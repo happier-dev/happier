@@ -11,11 +11,17 @@ import type { DaemonVoiceInferenceModelStatus } from '@happier-dev/protocol';
 import { listModelPackCatalogEntries } from '@happier-dev/protocol';
 
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 
 import { buildModelCatalogRows } from './buildModelCatalogRows';
 import { useDaemonVoiceModelCatalogState } from './useDaemonVoiceModelCatalogState';
+import { Modal } from '@/modal';
 
 const STT_PACK = listModelPackCatalogEntries('stt_sherpa')[0]!.packId;
+
+installDisconnectedServerSocketBoundary();
 
 type LegacyTestClient = Pick<DaemonVoiceInferenceClient, 'getModelsStatus' | 'installModel' | 'removeModel'>;
 
@@ -44,6 +50,8 @@ function status(
         model: entry?.model ?? packId,
         version: null,
         executionSupport: ['daemon'],
+        runtimeFamily: entry?.runtimeFamily ?? null,
+        runtimeSupported: true,
         installState: 'not_installed',
         progress: null,
         lastError: null,
@@ -84,11 +92,83 @@ function TestHarness(props: Readonly<{
 }
 
 describe('useDaemonVoiceModelCatalogState', () => {
+    it('cancels pending removal consent after Account retirement with the same execution machine', async () => {
+        vi.useRealTimers();
+        await loadSyncSingletonForTests();
+        const connection = await restoreServerAccountForTest({
+            serverUrl: 'https://model-catalog-home.example.test',
+            accountId: 'model-catalog-account',
+            request: async (url) => {
+                const path = new URL(String(url)).pathname;
+                if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+                if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+                return Response.json({}, { status: 404 });
+            },
+        });
+        try {
+            const lifetime = captureActiveServerAccountScopeLifetime();
+            if (!lifetime) throw new Error('Expected the real admitting Account lifetime');
+            expect(lifetime.isCurrent()).toBe(true);
+            let decide!: (accepted: boolean) => void;
+            const confirm = vi.spyOn(Modal, 'confirm').mockImplementation(() => new Promise<boolean>(resolve => { decide = resolve; }));
+            const client = {
+                listModels: vi.fn(async () => [status(STT_PACK, { installState: 'installed' })]),
+                getModelsStatus: vi.fn(async () => []),
+                installModel: vi.fn(async () => status(STT_PACK)),
+                acceptModelPackLicense: vi.fn(async () => status(STT_PACK)),
+                removeModel: vi.fn(async () => undefined),
+            };
+            function AccountRemovalHarness() {
+                const owner = useDaemonVoiceModelCatalogState({ client, refreshKey: 'same-machine' });
+                return React.createElement('AccountRemoval', { start: () => owner.remove(STT_PACK), actionPackId: owner.state.actionPackId });
+            }
+            const { tree } = await renderScreen(<AccountRemovalHarness />);
+            let pending!: Promise<void>;
+            await act(async () => { pending = tree.root.findByType('AccountRemoval').props.start(); await Promise.resolve(); });
+            expect(confirm).toHaveBeenCalledTimes(1);
+            expect(client.removeModel).not.toHaveBeenCalled();
+            await act(async () => { retireActiveServerAccountScopeLifetime(); });
+            expect(lifetime.isCurrent()).toBe(false);
+            await act(async () => { decide(true); await pending; });
+            expect(client.removeModel).not.toHaveBeenCalled();
+            expect(tree.root.findByType('AccountRemoval').props.actionPackId).toBeNull();
+            await act(async () => tree.unmount());
+        } finally {
+            await connection.dispose();
+        }
+    });
+
+    it('retains removal custody while consent is pending and cancels after machine replacement', async () => {
+        let decide!: (accepted: boolean) => void;
+        const confirm = vi.spyOn(Modal, 'confirm').mockImplementation(() => new Promise<boolean>(resolve => { decide = resolve; }));
+        const client = {
+            listModels: vi.fn(async () => [status(STT_PACK, { installState: 'installed', runtimeSupported: true })]),
+            getModelsStatus: vi.fn(async () => []),
+            installModel: vi.fn(async () => status(STT_PACK)),
+            acceptModelPackLicense: vi.fn(async () => status(STT_PACK)),
+            removeModel: vi.fn(async () => undefined),
+        };
+        function RemovalHarness({ machineId }: { machineId: string }) {
+            const owner = useDaemonVoiceModelCatalogState({ client, refreshKey: machineId });
+            return React.createElement('Removal', { start: () => owner.remove(STT_PACK), active: owner.state.actionPackId });
+        }
+        const { tree } = await renderScreen(<RemovalHarness machineId="machine-a" />);
+        let pending!: Promise<void>;
+        await act(async () => { pending = tree.root.findByType('Removal').props.start(); await Promise.resolve(); });
+        expect(client.removeModel).not.toHaveBeenCalled();
+        expect(tree.root.findByType('Removal').props.active).toBe(STT_PACK);
+        expect(confirm).toHaveBeenCalled();
+        await act(async () => { tree.update(<RemovalHarness machineId="machine-b" />); await Promise.resolve(); });
+        await act(async () => { decide(true); await pending; });
+        expect(client.removeModel).not.toHaveBeenCalled();
+        confirm.mockRestore();
+    });
     beforeEach(() => {
         vi.useFakeTimers();
     });
 
     afterEach(() => {
+        vi.restoreAllMocks();
         vi.useRealTimers();
     });
 
@@ -172,18 +252,24 @@ describe('useDaemonVoiceModelCatalogState', () => {
         const acceptModelPackLicense = vi.fn(async (
             _input: Parameters<DaemonVoiceInferenceClient['acceptModelPackLicense']>[0],
         ) => status(`${review.pluginId}/${review.packId}`));
+        const packId = `${review.pluginId}/${review.packId}`;
         const client = {
-            listModels: vi.fn(async () => []),
+            listModels: vi.fn(async () => [status(packId, {
+                pluginIdentity: { pluginId: review.pluginId, packId: review.packId },
+                runtimeFamily: 'sherpa_zipformer_streaming',
+                licenseReview: review,
+            })]),
             getModelsStatus: vi.fn(async () => []),
-            installModel: vi.fn(async () => status(STT_PACK)),
+            installModel: vi.fn(async () => status(packId)),
             acceptModelPackLicense,
             removeModel: vi.fn(async () => undefined),
         };
+        const confirm = vi.spyOn(Modal, 'confirm').mockResolvedValue(true);
 
         function LicenseHarness(): React.ReactElement {
-            const { acceptLicense } = useDaemonVoiceModelCatalogState({ client });
-            return React.createElement('AcceptLicenseButton', {
-                onPress: () => acceptLicense(review),
+            const { install } = useDaemonVoiceModelCatalogState({ client });
+            return React.createElement('InstallLicenseButton', {
+                onPress: () => install(packId),
             });
         }
 
@@ -192,9 +278,10 @@ describe('useDaemonVoiceModelCatalogState', () => {
             await Promise.resolve();
         });
         await act(async () => {
-            await tree.root.findByType('AcceptLicenseButton').props.onPress();
+            await tree.root.findByType('InstallLicenseButton').props.onPress();
         });
 
+        expect(confirm).toHaveBeenCalledWith(review.licenseTitle, review.licenseText, expect.any(Object));
         const input = acceptModelPackLicense.mock.calls[0]?.[0];
         if (!input) throw new Error('Expected license acceptance input');
         expect(input).toEqual({
@@ -209,6 +296,8 @@ describe('useDaemonVoiceModelCatalogState', () => {
             artifactBinding: review.artifactBinding,
         });
         expect(input.artifactBinding).toBe(review.artifactBinding);
+        expect(client.installModel).toHaveBeenCalledWith(expect.objectContaining({ packId }));
+        expect(acceptModelPackLicense.mock.invocationCallOrder[0]).toBeLessThan(client.installModel.mock.invocationCallOrder[0]!);
     });
 
     it('does not open a daemon model status request while disabled', async () => {
@@ -523,19 +612,32 @@ describe('useDaemonVoiceModelCatalogState', () => {
         const review = new Promise<boolean>((resolve) => {
             finishReview = resolve;
         });
+        const confirm = vi.spyOn(Modal, 'confirm').mockImplementation(() => review);
+        const packId = 'acme.speech/english-small';
         const client = {
-            getModelsStatus: vi.fn(async () => [status(STT_PACK)]),
-            installModel: vi.fn(async () => status(STT_PACK, { installState: 'installed' })),
+            listModels: vi.fn(async () => [status(packId, {
+                pluginIdentity: { pluginId: 'acme.speech', packId: 'english-small' },
+                runtimeFamily: 'sherpa_zipformer_streaming',
+                licenseReview: {
+                    pluginId: 'acme.speech', packId: 'english-small', pluginVersion: '1.2.3', packVersion: '2026.7.0',
+                    licenseId: 'acme-model-license-v1', licenseTitle: 'Acme model license', licenseText: 'Review these exact model terms.',
+                    licenseSourceUrl: 'https://example.test/licenses/acme-v1', licenseTextDigest: `sha256:${'a'.repeat(64)}`,
+                    artifactBinding: { kind: 'sourceIntegrity', integrity: `sha256:${'b'.repeat(64)}` }, accepted: false,
+                },
+            })]),
+            getModelsStatus: vi.fn(async () => [status(STT_PACK, { installState: 'installed' })]),
+            installModel: vi.fn(async () => status(packId, { installState: 'installed' })),
+            acceptModelPackLicense: vi.fn(async () => status(packId)),
             removeModel: vi.fn(async () => undefined),
         };
 
         function ReviewHarness(): React.ReactElement {
             const { state, install, remove } = useDaemonVoiceModelCatalogState({
-                client: React.useMemo(() => catalogClient(client), []),
+                client,
             });
             return React.createElement('ReviewState', {
                 actionPackId: state.actionPackId,
-                start: () => install(STT_PACK, () => review),
+                start: () => install(packId),
                 competing: () => remove(STT_PACK),
             });
         }
@@ -548,18 +650,21 @@ describe('useDaemonVoiceModelCatalogState', () => {
             installResult = owner.props.start();
             await Promise.resolve();
         });
-        expect(tree.root.findByType('ReviewState').props.actionPackId).toBe(STT_PACK);
+        expect(tree.root.findByType('ReviewState').props.actionPackId).toBe(packId);
+        expect(confirm).toHaveBeenCalledTimes(1);
 
         await act(async () => {
             await tree.root.findByType('ReviewState').props.competing();
         });
         expect(client.removeModel).not.toHaveBeenCalled();
+        expect(confirm).toHaveBeenCalledTimes(1);
 
         await act(async () => {
             finishReview(false);
             await installResult;
         });
         expect(client.installModel).not.toHaveBeenCalled();
+        expect(client.acceptModelPackLicense).not.toHaveBeenCalled();
         expect(tree.root.findByType('ReviewState').props.actionPackId).toBeNull();
     });
 
@@ -584,11 +689,16 @@ describe('useDaemonVoiceModelCatalogState', () => {
             },
             accepted: false,
         };
+        const confirm = vi.spyOn(Modal, 'confirm').mockImplementation(() => reviewDecision);
+        const packId = `${review.pluginId}/${review.packId}`;
         const acceptModelPackLicense = vi.fn(async () => status(STT_PACK));
         const installModel = vi.fn(async () => status(STT_PACK, { installState: 'installed' }));
         const client = {
             listModels: vi.fn(async (scope?: DaemonVoiceInferenceModelMachineScope) => [
-                status(STT_PACK, {
+                status(packId, {
+                    pluginIdentity: { pluginId: review.pluginId, packId: review.packId },
+                    runtimeFamily: 'sherpa_zipformer_streaming',
+                    licenseReview: review,
                     installState: scope?.machineId === 'machine-b' ? 'installed' : 'not_installed',
                 }),
             ]),
@@ -603,15 +713,10 @@ describe('useDaemonVoiceModelCatalogState', () => {
                 client,
                 refreshKey: props.machineId,
             });
-            const current = controller.state.statuses.find((candidate) => candidate.packId === STT_PACK);
+            const current = controller.state.statuses.find((candidate) => candidate.packId === packId);
             return React.createElement('ScopeReviewState', {
                 installState: current?.installState ?? null,
-                start: () => controller.install(STT_PACK, async (isCurrent) => {
-                    const accepted = await reviewDecision;
-                    if (!accepted || !isCurrent()) return false;
-                    await controller.acceptLicense(review);
-                    return isCurrent();
-                }),
+                start: () => controller.install(packId),
             });
         }
 
@@ -622,6 +727,7 @@ describe('useDaemonVoiceModelCatalogState', () => {
             staleInstall = tree.root.findByType('ScopeReviewState').props.start();
             await Promise.resolve();
         });
+        expect(confirm).toHaveBeenCalledTimes(1);
 
         await act(async () => {
             tree.update(<ScopeReviewHarness machineId="machine-b" />);

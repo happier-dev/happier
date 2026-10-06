@@ -78,6 +78,7 @@ export function LocalNeuralTtsSettings(props: {
       packId: effectiveAssetSetId,
       manifestUrl,
       networkTimeoutMs: props.networkTimeoutMs,
+      enabled: !usesDaemonExecution && publicationAvailable,
     });
 
   const deviceVoices = useLocalNeuralKokoroVoiceCatalog({ installSummary });

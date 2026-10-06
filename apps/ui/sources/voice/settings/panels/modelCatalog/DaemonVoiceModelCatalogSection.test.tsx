@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { act, ReactTestRenderer } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 
 import type { DaemonVoiceInferenceClient } from '@/voice/runtime/daemonInference/DaemonVoiceInferenceClient';
 import type { DaemonVoiceInferenceModelStatus } from '@happier-dev/protocol';
@@ -11,27 +11,23 @@ import {
 } from '@happier-dev/protocol';
 
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { Modal } from '@/modal';
 
 import { DaemonVoiceModelCatalogSection } from './DaemonVoiceModelCatalogSection';
 
-const confirmSpy = vi.hoisted(() => vi.fn());
-
-vi.mock('@/modal', async () => {
-    const actual = await vi.importActual<typeof import('@/modal')>('@/modal');
-    return { ...actual, Modal: { ...actual.Modal, confirm: confirmSpy } };
-});
-
-type Client = Pick<DaemonVoiceInferenceClient, 'getModelsStatus' | 'installModel' | 'removeModel'>;
+type Client = Pick<DaemonVoiceInferenceClient, 'getModelsStatus' | 'installModel' | 'removeModel'>
+    & Partial<Pick<DaemonVoiceInferenceClient, 'listModels' | 'acceptModelPackLicense'>>;
 
 function catalogClient(client: Client): Pick<
     DaemonVoiceInferenceClient,
     'listModels' | 'getModelsStatus' | 'installModel' | 'acceptModelPackLicense' | 'removeModel'
 > {
     return {
-        listModels: (scope) => client.getModelsStatus(undefined, scope),
+        listModels: client.listModels?.bind(client) ?? ((scope) => client.getModelsStatus(undefined, scope)),
         getModelsStatus: async () => [],
         installModel: client.installModel.bind(client),
-        acceptModelPackLicense: vi.fn(async () => status(getDefaultModelPackId('stt_sherpa')!)),
+        acceptModelPackLicense: client.acceptModelPackLicense?.bind(client)
+            ?? vi.fn(async () => status(getDefaultModelPackId('stt_sherpa')!)),
         removeModel: client.removeModel.bind(client),
     };
 }
@@ -75,12 +71,15 @@ function status(
 }
 
 describe('DaemonVoiceModelCatalogSection', () => {
+    let confirmSpy: MockInstance<typeof Modal.confirm>;
+
     beforeEach(() => {
         vi.useFakeTimers();
-        confirmSpy.mockReset();
+        confirmSpy = vi.spyOn(Modal, 'confirm');
     });
 
     afterEach(() => {
+        vi.restoreAllMocks();
         vi.useRealTimers();
     });
 
@@ -165,7 +164,8 @@ describe('DaemonVoiceModelCatalogSection', () => {
                 refresh: vi.fn(async () => undefined),
                 install: vi.fn(async () => undefined),
                 remove: vi.fn(async () => undefined),
-            } as any,
+                cancel: vi.fn(),
+            },
         });
 
         const row = tree.root.findByProps({ testID: `voice-model-row-${sttDefault}` });
@@ -229,7 +229,8 @@ describe('DaemonVoiceModelCatalogSection', () => {
                 refresh: vi.fn(async () => undefined),
                 install: vi.fn(async () => undefined),
                 remove: vi.fn(async () => undefined),
-            } as any,
+                cancel: vi.fn(),
+            },
         });
 
         const row = tree.root.findByProps({ testID: `voice-model-row-${unsupportedPack.packId}` });
@@ -252,44 +253,24 @@ describe('DaemonVoiceModelCatalogSection', () => {
             artifactBinding: { kind: 'sourceIntegrity', integrity: `sha256:${'b'.repeat(64)}` },
             accepted: false,
         } as const;
-        const acceptLicense = vi.fn(async () => undefined);
-        const installAfterReview = vi.fn(async () => undefined);
-        const install = vi.fn(async (
-            _packId: string,
-            prepare?: (isCurrent: () => boolean) => Promise<boolean>,
-        ) => {
-            if (prepare && !(await prepare(() => true))) return;
-            await installAfterReview();
-        });
+        const acceptModelPackLicense = vi.fn(async () => status(packId));
+        const installModel = vi.fn(async () => status(packId, { installState: 'installed' }));
         confirmSpy.mockResolvedValueOnce(true);
         const tree = await renderSection({
+            listModels: vi.fn(async () => [status(packId, {
+                pluginIdentity: { pluginId: 'acme.speech', packId: 'english-small' },
+                kind: 'stt_sherpa',
+                model: 'acme-english-small',
+                version: '2026.7.0',
+                runtimeFamily: 'sherpa_zipformer_streaming',
+                runtimeSupported: true,
+                installState: 'not_installed',
+                licenseReview: review,
+            })]),
             getModelsStatus: vi.fn(async () => []),
-            installModel: vi.fn(async () => undefined as never),
+            installModel,
+            acceptModelPackLicense,
             removeModel: vi.fn(async () => undefined),
-        }, {
-            catalogController: {
-                state: {
-                    statuses: [status(packId, {
-                        pluginIdentity: { pluginId: 'acme.speech', packId: 'english-small' },
-                        kind: 'stt_sherpa',
-                        model: 'acme-english-small',
-                        version: '2026.7.0',
-                        runtimeFamily: 'sherpa_zipformer_streaming',
-                        runtimeSupported: true,
-                        installState: 'not_installed',
-                        licenseReview: review,
-                    })],
-                    errorCode: null,
-                    loading: false,
-                    actionPackId: null,
-                    actionError: null,
-                },
-                refresh: vi.fn(async () => undefined),
-                install,
-                acceptLicense,
-                remove: vi.fn(async () => undefined),
-                cancel: vi.fn(),
-            },
         });
 
         await act(async () => {
@@ -302,36 +283,50 @@ describe('DaemonVoiceModelCatalogSection', () => {
             review.licenseText,
             expect.objectContaining({ confirmText: expect.any(String) }),
         );
-        expect(acceptLicense).toHaveBeenCalledWith(review);
-        expect(install).toHaveBeenCalledWith(packId, expect.any(Function));
-        expect(acceptLicense.mock.invocationCallOrder[0]).toBeLessThan(
-            installAfterReview.mock.invocationCallOrder[0]!,
+        expect(confirmSpy).toHaveBeenCalledTimes(1);
+        expect(acceptModelPackLicense).toHaveBeenCalledWith({
+            qualifiedPackId: packId, pluginId: review.pluginId, packId: review.packId,
+            pluginVersion: review.pluginVersion, packVersion: review.packVersion,
+            licenseId: review.licenseId, licenseSourceUrl: review.licenseSourceUrl,
+            licenseTextDigest: review.licenseTextDigest, artifactBinding: review.artifactBinding,
+        });
+        expect(installModel).toHaveBeenCalledWith(expect.objectContaining({ packId }));
+        expect(acceptModelPackLicense.mock.invocationCallOrder[0]).toBeLessThan(
+            installModel.mock.invocationCallOrder[0]!,
         );
+    });
+
+    it.each([false, true])('removes the installed default pack only after its one confirmation is accepted: %s', async (accepted) => {
+        const packId = getDefaultModelPackId('stt_sherpa')!;
+        const removeModel = vi.fn(async () => undefined);
+        confirmSpy.mockResolvedValue(accepted);
+        const tree = await renderSection({
+            getModelsStatus: vi.fn(async () => [status(packId)]),
+            installModel: vi.fn(async () => status(packId)),
+            removeModel,
+        }, { selectedSttPackId: packId });
+
+        await pressTestInstanceAsync(tree.root.findByProps({ testID: `voice-model-remove-${packId}` }));
+
+        expect(confirmSpy).toHaveBeenCalledTimes(1);
+        expect(confirmSpy).toHaveBeenCalledWith(expect.any(String), expect.any(String), expect.objectContaining({ destructive: true }));
+        if (accepted) expect(removeModel).toHaveBeenCalledWith(packId);
+        else expect(removeModel).not.toHaveBeenCalled();
     });
 
     it('makes every competing model action inert while the catalog mutation owner is active', async () => {
         const sttPack = getDefaultModelPackId('stt_sherpa')!;
         const ttsPack = getDefaultModelPackId('tts_sherpa')!;
+        let finishReview!: (accepted: boolean) => void;
+        confirmSpy.mockImplementation(() => new Promise<boolean>((resolve) => { finishReview = resolve; }));
+        const removeModel = vi.fn(async () => undefined);
         const tree = await renderSection({
-            getModelsStatus: vi.fn(async () => []),
+            getModelsStatus: vi.fn(async () => [status(sttPack), status(ttsPack)]),
             installModel: vi.fn(async () => undefined as never),
-            removeModel: vi.fn(async () => undefined),
-        }, {
-            catalogController: {
-                state: {
-                    statuses: [status(sttPack), status(ttsPack)],
-                    errorCode: null,
-                    loading: false,
-                    actionPackId: sttPack,
-                    actionError: null,
-                },
-                refresh: vi.fn(async () => undefined),
-                install: vi.fn(async () => undefined),
-                acceptLicense: vi.fn(async () => undefined),
-                remove: vi.fn(async () => undefined),
-                cancel: vi.fn(),
-            },
+            removeModel,
         });
+        await pressTestInstanceAsync(tree.root.findByProps({ testID: `voice-model-remove-${sttPack}` }));
+        expect(confirmSpy).toHaveBeenCalledTimes(1);
 
         const competingRow = tree.root.findByProps({ testID: `voice-model-row-${ttsPack}` });
         const competingRemove = tree.root.findByProps({ testID: `voice-model-remove-${ttsPack}` });
@@ -339,5 +334,7 @@ describe('DaemonVoiceModelCatalogSection', () => {
         expect(competingRow.props.disabled).toBe(true);
         expect(competingRemove.props.disabled).toBe(true);
         expect(competingRemove.props.accessibilityState).toEqual({ disabled: true });
+        await act(async () => { finishReview(false); });
+        expect(removeModel).not.toHaveBeenCalled();
     });
 });

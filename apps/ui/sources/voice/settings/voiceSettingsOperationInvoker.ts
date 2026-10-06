@@ -17,6 +17,7 @@ import { resolveVoiceDiagnosticsCaptureAuthorizationId } from '@/voice/diagnosti
 import { resolveVoiceExecutionMachineId } from './executionMachine';
 import { updateVoiceLocalConversationSetting } from './voiceSettingBinding';
 import { buildModelCatalogRows } from './panels/modelCatalog/buildModelCatalogRows';
+import { invokeDaemonModelPackOperation } from './panels/modelCatalog/invokeDaemonModelPackOperation';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import { projectVoiceProviderSettings } from '@/voice/registry/providerRegistry';
 import { inspectVoiceDictationSettingsReadiness, inspectVoiceProviderReadiness, projectVoiceRawSpeechReadinessTargets } from './voiceProviderReadinessInspection';
@@ -232,26 +233,8 @@ export async function invokeVoiceSettingsOperation(operation: VoiceSettingsOpera
             });
             return selectionCurrent() ? completed({ packId }) : { status: 'cancelled' };
         }
-        if (operation === 'model_remove' || operation.endsWith('_remove')) {
-            if (!row.canRemove) return unavailable('model_not_installed');
-            const confirmed = await Modal.confirm(t('settingsVoice.local.models.removeConfirmTitle'),
-                t('settingsVoice.local.models.removeConfirmBody', { name: row.displayName }), { confirmText: t('common.remove'), destructive: true });
-            if (!confirmed || !await operationCurrent()) return { status: 'cancelled' };
-            await client.removeModel(packId, scope);
-            return await operationCurrent() ? completed({ packId }) : { status: 'cancelled' };
-        }
-        if (!row.canInstall) return unavailable(row.state === 'downloading' ? 'model_install_in_progress' : 'model_install_unavailable');
-        const review = row.licenseReview;
-        if (review && !review.accepted) {
-            const accepted = await Modal.confirm(review.licenseTitle, review.licenseText, { confirmText: t('common.continue') });
-            if (!accepted || !await operationCurrent()) return { status: 'cancelled' };
-            await client.acceptModelPackLicense({ qualifiedPackId: `${review.pluginId}/${review.packId}`, pluginId: review.pluginId,
-                packId: review.packId, pluginVersion: review.pluginVersion, packVersion: review.packVersion, licenseId: review.licenseId,
-                licenseSourceUrl: review.licenseSourceUrl, licenseTextDigest: review.licenseTextDigest, artifactBinding: review.artifactBinding }, scope);
-        }
-        if (!await operationCurrent()) return { status: 'cancelled' };
-        await client.installModel({ packId, signal: context.signal }, scope);
-        return await operationCurrent() ? completed({ packId }) : { status: 'cancelled' };
+        return await invokeDaemonModelPackOperation({ operation: operation === 'model_remove' || operation.endsWith('_remove') ? 'remove' : 'install',
+            row, client, scope, signal: context.signal, isCurrent: operationCurrent });
     } catch (error) {
         if (!current()) return { status: 'cancelled' };
         const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : null;

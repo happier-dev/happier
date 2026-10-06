@@ -3,7 +3,6 @@ import { act, type ReactTestInstance } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
-import { Modal } from '@/modal';
 import { t } from '@/text';
 import { listModelPackCatalogEntries, type DaemonVoiceInferenceModelStatus } from '@happier-dev/protocol';
 
@@ -61,7 +60,7 @@ describe('DaemonModelPackRow', () => {
         expect(onCancel).toHaveBeenCalledTimes(1);
     });
 
-    it('uses one confirmation owner before removing an installed pack', async () => {
+    it('delegates removal separately from selection through an accessible installed-pack control', async () => {
         const row: ModelCatalogRow = {
             packId: 'pack-1',
             kind: 'tts_sherpa',
@@ -77,7 +76,6 @@ describe('DaemonModelPackRow', () => {
             licenseReview: null,
             sourcePluginId: null,
         };
-        vi.spyOn(Modal, 'confirm').mockResolvedValue(true);
         const onRemove = vi.fn(async () => undefined);
         const onSetDefault = vi.fn();
         const { tree } = await renderScreen(
@@ -114,12 +112,11 @@ describe('DaemonModelPackRow', () => {
         expectAtLeast44PointTarget(removeButton?.props.style);
 
         await pressTestInstanceAsync(removeButton!);
-        expect(Modal.confirm).toHaveBeenCalledTimes(1);
         expect(onRemove).toHaveBeenCalledWith('pack-1');
         expect(onSetDefault).not.toHaveBeenCalled();
     });
 
-    it('keeps removal available for the installed default pack and still confirms it', async () => {
+    it('keeps removal available for the installed default pack', async () => {
         const row: ModelCatalogRow = {
             packId: 'pack-default',
             kind: 'stt_sherpa',
@@ -135,7 +132,6 @@ describe('DaemonModelPackRow', () => {
             licenseReview: null,
             sourcePluginId: null,
         };
-        vi.spyOn(Modal, 'confirm').mockResolvedValue(true);
         const onRemove = vi.fn(async () => undefined);
         const { tree } = await renderScreen(
             <DaemonModelPackRow
@@ -148,7 +144,6 @@ describe('DaemonModelPackRow', () => {
         );
 
         await pressTestInstanceAsync(tree.root.findByProps({ testID: 'voice-model-remove-pack-default' }));
-        expect(Modal.confirm).toHaveBeenCalledTimes(1);
         expect(onRemove).toHaveBeenCalledWith('pack-default');
     });
 
@@ -182,7 +177,6 @@ describe('DaemonModelPackRow', () => {
             },
             refresh: vi.fn(async () => undefined),
             install: vi.fn(async () => undefined),
-            acceptLicense: vi.fn(async () => undefined),
             remove: vi.fn(async () => undefined),
             cancel: vi.fn(),
         };
@@ -224,7 +218,6 @@ describe('DaemonModelPackRow', () => {
             },
             refresh: vi.fn(async () => undefined),
             install: vi.fn(async () => undefined),
-            acceptLicense: vi.fn(async () => undefined),
             remove: vi.fn(async () => undefined),
             cancel: vi.fn(),
         };
