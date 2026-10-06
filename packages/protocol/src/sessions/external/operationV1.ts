@@ -1374,3 +1374,24 @@ export function decideExternalSessionOperationUpdateV1(
   }
   return Object.freeze({ kind: 'accept' });
 }
+
+/** Phase safety shared by the durable executor and its public control projections. */
+export function canCancelExternalSessionOperationV1(operation: ExternalSessionOperationRecordV1 | ExternalSessionOperationProgressV1): boolean {
+  if (operation.status === 'cancel_requested') return true;
+  if (isExternalSessionOperationTerminalStatusV1(operation.status) || operation.status === 'reconciliation_required') return false;
+  if (operation.request.plan === 'takeover' && operation.request.targetStorageMode === 'external-linked') {
+    return (operation.status === 'awaiting_user_resume' && ['validating', 'quiescing', 'admitting'].includes(operation.phase))
+      || (operation.status === 'failed' && ['quiescing', 'admitting'].includes(operation.phase));
+  }
+  if (operation.request.plan === 'takeover' && (
+    ['admitting', 'spawning', 'finalizing'].includes(operation.phase)
+    || operation.currentStorageState === 'snapshot_complete'
+  )) return false;
+  if (operation.request.plan === 'materialize'
+    && operation.priorStableStorage.state === 'snapshot_complete'
+    && operation.phase === 'staging' && operation.checkpoint.stagedItemCount === 0) {
+    // Public progress cannot prove that the first private staging checkpoint is settled.
+    return 'bindings' in operation && operation.bindings.privateStagingId === undefined;
+  }
+  return true;
+}
