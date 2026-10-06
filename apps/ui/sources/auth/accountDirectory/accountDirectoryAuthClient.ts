@@ -344,10 +344,8 @@ async function verifyAccountDirectoryEndpoint(input: Readonly<{
         ...(input.homeCarrier ? { homeCarrier: input.homeCarrier } : {}),
         ...(input.signal ? { signal: input.signal } : {}),
         force: true,
-        // No foreground cutoff. The probe's default wait budget serves callers with their own
-        // fallback (sign-in, pairing); account-service discovery has none, and a cutoff turned
-        // a slow but healthy service into "unreachable". The shared probe's own attempt bound
-        // still ends the check, and the caller's signal still cancels it.
+        // Account-service discovery needs the shared attempt result, like the
+        // default probe contract. Keep the explicit no-cutoff spelling here.
         timeoutMs: 0,
     });
     if (snapshot.status !== 'ready') {

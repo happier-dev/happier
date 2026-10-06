@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MMKV } from 'react-native-mmkv';
 
 const mocks = vi.hoisted(() => {
@@ -78,6 +78,7 @@ function keyChallengeV2Capabilities(serverIdentityId: string) {
 }
 
 describe('authGetToken key-challenge gate', () => {
+    afterEach(() => { vi.useRealTimers(); });
     beforeEach(() => {
         resetServerFeaturesClientForTests();
         mocks.serverFetch.mockReset();
@@ -174,8 +175,11 @@ describe('authGetToken key-challenge gate', () => {
     });
 
     it('uses the released v1 request shape when an ordinary unbound Home feature probe times out', async () => {
+        vi.useFakeTimers();
+        let featureSignal: AbortSignal | null | undefined;
         mocks.serverFetch
             .mockImplementationOnce((_url: string, init?: RequestInit) => {
+                featureSignal = init?.signal;
                 return new Promise<Response>((_resolve, reject) => {
                     const signal = init?.signal;
                     if (!signal) {
@@ -192,11 +196,49 @@ describe('authGetToken key-challenge gate', () => {
             })
             .mockResolvedValueOnce(jsonResponse({ token: 'legacy-token' }));
 
-        await expect(authGetToken(new Uint8Array(32))).resolves.toBe('legacy-token');
+        const result = authGetToken(new Uint8Array(32));
+        await vi.advanceTimersByTimeAsync(799);
+        expect(mocks.serverFetch.mock.calls.map((call) => call[0])).toEqual(['/v1/features']);
+        await vi.advanceTimersByTimeAsync(1);
+        await expect(result).resolves.toBe('legacy-token');
+        expect(featureSignal).toBeDefined();
+        expect(featureSignal?.aborted).toBe(false);
+        const body = JSON.parse(String(mocks.serverFetch.mock.calls[1]?.[1]?.body)) as Record<string, unknown>;
+        expect(body).toHaveProperty('challenge');
+        expect(body).not.toHaveProperty('challengeId');
         expect(mocks.serverFetch.mock.calls.map((call) => call[0])).toEqual([
             '/v1/features',
             '/v1/auth',
         ]);
+        await vi.advanceTimersByTimeAsync(59_200);
+    });
+
+    it('waits for slow features when focused key login requires an Account-bound challenge', async () => {
+        const profile = upsertServerProfile({ serverUrl: 'https://slow-focused.example.test', name: 'Slow Home' });
+        await setActiveServerId(profile.id);
+        vi.useFakeTimers();
+        mocks.serverFetch.mockImplementation(async (path: string) => {
+            if (path === '/v1/features') {
+                await new Promise<void>((resolve) => setTimeout(resolve, 1_500));
+                return jsonResponse({ features: {}, capabilities: keyChallengeV2Capabilities('srv_slow_focused') });
+            }
+            if (path === '/v1/auth/challenge') return jsonResponse({
+                challengeId: 'slow-challenge', nonce: 'nonce',
+                issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString(),
+                audience: { origin: 'https://slow-focused.example.test', serverIdentityId: 'srv_slow_focused' },
+            });
+            if (path === '/v1/auth') return jsonResponse({ token: 'focused-token' });
+            throw new Error(`Unexpected request: ${path}`);
+        });
+        let settled = false;
+        const result = authGetToken(new Uint8Array(32).fill(7), { expectedAccountId: 'expected-account' })
+            .then((token) => { settled = true; return token; }, (error: unknown) => { settled = true; return error; });
+        await vi.advanceTimersByTimeAsync(800);
+        expect(settled).toBe(false);
+        expect(mocks.serverFetch.mock.calls.map((call) => call[0])).toEqual(['/v1/features']);
+        await vi.advanceTimersByTimeAsync(700);
+        await expect(result).resolves.toBe('focused-token');
+        expect(mocks.serverFetch.mock.calls.map((call) => call[0])).toEqual(['/v1/features', '/v1/auth/challenge', '/v1/auth']);
     });
 
     it('keeps Account-bound login fail closed when its feature probe is unavailable', async () => {
