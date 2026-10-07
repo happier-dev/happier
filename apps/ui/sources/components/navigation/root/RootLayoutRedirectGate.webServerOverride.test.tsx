@@ -57,6 +57,9 @@ describe('supplied Home admission before shell mount', () => {
     });
 
     async function mountFor(address: string, onMount: (serverUrl: string) => void, withNavigation = false, historyState: unknown = null) {
+        // Match the app entry: the real Sync runtime must be registered before
+        // Router admission can switch a Home. resetModules retires that runtime.
+        await import('@/sync/syncEngine');
         const location = { href: `https://app.example.test${navigation.pathname}?server=${encodeURIComponent(address)}&tab=work` };
         // Browser history is the external boundary. Apply writes so assertions
         // observe the retained URL/state rather than only an incidental call.
@@ -99,16 +102,12 @@ describe('supplied Home admission before shell mount', () => {
             });
         });
         const mountedHomes: string[] = [];
-        const mounting = mountFor(address, (serverUrl) => { mountedHomes.push(serverUrl); });
-        // Release the genuine network boundary when requested, not after a cold
-        // component graph may have exhausted the readiness owner's deadline.
-        await vi.waitFor(() => expect(runtimeFetch).toHaveBeenCalledWith(`${address}/health`, expect.any(Object)), { timeout: 300000 });
-        const profiles = await import('@/sync/domains/server/serverProfiles');
-        expect(mountedHomes).toEqual([]);
-        expect(profiles.listServerProfiles().some((profile) => profile.serverUrl === address)).toBe(false);
-        await act(async () => { releaseHealth(); });
-        const { screen } = await mounting;
+        const { screen, profiles } = await mountFor(address, (serverUrl) => { mountedHomes.push(serverUrl); });
         try {
+            expect(mountedHomes).toEqual([]);
+            await vi.waitFor(() => expect(runtimeFetch).toHaveBeenCalledWith(`${address}/health`, expect.any(Object)));
+            expect(profiles.listServerProfiles().some((profile) => profile.serverUrl === address)).toBe(false);
+            await act(async () => { releaseHealth(); });
             const { Modal } = await import('@/modal');
             await vi.waitFor(() => expect(mountedHomes).toHaveLength(1));
             expect(Modal.confirm).not.toHaveBeenCalled();
