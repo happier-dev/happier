@@ -10,8 +10,15 @@ import { VoiceEnergyProvider } from '@/components/voice/light/useVoiceEnergy';
 import { voiceRuntimeLevelStore, type VoiceRuntimeLevelWriter } from '@/voice/runtime/levels/voiceRuntimeLevelStore';
 import { VoiceMarkArt } from './VoiceMark';
 import { VoiceStatusCell } from './VoiceStatusCell';
+import { VoiceElapsed } from './VoiceStatusLine';
+import { VoiceMarkArt as PublicVoiceMarkArt } from '@happier-dev/plugin-ui';
+import { createPluginUiPrivatePresentationHost } from '@/components/plugins/surfaces/pluginUiPrivatePresentationHost';
+import { PluginUiPresentationHostProviderInternal } from '../../../../../../packages/plugin-ui/src/presentationHost/context';
+import { HappierUiAnimationActivityProviderInternal } from '../../../../../../packages/plugin-ui/src/environment/context';
 
-const host = vi.hoisted(() => ({ viewed: true, reduced: false, repeats: 0, cancels: 0, timings: 0 }));
+const publicArtHost = createPluginUiPrivatePresentationHost(undefined);
+
+const host = vi.hoisted(() => ({ viewed: true, reduced: false, repeats: 0, cancels: 0, timings: 0, viewListeners: new Set<() => void>() }));
 // Reanimated is the native animation boundary; preserve the shared-value/frame testkit beneath it.
 vi.mock('react-native-reanimated', async () => {
     const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
@@ -24,10 +31,16 @@ vi.mock('react-native-reanimated', async () => {
     };
 });
 vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({ useReducedMotionPreference: () => host.reduced }));
-vi.mock('@/utils/runtime/useHostActivelyViewed', () => ({
-    useHostActivelyViewed: () => host.viewed,
-    useHostActivelyFocused: () => host.viewed,
-}));
+vi.mock('@/utils/runtime/useHostActivelyViewed', async () => {
+    const React = await import('react');
+    const subscribe = (listener: () => void) => {
+        host.viewListeners.add(listener);
+        return () => { host.viewListeners.delete(listener); };
+    };
+    const read = () => host.viewed;
+    const useViewed = () => React.useSyncExternalStore(subscribe, read, read);
+    return { useHostActivelyViewed: useViewed, useHostActivelyFocused: useViewed };
+});
 
 let screen: RenderScreenResult | null = null;
 let input: VoiceRuntimeLevelWriter | null = null;
@@ -44,6 +57,7 @@ afterEach(async () => {
     input = null;
     await screen?.unmount();
     screen = null;
+    vi.useRealTimers();
 });
 
 function scene(presented: boolean, otherVisible = false) {
@@ -67,6 +81,72 @@ function ViewportScene(props: Readonly<{ tracker: NearViewportTracker; onRender:
 }
 
 describe('Voice retained presentation demand', () => {
+    it('settles public art transitions when the plugin presentation hides them, without replay on reveal', async () => {
+        const art = (active: boolean, pose: React.ComponentProps<typeof PublicVoiceMarkArt>['pose']) => (
+            <PluginUiPresentationHostProviderInternal host={publicArtHost}>
+                <HappierUiAnimationActivityProviderInternal active={active}>
+                    <PublicVoiceMarkArt pose={pose} size={24} still={false} />
+                </HappierUiAnimationActivityProviderInternal>
+            </PluginUiPresentationHostProviderInternal>
+        );
+        screen = await renderScreen(art(false, 'mic'));
+        await screen.update(art(false, 'shadow'));
+        await screen.update(art(false, 'ready'));
+        expect(host.timings).toBe(0);
+        await screen.update(art(true, 'ready'));
+        expect(host.timings).toBe(0);
+        await screen.update(art(true, 'mic'));
+        expect(host.timings).toBe(1);
+    });
+    it('pauses an offscreen elapsed clock and catches up from the same admitted start on reveal', async () => {
+        vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+        vi.setSystemTime(200_000);
+        const clock = (presented: boolean) => (
+            <PluginSurfaceFocusEligibilityProvider active={presented} presentationActive={presented}>
+                <VoiceElapsed startedAt={80_000} />
+            </PluginSurfaceFocusEligibilityProvider>
+        );
+        screen = await renderScreen(clock(true));
+        expect(screen.getTextContent()).toBe('2:00');
+        expect(vi.getTimerCount()).toBe(1);
+        await screen.update(clock(false));
+        expect(vi.getTimerCount()).toBe(0);
+        act(() => { vi.advanceTimersByTime(30_000); });
+        expect(screen.getTextContent()).toBe('2:00');
+        await screen.update(clock(true));
+        expect(screen.getTextContent()).toBe('2:30');
+        expect(vi.getTimerCount()).toBe(1);
+        act(() => { vi.advanceTimersByTime(1_000); });
+        expect(screen.getTextContent()).toBe('2:31');
+        await screen.unmount();
+        screen = null;
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('pauses elapsed work in the background and catches up on the same mounted host when foregrounded', async () => {
+        vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+        vi.setSystemTime(200_000);
+        host.viewed = false;
+        screen = await renderScreen(<VoiceElapsed startedAt={80_000} />);
+        expect(screen.getTextContent()).toBe('2:00');
+        expect(vi.getTimerCount()).toBe(0);
+        act(() => { vi.advanceTimersByTime(30_000); });
+        expect(screen.getTextContent()).toBe('2:00');
+        act(() => {
+            host.viewed = true;
+            host.viewListeners.forEach((listener) => listener());
+        });
+        expect(screen.getTextContent()).toBe('2:30');
+        expect(vi.getTimerCount()).toBe(1);
+        act(() => {
+            host.viewed = false;
+            host.viewListeners.forEach((listener) => listener());
+        });
+        expect(vi.getTimerCount()).toBe(0);
+        act(() => { vi.advanceTimersByTime(30_000); });
+        expect(screen.getTextContent()).toBe('2:30');
+    });
+
     it('settles hidden morph and pose changes without clocks or replay on return', async () => {
         const mark = (presented: boolean, pose: React.ComponentProps<typeof VoiceMarkArt>['pose']) => (
             <PluginSurfaceFocusEligibilityProvider active={presented} presentationActive={presented}>

@@ -3,9 +3,12 @@ export type TurnEndpointPolicy = Readonly<{
     minSpeechMs: number;
 }>;
 
+/** setTimeout uses a signed 32-bit millisecond delay on supported JS hosts. */
+export const MAX_VOICE_TIMER_DELAY_MS = 2_147_483_647;
+
 function clampBoundedMs(value: unknown): number {
     const n = typeof value === 'number' && Number.isFinite(value) ? Math.floor(value) : 0;
-    return Math.max(0, Math.min(5_000, n));
+    return Math.max(0, Math.min(MAX_VOICE_TIMER_DELAY_MS, n));
 }
 
 export function normalizeTurnEndpointPolicy(raw: {

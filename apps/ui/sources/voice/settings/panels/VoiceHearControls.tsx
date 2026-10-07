@@ -6,10 +6,9 @@ import { Switch } from '@/components/ui/forms/Switch';
 import type { VoiceLocalConversationSettings } from '@/sync/domains/settings/voiceSettings';
 import { t } from '@/text';
 import { VOICE_CONVERSATIONS_SETTINGS } from '@/voice/settings/voiceSettingsDeclarations';
+import { MAX_VOICE_TIMER_DELAY_MS } from '@/voice/runtime/input/TurnEndpointDetector';
 
 type HandsFree = VoiceLocalConversationSettings['handsFree'];
-
-const ENDPOINTING_MAX_MS = 5000;
 
 /**
  * The Hear rows after the recognizer: hands-free (with its timing) and interrupting a reply by
@@ -33,7 +32,7 @@ export function VoiceHearControls(props: Readonly<{
       ? undefined
       : t('settingsVoice.pages.conversations.handsFreeTimingUnavailable');
   const commitEndpointing = (key: 'silenceMs' | 'minSpeechMs') => (draft: string) => {
-    const next = Math.max(0, Math.min(ENDPOINTING_MAX_MS, Math.round(Number(draft) * 1000)));
+    const next = Math.max(0, Math.min(MAX_VOICE_TIMER_DELAY_MS, Math.round(Number(draft) * 1000)));
     if (!Number.isFinite(next)) return String(handsFree.endpointing[key] / 1000);
     props.setHandsFree({ ...handsFree, endpointing: { ...handsFree.endpointing, [key]: next } });
     return String(next / 1000);

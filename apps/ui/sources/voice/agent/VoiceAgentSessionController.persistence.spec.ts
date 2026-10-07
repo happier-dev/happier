@@ -532,17 +532,20 @@ describe('VoiceExecutionTransport (persistence)', () => {
         }),
       ],
     });
-    sessionExecutionRunGet.mockResolvedValueOnce({
-      run: buildExecutionRunPublicState({
-        runId: 'run_legacy',
-        transcript: { persistenceMode: 'ephemeral', epoch: 1 },
-        resumeHandle: {
-          kind: 'provider_session.v1',
-          backendTarget: { kind: 'backend', backendId: 'claude' },
-          providerSessionId: 'vs_legacy',
-        },
-      }),
+    const retainedRun = buildExecutionRunPublicState({
+      runId: 'run_legacy',
+      transcript: { persistenceMode: 'ephemeral', epoch: 1 },
+      voicePolicy: { assistantLanguage: 'fr-FR', welcome: { enabled: false, mode: 'immediate' } },
+      resumeHandle: {
+        kind: 'provider_session.v1',
+        backendTarget: { kind: 'backend', backendId: 'claude' },
+        providerSessionId: 'vs_legacy',
+      },
     });
+    // Both reconciliation and the post-start read address the same retained Run.
+    sessionExecutionRunGet
+      .mockResolvedValueOnce({ run: retainedRun })
+      .mockResolvedValueOnce({ run: retainedRun });
 
     const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceExecutionTransport } = await loadVoiceAgentPersistenceHarness();
     const controller = createVoiceExecutionTransport();

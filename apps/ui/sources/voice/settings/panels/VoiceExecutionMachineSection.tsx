@@ -31,7 +31,7 @@ import {
 } from '@/voice/registry/readiness';
 import { resolveStoredVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
 import { applyVoiceExecutionMachineChoice } from '@/voice/settings/executionMachineChoice';
-import { SettingAnchor } from '@/components/settings/shell/SettingRow';
+import { SettingAnchor, useSettingRevealRequested } from '@/components/settings/shell/SettingRow';
 import { VOICE_ADVANCED_SETTINGS, VOICE_CONVERSATIONS_SETTINGS, VOICE_DICTATION_SETTINGS } from '@/voice/settings/voiceSettingsDeclarations';
 
 const defaultRegistry = createDefaultVoiceProviderRegistry();
@@ -57,6 +57,10 @@ export function VoiceExecutionMachineSection(props: Readonly<{
     ? state.autoTargetMachineByScope[accountSettingsScopeKeySuffix(settingsScope)]
     : undefined);
   const [open, setOpen] = React.useState(false);
+  const setting = props.intent === 'advanced'
+    ? VOICE_ADVANCED_SETTINGS.settings.executionMachine : props.intent === 'dictation'
+      ? VOICE_DICTATION_SETTINGS.settings.executionMachine : VOICE_CONVERSATIONS_SETTINGS.settings.executionMachine;
+  const revealRequested = useSettingRevealRequested([setting]);
   const voice = voiceSettingsParse(props.voice);
   const registry = props.registry ?? defaultRegistry;
   const providerId = resolveStoredVoiceProviderId(voice.providerId);
@@ -123,7 +127,7 @@ export function VoiceExecutionMachineSection(props: Readonly<{
     unknownMachineLabel: t('settingsVoice.local.executionMachine.unknownMachineLabel'),
   }), [machines, theme.colors.text.secondary]);
 
-  if (!requiresExecutionMachine) return null;
+  if (!requiresExecutionMachine && !revealRequested) return null;
 
   const fixedMachineId = voice.executionMachine.mode === 'fixed'
     ? String(voice.executionMachine.machineId ?? '').trim()
@@ -155,6 +159,7 @@ export function VoiceExecutionMachineSection(props: Readonly<{
       ? (stickyAutoItem ? `${t('settingsVoice.local.executionMachine.autoTitle')} · ${stickyAutoItem.title}` : t('settingsVoice.local.executionMachine.autoTitle'))
       : (selectedItem?.title ?? fixedMachineId);
     return (
+      <SettingAnchor setting={setting}>
       <SelectionListFilterChip
         filter={{
           id: 'voiceComputer',
@@ -169,6 +174,7 @@ export function VoiceExecutionMachineSection(props: Readonly<{
           ...(fixedMachine === null && fixedMachineId ? { muted: true } : {}),
         }}
       />
+      </SettingAnchor>
     );
   }
 
@@ -177,9 +183,7 @@ export function VoiceExecutionMachineSection(props: Readonly<{
       title={t('settingsVoice.pages.advanced.computerTitle')}
       description={t('settingsVoice.pages.advanced.computerDescription')}
     >
-      <SettingAnchor setting={props.intent === 'advanced'
-        ? VOICE_ADVANCED_SETTINGS.settings.executionMachine : props.intent === 'dictation'
-          ? VOICE_DICTATION_SETTINGS.settings.executionMachine : VOICE_CONVERSATIONS_SETTINGS.settings.executionMachine}>
+      <SettingAnchor setting={setting}>
       <DropdownMenu
         open={open}
         onOpenChange={setOpen}

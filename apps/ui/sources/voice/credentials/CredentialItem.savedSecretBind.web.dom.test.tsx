@@ -123,24 +123,6 @@ vi.mock('./VoiceRawCredentialAccessReview', () => ({
     VoiceRawCredentialAccessReview: () => null,
 }));
 
-// The menu trigger is not the defect under test (it is observed working in the
-// running app); the picker it opens is. This stands in for the row's dropdown so
-// the gesture can be started, and nothing downstream of it is replaced.
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: {
-        itemTrigger?: { title?: string; detailFormatter?: () => string };
-        onSelect: (id: string) => void;
-    }) => React.createElement(
-        'button',
-        {
-            'data-testid': 'credential-gesture-menu',
-            onClick: () => props.onSelect('useSavedSecret'),
-        },
-        React.createElement('span', { 'data-testid': 'credential-detail' },
-            props.itemTrigger?.detailFormatter?.() ?? ''),
-    ),
-}));
-
 const { createVoiceProviderRegistry } = await import('@/voice/registry/providerRegistry');
 const { commitExternalVoiceProviderRegistration, removeExternalVoiceProviderRegistration } = await import(
     '@/voice/registry/externalVoiceProviderRegistrations'
@@ -253,6 +235,20 @@ function pressWithPointer(node: HTMLElement): void {
 async function flush(): Promise<void> {
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+}
+
+async function openSavedSecretPicker(): Promise<void> {
+    const trigger = requireNode('voice-credential').querySelector<HTMLElement>('button, [role="button"]');
+    if (!trigger) throw new Error('missing credential row trigger');
+    await act(async () => { pressWithPointer(trigger); });
+    await flush();
+    await act(async () => { pressWithPointer(requireNode('dropdown-option-useSavedSecret')); });
+    // The real modal host admits the picker asynchronously; await its rendered
+    // choices instead of assuming two event-loop turns have finished admission.
+    await vi.waitFor(async () => {
+        await flush();
+        expect(document.querySelector('[data-testid^="saved-secret:"]')).not.toBeNull();
+    }, { timeout: CASE_TIMEOUT_MS });
 }
 
 async function renderRow(options: Readonly<{
@@ -402,12 +398,13 @@ async function renderRow(options: Readonly<{
  * The first render pulls in the modal host, the protocol package and the Voice
  * registry. Warmed once so a single test is not charged for the whole graph.
  */
-await Promise.all([
-    import('@/modal'),
-    import('./CredentialItem'),
-    import('@happier-dev/protocol'),
-    import('@/sync/domains/settings/settings'),
-]);
+// Modal and CredentialItem share the modal/storage graph. Loading both roots
+// concurrently stalled collection in Vitest's asynchronous mock/module graph;
+// finish the shared root before its consumer.
+await import('@/modal');
+await import('./CredentialItem');
+await import('@happier-dev/protocol');
+await import('@/sync/domains/settings/settings');
 
 const CASE_TIMEOUT_MS = 180_000;
 
@@ -415,8 +412,7 @@ describe('Voice credential row → saved-secret picker → account-settings writ
     it('writes the selected SavedSecret when a real click lands on a picker row', async () => {
         await renderRow({ credentialSourcePurpose: 'voice.client-auth' });
 
-        await act(async () => { pressWithPointer(requireNode('credential-gesture-menu')); });
-        await flush();
+        await openSavedSecretPicker();
 
         // The picker is open and lists the account's stored records.
         const row = requireNode('saved-secret:2cd702f5-1111-4222-8333-444455556666');
@@ -433,16 +429,15 @@ describe('Voice credential row → saved-secret picker → account-settings writ
             credentialSource: { kind: 'savedSecret' },
             credentialBindings: { account: { 'api-key': '2cd702f5-1111-4222-8333-444455556666' } },
         });
-        expect(requireNode('credential-detail').textContent)
-            .toBe('settingsVoice.local.voiceCredential.setOnAccount');
+        expect(requireNode('voice-credential').textContent)
+            .toContain('settingsVoice.local.voiceCredential.setOnAccount');
         expect(voiceCredentialGestureRecords()).toEqual([]);
     }, CASE_TIMEOUT_MS);
 
     it('writes a colon-bearing SavedSecret id unchanged', async () => {
         await renderRow({ credentialSourcePurpose: 'voice.client-auth' });
 
-        await act(async () => { pressWithPointer(requireNode('credential-gesture-menu')); });
-        await flush();
+        await openSavedSecretPicker();
 
         await act(async () => {
             pressWithPointer(requireNode('saved-secret:voice:realtime_elevenlabs:api_key'));
@@ -481,8 +476,7 @@ describe('Voice credential row → saved-secret picker → account-settings writ
             },
         });
 
-        await act(async () => { pressWithPointer(requireNode('credential-gesture-menu')); });
-        await flush();
+        await openSavedSecretPicker();
         await act(async () => {
             pressWithPointer(requireNode('saved-secret:2cd702f5-1111-4222-8333-444455556666'));
         });
@@ -505,8 +499,7 @@ describe('Voice credential row → saved-secret picker → account-settings writ
     it('reaches the write through the recipient-contract approval the live slot requires', async () => {
         await renderRow({ credentialSourcePurpose: 'voice.client-auth', withRecipientContract: true });
 
-        await act(async () => { pressWithPointer(requireNode('credential-gesture-menu')); });
-        await flush();
+        await openSavedSecretPicker();
         await act(async () => {
             pressWithPointer(requireNode('saved-secret:2cd702f5-1111-4222-8333-444455556666'));
         });
@@ -521,8 +514,8 @@ describe('Voice credential row → saved-secret picker → account-settings writ
             credentialSource: { kind: 'savedSecret' },
             credentialBindings: { account: { 'api-key': '2cd702f5-1111-4222-8333-444455556666' } },
         });
-        expect(requireNode('credential-detail').textContent)
-            .toBe('settingsVoice.local.voiceCredential.setOnAccount');
+        expect(requireNode('voice-credential').textContent)
+            .toContain('settingsVoice.local.voiceCredential.setOnAccount');
     }, CASE_TIMEOUT_MS);
 
     /**
@@ -536,15 +529,14 @@ describe('Voice credential row → saved-secret picker → account-settings writ
         await renderRow({ credentialSourcePurpose: 'voice.client-auth' });
         boundary.reportAppliedWithoutApplying = true;
 
-        await act(async () => { pressWithPointer(requireNode('credential-gesture-menu')); });
-        await flush();
+        await openSavedSecretPicker();
         await act(async () => {
             pressWithPointer(requireNode('saved-secret:2cd702f5-1111-4222-8333-444455556666'));
         });
         await flush();
 
-        expect(requireNode('credential-detail').textContent)
-            .toBe('settingsVoice.local.voiceCredential.notSetOnAccount');
+        expect(requireNode('voice-credential').textContent)
+            .toContain('settingsVoice.local.voiceCredential.notSetOnAccount');
         expect(voiceCredentialGestureRecords()).toHaveLength(1);
         expect(voiceCredentialGestureRecords()[0]).toContain('saved_secret_binding_not_effective');
         expect(voiceCredentialGestureRecords()[0]).toContain('"outcome":"unapplied"');
@@ -558,8 +550,7 @@ describe('Voice credential row → saved-secret picker → account-settings writ
     it('records one bounded failure when the picker closes without a selection', async () => {
         await renderRow({ credentialSourcePurpose: 'voice.client-auth' });
 
-        await act(async () => { pressWithPointer(requireNode('credential-gesture-menu')); });
-        await flush();
+        await openSavedSecretPicker();
 
         const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
         expect(dialog).not.toBeNull();

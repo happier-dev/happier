@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { SessionPendingPromptCards } from '@/components/tools/shell/permissions/SessionPendingPromptCards';
+import { AppSessionTranscriptSourceProvider } from '@/components/sessions/transcript/source/appSessionTranscriptSource';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
@@ -43,15 +44,19 @@ export const VoiceNeedsYouPrompts = React.memo(function VoiceNeedsYouPrompts(pro
     if (!session || !prompts) return null;
     return (
         <View style={styles.root}>
-            <SessionPendingPromptCards
-                testID={props.testID}
-                sessionId={props.address.sessionId}
-                serverId={props.address.serverId}
-                session={session}
-                permissions={prompts.permissions}
-                userActions={prompts.userActions}
-                chrome="card"
-            />
+            {/* Voice can be outside a transcript, or beside a different Session's transcript.
+                The exact conversation owns request data, navigation and approval custody. */}
+            <AppSessionTranscriptSourceProvider sessionId={props.address.sessionId} serverId={props.address.serverId}>
+                <SessionPendingPromptCards
+                    testID={props.testID}
+                    sessionId={props.address.sessionId}
+                    serverId={props.address.serverId}
+                    session={session}
+                    permissions={prompts.permissions}
+                    userActions={prompts.userActions}
+                    chrome="card"
+                />
+            </AppSessionTranscriptSourceProvider>
             <Text style={styles.note}>{t('voiceMoments.needsYouTapToDecide')}</Text>
         </View>
     );

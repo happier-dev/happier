@@ -1,22 +1,30 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { voiceSettingsDefaults } from '@/sync/domains/settings/voiceSettings';
 import { t } from '@/text';
 import { VOICE_PRIVACY_SETTINGS } from '@/voice/settings/voiceSettingsDeclarations';
 
-vi.mock('@/components/ui/forms/Switch', () => ({
-  Switch: (props: any) => React.createElement('Switch', props),
-}));
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-  DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
-}));
+vi.mock('react-native', async () => {
+  const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+  return createReactNativeWebMock();
+});
+vi.mock('react-native-unistyles', async () => {
+  const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+  return createUnistylesMock();
+});
+afterEach(() => {
+  standardCleanup();
+  vi.useRealTimers();
+});
 
 describe('VoicePrivacySection', () => {
   it('names every privacy switch and updates the canonical privacy setting', async () => {
     const setVoice = vi.fn();
     const { VoicePrivacySection } = await import('./VoicePrivacySection');
+    vi.useFakeTimers();
     const screen = await renderScreen(React.createElement(VoicePrivacySection, {
       voice: voiceSettingsDefaults,
       setVoice,
@@ -30,10 +38,12 @@ describe('VoicePrivacySection', () => {
       t(settings.sharePermissionRequests.titleKey),
       t(settings.shareDeviceInventory.titleKey),
     ];
-    const switches = screen.tree.root.findAllByType('Switch' as any);
+    // The real native Switch adapter defers mounting; settle its clock boundary, not the component.
+    await act(async () => { await vi.runOnlyPendingTimersAsync(); });
+    const switches = screen.findAll((node) => typeof node.type === 'string' && String(node.type) === 'Switch');
     expect(switches.map((control) => control.props.accessibilityLabel)).toEqual(expectedLabels);
 
-    switches[0]?.props.onValueChange(!voiceSettingsDefaults.privacy.shareSessionSummary);
+    await act(async () => { switches[0]!.props.onValueChange(!voiceSettingsDefaults.privacy.shareSessionSummary); });
     expect(setVoice).toHaveBeenCalledWith({
       ...voiceSettingsDefaults,
       privacy: {
@@ -59,7 +69,7 @@ describe('VoicePrivacySection', () => {
       expect(screen.findByTestId(`settings.voice.privacy.currentUiContextMode:${mode}`)).toBeTruthy();
     }
 
-    screen.pressByTestId(`settings.voice.privacy.currentUiContextMode:${currentUiContextMode}`);
+    await screen.pressByTestIdAsync(`settings.voice.privacy.currentUiContextMode:${currentUiContextMode}`);
     expect(setVoice).toHaveBeenCalledWith({
       ...voiceSettingsDefaults,
       privacy: {
@@ -69,9 +79,11 @@ describe('VoicePrivacySection', () => {
     });
     },
   );
-  it('edits the recent messages count in place, within 0–50', async () => {
+  it.each([
+    ['80', 80],
+    ['0', 0],
+  ] as const)('commits recent messages count %s as the canonical nonnegative value %i', async (draft, expectedCount) => {
     const setVoice = vi.fn();
-    const { act } = await import('react-test-renderer');
     const { VoicePrivacySection } = await import('./VoicePrivacySection');
     const voice = {
       ...voiceSettingsDefaults,
@@ -82,7 +94,7 @@ describe('VoicePrivacySection', () => {
     const field = () => screen.findByTestId('settings.voice.privacy.recentMessagesCount.field');
     expect(field()?.props.value).toBe('3');
     await act(async () => {
-      field()!.props.onChangeText('80');
+      field()!.props.onChangeText(draft);
     });
     await act(async () => {
       field()!.props.onBlur();
@@ -90,7 +102,7 @@ describe('VoicePrivacySection', () => {
 
     expect(setVoice).toHaveBeenLastCalledWith({
       ...voice,
-      privacy: { ...voice.privacy, recentMessagesCount: 50 },
+      privacy: { ...voice.privacy, recentMessagesCount: expectedCount },
     });
   });
 

@@ -5,6 +5,8 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useElapsedTime } from '@/hooks/ui/useElapsedTime';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 import type { VoiceAttemptControlProjection } from '@/components/voice/attempt/useVoiceAttemptControl';
 import type { VoiceSurfaceState } from '@/components/voice/surface/resolveVoiceSurfaceState';
 
@@ -22,6 +24,15 @@ const METRICS: Readonly<Record<VoiceStatusLineSize, Readonly<{ fontSize: number;
 const CLOCKED_STATES: ReadonlySet<VoiceSurfaceState> = new Set<VoiceSurfaceState>([
     'listening', 'transcribing', 'thinking', 'speaking', 'interrupted', 'reconnecting',
 ]);
+
+/** A running-call clock is the same fact in a compact status and a glance header. */
+export function readVoiceElapsedStartedAt(
+    voice: Pick<VoiceAttemptControlProjection, 'live' | 'tone' | 'surfaceState' | 'elapsedStartedAt'>,
+): number | null {
+    return voice.live && voice.tone !== 'error' && CLOCKED_STATES.has(voice.surfaceState)
+        ? voice.elapsedStartedAt
+        : null;
+}
 
 /** The elapsed clock: `m:ss`, growing to `h:mm:ss` only when a conversation runs that long. */
 export function formatVoiceElapsed(totalSeconds: number): string {
@@ -48,8 +59,7 @@ export const VoiceStatusLine = React.memo(function VoiceStatusLine(props: Readon
     const metrics = METRICS[props.size];
     // The clock says a call is running: only while one is underway, never while it is still
     // opening, blocked or failed (lab ST).
-    const clocked = props.voice.live && props.voice.tone !== 'error' && CLOCKED_STATES.has(props.voice.surfaceState);
-    const startedAt = clocked ? props.voice.elapsedStartedAt : null;
+    const startedAt = readVoiceElapsedStartedAt(props.voice);
     const ended = !props.voice.live ? props.voice.ended ?? null : null;
     const endedSeconds = ended && ended.startedAt !== null
         ? Math.max(0, Math.round((ended.endedAt - ended.startedAt) / 1000))
@@ -93,7 +103,9 @@ export const VoiceElapsed = React.memo(function VoiceElapsed(props: Readonly<{
     fontSize?: number;
     lineHeight?: number;
 }>): React.ReactElement {
-    const elapsed = useElapsedTime(props.startedAt);
+    const presented = useLayoutPresentationActive();
+    const viewed = useHostActivelyViewed();
+    const elapsed = useElapsedTime(props.startedAt, presented && viewed);
     return (
         <Text
             numberOfLines={1}

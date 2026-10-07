@@ -6,10 +6,7 @@ import { resolveMachineForActiveServerFromState, resolveVisibleMachinesForActive
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { readVoiceAutoTargetMachineId } from '@/voice/persistence/voiceAutoTargetMachineSettings';
-import {
-  VoiceExecutionMachineSettingsSchema,
-  voiceSettingsParse,
-} from '@/sync/domains/settings/voiceSettings';
+import { readVoiceExecutionMachineSettings } from '@/sync/domains/settings/voiceSettings';
 
 export type VoiceExecutionMachineOverride = Readonly<{ machineId: string }>;
 export type VoiceExecutionMachineSelection =
@@ -45,22 +42,8 @@ export function resolveVoiceExecutionMachineSelectionFromState(
 ): VoiceExecutionMachineSelection {
   if (override) return resolveReplacementAwareSelection(state, override.machineId);
 
-  const rawVoice = state?.settings?.voice;
-  const hasCanonicalTarget = Boolean(rawVoice)
-    && typeof rawVoice === 'object'
-    && Object.prototype.hasOwnProperty.call(rawVoice, 'executionMachine');
-  const canonicalTarget = hasCanonicalTarget
-    ? VoiceExecutionMachineSettingsSchema.safeParse(rawVoice.executionMachine)
-    : null;
-  if (canonicalTarget && !canonicalTarget.success) {
-    return { kind: 'none' };
-  }
-  // Store selectors run this on every store change. A present target is exactly
-  // what the full voice settings parse would keep, so only an absent target
-  // (legacy migration or default) pays for the full parse.
-  const target = canonicalTarget?.success
-    ? canonicalTarget.data
-    : voiceSettingsParse(rawVoice).executionMachine;
+  const target = readVoiceExecutionMachineSettings(state?.settings?.voice);
+  if (!target) return { kind: 'none' };
   const mode = target?.mode === 'fixed' ? 'fixed' : 'auto';
   const persistedMachineId = mode === 'fixed'
     ? normalizeNonEmptyString(target?.machineId)

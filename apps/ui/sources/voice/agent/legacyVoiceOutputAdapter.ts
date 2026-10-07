@@ -1,6 +1,6 @@
 import {
   VoiceAgentOutputEventV1Schema,
-  resolveVoiceSpeechSegmentLength,
+  resolveVoiceAgentOutputSpeechSegmentLength,
   VoiceAssistantActionSchema,
   VOICE_OUTPUT_INCOMPLETE_TEXT,
   canAppendVoiceAgentOutputEventsV1,
@@ -43,7 +43,7 @@ export function createLegacyVoiceOutputAdapter(input: Readonly<{ streamId: strin
   const flushSpeech = (force: boolean): VoiceAgentOutputEventV1[] => {
     const output: VoiceAgentOutputEventV1[] = [];
     while (speechBuffer) {
-      const length = resolveVoiceSpeechSegmentLength(speechBuffer, {
+      const length = resolveVoiceAgentOutputSpeechSegmentLength(speechBuffer, {
         force, firstSegment: segmentIndex === 0, targetChars: input.speechSegmentTargetChars,
       });
       if (length === 0) break;

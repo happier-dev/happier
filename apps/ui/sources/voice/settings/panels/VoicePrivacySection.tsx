@@ -70,12 +70,12 @@ export function VoicePrivacySection(props: { voice: VoiceSettings; setVoice: (ne
               : t('settingsVoice.pages.privacy.recentCountUnavailable')}
             fieldTestID="settings.voice.privacy.recentMessagesCount.field"
             kind="integer"
-            stepper={{ min: 0, max: 50, step: 1 }}
+            stepper={{ min: 0, step: 1 }}
             unit={t('settingsVoice.pages.privacy.messagesUnit')}
             disabled={!privacy.shareRecentMessages}
             value={String(privacy.recentMessagesCount)}
             onCommit={(draft) => {
-              const next = Math.max(0, Math.min(50, Math.floor(Number(draft))));
+              const next = Math.max(0, Math.floor(Number(draft)));
               if (!Number.isFinite(next)) return String(privacy.recentMessagesCount);
               setPrivacy({ recentMessagesCount: next });
               return String(next);

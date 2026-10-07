@@ -6,10 +6,52 @@ import {
   streamKokoroWavSentences,
   synthesizeKokoroWav,
 } from '@/voice/kokoro/runtime/synthesizeKokoroWav.native';
+import { createMemFs } from '@/voice/modelPacks/installerTestFs';
 
 const loadedNativeVoices = Array.from({ length: 3 }, (_, sid) => ({ id: `sid:${sid}`, title: `Speaker ${sid}`, sid }));
 
 describe('synthesizeKokoroWav (native)', () => {
+  it('keeps unbounded native preparation pending until caller cancellation has retired its initialization', async () => {
+    vi.useFakeTimers();
+    try {
+      const { fs, files, root } = createMemFs();
+      const packId = 'kokoro-unbounded-preparation';
+      files.set(`${root}/${packId}/pack.json`, new TextEncoder().encode(JSON.stringify({ manifest: {
+        packId, kind: 'tts_sherpa', model: 'kokoro', version: 'v1', frontend: { lang: 'en' },
+        files: [{ path: 'model.onnx', url: 'https://example.com/model.onnx', sha256: 'a'.repeat(64), sizeBytes: 1 }],
+      } })));
+      let finishInitialization: (() => void) | undefined;
+      let finishCancellation: (() => void) | undefined;
+      const cancelInitialization = vi.fn(() => new Promise<void>((resolve) => { finishCancellation = resolve; }));
+      const native = {
+        initialize: () => new Promise<void>((resolve) => { finishInitialization = resolve; }),
+        cancelInitialization,
+        listVoices: async () => [],
+        synthesizeToWavFile: async () => ({ wavPath: 'file:///unused.wav', sampleRate: 24_000 }),
+        cancel: async () => {},
+      };
+      const caller = new AbortController();
+      const preparation = prepareKokoroTts({ assetSetId: packId, signal: caller.signal,
+        timeoutMs: null,
+      }, { kokoroNativeModule: native, fs: { ...fs, Paths: { ...fs.Paths, cache: 'file:///tmp/' } } });
+      const outcome = preparation.then(() => 'prepared', (error: unknown) => error instanceof Error ? error.message : String(error));
+      let settled = false;
+      void outcome.then(() => { settled = true; });
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(settled ? await outcome : 'pending').toBe('pending');
+      expect(cancelInitialization).not.toHaveBeenCalled();
+      caller.abort();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(cancelInitialization).toHaveBeenCalledOnce();
+      expect(settled).toBe(false);
+      finishCancellation?.();
+      expect(await outcome).toBe('aborted');
+      finishInitialization?.();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each(['bad', null])('rejects a manifest SID outside the loaded model instead of synthesizing speaker zero (%s)', async (voiceId) => {
     class File {
       uri: string;

@@ -8,7 +8,7 @@ import { formatModelPackBuildLabel } from '@/voice/modelPacks/formatBuildLabel';
 import { prepareKokoroTts } from '@/voice/kokoro/runtime/synthesizeKokoroWav';
 import type { VoiceDeviceModelPackOperationInput } from './voiceDeviceModelPackOperation';
 
-/** Uses the incumbent installer, its runtime invalidation and its declared download budgets. */
+/** Uses the incumbent installer and runtime invalidation for the caller's lifetime. */
 export async function invokeVoiceDeviceModelPackOperation(input: VoiceDeviceModelPackOperationInput): Promise<SettingOperationResult> {
     const signal = input.signal ?? new AbortController().signal;
     const isCurrent = async () => {
@@ -33,7 +33,7 @@ export async function invokeVoiceDeviceModelPackOperation(input: VoiceDeviceMode
     if (input.operation === 'prepare' && input.role === 'tts_sherpa') {
         // The settings UI prepares the installed runtime as well as its files.
         input.onDownloadStarted?.();
-        await prepareKokoroTts({ assetSetId: input.packId, timeoutMs: Math.max(60_000, input.networkTimeoutMs), signal,
+        await prepareKokoroTts({ assetSetId: input.packId, timeoutMs: null, signal,
             onProgress: input.onProgress });
         return await isCurrent() ? { status: 'completed', value: { packId: input.packId } } : { status: 'cancelled' };
     }
@@ -41,7 +41,7 @@ export async function invokeVoiceDeviceModelPackOperation(input: VoiceDeviceMode
     if (!manifestUrl) return { status: 'unavailable', reason: 'model_manifest_unavailable' };
     if (input.operation === 'update') {
         const status = await checkModelPackUpdateAvailable({ packId: input.packId, manifestUrl,
-            timeoutMs: input.role === 'stt_sherpa' ? 30_000 : Math.max(30_000, input.networkTimeoutMs), signal });
+            timeoutMs: null, signal });
         if (!await isCurrent()) return { status: 'cancelled' };
         if (!status.installed) return { status: 'unavailable', reason: 'model_not_installed' };
         const remoteBuild = formatModelPackBuildLabel(status.remoteManifest);
@@ -60,7 +60,7 @@ export async function invokeVoiceDeviceModelPackOperation(input: VoiceDeviceMode
     input.onDownloadStarted?.();
     const result = await ensureModelPackInstalled({ packId: input.packId, manifestUrl, mode: 'download_if_missing',
         ...(input.operation === 'update' ? { updatePolicy: 'manual_update_if_available' as const } : {}),
-        timeoutMs: input.role === 'stt_sherpa' ? 120_000 : Math.max(120_000, input.networkTimeoutMs), signal,
+        timeoutMs: null, signal,
         onProgress: input.onProgress });
     return await isCurrent() ? { status: 'completed', value: { packId: result.manifest.packId } } : { status: 'cancelled' };
 }

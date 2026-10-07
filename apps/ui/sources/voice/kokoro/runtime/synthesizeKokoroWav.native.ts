@@ -74,7 +74,7 @@ function awaitAbortableOperation<T>(
   start: () => Promise<T>,
   opts: {
     signal: AbortSignal;
-    timeoutMs: number;
+    timeoutMs: number | null;
     onCancelled?: () => void | Promise<void>;
   },
 ): Promise<T> {
@@ -126,8 +126,10 @@ function awaitAbortableOperation<T>(
       cancel('aborted');
       return;
     }
-    timer = setTimeout(() => cancel('timeout'), opts.timeoutMs);
-    (timer as unknown as { unref?: () => void }).unref?.();
+    if (opts.timeoutMs !== null) {
+      timer = setTimeout(() => cancel('timeout'), opts.timeoutMs);
+      (timer as unknown as { unref?: () => void }).unref?.();
+    }
 
     let operation: Promise<T>;
     try {
@@ -161,7 +163,7 @@ function awaitAbortableOperation<T>(
 async function initializeNativeRuntime(opts: {
   native: KokoroNativeModuleLike;
   assetsDirPath: string;
-  timeoutMs: number;
+  timeoutMs: number | null;
   signal: AbortSignal;
   frontend: KokoroModelConfig;
 }): Promise<void> {
@@ -400,7 +402,7 @@ export async function synthesizeKokoroWav(
 export async function prepareKokoroTts(
   opts: {
     assetSetId?: string | null;
-    timeoutMs: number;
+    timeoutMs: number | null;
     signal: AbortSignal;
     onProgress?: (progress: unknown) => void;
   },

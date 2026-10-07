@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MAX_VOICE_TIMER_DELAY_MS } from '@/voice/runtime/input/TurnEndpointDetector';
 
 const LEGACY_HANDS_FREE_ENDPOINTING_DEFAULTS = {
   silenceMs: 450,
@@ -44,8 +45,8 @@ export const VoiceHandsFreeSchema = z.preprocess(
       enabled: z.boolean().default(false),
       endpointing: z
         .object({
-          silenceMs: z.number().int().min(0).max(5000).default(VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs),
-          minSpeechMs: z.number().int().min(0).max(5000).default(VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs),
+          silenceMs: z.number().int().min(0).max(MAX_VOICE_TIMER_DELAY_MS).default(VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs),
+          minSpeechMs: z.number().int().min(0).max(MAX_VOICE_TIMER_DELAY_MS).default(VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs),
         })
         .prefault({}),
     })

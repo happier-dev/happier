@@ -10,6 +10,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { getRetainedLocalVoiceEffectOutcomes } from '@/voice/tools/localVoiceEffectOutcomeCustody';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -241,6 +242,7 @@ describe('VoiceExecutionTransport (streaming)', () => {
   let createVoiceExecutionTransport: () => any;
 
   beforeAll(async () => {
+    await loadSyncSingletonForTests();
     ({ createVoiceExecutionTransport } = await import('@/voice/runtime/execution/VoiceExecutionTransport'));
   }, 60_000);
 

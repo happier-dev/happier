@@ -9,7 +9,7 @@ type KokoroSynthesisOptions = {
 
 type KokoroPrepareOptions = {
     assetSetId?: string | null;
-    timeoutMs: number;
+    timeoutMs: number | null;
     signal: AbortSignal;
     onProgress?: (progress: unknown) => void;
 };

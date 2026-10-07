@@ -4,7 +4,6 @@ export type VoiceDeviceModelPackOperationInput = Readonly<{
     operation: 'prepare' | 'remove' | 'update';
     packId: string;
     role: 'stt_sherpa' | 'tts_sherpa';
-    networkTimeoutMs: number;
     manifestUrl?: string | null;
     signal?: AbortSignal;
     isCurrent(): boolean | Promise<boolean>;

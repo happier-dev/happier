@@ -174,6 +174,21 @@ describe('VoiceTransport', () => {
 });
 
 describe('VoiceStatusLine', () => {
+    it('keeps the canonical attention status in every compact container accessible name', async () => {
+        const voice = { ...projection('listening'), statusWord: 'Needs you', statusLabel: 'Approval required', statusCell: 'needs_you' as const };
+        const anchor = React.createRef<View>();
+        screen = await renderScreen(<>
+            <VoiceTopBarPresence voice={voice} />
+            <VoiceIsland voice={voice} phone={false} width={330} anchorRef={anchor} sectionOpen={false}
+                onOpenSection={() => {}} shouldSuppressPress={() => false} />
+            <VoiceOrb voice={voice} anchorRef={anchor} sectionOpen={false} onOpenSection={() => {}}
+                shouldSuppressPress={() => false} translateX={makeMutable(300)} hostWidth={400} />
+        </>);
+        for (const id of ['voice-top-bar-label', 'voice-island-body', 'voice-orb-body']) {
+            expect(screen.findByTestId(id)?.props.accessibilityLabel).toBe(t('voicePresence.containerA11y', { status: voice.statusLabel }));
+        }
+    });
+
     it('exposes the full accessible status while rendering its compact word', async () => {
         const voice = { ...projection('failed'), statusWord: 'Blocked', statusLabel: 'Microphone permission is required' };
         screen = await renderScreen(<VoiceStatusLine voice={voice} size="island" />);

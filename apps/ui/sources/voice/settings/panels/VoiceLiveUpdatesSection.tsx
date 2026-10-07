@@ -71,14 +71,14 @@ export function VoiceLiveUpdatesSection(props: Readonly<{
             subtitle={sendsMessages ? undefined : messagesUnavailable}
             subtitleLines={0}
             kind="integer"
-            stepper={{ min: 1, max: 10, step: 1 }}
+            stepper={{ min: 1, step: 1 }}
             unit={t('settingsVoice.pages.privacy.messagesUnit')}
             disabled={!sendsMessages}
             value={String(updates.snippetsMaxMessages)}
             onCommit={(draft) => {
               const count = Math.floor(Number(draft));
               if (!Number.isFinite(count)) return String(updates.snippetsMaxMessages);
-              const next = Math.max(1, Math.min(10, count));
+              const next = Math.max(1, count);
               setUpdates({ snippetsMaxMessages: next });
               return String(next);
             }}

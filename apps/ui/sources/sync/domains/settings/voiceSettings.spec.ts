@@ -11,8 +11,41 @@ import {
 } from './voiceSettings';
 import { DEFAULT_ELEVENLABS_VOICE_ID } from '../../../../../../packages/plugins/elevenlabs/src/protocol/voice/index';
 import { settingsParse } from './settings';
+import { resolveVoiceTurnStreamReadConfig } from '@/voice/agent/resolveVoiceTurnStreamReadConfig';
 
 describe('voiceSettings', () => {
+  it('preserves configured Voice retention, replay, segmentation and stream preferences without local ceilings', () => {
+    const agent = { maxWarmRoots: 12, idleTtlSeconds: 28_800, bootstrapTimeoutMs: 600_000,
+      replay: { strategy: 'recent_messages' as const, recentMessagesCount: 150 } };
+    const streaming = { ttsChunkChars: 4_000, turnReadPollIntervalMs: 1_000,
+      turnReadMaxEvents: 512, turnStreamTimeoutMs: 7_200_000 };
+    const parsed = voiceSettingsParse({ providers: { local_conversation: { schemaVersion: 1,
+      config: { agent, streaming, networkTimeoutMs: 500 } } } });
+    const config = readLocalConversationVoiceSettings(parsed);
+    expect(config.agent).toMatchObject(agent);
+    expect(config.streaming).toMatchObject(streaming);
+    expect(config.networkTimeoutMs).toBe(500);
+    expect(resolveVoiceTurnStreamReadConfig(config)).toEqual({
+      pollIntervalMs: 1_000, maxEvents: 512, streamTimeoutMs: 7_200_000,
+    });
+  });
+
+  it('preserves the selected transcript and snippet counts without a separate disclosure-count cap', () => {
+    const parsed = voiceSettingsParse({ privacy: { recentMessagesCount: 80 },
+      ui: { updates: { snippetsMaxMessages: 20 } } });
+    expect(parsed.privacy.recentMessagesCount).toBe(80);
+    expect(parsed.ui.updates.snippetsMaxMessages).toBe(20);
+  });
+
+  it.each(['local_conversation', 'local_direct'] as const)('preserves a configured speech-request timeout beyond sixty seconds (%s)', (providerId) => {
+    const parsed = voiceSettingsParse({
+      providers: { [providerId]: { schemaVersion: 1, config: { networkTimeoutMs: 120_000 } } },
+    });
+    const config = providerId === 'local_conversation'
+      ? readLocalConversationVoiceSettings(parsed)
+      : readLocalDirectVoiceSettings(parsed);
+    expect(config.networkTimeoutMs).toBe(120_000);
+  });
   it('loads stored Account settings while dropping the never-shipped automatic machine key', () => {
     const parsed = settingsParse({
       voiceSettingsV1: {
@@ -312,6 +345,13 @@ describe('voiceSettings', () => {
       credentialSource: { kind: 'savedSecret' },
       credentialBindings: { account: { api_key: 'saved-openai' } },
     }]);
+    const bindings = Array.from({ length: 80 }, (_, index) => ({
+      contribution: { pluginId: `happier.voice.provider${index}`, localId: 'realtime' },
+      credentialSlotId: 'api_key',
+      credentialSource: { kind: 'savedSecret' as const },
+      credentialBindings: { account: { api_key: `saved-provider-${index}` } },
+    }));
+    expect(voiceSettingsParse({ credentialBindings: bindings }).credentialBindings).toEqual(bindings);
     expect(voiceSettingsParse({
       credentialBindings: [
         {

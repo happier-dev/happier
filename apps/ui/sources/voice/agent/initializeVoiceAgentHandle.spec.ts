@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getAgentCore } from '@/agents/catalog/catalog';
 import { installVoiceAgentCommonModuleMocks } from './voiceAgentTestHelpers';
 import { storage } from '@/sync/domains/state/storage';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 const start = vi.fn(async (_params: any) => ({ voiceAgentId: 'voice-agent-1' }));
 const ensureVoiceAgentInstallablesBackground = vi.fn(async (_args: unknown) => {});
@@ -136,6 +137,7 @@ vi.mock('@/voice/context/buildVoiceInitialContext', () => ({
 
 describe('initializeVoiceAgentHandle', () => {
     let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
+    beforeAll(loadSyncSingletonForTests, 60_000);
     afterEach(async () => {
         await connection?.dispose();
         vi.restoreAllMocks();
@@ -218,6 +220,8 @@ describe('initializeVoiceAgentHandle', () => {
     });
 
     it('uses hydrated layout-1 owner facts with the current list-selected session model', async () => {
+        const { initializeVoiceAgentHandle } = await import('./initializeVoiceAgentHandle');
+        state = storage.getState();
         const previousSettings = state.settings;
         const previousSession = state.sessions.s1;
         const rows = state.sessionListRowsByServerId[state.profileScope.serverId];
@@ -249,7 +253,13 @@ describe('initializeVoiceAgentHandle', () => {
                 ...previousRow, metadataLayoutVersion: 1, modelMode: 'current-session-model',
                 metadata: { summaryText: 'Current shared presentation' }, ownerMetadataView: null,
             };
-            const { initializeVoiceAgentHandle } = await import('./initializeVoiceAgentHandle');
+            // Publish fixture replacement through the real store: Sync may have
+            // replaced its root while the asynchronous module import settled.
+            storage.setState({
+                settings: state.settings,
+                sessions: state.sessions,
+                sessionListRowsByServerId: state.sessionListRowsByServerId,
+            });
             await initializeVoiceAgentHandle({
                 sessionId: 's1',
                 getDaemonVoiceAgentClient: () => ({
@@ -266,6 +276,12 @@ describe('initializeVoiceAgentHandle', () => {
             state.settings = previousSettings;
             state.sessions.s1 = previousSession;
             rows.s1 = previousRow;
+            storage.setState({
+                settings: previousSettings,
+                sessions: state.sessions,
+                sessionListRowsByServerId: state.sessionListRowsByServerId,
+            });
+            state = storage.getState();
         }
     });
 
