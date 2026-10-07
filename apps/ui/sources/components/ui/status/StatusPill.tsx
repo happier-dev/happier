@@ -10,6 +10,7 @@ import { StatusDot } from './StatusDot';
 export const STATUS_PILL_VARIANTS = [
     'success',
     'warning',
+    'attention',
     'danger',
     'info',
     'neutral',
@@ -135,8 +136,8 @@ export function StatusPill(props: StatusPillProps): React.ReactElement {
                 chrome === 'plain'
                     ? styles.plainContainer
                     : {
-                        backgroundColor: state.background,
-                        borderColor: state.border,
+                        backgroundColor: 'background' in state ? state.background : undefined,
+                        borderColor: 'border' in state ? state.border : undefined,
                     },
                 props.style,
             ]}

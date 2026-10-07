@@ -8,11 +8,6 @@ vi.mock('react-native', async () => {
     return createReactNativeWebMock();
 });
 
-vi.mock('@/components/ui/text/Text', async () => {
-    const { createUiTextModuleMock } = await import('@/dev/testkit/mocks/uiText');
-    return createUiTextModuleMock();
-});
-
 describe('StatusPill', () => {
     it('maps onboarding status states to green live, amber needs-attention, and neutral otherwise', async () => {
         const { StatusPill, resolveStatusPillVariantForState } = await import('./StatusPill');

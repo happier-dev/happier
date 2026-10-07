@@ -10,6 +10,6 @@ export function focusRingStyle(params: Readonly<{
     focused: boolean;
     color: string;
     placement?: HappierFocusRingPlacement;
-}>) {
+}>): ReturnType<typeof happierFocusRingStyle> {
     return happierFocusRingStyle({ visible: params.focused, color: params.color, placement: params.placement });
 }
