@@ -687,7 +687,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
     const { actionCaller, defaultSessionMachineId, executionRunTargetMachineId, placement, ...capturedContext } = deferredSpawnArgs.context;
     // Durable replay restores routing defaults that the direct invocation omits.
     expect({ actionCaller, defaultSessionMachineId, executionRunTargetMachineId, placement }).toEqual({
-      actionCaller: { kind: 'host' },
+      actionCaller: caller,
       defaultSessionMachineId: sessionSpawnInput.executionTarget.machineId,
       executionRunTargetMachineId: sessionSpawnInput.executionTarget.machineId,
       placement: null,
@@ -706,7 +706,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       workDepth: args.workDepth, originSessionId: args.originSessionId,
     }))).toEqual([0, 1].map(() => ({ actionCaller: caller, permissionMode: 'read-only',
       sessionAgentSpawnPolicyV1: policy, workDepth: 1, originSessionId: caller.sessionId })));
-    expect(sessionSpawnNew.mock.calls[1]?.[0]).toEqual({ ...deferredSpawnArgs, context: capturedContext });
+    expect(sessionSpawnNew.mock.calls[1]?.[0]).toEqual({ ...deferredSpawnArgs, context: { ...capturedContext, actionCaller } });
   });
 
   it('retains an Agent permission ceiling through durable Run approval replay', async () => {
@@ -1472,7 +1472,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       serverId: 'server-1',
       actionRequestId: 'request-workflow-1',
       actionCaller: { kind: 'workflowRun', runId: 'run-1', authorization },
-    })).resolves.toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+    })).resolves.toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'workflow-approval-1' } });
 
     expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({
       request: expect.objectContaining({

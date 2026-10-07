@@ -60,7 +60,7 @@ describe('createActionExecutor plugin caller policy', () => {
     });
   });
 
-  it('rejects plugin uninstall automation before side effects and admits an interactive present user', async () => {
+  it('fails closed without uninstall approval support and admits an interactive present user', async () => {
     const pluginsDevLoopAction = vi.fn(async () => ({
       ok: true as const,
       kind: 'plugins_uninstall',
@@ -75,17 +75,17 @@ describe('createActionExecutor plugin caller policy', () => {
       actionCaller: pluginCaller('acme.author'),
     })).resolves.toEqual({
       ok: false,
-      errorCode: 'present_user_required',
-      error: 'present_user_required',
+      errorCode: 'approvals_not_supported',
+      error: 'approvals_not_supported',
     });
     expect(pluginsDevLoopAction).not.toHaveBeenCalled();
 
     await expect(executor.execute('plugins.uninstall', {
       pluginId: 'acme.author',
     }, {
-      surface: 'plugin',
+      surface: 'cli',
       authority: 'present_user',
-      actionCaller: pluginCaller('acme.author'),
+      actionCaller: { kind: 'host' },
     })).resolves.toEqual({
       ok: true,
       result: {
@@ -94,6 +94,51 @@ describe('createActionExecutor plugin caller policy', () => {
       },
     });
     expect(pluginsDevLoopAction).toHaveBeenCalledTimes(1);
+  });
+
+  it('requires uninstall consent custody for a trusted plugin even when the host waives approval', async () => {
+    const pluginsDevLoopAction = vi.fn(async () => ({ ok: true, kind: 'plugins_uninstall' }));
+    // Approval persistence is the external boundary; admission and routing stay real.
+    const approvalsCreate = vi.fn<NonNullable<ActionExecutorDeps['approvalsCreate']>>(
+      async () => ({ artifactId: 'approval-uninstall-1' }),
+    );
+    const executor = createExecutor({ pluginsDevLoopAction, approvalsCreate });
+    const caller = {
+      ...pluginCaller('acme.author'),
+      sourceCustody: { kind: 'development' as const, registeredRootId: 'author-root-1' },
+    };
+
+    await expect(executor.execute('plugins.uninstall', { pluginId: 'acme.author' }, {
+      surface: 'plugin',
+      authority: 'account_automation',
+      serverId: 'server-1',
+      actionRequestId: 'uninstall-1',
+      actionCaller: caller,
+    })).resolves.toMatchObject({
+      ok: true,
+      result: { kind: 'approval_request_created', artifactId: 'approval-uninstall-1' },
+    });
+    expect(approvalsCreate).toHaveBeenCalledWith({
+      serverId: 'server-1',
+      request: expect.objectContaining({
+        v: 2,
+        status: 'open',
+        actionId: 'plugins.uninstall',
+        actionArgs: { pluginId: 'acme.author' },
+        approval: expect.objectContaining({ flow: 'deferred' }),
+        executionOriginV1: expect.objectContaining({
+          authority: 'account_automation',
+          caller: {
+            kind: 'plugin',
+            pluginId: 'acme.author',
+            contributionLocalId: 'surface',
+            sourceCustody: caller.sourceCustody,
+            startedBy: 'trigger',
+          },
+        }),
+      }),
+    });
+    expect(pluginsDevLoopAction).not.toHaveBeenCalled();
   });
 
   it('allows a plugin to reload itself, propagating its host-stamped caller and cancellation signal', async () => {

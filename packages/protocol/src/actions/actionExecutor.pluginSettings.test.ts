@@ -147,8 +147,9 @@ describe('createActionExecutor (plugin Settings administration)', () => {
         actionCaller: { kind: 'plugin', pluginId: 'acme.settings' },
       })).resolves.toEqual({
         ok: false,
-        errorCode: 'present_user_required',
-        error: 'present_user_required',
+        // Trusted plugins may request consent; this host has no approval custody.
+        errorCode: 'approvals_not_supported',
+        error: 'approvals_not_supported',
       });
     }
 

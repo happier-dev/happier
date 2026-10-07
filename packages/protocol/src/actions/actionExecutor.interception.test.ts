@@ -321,6 +321,7 @@ describe('createActionExecutor execution interception', () => {
           pluginId: 'caller.plugin',
           contributionLocalId: 'title-hook',
           sourceCustody: { kind: 'development', registeredRootId: 'root-1' },
+          startedBy: 'trigger',
         },
         result: expect.objectContaining({ ok: true }),
       })]]);

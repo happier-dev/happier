@@ -3,6 +3,7 @@ import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.
 import { getActionSpec } from './actionSpecs.js';
 import { createHomeHubArtifactPortV1 } from '../home/homeHubArtifactV1.js';
 import { createWorkBoardArtifactBoundary } from '../boards/workBoardArtifactV1.testkit.js';
+import { createWidgetActionInputResolverV1 } from '../widgets/widgetActionInputResolverV1.js';
 
 describe('Home layout Account Actions', () => {
     it.each([true, false])('preserves the issued Artifact acknowledgment after retirement (applied: %s)', async applied => {
@@ -33,16 +34,34 @@ describe('Home layout Account Actions', () => {
         const boundary = createWorkBoardArtifactBoundary();
         const accountId = 'one';
         const port = createHomeHubArtifactPortV1(boundary.forAccount(accountId), { accountId });
-        const executor = createActionExecutor({ homeHubArtifacts: port } as unknown as ActionExecutorDeps);
+        // Host descriptor/context ports are the installed-widget boundary; admission and persistence stay real.
+        const deps = {
+            homeHubArtifacts: port,
+            widgetAccountScope: () => ({ serverId: 'home', accountId }),
+            widgetInputs: createWidgetActionInputResolverV1({
+                readDescriptor: async () => ({ sizeDeclaration: { sizes: ['medium', 'full'], defaultSize: 'medium' },
+                    inputs: { fields: [] }, inputSchema: { type: 'object', additionalProperties: false } }),
+                readContext: async () => ({}), readViewerValues: async () => ({ values: {} }),
+                validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [],
+            }),
+        } satisfies ActionExecutorDeps;
+        const executor = createActionExecutor(deps);
         expect(getActionSpec('home.hub.layout.update')).toMatchObject({ executionPlacement: 'account', surfaces: { cli: true, rpc: true } });
-        const instance = { v: 1, id: 'copy', definition: { kind: 'builtin', id: 'count' }, bindings: {} };
+        const instance = { v: 1, id: 'copy', definition: { kind: 'installed', surface: { pluginId: 'com.acme.home', localId: 'count' } }, bindings: {} };
+        const beforeAdd = await port.read();
+        const unwired = createActionExecutor({ homeHubArtifacts: port });
+        expect(await unwired.execute('home.hub.layout.update', { intent: { kind: 'widget_add', instance } }, { surface: 'cli' }))
+            .toMatchObject({ ok: false, errorCode: 'widget_scope_unavailable' });
+        expect(await port.read()).toEqual(beforeAdd);
         expect(await executor.execute('home.hub.layout.update', { intent: { kind: 'widget_add', instance } }, { surface: 'cli' })).toMatchObject({ ok: true });
         expect(await executor.execute('home.hub.layout.update', { intent: { kind: 'setup_visibility', stepId: 'addPhone', hidden: true } }, { surface: 'agent' })).toMatchObject({ ok: true });
-        expect(await executor.execute('home.hub.layout.update', { intent: { kind: 'widget_width', instanceId: 'copy', width: 'full' } }, { surface: 'cli' })).toMatchObject({ ok: true });
-        const otherClient = createActionExecutor({ homeHubArtifacts: port } as unknown as ActionExecutorDeps);
+        expect(await executor.execute('home.hub.layout.update', { intent: { kind: 'widget_size', instanceId: 'copy', size: 'full' } }, { surface: 'cli' })).toMatchObject({ ok: true });
+        const otherClient = createActionExecutor({ ...deps,
+            homeHubArtifacts: createHomeHubArtifactPortV1(boundary.forAccount(accountId), { accountId }),
+        });
         expect(await otherClient.execute('home.hub.layout.get', {}, { surface: 'mcp' })).toMatchObject({ ok: true, result: {
-            layout: { instances: [instance], sections: { copy: { width: 'full' } } }, hiddenSetupStepIds: ['addPhone'],
-            sections: expect.arrayContaining([{ kind: 'widget', id: 'copy', instance, width: 'full', hidden: false, hideable: true }]),
+            layout: { instances: [instance], sections: { copy: { size: 'full' } } }, hiddenSetupStepIds: ['addPhone'],
+            sections: expect.arrayContaining([{ kind: 'widget', id: 'copy', instance, size: 'full', hidden: false, hideable: true }]),
         } });
         expect(await executor.execute('home.hub.layout.update', { intent: { kind: 'visibility', sectionId: 'attention', hidden: true } }, { surface: 'cli' })).toMatchObject({ ok: true });
         expect((await port.read()).hidden).not.toContain('attention');

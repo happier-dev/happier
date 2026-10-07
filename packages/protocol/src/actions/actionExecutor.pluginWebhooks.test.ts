@@ -73,8 +73,8 @@ describe('createActionExecutor (plugin webhook endpoints)', () => {
    * The one place that answers "may a trusted plugin drive the generic
    * endpoint itself?". Generic endpoint observation and unrestricted retarget
    * are present-user administration, so a daemon-side plugin caller — which
-   * the host always stamps `account_automation` — is refused before any
-   * endpoint effect. The plugin surface owns exactly two bounded capabilities:
+   * the host always stamps `account_automation` — must request consent before any
+   * endpoint effect. Unattended plugin execution owns two bounded capabilities:
    * the correspondence check and the correspondence-gated target convergence.
    */
   describe('trusted-plugin caller authority', () => {
@@ -89,7 +89,7 @@ describe('createActionExecutor (plugin webhook endpoints)', () => {
       },
     } as const;
 
-    it('refuses plugin-driven endpoint read and retarget before any endpoint effect', async () => {
+    it('fails closed without approval support for plugin-driven endpoint read and retarget', async () => {
       const pluginWebhookAction = vi.fn(async () => ({}));
       const executor = createActionExecutor({
         pluginWebhookAction,
@@ -104,8 +104,8 @@ describe('createActionExecutor (plugin webhook endpoints)', () => {
         actionCaller: pluginCaller,
       })).resolves.toEqual({
         ok: false,
-        errorCode: 'present_user_required',
-        error: 'present_user_required',
+        errorCode: 'approvals_not_supported',
+        error: 'approvals_not_supported',
       });
 
       await expect(executor.execute('plugin.webhook.endpoint.retarget', {
@@ -123,8 +123,8 @@ describe('createActionExecutor (plugin webhook endpoints)', () => {
         actionCaller: pluginCaller,
       })).resolves.toEqual({
         ok: false,
-        errorCode: 'present_user_required',
-        error: 'present_user_required',
+        errorCode: 'approvals_not_supported',
+        error: 'approvals_not_supported',
       });
 
       expect(pluginWebhookAction).not.toHaveBeenCalled();

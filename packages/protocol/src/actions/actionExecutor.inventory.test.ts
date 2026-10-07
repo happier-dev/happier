@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
+import Ajv2020 from 'ajv/dist/2020.js';
+import addFormats from 'ajv-formats';
 
 import { createActionExecutor as createRawActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
-import type { ActionDefinitionV1 } from './actionDefinitionV1.js';
+import { ActionDiscoveryDefinitionV1Schema, type ActionDefinitionV1 } from './actionDefinitionV1.js';
 import { getActionSpec, PUBLIC_ACTION_OUTPUT_SCHEMAS } from './actionSpecs.js';
 import { ActionIdSchema } from './actionIds.js';
 import type { MachinesAgentsListInput } from '../capabilities/machineAgentInventory.js';
@@ -80,10 +82,14 @@ describe('machine Agent inventory execution', () => {
     const executor = createActionExecutor({ ...createDeps(), widgetAccountScope: () => ({ serverId: 'home', accountId: 'viewer' }),
       pathsListRecent: async () => ({ items: [{ path: '/from-A', label: 'A' }] }),
       notificationChannelsList: async () => ({ items: [{ id: 'from-B', label: 'B' }] }),
-      widgetCatalog: { list: async (_surface, _context, _signal, boundSession?: { serverId: string; sessionId: string }) => [{
-        definition, title: 'Checks', availability: 'available', instanceCount: 0,
-        fields: [{ path: 'choice', title: 'Choice', widget: 'select', optionsSourceId: boundSession?.sessionId === 'B' ? 'notifications.channels.available' : 'paths.list_recent' }],
-      }] },
+      widgetCatalog: { list: async (catalogSurface, _context, _signal, boundSession?: { serverId: string; sessionId: string }) => {
+        expect(catalogSurface).toEqual(surface);
+        return [{
+          definition, title: 'Checks', availability: 'available', instanceCount: 0,
+          sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' },
+          fields: [{ path: 'choice', title: 'Choice', widget: 'select', optionsSourceId: boundSession?.sessionId === 'B' ? 'notifications.channels.available' : 'paths.list_recent' }],
+        }];
+      } },
     });
     await expect(executor.execute('action.options.resolve', {
       consumer: { kind: 'widget', surface, definition, selectedSession: { serverId: 'home', sessionId: 'B' } }, fieldPath: 'choice',
@@ -95,6 +101,7 @@ describe('machine Agent inventory execution', () => {
     const executor = createActionExecutor({ ...createDeps(),
       widgetAccountScope: () => ({ serverId: 'home', accountId: 'viewer' }),
       widgetCatalog: { list: async () => [{ definition, title: 'Checks', availability: 'available', instanceCount: 0,
+        sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' },
         fields: [{ path: 'choice', title: 'Choice', widget: 'select', options: [{ value: 'current', label: 'Current' }] }] }] },
     });
     await expect(executor.execute('action.options.resolve', {
@@ -173,6 +180,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     const consumerExecutor = createActionExecutor({ ...deps,
       widgetAccountScope: () => ({ serverId: 'home', accountId: 'account' }),
       widgetCatalog: { list: async () => [{ definition: widgetDefinition, title: 'Repository',
+        sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' },
         fields: definition.inputHints!.fields, availability: 'available', instanceCount: 0 }] },
       workflowAction: async () => ({ definitions: [], pluginWorkflows: [{ workflow, pluginId: inputType.pluginId,
         version: '1.0.0', title: 'Review', definition: { version: 1, inputs: [{ name: 'repository', valueType: 'string', required: true, inputType }],
@@ -619,7 +627,8 @@ describe('createActionExecutor (inventory/discovery)', () => {
     if (!res.ok) throw new Error('Review Action did not dispatch');
     expect(getActionSpec('review.start').completion?.launched(res.result)).toEqual({
       runs: [],
-      failed: [{ key: 'coderabbit', errorCode: 'execution_run_not_allowed' }],
+      failed: [{ key: 'coderabbit', errorCode: 'execution_run_not_allowed',
+        runCreation: failureKind === 'returned' || failureKind === 'thrown' ? 'noRunCreated' : 'outcomeUnknown' }],
     });
   });
 
@@ -2272,33 +2281,30 @@ describe('createActionExecutor (inventory/discovery)', () => {
       id: 'session.spawn_new',
     }, { surface: 'agent' });
 
-    expect(spawnResult).toEqual(expect.objectContaining({
-      ok: true,
-      result: expect.objectContaining({
-        actionSpec: expect.objectContaining({
-          kindVersion: 1,
-          inputSchema: expect.objectContaining({
-            properties: expect.objectContaining({
-              executionTarget: expect.objectContaining({
-                properties: expect.objectContaining({
-                  serverId: expect.objectContaining({ minLength: 1, maxLength: 191 }),
-                }),
-              }),
-              organizationPlacement: expect.objectContaining({
-                properties: expect.objectContaining({
-                  tagIds: expect.objectContaining({ type: 'array', maxItems: 500 }),
-                }),
-              }),
-              agentSessionStartupInstructionsV1: expect.objectContaining({
-                properties: expect.objectContaining({
-                  revision: expect.objectContaining({ exclusiveMinimum: 0, maximum: 2_147_483_647 }),
-                }),
-              }),
-            }),
-          }),
-        }),
-      }),
-    }));
+    if (!spawnResult.ok) throw new Error('Session creation schema discovery failed');
+    const { actionSpec } = PUBLIC_ACTION_OUTPUT_SCHEMAS['action.spec.get'].parse(spawnResult.result);
+    const discovered = ActionDiscoveryDefinitionV1Schema.parse(actionSpec);
+    const ajv = new Ajv2020({ strict: false });
+    addFormats(ajv);
+    const validate = ajv.compile(discovered.inputSchema);
+    // Validate the published contract, including local references, without
+    // requiring the producer to inline shared schema definitions.
+    expect(validate(canonicalSessionSpawnInput)).toBe(true);
+    for (const serverId of ['', 's'.repeat(192)]) {
+      expect(validate({ ...canonicalSessionSpawnInput, executionTarget: { serverId, machineId: 'machine-1' } })).toBe(false);
+    }
+    expect(validate({ ...canonicalSessionSpawnInput, executionTarget: { serverId: 's'.repeat(191), machineId: 'machine-1' } })).toBe(true);
+    for (const [count, accepted] of [[500, true], [501, false]] as const) {
+      expect(validate({ ...canonicalSessionSpawnInput, organizationPlacement: {
+        folderId: null,
+        tagIds: Array.from({ length: count }, (_, index) => `tag-${index}`),
+      } })).toBe(accepted);
+    }
+    for (const [revision, accepted] of [[1, true], [2_147_483_647, true], [0, false], [2_147_483_648, false]] as const) {
+      expect(validate({ ...canonicalSessionSpawnInput, agentSessionStartupInstructionsV1: {
+        v: 1, id: 'repository-guidance', revision, instructions: 'Use repository guidance.',
+      } })).toBe(accepted);
+    }
   });
 
   it('rejects action.spec.get for actions that are not surfaced on the current surface', async () => {

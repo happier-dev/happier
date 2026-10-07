@@ -7,6 +7,7 @@ import { getActionSpec } from './actionSpecs.js';
 import type { SessionAwarenessProjectionV1 } from '../sessions/awareness/projectionV1.js';
 import { encodeV2SessionListCursorV1 } from '../sessions/listing/cursor.js';
 import { projectSessionAwarenessV1 } from '../sessions/awareness/projectV1.js';
+import type { WidgetCatalogSourceEntryV1 } from '../widgets/actionsV1.js';
 
 function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
   return createActionExecutor({
@@ -159,7 +160,8 @@ describe('session.list execution', () => {
       widgetCatalog: { list: async () => {
         descriptorRead = true;
         return [{ definition, title: 'Checks', availability: 'available', instanceCount: 0,
-          fields: [{ path: 'session', title: 'Session', widget: 'select', optionsSourceId: 'sessions' }] }];
+          sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' },
+          fields: [{ path: 'session', title: 'Session', widget: 'select', optionsSourceId: 'sessions' }] } satisfies WidgetCatalogSourceEntryV1];
       } },
     });
     await expect(executor.execute('action.options.resolve', {

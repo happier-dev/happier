@@ -174,11 +174,14 @@ describe('createActionExecutor (session control)', () => {
   });
 
   it('fails discoverable workspace Actions with typed unsupported when this host has no mounted workspace', async () => {
-    for (const surface of ['agent', 'mcp', 'cli'] as const) {
+    for (const surface of ['agent', 'mcp'] as const) {
       await expect(createExecutor().execute('workspace.tabs.list', {}, { surface })).resolves.toMatchObject({
         ok: false, errorCode: 'unsupported_action',
       });
     }
+    await expect(createExecutor().execute('workspace.tabs.list', {}, { surface: 'cli' })).resolves.toMatchObject({
+      ok: false, errorCode: 'action_disabled', details: { reason: 'unsupported_surface', surface: 'cli' },
+    });
   });
   it('admits tab reorder on the advertised client surfaces and rejects it without a mounted workspace', async () => {
     // The mounted workspace port is the host boundary; canonical Action parsing remains real.
@@ -186,12 +189,14 @@ describe('createActionExecutor (session control)', () => {
       expect(request).toMatchObject({ actionId: 'workspace.tabs.reorder', input: { tabId: 'tab-1', index: 1 } });
       return { ok: true };
     };
-    for (const surface of ['ui', 'voice', 'agent', 'mcp', 'cli'] as const) {
+    for (const surface of ['ui', 'voice', 'agent', 'mcp'] as const) {
       await expect(createExecutor({ workspaceAction }).execute('workspace.tabs.reorder', { tabId: 'tab-1', index: 1 }, { surface }))
         .resolves.toEqual({ ok: true, result: { ok: true } });
     }
     await expect(createExecutor().execute('workspace.tabs.reorder', { tabId: 'tab-1', index: 1 }, { surface: 'agent' }))
       .resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+    await expect(createExecutor({ workspaceAction }).execute('workspace.tabs.reorder', { tabId: 'tab-1', index: 1 }, { surface: 'cli' }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'action_disabled', details: { reason: 'unsupported_surface', surface: 'cli' } });
   });
   it('preserves the explicitly selected workspace tab when opening a qualified session', async () => {
     const sessionOpen = vi.fn(async () => ({ ok: true, status: 'opened' }));
@@ -232,8 +237,10 @@ describe('createActionExecutor (session control)', () => {
       .resolves.toEqual({ ok: true, result: { commands } });
     await expect(executor.execute('ui.command_palette.invoke', { commandId: 'account' }, { surface: 'mcp' }))
       .resolves.toEqual({ ok: true, result: { invoked: true } });
-    await expect(createExecutor().execute('ui.command_palette.invoke', { commandId: 'account' }, { surface: 'cli' }))
+    await expect(createExecutor().execute('ui.command_palette.invoke', { commandId: 'account' }, { surface: 'agent' }))
       .resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+    await expect(executor.execute('ui.command_palette.invoke', { commandId: 'account' }, { surface: 'cli' }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'action_disabled', details: { reason: 'unsupported_surface', surface: 'cli' } });
   });
   it('controls Find through the mounted client adapter and distinguishes headless absence from zero results', async () => {
     const uiFindAction = vi.fn(async () => ({ ok: true as const, result: { status: 'results', current: null, total: 0, coverage: 'loaded' } }));
@@ -662,30 +669,32 @@ describe('createActionExecutor (session control)', () => {
     }));
   });
 
-  it('refuses the global Session permission policy Action on the plugin surface while present-user CLI mutation stays available', async () => {
+  it('routes Session permission intent from a host-stamped plugin caller and the present-user CLI', async () => {
     const sessionPermissionModeSet = vi.fn(async () => ({ ok: true }));
     const executor = createExecutor({ sessionPermissionModeSet });
 
     await expect(executor.execute(
-      'session.permission_mode.set' as any,
+      'session.permission_mode.set',
       { sessionId: 'target', permissionMode: 'read-only' },
       {
         surface: 'plugin',
         actionCaller: { kind: 'plugin', pluginId: 'acme.channels', contributionLocalId: 'inbound' },
       },
-    )).resolves.toMatchObject({
-      ok: false,
-      errorCode: 'action_disabled',
-      details: { reason: 'unsupported_surface', surface: 'plugin' },
+    )).resolves.toEqual({ ok: true, result: { ok: true } });
+    expect(sessionPermissionModeSet).toHaveBeenCalledWith({
+      sessionId: 'target', permissionMode: 'read-only', context: {
+        surface: 'plugin', actionCaller: { kind: 'plugin', pluginId: 'acme.channels', contributionLocalId: 'inbound' },
+      },
     });
-    expect(sessionPermissionModeSet).not.toHaveBeenCalled();
 
     await expect(executor.execute(
-      'session.permission_mode.set' as any,
+      'session.permission_mode.set',
       { sessionId: 'target', permissionMode: 'read-only' },
       { surface: 'cli', authority: 'present_user' },
     )).resolves.toEqual({ ok: true, result: { ok: true } });
-    expect(sessionPermissionModeSet).toHaveBeenCalledTimes(1);
+    expect(sessionPermissionModeSet).toHaveBeenLastCalledWith({
+      sessionId: 'target', permissionMode: 'read-only', context: { surface: 'cli', authority: 'present_user' },
+    });
   });
 
   it('refuses mediated source authority from a non-plugin caller instead of dropping it', async () => {
@@ -1480,7 +1489,7 @@ describe('createActionExecutor (session control)', () => {
     expect(sessionTranscriptGet).not.toHaveBeenCalled();
   });
 
-  it('routes public Session reads but denies permission-mode control for plugin callers', async () => {
+  it('routes public Session reads and permission intent for host-stamped plugin callers', async () => {
     const sessionTranscriptGet = vi.fn(async () => ({ ok: true }));
     const sessionEventsGet = vi.fn(async () => ({ ok: true }));
     const sessionPermissionModeSet = vi.fn(async () => ({ ok: true }));
@@ -1511,8 +1520,10 @@ describe('createActionExecutor (session control)', () => {
       'session.permission_mode.set',
       { sessionId: 's1', permissionMode: 'yolo' },
       pluginContext,
-    )).resolves.toMatchObject({ ok: false, errorCode: 'action_disabled' });
-    expect(sessionPermissionModeSet).not.toHaveBeenCalled();
+    )).resolves.toEqual({ ok: true, result: { ok: true } });
+    expect(sessionPermissionModeSet).toHaveBeenCalledWith({
+      sessionId: 's1', permissionMode: 'yolo', context: pluginContext,
+    });
   });
 
   it('executes session.events.get via deps.sessionEventsGet', async () => {
@@ -2390,35 +2401,50 @@ describe('createActionExecutor (session control)', () => {
     },
   );
 
-  it.each(['api', 'plugin'] as const)(
-    'rejects %s automation from answering a present-user action request',
-    async (surface) => {
-      const sessionUserActionAnswer = vi.fn(async () => ({ ok: true }));
-      const executor = createExecutor({ sessionUserActionAnswer });
+  it('rejects API automation from answering a present-user action request', async () => {
+    const sessionUserActionAnswer = vi.fn(async () => ({ ok: true }));
+    const executor = createExecutor({ sessionUserActionAnswer });
 
-      const res = await executor.execute(
-        'session.user_action.answer' as any,
-        surface === 'plugin'
-          ? { requestId: 'request-1', decision: 'approve' }
-          : { sessionId: 's1', requestId: 'request-1', decision: 'approve' },
-        {
-          surface,
-          authority: 'account_automation',
-          defaultSessionId: surface === 'plugin' ? 's1' : null,
-          ...(surface === 'api'
-            ? { actionCaller: { kind: 'host' } }
-            : { actionCaller: { kind: 'plugin', pluginId: 'acme.test' } }),
-        } as any,
-      );
+    const res = await executor.execute(
+      'session.user_action.answer',
+      { sessionId: 's1', requestId: 'request-1', decision: 'approve' },
+      {
+        surface: 'api',
+        authority: 'account_automation',
+        defaultSessionId: null,
+        actionCaller: { kind: 'host' },
+      },
+    );
 
-      expect(res).toEqual({
-        ok: false,
-        errorCode: 'present_user_required',
-        error: 'present_user_required',
-      });
-      expect(sessionUserActionAnswer).not.toHaveBeenCalled();
-    },
-  );
+    expect(res).toEqual({
+      ok: false,
+      errorCode: 'present_user_required',
+      error: 'present_user_required',
+    });
+    expect(sessionUserActionAnswer).not.toHaveBeenCalled();
+  });
+
+  it('requires human consent for a plugin action answer even when the approval hint is false', async () => {
+    const sessionUserActionAnswer = vi.fn(async () => ({ ok: true }));
+    const approvalsCreate = vi.fn<NonNullable<ActionExecutorDeps['approvalsCreate']>>(async () => ({ artifactId: 'human-answer-approval' }));
+    const executor = createExecutor({ sessionUserActionAnswer, approvalsCreate });
+    const input = { requestId: 'request-1', decision: 'approve' };
+    const result = await executor.execute('session.user_action.answer', input, {
+      surface: 'plugin', authority: 'account_automation', serverId: 'home-1', defaultSessionId: 's1',
+      actionRequestId: 'plugin-answer-request-1',
+      actionCaller: { kind: 'plugin', pluginId: 'acme.test', contributionLocalId: 'answers',
+        sourceCustody: { kind: 'managed', immutableGenerationId: 'answers-generation-1', installSource: 'npm' } },
+    });
+    expect(result).toEqual({ ok: true, result: {
+      kind: 'approval_request_created', artifactId: 'human-answer-approval', actionId: 'session.user_action.answer',
+    } });
+    expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({
+      actionId: 'session.user_action.answer', actionArgs: { ...input, sessionId: 's1' },
+      approval: expect.objectContaining({ flow: 'deferred' }),
+      executionOriginV1: expect.objectContaining({ authority: 'account_automation', sessionId: 's1' }),
+    }) }));
+    expect(sessionUserActionAnswer).not.toHaveBeenCalled();
+  });
 
   it('returns unsupported_action when session.user_action.answer is not implemented by deps', async () => {
     const executor = createExecutor({ sessionUserActionAnswer: undefined as any });

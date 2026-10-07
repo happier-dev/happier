@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { ApprovalRequestV1 } from '../approvals/approvalRequestV1.js';
+import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import type {
   PluginPermissionGrantRequestV1,
   PluginPermissionGrantV1,
@@ -178,15 +178,15 @@ describe('createActionExecutor (plugin permission grants)', () => {
     expect(pluginPermissionGrantAction).toHaveBeenCalledTimes(2);
   });
 
-  it('preserves host-stamped plugin identity through blocking approval replay', async () => {
+  it('preserves host-stamped plugin identity and descriptive provenance through deferred approval replay', async () => {
     const pluginPermissionGrantAction = vi.fn(async () => ({ grant: revokedGrant }));
-    let storedRequest: ApprovalRequestV1 | null = null;
-    const approvalsCreate = vi.fn(async ({ request }: { request: ApprovalRequestV1 }) => {
+    let storedRequest: ApprovalRequest | null = null;
+    const approvalsCreate = vi.fn(async ({ request }: { request: ApprovalRequest }) => {
       storedRequest = request;
       return { artifactId: 'approval-1' };
     });
     const approvalsGet = vi.fn(async () => storedRequest);
-    const approvalsUpdate = vi.fn(async ({ request }: { request: ApprovalRequestV1 }) => {
+    const approvalsUpdate = vi.fn(async ({ request }: { request: ApprovalRequest }) => {
       storedRequest = request;
       return { ok: true as const };
     });
@@ -244,11 +244,12 @@ describe('createActionExecutor (plugin permission grants)', () => {
         pluginId: 'acme.voice',
         contributionLocalId: 'permission-grants',
         sourceCustody: { kind: 'development', registeredRootId: 'voice-root-1' },
+        startedBy: 'trigger',
       },
     });
   });
 
-  it('keeps grant/dismiss on the deciding side while routing their host UI execution', async () => {
+  it('fails closed without grant/dismiss approval support while routing present-user host UI execution', async () => {
     const pluginPermissionGrantAction = vi.fn(async ({ actionId }) => actionId === 'plugins.permissions.grants.grant'
       ? { grant: activeGrant, pendingRequest: grantedPendingRequest }
       : { pendingRequest: dismissedPendingRequest });
@@ -260,10 +261,10 @@ describe('createActionExecutor (plugin permission grants)', () => {
 
     await expect(executor.execute('plugins.permissions.grants.grant', {
       requestId: 'request-1',
-    }, pluginContext)).resolves.toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    }, pluginContext)).resolves.toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
     await expect(executor.execute('plugins.permissions.grants.dismissRequest', {
       requestId: 'request-1',
-    }, pluginContext)).resolves.toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    }, pluginContext)).resolves.toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
     expect(pluginPermissionGrantAction).not.toHaveBeenCalled();
 
     await expect(executor.execute('plugins.permissions.grants.grant', {

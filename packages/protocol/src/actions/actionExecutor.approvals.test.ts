@@ -187,6 +187,7 @@ describe('createActionExecutor (approvals)', () => {
         items: page.items.map(row => ({ ...row, ownerAccountId: 'account' })) }; },
     }, { accountId: 'account' });
     const definition = await definitions.create({ v: 1, id: 'private-definition', name: 'Checks',
+      sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' },
       inputs: { fields: [] }, inputSchema: { type: 'object', additionalProperties: false },
       body: { kind: 'declarative', document: { version: 1, root: { kind: 'metric', label: 'Checks',
         value: { path: ['count'], type: 'number' }, data: { kind: 'resource', resource: { pluginId: 'acme.metrics', localId: 'counts' },
