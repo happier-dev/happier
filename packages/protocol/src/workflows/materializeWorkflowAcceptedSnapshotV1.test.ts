@@ -27,6 +27,33 @@ const policyContext: AgentStartContextV1 = {
 };
 
 describe('materializeWorkflowAcceptedSnapshotV1', () => {
+  it.each(['origin_session', 'existing_session', 'fresh'] as const)('charges start capacity only for a new Agent (%s)', async kind => {
+    const conversation = kind === 'existing_session'
+      ? { kind, sessionId: 'origin', machineId: 'machine' } : { kind };
+    expect(await materialize({ definition: { ...definition, defaults: { ...definition.defaults, conversation } },
+      context: { ...context, origin: { kind: 'direct', originSessionId: 'origin' } },
+    })).toMatchObject({ ok: true, snapshot: { requiresMachineStartCapacity: kind === 'fresh',
+      targetSessionIds: kind === 'fresh' ? [] : ['origin'] } });
+  });
+
+  it('freezes the deduplicated destination sessions across structural and nested leaves', async () => {
+    const target = { kind: 'existing_session', sessionId: 'destination', machineId: 'machine' };
+    const accepted = await materialize({
+      definition: { ...definition, blocks: [
+        { ...definition.blocks[0], execution: { conversation: { kind: 'origin_session' } } },
+        { kind: 'parallel', id: 'parallel', failurePolicy: 'fail_stop', branches: [
+          { id: 'branch', blocks: [{ ...definition.blocks[0], id: 'writes', execution: { conversation: target } }] },
+        ] },
+        { kind: 'workflow', id: 'nested', workflowRef: 'builtin:child', input: {} },
+      ] },
+      context: { ...context, origin: { kind: 'direct', originSessionId: 'origin' } },
+      effects: { resolveTargetAvailability: available, readWorkflowDefinition: async () => ({
+        sourceKey: 'builtin:child', definition: { ...definition, defaults: { ...definition.defaults, conversation: target } },
+      }) },
+    });
+    expect(accepted).toMatchObject({ ok: true, snapshot: { targetSessionIds: ['origin', 'destination'] } });
+  });
+
   it('replays frozen roles, children, placement and targets rather than today\'s graph', async () => {
     const role = { roleId: 'frozen_builder', name: 'Builder', instructions: 'Do not write',
       runsAs: { kind: 'background_run' as const, intent: 'delegate' as const },

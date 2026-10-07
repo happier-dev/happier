@@ -1,6 +1,7 @@
 import { deriveWorkflowReplacementId } from '../../workflows/workflowInvocationIdentityV1.js';
 
 import { WorkflowAcceptedSnapshotV1Schema, type WorkflowDefinitionSavedByV1 } from '../../workflows/workflowDefinitionV1.js';
+import { deriveWorkflowDestinationsV1 } from '../../workflows/workflowDestinationsV1.js';
 import { WorkflowAuthoredInputV1Schema, WorkflowCheckpointEnvelopeV1Schema, WorkflowProgressEnvelopeV1Schema, WorkflowRunInvocationIndexV1Schema, WorkflowRunSummaryV1Schema, type WorkflowAuthoredInputV1, type WorkflowProgressEnvelopeV1, type WorkflowUsageV1, type WorkflowInvocationRecoveryAvailabilityV1, type WorkflowRunInvocationIndexV1, type WorkflowRunSummaryV1, classifyWorkflowHoldV1, isWorkflowDraftPublicationLifecycleV1 } from '../../workflows/workflowProgressV1.js';
 import { WorkflowActionOutputSchemasV1, WorkflowRunWaitSnapshotV1Schema, WorkflowRunListResultV1Schema, WorkflowRunAcceptedContextV1Schema, type WorkflowRunPrivateMetadataV1, type WorkflowRunAcceptedContextV1 } from '../../workflows/actionsV1.js';
 import { materializeWorkflowAcceptedSnapshotV1, readWorkflowAcceptedAgentStartLeavesV1 } from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
@@ -1994,6 +1995,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
           const metadataByRunId: Record<string, WorkflowRunPrivateMetadataV1> = {};
           const runs: WorkflowRunSummaryV1[] = [];
           for (const run of page.runs) {
+            let matchesDestination = args.input.targetSessionId === undefined;
             let projected: WorkflowRunPrivateMetadataV1 | null;
             let where: WorkflowRunSummaryV1['where'] = null;
             let startedBy: WorkflowRunSummaryV1['startedBy'] = null;
@@ -2043,6 +2045,9 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
               });
               if (opened.kind !== 'available') throw workflowError('content_unavailable');
               const accepted = WorkflowAcceptedSnapshotV1Schema.parse(opened.content);
+              matchesDestination = args.input.targetSessionId === undefined || (accepted.targetSessionIds
+                ?? deriveWorkflowDestinationsV1({ definition: accepted.definition, materializedLeaves: accepted.materializedLeaves,
+                  originSessionId: accepted.origin?.originSessionId }).targetSessionIds).includes(args.input.targetSessionId);
               startedBy = accepted.startedBy;
               const project = accepted.workspaceTarget.project;
               where = { machineId: project.machineId, directory: project.directory,
@@ -2059,6 +2064,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
               // open its private accepted content on the current host.
               projected = { kind: 'unavailable' };
             }
+            if (!matchesDestination) continue;
             runs.push({ ...run, where, startedBy, stepProgress, stepProgressCurrentness });
             if (projected) metadataByRunId[run.id] = projected;
           }
@@ -2068,11 +2074,17 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
             ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
           });
         };
-        return await projectPage(await deps.storage.execute({
-          operation: 'list',
-          request: target?.kind === 'machine' ? { ...args.input, machineId: target.machineId } : args.input,
-          pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
-        }, args.context.signal ? { signal: args.context.signal } : {}));
+        let cursor = args.input.cursor;
+        for (;;) {
+          args.context.signal?.throwIfAborted();
+          const request = { ...args.input, ...(target?.kind === 'machine' ? { machineId: target.machineId } : {}),
+            ...(cursor === undefined ? {} : { cursor }) };
+          const page = await projectPage(await deps.storage.execute({ operation: 'list', request,
+            pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
+          }, args.context.signal ? { signal: args.context.signal } : {}));
+          if (args.input.targetSessionId === undefined || page.runs.length > 0 || !page.nextCursor) return page;
+          cursor = page.nextCursor;
+        }
       } catch (error) {
         translateStorageError(error);
       }

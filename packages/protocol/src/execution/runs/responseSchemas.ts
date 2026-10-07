@@ -146,6 +146,8 @@ const ExecutionRunInputTurnsV1Schema = z.object({
 
 export const ExecutionRunPublicStateSchema = z.object({
   runId: z.string().min(1),
+  /** Retained host launch provenance, never authored execution input. */
+  originWorkflowRunId: z.string().min(1).optional(),
   callId: z.string().min(1),
   sidechainId: z.string().min(1),
   intent: ExecutionRunIntentSchema,

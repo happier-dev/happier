@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { WorkflowDestinationsV1Schema } from './workflowDestinationsV1.js';
 import {
   WorkflowTriggerListRequestV1Schema, WorkflowTriggerAddRequestV1Schema,
   WorkflowTriggerUpdateRequestV1Schema, WorkflowTriggerRemoveRequestV1Schema,
@@ -176,6 +177,7 @@ export const WorkflowRunListRequestV1Schema = z.object({
   states: z.array(WorkflowRunStateV1Schema).min(1).optional(),
   attention: WorkflowRunAttentionFilterV1Schema.optional(),
   originSessionId: preservedBoundedNfcString(191, 'Session ids').optional(),
+  targetSessionId: preservedBoundedNfcString(191, 'Session ids').optional(),
   automationId: preservedBoundedNfcString(191, 'Automation ids').optional(),
   machineId: WorkflowMachineIdV1Schema.optional(),
 }).strict();
@@ -370,13 +372,13 @@ const WorkflowDefinitionLibraryHeaderV1Schema = WorkflowDefinitionArtifactHeader
   nextRunAt: z.number().int().nonnegative().safe().nullable(),
 }).strict();
 export const WorkflowDefinitionListResultV1Schema = z.object({ definitions: z.array(z.discriminatedUnion('contentStatus', [
-  WorkflowDefinitionLibraryHeaderV1Schema.extend({ contentStatus: z.literal('available'), stepCount: z.number().int().nonnegative().safe() }).strict(),
+  WorkflowDefinitionLibraryHeaderV1Schema.extend({ contentStatus: z.literal('available'), stepCount: z.number().int().nonnegative().safe(), destinations: WorkflowDestinationsV1Schema.optional() }).strict(),
   WorkflowDefinitionLibraryHeaderV1Schema.extend({ contentStatus: z.literal('unavailable'), stepCount: z.null(),
     revision: WorkflowArtifactRevisionV1Schema.nullable(), metadata: WorkflowDefinitionMetadataV1Schema.nullable(),
     contentUnavailableReason: WorkflowDefinitionContentUnavailableReasonV1Schema }).strict(),
 ])), pluginWorkflows: z.array(WorkflowPluginSourceV1Schema).optional(), nextCursor: CursorSchema.optional() }).strict();
 export const WorkflowDefinitionGetRequestV1Schema = z.object({ definitionId: WorkflowDefinitionIdV1Schema }).strict();
-export const WorkflowDefinitionGetResultV1Schema = z.object({ definitionId: WorkflowDefinitionIdV1Schema, revision: WorkflowArtifactRevisionV1Schema, definition: WorkflowDefinitionV1Schema, metadata: WorkflowDefinitionMetadataV1Schema, access: ArtifactCallerAccessV1Schema, savedBy: WorkflowDefinitionSavedByV1Schema.optional() }).strict();
+export const WorkflowDefinitionGetResultV1Schema = z.object({ definitionId: WorkflowDefinitionIdV1Schema, revision: WorkflowArtifactRevisionV1Schema, definition: WorkflowDefinitionV1Schema, destinations: WorkflowDestinationsV1Schema.optional(), metadata: WorkflowDefinitionMetadataV1Schema, access: ArtifactCallerAccessV1Schema, savedBy: WorkflowDefinitionSavedByV1Schema.optional() }).strict();
 export const WorkflowDefinitionCreateRequestV1Schema = z.object({ definitionId: WorkflowDefinitionIdV1Schema, definition: WorkflowIngressCarrierV1Schema, metadata: WorkflowDefinitionMetadataV1Schema }).strict();
 export const WorkflowDefinitionCreateResultV1Schema = WorkflowDefinitionGetResultV1Schema;
 export const WorkflowDefinitionUpdateRequestV1Schema = z.object({ definitionId: WorkflowDefinitionIdV1Schema, expectedRevision: WorkflowArtifactRevisionV1Schema, definition: WorkflowIngressCarrierV1Schema, metadata: WorkflowDefinitionMetadataV1Schema }).strict();

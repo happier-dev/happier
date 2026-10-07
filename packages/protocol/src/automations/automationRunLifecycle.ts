@@ -23,6 +23,8 @@ export const AutomationRunLifecycleOccurrenceEvidenceV1Schema = AutomationRunLif
   /** Execution terminal's finished timestamp, or FIN's current revision. */
   sourceRevision: z.number().int().nonnegative().safe(),
   occurredAt: AutomationOccurredAtV1Schema,
+  /** Exact-machine host provenance for an Execution Run spawned by a Workflow. */
+  originRunId: Id.optional(),
 }).strict();
 export type AutomationRunLifecycleOccurrenceEvidenceV1 = z.infer<typeof AutomationRunLifecycleOccurrenceEvidenceV1Schema>;
 export const AutomationExecutionRunLifecycleSourceSchema = AutomationRunLifecycleSourceSchema.options[0];

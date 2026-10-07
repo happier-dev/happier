@@ -32,6 +32,7 @@ import { SessionAgentSpawnPolicyV1StrictSchema } from '../../account/settings/se
 import { materializeWorkflowAcceptedSnapshotV1, materializeWorkflowDefinitionAuthorityV1, type MaterializeWorkflowAcceptedSnapshotV1Input } from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
 import { validateWorkflowDefinition } from '../../workflows/workflowValidationV1.js';
 import type { WorkflowDefinitionV1 } from '../../workflows/workflowV1.js';
+import { resolveWorkflowDestinationsV1 } from '../../workflows/workflowDestinationsV1.js';
 import type { WorkflowActionExecuteArgs } from './types.js';
 import { isActionCallerOwnSessionV1 } from './agentStartAdmission.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
@@ -146,6 +147,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     const definition = target.kind === 'inline' ? target.definition : await deps.resolveWorkflow(target.ref);
     const checked = validateWorkflowDefinition(definition);
     if (!checked.valid) refuse('invalid_input', { issues: checked.issues });
+    return definition;
   };
   const assertWrite = async (target: TriggerTargetV1, context: WorkflowTriggerContextV1, targetProject: WorkflowTriggerAddRequestV1['project'], caller?: Caller, sessionId?: string, creatingSession = false) => {
     await assertTarget(target);
@@ -214,9 +216,12 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       const value = await opened(row, true);
       const targetProject = base.legacy && row.assignments.length !== 1 ? undefined : project(row, value.context);
       // Retained templates are readable even when their settings cannot become a current Workflow.
-      if (!base.legacy) await assertTarget(value.target);
+      const definition = base.legacy
+        ? value.target.kind === 'inline' ? value.target.definition : await deps.resolveWorkflow(value.target.ref)
+        : await assertTarget(value.target);
+      const destinations = await resolveWorkflowDestinationsV1({ definition, originSessionId: row.scopeSessionId ?? undefined }, deps.resolveWorkflow);
       return { ...base, triggers, ...(base.legacy && 'placements' in value ? { legacy: { ...base.legacy, placements: value.placements } } : {}),
-        health: 'available', target: value.target, context: value.context, ...(targetProject ? { project: targetProject } : {}) };
+        health: 'available', target: value.target, context: value.context, destinations, ...(targetProject ? { project: targetProject } : {}) };
     } catch (error) {
       const code = error !== null && typeof error === 'object' && 'code' in error ? error.code : undefined;
       const lockedReason = code === 'session_key_required' || code === 'encryption_material_unavailable' ? 'session_key_required' as const

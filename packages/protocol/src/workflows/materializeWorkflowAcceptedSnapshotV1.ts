@@ -23,6 +23,7 @@ import { WorkflowStepExecutionSelectionSchema, type WorkflowBlock, type Workflow
   type WorkflowValidationIssue } from './workflowV1.js';
 import type { WorkflowAcceptedWorkspaceTargetV1 } from './workflowWorkspaceV1.js';
 import { collectWorkflowConditionValueReferences, readWorkflowValuePathV1, type WorkflowValueReference } from './workflowReferenceV1.js';
+import { collectWorkflowLeavesV1 as leavesOf, deriveWorkflowDestinationsV1, readWorkflowLeafTargetSessionIdsV1 } from './workflowDestinationsV1.js';
 
 export type WorkflowMaterializationContextV1 = Readonly<{
   /** Host-stamped admitting caller; private input, never authored Workflow content. */
@@ -81,23 +82,6 @@ export type MaterializeWorkflowDefinitionAuthorityV1Result =
   | Readonly<{ ok: true; agentStartLeaves: readonly MaterializedWorkflowLeafV1[];
     materializedLeaves: readonly WorkflowMaterializedLeafV1[] }>
   | Readonly<{ ok: false; error: WorkflowMaterializationErrorV1 }>;
-
-function leavesOf(definition: WorkflowDefinitionV1): WorkflowLeafV1[] {
-  const leaves: WorkflowLeafV1[] = [];
-  const pending: WorkflowBlock[] = [...definition.blocks].reverse();
-  while (pending.length > 0) {
-    const block = pending.pop()!;
-    if (block.kind === 'parallel') {
-      pending.push(...block.branches.flatMap((branch) => branch.blocks).reverse());
-    } else if (block.kind === 'if') {
-      pending.push(...[...block.then, ...block.otherwise].reverse());
-    } else if (block.kind === 'loop') {
-      if (block.repetition.kind === 'evaluate') pending.push(block.repetition.evaluator);
-      pending.push(...[...block.body].reverse());
-    } else leaves.push(block);
-  }
-  return leaves;
-}
 
 function invalidInput(blockId?: string, issues?: readonly WorkflowValidationIssue[]): MaterializeWorkflowAcceptedSnapshotV1Result {
   return { ok: false, error: { code: 'invalid_input', ...(blockId === undefined ? {} : { blockId }), ...(issues === undefined ? {} : { issues }) } };
@@ -196,6 +180,16 @@ function agentLeaf(snapshot: Pick<WorkflowAcceptedSnapshotV1, 'machineId' | 'wor
           .map(([name, option]) => [name, { value: option.value, updatedAtMs: option.updatedAt }])) } : {}),
     },
   };
+}
+
+/** Machine start admission is about execution, never trigger scope. */
+export function workflowRequiresMachineStartCapacityV1(leaves: readonly WorkflowMaterializedLeafV1[]): boolean {
+  return leaves.some(leaf => {
+    if (leaf.kind === 'action') return leaf.actionId !== undefined && isAgentStartActionV1(leaf.actionId);
+    if (leaf.kind !== 'step') return false;
+    const conversation = leaf.selection.conversation?.kind;
+    return conversation !== 'existing_session' && conversation !== 'origin_session' && conversation !== 'from_step';
+  });
 }
 
 export class WorkflowMaterializationFailureV1 extends Error {
@@ -569,11 +563,7 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
   // without an explicit origin reference in the authored definition.
   const requiredOriginSessionId = purpose === 'run' ? input.context.origin?.originSessionId : undefined;
   for (const leaf of materializedLeaves) {
-    const conversation = leaf.selection.conversation;
-    const sessionIds = [...new Set([
-      ...(requiredOriginSessionId ? [requiredOriginSessionId] : []),
-      ...(conversation?.kind === 'existing_session' ? [conversation.sessionId] : []),
-    ])];
+    const sessionIds = readWorkflowLeafTargetSessionIdsV1(leaf.selection, requiredOriginSessionId);
     if ((leaf.kind === 'step' || leaf.kind === 'action' || sessionIds.length > 0)
       && !await input.effects.resolveTargetAvailability(leaf, { sessionIds })) return unavailable(leaf.blockId);
   }
@@ -593,6 +583,9 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
     ...sharedContext, ...(origin ? { origin } : input.context.source.kind === 'automation' ? {} : { origin: { kind: 'direct' } }),
     ...(resultDelivery ? { resultDelivery } : {}),
     definition: concrete.get('$root'), authoredDefinition: root, materializedLeaves, frozenChildren, workDepth,
+    requiresMachineStartCapacity: workflowRequiresMachineStartCapacityV1(materializedLeaves),
+    targetSessionIds: deriveWorkflowDestinationsV1({ definition: concrete.get('$root')!, materializedLeaves,
+      originSessionId: input.context.origin?.originSessionId }).targetSessionIds,
     startedBy: actionCaller ? resolveWorkflowRunStartedByForActionCallerV1(actionCaller) : input.admission.kind,
     metadata: sharedContext.metadata ?? null,
     roleOverrides: overrides.data,

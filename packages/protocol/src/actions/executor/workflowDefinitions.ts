@@ -24,6 +24,8 @@ import { workflowDefinitionArtifactSharingAdapterV1 } from '../../artifacts/arti
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { WorkflowDefinitionIdV1Schema } from '../../workflows/workflowIdsV1.js';
 import type { WorkflowPluginSourceReaderV1, WorkflowPluginSourceV1 } from '../../workflows/workflowPluginSourceV1.js';
+import { resolveWorkflowDestinationsV1 } from '../../workflows/workflowDestinationsV1.js';
+import { resolveWorkflowDefinitionRefV1 } from '../../workflows/workflowDefinitionResolverV1.js';
 
 export type WorkflowDefinitionArtifactHeaderRow = Readonly<{
   artifactId: string; header: Readonly<Record<string, unknown>>; headerVersion: number; updatedAt: number;
@@ -114,7 +116,7 @@ export function createWorkflowDefinitionActions(params: Readonly<{
   readWorkflowTriggerSummaries?: ReturnType<typeof createWorkflowTriggerActions>['readWorkflowSummaries'];
 }>) {
   const readPluginWorkflows: WorkflowPluginSourceReaderV1 = params.readPluginWorkflows ?? (() => []);
-  const get = async ({ definitionId, signal }: Readonly<{ definitionId: string; signal?: AbortSignal }>) => {
+  const read = async ({ definitionId, signal }: Readonly<{ definitionId: string; signal?: AbortSignal }>) => {
     const artifact = await params.artifactStore.read(definitionId, signal ? { signal } : undefined);
     if (!artifact) throw contentUnavailable('not_found');
     const parsedHeader = WorkflowDefinitionArtifactHeaderV1ReadSchema.safeParse(artifact.header);
@@ -126,8 +128,19 @@ export function createWorkflowDefinitionActions(params: Readonly<{
     }, parsedHeader.data)) {
       throw contentUnavailable('revision_mismatch');
     }
-    return { definitionId, revision: artifact.revision, definition: openDefinitionBody(artifact.body), metadata: parsedHeader.data.metadata, access: artifact.access,
+    const definition = openDefinitionBody(artifact.body);
+    return { definitionId, revision: artifact.revision, definition, metadata: parsedHeader.data.metadata, access: artifact.access,
       ...(artifact.provenance ? { savedBy: artifact.provenance.savedBy } : {}) };
+  };
+  const destinations = (definition: WorkflowDefinitionV1, signal?: AbortSignal) => resolveWorkflowDestinationsV1({ definition }, async ref => {
+    const source = await resolveWorkflowDefinitionRefV1(ref, { readPluginWorkflows,
+      readArtifact: (definitionId, readSignal) => read({ definitionId, ...(readSignal ? { signal: readSignal } : {}) }),
+      ...(signal ? { signal } : {}) });
+    return source?.definition ?? null;
+  });
+  const get = async (input: Readonly<{ definitionId: string; signal?: AbortSignal }>) => {
+    const value = await read(input);
+    return { ...value, destinations: await destinations(value.definition, input.signal) };
   };
   const save = async (input: Pick<UpdateInput, 'definitionId' | 'expectedRevision' | 'metadata'>, definition: WorkflowDefinitionV1, access: ArtifactCallerAccessV1, caller?: DefinitionCaller) => {
     const nextRevision = { headerVersion: input.expectedRevision.headerVersion + 1, bodyVersion: input.expectedRevision.bodyVersion + 1 };
@@ -138,7 +151,7 @@ export function createWorkflowDefinitionActions(params: Readonly<{
       code: result.errorCode === 'version_mismatch' ? 'currentness_conflict' : 'content_unavailable',
     });
     const actor = savedBy(caller);
-    return { definitionId: input.definitionId, revision: result.revision, definition, metadata: input.metadata, access,
+    return { definitionId: input.definitionId, revision: result.revision, definition, destinations: await destinations(definition), metadata: input.metadata, access,
       ...(actor ? { savedBy: actor } : {}) };
   };
   return {
@@ -225,7 +238,8 @@ export function createWorkflowDefinitionActions(params: Readonly<{
           });
           const displayMetadata = WorkflowDefinitionArtifactHeaderV1ReadSchema.shape.metadata.safeParse(artifact.header.metadata);
           const definition: WorkflowDefinitionListResultV1['definitions'][number] = opened && readableHeader
-            ? { ...readableHeader, ...facts, contentStatus: 'available', stepCount: countWorkflowStepsV1(opened.blocks) }
+            ? { ...readableHeader, ...facts, contentStatus: 'available', stepCount: countWorkflowStepsV1(opened.blocks),
+              destinations: await destinations(opened) }
             : { kind: 'workflow-definition.v1', definitionId: identity.data,
               revision: readableHeader?.revision ?? (physicalRevision.success ? physicalRevision.data : null),
               metadata: displayMetadata.success ? displayMetadata.data : null, ...facts,
