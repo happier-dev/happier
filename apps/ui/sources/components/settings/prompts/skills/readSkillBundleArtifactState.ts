@@ -1,4 +1,4 @@
-import { PromptBundleBodyV1Schema } from '@happier-dev/protocol';
+import { PromptBundleBodyV1Schema } from '@happier-dev/protocol/prompts/library/promptBundleSchemas';
 
 import { storage } from '@/sync/domains/state/storage';
 

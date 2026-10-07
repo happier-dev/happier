@@ -1,4 +1,6 @@
-import { buildWorkBoardItemKeyV1, type BoardItemRefV1, type WorkflowRunStateV1, type WorkflowRunSummaryV1, type WorkflowTriggerSummaryInputV1, type WorkBoardV1 } from '@happier-dev/protocol';
+import { buildWorkBoardItemKeyV1, type BoardItemRefV1, type WorkBoardV1 } from '@happier-dev/protocol/boards/workBoardV1';
+import type { WorkflowRunStateV1, WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import type { WorkflowTriggerSummaryInputV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 
 import {
     resolveWorkStatusTone,

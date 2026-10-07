@@ -1,6 +1,7 @@
-import { createElement } from 'react';
-import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { act, createElement } from 'react';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { createPluginWidgetAreaHostPortV1 } from '@happier-dev/protocol/plugins/ui';
@@ -15,7 +16,11 @@ import { PluginUiPresentationHostProviderInternal, type PluginUiWidgetAreaPresen
 
 it('mounts the registered page area, changes followed context and reloads configured Resource widgets through the public author path', async () => {
   const plugin = await createPluginTestkit({ manifest: widgetAreasPlugin.manifest, module: widgetAreasPlugin });
+  const directory = await mkdtemp(join(tmpdir(), 'happier-widget-area-rnw-'));
   try {
+    await writeFile(join(directory, 'first.txt'), 'first');
+    await writeFile(join(directory, 'second.txt'), 'second');
+    await mkdir(join(directory, 'child'));
     const ui = widgetAreasPlugin.manifest.contributes?.ui;
     const page = ui?.views?.find(view => view.id === 'overview');
     const widget = ui?.views?.find(view => view.id === 'counter');
@@ -74,49 +79,69 @@ it('mounts the registered page area, changes followed context and reloads config
     const pageMount = await mountPage();
     const instance = (id: string, pinned = false) => ({ v: 1 as const, id,
       definition: { kind: 'installed' as const, surface: { pluginId: widgetAreasPlugin.manifest.id, localId: widget.id } },
-      bindings: { filter: pinned ? { kind: 'value' as const, value: 'open' } : { kind: 'context' as const, slot: 'filter' } },
+      bindings: {
+        directory: pinned ? { kind: 'value' as const, value: directory } : { kind: 'context' as const, slot: 'directory' },
+        filter: pinned ? { kind: 'value' as const, value: 'files' } : { kind: 'context' as const, slot: 'filter' },
+      },
     });
     const execute = async (operation: Parameters<PluginUiWidgetAreaPresentation['port']['execute']>[0]) => {
       if (!presented) throw new Error('The registered page did not embed its declared area');
       return presented.port.execute(operation, presented.context);
     };
     try {
-      expect(presented?.context).toEqual({ filter: 'open' });
+      expect(presented?.context).toEqual({ directory: '.', filter: 'files' });
+      await pageMount.getByRole('textbox', { label: 'Directory on the serving machine', value: '.' });
+      // Text entry is the real browser boundary; the public semantic fixture
+      // deliberately only exposes press, so no parallel author input API is invented.
+      const directoryField = document.querySelector('input[aria-label="Directory on the serving machine"]');
+      if (!(directoryField instanceof HTMLInputElement)) throw new Error('Directory input was not mounted');
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      if (!setValue) throw new Error('Browser input value setter missing');
+      await act(async () => {
+        setValue.call(directoryField, directory);
+        directoryField.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      expect(presented?.context).toEqual({ directory: '.', filter: 'files' });
+      await pageMount.press(await pageMount.getByRole('button', { name: 'Use directory' }));
+      expect(presented?.context).toEqual({ directory, filter: 'files' });
       expect(await execute({ actionId: 'widgets.instance.add', instance: instance('following') })).toMatchObject({ ok: true });
       expect(await execute({ actionId: 'widgets.instance.add', instance: instance('pinned', true) })).toMatchObject({ ok: true });
-      expect(await execute({ actionId: 'widgets.instance.width.set', instanceId: 'following', width: 'full' })).toMatchObject({ ok: true });
+      expect(await execute({ actionId: 'widgets.instance.size.set', instanceId: 'following', size: 'full' })).toMatchObject({ ok: true });
       expect(await execute({ actionId: 'widgets.instance.move', instanceId: 'pinned', toIndex: 0 })).toMatchObject({ ok: true });
-      await pageMount.press(await pageMount.getByRole('radio', { name: 'Closed' }));
-      expect(presented?.context).toEqual({ filter: 'closed' });
-      for (const [id, pinned, filter] of [['following', false, 'closed'], ['pinned', true, 'open']] as const) {
+      await pageMount.press(await pageMount.getByRole('radio', { name: 'Folders' }));
+      expect(presented?.context).toEqual({ directory, filter: 'folders' });
+      for (const [id, pinned, filter, count] of [['following', false, 'folders', 1], ['pinned', true, 'files', 2]] as const) {
         const input = await execute({ actionId: 'widgets.instance.inputs.validate', instanceId: id, bindings: instance(id, pinned).bindings });
-        expect(input).toEqual({ ok: true, result: { status: 'ready', input: { filter } } });
+        expect(input).toEqual({ ok: true, result: { status: 'ready', input: { directory, filter } } });
         if (!input.ok || !('input' in input.result)) throw new Error('Inputs were not admitted');
-        const readResource = vi.fn(async ({ resource: ref }: Readonly<{ resource: unknown }>) => {
+        const launchInput = input.result.input;
+        const readResource = async ({ resource: ref }: Readonly<{ resource: unknown }>) => {
           expect(ref).toEqual({ pluginId: widgetAreasPlugin.manifest.id, localId: 'count' });
-          const bytes = await resource.read({ context: { kind: 'global' }, signal: new AbortController().signal });
+          const bytes = await resource.read({ context: { kind: 'surface', mountInstanceKey: id,
+            launchInput }, signal: new AbortController().signal });
           return { contentType: 'application/json', digest: `sha256:${'a'.repeat(64)}`,
             bytes: typeof bytes === 'string' ? new TextEncoder().encode(bytes) : bytes };
-        });
+        };
         const body = await createPluginUiTestkit({
           identity: { instanceId: id, mountNonce: `${id}-mount` }, authorPlugin: { id: widgetAreasPlugin.manifest.id, version: '1.0.0' },
-          surface: nativeWidget, launchInput: input.result.input,
+          surface: nativeWidget, launchInput,
           surfaceContext: createSurfaceContextFixture({ mount: { kind: 'embedded', role: 'widget', presentation: 'content' }, target: { kind: 'app' } }),
           adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: { readResource },
         });
         try {
-          await vi.waitFor(async () => { expect(await body.getByText('42')).toEqual({ content: '42' }); });
-          await body.getByText(`Filter: ${filter}`);
-          expect(readResource).toHaveBeenCalled();
+          await vi.waitFor(async () => { expect(await body.getByText(String(count))).toEqual({ content: String(count) }); });
+          await body.getByText(`${filter === 'files' ? 'Files' : 'Folders'} · ${directory}`);
+          await body.press(await body.getByRole('button', { name: 'Refresh count' }));
+          await vi.waitFor(async () => { expect(await body.getByText(String(count))).toEqual({ content: String(count) }); });
         } finally { await body.dispose(); }
       }
     } finally { await pageMount.dispose(); }
     const reload = await mountPage();
     try {
       expect(await execute({ actionId: 'widgets.instance.list' })).toMatchObject({ ok: true, result: { instances: [
-        { instance: instance('pinned', true), width: 'half' }, { instance: instance('following'), width: 'full' },
+        { instance: instance('pinned', true), size: 'medium' }, { instance: instance('following'), size: 'full' },
       ] } });
       expect(boundary.rows.size).toBe(1);
     } finally { await reload.dispose(); }
-  } finally { await plugin.dispose(); }
+  } finally { await plugin.dispose(); await rm(directory, { recursive: true, force: true }); }
 });

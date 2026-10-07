@@ -1,4 +1,4 @@
-import { ENCRYPTED_DATA_KEY_V1_BYTES } from '@happier-dev/protocol';
+import { ENCRYPTED_DATA_KEY_V1_BYTES } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import type { ScopedRpcSessionEncryptionContext } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 
 /**

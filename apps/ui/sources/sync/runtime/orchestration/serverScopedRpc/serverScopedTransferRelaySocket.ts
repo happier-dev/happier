@@ -1,4 +1,5 @@
-import { TRANSFER_RELAY_V2_SOCKET_EVENT, type TransferRelayV2SendEnvelope } from '@happier-dev/protocol';
+import { TRANSFER_RELAY_V2_SOCKET_EVENT } from '@happier-dev/protocol/transfers/relay/v2/socketEvents';
+import type { TransferRelayV2SendEnvelope } from '@happier-dev/protocol/transfers/relay/v2/transferRelayEnvelopeSchema';
 
 import { apiSocket } from '@/sync/api/session/apiSocket';
 

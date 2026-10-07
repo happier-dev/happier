@@ -2,7 +2,7 @@ import {
     SESSION_RUNNER_RUNTIME_METADATA_KEY,
     SessionRunnerRuntimeStateV1Schema,
     type SessionRunnerRuntimeStateV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1';
 
 function readRecord(value: unknown): Record<string, unknown> | null {
     return value && typeof value === 'object' && !Array.isArray(value)

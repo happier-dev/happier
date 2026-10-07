@@ -49,7 +49,7 @@ import { Text } from '@/components/ui/text/Text';
 import { resolveToolErrorSummary } from '@/components/tools/shell/presentation/resolveToolErrorSummary';
 import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
 import { buildApprovalToolCallLocation, doesApprovalMatchToolCall } from './toolApprovalPromptMatching';
-import { isAskUserQuestionToolName } from '@happier-dev/protocol';
+import { isAskUserQuestionToolName } from '@happier-dev/protocol/activity/agentRequestSummary';
 import { resolveToolPermissionTerminalErrorMessage } from '@/components/tools/shell/permissions/resolveToolPermissionTerminalErrorMessage';
 import { Icon } from '@/components/ui/icons/Icon';
 import {

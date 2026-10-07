@@ -4,7 +4,7 @@ import {
     AccountSessionsSignOutEverywhereServerOutputV1Schema,
     type AccountSessionsSignOutEverywhereActionInputV1,
     type AccountSessionsSignOutEverywhereActionOutputV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/auth/accountSessions';
 
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import {

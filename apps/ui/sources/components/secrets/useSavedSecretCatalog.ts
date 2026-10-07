@@ -1,12 +1,7 @@
 import * as React from 'react';
 import { randomUUID } from 'expo-crypto';
-import {
-    applyAccountSettingsSavedSecretMutation,
-    projectSavedSecretCatalogCollisionStateV1,
-    rekeyPersonalSavedSecret,
-    type SavedSecretCatalogCorruptEntryV1,
-    type SavedSecretCatalogEntryV1,
-} from '@happier-dev/protocol';
+import { applyAccountSettingsSavedSecretMutation, rekeyPersonalSavedSecret } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import { projectSavedSecretCatalogCollisionStateV1, type SavedSecretCatalogCorruptEntryV1, type SavedSecretCatalogEntryV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 
 import { useSetting, useSettingsVersion } from '@/sync/store/hooks';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';

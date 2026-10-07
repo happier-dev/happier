@@ -4,7 +4,7 @@ import {
     AUTOMATION_V3_RUN_LIST_MAX_ITEMS,
     AutomationV3RunListResponseSchema,
     type AutomationV3RunListItem,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/automations/automationApiV3';
 
 import { getAutomationAuthHeaders, readAutomationJsonOrThrow } from './apiAutomationHttp';
 import type { AutomationRequestContext } from './apiAutomations';

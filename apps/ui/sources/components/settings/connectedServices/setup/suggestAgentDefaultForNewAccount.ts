@@ -1,9 +1,5 @@
-import {
-    resolveAgentConnectedAccountPurposeDefaults,
-    writeAgentConnectedAccountPurposeDefault,
-    type AgentConnectedAccountPurposeDeclaration,
-    type QualifiedConnectedAccountRef,
-} from '@happier-dev/protocol';
+import { resolveAgentConnectedAccountPurposeDefaults, writeAgentConnectedAccountPurposeDefault, type AgentConnectedAccountPurposeDeclaration } from '@happier-dev/protocol/account/settings/connected-services';
+import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 
 type AgentDefaultSettings = Parameters<typeof resolveAgentConnectedAccountPurposeDefaults>[0]['settings'];
 

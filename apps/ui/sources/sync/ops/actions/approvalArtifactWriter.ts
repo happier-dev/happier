@@ -1,9 +1,6 @@
-import {
-    approvalArtifactBodyMatchesHeaderV1,
-    buildApprovalRequestArtifactHeaderV1,
-    decideApprovalRequestTransition,
-    type ApprovalRequest,
-} from '@happier-dev/protocol';
+import { approvalArtifactBodyMatchesHeaderV1, buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
+import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 import type { ArtifactHeader, DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 

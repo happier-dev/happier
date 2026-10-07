@@ -1,10 +1,6 @@
-import {
-    TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1,
-    bindHomeDomainActionHttpRequestV1,
-    HomeGovernanceEligibilityV1Schema,
-    homeDomainActionOutputSchemaV1,
-    type HomeGovernanceEligibilityV1,
-} from '@happier-dev/protocol';
+import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
+import { bindHomeDomainActionHttpRequestV1, homeDomainActionOutputSchemaV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
+import { HomeGovernanceEligibilityV1Schema, type HomeGovernanceEligibilityV1 } from '@happier-dev/protocol/home/governance/projection';
 
 import { requestHomeDomain, type HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';
 import type { ScopedSnapshotError } from '@/sync/domains/scope/scopedSnapshotFacts';

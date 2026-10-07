@@ -3,12 +3,9 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon } from '@/components/ui/icons/Icon';
-import {
-    fromWorkflowAgentStatus,
-    fromWorkflowRunStatus,
-    type SessionWorkflowAgentStatusV1,
-    type SessionWorkflowRunStatusV1,
-} from '@happier-dev/protocol';
+import { fromWorkflowAgentStatus } from '@happier-dev/protocol/sessions/work/agentActivity/adapters/fromWorkflowAgentStatus';
+import { fromWorkflowRunStatus } from '@happier-dev/protocol/sessions/work/agentActivity/adapters/fromWorkflowRunStatus';
+import type { SessionWorkflowAgentStatusV1, SessionWorkflowRunStatusV1 } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowRunSnapshotV1';
 
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { workStatusGlyphColor } from '@/components/work/status/workStatusTreatment';

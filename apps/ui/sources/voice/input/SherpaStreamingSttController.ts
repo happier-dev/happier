@@ -19,7 +19,7 @@ import {
 } from '@/voice/runtime/input/TurnEndpointController';
 import { createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
 import { resolveVoicePcmCaptureAudioSession } from '@/voice/runtime/nativePcmAudioSession';
-import { VOICE_RUNTIME_STT_PCM_FORMAT } from '@happier-dev/protocol';
+import { VOICE_RUNTIME_STT_PCM_FORMAT } from '@happier-dev/protocol/voice/runtimeConfig';
 
 import { resolveLocalNeuralSttCaptureSettings } from './resolveLocalNeuralSttCaptureSettings';
 import type { SttController, SttStartParams, SttStopResult } from './sttController';

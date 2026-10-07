@@ -1,18 +1,8 @@
-import {
-    browserViewKey,
-    BrowserActiveTargetV1Schema,
-    type BrowserActiveTargetV1,
-    BrowserAutomationCancelActiveResultV1Schema,
-    BrowserAutomationActionResultV1Schema,
-    BrowserAutomationErrorCodeV1Schema,
-    BrowserAutomationActionKindV1Schema,
-    isBrowserAutomationMutatingActionKind,
-    redactBrowserAutomationActionResultDetails,
-    redactBrowserAutomationTimelineDetails,
-    type BrowserAutomationCancelActiveResultV1,
-    type BrowserAutomationErrorCodeV1,
-    type BrowserAutomationActionResultV1,
-} from '@happier-dev/protocol';
+import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
+import { BrowserActiveTargetV1Schema, type BrowserActiveTargetV1 } from '@happier-dev/protocol/browser/events/activeTarget';
+import { BrowserAutomationCancelActiveResultV1Schema, BrowserAutomationActionResultV1Schema, BrowserAutomationActionKindV1Schema, isBrowserAutomationMutatingActionKind, type BrowserAutomationCancelActiveResultV1, type BrowserAutomationActionResultV1 } from '@happier-dev/protocol/browser/automation/v1';
+import { BrowserAutomationErrorCodeV1Schema, type BrowserAutomationErrorCodeV1 } from '@happier-dev/protocol/browser/automation/errors';
+import { redactBrowserAutomationActionResultDetails, redactBrowserAutomationTimelineDetails } from '@happier-dev/protocol/browser/automation/redaction';
 
 export type BrowserAutomationAuthority = 'uiLocal' | 'daemon' | 'serverBroker';
 export type BrowserAutomationRequesterKind = 'agent' | 'plugin' | 'system' | 'user';

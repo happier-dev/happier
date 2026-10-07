@@ -1,4 +1,5 @@
-import { ExecutionRunLaunchOriginSchema, type BackendTargetRefV1, type ExecutionRunLaunchOrigin } from '@happier-dev/protocol';
+import { ExecutionRunLaunchOriginSchema, type ExecutionRunLaunchOrigin } from '@happier-dev/protocol/execution/runs/index';
+import type { BackendTargetRefV1 } from '@happier-dev/protocol/backends/targets/backendTargetRef';
 
 import { resolveToolTranscriptSidechainId } from '@/components/tools/shell/views/resolveToolTranscriptSidechainId';
 import type { Message, ToolCallMessage } from "@happier-dev/session-core/messages";

@@ -3,7 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
-import { maybeParseJson } from '@happier-dev/protocol';
+import { maybeParseJson } from '@happier-dev/protocol/activity/parseJson';
 import { ToolFindText, useToolFindState } from '../core/ToolFindText';
 import { t } from '@/text';
 import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';

@@ -1,4 +1,4 @@
-import { BackendTargetKeyV2Schema } from '@happier-dev/protocol';
+import { BackendTargetKeyV2Schema } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { z } from 'zod';
 
 export const FavoriteBackendTargetKeysV1Schema = z.preprocess((value) => {

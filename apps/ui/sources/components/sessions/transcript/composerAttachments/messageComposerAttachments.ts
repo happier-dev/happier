@@ -1,9 +1,7 @@
 import * as React from 'react';
 
-import {
-    readHappierStructuredInputV1FromMeta,
-    type ComposerAttachmentInputV1,
-} from '@happier-dev/protocol';
+import { readHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/sessions/userMessageRpc';
+import type { ComposerAttachmentInputV1 } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
 
 export type TranscriptComposerAttachment = Readonly<{
     instanceId: string;

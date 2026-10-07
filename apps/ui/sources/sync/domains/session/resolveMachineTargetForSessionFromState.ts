@@ -6,7 +6,8 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { machineCollectionValues, findMachineInCollection, type MachineCollection } from '@/sync/domains/machines/identity/machineCollection';
 import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
-import { isSameMachineLocality, resolveSessionWorkspaceRootForMachine } from '@happier-dev/protocol';
+import { isSameMachineLocality } from '@happier-dev/protocol/machines/identity/machineLocality';
+import { resolveSessionWorkspaceRootForMachine } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
 import {
     resolveSessionDisplayTarget,
     resolveSessionRpcTarget,

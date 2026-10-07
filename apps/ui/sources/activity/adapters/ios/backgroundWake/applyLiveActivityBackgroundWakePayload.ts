@@ -1,7 +1,7 @@
 import {
     HAPPIER_FOCUS_LIVE_ACTIVITY_NAME,
     HappierFocusLiveActivityContentStateV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/activity/live/remoteUpdates';
 import { z } from 'zod';
 
 import type { LiveActivitySnapshot } from '../liveActivities/buildLiveActivitySnapshots';

@@ -1,5 +1,5 @@
 import type { BrowserControlViewState } from '../control';
-import { isLoopbackHostname } from '@happier-dev/protocol';
+import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
 
 /**
  * Presentation model for the toolbar SecurityOriginIndicator. The browser already TRACKS the

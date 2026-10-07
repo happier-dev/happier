@@ -1,11 +1,7 @@
-import {
-    BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
-    ConnectedServiceIdSchema,
-    ConnectedServiceProfileIdSchema,
-    type ConnectedServiceId,
-    type QualifiedConnectedAccountProfileV4,
-    type QualifiedConnectedAccountRef,
-} from '@happier-dev/protocol';
+import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
+import { ConnectedServiceIdSchema, ConnectedServiceProfileIdSchema, type ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 
 export type BuiltInConnectedAccountQuotaNegotiation =
     | 'advertised-v4'

@@ -1,9 +1,5 @@
-import {
-    buildExternalSessionFollowPolicyV1,
-    readExternalSessionFollowPolicyV1,
-    updateLinkedExternalSessionFollowMetadataV1,
-    type ExternalSessionFollowPolicy,
-} from '@happier-dev/protocol';
+import { buildExternalSessionFollowPolicyV1, readExternalSessionFollowPolicyV1, type ExternalSessionFollowPolicy } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import { updateLinkedExternalSessionFollowMetadataV1 } from '@happier-dev/protocol/sessions/external/followLifecycleV1';
 
 import type { Metadata } from '@happier-dev/session-core/state';
 

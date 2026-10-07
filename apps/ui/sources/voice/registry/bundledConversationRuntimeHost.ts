@@ -9,18 +9,15 @@ import type {
   BundledRealtimeProviderRuntimeHost,
   BundledRetiringDirectMediaTranscriptDrain,
 } from './bundledConversationRuntimeContract';
-import {
-  AgentSessionRealtimeInspectResultV1Schema,
-  describeActionForVoiceTool,
-  isVoiceSdkSafeActionSpec,
-  SessionLookupByTagsResponseV2Schema,
-  StrictJsonValueSchema,
-  VoiceRealtimeJsonValueSchema,
-  zodSchemaToJsonSchemaObject,
-  type ActionId,
-  type ConnectedServiceBindingsV2,
-  type VoiceRealtimeJsonValue,
-} from '@happier-dev/protocol';
+import { AgentSessionRealtimeInspectResultV1Schema } from '@happier-dev/protocol/voice/realtime/agentSession';
+import { describeActionForVoiceTool } from '@happier-dev/protocol/actions/actionVoiceToolSummary';
+import { isVoiceSdkSafeActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { SessionLookupByTagsResponseV2Schema } from '@happier-dev/protocol/sessions/control/contract';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { VoiceRealtimeJsonValueSchema, type VoiceRealtimeJsonValue } from '@happier-dev/protocol/voice/realtime/events';
+import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { VoiceHostedConversationService } from '@happier-dev/plugin-sdk/voice/client';
 import { createRealtimeReadOnlyClientTools } from '@/realtime/realtimeClientTools';
 import { fetchHappierVoiceToken, completeHappierVoiceSession, releaseHappierVoiceSession } from '@/sync/api/voice/apiVoice';

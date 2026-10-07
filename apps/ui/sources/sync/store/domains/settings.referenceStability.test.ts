@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createStore } from 'zustand/vanilla';
+import { getPreferredLanguage, setPreferredLanguageFromSettings, t } from '@/text/i18n';
+import { es } from '@/text/translations/es';
 
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
@@ -56,8 +59,8 @@ type TestState = SettingsDomainApi & Readonly<{
     getProjectForSession: undefined;
 }>;
 
-function createTestStore(): { getState: () => TestState } {
-    let state = {
+function createTestStore() {
+    return createStore<TestState>((set, get) => ({
         sessions: {},
         machines: {},
         machineDisplayById: {},
@@ -68,17 +71,8 @@ function createTestStore(): { getState: () => TestState } {
         concurrentSessionListCacheByServerId: {},
         machineListByServerId: {},
         getProjectForSession: undefined,
-    } as TestState;
-
-    const set = (updater: ((state: TestState) => Partial<TestState> | TestState) | Partial<TestState>) => {
-        const next = typeof updater === 'function' ? updater(state) : updater;
-        state = { ...state, ...next };
-    };
-    const get = () => state;
-    const domain = createSettingsDomain<TestState>({ set, get });
-    state = { ...state, ...(domain as SettingsDomainApi) };
-
-    return { getState: () => state };
+        ...createSettingsDomain<TestState>({ set, get }),
+    }));
 }
 
 /**
@@ -105,6 +99,18 @@ describe('createSettingsDomain settings projection reference stability', () => {
     beforeEach(() => {
         clearPersistence();
         store.clear();
+        setPreferredLanguageFromSettings(null);
+    });
+
+    it('notifies settings subscribers with the activated loaded locale and suppresses identical echoes', () => {
+        const api = createTestStore();
+        const observed: Array<{ language: string; copy: string }> = [];
+        api.subscribe(() => { observed.push({ language: getPreferredLanguage(), copy: t('tabs.inbox') }); });
+        api.getState().applySettingsLocal({ preferredLanguage: 'es' });
+        expect(api.getState().settings.preferredLanguage).toBe('es');
+        expect(observed).toEqual([{ language: 'es', copy: es.tabs.inbox }]);
+        api.getState().applySettingsLocal({ preferredLanguage: 'es' });
+        expect(observed).toHaveLength(1);
     });
 
     it('keeps the settings projection reference when a server echo carries structurally identical settings', async () => {

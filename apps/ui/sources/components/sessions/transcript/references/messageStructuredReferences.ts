@@ -1,10 +1,7 @@
 import * as React from 'react';
-import {
-    MENTION_KIND_V1,
-    readHappierStructuredInputV1FromMeta,
-    readMentionRefOpaqueForKindV1,
-    readStructuredInputMentionSourcesV1,
-} from '@happier-dev/protocol';
+import { MENTION_KIND_V1, readMentionRefOpaqueForKindV1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
+import { readHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/sessions/userMessageRpc';
+import { readStructuredInputMentionSourcesV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 
 import { extractWorkspaceFileMentions } from '@/components/sessions/linkedFiles/extractWorkspaceFileMentions';
 import { isSafeWorkspaceRelativePath } from '@/utils/path/isSafeWorkspaceRelativePath';

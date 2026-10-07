@@ -1,4 +1,8 @@
-import { PluginActionSurfaceV2Schema, PluginJsonValueV2Schema, PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE, type ActionExecutorDeps, type ActionExecuteResult } from '@happier-dev/protocol';
+import { PluginActionSurfaceV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
+import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
+import { PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { CurrentUiContextVoiceToolPort } from './currentUiContextVoiceToolPort';
 import type { PluginSurfaceActionInvocationSurface, PluginSurfaceHostActionBinding } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
 

@@ -543,10 +543,6 @@ test('sync status and explicit sync use the target session in the stack Mutagen 
   assert.equal(synced.state, 'ready');
   const flushCall = calls.find((call) => call.args.includes('flush'));
   assert.ok(flushCall);
-  assert.equal(
-    flushCall.env.HAPPIER_DEV_TARGET_CONTROL_STATE_DIR,
-    '/tmp/stack/dev-target-command-load-native/sync-control',
-  );
   assert.ok(calls.every((call) => call.env.MUTAGEN_DATA_DIRECTORY === '/tmp/stack/mutagen/data'));
 });
 

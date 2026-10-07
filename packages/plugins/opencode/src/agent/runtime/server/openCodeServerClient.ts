@@ -765,6 +765,18 @@ export function createOpenCodeServerClient(input: Readonly<{
   ): Readonly<Record<string, string | undefined>> => (
     openCodeV2LocationQuery(resolveDirectory(value))
   );
+  const readV2Catalog = async (
+    path: '/api/command' | '/api/skill',
+    directory?: string | null,
+  ): Promise<unknown[]> => {
+    const query = locationQuery(directory);
+    const operation = path === '/api/command' ? 'command_catalog' : 'skill_catalog';
+    // OpenCode 2.0.15/2.0.20 integration.list awaits Plugin.awaitActivation;
+    // command.list and skill.list otherwise expose the cold, empty registry.
+    await requestJson({ fetch: params.fetch, method: 'GET', path: '/api/integration', query, operation });
+    const response = await requestJson({ fetch: params.fetch, method: 'GET', path, query, operation });
+    return readOpenCodeV2DataArray(response);
+  };
   const unsupported = (
     operation: OpenCodeServerUnsupportedOperation,
     message: string,
@@ -1315,26 +1327,18 @@ export function createOpenCodeServerClient(input: Readonly<{
       });
     },
     async appCommands(input) {
+      if (isV2) return await readV2Catalog('/api/command', input.directory);
       const response = await requestJson({
         fetch: params.fetch,
         method: 'GET',
-        path: isV2 ? '/api/command' : '/command',
-        query: isV2 ? locationQuery(input.directory) : directoryQuery(input.directory),
+        path: '/command',
+        query: directoryQuery(input.directory),
         operation: 'command_catalog',
       });
-      return isV2 ? readOpenCodeV2DataArray(response) : Array.isArray(response) ? response : [];
+      return Array.isArray(response) ? response : [];
     },
     async appSkills(input) {
-      if (isV2) {
-        const response = await requestJson({
-          fetch: params.fetch,
-          method: 'GET',
-          path: '/api/skill',
-          query: locationQuery(input.directory),
-          operation: 'skill_catalog',
-        });
-        return readOpenCodeV2DataArray(response);
-      }
+      if (isV2) return await readV2Catalog('/api/skill', input.directory);
       const response = await params.fetch({
         url: pathWithQuery('/skill', directoryQuery(input.directory)),
         method: 'GET',

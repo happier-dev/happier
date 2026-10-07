@@ -10,7 +10,7 @@ export async function exerciseReviewWidgetArea(host: Pick<PluginUiHostApi, 'widg
             definition: { kind: 'installed', surface: { pluginId: 'examples.public-sdk-review-assistant', localId: 'review-status-widget' } },
             bindings: { session: { kind: 'context', slot: 'session' } } } },
         { actionId: 'widgets.instance.inputs.validate', instanceId, bindings: { session: { kind: 'context', slot: 'session' } } },
-        { actionId: 'widgets.instance.width.set', instanceId, width: 'full' },
+        { actionId: 'widgets.instance.size.set', instanceId, size: 'full' },
         { actionId: 'widgets.instance.move', instanceId, toIndex: 0 },
         { actionId: 'widgets.instance.refresh', instanceId },
         { actionId: 'widgets.instance.list' },

@@ -1,14 +1,9 @@
-import {
-    ActionIdSchema,
-    getActionSpec,
-    parseQualifiedPluginActionId,
-    type ActionId,
-    type ActionSettingsActionId,
-    type ActionSpec,
-    type ActionSurfaces,
-    type ActionUiPlacement,
-    type ActionsSettingsV1,
-} from '@happier-dev/protocol';
+import { ActionIdSchema, type ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { getActionSpec, type ActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import type { ActionSettingsActionId, ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import type { ActionSurfaces } from '@happier-dev/protocol/actions/metadata';
+import type { ActionUiPlacement } from '@happier-dev/protocol/actions/actionUiPlacements';
 
 import type { TranslationKey } from '@/text';
 

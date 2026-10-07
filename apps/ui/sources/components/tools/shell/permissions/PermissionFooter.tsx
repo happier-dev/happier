@@ -1,4 +1,6 @@
-import { extractShellCommand, formatPermissionRequestSummary, type SessionPermissionDecisionActorV1 } from '@happier-dev/protocol';
+import { extractShellCommand } from '@happier-dev/protocol/activity/shellCommand';
+import { formatPermissionRequestSummary } from '@happier-dev/protocol/activity/agentRequestSummary';
+import type { SessionPermissionDecisionActorV1 } from '@happier-dev/protocol/sessions/permissions/v1';
 import React, { useRef, useState } from 'react';
 import { View, TouchableOpacity, Platform } from 'react-native';
 import { useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';

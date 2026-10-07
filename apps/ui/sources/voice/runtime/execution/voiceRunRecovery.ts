@@ -1,7 +1,7 @@
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import {
     resolveVoiceAgentRunBackendId,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/voice/voiceAgentRunMetadataV1';
 import type { VoiceAgentHandle } from '@/voice/agent/types';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { isVoiceAgentNotFoundError } from '@/voice/agent/voiceAgentErrorGuards';

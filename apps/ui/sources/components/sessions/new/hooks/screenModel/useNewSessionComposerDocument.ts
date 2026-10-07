@@ -7,7 +7,7 @@ import type {
     ComposerAttachmentViewV1,
     SessionDirectoryIntentV1,
 } from '@happier-dev/protocol';
-import { sameStrictJsonValue } from '@happier-dev/protocol';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { composerRefsV1Equal } from '@happier-dev/protocol/plugins/ui/composerRef';
 import * as React from 'react';
 

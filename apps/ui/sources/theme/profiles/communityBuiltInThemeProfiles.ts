@@ -89,7 +89,6 @@ const createCuratedThemeOverrides = (palette: CuratedThemePalette): ThemeProfile
     // enough against that palette's own raised surfaces.
     'border.focus': palette.focusRing ?? palette.activeForeground,
     'border.modal': palette.borderModal,
-    'effect.surfaceHighlight': 'transparent',
     'chrome.header.background': palette.base,
     'chrome.header.foreground': palette.textPrimary,
     'text.primary': palette.textPrimary,

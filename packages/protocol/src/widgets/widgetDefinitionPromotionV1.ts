@@ -6,6 +6,7 @@ import { WidgetDefinitionDraftV1Schema, projectWidgetDefinitionForSharedPublicat
 import type { WidgetDefinitionActionDepsV1 } from './definitionActionsV1.js';
 import type { WidgetInputDescriptorV1 } from './widgetInputAdmissionV1.js';
 import type { WidgetDefinitionRefV1, WidgetInputBindingsV1 } from './widgetInstanceV1.js';
+import { WIDGET_SIZE_ORDER_V1 } from './widgetPresentationV1.js';
 
 /** The copy's Session read becomes configurable; UI disclosure consumes this same transformation. */
 export function projectWidgetDefinitionPromotionBindingsV1(
@@ -35,6 +36,7 @@ export function createSessionWidgetDefinitionSourceReaderV1(input: Readonly<{
         if (!item || !isSessionSurfaceItemIdentityCorrespondingV1(request.itemId, item)) return fail('widget_definition_source_unavailable');
         if (item.source.kind === 'declarative') return {
             definition: WidgetDefinitionDraftV1Schema.parse({ name: item.title || request.itemId,
+                sizeDeclaration: { sizes: [...WIDGET_SIZE_ORDER_V1], defaultSize: 'medium' },
                 body: { kind: 'declarative', document: item.source.document }, inputs: { fields: [] }, inputSchema: { type: 'object', additionalProperties: false } }),
             bindings: {},
         };
@@ -46,8 +48,9 @@ export function createSessionWidgetDefinitionSourceReaderV1(input: Readonly<{
         if (item.source.instance.definition.kind !== 'installed') return fail('widget_definition_source_unsupported');
         const descriptor = await input.readInstalledDescriptor(item.source.instance.definition, request);
         request.signal?.throwIfAborted();
-        if (!descriptor?.inputSchema) return fail('widget_definition_source_unavailable');
+        if (!descriptor?.inputSchema || !descriptor.sizeDeclaration) return fail('widget_definition_source_unavailable');
         return { definition: WidgetDefinitionDraftV1Schema.parse({ name: item.title || request.itemId,
+            sizeDeclaration: descriptor.sizeDeclaration,
             body: item.source.instance.definition, inputs: descriptor.inputs ?? { fields: [] }, inputSchema: descriptor.inputSchema,
             ...(descriptor.sessionInputPath ? { sessionInputPath: descriptor.sessionInputPath } : {}),
             ...('connectedAccountPurposeBindings' in descriptor ? { connectedAccountPurposeBindings: descriptor.connectedAccountPurposeBindings } : {}),

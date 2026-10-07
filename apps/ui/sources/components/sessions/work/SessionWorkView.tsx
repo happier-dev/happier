@@ -4,7 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { usePaneHeaderSlotContent } from '@/components/appShell/panes/paneHeaderSlot';
 import { SessionRoleValueRow, isSessionRoleSnapshotCopiedAcrossOwners } from '@/components/roles/session/sessionRole';
-import { readSessionRolesV1 } from '@happier-dev/protocol';
+import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { SessionAgentsLaunchMenu } from '@/components/sessions/agents/launch/SessionAgentsLaunchMenu';

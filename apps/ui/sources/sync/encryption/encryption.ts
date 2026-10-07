@@ -18,19 +18,11 @@ import sodium, { type LibsodiumKeyPair } from '@/encryption/libsodium.lib';
 import { decryptBox, encryptBox } from "@/encryption/libsodium";
 import { randomUUID } from '@/platform/randomUUID';
 import { getRandomBytes } from '@/platform/cryptoRandom';
-import {
-    ENCRYPTED_DATA_KEY_V1_BYTES,
-    openAccountScopedBlobCiphertext,
-    openEncryptedDataKeyEnvelopeV1,
-    sealAccountScopedBlobCiphertext,
-    sealAutomationTriggerDefinitionStoredEnvelopeV1,
-    sealEncryptedDataKeyEnvelopeV1,
-    AutomationEncryptedTriggerDefinitionEnvelopeV1Schema,
-    type AccountScopedCryptoMaterial,
-    type AutomationEncryptedTriggerDefinitionEnvelopeV1,
-    type AutomationEventTriggerDefinitionStoredPayloadV1,
-    type AutomationTriggerDefinitionBindingV1,
-} from '@happier-dev/protocol';
+import { ENCRYPTED_DATA_KEY_V1_BYTES, openEncryptedDataKeyEnvelopeV1, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { sealAutomationTriggerDefinitionStoredEnvelopeV1, type AutomationTriggerDefinitionBindingV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
+import { AutomationEncryptedTriggerDefinitionEnvelopeV1Schema, type AutomationEncryptedTriggerDefinitionEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinition';
+import type { AutomationEventTriggerDefinitionStoredPayloadV1 } from '@happier-dev/protocol/automations/event';
 import { syncPerformanceTelemetry } from '../runtime/syncPerformanceTelemetry';
 import { createNativeCryptoWorker } from './nativeCryptoWorker/nativeCryptoWorker';
 import {

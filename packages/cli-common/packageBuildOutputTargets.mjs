@@ -1,6 +1,8 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 
+export const WORKSPACE_PACKAGE_BUILD_INPUT_RECORD = '.happier-build-inputs.json';
+
 function collectTargetStrings(value, targets) {
   if (typeof value === 'string') {
     targets.push(value);

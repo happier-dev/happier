@@ -2,6 +2,10 @@
 # Remote command custody uses the existing execution PID file. Noninteractive
 # controllers keep stdin open as a lifetime pipe; payload stdin remains closed
 # unless the admitted runtime-build control channel explicitly forwards it.
+# Parse before execution: source synchronization must not change a running
+# command's remaining cleanup or status handling. Keep the same shell scope.
+{
+
 set -u
 lifetime_stdin=${HAPPIER_REMOTE_EXEC_LIFELINE-0}
 control_stdin=${HAPPIER_REMOTE_EXEC_CONTROL_STDIN-0}
@@ -280,3 +284,4 @@ command_status=$?
 terminate_command
 remote_child_pid=
 exit "$command_status"
+}

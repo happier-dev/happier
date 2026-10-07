@@ -1,7 +1,7 @@
 import {
     DaemonComputerActionExecuteRequestV1Schema,
     DaemonComputerActionExecuteResponseV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/computer/v1';
 import { isRpcMethodNotFoundResult, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';

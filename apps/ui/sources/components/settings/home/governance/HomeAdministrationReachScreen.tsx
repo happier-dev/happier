@@ -2,7 +2,8 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { SERVER_CONFIG, validateServerConfigText } from '@happier-dev/protocol';
+import { SERVER_CONFIG } from '@happier-dev/protocol/serverConfig/registry';
+import { validateServerConfigText } from '@happier-dev/protocol/serverConfig/serverConfigCodec';
 import type {
     HomeReachabilityV1,
     HomeSettingEntryV1,

@@ -10,6 +10,10 @@ import {
     useOverlayPresence,
 } from '@/components/ui/overlays/motion/overlayMotion';
 import { shadowLevelStyle } from '@/shadowElevation';
+import { resolveThemeSurfaceBorderStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
+import { resolveThemeRaisedEdge } from '@/components/ui/surfaces/themeRaisedEdge';
+import { SurfaceRim } from '@/components/ui/surfaces/SurfaceRim';
+import { surfaceUsesRim } from '@/components/ui/surfaces/surfaceEdgeTreatment';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { resolveOverlayPointerEvents } from '@/components/ui/overlays/resolveOverlayPointerEvents';
 import { useOptionalSafeAreaInsets } from '@/hooks/ui/useOptionalSafeAreaInsets';
@@ -38,6 +42,9 @@ const NOTICE_TOP_MARGIN_PX = 12;
 /** It hangs from the top of the window: it drops in from that edge and lifts back into it. */
 const NOTICE_MOTION = resolveOverlayMotionPreset({ kind: 'popover', direction: 'bottom' });
 
+/** A notice is a floating surface (toast): the floating hairline and its rim, at the toast's radius. */
+const NOTICE_RADIUS_PX = 12;
+
 const stylesheet = StyleSheet.create((theme) => ({
     noticeHost: {
         position: 'absolute',
@@ -48,9 +55,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     notice: {
         maxWidth: 560,
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
+        borderRadius: NOTICE_RADIUS_PX,
+        ...resolveThemeSurfaceBorderStyle({
+            borderColor: theme.colors.border.modal,
+            edge: resolveThemeRaisedEdge(theme, 'modal'),
+            rim: surfaceUsesRim('floating', theme.dark),
+        }),
         backgroundColor: theme.colors.surface.elevated,
         paddingHorizontal: 14,
         paddingVertical: 10,
@@ -170,6 +180,7 @@ export const PresentationNoticeHost = React.memo(function PresentationNoticeHost
                         <Text style={styles.undoLabel}>{shownUndo.label}</Text>
                     </Pressable>
                 ) : null}
+                <SurfaceRim role="floating" radius={NOTICE_RADIUS_PX} border="modal" />
             </Animated.View>
         </View>
     );

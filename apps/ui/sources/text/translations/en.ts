@@ -1,141 +1,564 @@
-import { promptPickerTranslations } from './promptPickerTranslations';
-import { pendingNavigationTranslations } from './pendingNavigationTranslations';
-import { fileContentSearchTranslations } from './fileContentSearchTranslations';
-import { voiceSettingsPagesTranslations } from './voiceSettingsPagesTranslations';
-import { folderlessSessionTranslations } from './folderlessSessionTranslations';
-import { sessionCollaborationTranslations } from './sessionCollaborationTranslations';
-import { sessionMessageAccountActorTranslations } from './sessionMessageAccountActorTranslations';
-import { sessionAccessTranslations } from './sessionAccessTranslations';
-import { nativePasswordTranslations } from './nativePasswordTranslations';
-import { sessionFollowTranslations } from './sessionFollowTranslations';
-import { sessionHomeFreshnessTranslations } from './sessionHomeFreshnessTranslations';
-import { sessionEmbeddedTranslations } from './sessionEmbeddedTranslations';
-import { sessionReminderTranslations } from './sessionReminderTranslations';
+
+import { workspaceTabKeyboardTranslations } from './workspaceTabTranslations.shared';
+
+import { terminalWorkspaceKeyboardTranslations } from './terminalWorkspaceTranslations.shared';
+
+
+import { promptPickerTranslations as feature_promptPickerTranslations } from './features/en';
+
+import { pendingNavigationTranslations as feature_pendingNavigationTranslations } from './features/en';
+
+import { fileContentSearchTranslations as feature_fileContentSearchTranslations } from './features/en';
+
+import { voiceSettingsPagesTranslations as feature_voiceSettingsPagesTranslations } from './features/en';
+
+import { folderlessSessionTranslations as feature_folderlessSessionTranslations } from './features/en';
+
+import { sessionCollaborationTranslations as feature_sessionCollaborationTranslations } from './features/en';
+
+import { sessionMessageAccountActorTranslations as feature_sessionMessageAccountActorTranslations } from './features/en';
+
+import { sessionAccessTranslations as feature_sessionAccessTranslations } from './features/en';
+
+import { nativePasswordTranslations as feature_nativePasswordTranslations } from './features/en';
+
+import { sessionFollowTranslations as feature_sessionFollowTranslations } from './features/en';
+
+import { sessionHomeFreshnessTranslations as feature_sessionHomeFreshnessTranslations } from './features/en';
+
+import { sessionEmbeddedTranslations as feature_sessionEmbeddedTranslations } from './features/en';
+
+import { sessionReminderTranslations as feature_sessionReminderTranslations } from './features/en';
+
 import { PRODUCT_STORY_DETAILS_ENGLISH } from '@happier-dev/brand/product-story';
-import { externalSessionOperationTranslations } from './externalSessionOperationTranslations';
-import { externalSessionSettingsTranslations } from './externalSessionSettingsTranslations';
-import { sessionResponsibilityTranslations } from './sessionResponsibilityTranslations';
-import { sessionListFilterTranslations } from './sessionListFilterTranslations';
-import { pluginPermissionTranslations } from './pluginPermissionTranslations';
-import { sessionBoardTranslations } from './sessionBoardTranslations';
-import { pluginMarketplaceDiscoverTranslations } from './pluginMarketplaceDiscoverTranslations';
-import { pluginSettingsPresentationTranslations } from './pluginSettingsPresentationTranslations';
-import { sessionRemotePermissionGrantTranslations } from './sessionRemotePermissionGrantTranslations';
-import { sessionAgentActivityTranslations } from './sessionAgentActivityTranslations';
-import { sessionWorkTranslations } from './sessionWorkTranslations';
-import { entityDragDropTranslations } from './entityDragDropTranslations';
-import { agentStartTranslations } from './agentStartTranslations';
-import { goalControlTranslations } from './goalControlTranslations';
-import { inboxWorkTranslations } from './inboxWorkTranslations';
-import { sessionGitPaneTranslations } from './sessionGitPaneTranslations';
-import { sessionGitDisplayTranslations } from './sessionGitDisplayTranslations';
-import { sessionGitBranchesTranslations } from './sessionGitBranchesTranslations';
-import { sessionGitPullRequestTranslations } from './sessionGitPullRequestTranslations';
-import { sessionConversationSurfaceTranslations } from './sessionConversationSurfaceTranslations';
-import { changedFileEvidenceTranslations } from './changedFileEvidenceTranslations';
-import { turnChangesTranslations } from './turnChangesTranslations';
-import { committedMessageActionTranslations } from './committedMessageActionTranslations';
-import { scmComparisonTranslations } from './scmComparisonTranslations';
-import { walkthroughTranslations } from './walkthroughTranslations';
-import { walkthroughSettingsTranslations } from './walkthroughSettingsTranslations';
-import { walkthroughStartTranslations } from './walkthroughStartTranslations';
-import { reviewWalkthroughTranslations } from './reviewWalkthroughTranslations';
-import { commitProposalTranslations } from './commitProposalTranslations';
-import { voiceReadinessTranslations } from './voiceReadinessTranslations';
-import { voiceProviderPrivacyTranslations } from './voiceProviderPrivacyTranslations';
-import { pluginWebhookAdministrationTranslations } from './pluginWebhookAdministrationTranslations';
-import { pluginAccountDataEraseTranslations } from './pluginAccountDataEraseTranslations';
-import { apiTokenSettingsTranslations } from './apiTokenSettingsTranslations';
-import { embedSettingsTranslations } from './embedSettingsTranslations';
-import { embedTranslations } from './embedTranslations';
-import { actionFamilyTranslations } from './actionFamilyTranslations';
-import { providerCollectionTranslations } from './providerCollectionTranslations';
-import { settingsSearchKeywordsTranslations } from './settingsSearchKeywordsTranslations';
-import { automationPageTranslations } from './automationPageTranslations';
-import { settingsSessionPagesTranslations } from './settingsSessionPagesTranslations';
-import { workspaceTabKeyboardTranslations, workspaceTabTranslations } from './workspaceTabTranslations';
-import { terminalWorkspaceKeyboardTranslations, terminalWorkspaceTranslations } from './terminalWorkspaceTranslations';
-import { phoneNavigationTranslations } from './phoneNavigationTranslations';
-import { workspaceBarTranslations } from './workspaceBarTranslations';
-import { settingsProfilesRemoteHostsPageTranslations } from './settingsProfilesRemoteHostsPageTranslations';
-import { profilesPageTranslations } from './profilesPageTranslations';
-import { machineDetailPageTranslations } from './machineDetailPageTranslations';
-import { sessionPageTranslations } from './sessionPageTranslations';
-import { pluginAccountReleaseSelectionTranslations } from './pluginAccountReleaseSelectionTranslations';
-import { pluginMachineMatrixTranslations } from './pluginMachineMatrixTranslations';
-import { pluginInvocationLogTranslations } from './pluginInvocationLogTranslations';
-import { eventAutomationComposerTranslations } from './eventAutomationComposerTranslations';
+
+import { externalSessionOperationTranslations as feature_externalSessionOperationTranslations } from './features/en';
+
+import { externalSessionSettingsTranslations as feature_externalSessionSettingsTranslations } from './features/en';
+
+import { sessionResponsibilityTranslations as feature_sessionResponsibilityTranslations } from './features/en';
+
+import { sessionListFilterTranslations as feature_sessionListFilterTranslations } from './features/en';
+
+import { pluginPermissionTranslations as feature_pluginPermissionTranslations } from './features/en';
+
+import { sessionBoardTranslations as feature_sessionBoardTranslations } from './features/en';
+
+import { pluginMarketplaceDiscoverTranslations as feature_pluginMarketplaceDiscoverTranslations } from './features/en';
+
+import { pluginSettingsPresentationTranslations as feature_pluginSettingsPresentationTranslations } from './features/en';
+
+import { sessionRemotePermissionGrantTranslations as feature_sessionRemotePermissionGrantTranslations } from './features/en';
+
+import { sessionAgentActivityTranslations as feature_sessionAgentActivityTranslations } from './features/en';
+
+import { sessionWorkTranslations as feature_sessionWorkTranslations } from './features/en';
+
+import { entityDragDropTranslations as feature_entityDragDropTranslations } from './features/en';
+
+import { agentStartTranslations as feature_agentStartTranslations } from './features/en';
+
+import { goalControlTranslations as feature_goalControlTranslations } from './features/en';
+
+import { inboxWorkTranslations as feature_inboxWorkTranslations } from './features/en';
+
+import { sessionGitPaneTranslations as feature_sessionGitPaneTranslations } from './features/en';
+
+import { sessionGitDisplayTranslations as feature_sessionGitDisplayTranslations } from './features/en';
+
+import { sessionGitBranchesTranslations as feature_sessionGitBranchesTranslations } from './features/en';
+
+import { sessionGitPullRequestTranslations as feature_sessionGitPullRequestTranslations } from './features/en';
+
+import { sessionConversationSurfaceTranslations as feature_sessionConversationSurfaceTranslations } from './features/en';
+
+import { changedFileEvidenceTranslations as feature_changedFileEvidenceTranslations } from './features/en';
+
+import { turnChangesTranslations as feature_turnChangesTranslations } from './features/en';
+
+import { committedMessageActionTranslations as feature_committedMessageActionTranslations } from './features/en';
+
+import { scmComparisonTranslations as feature_scmComparisonTranslations } from './features/en';
+
+import { walkthroughTranslations as feature_walkthroughTranslations } from './features/en';
+
+import { walkthroughSettingsTranslations as feature_walkthroughSettingsTranslations } from './features/en';
+
+import { walkthroughStartTranslations as feature_walkthroughStartTranslations } from './features/en';
+
+import { reviewWalkthroughTranslations as feature_reviewWalkthroughTranslations } from './features/en';
+
+import { commitProposalTranslations as feature_commitProposalTranslations } from './features/en';
+
+import { voiceReadinessTranslations as feature_voiceReadinessTranslations } from './features/en';
+
+import { voiceProviderPrivacyTranslations as feature_voiceProviderPrivacyTranslations } from './features/en';
+
+import { pluginWebhookAdministrationTranslations as feature_pluginWebhookAdministrationTranslations } from './features/en';
+
+import { pluginAccountDataEraseTranslations as feature_pluginAccountDataEraseTranslations } from './features/en';
+
+import { apiTokenSettingsTranslations as feature_apiTokenSettingsTranslations } from './features/en';
+
+import { embedSettingsTranslations as feature_embedSettingsTranslations } from './features/en';
+
+import { embedTranslations as feature_embedTranslations } from './features/en';
+
+import { actionFamilyTranslations as feature_actionFamilyTranslations } from './features/en';
+
+import { providerCollectionTranslations as feature_providerCollectionTranslations } from './features/en';
+
+import { settingsSearchKeywordsTranslations as feature_settingsSearchKeywordsTranslations } from './features/en';
+
+import { automationPageTranslations as feature_automationPageTranslations } from './features/en';
+
+import { settingsSessionPagesTranslations as feature_settingsSessionPagesTranslations } from './features/en';
+
+import { workspaceTabTranslations as feature_workspaceTabTranslations } from './features/en';
+
+import { terminalWorkspaceTranslations as feature_terminalWorkspaceTranslations } from './features/en';
+
+import { phoneNavigationTranslations as feature_phoneNavigationTranslations } from './features/en';
+
+import { workspaceBarTranslations as feature_workspaceBarTranslations } from './features/en';
+
+import { settingsProfilesRemoteHostsPageTranslations as feature_settingsProfilesRemoteHostsPageTranslations } from './features/en';
+
+import { profilesPageTranslations as feature_profilesPageTranslations } from './features/en';
+
+import { machineDetailPageTranslations as feature_machineDetailPageTranslations } from './features/en';
+
+import { sessionPageTranslations as feature_sessionPageTranslations } from './features/en';
+
+import { pluginAccountReleaseSelectionTranslations as feature_pluginAccountReleaseSelectionTranslations } from './features/en';
+
+import { pluginMachineMatrixTranslations as feature_pluginMachineMatrixTranslations } from './features/en';
+
+import { pluginInvocationLogTranslations as feature_pluginInvocationLogTranslations } from './features/en';
+
+import { eventAutomationComposerTranslations as feature_eventAutomationComposerTranslations } from './features/en';
+
 import { actionOperationInboxTranslations } from './actionOperationInboxTranslations';
-import { actionConfirmationTranslations } from './actionConfirmationTranslations';
-import { detailPageTranslations } from './detailPageTranslations';
-import { rolesTranslations } from './rolesTranslations';
-import { boardsTranslations } from './boardsTranslations';
-import { findTranslations } from './findTranslations';
-import { transcriptFindTranslations } from './transcriptFindTranslations';
-import { artifactsBrowserTranslations } from './artifactsBrowserTranslations';
-import { workStatusTranslations } from './workStatusTranslations';
-import { shareSheetTranslations } from './shareSheetTranslations';
-import { surfaceStateTranslations } from './surfaceStateTranslations';
-import { sessionCompanionTranslations } from './sessionCompanionTranslations';
-import { runPageTranslations } from './runPageTranslations';
-import { detailsChromeTranslations } from './detailsChromeTranslations';
-import { detailsFileTranslations } from './detailsFileTranslations';
-import { filesPaneTranslations } from './filesPaneTranslations';
-import { detailsHistoryTranslations } from './detailsHistoryTranslations';
-import { detailsReviewTranslations } from './detailsReviewTranslations';
-import { sessionDraftTranslations } from './sessionDraftTranslations';
-import { sessionDirectoryRecoveryTranslations } from './sessionDirectoryRecoveryTranslations';
-import { accountServiceOAuthTranslations } from './accountServiceOAuthTranslations';
-import { personalHomeSettingsTranslations } from './personalHomeSettingsTranslations';
-import { homeDeviceApprovalTranslations } from './homeDeviceApprovalTranslations';
-import { settingsOverviewTranslations } from './settingsOverviewTranslations';
-import { homeSetupTranslations } from './homeSetupTranslations';
-import { personalizeTranslations } from './personalizeTranslations';
-import { connectedServicesSetupTranslations } from './connectedServicesSetupTranslations';
-import { homeWidgetTranslations } from './homeWidgetTranslations';
-import { widgetAddTranslations } from './widgetAddTranslations';
-import { widgetDefinitionTranslations } from './widgetDefinitionTranslations';
-import { widgetFrameTranslations } from './widgetFrameTranslations';
-import { navigationPlacementTranslations } from './navigationPlacementTranslations';
-import { inputPickerTranslations } from './inputPickerTranslations';
-import { widgetGlanceTranslations } from './widgetGlanceTranslations';
-import { voicePresenceTranslations } from './voicePresenceTranslations';
-import { voiceMomentsTranslations } from './voiceMomentsTranslations';
-import { homeIndexTranslations } from './homeIndexTranslations';
-import { addFlowsTranslations } from './addFlowsTranslations';
-import { machineAddTranslations } from './machineAddTranslations';
-import { machineAgentsTranslations } from './machineAgentsTranslations';
-import { homeComposerTranslations } from './homeComposerTranslations';
-import { sidebarFooterTranslations } from './sidebarFooterTranslations';
-import { accountPopoverTranslations } from './accountPopoverTranslations';
-import { homesHubTranslations } from './homesHubTranslations';
-import { homesJourneysTranslations } from './homesJourneysTranslations';
-import { homeAddTranslations } from './homeAddTranslations';
-import { accountDisplayTranslations } from './accountDisplayTranslations';
-import { homeFeatureTranslations } from './homeFeatureTranslations';
-import { homeSettingsTranslations } from './homeSettingsTranslations';
-import { homeGovernanceTranslations } from './homeGovernanceTranslations';
-import { workflowTranslations } from './workflowTranslations';
-import { teamsTranslations } from './teamsTranslations';
-import { identityAdministrationTranslations } from './identityAdministrationTranslations';
-import { machinePoolTranslations } from './machinePoolTranslations';
-import { settingsConnectionsTranslations } from './settingsConnectionsTranslations';
-import { settingsMachinesTranslations } from './settingsMachinesTranslations';
-import { connectedServicesSettingsTranslations } from './connectedServicesSettingsTranslations';
-import { connectedServicesPoolTranslations } from './connectedServicesPoolTranslations';
-import { connectedServicesCollectionTranslations } from './connectedServicesCollectionTranslations';
-import { cliPathExposureTranslations } from './cliPathExposureTranslations';
-import { agentInstallJobTranslations } from './agentInstallJobTranslations';
-import { thisComputerConnectionTranslations } from './thisComputerConnectionTranslations';
-import { menuBarModeTranslations } from './menuBarModeTranslations';
-import { personalHomeDecisionTranslations } from './personalHomeDecisionTranslations';
-import { cliTrustPromptTranslations } from './cliTrustPromptTranslations';
-import { pluginUpdateReviewTranslations } from './pluginUpdateReviewTranslations';
-import { secretsSettingsTranslations } from './secretsSettingsTranslations';
-import { mcpSettingsTranslations } from './mcpSettingsTranslations';
-import { browserPresenceTranslations } from './browserPresenceTranslations';
-import { computerUseTranslations } from './computerUseTranslations';
-import { browserToolTranslations } from './browserToolTranslations';
+
+import { actionConfirmationTranslations as feature_actionConfirmationTranslations } from './features/en';
+
+import { detailPageTranslations as feature_detailPageTranslations } from './features/en';
+
+import { rolesTranslations as feature_rolesTranslations } from './features/en';
+
+import { boardsTranslations as feature_boardsTranslations } from './features/en';
+
+import { findTranslations as feature_findTranslations } from './features/en';
+
+import { transcriptFindTranslations as feature_transcriptFindTranslations } from './features/en';
+
+import { artifactsBrowserTranslations as feature_artifactsBrowserTranslations } from './features/en';
+
+import { workStatusTranslations as feature_workStatusTranslations } from './features/en';
+
+import { shareSheetTranslations as feature_shareSheetTranslations } from './features/en';
+
+import { surfaceStateTranslations as feature_surfaceStateTranslations } from './features/en';
+
+import { sessionCompanionTranslations as feature_sessionCompanionTranslations } from './features/en';
+
+import { runPageTranslations as feature_runPageTranslations } from './features/en';
+
+import { detailsChromeTranslations as feature_detailsChromeTranslations } from './features/en';
+
+import { detailsFileTranslations as feature_detailsFileTranslations } from './features/en';
+
+import { filesPaneTranslations as feature_filesPaneTranslations } from './features/en';
+
+import { detailsHistoryTranslations as feature_detailsHistoryTranslations } from './features/en';
+
+import { detailsReviewTranslations as feature_detailsReviewTranslations } from './features/en';
+
+import { sessionDraftTranslations as feature_sessionDraftTranslations } from './features/en';
+
+import { sessionDirectoryRecoveryTranslations as feature_sessionDirectoryRecoveryTranslations } from './features/en';
+
+import { accountServiceOAuthTranslations as feature_accountServiceOAuthTranslations } from './features/en';
+
+import { personalHomeSettingsTranslations as feature_personalHomeSettingsTranslations } from './features/en';
+
+import { homeDeviceApprovalTranslations as feature_homeDeviceApprovalTranslations } from './features/en';
+
+import { settingsOverviewTranslations as feature_settingsOverviewTranslations } from './features/en';
+
+import { homeSetupTranslations as feature_homeSetupTranslations } from './features/en';
+
+import { personalizeTranslations as feature_personalizeTranslations } from './features/en';
+
+import { connectedServicesSetupTranslations as feature_connectedServicesSetupTranslations } from './features/en';
+
+import { homeWidgetTranslations as feature_homeWidgetTranslations } from './features/en';
+
+import { widgetAddTranslations as feature_widgetAddTranslations } from './features/en';
+
+import { widgetDefinitionTranslations as feature_widgetDefinitionTranslations } from './features/en';
+
+import { widgetFrameTranslations as feature_widgetFrameTranslations } from './features/en';
+
+import { navigationPlacementTranslations as feature_navigationPlacementTranslations } from './features/en';
+
+import { inputPickerTranslations as feature_inputPickerTranslations } from './features/en';
+
+import { widgetGlanceTranslations as feature_widgetGlanceTranslations } from './features/en';
+
+import { voicePresenceTranslations as feature_voicePresenceTranslations } from './features/en';
+
+import { voiceMomentsTranslations as feature_voiceMomentsTranslations } from './features/en';
+
+import { homeIndexTranslations as feature_homeIndexTranslations } from './features/en';
+
+import { addFlowsTranslations as feature_addFlowsTranslations } from './features/en';
+
+import { machineAddTranslations as feature_machineAddTranslations } from './features/en';
+
+import { machineAgentsTranslations as feature_machineAgentsTranslations } from './features/en';
+
+import { homeComposerTranslations as feature_homeComposerTranslations } from './features/en';
+
+import { sidebarFooterTranslations as feature_sidebarFooterTranslations } from './features/en';
+
+import { accountPopoverTranslations as feature_accountPopoverTranslations } from './features/en';
+
+import { homesHubTranslations as feature_homesHubTranslations } from './features/en';
+
+import { homesJourneysTranslations as feature_homesJourneysTranslations } from './features/en';
+
+import { homeAddTranslations as feature_homeAddTranslations } from './features/en';
+
+import { accountDisplayTranslations as feature_accountDisplayTranslations } from './features/en';
+
+import { homeFeatureTranslations as feature_homeFeatureTranslations } from './features/en';
+
+import { homeSettingsTranslations as feature_homeSettingsTranslations } from './features/en';
+
+import { homeGovernanceTranslations as feature_homeGovernanceTranslations } from './features/en';
+
+import { workflowTranslations as feature_workflowTranslations } from './features/en';
+
+import { teamsTranslations as feature_teamsTranslations } from './features/en';
+
+import { identityAdministrationTranslations as feature_identityAdministrationTranslations } from './features/en';
+
+import { machinePoolTranslations as feature_machinePoolTranslations } from './features/en';
+
+import { settingsConnectionsTranslations as feature_settingsConnectionsTranslations } from './features/en';
+
+import { settingsMachinesTranslations as feature_settingsMachinesTranslations } from './features/en';
+
+import { connectedServicesSettingsTranslations as feature_connectedServicesSettingsTranslations } from './features/en';
+
+import { connectedServicesPoolTranslations as feature_connectedServicesPoolTranslations } from './features/en';
+
+import { connectedServicesCollectionTranslations as feature_connectedServicesCollectionTranslations } from './features/en';
+
+import { cliPathExposureTranslations as feature_cliPathExposureTranslations } from './features/en';
+
+import { agentInstallJobTranslations as feature_agentInstallJobTranslations } from './features/en';
+
+import { thisComputerConnectionTranslations as feature_thisComputerConnectionTranslations } from './features/en';
+
+import { menuBarModeTranslations as feature_menuBarModeTranslations } from './features/en';
+
+import { personalHomeDecisionTranslations as feature_personalHomeDecisionTranslations } from './features/en';
+
+import { cliTrustPromptTranslations as feature_cliTrustPromptTranslations } from './features/en';
+
+import { pluginUpdateReviewTranslations as feature_pluginUpdateReviewTranslations } from './features/en';
+
+import { secretsSettingsTranslations as feature_secretsSettingsTranslations } from './features/en';
+
+import { mcpSettingsTranslations as feature_mcpSettingsTranslations } from './features/en';
+
+import { browserPresenceTranslations as feature_browserPresenceTranslations } from './features/en';
+
+import { computerUseTranslations as feature_computerUseTranslations } from './features/en';
+
+import { browserToolTranslations as feature_browserToolTranslations } from './features/en';
+
+import { accountEncryptionRecoveryTranslations as feature_accountEncryptionRecoveryTranslations } from './features/en';
+
+import { glassAppearanceTranslations as feature_glassAppearanceTranslations } from './features/en';
+const { promptPickerTranslations } = feature_promptPickerTranslations;
+
+const { pendingNavigationTranslations } = feature_pendingNavigationTranslations;
+
+const { fileContentSearchTranslations } = feature_fileContentSearchTranslations;
+
+const { voiceSettingsPagesTranslations } = feature_voiceSettingsPagesTranslations;
+
+const { folderlessSessionTranslations } = feature_folderlessSessionTranslations;
+
+const { sessionCollaborationTranslations } = feature_sessionCollaborationTranslations;
+
+const { sessionMessageAccountActorTranslations } = feature_sessionMessageAccountActorTranslations;
+
+const { sessionAccessTranslations } = feature_sessionAccessTranslations;
+
+const { nativePasswordTranslations } = feature_nativePasswordTranslations;
+
+const { sessionFollowTranslations } = feature_sessionFollowTranslations;
+
+const { sessionHomeFreshnessTranslations } = feature_sessionHomeFreshnessTranslations;
+
+const { sessionEmbeddedTranslations } = feature_sessionEmbeddedTranslations;
+
+const { sessionReminderTranslations } = feature_sessionReminderTranslations;
+
+const { externalSessionOperationTranslations } = feature_externalSessionOperationTranslations;
+
+const { externalSessionSettingsTranslations } = feature_externalSessionSettingsTranslations;
+
+const { sessionResponsibilityTranslations } = feature_sessionResponsibilityTranslations;
+
+const { sessionListFilterTranslations } = feature_sessionListFilterTranslations;
+
+const { pluginPermissionTranslations } = feature_pluginPermissionTranslations;
+
+const { sessionBoardTranslations } = feature_sessionBoardTranslations;
+
+const { pluginMarketplaceDiscoverTranslations } = feature_pluginMarketplaceDiscoverTranslations;
+
+const { pluginSettingsPresentationTranslations } = feature_pluginSettingsPresentationTranslations;
+
+const { sessionRemotePermissionGrantTranslations } = feature_sessionRemotePermissionGrantTranslations;
+
+const { sessionAgentActivityTranslations } = feature_sessionAgentActivityTranslations;
+
+const { sessionWorkTranslations } = feature_sessionWorkTranslations;
+
+const { entityDragDropTranslations } = feature_entityDragDropTranslations;
+
+const { agentStartTranslations } = feature_agentStartTranslations;
+
+const { goalControlTranslations } = feature_goalControlTranslations;
+
+const { inboxWorkTranslations } = feature_inboxWorkTranslations;
+
+const { sessionGitPaneTranslations } = feature_sessionGitPaneTranslations;
+
+const { sessionGitDisplayTranslations } = feature_sessionGitDisplayTranslations;
+
+const { sessionGitBranchesTranslations } = feature_sessionGitBranchesTranslations;
+
+const { sessionGitPullRequestTranslations } = feature_sessionGitPullRequestTranslations;
+
+const { sessionConversationSurfaceTranslations } = feature_sessionConversationSurfaceTranslations;
+
+const { changedFileEvidenceTranslations } = feature_changedFileEvidenceTranslations;
+
+const { turnChangesTranslations } = feature_turnChangesTranslations;
+
+const { committedMessageActionTranslations } = feature_committedMessageActionTranslations;
+
+const { scmComparisonTranslations } = feature_scmComparisonTranslations;
+
+const { walkthroughTranslations } = feature_walkthroughTranslations;
+
+const { walkthroughSettingsTranslations } = feature_walkthroughSettingsTranslations;
+
+const { walkthroughStartTranslations } = feature_walkthroughStartTranslations;
+
+const { reviewWalkthroughTranslations } = feature_reviewWalkthroughTranslations;
+
+const { commitProposalTranslations } = feature_commitProposalTranslations;
+
+const { voiceReadinessTranslations } = feature_voiceReadinessTranslations;
+
+const { voiceProviderPrivacyTranslations } = feature_voiceProviderPrivacyTranslations;
+
+const { pluginWebhookAdministrationTranslations } = feature_pluginWebhookAdministrationTranslations;
+
+const { pluginAccountDataEraseTranslations } = feature_pluginAccountDataEraseTranslations;
+
+const { apiTokenSettingsTranslations } = feature_apiTokenSettingsTranslations;
+
+const { embedSettingsTranslations } = feature_embedSettingsTranslations;
+
+const { embedTranslations } = feature_embedTranslations;
+
+const { actionFamilyTranslations } = feature_actionFamilyTranslations;
+
+const { providerCollectionTranslations } = feature_providerCollectionTranslations;
+
+const { settingsSearchKeywordsTranslations } = feature_settingsSearchKeywordsTranslations;
+
+const { automationPageTranslations } = feature_automationPageTranslations;
+
+const { settingsSessionPagesTranslations } = feature_settingsSessionPagesTranslations;
+
+const { workspaceTabTranslations } = feature_workspaceTabTranslations;
+
+const { terminalWorkspaceTranslations } = feature_terminalWorkspaceTranslations;
+
+const { phoneNavigationTranslations } = feature_phoneNavigationTranslations;
+
+const { workspaceBarTranslations } = feature_workspaceBarTranslations;
+
+const { settingsProfilesRemoteHostsPageTranslations } = feature_settingsProfilesRemoteHostsPageTranslations;
+
+const { profilesPageTranslations } = feature_profilesPageTranslations;
+
+const { machineDetailPageTranslations } = feature_machineDetailPageTranslations;
+
+const { sessionPageTranslations } = feature_sessionPageTranslations;
+
+const { pluginAccountReleaseSelectionTranslations } = feature_pluginAccountReleaseSelectionTranslations;
+
+const { pluginMachineMatrixTranslations } = feature_pluginMachineMatrixTranslations;
+
+const { pluginInvocationLogTranslations } = feature_pluginInvocationLogTranslations;
+
+const { eventAutomationComposerTranslations } = feature_eventAutomationComposerTranslations;
+
+const { actionConfirmationTranslations } = feature_actionConfirmationTranslations;
+
+const { detailPageTranslations } = feature_detailPageTranslations;
+
+const { rolesTranslations } = feature_rolesTranslations;
+
+const { boardsTranslations } = feature_boardsTranslations;
+
+const { findTranslations } = feature_findTranslations;
+
+const { transcriptFindTranslations } = feature_transcriptFindTranslations;
+
+const { artifactsBrowserTranslations } = feature_artifactsBrowserTranslations;
+
+const { workStatusTranslations } = feature_workStatusTranslations;
+
+const { shareSheetTranslations } = feature_shareSheetTranslations;
+
+const { surfaceStateTranslations } = feature_surfaceStateTranslations;
+
+const { sessionCompanionTranslations } = feature_sessionCompanionTranslations;
+
+const { runPageTranslations } = feature_runPageTranslations;
+
+const { detailsChromeTranslations } = feature_detailsChromeTranslations;
+
+const { detailsFileTranslations } = feature_detailsFileTranslations;
+
+const { filesPaneTranslations } = feature_filesPaneTranslations;
+
+const { detailsHistoryTranslations } = feature_detailsHistoryTranslations;
+
+const { detailsReviewTranslations } = feature_detailsReviewTranslations;
+
+const { sessionDraftTranslations } = feature_sessionDraftTranslations;
+
+const { sessionDirectoryRecoveryTranslations } = feature_sessionDirectoryRecoveryTranslations;
+
+const { accountServiceOAuthTranslations } = feature_accountServiceOAuthTranslations;
+
+const { personalHomeSettingsTranslations } = feature_personalHomeSettingsTranslations;
+
+const { homeDeviceApprovalTranslations } = feature_homeDeviceApprovalTranslations;
+
+const { settingsOverviewTranslations } = feature_settingsOverviewTranslations;
+
+const { homeSetupTranslations } = feature_homeSetupTranslations;
+
+const { personalizeTranslations } = feature_personalizeTranslations;
+
+const { connectedServicesSetupTranslations } = feature_connectedServicesSetupTranslations;
+
+const { homeWidgetTranslations } = feature_homeWidgetTranslations;
+
+const { widgetAddTranslations } = feature_widgetAddTranslations;
+
+const { widgetDefinitionTranslations } = feature_widgetDefinitionTranslations;
+
+const { widgetFrameTranslations } = feature_widgetFrameTranslations;
+
+const { navigationPlacementTranslations } = feature_navigationPlacementTranslations;
+
+const { inputPickerTranslations } = feature_inputPickerTranslations;
+
+const { widgetGlanceTranslations } = feature_widgetGlanceTranslations;
+
+const { voicePresenceTranslations } = feature_voicePresenceTranslations;
+
+const { voiceMomentsTranslations } = feature_voiceMomentsTranslations;
+
+const { homeIndexTranslations } = feature_homeIndexTranslations;
+
+const { addFlowsTranslations } = feature_addFlowsTranslations;
+
+const { machineAddTranslations } = feature_machineAddTranslations;
+
+const { machineAgentsTranslations } = feature_machineAgentsTranslations;
+
+const { homeComposerTranslations } = feature_homeComposerTranslations;
+
+const { sidebarFooterTranslations } = feature_sidebarFooterTranslations;
+
+const { accountPopoverTranslations } = feature_accountPopoverTranslations;
+
+const { homesHubTranslations } = feature_homesHubTranslations;
+
+const { homesJourneysTranslations } = feature_homesJourneysTranslations;
+
+const { homeAddTranslations } = feature_homeAddTranslations;
+
+const { accountDisplayTranslations } = feature_accountDisplayTranslations;
+
+const { homeFeatureTranslations } = feature_homeFeatureTranslations;
+
+const { homeSettingsTranslations } = feature_homeSettingsTranslations;
+
+const { homeGovernanceTranslations } = feature_homeGovernanceTranslations;
+
+const { workflowTranslations } = feature_workflowTranslations;
+
+const { teamsTranslations } = feature_teamsTranslations;
+
+const { identityAdministrationTranslations } = feature_identityAdministrationTranslations;
+
+const { machinePoolTranslations } = feature_machinePoolTranslations;
+
+const { settingsConnectionsTranslations } = feature_settingsConnectionsTranslations;
+
+const { settingsMachinesTranslations } = feature_settingsMachinesTranslations;
+
+const { connectedServicesSettingsTranslations } = feature_connectedServicesSettingsTranslations;
+
+const { connectedServicesPoolTranslations } = feature_connectedServicesPoolTranslations;
+
+const { connectedServicesCollectionTranslations } = feature_connectedServicesCollectionTranslations;
+
+const { cliPathExposureTranslations } = feature_cliPathExposureTranslations;
+
+const { agentInstallJobTranslations } = feature_agentInstallJobTranslations;
+
+const { thisComputerConnectionTranslations } = feature_thisComputerConnectionTranslations;
+
+const { menuBarModeTranslations } = feature_menuBarModeTranslations;
+
+const { personalHomeDecisionTranslations } = feature_personalHomeDecisionTranslations;
+
+const { cliTrustPromptTranslations } = feature_cliTrustPromptTranslations;
+
+const { pluginUpdateReviewTranslations } = feature_pluginUpdateReviewTranslations;
+
+const { secretsSettingsTranslations } = feature_secretsSettingsTranslations;
+
+const { mcpSettingsTranslations } = feature_mcpSettingsTranslations;
+
+const { browserPresenceTranslations } = feature_browserPresenceTranslations;
+
+const { computerUseTranslations } = feature_computerUseTranslations;
+
+const { browserToolTranslations } = feature_browserToolTranslations;
+
+const { accountEncryptionRecoveryTranslations } = feature_accountEncryptionRecoveryTranslations;
+
+const { glassAppearanceTranslations } = feature_glassAppearanceTranslations;
+
 
 const mcpServersUxTranslationExtension = {
   mcpServersConfiguredEmptySubtitle: 'Create a server, import host JSON, or install a recommended preset.',
@@ -238,6 +661,7 @@ const mcpServersUxTranslationExtension = {
   mcpServersDeliveryUnsupportedSubtitle: 'This backend does not currently receive Happier tools.',
 } as const;
 
+
 const memoryEmbeddingsTranslationExtension = {
   status: {
     embeddingsTitle: 'Embeddings runtime',
@@ -307,6 +731,7 @@ const memoryEmbeddingsTranslationExtension = {
   },
 } as const;
 
+
 const newSessionMcpTranslationExtension = {
   mcpChipLabel: 'MCP',
   mcpChipLabelWithCount: ({ count }: { count: number }) => `MCP ${count}`,
@@ -341,6 +766,7 @@ const newSessionMcpTranslationExtension = {
   profileReasonNotPortable: 'Not portable to this session',
   connectedServicesReasonNotPortable: 'Not portable to this session',
 } as const;
+
 
 const agentAuthenticationTranslationExtension = {
   authentication: {
@@ -389,6 +815,7 @@ const agentAuthenticationTranslationExtension = {
     },
   },
 } as const;
+
 
 const settingsAppearanceTranslationExtension = {
   glassControls: glassAppearanceTranslations['en'],
@@ -570,6 +997,7 @@ const settingsAppearanceTranslationExtension = {
   },
 } as const;
 
+
 const acpCatalogTranslationExtension = {
   settings: {
     acpCatalog: 'ACP Backends',
@@ -621,6 +1049,7 @@ const acpCatalogTranslationExtension = {
   newSession: {},
 } as const;
 
+
 /**
  * English plural helper function
  * English has 2 plural forms: singular, plural
@@ -630,6 +1059,7 @@ const acpCatalogTranslationExtension = {
 function plural({ count, singular, plural }: { count: number; singular: string; plural: string }): string {
     return count === 1 ? singular : plural;
 }
+
 
 /**
  * ENGLISH TRANSLATIONS - DEDICATED FILE
@@ -653,73 +1083,108 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
 // Infer each namespace separately so declaration emit never serializes one enormous inferred tree.
 const enHomeDeviceApproval = homeDeviceApprovalTranslations.en;
 
+
 const enSettingsOverview = settingsOverviewTranslations.en;
+
 
 const enHomeSetup = homeSetupTranslations.en;
 
+
 const enPersonalize = personalizeTranslations.en;
+
 
 const enConnectedServicesSetup = connectedServicesSetupTranslations.en;
 
+
 const enHomeWidgets = homeWidgetTranslations.en;
+
 
 const enWidgetFrame = widgetFrameTranslations.en;
 
+
 const enInputPicker = inputPickerTranslations.en;
+
 
 const enWidgetAdd = widgetAddTranslations.en;
 
+
 const enWidgetDefinition = widgetDefinitionTranslations.en;
+
 
 const enWidgetGlances = widgetGlanceTranslations.en;
 
+
 const enVoicePresence = voicePresenceTranslations.en;
+
 
 const enVoiceMoments = voiceMomentsTranslations.en;
 
+
 const enHomeIndex = homeIndexTranslations.en;
+
 
 const enAddFlows = addFlowsTranslations.en;
 
+
 const enMachineAdd = machineAddTranslations.en;
+
 
 const enMachineAgents = machineAgentsTranslations.en;
 
+
 const enHomeComposer = homeComposerTranslations.en;
+
 
 const enSidebarFooter = sidebarFooterTranslations.en;
 
+
 const enAccountPopover = accountPopoverTranslations.en;
+
 
 const enHomesHub = homesHubTranslations.en;
 
+
 const enHomesJourneys = homesJourneysTranslations.en;
+
 
 const enHomeAdd = homeAddTranslations.en;
 
+
 const enAccountDisplay = accountDisplayTranslations.en;
+
 
 const enActionConfirmations = actionConfirmationTranslations.en;
 
+
 const enDetailPages = detailPageTranslations.en;
+
 
 const enRoles = rolesTranslations.en;
 
+
 const enBoards = boardsTranslations.en;
+
 
 const enFind = findTranslations.en;
 
+
 const enTranscriptFind = transcriptFindTranslations['en'];
+
 
 const enWorkStatus = workStatusTranslations.en;
 
+
 const enShareSheet = shareSheetTranslations.en;
+
 
 const enSurfaceState = surfaceStateTranslations.en;
 
+
 const enSessionCompanion = sessionCompanionTranslations.en;
 
+
 const enRunPage = runPageTranslations.en;
+
 
 const enDetailsSurface = {
         chrome: detailsChromeTranslations.en,
@@ -728,11 +1193,15 @@ const enDetailsSurface = {
         review: detailsReviewTranslations.en,
     };
 
+
 const enSessionDrafts = sessionDraftTranslations.en;
+
 
 const enPendingNavigation = pendingNavigationTranslations.en;
 
+
 const enSessionDirectoryRecovery = sessionDirectoryRecoveryTranslations.en;
+
 
 const enTransferRecovery = {
         title: 'Finish staged upload',
@@ -743,33 +1212,48 @@ const enTransferRecovery = {
         unavailable: 'This staged upload is no longer available.',
     };
 
+
 const enVoice = voiceReadinessTranslations.en;
+
 
 const enPluginPermissions = pluginPermissionTranslations.en;
 
+
 const enSessionBoard = sessionBoardTranslations.en;
+
 
 const enSessionAgentActivity = sessionAgentActivityTranslations.en;
 
+
 const enSessionWork = sessionWorkTranslations.en;
+
 
 const enEntityDragDrop = entityDragDropTranslations.en;
 
+
 const enAgentStart = agentStartTranslations.en;
+
 
 const enGoalControl = goalControlTranslations.en;
 
+
 const enSessionGitPane = sessionGitPaneTranslations.en;
+
 
 const enSessionGitDisplay = sessionGitDisplayTranslations.en;
 
+
 const enSessionGitBranches = sessionGitBranchesTranslations.en;
+
 
 const enSessionGitPullRequest = sessionGitPullRequestTranslations.en;
 
+
 const enSessionConversation = sessionConversationSurfaceTranslations.en;
 
+
 const enSessionRemotePermissionGrants = sessionRemotePermissionGrantTranslations.en;
+
 
 const enPluginSurfaces = {
         state: {
@@ -810,6 +1294,7 @@ const enPluginSurfaces = {
             empty: 'No app plugin tabs available.',
         },
     };
+
 
 const enSettingsKeyboard = {
         title: 'Keyboard shortcuts',
@@ -909,6 +1394,7 @@ const enSettingsKeyboard = {
             transcriptMessagePrevious: "Previous message",},
     };
 
+
 const enTabs = {
         // Tab navigation labels
         inbox: 'Inbox',
@@ -918,6 +1404,7 @@ const enTabs = {
         settings: 'Settings',
 
         projects: 'Projects',};
+
 
 const enTranscript = {
 
@@ -1006,6 +1493,7 @@ const enTranscript = {
 
     };
 
+
 const enInbox = {
         work: inboxWorkTranslations.en,
         ...actionOperationInboxTranslations,
@@ -1026,6 +1514,7 @@ const enInbox = {
         openInbox: 'Open Inbox',
         updates: 'Activity',
     };
+
 
 const enApprovals = {
         title: 'Approval',
@@ -1059,6 +1548,7 @@ const enApprovals = {
             expired: 'Expired',
         },
     };
+
 
 const enPromptLibrary = {
 	        surface: {
@@ -1345,6 +1835,7 @@ const enPromptLibrary = {
         librarySearchPlaceholder: 'Search library',
     };
 
+
 const enRuns = {
         title: 'Runs',
         empty: 'No runs yet.',
@@ -1411,6 +1902,7 @@ const enRuns = {
         },
     };
 
+
 const enSessionLog = {
         title: 'Session log',
         devModeRequiredTitle: 'Developer mode is required',
@@ -1431,6 +1923,7 @@ const enSessionLog = {
         noOutputYet: '(No log output yet)',
         readFailed: 'Failed to read session log',
     };
+
 
 const enAutomations = {
         unsupportedReference: ({ reference }: { reference: string }) =>
@@ -1868,6 +2361,7 @@ const enAutomations = {
         },
     };
 
+
 const enAppCrash = {
         title: 'Something went wrong',
         subtitle: 'Happier hit an unexpected error. You can restart the app UI or copy details for support.',
@@ -1876,6 +2370,7 @@ const enAppCrash = {
         restartAndReportIssue: 'Restart and open bug report',
         copyDetails: 'Copy error details',
     };
+
 
 const enWebCryptoGate = {
         title: 'Secure connection required',
@@ -1889,6 +2384,7 @@ const enWebCryptoGate = {
         copyDetails: 'Copy details',
         reload: 'Reload',
     };
+
 
 const enCommon = {
         decrease: "Decrease",
@@ -2016,6 +2512,7 @@ const enCommon = {
 	        share: "Share",
 	        unreachable: 'Unreachable',};
 
+
 const enUi = {
         resizableDockedPane: {
             resizeA11y: 'Resize panel',
@@ -2036,6 +2533,7 @@ const enUi = {
         },
     };
 
+
 const enDropdown = {
         category: {
             general: 'General',
@@ -2046,6 +2544,7 @@ const enDropdown = {
         },
     };
 
+
 const enProfile = {
         userProfile: 'User Profile',
         details: 'Details',
@@ -2054,6 +2553,7 @@ const enProfile = {
         username: 'Username',
         status: 'Status',
     };
+
 
 const enStatus = {
         encryptedUnavailable: "Encrypted details unavailable",
@@ -2088,6 +2588,7 @@ const enStatus = {
         activeNow: 'Active now',
         unknown: 'unknown',
     };
+
 
 const enConnectionStatus = {
         title: 'Connection',
@@ -2131,6 +2632,7 @@ const enConnectionStatus = {
         diagnosticsCopied: 'Diagnostics copied',
     };
 
+
 const enTime = {
         justNow: 'just now',
         minutesAgo: ({ count }: { count: number }) => `${count} minute${count !== 1 ? 's' : ''} ago`,
@@ -2143,9 +2645,11 @@ const enTime = {
         daysAgoShort: ({ count }: { count: number }) => `${count}d ago`,
     };
 
+
 const enCommandMenu = {
         empty: 'No results',
     };
+
 
 const enSelectionList = {
         // Generic strings consumed by the `components/ui/selectionList/`
@@ -2163,6 +2667,7 @@ const enSelectionList = {
         // sub-step, or a non-root path in path-mode).
         backShortcut: 'back',
     };
+
 
 const enConnect = {
         addPhonePage: {
@@ -2251,6 +2756,7 @@ const enConnect = {
             command: ({ name }: { name: string }) => `happier connect ${name}`,
         },
     };
+
 
 const enBugReports = {
         composer: {
@@ -2384,6 +2890,7 @@ const enBugReports = {
             },
         },
     };
+
 
 const enMemorySearchSettings = {
         indexing: {
@@ -2546,6 +3053,7 @@ const enMemorySearchSettings = {
         },
     };
 
+
 const enSubAgentGuidance = {
           ruleEditor: {
             header: {
@@ -2672,6 +3180,7 @@ const enSubAgentGuidance = {
               },
           },
       };
+
 
 const enSettings = {
         title: 'Settings',
@@ -3251,6 +3760,7 @@ const enSettings = {
             `${feature} ${enabled ? 'enabled' : 'disabled'}`,
     };
 
+
 const enSystemStatus = {
         pageDescription: 'How this app, your Homes and your machines are connected right now.',
         sections: {
@@ -3347,6 +3857,7 @@ const enSystemStatus = {
             copyJsonSubtitle: 'Share a redacted snapshot for support',
         },
     };
+
 
 const enDiagnosis = {
         pageDescription: 'Check this app, your Home and your machines for setup problems, with steps to fix them.',
@@ -3469,6 +3980,7 @@ const enDiagnosis = {
             },
         },
     };
+
 
 const enConnectedServices = {
         purposeTargets: {
@@ -4072,6 +4584,7 @@ const enConnectedServices = {
         },
     };
 
+
 const enAttachments = {
         alerts: {
             fileTooLargeTitle: 'File too large',
@@ -4081,6 +4594,7 @@ const enAttachments = {
             noClipboardImageBody: 'Copy an image, then paste it as an attachment.',
         },
     };
+
 
 const enSettingsAttachments = {
         pageDescription: 'Where files you attach are saved, and how source control treats them.',
@@ -4159,6 +4673,7 @@ const enSettingsAttachments = {
             },
         },
     };
+
 
 const enSettingsSourceControl = {
         page: {
@@ -4416,6 +4931,7 @@ const enSettingsSourceControl = {
         },
     };
 
+
 const enSettingsDesktop = {
         ...menuBarModeTranslations.en,
         title: 'Desktop app',
@@ -4509,6 +5025,7 @@ const enSettingsDesktop = {
         },
     };
 
+
 const enSettingsPets = {
         title: 'Pets',
         previewTitle: 'Blink',
@@ -4593,6 +5110,7 @@ const enSettingsPets = {
         visibilityModeAttentionOrActive: 'Attention or active',
         visibilityModeAttentionOnly: 'Attention only',
     };
+
 
 const enSettingsNotifications = {
         mutePhoneWhenComputerFocusedTitle: "Mute phone while a computer is focused",
@@ -4953,6 +5471,7 @@ const enSettingsNotifications = {
         },
     };
 
+
 const enNotifications = {
         actions: {
             allow: 'Allow',
@@ -4983,11 +5502,15 @@ const enNotifications = {
         },
     };
 
+
 const enMcpSettings = mcpSettingsTranslations.en;
+
 
 const enAgentInstallJob = agentInstallJobTranslations.en;
 
+
 const enSecretsSettings = secretsSettingsTranslations.en;
+
 
 const enSettingsProviders = {
         title: 'Providers',
@@ -5394,6 +5917,7 @@ const enSettingsProviders = {
             connectedServiceSuppressed: 'The agent\'s native connected-service sign-in is not used with this provider. Your saved selection is unchanged.',
         },
     };
+
 
 const enSettingsAgents = {
         authoring: {
@@ -6004,6 +6528,7 @@ const enSettingsAgents = {
 	        },
 	    };
 
+
 const enWorkspaceCockpit = {
         sessionPosition: ({ position, total }: { position: number; total: number }) => position + ' of ' + total,
         previousSession: 'Previous session',
@@ -6013,6 +6538,7 @@ const enWorkspaceCockpit = {
         openClassicView: 'Open classic view',
         tabs: 'Tabs',
     };
+
 
 const enInstrument = {
         contextGauge: {
@@ -6041,6 +6567,7 @@ const enInstrument = {
             moreLabel: 'More instruments',
         },
     };
+
 
 const enSettingsAppearance = {
       pageDescription: 'Theme, text, layout and motion.',
@@ -6272,6 +6799,7 @@ const enSettingsAppearance = {
         },
     };
 
+
 const enSettingsFeatures = {
         // Features settings screen
         experiments: 'Experiments',
@@ -6388,6 +6916,7 @@ const enSettingsFeatures = {
         pathPickerSearchSubtitle: 'Show a search field in path pickers',
     };
 
+
 const enErrors = {
         networkError: 'Network error occurred',
         serverError: 'Server error occurred',
@@ -6478,6 +7007,7 @@ const enErrors = {
 
         sourceControlUnavailableForSession: "Source control is unavailable for this session.",};
 
+
 const enCliAcquisitionProgress = {
         blockedCliUnavailableStatus: "Happier couldn’t start its command line on this computer.",
         blockedCliFailedStatus: 'Happier couldn’t finish reading this computer’s setup.',
@@ -6496,6 +7026,7 @@ const enCliAcquisitionProgress = {
         acquisitionDownloadBytes: ({ received }: { received: string }) => `${received} downloaded`,
         acquisitionDownloadBytesTotal: ({ received, total }: { received: string; total: string }) => `${received} of ${total} downloaded`,
     };
+
 
 const enDeps = {
         installNotSupported: 'Update Happier CLI to install this dependency.',
@@ -6547,6 +7078,7 @@ const enDeps = {
             installLogTitle: 'Install log',
         },
     };
+
 
 const enNewSession = {
       terminalHostUnavailableTitle: "Terminal host unavailable",
@@ -6939,6 +7471,7 @@ const enNewSession = {
             description: 'This installs the optional GitHub CLI dependency used by source-control GitHub workflows after you confirm.',
         },};
 
+
 const enSessionHistory = {
         // Used by session history screen
         title: 'Session History',
@@ -6948,6 +7481,7 @@ const enSessionHistory = {
         daysAgo: ({ count }: { count: number }) => `${count} ${count === 1 ? 'day' : 'days'} ago`,
         viewAll: 'View all sessions',
     };
+
 
 const enSessionHandoff = {
         awaitingAdmission: 'Checking the destination before starting. Your choices are saved here.',
@@ -7008,6 +7542,7 @@ const enSessionHandoff = {
             keepStopped: 'Keep stopped',
         },
     };
+
 
 const enSession = {
         folderless: folderlessSessionTranslations.en.display,
@@ -7846,6 +8381,7 @@ const enSession = {
         },
     };
 
+
 const enUniversalSearch = {
         content: fileContentSearchTranslations["en"],
         scopeFilterLabel: 'Home',
@@ -7862,6 +8398,7 @@ const enUniversalSearch = {
             commits: 'Commits',
         },
     };
+
 
 const enCommandPalette = {
         placeholder: fileContentSearchTranslations["en"].placeholder,
@@ -7918,9 +8455,11 @@ const enCommandPalette = {
         },
     };
 
+
 const enCommandView = {
         completedWithNoOutput: '[Command completed with no output]',
     };
+
 
 const enDelegation = {
         output: {
@@ -7928,6 +8467,7 @@ const enDelegation = {
             deliverablesTitle: 'Deliverables',
         },
     };
+
 
 const enModelPickerOverlay = {
         refreshModelsA11y: 'Refresh models',
@@ -7939,6 +8479,7 @@ const enModelPickerOverlay = {
         optionControlA11y: ({ name }: { name: string }) => `Model option: ${name}`,
         effectiveLabel: ({ label }: { label: string }) => `Effective: ${label}`,
     };
+
 
 const enVoiceAssistant = {
         connecting: 'Connecting…',
@@ -7977,6 +8518,7 @@ const enVoiceAssistant = {
             microphoneOwnedByDictation: 'Dictation is already using the microphone. End the current dictation before starting another.',
         },
     };
+
 
 const enVoiceSurface = {
         reviewCredentials: 'Review credentials',
@@ -8017,6 +8559,7 @@ const enVoiceSurface = {
             unmute: 'Unmute microphone',},
     };
 
+
 const enVoiceActivity = {
         title: 'Voice Activity',
         empty: 'No voice activity yet.',
@@ -8037,6 +8580,7 @@ const enVoiceActivity = {
             eventFallback: 'event',
         },
     };
+
 
 const enDevVoiceQa = {
         menuTitle: 'Voice QA Harness',
@@ -8086,6 +8630,7 @@ const enDevVoiceQa = {
             statusLabel: 'Status',
             noResult: 'No transcription result',
         },};
+
 
 const enServer = {
         pageSections: {
@@ -8236,6 +8781,7 @@ const enServer = {
             },
         },};
 
+
 const enSessionTags = {
         searchOrAddPlaceholder: 'Add or search tag…',
         editTagsLabel: 'Edit tags',
@@ -8245,6 +8791,7 @@ const enSessionTags = {
         newTagMessage: 'Enter a name for the new tag.',
         newTagConfirm: 'Add',
     };
+
 
 const enSessionsList = {
         reminders: sessionReminderTranslations['en'],
@@ -8361,6 +8908,7 @@ const enSessionsList = {
         failedToMoveSessionToFolder: "Failed to move session to folder.",
         newFolderDefaultName: "New folder",};
 
+
 const enDirectSessions = {
         browseTitle: 'Browse external sessions',
         browseOpenExisting: 'Browse external sessions',
@@ -8391,6 +8939,7 @@ const enDirectSessions = {
         browseDeleteCandidateConfirmMessage: ({ title, agent }: { title: string; agent: string }) => `Delete “${title}” from ${agent}? The agent removes its own session; your Happier session history stays.`,
         browseDeleteCandidateFailed: 'Failed to delete the agent session.',
     };
+
 
 const enSessionInfo = {
 	        // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
@@ -8537,6 +9086,7 @@ const enSessionInfo = {
 	        openInSplitDown: 'Open in split down',
 	        revealInCurrentSplit: 'Reveal in current split',};
 
+
 const enWorkspacePresentation = {
         homeFolder: 'Home folder',
         checkoutKinds: {
@@ -8544,6 +9094,7 @@ const enWorkspacePresentation = {
             git_worktree: 'Git worktree',
         },
     };
+
 
 const enSourceControlWorkspace = {
         createTitle: 'Create linked workspace',
@@ -8553,6 +9104,7 @@ const enSourceControlWorkspace = {
         createSessionInWorktreeTitle: 'Create session here',
         adoptWorktreeTitle: 'Add worktree to workspace',
     };
+
 
 const enComponents = {
         emptyMainScreen: {
@@ -8576,6 +9128,7 @@ const enComponents = {
         },
     };
 
+
 const enZen = {
         title: 'Zen',
         add: {
@@ -8592,6 +9145,7 @@ const enZen = {
             tapTaskTextToEdit: 'Tap the task text to edit',
         },
     };
+
 
 const enAgentInput = {
         promptPicker: promptPickerTranslations['en'],
@@ -8813,6 +9367,7 @@ const enAgentInput = {
         noMachinesAvailable: 'No machines',
     };
 
+
 const enMachineLauncher = {
         showLess: 'Show less',
         showAll: ({ count }: { count: number }) => `Show all (${count} paths)`,
@@ -8820,9 +9375,11 @@ const enMachineLauncher = {
         offlineUnableToSpawn: 'Unable to spawn new session, offline',
     };
 
+
 const enSidebar = {
         sessionsTitle: 'Happier',
     };
+
 
 const enToolView = {
         open: 'Open details',
@@ -8832,6 +9389,7 @@ const enToolView = {
         showFullContent: 'Show full content',
         showLessContent: 'Show less',
     };
+
 
 const enTools = {
         common: {
@@ -9045,6 +9603,7 @@ const enTools = {
             turnDiffRecap: 'Recap of the changes that occurred during this turn',
         }
     };
+
 
 const enFiles = {
             pane: filesPaneTranslations.en,
@@ -9763,6 +10322,7 @@ const enFiles = {
             noAgentReportedTurnChanges: 'No agent-reported changes currently detected for this turn.',
             noCheckpointTurnChanges: 'No checkpoint changes currently detected for this turn.',};
 
+
 const enLocalServices = {
         inventory: {
             title: 'Local services',
@@ -9982,6 +10542,7 @@ const enLocalServices = {
         },
     };
 
+
 const enBrowserContext = {
         composer: {
             attachPageReference: 'Attach page',
@@ -10014,6 +10575,7 @@ const enBrowserContext = {
         },
     };
 
+
 const enBrowserRecording = {
         actions: {
             start: 'Start recording',
@@ -10031,11 +10593,15 @@ const enBrowserRecording = {
         },
     };
 
+
 const enBrowserPresence = browserPresenceTranslations.en;
+
 
 const enComputerUse = computerUseTranslations.en;
 
+
 const enBrowserTool = browserToolTranslations.en;
+
 
 const enBrowserSurface = {
         title: 'Browser',
@@ -10043,6 +10609,7 @@ const enBrowserSurface = {
         openHint: 'Opens the browser launchpad in details.',
         openDisabledA11y: 'Browser unavailable',
     };
+
 
 const enBrowserLaunchpad = {
         pane: {
@@ -10079,6 +10646,7 @@ const enBrowserLaunchpad = {
             title: 'Browser targets need attention',
         },
     };
+
 
 const enBrowserShell = {
         address: {
@@ -10215,6 +10783,7 @@ const enBrowserShell = {
         },
     };
 
+
 const enStreamPlayer = {
         status: {
             opening: 'Opening stream…',
@@ -10239,6 +10808,7 @@ const enStreamPlayer = {
             fallback: 'Fallback renderer',
         },
     };
+
 
 const enSimulatorPreview = {
         picker: {
@@ -10311,6 +10881,7 @@ const enSimulatorPreview = {
             item: ({ reasonCode }: { reasonCode: string }) => `Diagnostic: ${reasonCode}`,
         },
     };
+
 
 const enBrowserDiagnostics = {
         previewProxy: {
@@ -10452,6 +11023,7 @@ const enBrowserDiagnostics = {
         },
     };
 
+
 const enExecutionRuns = {
         newRun: {
             headerTitle: 'Start run',
@@ -10519,6 +11091,7 @@ const enExecutionRuns = {
             },
         },
     };
+
 
 const enSettingsActions = {
         searchPlaceholder: 'Search actions',
@@ -10794,6 +11367,7 @@ const enSettingsActions = {
             },},
     };
 
+
 const enWorkspaceSync = {
     title: 'Workspace sync',
     availableOn: 'Available on',
@@ -10990,6 +11564,7 @@ const enWorkspaceSync = {
         reasonSelectionUnavailable: 'Selection evaluator unavailable',
     },
 };
+
 
 const enSettingsSession = {
     pageDescription: 'How new sessions start, what Happier remembers, and how the session list is organized.',
@@ -11728,6 +12303,7 @@ const enSettingsSession = {
         },
     };
 
+
 const enWindowsRemoteSessionLaunchMode = {
         hidden: 'Hidden',
         shortHidden: 'Hidden',
@@ -11739,6 +12315,7 @@ const enWindowsRemoteSessionLaunchMode = {
         shortConsole: 'Console',
         consoleSubtitle: 'Open the session in a standard Windows console window.',
     };
+
 
 const enSettingsVoice = {
         ...voiceSettingsPagesTranslations.en,
@@ -13005,6 +13582,7 @@ const enSettingsVoice = {
         }
     };
 
+
 const enSettingsAccount = {
         ...accountEncryptionRecoveryTranslations['en'],
         providerCatalogUnavailable: 'Couldn’t check available sign-in connections.',
@@ -13237,6 +13815,7 @@ const enSettingsAccount = {
         },
     };
 
+
 const enSettingsLanguage = {
         // Language settings screen
         title: 'Language',
@@ -13252,11 +13831,13 @@ const enSettingsLanguage = {
         restartNow: 'Restart now',
     };
 
+
 const enConnectButton = {
         authenticate: 'Authenticate Terminal',
         authenticateWithUrlPaste: 'Authenticate Terminal with URL paste',
         pasteAuthUrl: 'Paste the auth URL from your terminal',
     };
+
 
 const enUpdateBanner = {
         updateAvailable: 'Update available',
@@ -13264,11 +13845,13 @@ const enUpdateBanner = {
 
         lastCheckedTitle: 'Last checked',};
 
+
 const enChangelog = {
         // Used by the changelog screen
         version: ({ version }: { version: string }) => `Version ${version}`,
         noEntriesAvailable: 'No changelog entries available.',
     };
+
 
 const enReleaseNotes = {
         viewFullChangelog: 'View full release notes',
@@ -13563,6 +14146,7 @@ const enReleaseNotes = {
             },
     };
 
+
 const enTerminal = {
         plaintextStorage: 'Home-managed (not end-to-end encrypted)',
         plaintextStorageDescription: 'This Home can read Account data. The connection response is encrypted for this terminal.',
@@ -13590,6 +14174,7 @@ const enTerminal = {
         switchServerToConnectTerminal: ({ serverUrl, signedInServerUrl }: { serverUrl: string; signedInServerUrl: string }) =>
             `This connection is for ${serverUrl}. You’re signed in to ${signedInServerUrl}. Switch Homes and continue?`,
     };
+
 
 const enTerminalEmbedded = {
         nativeAccessibility: {
@@ -13633,6 +14218,7 @@ const enTerminalEmbedded = {
 
         openNewTabA11y: 'Open a new terminal tab',};
 
+
 const enModals = {
         // Used across connect flows and settings
         authenticateTerminal: 'Authenticate Terminal',
@@ -13667,6 +14253,7 @@ const enModals = {
         qrScannerUnavailable: 'Unable to open the QR scanner. Please try again or enter the URL manually.'
     };
 
+
 const enNavigation = {
         // Navigation titles and screen headers
         connectTerminal: 'Connect Terminal',
@@ -13690,6 +14277,7 @@ const enNavigation = {
         zenNewTask: 'New Task',
         zenTaskDetails: 'Task Details',
     };
+
 
 const enWelcome = {
         // Main welcome screen for unauthenticated users
@@ -13798,6 +14386,7 @@ const enWelcome = {
         brandHeroGetStarted: 'Get started',
     };
 
+
 const enSessionGettingStarted = {
         title: {
             connectMachine: 'Set up this computer',
@@ -13864,6 +14453,7 @@ const enSessionGettingStarted = {
             },
         },
     };
+
 
 const enJourney = {
         actions: {
@@ -14024,6 +14614,7 @@ const enJourney = {
             },
         },
     };
+
 
 const enSetupOnboarding = {
         screenTitle: 'Set up this computer',
@@ -14223,6 +14814,7 @@ const enSetupOnboarding = {
         },
     };
 
+
 const enReview = {
         // Used by utils/requestReview.ts
         enjoyingApp: 'Enjoying the app?',
@@ -14231,11 +14823,13 @@ const enReview = {
         notReally: 'Not really'
     };
 
+
 const enItems = {
 	        // Used by Item component for copy toast
 	        copiedToClipboard: ({ label }: { label: string }) => `${label} copied to clipboard`,
 	        failedToCopyToClipboard: 'Failed to copy to clipboard',
 	    };
+
 
 const enMachine = {
         launchNewSessionInDirectory: 'Launch new session in directory',
@@ -14419,6 +15013,7 @@ const enMachine = {
             stateUnavailable: 'Unavailable',
         },};
 
+
 const enMessage = {
         ...sessionMessageAccountActorTranslations['en'],
         sessionReferenceUnavailable: 'Unavailable session',
@@ -14476,6 +15071,7 @@ const enMessage = {
         unknownTime: 'unknown time',
     };
 
+
 const enChatFooter = {
         permissionsTerminalOnly: 'Permissions are shown in the terminal only. Reset or send a message to control from the app.',
         sessionRunningLocally: 'This session is running locally on this computer. You can switch to remote to control it from the app.',
@@ -14505,6 +15101,7 @@ const enChatFooter = {
         externalSessionTakeoverBlocked: 'Happier could not verify that the external Agent has stopped. Stop it in its terminal, then try again.',
     };
 
+
 const enCodex = {
         // Codex permission dialog buttons
         permissions: {
@@ -14514,6 +15111,7 @@ const enCodex = {
             stopAndExplain: 'Stop, and explain what to do',
         }
     };
+
 
 const enClaude = {
         // Claude permission dialog buttons
@@ -14528,6 +15126,7 @@ const enClaude = {
         }
     };
 
+
 const enTextSelection = {
         // Text selection screen
         selectText: 'Select text range',
@@ -14539,6 +15138,7 @@ const enTextSelection = {
         noTextToCopy: 'No text available to copy',
         failedToOpen: 'Failed to open text selection. Please try again.',
     };
+
 
 const enMarkdown = {
         // Markdown copy functionality
@@ -14604,6 +15204,7 @@ const enMarkdown = {
         },
     };
 
+
 // Accessibility labels for the rich markdown editor formatting toolbar.
 const enMarkdownEditorToolbar = {
         bold: 'Bold',
@@ -14622,6 +15223,7 @@ const enMarkdownEditorToolbar = {
         openLink: 'Open link',
         unlink: 'Remove link',
     };
+
 
 const enArtifacts = {
         browser: artifactsBrowserTranslations.en,
@@ -14650,6 +15252,7 @@ const enArtifacts = {
         saving: 'Saving...',
         error: 'Failed to load artifact',
     };
+
 
 const enFriends = {
         // Friends feature
@@ -14730,6 +15333,7 @@ const enFriends = {
             notConfigured: ({ provider }: { provider: string }) => `${provider} OAuth is not configured on this server.`,
         },
     };
+
 
 const enUsage = {
         // Usage panel strings
@@ -14854,6 +15458,7 @@ const enUsage = {
             },
         },};
 
+
 const enFeed = {
         // Feed notifications for friend requests and acceptances
         friendRequestFrom: ({ name }: { name: string }) => `${name} sent you a friend request`,
@@ -14861,6 +15466,7 @@ const enFeed = {
         friendAccepted: ({ name }: { name: string }) => `You are now friends with ${name}`,
         friendAcceptedGeneric: 'Friend request accepted',
     };
+
 
 const enSecrets = {
         catalog: {
@@ -14964,6 +15570,7 @@ const enSecrets = {
             deleteConfirm: ({ name }: { name: string }) => `Delete “${name}”? This cannot be undone.`,
         },
     };
+
 
 const enProfiles = {
         launchPlacement: {
@@ -15271,6 +15878,7 @@ const enProfiles = {
         },
     };
 
+
 const enProjects = {
         emptyTitle: 'No projects yet',
         emptyDescription: 'Projects let you browse and edit files, and use Git on your machines outside of sessions.',
@@ -15324,6 +15932,7 @@ const enProjects = {
             },
         },
     };
+
 
 const enSettingsPlugins = {
       updateReview: pluginUpdateReviewTranslations.en,
@@ -15569,6 +16178,7 @@ const enSettingsPlugins = {
       registriesEmpty: "No private registries configured.",
     };
 
+
 const enSettingsScmDiffSummary = {
         title: 'Diff summaries',
         enabledTitle: 'Enable diff summaries',
@@ -15581,6 +16191,7 @@ const enSettingsScmDiffSummary = {
         cacheTitle: 'Summary cache',
         cacheSubtitle: 'Checkpoint summaries are reused by receipt; working tree summaries stay temporary.',
     };
+
 
 const enUpdates = {
         pageDescription: 'Everything Happier can update, on this device and your machines.',
@@ -15708,17 +16319,24 @@ const enUpdates = {
         },
     };
 
+
 const enMachinePools = machinePoolTranslations.en;
+
 
 const enSettingsConnections = settingsConnectionsTranslations.en;
 
+
 const enSettingsMachines = settingsMachinesTranslations.en;
+
 
 const enConnectedServicesSettings = connectedServicesSettingsTranslations.en;
 
+
 const enConnectedServicesPool = connectedServicesPoolTranslations.en;
 
+
 const enConnectedServicesCollection = connectedServicesCollectionTranslations.en;
+
 
 const enExternalSessions = {
         ...externalSessionOperationTranslations.en,
@@ -15804,11 +16422,13 @@ const enExternalSessions = {
         browseDeleteCandidateFailed: 'Failed to delete the agent session.',
     };
 
+
 const enPluginReactNative = {
         unavailable: 'React Native plugin UI unavailable',
         disabled: 'React Native plugin UI disabled',
         fallback: 'Using plugin fallback',
     };
+
 
 const enPluginRuntime = {
         unavailableGeneric: 'This plugin view is unavailable right now.',
@@ -15829,17 +16449,24 @@ const enPluginRuntime = {
         retired: 'This plugin view is no longer active. Open plugin settings to enable or reinstall it.',
     };
 
+
 const enWorkflows = workflowTranslations.en;
+
 
 const enHomeGovernance = homeGovernanceTranslations.en;
 
+
 const enHomeFeatures = homeFeatureTranslations.en;
+
 
 const enHomeSettings = homeSettingsTranslations.en;
 
+
 const enTeams = teamsTranslations.en.teams;
 
+
 const enIdentityAdministration = identityAdministrationTranslations.en.identityAdministration;
+
 
 const enPersonalHome = {
         settings: personalHomeSettingsTranslations.en,
@@ -15875,17 +16502,20 @@ const enPersonalHome = {
         },
     };
 
+
 const enSettingsSearch = {
         placeholder: 'Search settings',
         pagesTitle: 'Pages',
         settingsTitle: 'Settings',
     };
 
+
 const enOnboardingJourney = {
         accessibility: {
             skipToContent: 'Skip to content',
         },
     };
+
 
 export const en: TranslationStructure = {
     homeDeviceApproval: enHomeDeviceApproval,
@@ -16116,9 +16746,11 @@ export const en: TranslationStructure = {
     onboardingJourney: enOnboardingJourney,
 };
 
+
 // Keep the literal keys above as the compile-time locale shape, while the shared
 // brand owner supplies the canonical English values used at runtime.
 Object.assign(en.releaseNotes.onboardingShowcase.details, PRODUCT_STORY_DETAILS_ENGLISH);
+
 
 type DeepTranslationShape<T> =
     T extends (...args: infer Args) => infer Return
@@ -16134,7 +16766,9 @@ type DeepTranslationShape<T> =
                     ? { readonly [K in keyof T]: DeepTranslationShape<T[K]> }
                     : T;
 
+
 type TranslationOverlay<Base, Overlay> = Omit<Base, keyof Overlay> & Overlay;
+
 
 type EnglishNamespaces0 = {
     readonly homeDeviceApproval: typeof enHomeDeviceApproval;
@@ -16193,23 +16827,33 @@ type EnglishNamespaces0 = {
     readonly sessionConversation: typeof enSessionConversation;
 };
 
+
 type EnglishNamespaces1 = TranslationOverlay<EnglishNamespaces0, typeof changedFileEvidenceTranslations.en>;
+
 
 type EnglishNamespaces2 = TranslationOverlay<EnglishNamespaces1, typeof turnChangesTranslations.en>;
 
+
 type EnglishNamespaces3 = TranslationOverlay<EnglishNamespaces2, typeof committedMessageActionTranslations.en>;
+
 
 type EnglishNamespaces4 = TranslationOverlay<EnglishNamespaces3, typeof scmComparisonTranslations.en>;
 
+
 type EnglishNamespaces5 = TranslationOverlay<EnglishNamespaces4, typeof walkthroughTranslations.en>;
+
 
 type EnglishNamespaces6 = TranslationOverlay<EnglishNamespaces5, typeof walkthroughSettingsTranslations.en>;
 
+
 type EnglishNamespaces7 = TranslationOverlay<EnglishNamespaces6, typeof walkthroughStartTranslations.en>;
+
 
 type EnglishNamespaces8 = TranslationOverlay<EnglishNamespaces7, typeof reviewWalkthroughTranslations.en>;
 
+
 type EnglishNamespaces9 = TranslationOverlay<EnglishNamespaces8, typeof commitProposalTranslations.en>;
+
 
 type EnglishNamespaces10 = TranslationOverlay<EnglishNamespaces9, {
     readonly sessionRemotePermissionGrants: typeof enSessionRemotePermissionGrants;
@@ -16340,37 +16984,54 @@ type EnglishNamespaces10 = TranslationOverlay<EnglishNamespaces9, {
     readonly projects: typeof enProjects;
 }>;
 
+
 type EnglishNamespaces11 = TranslationOverlay<EnglishNamespaces10, typeof apiTokenSettingsTranslations.en>;
+
 
 type EnglishNamespaces12 = TranslationOverlay<EnglishNamespaces11, typeof embedSettingsTranslations.en>;
 
+
 type EnglishNamespaces13 = TranslationOverlay<EnglishNamespaces12, typeof embedTranslations.en>;
+
 
 type EnglishNamespaces14 = TranslationOverlay<EnglishNamespaces13, typeof actionFamilyTranslations.en>;
 
+
 type EnglishNamespaces15 = TranslationOverlay<EnglishNamespaces14, typeof providerCollectionTranslations.en>;
+
 
 type EnglishNamespaces16 = TranslationOverlay<EnglishNamespaces15, typeof settingsSearchKeywordsTranslations.en>;
 
+
 type EnglishNamespaces17 = TranslationOverlay<EnglishNamespaces16, typeof automationPageTranslations.en>;
+
 
 type EnglishNamespaces18 = TranslationOverlay<EnglishNamespaces17, typeof settingsSessionPagesTranslations.en>;
 
+
 type EnglishNamespaces19 = TranslationOverlay<EnglishNamespaces18, typeof workspaceTabTranslations.en>;
+
 
 type EnglishNamespaces20 = TranslationOverlay<EnglishNamespaces19, typeof terminalWorkspaceTranslations.en>;
 
+
 type EnglishNamespaces21 = TranslationOverlay<EnglishNamespaces20, typeof phoneNavigationTranslations.en>;
+
 
 type EnglishNamespaces22 = TranslationOverlay<EnglishNamespaces21, typeof workspaceBarTranslations.en>;
 
+
 type EnglishNamespaces23 = TranslationOverlay<EnglishNamespaces22, typeof settingsProfilesRemoteHostsPageTranslations.en>;
+
 
 type EnglishNamespaces24 = TranslationOverlay<EnglishNamespaces23, typeof profilesPageTranslations.en>;
 
+
 type EnglishNamespaces25 = TranslationOverlay<EnglishNamespaces24, typeof machineDetailPageTranslations.en>;
 
+
 type EnglishNamespaces26 = TranslationOverlay<EnglishNamespaces25, typeof sessionPageTranslations.en>;
+
 
 type EnglishNamespaces27 = TranslationOverlay<EnglishNamespaces26, {
     readonly settingsPlugins: typeof enSettingsPlugins;
@@ -16396,10 +17057,10 @@ type EnglishNamespaces27 = TranslationOverlay<EnglishNamespaces26, {
     readonly onboardingJourney: typeof enOnboardingJourney;
 }>;
 
+
 export type TranslationsEn = EnglishNamespaces27;
+
 
 // Shape contract for all locales: enforce identical key structure without requiring English literal
 // string values. Functions are preserved so parameter lists remain typechecked.
 export type TranslationStructure = DeepTranslationShape<TranslationsEn>;
-import { accountEncryptionRecoveryTranslations } from './accountEncryptionRecoveryTranslations';
-import { glassAppearanceTranslations } from './glassAppearanceTranslations';

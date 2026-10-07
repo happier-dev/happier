@@ -1,5 +1,5 @@
 import { isAgentCliAuthBackgroundCheckSafe } from '@happier-dev/agents';
-import { isPluginAgentCliAuthBackgroundCheckSafe } from '@happier-dev/protocol';
+import { isPluginAgentCliAuthBackgroundCheckSafe } from '@happier-dev/protocol/plugins/contributions/agentCliMetadata';
 
 import { isBundledAgentId } from '@/agents/catalog/catalog';
 import type { MergedProviderProjectionEntry } from './mergedProjectionTypes';

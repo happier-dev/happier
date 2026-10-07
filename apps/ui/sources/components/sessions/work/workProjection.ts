@@ -1,4 +1,5 @@
-import { readSessionWorkStateGroupV1, type SessionWorkflowRunHeadlineV1 } from '@happier-dev/protocol';
+import { readSessionWorkStateGroupV1 } from '@happier-dev/protocol/sessions/awareness/presentationV1';
+import type { SessionWorkflowRunHeadlineV1 } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowActivityHeadlineV1';
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 import {

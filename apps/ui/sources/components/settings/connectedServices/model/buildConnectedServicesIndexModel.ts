@@ -1,13 +1,8 @@
-import {
-    buildQualifiedPluginContributionKey,
-    isConnectedServiceCredentialHealthStatusUsable,
-    normalizeConnectedServiceCredentialHealthStatus,
-    type ConnectedServiceId,
-    type PluginContributionIdentityV1,
-    type QualifiedConnectedAccountGroupV4,
-    type QualifiedConnectedAccountPurposeBindingTargetV1,
-    type QualifiedConnectedAccountProfileV4,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { isConnectedServiceCredentialHealthStatusUsable, normalizeConnectedServiceCredentialHealthStatus } from '@happier-dev/protocol/connect/connected-service-schemas';
+import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { QualifiedConnectedAccountGroupV4, QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 
 import { canExecuteConnectedServiceAction, type ConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import {

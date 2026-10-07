@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
-import { isArtifactHtmlHeaderV1 } from '@happier-dev/protocol';
+import { isArtifactHtmlHeaderV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { storage } from '@/sync/domains/state/storage';

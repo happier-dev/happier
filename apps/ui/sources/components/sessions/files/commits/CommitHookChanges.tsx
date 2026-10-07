@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { classifyScmChangePath } from '@happier-dev/protocol';
+import { classifyScmChangePath } from '@happier-dev/protocol/scm/comparison';
 import type { ScmDiffCommitResponse } from '@happier-dev/protocol/scm';
 
 import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';

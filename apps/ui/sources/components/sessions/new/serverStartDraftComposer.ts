@@ -2,7 +2,7 @@ import {
     SessionServerStartSpawnDraftV1Schema,
     type SessionServerStartSpawnDraftV1,
 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
-import { MAX_AGENT_ROUTING_ID_BYTES } from '@happier-dev/protocol';
+import { MAX_AGENT_ROUTING_ID_BYTES } from '@happier-dev/protocol/agents/agentIdV1';
 import {
     PLUGIN_UI_LAUNCH_INPUT_MAX_UTF8_BYTES_V1,
     PluginUiSessionCheckoutIntentV1Schema,

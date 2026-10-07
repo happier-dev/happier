@@ -1,4 +1,4 @@
-import { resolveManualUnreadCursorBoundary } from '@happier-dev/protocol';
+import { resolveManualUnreadCursorBoundary } from '@happier-dev/protocol/sessions/control/readCursor';
 
 export type ReadStateV1 = {
     v: 1;

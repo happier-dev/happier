@@ -1,6 +1,6 @@
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -21,7 +21,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   };
 });
 
-describe('cli-common build Windows rename fallback', () => {
+describe('cli-common build rename boundaries', () => {
   const tempDirs = [];
 
   afterEach(() => {
@@ -29,6 +29,50 @@ describe('cli-common build Windows rename fallback', () => {
     for (const dir of tempDirs.splice(0)) {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it('populates an outer publisher on another device without renaming its output', async () => {
+    const { buildCliCommonDist } = await import(pathToFileURL(join(scriptsDir, 'build.mjs')).href);
+    const root = mkdtempSync(join(tmpdir(), 'happier-cli-common-build-exdev-'));
+    tempDirs.push(root);
+    const packageDir = join(root, 'capture', 'packages', 'cli-common');
+    const distDir = join(packageDir, 'dist');
+    const outputDir = join(root, 'workspace', 'staged-dist');
+    mkdirSync(distDir, { recursive: true });
+    mkdirSync(outputDir, { recursive: true });
+    writeFileSync(join(distDir, 'index.js'), 'export const oldValue = true;\n');
+    writeFileSync(join(outputDir, 'publisher-owned'), 'retained');
+    const packageJson = {
+      name: '@happier-dev/cli-common-fixture',
+      exports: { '.': { default: './dist/index.js', types: './dist/index.d.ts' } },
+    };
+    renameMock.mockImplementation(async (from, to) => {
+      if (String(from).startsWith(`${packageDir}${sep}`) && to === outputDir) {
+        const error = new Error(`EXDEV: cross-device rename '${from}' -> '${to}'`);
+        error.code = 'EXDEV';
+        throw error;
+      }
+      return renameDelegate.current(from, to);
+    });
+
+    await buildCliCommonDist({
+      packageDir,
+      packageJson,
+      env: { HAPPIER_WORKSPACE_DIST_OUTPUT_DIR: outputDir },
+      buildIntoDistDir: async ({ stagingDistDir }) => {
+        mkdirSync(join(stagingDistDir, 'nested'), { recursive: true });
+        writeFileSync(join(stagingDistDir, 'index.js'), 'export const newValue = true;\n');
+        writeFileSync(join(stagingDistDir, 'index.d.ts'), 'export declare const newValue: boolean;\n');
+        writeFileSync(join(stagingDistDir, 'nested', 'value.js'), 'export const nested = true;\n');
+      },
+    });
+
+    expect(readFileSync(join(outputDir, 'index.js'), 'utf8')).toContain('newValue');
+    expect(readFileSync(join(outputDir, 'index.d.ts'), 'utf8')).toContain('newValue');
+    expect(readFileSync(join(outputDir, 'nested', 'value.js'), 'utf8')).toContain('nested');
+    expect(readFileSync(join(outputDir, 'publisher-owned'), 'utf8')).toBe('retained');
+    expect(readFileSync(join(distDir, 'index.js'), 'utf8')).toContain('oldValue');
+    expect(renameMock.mock.calls.some(([from, to]) => from === outputDir || to === outputDir)).toBe(false);
   });
 
   it('copies staged dist into place when Windows blocks rename with EPERM', async () => {

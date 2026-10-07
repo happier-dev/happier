@@ -1,4 +1,4 @@
-import { parseModelPackManifest, type ModelPackManifest } from '@happier-dev/protocol';
+import { parseModelPackManifest, type ModelPackManifest } from '@happier-dev/protocol/voice/modelPacks/manifest';
 import { getOptionalHappierSherpaNativeModule } from '@happier-dev/sherpa-native';
 import { installModelPackWithHost, type ModelPackPromotionPriorInstallV1 } from '@happier-dev/voice-modelpacks';
 

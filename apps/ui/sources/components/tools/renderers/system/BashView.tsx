@@ -1,10 +1,10 @@
-import { extractShellCommand, stripShellCommandPreludeForDisplay } from '@happier-dev/protocol';
+import { extractShellCommand, stripShellCommandPreludeForDisplay } from '@happier-dev/protocol/activity/shellCommand';
 import * as React from 'react';
 import { StyleSheet } from 'react-native-unistyles';
 import { ToolCall } from "@happier-dev/session-core/messages";
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { CommandView } from '@/components/sessions/transcript/CommandView';
-import { maybeParseJson } from '@happier-dev/protocol';
+import { maybeParseJson } from '@happier-dev/protocol/activity/parseJson';
 import { extractStdStreams, tailTextWithEllipsis } from "@happier-dev/session-core/tools";
 import { CodeView } from '@/components/ui/media/CodeView';
 import { t } from '@/text';

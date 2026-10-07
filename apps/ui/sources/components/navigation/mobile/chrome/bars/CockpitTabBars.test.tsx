@@ -15,7 +15,7 @@ let fixtureSessionServerId: string | undefined;
 const sessionMetadataState = vi.hoisted(() => ({
     metadata: { flavor: 'codex' } as Record<string, unknown> | null,
     metadataLayoutVersion: 0,
-    ownerMetadataView: null as Record<string, unknown> | null,
+    ownerMetadataView: undefined as Record<string, unknown> | null | undefined,
     accessLevel: null as 'view' | 'edit' | 'admin' | null,
 }));
 const collaborationAdmissionState = vi.hoisted(() => ({ admitted: false }));
@@ -104,12 +104,14 @@ async function seedCockpitState(element: React.ReactNode) {
         // These are producer fixture payloads; the presentation owner and store readers remain real.
         const target = reachableMachineState.target ?? { machineId: 'machine-1', basePath: '/repo' };
         const serverId = fixtureSessionServerId ?? route.serverId;
-        const metadata = sessionMetadataState.metadata === null ? null : {
+        const metadata = sessionMetadataState.metadataLayoutVersion === 1 ? sessionMetadataState.metadata : sessionMetadataState.metadata === null ? null : {
             ...createSessionFixture().metadata,
             machineId: target.machineId, path: target.basePath,
             ...sessionMetadataState.metadata,
         } as Session['metadata'];
-        const ownerMetadataView = sessionMetadataState.ownerMetadataView as Session['ownerMetadataView'];
+        const ownerMetadataView = (sessionMetadataState.metadataLayoutVersion === 1 && sessionMetadataState.ownerMetadataView === undefined
+            ? { ...createSessionFixture().metadata, machineId: target.machineId, path: target.basePath }
+            : sessionMetadataState.ownerMetadataView) as Session['ownerMetadataView'];
         const session = createSessionFixture({ id: route.sessionId, serverId,
             metadata, metadataLayoutVersion: sessionMetadataState.metadataLayoutVersion, ownerMetadataView,
             ...(sessionMetadataState.accessLevel ? { accessLevel: sessionMetadataState.accessLevel } : {}),
@@ -192,7 +194,7 @@ describe('cockpit tab bars', () => {
         translationPrefix = 'en';
         sessionMetadataState.metadata = { flavor: 'codex' };
         sessionMetadataState.metadataLayoutVersion = 0;
-        sessionMetadataState.ownerMetadataView = null;
+        sessionMetadataState.ownerMetadataView = undefined;
         sessionMetadataState.accessLevel = null;
         scmState.status = null;
         badgeSettingsState.gitBadgeMode = 'changedFiles';
@@ -338,6 +340,7 @@ describe('cockpit tab bars', () => {
     }
 
     function flattenStyle(style: unknown): Record<string, unknown> {
+        if (typeof style === 'function') return flattenStyle(style({ pressed: false, hovered: false, focused: false, selected: false, busy: false, disabled: false }));
         if (Array.isArray(style)) {
             return Object.assign({}, ...style.map((entry) => flattenStyle(entry)));
         }
@@ -348,6 +351,8 @@ describe('cockpit tab bars', () => {
     }
 
     it('uses the session agent name and icon for the chat tab', async () => {
+        // Agent identity remains Session-readable while its private machine target is unavailable.
+        sessionMetadataState.ownerMetadataView = null;
         sessionMetadataState.metadata = { flavor: 'codex' };
         translationPrefix = 'en';
         const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
@@ -815,6 +820,9 @@ describe('cockpit tab bars', () => {
                 // frame; RNW cannot turn Pressable hitSlop into a physical target.
                 hitSlop: 0,
             }));
+            const targetFrame = flattenStyle(pin?.props.style);
+            expect(targetFrame.width).toBeGreaterThanOrEqual(minimumTargetSize);
+            expect(targetFrame.height).toBeGreaterThanOrEqual(minimumTargetSize);
 
             const stopPropagation = vi.fn();
             await act(async () => {
@@ -829,11 +837,11 @@ describe('cockpit tab bars', () => {
             expect(onSurfacePress).not.toHaveBeenCalled();
 
             await act(async () => {
-                pin?.props.onFocus?.();
+                screen.findByTestId(pinTestID)?.props.onFocus?.();
             });
-            const focusedPinSurface = screen.findByTestId(`${pinTestID}-surface`);
-            const focusedStyle = focusedPinSurface?.props.style;
-            expect(flattenStyle(focusedStyle)).toEqual(expect.objectContaining({ borderWidth: 1 }));
+            expect(screen.findByTestId(`${pinTestID}-tooltip`)).not.toBeNull();
+            await act(async () => { screen.findByTestId(pinTestID)?.props.onBlur?.(); });
+            expect(screen.findByTestId(`${pinTestID}-tooltip`)).toBeNull();
 
             cockpitPinsState.value = ['plugin:acme.review:review-panel'];
             await screen.update(renderBar());

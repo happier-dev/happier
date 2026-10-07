@@ -1,7 +1,7 @@
 import {
     readHomeDomainActionErrorV1,
     type HomeDomainActionErrorCodeV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/actions/homeDomainActionFamily';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';

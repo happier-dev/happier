@@ -4,7 +4,7 @@ import {
     type MemorySearchMode,
     type MemorySearchResultV1,
     type MemorySearchScope,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/memory/memorySearch';
 
 import { serverFetch } from '@/sync/http/client';
 import {

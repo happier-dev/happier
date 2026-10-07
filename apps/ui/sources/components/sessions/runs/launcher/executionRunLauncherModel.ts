@@ -3,10 +3,8 @@ import { resolveExecutionRunAvailableBackends, type ExecutionRunBackendCapabilit
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { resolveExecutionRunIntentTitle } from '@/components/sessions/runs/resolveExecutionRunIntentTitle';
 import { t } from '@/text';
-import {
-    ExecutionRunIntentSchema,
-    type SessionDiscussionSelectionSourceV1,
-} from '@happier-dev/protocol';
+import { ExecutionRunIntentSchema } from '@happier-dev/protocol/execution/runs/index';
+import type { SessionDiscussionSelectionSourceV1 } from '@happier-dev/protocol/sessions/discussions/content';
 
 export const EXECUTION_RUN_LAUNCH_INTENTS = ['review', 'plan', 'delegate'] as const;
 

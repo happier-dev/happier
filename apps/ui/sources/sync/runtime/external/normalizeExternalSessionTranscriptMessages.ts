@@ -1,7 +1,5 @@
-import {
-    makeExternalSessionHistoricalImportLocalId,
-    type ExternalSessionTranscriptRawMessageV1,
-} from '@happier-dev/protocol';
+import { makeExternalSessionHistoricalImportLocalId } from '@happier-dev/protocol/sessions/external/historicalImportIdentity';
+import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 
 import { normalizeRawMessages, type NormalizedMessage, type RawMessageNormalizationInput } from "@happier-dev/session-core/raw";
 

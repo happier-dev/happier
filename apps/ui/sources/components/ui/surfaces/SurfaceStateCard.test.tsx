@@ -410,6 +410,26 @@ describe('SurfaceStateCard pane-state composition', () => {
         expect(learnMore).toHaveBeenCalledTimes(1);
     });
 
+    it('draws its Daybreak scene in the glyph slot only where the state has room for it', async () => {
+        const { SurfaceStateCard } = await import('./SurfaceStateCard');
+        const hasScene = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.findAllHostsByTestId('scene-planet').length > 0;
+        const glyph = (screen: Awaited<ReturnType<typeof renderScreen>>, name: string) => screen.findAll((node) => node.props?.name === name).length;
+
+        const empty = await renderScreen(<SurfaceStateCard size="pane" kind="empty" iconName="globe" scene="nothingListening" title="No local services" />);
+        expect(hasScene(empty)).toBe(true);
+        expect(glyph(empty, 'globe'), 'the scene takes the glyph\'s place').toBe(0);
+
+        const offline = await renderScreen(<SurfaceStateCard size="page" kind="unavailable" scene="homeOffline" title="Studio is out of reach" />);
+        expect(hasScene(offline)).toBe(true);
+
+        const inline = await renderScreen(<SurfaceStateCard size="pane" layout="inline" kind="success" scene="treeClean" title="Working tree clean" />);
+        expect(hasScene(inline)).toBe(false);
+
+        const line = await renderScreen(<SurfaceStateCard size="line" kind="empty" iconName="globe" scene="nothingListening" title="Nothing running" />);
+        expect(hasScene(line)).toBe(false);
+        expect(glyph(line, 'globe')).toBe(1);
+    });
+
     it('in a list it is one quiet line: the kind glyph, the sentence and an inline recovery', async () => {
         const { SurfaceStateCard } = await import('./SurfaceStateCard');
         const retry = vi.fn();

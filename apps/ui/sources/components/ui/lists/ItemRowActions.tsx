@@ -27,12 +27,17 @@ export interface ItemRowActionsProps {
     layoutWidthPx?: number | null;
     overflowTriggerTestID?: string;
     overflowTriggerAccessibilityLabel?: string;
+    /** A mounted overflow control may own domain shortcuts; descendant text entry is untouched. */
+    onOverflowTriggerKeyDown?: (key: string) => boolean;
+    /** Replaces one open menu section without mounting custom content while the menu is shut. */
+    renderOverflowSection?: (section: Readonly<{ id: string; title: string }>) => React.ReactNode | undefined;
     renderOverflowTrigger?: (props: Readonly<{
         open: boolean;
         toggle: () => void;
         testID?: string;
         accessibilityLabel: string;
         accessibilityHint: string;
+        onKeyDown?: (event: OverflowTriggerKeyEvent) => void;
     }>) => React.ReactNode;
     renderOverflowAnchorOverlay?: () => React.ReactNode;
     /** Controlled overflow, for a row that also opens its actions another way (a long press on touch). */
@@ -78,6 +83,14 @@ export interface ItemRowActionsProps {
     popoverBoundaryRef?: React.RefObject<any> | null;
 }
 
+type OverflowTriggerKeyEvent = Readonly<{
+    key: string;
+    target: unknown;
+    currentTarget: unknown;
+    preventDefault(): void;
+    stopPropagation(): void;
+}>;
+
 const DEFAULT_ACTION_CONTROL_SIZE = 28;
 
 export function ItemRowActions(props: ItemRowActionsProps) {
@@ -100,6 +113,11 @@ export function ItemRowActions(props: ItemRowActionsProps) {
         onOverflowOpenChange?.(resolved);
     }, [onOverflowOpenChange, props.overflowOpen, showOverflow]);
     const overflowAnchorRef = React.useRef<View>(null);
+    const onOverflowTriggerKeyDown = React.useCallback((event: OverflowTriggerKeyEvent) => {
+        if (event.target !== event.currentTarget || !props.onOverflowTriggerKeyDown?.(event.key)) return;
+        event.preventDefault();
+        event.stopPropagation();
+    }, [props.onOverflowTriggerKeyDown]);
 
     const blurTintOnWeb = React.useMemo(() => {
         return resolveWebBlurTintColor({ surfaceColor: theme.colors.surface.base, dark: theme.dark });
@@ -316,6 +334,7 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                             testID: props.overflowTriggerTestID,
                             accessibilityLabel,
                             accessibilityHint,
+                            ...(Platform.OS === 'web' ? { onKeyDown: onOverflowTriggerKeyDown } : {}),
                         })
                         : (
                             <Pressable
@@ -339,6 +358,7 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                                 accessibilityLabel={accessibilityLabel}
                                 accessibilityHint={accessibilityHint}
                                 accessibilityState={{ expanded: showOverflow }}
+                                {...(Platform.OS === 'web' ? { onKeyDown: onOverflowTriggerKeyDown } : {})}
                                 // @ts-expect-error - react-native types do not model the web-only `title` attribute; RN Web forwards it.
                                 title={accessibilityLabel}
                             >
@@ -380,20 +400,19 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                                 edgeFades={{ top: true, bottom: true, size: 24 }}
                                 edgeIndicators={true}
                             >
-                                {overflowActionSections.map((section) => (
-                                    <ActionListSection
-                                        key={section.id}
-                                        title={section.title}
-                                        actions={section.actions}
-                                    />
-                                ))}
+                                {overflowActionSections.map((section) => {
+                                    const custom = props.renderOverflowSection?.(section);
+                                    return <React.Fragment key={section.id}>{custom === undefined
+                                        ? <ActionListSection title={section.title} actions={section.actions} />
+                                        : custom}</React.Fragment>;
+                                })}
                             </FloatingOverlay>
                         )}
                     </Popover>
                 ) : null}
             </View>
         );
-    }, [actionControlFrame, blurTintOnWeb, iconSize, overflowActionSections, overflowAnchorOverlay, overflowPlacement, overflowPortal, props, showOverflow, theme.colors.button.secondary.tint]);
+    }, [actionControlFrame, blurTintOnWeb, iconSize, onOverflowTriggerKeyDown, overflowActionSections, overflowAnchorOverlay, overflowPlacement, overflowPortal, props, showOverflow, theme.colors.button.secondary.tint]);
 
     return (
         <View style={[styles.container, { gap }]}>

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { WorkflowEngineSelectionV1, RoleEngineV1 } from '@happier-dev/protocol';
-import { buildBackendTargetKeyV2, parseBackendTargetKeyV2 } from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2, parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { RoleEngineField } from '@/components/roles/engine/RoleEngineField';
 import { useRoleEnginePresentation } from '@/components/roles/catalog/useRoleEnginePresentation';
 import { useRoleRailItems } from '@/components/roles/rail/useRoleRailItems';

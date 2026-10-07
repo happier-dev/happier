@@ -2,7 +2,7 @@ import {
     projectExternalSessionOperationSharedPresentationV1,
     type ExternalSessionOperationProgressV1,
     type ExternalSessionOperationSharedPresentationV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/external/operationV1';
 
 export function createExternalSessionOperationPresentationIdentity(
     presentation: ExternalSessionOperationSharedPresentationV1,

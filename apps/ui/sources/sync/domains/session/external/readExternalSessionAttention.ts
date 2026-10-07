@@ -2,7 +2,7 @@ import {
     deriveExternalSessionAttentionHasUnread as deriveExternalSessionAttentionHasUnreadSnapshot,
     readExternalSessionAttentionV1,
     type ExternalSessionAttentionV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/external/linked-metadata';
 
 import type { Metadata } from '@happier-dev/session-core/state';
 

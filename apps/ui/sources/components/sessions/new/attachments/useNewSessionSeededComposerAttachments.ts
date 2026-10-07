@@ -1,7 +1,5 @@
-import {
-    buildQualifiedPluginContributionKey,
-    type ComposerRefV1,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef';
 import * as React from 'react';
 
 import {

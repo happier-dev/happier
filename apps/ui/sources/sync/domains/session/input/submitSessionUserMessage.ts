@@ -1,11 +1,8 @@
-import {
-    DEFAULT_SESSION_INACTIVE_RESUME_POLICY,
-    readPendingLocalId,
-    normalizeParticipantRecipientRoutingIdentityV1,
-    withParticipantRecipientV1,
-    withSessionUserMessageDeliveryIntentMeta,
-    type PendingRequestedActionV1,
-} from '@happier-dev/protocol';
+import { DEFAULT_SESSION_INACTIVE_RESUME_POLICY } from '@happier-dev/protocol/account/settings/accountSettings';
+import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
+import { normalizeParticipantRecipientRoutingIdentityV1, withParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
+import { withSessionUserMessageDeliveryIntentMeta } from '@happier-dev/protocol/sessions/messages/sessionMessageMeta';
+import type { PendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 
 import { getPendingQueueWakeResumeOptions } from '@/sync/domains/pending/pendingQueueWake';
 import { classifyAgentSessionComposerNonSteerablePayload } from '@/agents/registry/registryUiBehavior';

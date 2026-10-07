@@ -1,4 +1,5 @@
-import { BrowserActiveTargetV1Schema, type ComputerControlStatusResponseV1 } from '@happier-dev/protocol';
+import { BrowserActiveTargetV1Schema } from '@happier-dev/protocol/browser/events/activeTarget';
+import type { ComputerControlStatusResponseV1 } from '@happier-dev/protocol/computer/v1';
 
 import { classifyBrowserAgentActivity, type BrowserCopresence } from '@/sync/domains/browser/automation/copresence';
 

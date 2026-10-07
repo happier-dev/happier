@@ -1,19 +1,6 @@
 import * as React from 'react';
-import {
-    DaemonPetDiscoverResponseV1Schema,
-    DaemonPetForgetLocalPackageResponseV1Schema,
-    DaemonPetImportLocalPackageResponseV1Schema,
-    DaemonPetImportResponseV1Schema,
-    PET_DAEMON_RPC_METHODS,
-    ImportedLocalPetPackageV1Schema,
-    type AccountPetLibraryEntryV1,
-    type DaemonPetDiscoverRequestV1,
-    type DaemonPetForgetLocalPackageRequestV1,
-    type DaemonPetImportAccountPackageRequestV1,
-    type DaemonPetImportLocalPackageRequestV1,
-    type DiscoveredPetPackageV1,
-    type ImportedLocalPetPackageV1,
-} from '@happier-dev/protocol';
+import { DaemonPetDiscoverResponseV1Schema, DaemonPetForgetLocalPackageResponseV1Schema, DaemonPetImportLocalPackageResponseV1Schema, DaemonPetImportResponseV1Schema, PET_DAEMON_RPC_METHODS, ImportedLocalPetPackageV1Schema, type DaemonPetDiscoverRequestV1, type DaemonPetForgetLocalPackageRequestV1, type DaemonPetImportAccountPackageRequestV1, type DaemonPetImportLocalPackageRequestV1, type DiscoveredPetPackageV1, type ImportedLocalPetPackageV1 } from '@happier-dev/protocol/pets/daemonRpc';
+import type { AccountPetLibraryEntryV1 } from '@happier-dev/protocol/pets/accountLibrary';
 
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import type { SegmentedChoiceOption } from '@/components/ui/lists/SegmentedChoiceItem';

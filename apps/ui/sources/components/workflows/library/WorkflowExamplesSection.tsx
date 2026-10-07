@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierPageSheet } from '@happier-dev/plugin-ui/presentation';
-import { WORKFLOW_STARTER_EXAMPLES_V1, type WorkflowStarterExampleV1 } from '@happier-dev/protocol';
+import { WORKFLOW_STARTER_EXAMPLES_V1, type WorkflowStarterExampleV1 } from '@happier-dev/protocol/workflows/builtins/examples';
 import { countWorkflowStepsV1 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -13,7 +13,7 @@ import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { getPreferredLanguage, t, tLoose } from '@/text';
-import { workflowExamplesTranslations } from '@/text/translations/workflowExamplesTranslations';
+import { en } from '@/text/translations/en';
 import { WorkflowFlowView } from '../flow/WorkflowFlowView';
 import { projectWorkflowFlow } from '../flow/workflowFlowProjection';
 
@@ -49,8 +49,8 @@ function ExampleCard(props: Readonly<{ example: WorkflowStarterExampleV1; onUse:
     const { theme } = useUnistyles();
     const language = getPreferredLanguage();
     const projection = React.useMemo(() => projectWorkflowFlow(example.definition, {}, Object.fromEntries(
-        Object.keys(workflowExamplesTranslations.en.nodes).map(key => [key,
-            t(`workflows.examples.nodes.${key as keyof typeof workflowExamplesTranslations.en.nodes}`)]),
+        Object.keys(en.workflows.examples.nodes).map(key => [key,
+            t(`workflows.examples.nodes.${key as keyof typeof en.workflows.examples.nodes}`)]),
     )), [example.definition, language]);
     const stepCount = React.useMemo(
         () => countWorkflowStepsV1(example.definition.blocks),

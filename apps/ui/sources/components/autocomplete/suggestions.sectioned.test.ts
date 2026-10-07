@@ -153,7 +153,7 @@ function composerReferenceProjection(entries: readonly Readonly<{
                     ? { state: 'dormant' }
                     : entry.activationState === 'unavailable'
                         ? { state: 'unavailable', reason: 'test unavailable' }
-                        : { state: 'active', occurrenceId: entry.activationOccurrenceId ?? `fixture-occurrence:${entry.pluginId}` },
+                        : { state: 'active', occurrenceId: entry.activationOccurrenceId ?? entry.registrationOccurrenceId ?? `fixture-occurrence:${entry.pluginId}` },
                 projection: { state: 'projected' },
                 consumer: 'composer-reference-host',
                 platforms: ['cli', 'web'],

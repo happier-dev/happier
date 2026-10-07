@@ -2,7 +2,7 @@ import {
     encodeTerminalPasteInput,
     TERMINAL_BRACKETED_PASTE_END,
     TERMINAL_BRACKETED_PASTE_START,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/terminal/inputEncoding';
 
 import {
     DEFAULT_TERMINAL_INTERACTION_POLICY,

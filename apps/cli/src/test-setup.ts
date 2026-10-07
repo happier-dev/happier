@@ -198,9 +198,10 @@ export async function setup(options: CliTestSetupOptions = {}) {
   // Source tests exercise native confinement without publishing the full CLI
   // dist. Prepare that prerequisite through the same staging owner as releases.
   await ensureNativeCustodyReadyOnce(projectRoot, dependencies.runCommand)
-  await ensureBundledPluginPublicationReady(projectRoot)
+  if (buildMode === 'none') return
 
-  if (skipBuild || buildMode === 'none') return
+  await ensureBundledPluginPublicationReady(projectRoot)
+  if (skipBuild) return
 
   if (buildMode === 'full') {
     await dependencies.ensureDistBuiltOnce(projectRoot)

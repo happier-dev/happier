@@ -3,7 +3,7 @@ import {
     HomeConnectionDescriptorV1Schema,
     type HomeConnectionDescriptorV1,
     type HomeCredentialDestinationSelectionV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/auth/accountDirectory';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { createServerFetchAtEndpoint, type ServerFetch } from '@/sync/http/client';
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';

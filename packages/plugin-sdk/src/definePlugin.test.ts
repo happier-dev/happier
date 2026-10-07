@@ -849,9 +849,9 @@ describe('definePlugin', () => {
             id: 'com.acme.widget-placements',
             version: '1.0.0',
             ui: {
-                views: [{ id: 'shared', container: 'widget', target: { kind: 'session' }, renderer: 'native', inputs, inputSchema, sessionInputPath: 'session' }],
+                views: [{ sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' }, id: 'shared', container: 'widget', target: { kind: 'session' }, renderer: 'native', inputs, inputSchema, sessionInputPath: 'session' }],
                 renderers: [{ id: 'native', kind: 'declarative', root: { kind: 'text', text: 'Shared' } }],
-                surfaces: [{ id: 'glance', placement: 'widget', target: { kind: 'session' }, inputs, inputSchema, sessionInputPath: 'session', renderer: { kind: 'declarative', root: { kind: 'text', text: 'Glance' } } }],
+                surfaces: [{ sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' }, id: 'glance', placement: 'widget', target: { kind: 'session' }, inputs, inputSchema, sessionInputPath: 'session', renderer: { kind: 'declarative', root: { kind: 'text', text: 'Glance' } } }],
             },
         });
         expect(plugin.manifest.contributes.ui?.views).toEqual(expect.arrayContaining([

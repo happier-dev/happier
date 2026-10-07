@@ -1,6 +1,6 @@
 import type { ToolCall } from '@happier-dev/session-core/messages';
 import type { Metadata } from '@happier-dev/session-core/state';
-import { maybeParseJson } from '@happier-dev/protocol';
+import { maybeParseJson } from '@happier-dev/protocol/activity/parseJson';
 import { knownTools } from '@/components/tools/catalog';
 import type { KnownToolDefinition } from '@/components/tools/catalog/_types';
 import { parseToolUseError } from '@/utils/errors/toolErrorParser';

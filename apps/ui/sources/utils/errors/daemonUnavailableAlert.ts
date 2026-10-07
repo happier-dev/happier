@@ -1,4 +1,4 @@
-import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { isRpcMethodNotAvailableError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 

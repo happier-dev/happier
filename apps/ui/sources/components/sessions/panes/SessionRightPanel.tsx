@@ -78,7 +78,7 @@ import { createSessionBoardDetailsTab } from './details/sessionDetailsTabBuilder
 import { useSessionViewShellSession } from '@/components/sessions/shell/sessionViewStableSession';
 import { useSessionProjectScmIsRepo } from '@/sync/store/hooks';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
-import { readSessionDirectoryKind } from '@happier-dev/protocol';
+import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import type { SessionBoardPrimaryMountResolver } from '@/sync/domains/session/board';
 import { useMountedSessionBoardController } from '@/components/sessions/board/SessionBoardControllerProvider';
 

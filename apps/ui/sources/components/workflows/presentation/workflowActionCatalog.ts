@@ -1,5 +1,7 @@
 import { listActionSpecs, type ActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { formatQualifiedPluginActionId, parseQualifiedPluginContributionKey, type PluginProjectionV2 } from '@happier-dev/protocol';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { resolvePluginProjectedActionPresentation } from '@/sync/domains/plugins/ui/actionPresentation';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { resolveWorkflowActionTitle } from '@/sync/domains/workflows/workflowActionPresentation';

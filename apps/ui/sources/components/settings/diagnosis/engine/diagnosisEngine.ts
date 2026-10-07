@@ -1,8 +1,5 @@
-import {
-  sanitizeBugReportUrl,
-  sanitizeDoctorSnapshotUrls,
-  type DoctorSnapshot,
-} from '@happier-dev/protocol';
+import { sanitizeBugReportUrl } from '@happier-dev/protocol/bugs/reports/sanitize';
+import { sanitizeDoctorSnapshotUrls, type DoctorSnapshot } from '@happier-dev/protocol/diagnostics/doctorSnapshot';
 
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { isDaemonOfAnotherAccount } from '@/sync/domains/server/relayDrift/relayDriftModel';

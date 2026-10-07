@@ -1,12 +1,9 @@
-import {
-    BrowserScreenshotMediaReferenceV1Schema,
-    BrowserCommandDispatchResultV1Schema,
-    BrowserViewTargetV1Schema,
-    listActionSpecs,
-    maybeParseJson,
-    parseLocator,
-    type BrowserViewTargetV1,
-} from '@happier-dev/protocol';
+import { BrowserScreenshotMediaReferenceV1Schema } from '@happier-dev/protocol/browser/context/v1';
+import { BrowserCommandDispatchResultV1Schema } from '@happier-dev/protocol/browser/control/v1';
+import { BrowserViewTargetV1Schema, type BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
+import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+import { maybeParseJson } from '@happier-dev/protocol/activity/parseJson';
+import { parseLocator } from '@happier-dev/protocol/browser/automation/locators';
 
 import type { ToolCall } from '@happier-dev/session-core/messages';
 import { formatBrowserDisplayUrl } from '@/sync/domains/browser/shell';

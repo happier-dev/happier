@@ -1,4 +1,4 @@
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 
 const MANAGED_STASH_RETRY_BASE_INTERVAL_MS = 1_000;
 const MANAGED_STASH_RETRY_STEP_INTERVAL_MS = 1_000;

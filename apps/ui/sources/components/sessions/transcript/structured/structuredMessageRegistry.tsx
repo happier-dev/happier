@@ -3,22 +3,19 @@ import { t } from '@/text';
 
 import { ReviewCommentsV1Schema } from '@/sync/domains/input/reviewComments/reviewCommentMeta';
 import { ReviewCommentsMessageCard, projectReviewCommentsFindText } from '@/components/sessions/reviews/messages/ReviewCommentsMessageCard';
-import {
-    DelegateOutputV1Schema,
-    ExecutionRunCompletionV1Schema,
-    type ExecutionRunCompletionV1,
-    type WorkerUpdateV1,
-    PlanOutputV1Schema,
-    ParticipantMessageV1Schema,
-    ReviewFindingsV1Schema,
-    ReviewFindingsV2Schema,
-    ReviewFollowUpV1Schema,
-    SessionSummaryShardV1Schema,
-    SessionSynopsisV1Schema,
-    SubagentCommandV1Schema,
-    SubagentLaunchV1Schema,
-    VoiceAgentTurnV1Schema,
-} from '@happier-dev/protocol';
+import { DelegateOutputV1Schema } from '@happier-dev/protocol/messages/structured/delegateOutputV1';
+import { ExecutionRunCompletionV1Schema, type ExecutionRunCompletionV1 } from '@happier-dev/protocol/execution/runs/completionInputV1';
+import type { WorkerUpdateV1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
+import { PlanOutputV1Schema } from '@happier-dev/protocol/messages/structured/planOutputV1';
+import { ParticipantMessageV1Schema } from '@happier-dev/protocol/messages/structured/participantMessageV1';
+import { ReviewFindingsV1Schema } from '@happier-dev/protocol/messages/structured/reviewFindingsV1';
+import { ReviewFindingsV2Schema } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
+import { ReviewFollowUpV1Schema } from '@happier-dev/protocol/messages/structured/reviewFollowUpV1';
+import { SessionSummaryShardV1Schema } from '@happier-dev/protocol/messages/structured/sessionSummaryShardV1';
+import { SessionSynopsisV1Schema } from '@happier-dev/protocol/messages/structured/sessionSynopsisV1';
+import { SubagentCommandV1Schema } from '@happier-dev/protocol/messages/structured/subagentCommandV1';
+import { SubagentLaunchV1Schema } from '@happier-dev/protocol/messages/structured/subagentLaunchV1';
+import { VoiceAgentTurnV1Schema } from '@happier-dev/protocol/messages/structured/voiceAgentTurnV1';
 import { ReviewFindingsMessageCard, projectReviewFindingsFindText } from '@/components/sessions/reviews/messages/ReviewFindingsMessageCard';
 import { ReviewFollowUpMessageCard, projectReviewFollowUpFindText } from '@/components/sessions/reviews/messages/ReviewFollowUpMessageCard';
 import { PlanOutputMessageCard, projectPlanOutputFindText } from '@/components/sessions/plans/messages/PlanOutputMessageCard';

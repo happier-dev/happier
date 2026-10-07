@@ -1,11 +1,6 @@
-import {
-    ComposerContentDisplayNameV1Schema,
-    ComposerContentMimeTypeV1Schema,
-    type ComposerContentHandleV1,
-    type ComposerContentMediaKindV1,
-    type PluginContributionIdentityV1,
-    type SessionExecutionTargetV1,
-} from '@happier-dev/protocol';
+import { ComposerContentDisplayNameV1Schema, ComposerContentMimeTypeV1Schema, type ComposerContentHandleV1, type ComposerContentMediaKindV1 } from '@happier-dev/protocol/runtime/input/composerContentV1';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { SessionExecutionTargetV1 } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
 
 import {
     openLocalUploadSourceReader,

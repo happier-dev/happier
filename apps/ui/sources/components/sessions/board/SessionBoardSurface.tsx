@@ -1298,6 +1298,7 @@ export function SessionBoardSurface(props: SessionBoardSurfaceProps): React.Reac
                                 testID={`${testID}-empty`}
                                 kind="empty"
                                 iconName="squares-four"
+                                scene="emptyBoard"
                                 title={snapshot.canEdit
                                     ? t('sessionBoard.empty.editor.title')
                                     : t('sessionBoard.empty.viewer.title')}
@@ -1316,11 +1317,7 @@ export function SessionBoardSurface(props: SessionBoardSurfaceProps): React.Reac
                             {visiblePlacements.length === 0 && visibleRecovered.length === 0 ? (
                                 <EmptyState
                                     testID={`${testID}-empty-view`}
-                                    icon={<Icon
-                                        name={mobileQuery.trim() ? 'magnifying-glass' : 'squares-four'}
-                                        size={32}
-                                        color={theme.colors.text.secondary}
-                                    />}
+                                    scene={mobileQuery.trim() ? 'noMatch' : 'emptyBoard'}
                                     title={mobileQuery.trim()
                                         ? t('common.noMatches')
                                         : t('sessionBoard.views.empty.title')}

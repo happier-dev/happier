@@ -1,4 +1,4 @@
-import { BrowserScreenshotMediaReferenceV1Schema } from '@happier-dev/protocol';
+import { BrowserScreenshotMediaReferenceV1Schema } from '@happier-dev/protocol/browser/context/v1';
 import { normalizeSessionAttachmentUploadPath } from '@happier-dev/protocol/runtime';
 import { randomUUID } from '@/platform/randomUUID';
 import type { BrowserAnnotationMediaRegistrar } from '@/sync/domains/browser/context/captureProvider';

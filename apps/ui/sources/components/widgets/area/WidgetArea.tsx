@@ -3,7 +3,8 @@ import { Platform, View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import { useOptionalPluginUiScrollActivityTracker } from '@happier-dev/plugin-ui/advanced';
-import type { WidgetAreaLayoutV1, WidgetInstanceV1, WidgetPlacementV1, WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
+import { normalizeWidgetSizeForSurfaceV1, resolveWidgetSizeChoicesV1, type WidgetAreaLayoutV1, type WidgetInstanceV1, type WidgetPlacementV1, type WidgetSurfaceRefV1, type WidgetSizeV1 } from '@happier-dev/protocol/widgets';
+import { getWidgetSizeFootprintV1 } from '@happier-dev/protocol/widgets';
 
 import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
@@ -24,7 +25,7 @@ import {
     buildWidgetFrameStyleActions,
     buildWidgetInstanceActions,
     buildWidgetMoveActions,
-    buildWidgetWidthActions,
+    buildWidgetSizeActions,
     orderWidgetMenu,
 } from '@/components/widgets/frame/widgetFrameMenu';
 import { WIDGET_FRAME_PLACEMENT_DEFAULTS, resolveWidgetFrameStyle } from '@/components/widgets/frame/widgetFrameStyle';
@@ -32,10 +33,10 @@ import { useWidgetFrameRename } from '@/components/widgets/frame/useWidgetFrameR
 import { useWidgetDefinitionFlows } from '@/components/widgets/definitions/useWidgetDefinitionFlows';
 import { useWidgetInputsEditor } from '@/components/widgets/surface/useWidgetInputsEditor';
 import { useWidgetInstanceBindingLabel } from '@/components/widgets/surface/useWidgetInstanceBindingLabel';
-import { useWidgetInstanceDescriptor } from '@/components/widgets/surface/useWidgetInstanceDescriptor';
+import { useWidgetInstanceDescriptors } from '@/components/widgets/surface/useWidgetInstanceDescriptor';
 import { WidgetSurface } from '@/components/widgets/surface/WidgetSurface';
 import { runAcknowledgedWidgetSetupCommand, widgetProvidedContext, type WidgetSurfaceContext } from '@/components/widgets/surface/widgetSurfaceSetup';
-import { readWidgetDescriptor } from '@/components/widgets/widgetCatalog';
+import { readWidgetDescriptor, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { t } from '@/text';
 import { useIsNearViewport, type NearViewportSpan } from '@/components/widgets/nearViewport';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
@@ -47,6 +48,7 @@ import { resolveWidgetAreaEntityDrop } from './widgetAreaEntityDrop';
 import type { EntityDropEffectV1, EntityDropAdmissionV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { useWidgetAreaLayout, type WidgetAreaLayout, type WidgetAreaPort, type WidgetAreaWriteOutcome } from './useWidgetAreaLayout';
+import { renderWidgetSizeMenuSection, stepWidgetSizeControl, type WidgetSizeControl } from '@/components/widgets/frame/WidgetSizeControl';
 
 type WidgetAreaWrite = WidgetAreaLayout<WidgetSurfaceContext>['write'];
 
@@ -212,7 +214,7 @@ function WidgetAreaWithLayout(props: WidgetAreaProps & Readonly<{ port: WidgetAr
                     placements={ready.placements}
                     context={ready.context}
                     surfaceName={props.surfaceName}
-                    write={write}
+                    write={layoutWrite}
                     onRequestClose={closeAdd}
                     testID={`${props.testID}.addPopover`}
                 />
@@ -248,12 +250,23 @@ type PlacementsProps = WidgetAreaProps & Readonly<{
 }>;
 
 function WidgetAreaPlacements(props: PlacementsProps): React.ReactElement {
+    const runtime = useAppShellPluginUiProjection();
+    const instances = React.useMemo(() => props.placements.map(placement => placement.instance), [props.placements]);
+    const installed = React.useMemo(() => instances.flatMap(instance => {
+        const candidate = readWidgetDescriptor(runtime.pluginUiProjection, instance.definition);
+        return candidate ? [candidate] : [];
+    }), [instances, runtime.pluginUiProjection]);
+    const descriptors = useWidgetInstanceDescriptors(props.surface, instances, installed);
+    const sizes = React.useMemo(() => props.placements.map((placement, index) => normalizeWidgetSizeForSurfaceV1(
+        props.surface.owner.kind, placement.size, descriptors[index]?.sizeDeclaration)), [props.placements, props.surface.owner.kind, descriptors]);
     const items = props.placements.map((placement, index) => (
         <WidgetAreaItem
             key={placement.instance.id}
             {...props}
             failed={props.failed?.instanceId === placement.instance.id ? props.failed : null}
             placement={placement}
+            descriptor={descriptors[index] ?? null}
+            size={sizes[index]}
             index={index}
             count={props.placements.length}
         />
@@ -261,7 +274,7 @@ function WidgetAreaPlacements(props: PlacementsProps): React.ReactElement {
     if (props.geometry === 'column') return <View style={styles.column}>{items}</View>;
     return (
         <CardGrid testID={`${props.testID}.grid`} columns={2}>
-            {props.placements.map((placement, index) => (placement.width === 'full'
+            {props.placements.map((placement, index) => (sizes[index] && getWidgetSizeFootprintV1(props.surface.owner.kind, sizes[index])?.columnSpan === 2
                 ? <CardGridCell key={placement.instance.id} span="row">{items[index]}</CardGridCell>
                 : items[index]))}
         </CardGrid>
@@ -270,6 +283,8 @@ function WidgetAreaPlacements(props: PlacementsProps): React.ReactElement {
 
 const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps & Readonly<{
     placement: WidgetAreaLayoutV1['instances'][number];
+    descriptor: WidgetCandidate | null;
+    size: WidgetSizeV1 | undefined;
     index: number;
     count: number;
 }>) {
@@ -277,8 +292,10 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
     const instance = placement.instance;
     const testID = `${props.testID}.widget.${instance.id}`;
     const runtime = useAppShellPluginUiProjection();
-    const installed = React.useMemo(() => readWidgetDescriptor(runtime.pluginUiProjection, instance.definition), [runtime.pluginUiProjection, instance.definition]);
-    const candidate = useWidgetInstanceDescriptor(surface, instance, installed);
+    const candidate = props.descriptor;
+    const size = props.size;
+    const widgetPresentation = React.useMemo(() => size ? { size, footprint: getWidgetSizeFootprintV1(surface.owner.kind, size)! } : undefined,
+        [size, surface.owner.kind]);
     const frameStyle = resolveWidgetFrameStyle({ placement: GEOMETRY_PLACEMENT[geometry], override: placement.frameStyle ?? null });
     const providedContext = React.useMemo(() => widgetProvidedContext(context), [context]);
     const focused = useIsFocused();
@@ -357,6 +374,12 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
     });
 
     const alwaysVisible = Platform.OS !== 'web' || readCoarsePrimaryPointer();
+    const choices = resolveWidgetSizeChoicesV1(surface.owner.kind, candidate?.sizeDeclaration);
+    const sizeControl: WidgetSizeControl | undefined = props.canEdit && candidate && choices.defaultSize ? {
+        surface: surface.owner.kind, sizes: choices.sizes,
+        size,
+        onSet: size => { void write({ actionId: 'widgets.instance.size.set', instanceId: instance.id, size }); },
+    } : undefined;
     const menu = props.canEdit ? (
         <View
             ref={edit.anchorRef}
@@ -375,12 +398,11 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
                 compactActionIds={[]}
                 overflowTriggerTestID={`${testID}.menuTrigger`}
                 overflowTriggerAccessibilityLabel={`${t('widgetAdd.widgetOptions')}: ${title}`}
+                onOverflowTriggerKeyDown={key => stepWidgetSizeControl(sizeControl, key)}
+                renderOverflowSection={({ id }) => renderWidgetSizeMenuSection(sizeControl, id, `${testID}.size`)}
                 actions={orderWidgetMenu({
                     instance: buildWidgetInstanceActions({ editInputs: edit.editInputs, onRename: renaming.begin }),
-                    width: geometry === 'grid' ? buildWidgetWidthActions({
-                        width: placement.width ?? 'half',
-                        onSet: (width) => { void write({ actionId: 'widgets.instance.width.set', instanceId: instance.id, width }); },
-                    }) : [],
+                    size: buildWidgetSizeActions(sizeControl),
                     frame: buildWidgetFrameStyleActions({
                         placement: GEOMETRY_PLACEMENT[geometry],
                         surfaceDefault: WIDGET_FRAME_PLACEMENT_DEFAULTS[GEOMETRY_PLACEMENT[geometry]],
@@ -418,13 +440,14 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
                 providedContext={providedContext}
                 recordRevision={stableJsonStringify(instance)}
                 presentation="content"
+                size={size}
                 appRuntime={runtime}
                 {...(edit.onRepairInputs ? { onRepairInputs: edit.onRepairInputs } : {})}
                 testID={`${testID}.body`}
             />
             </View>
         ) : <View testID={`${testID}.deferred`} style={{ minHeight: bodyHeight }} />,
-    }), [active, bodyHeight, candidate, edit.onRepairInputs, instance, onBodyLayout, providedContext, runtime, surface, testID]);
+    }), [active, bodyHeight, candidate, edit.onRepairInputs, instance, onBodyLayout, providedContext, runtime, surface, testID, size]);
 
     return (
         <View ref={node => { sectionRef.current = node; drag.ref(node); }} collapsable={false}
@@ -433,7 +456,7 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
                 testID={`${testID}.frame`}
                 frameStyle={frameStyle}
                 placement={GEOMETRY_PLACEMENT[geometry]}
-                fill={geometry === 'grid'}
+                widgetPresentation={widgetPresentation}
                 mark={candidate?.icon ?? 'squares-four'}
                 title={renaming.field ?? title}
                 source={bindingLabel ?? candidate?.pluginName ?? undefined}
@@ -469,8 +492,8 @@ function WidgetAreaAddPopover(props: Readonly<{
     const { write } = props;
     const instances = React.useMemo(() => props.placements.map((placement) => placement.instance), [props.placements]);
     const labels = React.useMemo(() => AREA_LABELS(props.surfaceName), [props.surfaceName]);
-    const addInstance = React.useCallback((instance: WidgetInstanceV1) => runAcknowledgedWidgetSetupCommand(
-        () => write({ actionId: 'widgets.instance.add', instance }), t('widgetAdd.addFailed'),
+    const addInstance = React.useCallback((instance: WidgetInstanceV1, size?: WidgetSizeV1) => runAcknowledgedWidgetSetupCommand(
+        () => write({ actionId: 'widgets.instance.add', instance, ...(size ? { size } : {}) }), t('widgetAdd.addFailed'),
     ), [write]);
     const sections = useAccountWidgetAddSections({ scope: props.surface, instances, addInstance, labels, context: props.context, testID: props.testID });
     return (

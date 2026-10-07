@@ -1,4 +1,4 @@
-import { maybeParseJson } from '@happier-dev/protocol';
+import { maybeParseJson } from '@happier-dev/protocol/activity/parseJson';
 import {
     SESSION_BOARD_ACTION_IDS_V1,
     parseSessionBoardActionExecuteOutcomeV1,

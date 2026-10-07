@@ -4,7 +4,7 @@ import type {
     SimulatorOrientationV1,
     SimulatorSidebandKindV1,
 } from '@happier-dev/protocol';
-import { isBackedSimulatorSidebandKindV1 } from '@happier-dev/protocol';
+import { isBackedSimulatorSidebandKindV1 } from '@happier-dev/protocol/devices/simulator/actionBuilders';
 
 import {
     buildSimulatorPreviewControl,

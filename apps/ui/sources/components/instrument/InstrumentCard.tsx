@@ -5,6 +5,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 
 import { shadowLevelStyle } from '@/shadowElevation';
 import { resolveThemeSurfaceChromeStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
+import { resolveThemeRaisedEdge } from '@/components/ui/surfaces/themeRaisedEdge';
 
 import { useMotionPreferences } from './motion/useMotionPreferences';
 
@@ -16,9 +17,9 @@ import { useMotionPreferences } from './motion/useMotionPreferences';
  *    dashboard, status cards. It adopts the app's ONE canonical grouped-surface
  *    language (`ItemGroup` via `resolveThemeSurfaceChromeStyle`): flat +
  *    hairline, the canonical radius, and NO bespoke drop shadow. In light theme
- *    that is a plain surface on the canvas (the theme's `border.surface` /
- *    `effect.surfaceHighlight` are transparent → no border, no shadow); in dark
- *    theme it is a hairline + level-1 lift. There is no competing tile language.
+ *    that is a plain surface on the canvas with only its raised bottom lip
+ *    (`border.surface` is transparent) and a level-1 lift; in dark theme it is a
+ *    hairline with a lit top edge + level-1 lift. There is no competing tile language.
  *  - `popover`: an elevated FLOATING surface (the scrub lens). Popovers
  *    legitimately cast a soft shadow, so this keeps a level-2 cast shadow, a
  *    40%-hairline, and (at full effects) a whisper of specular top highlight.
@@ -66,7 +67,7 @@ export const InstrumentCard = React.memo(function InstrumentCard(props: Instrume
             borderRadius,
             ...resolveThemeSurfaceChromeStyle({
                 borderColor: theme.colors.border.surface,
-                highlightColor: theme.colors.effect.surfaceHighlight,
+                edge: resolveThemeRaisedEdge(theme, 'surface'),
                 shadowStyle: shadowLevelStyle(theme.colors.shadowLevels[1]),
             }),
         };
@@ -75,7 +76,8 @@ export const InstrumentCard = React.memo(function InstrumentCard(props: Instrume
         isPopover,
         theme.colors.border.default,
         theme.colors.border.surface,
-        theme.colors.effect.surfaceHighlight,
+        theme.colors.edge,
+        theme.dark,
         theme.colors.shadowLevels,
         theme.colors.surface.base,
     ]);

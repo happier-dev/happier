@@ -1,19 +1,6 @@
-import {
-    getActionSpec,
-    PluginWebhookActionInputSchemasV1,
-    PluginWebhookActionOutputSchemasV1,
-    type PluginWebhookPresentUserActionIdV1,
-    PLUGIN_WEBHOOK_ACCOUNT_STATUS_HTTP_PATH_V1,
-    PLUGIN_WEBHOOK_DELIVERY_DISCARD_HTTP_PATH_V1,
-    PLUGIN_WEBHOOK_DELIVERY_REPLAY_HTTP_PATH_V1,
-    PluginWebhookAccountStatusRequestV1Schema,
-    PluginWebhookAccountStatusResultV1Schema,
-    PluginWebhookDeliveryDiscardInputV1Schema,
-    PluginWebhookDeliveryDiscardResultV1Schema,
-    PluginWebhookDeliveryReplayInputV1Schema,
-    PluginWebhookDeliveryReplayResultV1Schema,
-    type PluginWebhookAccountStatusRequestV1,
-} from '@happier-dev/protocol';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { PluginWebhookActionInputSchemasV1, PluginWebhookActionOutputSchemasV1, type PluginWebhookPresentUserActionIdV1 } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
+import { PLUGIN_WEBHOOK_ACCOUNT_STATUS_HTTP_PATH_V1, PLUGIN_WEBHOOK_DELIVERY_DISCARD_HTTP_PATH_V1, PLUGIN_WEBHOOK_DELIVERY_REPLAY_HTTP_PATH_V1, PluginWebhookAccountStatusRequestV1Schema, PluginWebhookAccountStatusResultV1Schema, PluginWebhookDeliveryDiscardInputV1Schema, PluginWebhookDeliveryDiscardResultV1Schema, PluginWebhookDeliveryReplayInputV1Schema, PluginWebhookDeliveryReplayResultV1Schema, type PluginWebhookAccountStatusRequestV1 } from '@happier-dev/protocol/plugins/webhooks/statusV1';
 
 import { serverFetch } from '@/sync/http/client';
 

@@ -1,4 +1,5 @@
 import { isReservedHappierPluginId } from '@happier-dev/protocol/plugins/plugin-id';
+import { runPluginAuthorPhase } from '@/plugins/authoring/phaseLog';
 
 import {
   resolveLocalPathPluginSource,
@@ -232,7 +233,11 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
         if (sourceAuthority.kind !== 'development') {
           throw new Error('Development source authority resolved to the wrong source class');
         }
-        const evaluated = developmentAuthoringSource.kind === 'code'
+        const evaluated = await runPluginAuthorPhase({
+          phase: 'evaluate',
+          projectRoot: sourceRootPath,
+          ...(expectedPluginId ? { pluginId: expectedPluginId } : {}),
+        }, async () => developmentAuthoringSource.kind === 'code'
           ? await evaluatePluginDevelopmentCandidate({
               locator: entry!.locator,
               sourceAuthority,
@@ -240,7 +245,7 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
           : await evaluateManifestPluginDevelopmentCandidate({
               source: developmentAuthoringSource.source,
               sourceAuthority,
-            });
+            }));
         const projected = developmentAuthoringSource.kind === 'code'
           ? projectEvaluatedPluginDevelopmentSource(evaluated.evaluated)
           : evaluated.evaluated;

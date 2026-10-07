@@ -1,12 +1,7 @@
-import {
-    VOICE_AGENT_RUN_TRANSCRIPT_CONTRACT_VERSION,
-    buildVoiceAgentRunMetadataV1,
-    doesVoiceAgentRunMetadataMatchBackendTarget,
-    parseVoiceAgentRunMetadataV1,
-    type BackendTargetRefV1,
-    type ExecutionRunResumeHandle,
-    type VoiceAgentRunMetadataV1,
-} from '@happier-dev/protocol';
+import { VOICE_AGENT_RUN_TRANSCRIPT_CONTRACT_VERSION } from '@happier-dev/protocol/voice/voiceAgentRunMetadataContract';
+import { buildVoiceAgentRunMetadataV1, doesVoiceAgentRunMetadataMatchBackendTarget, parseVoiceAgentRunMetadataV1, type VoiceAgentRunMetadataV1 } from '@happier-dev/protocol/voice/voiceAgentRunMetadataV1';
+import type { BackendTargetRefV1 } from '@happier-dev/protocol/backends/targets/backendTargetRef';
+import type { ExecutionRunResumeHandle } from '@happier-dev/protocol/execution/runs/index';
 
 import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';

@@ -1,9 +1,6 @@
-import {
-    PEER_MEDIATION_RECEIPTS,
-    PeerLoopbackEndpointCandidateV1Schema,
-    type FeaturesResponse,
-    type PeerLoopbackEndpointCandidateV1,
-} from '@happier-dev/protocol';
+import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/mediation/receipts';
+import { PeerLoopbackEndpointCandidateV1Schema, type PeerLoopbackEndpointCandidateV1 } from '@happier-dev/protocol/machines/peer/mediation/loopbackEndpointV1';
+import type { FeaturesResponse } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { PeerDirectPreference } from '@happier-dev/peer-mediation';

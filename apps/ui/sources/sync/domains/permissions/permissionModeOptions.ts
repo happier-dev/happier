@@ -6,7 +6,7 @@ import type { Metadata } from '@happier-dev/session-core/state';
 import { CLAUDE_PERMISSION_MODES, CODEX_LIKE_PERMISSION_MODES, normalizePermissionModeForGroup } from './permissionTypes';
 import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { parsePermissionIntentAlias } from '@happier-dev/agents/permissions';
-import { isPermissionModeGrantedV1 } from '@happier-dev/protocol';
+import { isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 
 export type PermissionModeOption = Readonly<{
     value: PermissionMode;

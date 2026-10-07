@@ -1,6 +1,10 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { pluginJsonValuesEqual, resolveRoleSelectionV1, type RoleOverrideV1, type WorkflowDefinitionV1, type WorkflowMaterializedLeafV1 } from '@happier-dev/protocol';
+import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
+import { resolveRoleSelectionV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
+import type { RoleOverrideV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
+import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
+import type { WorkflowMaterializedLeafV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { walkWorkflowBlocks } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { useRoleCatalog } from '@/components/roles/catalog/useRoleCatalog';
 import { useRoleEnginePresentation } from '@/components/roles/catalog/useRoleEnginePresentation';

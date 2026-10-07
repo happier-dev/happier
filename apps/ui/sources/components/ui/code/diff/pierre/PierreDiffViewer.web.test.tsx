@@ -357,6 +357,13 @@ describe('PierreDiffViewer (web)', () => {
         });
     });
 
+    it('uses the canonical default face for diff headers', async () => {
+        const { resolvePierreTypographyStyle } = await import('./PierreDiffViewer.web');
+        expect(resolvePierreTypographyStyle()).toHaveProperty(
+            '--diffs-header-font-family', 'var(--happier-font-default-regular, Inter-Regular)',
+        );
+    });
+
     it('publishes theme-backed selection CSS variables for Pierre selected lines', async () => {
         const { resolvePierreSelectionStyle } = await import('./PierreDiffViewer.web');
 

@@ -25,6 +25,7 @@ import {
     resolveWidgetAddPick,
     type WidgetAddAsk,
     type WidgetAddEntry,
+    type WidgetAddOutcome,
     type WidgetAddSection,
     type WidgetAddView,
 } from './widgetAddModel';
@@ -47,6 +48,7 @@ export type WidgetAddPanelProps = Readonly<{
     view: WidgetAddView;
     onViewChange: (view: WidgetAddView) => void;
     sections: readonly WidgetAddSection[];
+    initialOutcome?: WidgetAddOutcome;
     ask?: WidgetAddAsk;
     /** Phones: the switch takes its own full-width row under the title, and Done closes. */
     phone?: boolean;
@@ -65,6 +67,13 @@ export type WidgetAddPanelProps = Readonly<{
  * refused, with the reason in the tile's own second line.
  */
 type AddFeedback = Readonly<{ entryId: string; kind: 'added' | 'pending' | 'failed'; message: string }>;
+
+function feedbackForOutcome(outcome: WidgetAddOutcome): AddFeedback {
+    const { entryId, result } = outcome;
+    if (!result.ok) return { entryId, kind: 'failed', message: result.message };
+    return { entryId, kind: result.approvalPending ? 'pending' : 'added',
+        message: result.approvalPending ? t('widgetAdd.areaApprovalPending') : t('widgetAdd.justAdded', { widget: outcome.title }) };
+}
 
 /**
  * The one Add surface for widgets (lab `cwidgets` G1, round 2): a title with who sees what you add,
@@ -88,7 +97,10 @@ export function WidgetAddPanel(props: WidgetAddPanelProps): React.ReactElement {
     const [setup, setSetup] = React.useState<Readonly<{ entryId: string; setup: WidgetSetup }> | null>(null);
     // Which way the last step change went, so the arriving step enters from the right side.
     const [direction, setDirection] = React.useState<'none' | 'forward' | 'backward'>('none');
-    const [feedback, setFeedback] = React.useState<AddFeedback | null>(null);
+    const [feedback, setFeedback] = React.useState<AddFeedback | null>(() => props.initialOutcome ? feedbackForOutcome(props.initialOutcome) : null);
+    React.useEffect(() => {
+        if (feedback) AccessibilityInfo.announceForAccessibility?.(feedback.message);
+    }, [feedback]);
     const onSetupOpenChange = props.onSetupOpenChange;
     const openSetup = React.useCallback((next: Readonly<{ entryId: string; setup: WidgetSetup }> | null) => {
         setSetup(next);
@@ -96,13 +108,10 @@ export function WidgetAddPanel(props: WidgetAddPanelProps): React.ReactElement {
         onSetupOpenChange?.(next !== null);
     }, [onSetupOpenChange]);
     const confirmAdded = React.useCallback((entry: Readonly<{ id: string; title: string }>, result: Extract<WidgetSetupSubmitResult, { ok: true }>) => {
-        const message = result.approvalPending ? t('widgetAdd.areaApprovalPending') : t('widgetAdd.justAdded', { widget: entry.title });
-        setFeedback({ entryId: entry.id, kind: result.approvalPending ? 'pending' : 'added', message });
-        AccessibilityInfo.announceForAccessibility?.(message);
+        setFeedback(feedbackForOutcome({ entryId: entry.id, title: entry.title, result }));
     }, []);
     const refuse = React.useCallback((entryId: string, message: string) => {
         setFeedback({ entryId, kind: 'failed', message });
-        AccessibilityInfo.announceForAccessibility?.(message);
     }, []);
     const pick = React.useCallback((entry: WidgetAddEntry) => {
         const decision = resolveWidgetAddPick(entry);
@@ -121,8 +130,13 @@ export function WidgetAddPanel(props: WidgetAddPanelProps): React.ReactElement {
             );
             return;
         }
-        entry.onPick();
-        if (entry.closesOnPick) close();
+        const result = entry.onPick();
+        if (result) {
+            void result.then(
+                (outcome) => (outcome.ok ? confirmAdded(entry, outcome) : refuse(entry.id, outcome.message)),
+                () => refuse(entry.id, t('widgetAdd.addFailed')),
+            );
+        } else if (entry.closesOnPick) close();
     }, [close, confirmAdded, openSetup, refuse]);
     const pickAsk = React.useCallback(() => {
         props.ask?.onPick();
@@ -346,7 +360,8 @@ function GallerySection(props: Readonly<{
             {section.kind === 'chips' ? (
                 <View style={styles.chips}>
                     {section.entries.map((entry) => (
-                        <PaneChip key={entry.id} entry={entry} onPick={props.onPick} testID={`${props.testID}.entry.${entry.id}`} />
+                        <PaneChip key={entry.id} entry={entry} onPick={props.onPick} feedback={props.feedback?.entryId === entry.id ? props.feedback : null}
+                            testID={`${props.testID}.entry.${entry.id}`} />
                     ))}
                 </View>
             ) : (
@@ -408,15 +423,15 @@ function Tile(props: Readonly<{ entry: WidgetAddEntry; onPick: (entry: WidgetAdd
     );
 }
 
-function PaneChip(props: Readonly<{ entry: WidgetAddEntry; onPick: (entry: WidgetAddEntry) => void; testID: string }>): React.ReactElement {
+function PaneChip(props: Readonly<{ entry: WidgetAddEntry; onPick: (entry: WidgetAddEntry) => void; feedback: AddFeedback | null; testID: string }>): React.ReactElement {
     const styles = stylesheet;
     const { theme } = useUnistyles();
-    const { entry } = props;
+    const { entry, feedback } = props;
     return (
         <HappierPressable
             testID={props.testID}
             accessibilityRole="button"
-            accessibilityLabel={entry.added ? `${entry.title}, ${t('widgetAdd.added')}` : entry.title}
+            accessibilityLabel={[entry.title, feedback?.message, entry.added ? t('widgetAdd.added') : null].filter(Boolean).join(', ')}
             disabled={entry.added === true}
             onPress={() => props.onPick(entry)}
             style={(state) => [
@@ -427,8 +442,9 @@ function PaneChip(props: Readonly<{ entry: WidgetAddEntry; onPick: (entry: Widge
             ]}
         >
             <Icon name={entry.icon} size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
-            <Text style={[styles.chipLabel, entry.added ? styles.chipLabelAdded : null]}>{entry.title}</Text>
-            {entry.added ? <Icon name="check" size={ICON_SIZE.xs} color={theme.colors.text.tertiary} /> : null}
+            <Text style={[styles.chipLabel, entry.added ? styles.chipLabelAdded : null]}>{feedback && feedback.kind !== 'added' ? `${entry.title} · ${feedback.message}` : entry.title}</Text>
+            {feedback ? <EntryOutcome entry={entry} feedback={feedback} testID={props.testID} />
+                : entry.added ? <Icon name="check" size={ICON_SIZE.xs} color={theme.colors.text.tertiary} /> : null}
         </HappierPressable>
     );
 }

@@ -9,7 +9,7 @@ import type {
     CapabilitiesInvokeRequest,
     CapabilitiesInvokeResponse,
 } from '@happier-dev/protocol/capabilities';
-import { parseCapabilityId as parseCanonicalCapabilityId } from '@happier-dev/protocol';
+import { parseCapabilityId as parseCanonicalCapabilityId } from '@happier-dev/protocol/capabilities';
 import type { ChecklistId as ProtocolChecklistId } from '@happier-dev/protocol/checklists';
 
 export type {

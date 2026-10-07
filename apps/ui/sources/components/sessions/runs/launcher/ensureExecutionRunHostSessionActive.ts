@@ -1,4 +1,4 @@
-import { buildBackendTargetKeyV2 } from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 import { buildResumeSessionExtrasFromUiState } from '@/agents/catalog/catalog';
 import type { ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilities';

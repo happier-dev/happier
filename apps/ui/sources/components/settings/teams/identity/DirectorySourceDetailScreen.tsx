@@ -13,7 +13,7 @@ import { VirtualizedList, type VirtualizedListRef } from '@/components/ui/lists/
 import { restoreFocusToBestTarget } from '@/keyboard/focusReturn';
 import { useTeamGroups } from '@/hooks/teams/useTeamGroups';
 import { useTeamPagedList } from '@/hooks/teams/useTeamPagedList';
-import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol';
+import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import type { TeamDirectoryGroupPageV1 } from '@happier-dev/protocol/teams';
 import { identityAdministrationFailureMessage } from '@/components/settings/identity/identityAdministrationFailure';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';

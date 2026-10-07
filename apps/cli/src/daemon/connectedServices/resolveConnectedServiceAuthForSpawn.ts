@@ -1119,6 +1119,8 @@ function resolveSpawnMaterializationAttemptLimit(
 }
 
 async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly<{
+  signal?: AbortSignal;
+  retainCleanup?: (cleanup: () => Promise<void>) => Promise<() => void>;
   agentId: CatalogAgentId;
   materializationKey: string;
   activeServerDir: string;
@@ -1135,7 +1137,10 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
   resumeReachabilityRequired: boolean;
   runtimeDescriptorV1?: RuntimeDescriptorV1;
 }>): Promise<ConnectedServicesMaterialization | null> {
+  params.signal?.throwIfAborted();
   const materialized = await materializeConnectedServicesForSpawn({
+    signal: params.signal,
+    retainCleanup: params.retainCleanup,
     agentId: params.agentId,
     materializationKey: params.materializationKey,
     activeServerDir: params.activeServerDir,
@@ -1182,6 +1187,8 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
 }
 
 export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
+  signal?: AbortSignal;
+  retainCleanup?: (cleanup: () => Promise<void>) => Promise<() => void>;
   agentId: CatalogAgentId;
   modelId?: string;
   connectedServicesBindingsRaw: unknown;
@@ -1244,6 +1251,7 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
     dispose(): void | Promise<void>;
   }>;
 }> | null> {
+  params.signal?.throwIfAborted();
   const admittedBindings = ConnectedServicesBindingsIngressSchema.parse(params.connectedServicesBindingsRaw);
   const selections = parseConnectedServiceBindingSelections(admittedBindings);
   if (selections.length === 0) return null;
@@ -1359,7 +1367,13 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
       : null;
     let retainMaterializationPurposeLease = false;
     try {
+      if (materializationPurposeLease && params.retainCleanup) {
+        await params.retainCleanup(async () => { await materializationPurposeLease.dispose(); });
+      }
+      params.signal?.throwIfAborted();
       const materialized = await materializeAndVerifyConnectedServiceAuthForSpawn({
+        signal: params.signal,
+        retainCleanup: params.retainCleanup,
         agentId: params.agentId,
         materializationKey: params.materializationKey,
         activeServerDir: params.activeServerDir,

@@ -1,176 +1,28 @@
-/**
- * Copy owned by the Files pane (session tabs lab F1 / FC / ST): the Changed only filter, the View and
- * + menus, and the pane's own states. The header is just the tab title (user ruling), so no line copy.
- */
-type FilesPaneTranslations = Readonly<{
-    changedOnly: string;
-    showAllFiles: string;
-    viewOptions: string;
-    sizeAndDate: string;
-    newMenu: string;
-    newFile: string;
-    newFolder: string;
-    noChangedFilesTitle: string;
-    noChangedFilesReason: string;
-    rootErrorTitle: (params: Readonly<{ machine: string }>) => string;
-    rootErrorTitleUnnamed: string;
-}>;
+// Tooling aggregate. Product locale roots import only their locale payload.
+import { filesPaneTranslations as en } from './features/en';
+import { filesPaneTranslations as ca } from './features/ca';
+import { filesPaneTranslations as de } from './features/de';
+import { filesPaneTranslations as es } from './features/es';
+import { filesPaneTranslations as fr } from './features/fr';
+import { filesPaneTranslations as it } from './features/it';
+import { filesPaneTranslations as ja } from './features/ja';
+import { filesPaneTranslations as pl } from './features/pl';
+import { filesPaneTranslations as pt } from './features/pt';
+import { filesPaneTranslations as ru } from './features/ru';
+import { filesPaneTranslations as zh_Hans } from './features/zh-Hans';
+import { filesPaneTranslations as zh_Hant } from './features/zh-Hant';
 
 export const filesPaneTranslations = {
-    en: {
-        changedOnly: 'Changed only',
-        showAllFiles: 'Show all files',
-        viewOptions: 'View options',
-        sizeAndDate: 'Size and date',
-        newMenu: 'New file, new folder or upload',
-        newFile: 'New file',
-        newFolder: 'New folder',
-        noChangedFilesTitle: 'Nothing has changed',
-        noChangedFilesReason: 'The working copy matches the last commit.',
-        rootErrorTitle: ({ machine }) => `Couldn’t list files on ${machine}`,
-        rootErrorTitleUnnamed: 'Couldn’t list files',
-    },
-    ca: {
-        changedOnly: 'Només canviats',
-        showAllFiles: 'Mostra tots els fitxers',
-        viewOptions: 'Opcions de visualització',
-        sizeAndDate: 'Mida i data',
-        newMenu: 'Fitxer nou, carpeta nova o pujada',
-        newFile: 'Fitxer nou',
-        newFolder: 'Carpeta nova',
-        noChangedFilesTitle: 'No ha canviat res',
-        noChangedFilesReason: 'La còpia de treball coincideix amb l’últim commit.',
-        rootErrorTitle: ({ machine }) => `No s’han pogut llistar els fitxers a ${machine}`,
-        rootErrorTitleUnnamed: 'No s’han pogut llistar els fitxers',
-    },
-    de: {
-        changedOnly: 'Nur geänderte',
-        showAllFiles: 'Alle Dateien anzeigen',
-        viewOptions: 'Ansichtsoptionen',
-        sizeAndDate: 'Größe und Datum',
-        newMenu: 'Neue Datei, neuer Ordner oder Hochladen',
-        newFile: 'Neue Datei',
-        newFolder: 'Neuer Ordner',
-        noChangedFilesTitle: 'Nichts geändert',
-        noChangedFilesReason: 'Die Arbeitskopie entspricht dem letzten Commit.',
-        rootErrorTitle: ({ machine }) => `Dateien auf ${machine} konnten nicht aufgelistet werden`,
-        rootErrorTitleUnnamed: 'Dateien konnten nicht aufgelistet werden',
-    },
-    es: {
-        changedOnly: 'Solo con cambios',
-        showAllFiles: 'Mostrar todos los archivos',
-        viewOptions: 'Opciones de vista',
-        sizeAndDate: 'Tamaño y fecha',
-        newMenu: 'Archivo nuevo, carpeta nueva o subir',
-        newFile: 'Archivo nuevo',
-        newFolder: 'Carpeta nueva',
-        noChangedFilesTitle: 'No ha cambiado nada',
-        noChangedFilesReason: 'La copia de trabajo coincide con el último commit.',
-        rootErrorTitle: ({ machine }) => `No se pudieron listar los archivos en ${machine}`,
-        rootErrorTitleUnnamed: 'No se pudieron listar los archivos',
-    },
-    fr: {
-        changedOnly: 'Modifiés seulement',
-        showAllFiles: 'Afficher tous les fichiers',
-        viewOptions: 'Options d’affichage',
-        sizeAndDate: 'Taille et date',
-        newMenu: 'Nouveau fichier, nouveau dossier ou import',
-        newFile: 'Nouveau fichier',
-        newFolder: 'Nouveau dossier',
-        noChangedFilesTitle: 'Rien n’a changé',
-        noChangedFilesReason: 'La copie de travail correspond au dernier commit.',
-        rootErrorTitle: ({ machine }) => `Impossible de lister les fichiers sur ${machine}`,
-        rootErrorTitleUnnamed: 'Impossible de lister les fichiers',
-    },
-    it: {
-        changedOnly: 'Solo modificati',
-        showAllFiles: 'Mostra tutti i file',
-        viewOptions: 'Opzioni di visualizzazione',
-        sizeAndDate: 'Dimensione e data',
-        newMenu: 'Nuovo file, nuova cartella o caricamento',
-        newFile: 'Nuovo file',
-        newFolder: 'Nuova cartella',
-        noChangedFilesTitle: 'Non è cambiato nulla',
-        noChangedFilesReason: 'La copia di lavoro corrisponde all’ultimo commit.',
-        rootErrorTitle: ({ machine }) => `Impossibile elencare i file su ${machine}`,
-        rootErrorTitleUnnamed: 'Impossibile elencare i file',
-    },
-    ja: {
-        changedOnly: '変更のみ',
-        showAllFiles: 'すべてのファイルを表示',
-        viewOptions: '表示オプション',
-        sizeAndDate: 'サイズと日付',
-        newMenu: '新規ファイル、新規フォルダ、アップロード',
-        newFile: '新規ファイル',
-        newFolder: '新規フォルダ',
-        noChangedFilesTitle: '変更はありません',
-        noChangedFilesReason: '作業コピーは最新のコミットと一致しています。',
-        rootErrorTitle: ({ machine }) => `${machine} のファイルを一覧できませんでした`,
-        rootErrorTitleUnnamed: 'ファイルを一覧できませんでした',
-    },
-    pl: {
-        changedOnly: 'Tylko zmienione',
-        showAllFiles: 'Pokaż wszystkie pliki',
-        viewOptions: 'Opcje widoku',
-        sizeAndDate: 'Rozmiar i data',
-        newMenu: 'Nowy plik, nowy folder lub przesyłanie',
-        newFile: 'Nowy plik',
-        newFolder: 'Nowy folder',
-        noChangedFilesTitle: 'Nic się nie zmieniło',
-        noChangedFilesReason: 'Kopia robocza odpowiada ostatniemu commitowi.',
-        rootErrorTitle: ({ machine }) => `Nie udało się wyświetlić plików na ${machine}`,
-        rootErrorTitleUnnamed: 'Nie udało się wyświetlić plików',
-    },
-    pt: {
-        changedOnly: 'Só alterados',
-        showAllFiles: 'Mostrar todos os arquivos',
-        viewOptions: 'Opções de visualização',
-        sizeAndDate: 'Tamanho e data',
-        newMenu: 'Novo arquivo, nova pasta ou upload',
-        newFile: 'Novo arquivo',
-        newFolder: 'Nova pasta',
-        noChangedFilesTitle: 'Nada mudou',
-        noChangedFilesReason: 'A cópia de trabalho corresponde ao último commit.',
-        rootErrorTitle: ({ machine }) => `Não foi possível listar os arquivos em ${machine}`,
-        rootErrorTitleUnnamed: 'Não foi possível listar os arquivos',
-    },
-    ru: {
-        changedOnly: 'Только изменённые',
-        showAllFiles: 'Показать все файлы',
-        viewOptions: 'Параметры вида',
-        sizeAndDate: 'Размер и дата',
-        newMenu: 'Новый файл, новая папка или загрузка',
-        newFile: 'Новый файл',
-        newFolder: 'Новая папка',
-        noChangedFilesTitle: 'Ничего не изменилось',
-        noChangedFilesReason: 'Рабочая копия совпадает с последним коммитом.',
-        rootErrorTitle: ({ machine }) => `Не удалось получить список файлов на ${machine}`,
-        rootErrorTitleUnnamed: 'Не удалось получить список файлов',
-    },
-    'zh-Hans': {
-        changedOnly: '仅显示更改',
-        showAllFiles: '显示所有文件',
-        viewOptions: '视图选项',
-        sizeAndDate: '大小和日期',
-        newMenu: '新建文件、新建文件夹或上传',
-        newFile: '新建文件',
-        newFolder: '新建文件夹',
-        noChangedFilesTitle: '没有任何更改',
-        noChangedFilesReason: '工作副本与最近一次提交一致。',
-        rootErrorTitle: ({ machine }) => `无法列出 ${machine} 上的文件`,
-        rootErrorTitleUnnamed: '无法列出文件',
-    },
-    'zh-Hant': {
-        changedOnly: '僅顯示變更',
-        showAllFiles: '顯示所有檔案',
-        viewOptions: '檢視選項',
-        sizeAndDate: '大小和日期',
-        newMenu: '新增檔案、新增資料夾或上傳',
-        newFile: '新增檔案',
-        newFolder: '新增資料夾',
-        noChangedFilesTitle: '沒有任何變更',
-        noChangedFilesReason: '工作副本與最近一次提交一致。',
-        rootErrorTitle: ({ machine }) => `無法列出 ${machine} 上的檔案`,
-        rootErrorTitleUnnamed: '無法列出檔案',
-    },
-} as const satisfies Record<string, FilesPaneTranslations>;
+    ...en.filesPaneTranslations,
+    ...ca.filesPaneTranslations,
+    ...de.filesPaneTranslations,
+    ...es.filesPaneTranslations,
+    ...fr.filesPaneTranslations,
+    ...it.filesPaneTranslations,
+    ...ja.filesPaneTranslations,
+    ...pl.filesPaneTranslations,
+    ...pt.filesPaneTranslations,
+    ...ru.filesPaneTranslations,
+    ...zh_Hans.filesPaneTranslations,
+    ...zh_Hant.filesPaneTranslations,
+};

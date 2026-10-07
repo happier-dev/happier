@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useLocalSearchParams } from 'expo-router';
 import { Platform } from 'react-native';
 
-import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol';
+import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/control/contract';
 
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';

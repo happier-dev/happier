@@ -1,4 +1,4 @@
-import { readVoiceContentDisclosureV1 } from '@happier-dev/protocol';
+import { readVoiceContentDisclosureV1 } from '@happier-dev/protocol/voice/sourceDisclosureV1';
 
 import { voiceSettingsParse, type VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 

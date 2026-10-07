@@ -2,7 +2,7 @@ import {
     LaunchProfileV2Schema,
     validateLaunchProfileV2ReservedEnvironment,
     type LaunchProfileV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/profiles/v2/schema';
 
 export type SlimProfileEditableDraft = Readonly<{
     name: string;

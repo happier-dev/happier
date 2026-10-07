@@ -1,8 +1,5 @@
-import {
-    ActionIdSchema,
-    buildQualifiedPluginContributionKey,
-    PluginContributionIdentityV1Schema,
-} from '@happier-dev/protocol';
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { buildQualifiedPluginContributionKey, PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import {
     PluginUiExecuteActionRequestV1Schema,
     PluginUiResourceSubscriptionRequestV1Schema,

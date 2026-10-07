@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { computerTargetKeyV1, type ComputerAccessV1, type ComputerGrantStatusV1, type ComputerTargetsListResponseV1 } from '@happier-dev/protocol';
+import { computerTargetKeyV1, type ComputerAccessV1, type ComputerGrantStatusV1, type ComputerTargetsListResponseV1 } from '@happier-dev/protocol/computer/v1';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';

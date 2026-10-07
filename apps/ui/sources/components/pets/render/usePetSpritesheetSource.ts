@@ -1,12 +1,8 @@
 import * as React from 'react';
 import type { ImageProps } from 'expo-image';
-import {
-    DaemonPetReadPreviewAssetResponseV1Schema,
-    PET_DAEMON_RPC_METHODS,
-    type DaemonPetReadPreviewAssetRequestV1,
-    type PetAssetMediaTypeV1,
-    type PetPackageSourceV1,
-} from '@happier-dev/protocol';
+import { DaemonPetReadPreviewAssetResponseV1Schema, PET_DAEMON_RPC_METHODS, type DaemonPetReadPreviewAssetRequestV1 } from '@happier-dev/protocol/pets/daemonRpc';
+import type { PetAssetMediaTypeV1 } from '@happier-dev/protocol/pets/accountLibrary';
+import type { PetPackageSourceV1 } from '@happier-dev/protocol/pets/source';
 
 import { resolveBuiltInPetPackage } from '@/components/pets/builtIns/builtInPetRegistry';
 import type { SelectedPetPackageSource } from '@/components/pets/source/resolveSelectedPetPackage';

@@ -1,6 +1,8 @@
 import * as React from 'react';
 
-import { buildAcpConfigOptionOverridesV1, type PersistedBackendTargetRefV2, type SessionModelSelectionV1 } from '@happier-dev/protocol';
+import { buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
+import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 
 import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';

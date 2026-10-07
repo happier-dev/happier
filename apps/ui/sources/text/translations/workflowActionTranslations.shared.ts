@@ -1,0 +1,61 @@
+
+
+export type Copy = typeof en;
+
+
+
+export const en = {
+    host: "Happier",
+    structure: "Structure",
+    artifactCreate: "Create a document",
+    artifactGet: "Read a document",
+    artifactList: "List documents",
+    artifactUpdate: "Update a document",
+    artifactDelete: "Delete a document",
+    artifactPublish: "Publish a file",
+    artifactRevisions: "List document versions",
+    artifactRestore: "Restore a document version",
+    artifactUsage: "Read document storage usage",
+    artifactShare: "Share a document by link",
+    artifactLinks: "List document links",
+    artifactRevoke: "Revoke a document link",
+    artifactAudit: "Read document link activity",
+    sessionRole: "Set a session’s role",
+    sessionRoleOverride: "Change a session’s role settings",
+    sessionRoleClear: "Reset a session’s role settings",
+    sessionRoleAdd: "Add a session role",
+    sessionRoleRemove: "Remove a session role",
+    sessionNotes: "Set session notes",
+    sessionRolesApply: "Apply roles to reporting sessions",
+    roleList: "List roles",
+    roleGet: "Read a role",
+    roleCreate: "Create a role",
+    roleUpdate: "Update a role",
+    roleDelete: "Delete a role",
+    roleOverride: "Change role settings",
+    roleReset: "Reset role settings",
+    widgetCatalog: "List available widgets",
+    widgetInstances: "List placed widgets",
+    widgetAdd: "Add a widget",
+    widgetRemove: "Remove a widget",
+    widgetMove: "Move a widget",
+    widgetRename: "Rename a widget",
+    widgetSize: "Set a widget’s size",
+    widgetFrame: "Set a widget’s frame",
+    widgetInputs: "Read widget inputs",
+    widgetValidate: "Check widget inputs",
+    widgetSetInputs: "Set widget inputs",
+    widgetResetInputs: "Reset widget inputs",
+    widgetLayout: "Read widget layout",
+    widgetUpdateLayout: "Change widget layout",
+    widgetDefinitions: "List saved widgets",
+    widgetDefinition: "Read a saved widget",
+    widgetCreate: "Create a widget",
+    widgetUpdate: "Update a saved widget",
+    widgetDuplicate: "Duplicate a saved widget",
+    widgetDelete: "Delete a saved widget",
+    widgetSave: "Save a session widget",
+};
+
+
+export const workflowActionTranslationsEnglish: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy>, "en"> = { en };

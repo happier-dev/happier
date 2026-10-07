@@ -159,7 +159,7 @@ it('admits a personal connection pin only from the current Account and refuses s
         const inputSchema = { type: 'object' as const, properties: { connection: valueSchema }, additionalProperties: false } satisfies PluginJsonSchemaV2;
         const consumer = { pluginId: surface.pluginId, localId: 'metrics' };
         const purposes = { resources: [consumer], connectedAccountPurposeBindings: [{ path: 'connection', purpose: 'read', consumer }] };
-        const admitted = PluginUiViewV2Schema.parse({ id: surface.localId, renderer: 'widget-native', container: 'widget', target: { kind: 'app' }, inputs, inputSchema, ...purposes });
+        const admitted = PluginUiViewV2Schema.parse({ sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' }, id: surface.localId, renderer: 'widget-native', container: 'widget', target: { kind: 'app' }, inputs, inputSchema, ...purposes });
         expect(admitted).toMatchObject({ inputs, inputSchema });
         const widget = { ...widgetProjectionEntry({ ...surface, entryId: 'connection-widget', target: 'app', inputs, inputSchema, occurrenceId: 'current' }), ...purposes };
         const projection = normalizePluginUiProjection(PluginProjectionV2Schema.parse({ v: 2, generation: 1,
@@ -306,6 +306,7 @@ it('admits and refreshes a B-only stored widget using current B inputs and Resou
             properties: { session: { type: 'object' as const, required: ['serverId', 'sessionId'], additionalProperties: false,
                 properties: { serverId: { type: 'string' as const }, sessionId: { type: 'string' as const } } }, mode: { type: 'string' as const } } };
         const entry = (choice: string) => ({ ...surface, inputSchema, sessionInputPath: 'session', occurrenceId: 'binding-occurrence',
+            sizeDeclaration: { sizes: choice === 'current-b' ? ['medium', 'full', 'tall'] : ['medium'], defaultSize: choice === 'current-b' ? 'tall' : 'medium' } satisfies import('@happier-dev/protocol/widgets').WidgetSizeDeclarationV1,
             resources: [{ pluginId: surface.pluginId, localId: `${choice}-state` }], inputs: { fields: [
             { path: 'session', title: 'Session', widget: 'json' as const, required: true },
             { path: 'mode', title: 'Mode', widget: 'select' as const, required: true, options: [{ value: choice, label: choice }] },
@@ -343,6 +344,7 @@ it('admits and refreshes a B-only stored widget using current B inputs and Resou
         const request = { ref: { surface: physical, instanceId: instance.id }, instance, context: { serverId: scope.serverId } };
         boardItem = { v: 1, title: 'Bound B', frame: 'card', height: { mode: 'auto', fallback: 'regular' }, source: { kind: 'widget', instance } };
         expect(await inputs.resolve(request)).toEqual({ status: 'ready', input: { session: { serverId: scope.serverId, sessionId: b.id }, mode: 'current-b' } });
+        expect(await inputs.readSizeDeclaration(request)).toEqual({ sizes: ['medium', 'full', 'tall'], defaultSize: 'tall' });
         expect(await inputs.resolve({ ...request, instance: { ...instance, bindings: { ...instance.bindings, mode: { kind: 'value', value: 'metadata-only' } } } }))
             .toMatchObject({ status: 'invalid', fields: [{ path: 'mode', reasonCode: 'widget_input_option_unavailable' }] });
         daemon.resourceRead.mockReset();
@@ -367,7 +369,11 @@ it('admits and refreshes a B-only stored widget using current B inputs and Resou
         expect(await areaPort.execute({ area: 'pinned', context: pageContext, operation: { actionId: 'widgets.instance.add', instance: areaInstance } })).toMatchObject({ ok: true });
         expect(await areaPort.execute({ area: 'pinned', context: pageContext, operation: { actionId: 'widgets.instance.inputs.validate', instanceId: instance.id, bindings: areaInstance.bindings } }))
             .toMatchObject({ ok: true, result: { status: 'ready', input: { session: pageContext.session } } });
-        expect(await areaPort.execute({ area: 'pinned', context: pageContext, operation: { actionId: 'widgets.instance.width.set', instanceId: instance.id, width: 'full' } })).toMatchObject({ ok: true });
+        expect(await areaPort.execute({ area: 'pinned', context: pageContext, operation: { actionId: 'widgets.instance.size.set', instanceId: instance.id, size: 'full' } })).toMatchObject({ ok: true });
+        const admittedSizeWrites = areaHttp.writes.length;
+        expect(await areaPort.execute({ area: 'pinned', context: pageContext, operation: { actionId: 'widgets.instance.size.set', instanceId: instance.id, size: 'wide' } }))
+            .toMatchObject({ ok: false, errorCode: 'widget_size_unsupported' });
+        expect(areaHttp.writes).toHaveLength(admittedSizeWrites);
         expect(await areaPort.execute({ area: 'pinned', context: pageContext, operation: { actionId: 'widgets.instance.refresh', instanceId: instance.id } }))
             .toMatchObject({ ok: true, result: { status: 'refreshed', ref: { surface: { owner: { kind: 'pluginArea' } } } } });
         expect(daemon.resourceRead.mock.calls.at(-1)?.slice(0, 2)).toEqual(['machine-b', expect.objectContaining({
@@ -397,7 +403,7 @@ it('admits and refreshes a B-only stored widget using current B inputs and Resou
             expect(await pending).toEqual({ ok: true, result: { ref: request.ref, status: 'refreshed' } });
             expect(daemon.resourceRead).toHaveBeenCalledTimes(2);
         } finally { releaseMount(); mount.dispose(); }
-        const copiedDefinition = { v: 1 as const, id: 'copied-declarative', name: 'Copied checks', inputSchema,
+        const copiedDefinition = { v: 1 as const, id: 'copied-declarative', name: 'Copied checks', inputSchema, sizeDeclaration: entry('current-b').sizeDeclaration,
             inputs: entry('current-b').inputs, sessionInputPath: 'session', provenance: { source: { kind: 'authored' as const } },
             body: { kind: 'declarative' as const, document: { version: 1 as const, root: { kind: 'metric' as const, label: 'Checks',
                 data: { kind: 'resource' as const, resource: { pluginId: surface.pluginId, localId: 'current-b-state' },

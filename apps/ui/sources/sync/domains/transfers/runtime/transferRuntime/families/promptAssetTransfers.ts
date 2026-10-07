@@ -15,7 +15,7 @@ import {
     type PromptAssetReadRequest,
     type PromptAssetReadResponseV1,
     type PromptAssetWriteRequest,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/prompts/library/promptAssetsV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';

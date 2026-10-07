@@ -278,6 +278,12 @@ Happier should be recognizable without relying solely on its logo.
 ### Color and theme
 
 - Use canonical Unistyles theme tokens and semantic roles; do not hardcode production colors in feature components.
+- **Borders, dividers and selection are ink.** They are the theme's own text colour at low opacity —
+  a border, a lighter divider, a selection fill — never a fixed grey. Ink sits correctly on every
+  surface, tint and theme profile; a grey that matches one background is wrong on the next.
+- **Dark themes are layered, not inverted.** From the navigation plane to the page, cards and floating
+  surfaces, each layer lifts by a small step of light and keeps its raised edge, so depth reads without
+  heavier shadows.
 - Treat light and dark themes as designed experiences, not mechanical inversions.
 - Use accent color deliberately to guide attention, show state, or create a signature moment.
 - Do not use color as the only carrier of meaning.
@@ -288,12 +294,18 @@ Art-directed imagery and narrative surfaces may need locally owned visual tokens
 
 ### Typography
 
+- Inter is the default interface typeface on every platform, including native iOS and Apple web. Theme-held font choices continue to override the default; monospace keeps its own canonical family.
 - Use Happier’s canonical text primitives and typography tokens so scaling, platform rendering, theme, and localization continue to work.
 - Build hierarchy from size, weight, leading, tracking, color, and spacing as a coherent set.
 - Large display text may use tighter leading and tracking; body and dense UI text prioritize legibility.
 - Keep headings concise and balance short headings on platforms that support it.
 - Avoid orphaned final words in short descriptive copy when platform primitives allow appropriate wrapping.
 - Use tabular numerals for changing counts, timers, quotas, usage, aligned metrics, and numeric tables to prevent visual jitter.
+- **Meta lines up.** In a list, a row's time, count or size sits right-aligned in one tabular column
+  so the eye scans it vertically; a status that already has a mark (a dot, a cell) does not repeat
+  itself in words beside it.
+- **Mono is a role, not a style.** Monospace is for identifiers, paths, code, commands and keyboard
+  shortcuts (`#2493`, `⌘K`, `$HAPPIER_EVENT`), never for emphasis or decoration.
 - Never truncate information necessary to distinguish sessions, machines, providers, branches, paths, or errors without an accessible way to reveal it.
 - Test long translations, mixed scripts, large text settings, and narrow viewports.
 
@@ -302,6 +314,11 @@ Art-directed imagery and narrative surfaces may need locally owned visual tokens
 - Use the existing spacing, radius, size, and layout tokens or primitives.
 - Repeated spacing values should express a rhythm, not a collection of nearby guesses.
 - Nested rounded surfaces should appear optically concentric when they represent layers of one object.
+- **Radii derive from one base.** Small, control, menu, card and dialog radii are steps of one base
+  value; an inner surface's radius is the outer radius minus its inset, so nested layers stay
+  concentric. A radius chosen per surface is a defect.
+- **Spacing runs on one rhythm.** Card insets, header heights, row heights and gaps are steps of the
+  same grid. Dense desktop rows are compact; touch rows keep their target size.
 - Align icons optically, not only mathematically; asymmetric symbols often need correction.
 - Keep icons and labels visually balanced and baseline-aligned.
 - Avoid creating every grouping as a rounded card. Use proximity, whitespace, headings, dividers, background regions, and elevation according to meaning.
@@ -315,9 +332,29 @@ Art-directed imagery and narrative surfaces may need locally owned visual tokens
 - Larger or higher surfaces may use stronger separation than small controls.
 - Pair modal tasks with appropriate focus treatment; do not dim the world for parallel, non-blocking work.
 - Material transitions should feel like the surface arrives and departs, not like arbitrary opacity toggles.
+- **One material recipe.** A surface is drawn by its role, not by hand: an ink border, one raised
+  edge and a very low elevation (a hair of grounding, about 5% on light) sized by how far it floats.
+  The raised edge is one side of the border drawn a breath different — a dark lip along the bottom on
+  light, a light line along the top on dark.
+- **Flat edge in flow; the rim only for what floats.** Controls, rows, cards, grouped sheets and the
+  composer use the flat edge, in every theme. Popovers, menus, dialogs, sheets over content, toasts,
+  tooltips and the message bubble use the directional rim: one corner light anchored top-left,
+  running along the top and down the side and gone by about a third of the way round, with a short
+  sheen inside the fill from the same corner. On dark the corner is lighter (white about 18% at the
+  corner, 5% by a fifth of the way, sheen about 3%); on light it is inverted — a breath darker, never
+  white (ink about 8% at the corner, tint about 2%). Buttons, fields and rows never take the rim: on a
+  dense screen every control would carry a highlight. The choice is one edge role per surface role in
+  the edge owner, never a per-screen style.
+- **The rim is a whisper.** If you notice it before the content, it is too strong.
+- **Primary actions carry their own light.** The filled primary has a faint light line along its top
+  edge; secondary and destructive actions use the flat edge; ghost and icon buttons have no edge at
+  rest.
 
 ### Icons and imagery
 
+- Interface icons use one size and one stroke weight in chrome, from the icon owner's defaults; a
+  different size is a different role (identity marks, empty-state art), not a local adjustment.
+- Item glyphs stay in the ink; colour is for state, not for decorating a type of item.
 - Use the existing icon system and canonical product imagery before introducing a new visual family.
 - Icons communicate familiar actions; labels remain necessary when meaning is not immediately predictable.
 - Do not use icon-only controls without accessible labels and adequate hit targets.
@@ -403,6 +440,12 @@ When more than a label is needed:
 
 Use direct labels that describe the destination or consequence. “Review changes” is better than “Continue” when review is what will happen.
 
+Empty and setup states say what belongs here in one plain sentence and offer one action. Settings
+descriptions state the effect or scope, never the mechanism ("Get a ping when an agent needs you",
+not "Toggle to enable or disable push notifications"). Catalogues lead with purpose and keep
+provenance secondary: a widget row says what it shows; the plugin or source that provides it is a
+quiet second line.
+
 ### Error and recovery copy
 
 - Say what failed in language the user can act on.
@@ -441,6 +484,11 @@ Consider, where relevant:
 
 Use skeletons only when they represent a stable forthcoming structure and do not replace better continuity. Prefer last-known-good content with an honest refresh indicator when safe.
 
+A state takes the size of its container. A page, pane, card or phone state uses the shared state
+composition at that container's size step; a list, rail or column states its condition in one quiet
+line on the rows' edge. Failures and denials keep their semantic glyph and recovery at every size;
+illustration appears only where the container has room for it.
+
 Do not treat empty, error, or loading states as visual leftovers. They often define the user’s trust in the product.
 
 ## Accessibility is a design input
@@ -456,6 +504,8 @@ The baseline is WCAG 2.2 Level AA for applicable web, desktop, and native behavi
   editable text fields the insertion caret/selection is the visible focus cue;
   forced-colors mode additionally restores the browser outline.
 - Do not rely on color, hover, animation, spatial position, sound, or haptics alone.
+- Focus is one ring everywhere: the focus colour, separated from the control by a gap in the page
+  colour and following its radius, so it never merges with a border and reads on every surface.
 - Honor reduced motion and reduced transparency throughout a complete flow, not only in isolated components.
 - Target at least 44×44 points on iOS and 48×48 dp on Android for touch interactions, using the stricter applicable platform or canonical-primitive requirement elsewhere. Keep targets from overlapping; dense pointer layouts must still meet applicable WCAG target-size requirements and remain keyboard accessible.
 - Automatically started moving, blinking, or scrolling content that lasts more than five seconds and appears alongside other content must provide the pause, stop, or hide controls required by WCAG 2.2.2 unless it is essential. Auto-updating content presented alongside other content must provide the applicable pause, stop, hide, or update-frequency control unless essential. Document and verify any essential exception; short entrance and exit transitions remain governed by the motion rules rather than being treated as auto-updating content.
@@ -540,9 +590,21 @@ live in the page-presentation owners in code.
   title, and moves onto the title row only when there is no room for it.
 - **Glyphs and logos stand alone.** No icon, agent, provider or service mark has a backing tile,
   fill or border. Only avatars and an app icon rendered as an actual app icon are exceptions.
-- **Emptiness is designed.** An empty page shows a calm glyph without a tile, a short title, one line
+- **Emptiness is designed.** An empty page shows a calm mark without a tile, a short title, one line
   of purpose and one primary action; an empty list or rail says so in one quiet line. A rail and its
-  detail never both show the full state.
+  detail never both show the full state. Where a state has room (a page, pane or card state, about
+  220 px or taller), the mark is a Daybreak scene: line art on one horizon with the planet as the
+  colour, one moment of the day per state, composed from the shared scene library's parts
+  (`scene = { horizon, moment, planet, props[], sky[], accent? }`) and chosen by scene id. A scene
+  has at most three props on a page, two in a pane and one as a thumbnail; at most one keeps an
+  accent; the planet is the canonical dot planet and the only other colour. Plugins never ship
+  illustrations: they compose a named scene from the base parts and may add up to two of their own
+  single-stroke props through the typed prop slot. It plays once and then rests. Compact lines,
+  in-list states, failures and denials keep their text and glyph.
+- **One attention colour, a short status vocabulary.** "Needs you" is the attention amber wherever it
+  appears (pills, capsules, the status cell, scene beacons, the tray badge); rose means failure only.
+  Working is a moving mark, done is quiet, healthy says nothing. Blue is reserved for focus and links;
+  green appears only where "live" is the identity of the state (presence).
 - **Row height follows content.** A long list of single-line rows is compact; rows with a description
   keep their room.
 - **Controls are truthful.** A control acting on an empty set is hidden (no "Show archived" when
@@ -727,6 +789,11 @@ Reject or revisit designs that exhibit:
 - random friendliness in errors, security, or destructive flows;
 - unverified claims and marketing copy that overpromises behavior;
 - new components that duplicate canonical primitives;
+- handmade lookalikes of an existing primitive (a second card, field, picker or state) instead of
+  extending its owner;
+- surface-local edges, greys, radii or shadows instead of the material and ink roles;
+- calling a surface done from tests or a description without a side-by-side render against its
+  approved lab in light, dark and phone;
 - abstractions created only to enforce visual sameness across different product concepts;
 - performance fixes that regress continuity, accessibility, or freshness;
 - polished happy paths surrounded by unfinished empty, error, offline, and recovery states.

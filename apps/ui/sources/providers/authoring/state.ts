@@ -1,13 +1,6 @@
-import {
-    CUSTOM_PROVIDER_AUTHORING_PROTOCOLS_V1,
-    defaultCustomProviderCatalogParserV1,
-    normalizeCustomProviderAdvancedTemplateV1,
-    normalizeCustomProviderTemplateV1,
-    type BundledProviderCatalogParserV1,
-    type CustomProviderCredentialStyleV1,
-    type CustomProviderSimpleFormV1,
-    type CustomProviderTemplateV1,
-} from '@happier-dev/protocol';
+import { CUSTOM_PROVIDER_AUTHORING_PROTOCOLS_V1, defaultCustomProviderCatalogParserV1, normalizeCustomProviderAdvancedTemplateV1, normalizeCustomProviderTemplateV1, type CustomProviderCredentialStyleV1, type CustomProviderSimpleFormV1 } from '@happier-dev/protocol/providers/connections/normalizeCustomTemplateV1';
+import type { BundledProviderCatalogParserV1 } from '@happier-dev/protocol/providers/catalog/descriptorV1';
+import type { CustomProviderTemplateV1 } from '@happier-dev/protocol/providers/connections/customTemplateV1';
 
 export type CustomProviderPreset = CustomProviderSimpleFormV1['protocol'];
 

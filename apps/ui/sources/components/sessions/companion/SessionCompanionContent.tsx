@@ -4,7 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { SessionWidgetHost } from '@/components/sessions/board/SessionWidgetHost';
 import { CurrentSessionPresentationActionInputV1Schema } from '@happier-dev/protocol/sessions';
-import { sameStrictJsonValue } from '@happier-dev/protocol';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { EntityDropEffectV1, EntityDropOutcomeV1 } from '@happier-dev/protocol/plugins/ui';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useEntityDragDropRuntime, readWindowBounds, measureWindowBounds, type WindowBounds, useTreeDropAutoscroll } from '@/components/ui/treeDragDrop';

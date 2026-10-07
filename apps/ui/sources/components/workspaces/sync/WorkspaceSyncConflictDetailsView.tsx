@@ -10,7 +10,7 @@ import type {
     WorkspaceSyncEntryExpectationV1,
     WorkspaceSyncPathSelectionV1,
 } from '@happier-dev/protocol';
-import { areWorkspaceSyncEntryExpectationsEqual } from '@happier-dev/protocol';
+import { areWorkspaceSyncEntryExpectationsEqual } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
 import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';
 import { IconButton } from '@/components/ui/buttons/IconButton';

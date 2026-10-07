@@ -1,7 +1,7 @@
 import {
     SessionAccessErrorCodeV1Schema,
     type SessionAccessErrorCodeV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 
 export type SessionAccessHttpFailureCode =
     | SessionAccessErrorCodeV1

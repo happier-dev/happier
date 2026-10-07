@@ -1,4 +1,4 @@
-import { encodePasswordCredentialFieldV1 } from '@happier-dev/protocol';
+import { encodePasswordCredentialFieldV1 } from '@happier-dev/protocol/auth/accountPasswordCredential';
 
 import type { ServerFetch } from '@/sync/http/client';
 import { preloginEmailPassword, unlockEmailPassword } from '@/sync/api/auth/emailPassword';

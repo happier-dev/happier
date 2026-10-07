@@ -1,9 +1,5 @@
-import {
-    ComposerAttachmentsPickInputV1Schema,
-    ComposerTransactionApplyInputV1Schema,
-    RepositoryUploadPickInputV1Schema,
-    type ActionExecutorContext,
-} from '@happier-dev/protocol';
+import { ComposerAttachmentsPickInputV1Schema, ComposerTransactionApplyInputV1Schema, RepositoryUploadPickInputV1Schema } from '@happier-dev/protocol/actions/composerIngressAction';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import {
     applyMountedComposerPresentationTransaction,
     requestRegisteredComposerAttachmentPicker,

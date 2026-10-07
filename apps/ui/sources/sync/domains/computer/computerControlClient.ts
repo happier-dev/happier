@@ -1,22 +1,8 @@
-import {
-    ComputerActionResultV1Schema,
-    ComputerCaptureResponseV1Schema,
-    ComputerControlStatusResponseV1Schema,
-    ComputerOpenSettingsResponseV1Schema,
-    ComputerSelectedTargetResponseV1Schema,
-    ComputerTargetsListResponseV1Schema,
-    type ActionExecuteResult,
-    type ActionExecutorContext,
-    type ActionId,
-    type ComputerActionResultV1,
-    type ComputerAccessV1,
-    type ComputerCaptureResponseV1,
-    type ComputerControlStatusResponseV1,
-    type ComputerSelectedTargetResponseV1,
-    type ComputerTargetsListResponseV1,
-    type ComputerTargetV1,
-    type MachineLiveStreamFrameV1,
-} from '@happier-dev/protocol';
+import { ComputerActionResultV1Schema, ComputerCaptureResponseV1Schema, ComputerControlStatusResponseV1Schema, ComputerOpenSettingsResponseV1Schema, ComputerSelectedTargetResponseV1Schema, ComputerTargetsListResponseV1Schema, type ComputerActionResultV1, type ComputerAccessV1, type ComputerCaptureResponseV1, type ComputerControlStatusResponseV1, type ComputerSelectedTargetResponseV1, type ComputerTargetsListResponseV1, type ComputerTargetV1 } from '@happier-dev/protocol/computer/v1';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import type { MachineLiveStreamFrameV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import type { z } from 'zod';
 import { decodeBase64 } from '@/encryption/base64';
 

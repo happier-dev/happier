@@ -1,10 +1,5 @@
-import {
-    arePluginMachineExecutionOriginsEqual,
-    compareOpenableContentViewerMatchesV1,
-    matchOpenableContentViewerV1,
-    normalizeOpenableContentPreferenceSelectorV1,
-    serializeOpenableContentPreferenceSelectorV1,
-} from '@happier-dev/protocol';
+import { arePluginMachineExecutionOriginsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { compareOpenableContentViewerMatchesV1, matchOpenableContentViewerV1, normalizeOpenableContentPreferenceSelectorV1, serializeOpenableContentPreferenceSelectorV1 } from '@happier-dev/protocol/plugins/openableContentViewerV1';
 import type {
     OpenableContentMetadataV1,
     OpenableContentPreferenceSelectorV1,

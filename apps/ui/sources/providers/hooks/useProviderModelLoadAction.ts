@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { createProviderErrorV1 } from '@happier-dev/protocol';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type { DaemonProviderModelLoadResponseV1 } from '@happier-dev/protocol/rpc';
 
 import { providerModelRowKey } from '@/providers/models/modelRowKey';

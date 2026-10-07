@@ -1,6 +1,7 @@
 import type { PluginProjectionV2, PluginJsonSchemaV2, PluginContributionIdentityV1, PluginProjectedResourceV2, PluginProjectedFamilyEntryV2 } from '@happier-dev/protocol';
 import type { InputHints } from '@happier-dev/protocol/inputs';
 import { normalizePluginUiInlineSurfaceBindingV1 } from '@happier-dev/protocol/plugins/ui';
+import { WIDGET_SIZE_ORDER_V1, type WidgetSizeDeclarationV1 } from '@happier-dev/protocol/widgets';
 
 import {
     normalizePluginUiProjection,
@@ -23,6 +24,7 @@ export type WidgetFixtureEntry = Readonly<{
     homeDefault?: WidgetHomeDefault;
     inputs?: InputHints;
     inputSchema?: PluginJsonSchemaV2;
+    sizeDeclaration?: WidgetSizeDeclarationV1;
     sessionInputPath?: string;
     role?: typeof WIDGET_ROLE | 'sessionSubagentDetails';
     entryId?: string;
@@ -65,6 +67,7 @@ export function widgetProjectionEntry(input: WidgetFixtureEntry): Extract<Plugin
         target: binding.target,
         renderer: { kind: 'declarative', contributionId: 'widget-native' },
         display: { title: input.title ?? input.localId },
+        ...((input.role ?? WIDGET_ROLE) === WIDGET_ROLE ? { sizeDeclaration: input.sizeDeclaration ?? { sizes: [...WIDGET_SIZE_ORDER_V1], defaultSize: 'medium' } } : {}),
         ...(input.homeDefault ? { home: { default: input.homeDefault } } : {}),
         ...(inputs ? { inputs } : {}),
         ...(inputSchema ? { inputSchema } : {}),

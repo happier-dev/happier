@@ -1,12 +1,7 @@
-import {
-  createProviderErrorV1,
-  SessionModelSelectionV1Schema,
-  SPAWN_SESSION_ERROR_DETAIL_KINDS,
-  resolveSessionModelSelectionInputRefV1,
-  type BackendTargetRefV2,
-  type ProviderErrorV1,
-  type SessionModelSelectionV1,
-} from '@happier-dev/protocol';
+import { createProviderErrorV1, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { SessionModelSelectionV1Schema, resolveSessionModelSelectionInputRefV1, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import { SPAWN_SESSION_ERROR_DETAIL_KINDS } from '@happier-dev/protocol/spawnSession';
+import type { BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { resolveRuntimeFeatureDecision } from '@/sync/domains/features/featureDecisionInputs';

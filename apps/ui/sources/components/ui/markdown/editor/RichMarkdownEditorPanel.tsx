@@ -21,6 +21,7 @@ import { isMutatingMarkdownEditorCommand } from '@/components/ui/markdown/editor
 import { useMarkdownSlashMenu } from '@/components/ui/markdown/editor/slash/useMarkdownSlashMenu';
 import { MarkdownEditorToolbar } from '@/components/ui/markdown/editorChrome/MarkdownEditorToolbar';
 import { Text } from '@/components/ui/text/Text';
+import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
@@ -267,4 +268,11 @@ function RichMarkdownEditorPanelImpl(props: Readonly<{
     );
 }
 
-export const RichMarkdownEditorPanel = React.memo(RichMarkdownEditorPanelImpl);
+export const RichMarkdownEditorPanel = React.memo((props: React.ComponentProps<typeof RichMarkdownEditorPanelImpl>) => (
+    // Keep the controller and its selection/menu subscribers in the same ready
+    // commit as the surface; a boundary inside MarkdownEditor would commit them
+    // once against a null ref and leave them disconnected after lazy admission.
+    <React.Suspense fallback={<PaneLoadingFallback testID="rich-markdown-editor-loading" />}>
+        <RichMarkdownEditorPanelImpl {...props} />
+    </React.Suspense>
+));

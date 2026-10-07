@@ -1,9 +1,5 @@
-import {
-    ACCOUNT_SETTING_DEFINITIONS,
-    type AccountSettingKey,
-    type SettingDefinition,
-    type SettingDefinitionMap,
-} from '@happier-dev/protocol';
+import { ACCOUNT_SETTING_DEFINITIONS, type AccountSettingKey } from '@happier-dev/protocol/account/settings/accountSettings';
+import type { SettingDefinition, SettingDefinitionMap } from '@happier-dev/protocol/settings/registry/settingDefinition';
 
 import type { AnalyticsSettingArtifacts } from '@/track/settingsAnalytics/analyticsSettingArtifacts';
 

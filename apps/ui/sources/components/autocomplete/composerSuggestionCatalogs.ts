@@ -1,7 +1,8 @@
 import { probeMachineSessionCatalogs, type MachineSessionCatalogProbeParams } from '@/sync/ops/sessionCatalogs';
 import type { CommandItem } from '@/sync/domains/input/suggestionCommands';
 import { log } from '@/log';
-import { readNonBlankOpaqueIdentifier, resolveSkillCatalogOriginV1 } from '@happier-dev/protocol';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import { resolveSkillCatalogOriginV1 } from '@happier-dev/protocol/runtime/catalog/skills';
 
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import type { FileItem } from '@/sync/domains/input/suggestionFile';

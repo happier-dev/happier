@@ -1,7 +1,7 @@
 import {
     McpServersSettingsV1Schema,
     type McpServersSettingsV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/mcp/servers/settingsV1';
 
 const EMPTY_MCP_SERVERS_SETTINGS_V1 = McpServersSettingsV1Schema.parse({});
 

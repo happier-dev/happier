@@ -4,7 +4,7 @@ import {
     accountSettingsParse as parseProtocolAccountSettings,
     type AccountSettings,
     type AccountSettingsDefaults,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/settings/accountSettings';
 import { z } from 'zod';
 
 import {

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { isArtifactHtmlHeaderV1 } from '@happier-dev/protocol';
+import { isArtifactHtmlHeaderV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { MarkdownView } from '@/components/markdown/MarkdownView';

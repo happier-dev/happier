@@ -1,11 +1,7 @@
-import {
-    buildBackendTargetKeyV2,
-    buildBackendTargetKey,
-    convertBackendTargetRefV2ToV1,
-    readLegacyConfiguredAcpBackendId,
-    type AcpCatalogSettingsV1,
-    type PersistedBackendTargetRefV2,
-} from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2, convertBackendTargetRefV2ToV1, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { buildBackendTargetKey } from '@happier-dev/protocol/backends/targets/backendTargetRef';
+import { readLegacyConfiguredAcpBackendId } from '@happier-dev/protocol/backends/targets/compat/customAcp';
+import type { AcpCatalogSettingsV1 } from '@happier-dev/protocol/acp/catalog/settingsV1';
 
 import {
     getResolvedBackendCatalogEntries,

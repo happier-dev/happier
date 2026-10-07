@@ -11,6 +11,7 @@
  *   adapters     → presentation + plugin-sdk/ui
  */
 export type { HappierLayoutChangeEvent, HappierTextSelection } from './portableTypes.js';
+export { WidgetSizePicker, type WidgetSizePickerProps, type WidgetSizePickerChoice } from './layout/WidgetSizePicker.js';
 export type { CollectionVirtualizer, CollectionVirtualizerHandle, CollectionVirtualizerRequest } from './collection/collectionVirtualizer.js';
 export { HappierDropTargetOutline } from './interaction/DropTargetOutline.js';
 export { HappierArtifactPreviewCard, type HappierArtifactPreview, type HappierArtifactPreviewCardProps, type HappierArtifactPreviewCardHost } from './artifacts/ArtifactPreviewCard.js';
@@ -431,6 +432,39 @@ export {
 } from './state/InfoState.js';
 export { formatHappierAsOfTime, resolveHappierFreshnessText } from './state/asOfTime.js';
 export {
+  HAPPIER_SCENE_ART_METRICS,
+  HAPPIER_SCENE_IDS,
+  HAPPIER_SCENE_PROP_IDS,
+  HAPPIER_SCENE_RULES,
+  HAPPIER_SCENE_VIEWBOX,
+  defineHappierScene,
+  defineHappierSceneProp,
+  isHappierSceneId,
+  resolveHappierScene,
+  resolveHappierSceneArtSize,
+  type HappierResolvedScene,
+  type HappierResolvedSceneLayer,
+  type HappierResolvedSceneMark,
+  type HappierResolvedScenePlanet,
+  type HappierSceneArtSize,
+  type HappierSceneComposition,
+  type HappierSceneDash,
+  type HappierSceneDefinition,
+  type HappierSceneHorizon,
+  type HappierSceneId,
+  type HappierSceneInput,
+  type HappierSceneMark,
+  type HappierSceneMoment,
+  type HappierScenePlanetPlacement,
+  type HappierScenePlanetState,
+  type HappierScenePropDefinition,
+  type HappierScenePropId,
+  type HappierScenePropPlacement,
+  type HappierSceneRenderRequest,
+  type HappierSceneSky,
+  type HappierSceneTone,
+} from './state/scenes.js';
+export {
   HappierList,
   HappierListItem,
   HappierListSection,
@@ -639,6 +673,18 @@ export {
   type HappierSwitchProps,
   type HappierSwitchSize,
 } from './form/Switch.js';
+// The raised edge (one side of a bordered control's or surface's own border, lit on dark and
+// lipped on light) and the gloss of a filled accent control: which side, and which states sit flat.
+export {
+  HAPPIER_RAISED_EDGE_SIDE,
+  happierRaisedEdgeStyle,
+  resolveHappierGloss,
+  resolveHappierRaisedEdge,
+  settleHappierRaisedEdge,
+  type HappierRaisedEdge,
+  type HappierRaisedEdgeSide,
+  type HappierRaisedEdgeState,
+} from './layout/raisedEdge.js';
 export {
   HAPPIER_FIELD_BOX_METRICS,
   HAPPIER_FIELD_BOX_SHAPE,

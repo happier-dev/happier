@@ -13,14 +13,8 @@ import {
     type HomeProfileAdoptionPartialCommitFailure,
 } from '@/sync/domains/server/adoptHomeProfile';
 import { buildHomeConnectionDescriptorForProfile, getServerProfileById } from '@/sync/domains/server/serverProfiles';
-import {
-    computeHomeQrBindingProofV2,
-    createHomeQrReverseInviteV2,
-    deriveHomeQrBindingKeyV2,
-    deriveHomeQrRendezvousSecretV2,
-    type HomeConnectionDescriptorV1,
-    type HomeQrInviteV2,
-} from '@happier-dev/protocol';
+import { computeHomeQrBindingProofV2, createHomeQrReverseInviteV2, deriveHomeQrBindingKeyV2, deriveHomeQrRendezvousSecretV2, type HomeQrInviteV2 } from '@happier-dev/protocol/crypto/qrProvisioningV2';
+import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol/auth/accountDirectory';
 import { enrollmentPollingBackoffMs } from '@/auth/enrollment/enrollmentPollingBackoff';
 import { admitDirectHomeQrV2 } from '@happier-dev/cli-common/homeEnrollment';
 

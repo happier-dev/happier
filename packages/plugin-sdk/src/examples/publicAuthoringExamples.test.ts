@@ -1545,6 +1545,7 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             expect.objectContaining({
                 id: 'review-status-widget',
                 container: 'widget',
+                sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' },
                 target: { kind: 'session' },
                 renderer: 'review-native',
                 fallbackRenderers: ['review-web'],

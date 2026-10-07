@@ -11,7 +11,8 @@ import {
 } from '@/components/navigation/shell/sidebarFooter/SidebarUsagePopoverContent';
 import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import { connectedServiceProfileKey } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
-import { buildQualifiedPluginContributionKey, ConnectedServiceAuthGroupPolicyV1Schema } from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { ConnectedServiceAuthGroupPolicyV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 
 import { CHATGPT, CLAUDE, DAY, GROUPS, HOUR, MIN, type Svc } from './connectedServicesFixtures';
 

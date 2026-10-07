@@ -1,7 +1,7 @@
 import {
     SessionDiscussionSelectionSourceV1Schema,
     type SessionDiscussionSelectionSourceV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/discussions/content';
 
 import { applySendToSessionTemplate } from '@/components/sessions/transcript/messageSelection/applySendToSessionTemplate';
 import type { SessionInitialPromptV1 } from '@/sync/domains/sessionInitialPrompt/sessionInitialPromptV1';

@@ -1,8 +1,6 @@
 import * as React from 'react';
-import {
-    TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1,
-    type ManagedGitHubAppOwnerV1,
-} from '@happier-dev/protocol';
+import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
+import type { ManagedGitHubAppOwnerV1 } from '@happier-dev/protocol/identity/githubApps';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import {

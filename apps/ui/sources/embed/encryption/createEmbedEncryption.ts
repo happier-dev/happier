@@ -1,4 +1,4 @@
-import { openBoxBundleWithSecretKey } from '@happier-dev/protocol';
+import { openBoxBundleWithSecretKey } from '@happier-dev/protocol/crypto/boxBundle';
 import { EmbedSessionOptionsV1Schema, type ComposerOptionsInputV1 } from '@happier-dev/protocol/embed';
 
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';

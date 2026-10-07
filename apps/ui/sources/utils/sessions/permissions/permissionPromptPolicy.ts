@@ -1,4 +1,4 @@
-import { resolveAgentRequestKind } from '@happier-dev/protocol';
+import { resolveAgentRequestKind } from '@happier-dev/protocol/activity/agentRequestSummary';
 
 export type PermissionPromptSurfaceSetting = 'composer' | 'transcript' | 'both';
 

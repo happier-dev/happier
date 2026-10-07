@@ -1,32 +1,5 @@
-import {
-    ACCOUNT_API_TOKENS_CREATE_HTTP_PATH_V1,
-    ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1,
-    ACCOUNT_API_TOKENS_REVOKE_ALL_HTTP_PATH_V1,
-    ACCOUNT_API_TOKENS_REVOKE_HTTP_PATH_V1,
-    ACCOUNT_API_TOKENS_UPDATE_HTTP_PATH_V1,
-    AccountApiTokensCreateActionInputV1Schema,
-    AccountApiTokensCreateActionOutputV1Schema,
-    AccountApiTokensListActionInputV1Schema,
-    AccountApiTokensListActionOutputV1Schema,
-    AccountApiTokensRevokeActionInputV1Schema,
-    AccountApiTokensRevokeActionOutputV1Schema,
-    AccountApiTokensRevokeAllActionInputV1Schema,
-    AccountApiTokensRevokeAllActionOutputV1Schema,
-    AccountApiTokensServerErrorV1Schema,
-    AccountApiTokensUpdateActionInputV1Schema,
-    AccountApiTokensUpdateActionOutputV1Schema,
-    type AccountApiTokensCreateActionInputV1,
-    type AccountApiTokensCreateActionOutputV1,
-    type AccountApiTokensListActionInputV1,
-    type AccountApiTokensListActionOutputV1,
-    type AccountApiTokensRevokeActionInputV1,
-    type AccountApiTokensRevokeActionOutputV1,
-    type AccountApiTokensRevokeAllActionInputV1,
-    type AccountApiTokensRevokeAllActionOutputV1,
-    type AccountApiTokensUpdateActionInputV1,
-    type AccountApiTokensUpdateActionOutputV1,
-    type ActionExecuteFailure,
-} from '@happier-dev/protocol';
+import { ACCOUNT_API_TOKENS_CREATE_HTTP_PATH_V1, ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1, ACCOUNT_API_TOKENS_REVOKE_ALL_HTTP_PATH_V1, ACCOUNT_API_TOKENS_REVOKE_HTTP_PATH_V1, ACCOUNT_API_TOKENS_UPDATE_HTTP_PATH_V1, AccountApiTokensCreateActionInputV1Schema, AccountApiTokensCreateActionOutputV1Schema, AccountApiTokensListActionInputV1Schema, AccountApiTokensListActionOutputV1Schema, AccountApiTokensRevokeActionInputV1Schema, AccountApiTokensRevokeActionOutputV1Schema, AccountApiTokensRevokeAllActionInputV1Schema, AccountApiTokensRevokeAllActionOutputV1Schema, AccountApiTokensServerErrorV1Schema, AccountApiTokensUpdateActionInputV1Schema, AccountApiTokensUpdateActionOutputV1Schema, type AccountApiTokensCreateActionInputV1, type AccountApiTokensCreateActionOutputV1, type AccountApiTokensListActionInputV1, type AccountApiTokensListActionOutputV1, type AccountApiTokensRevokeActionInputV1, type AccountApiTokensRevokeActionOutputV1, type AccountApiTokensRevokeAllActionInputV1, type AccountApiTokensRevokeAllActionOutputV1, type AccountApiTokensUpdateActionInputV1, type AccountApiTokensUpdateActionOutputV1 } from '@happier-dev/protocol/auth/accountApiTokens';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { z } from 'zod';
 
 import { apiSocket } from '@/sync/api/session/apiSocket';

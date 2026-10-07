@@ -5,7 +5,7 @@ import {
   isValidRecoveryKey,
   normalizeRecoveryKey,
   parseRecoveryKey,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/auth/recoveryKey';
 
 function invalidSecretKeyError(result: ReturnType<typeof parseRecoveryKey>): Error {
   if (result.ok) return new Error('Invalid secret key format');

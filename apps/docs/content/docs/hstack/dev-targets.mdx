@@ -755,6 +755,14 @@ security paths. New packages, package-root files, and root files synchronize wit
 the project. Keep unrelated clones outside the checkout to avoid synchronizing them.
 Dependencies and published plugin artifacts remain target-local. Service status uses current session
 health; the separately reported startup preparation history can retain an earlier, recovered error.
+In current 0.3 development, runtime-build targets share one package-manager cache and Iroh Cargo
+target directory per worker CLI home. Linux runtime requests also check for stale staging and
+historical temporary roots: reclamation requires at least 24 hours since the newest modification
+and proof that no live process holds the root. Cache cleanup preserves resolutions used by every
+configured mirror sharing that cache, including the 0.2 command mirror, and retained build
+workspaces. Unknown process visibility or unavailable lockfiles preserve data; a full worker may
+therefore require maintenance with sufficient process-observation permissions. Checkout-local
+logs and temporary outputs under `.project/logs` and `.project/tmp` are excluded from synchronization.
 Current development dispatch recovers scan-only problems on an otherwise connected, scanned session
 with a completed cycle by requesting a fresh rescan through the existing causal flush barrier.
 `status` reports the scan path/error and rescan eligibility. Dispatch admits only after fresh clean

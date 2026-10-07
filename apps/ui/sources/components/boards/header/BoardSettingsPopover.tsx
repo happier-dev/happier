@@ -1,13 +1,8 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import {
-    normalizeSessionListFilterV1,
-    type BoardItemRefV1,
-    type WorkBoardIntentV1,
-    type WorkBoardSectionV1,
-    type WorkBoardV1,
-} from '@happier-dev/protocol';
+import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
+import type { BoardItemRefV1, WorkBoardIntentV1, WorkBoardSectionV1, WorkBoardV1 } from '@happier-dev/protocol/boards/workBoardV1';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { FieldItem } from '@/components/ui/forms/FieldItem';

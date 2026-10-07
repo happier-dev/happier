@@ -1,7 +1,7 @@
 import {
     DaemonVoiceInferenceErrorCodeSchema,
     type DaemonVoiceInferenceErrorCode,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/voiceInference';
 
 const DAEMON_VOICE_INFERENCE_CLIENT_TRANSPORT_ERROR_CODES = [
     'feature_disabled',

@@ -1,4 +1,4 @@
-import { fromSubagentStatus } from '@happier-dev/protocol';
+import { fromSubagentStatus } from '@happier-dev/protocol/sessions/work/agentActivity/adapters/fromSubagentStatus';
 
 import type { SessionSubagent, SessionSubagentKind } from '../../subagents/types';
 import {

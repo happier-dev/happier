@@ -1,6 +1,8 @@
 import * as React from 'react';
+import { View, type LayoutChangeEvent } from 'react-native';
+import { WidgetPresentationProvider, useWidgetPresentation } from '@happier-dev/plugin-ui';
 import type { JsonValue } from '@happier-dev/protocol';
-import { readBuiltinWidgetDescriptorV1, type WidgetInstanceV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
+import { getWidgetSizeFootprintV1, normalizeWidgetSizeForSurfaceV1, readBuiltinWidgetDescriptorV1, type WidgetSizeV1, type WidgetInstanceV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 
 import { ConfiguredInstalledWidgetSurface, ConfiguredWidgetRefusal, UnavailableInstalledWidget } from '@/components/widgets/InstalledWidgetSurface';
 import { BuiltinWidgetBody } from '@/components/sessions/companion/glances/BuiltinWidgetBody';
@@ -11,6 +13,7 @@ import type { WidgetPresentation } from '@/sync/domains/plugins/ui/widgetContrac
 import { useConfiguredWidgetTarget } from '@/sync/domains/widgets/useConfiguredWidgetTarget';
 import type { WidgetInputRepairOutcome } from '@/sync/domains/widgets/widgetBinding';
 import { useWidgetDefinition } from '@/sync/domains/widgets/useWidgetDefinition';
+import { useWidgetInstanceDescriptor } from './useWidgetInstanceDescriptor';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { storage, useActiveServerAccountScope } from '@/sync/domains/state/storage';
 
@@ -22,6 +25,7 @@ export type WidgetSurfaceProps = Readonly<{
     instance: WidgetInstanceV1;
     appRuntime: PluginUiProjectionCurrentness;
     presentation: WidgetPresentation;
+    size?: WidgetSizeV1;
     recordRevision: string;
     enabled?: boolean;
     /** Admitted navigation content; no widget body or Resource subscription is mounted. */
@@ -94,7 +98,7 @@ function AuthoredInstanceBody(props: WidgetSurfaceProps): React.ReactElement {
 }
 
 /** One mounted instance body shared by Home, Board and Companion; hosts retain their frame. */
-export function WidgetSurface(props: WidgetSurfaceProps): React.ReactElement {
+function WidgetSurfaceBody(props: WidgetSurfaceProps): React.ReactElement {
     if (props.instance.definition.kind === 'artifact' || props.instance.definition.kind === 'inline') return <AuthoredInstanceBody {...props} />;
     if (!props.descriptor) {
         const establishing = props.instance.definition.kind === 'installed' && props.appRuntime.phase === 'establishing';
@@ -104,4 +108,26 @@ export function WidgetSurface(props: WidgetSurfaceProps): React.ReactElement {
             testID={props.testID} onManagePlugin={props.onManagePlugin} />;
     }
     return <InstalledInstanceBody {...props} descriptor={props.descriptor} />;
+}
+
+/** One measured body box for all renderers. Reflow is presentation and never persists a size. */
+export function WidgetSurface(props: WidgetSurfaceProps): React.ReactElement {
+    const inherited = useWidgetPresentation();
+    const descriptor = useWidgetInstanceDescriptor(props.scope, props.instance, props.descriptor);
+    const [geometry, setGeometry] = React.useState<Readonly<{ width: number; height: number }>>();
+    const onLayout = React.useCallback((event: LayoutChangeEvent) => {
+        const { width, height } = event.nativeEvent.layout;
+        if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
+        setGeometry(previous => previous?.width === width && previous.height === height ? previous : { width, height });
+    }, []);
+    const size = inherited ? undefined : normalizeWidgetSizeForSurfaceV1(props.scope.owner.kind, props.size, descriptor?.sizeDeclaration);
+    const footprint = size ? getWidgetSizeFootprintV1(props.scope.owner.kind, size) : undefined;
+    // A framed body consumes its one viewport owner unchanged (especially Board's native width×height).
+    // Only an unframed preview measures here; neither path turns measured pixels into saved intent.
+    const value = React.useMemo(() => inherited ?? (size && footprint ? { size, footprint, ...(geometry ? { geometry } : {}) } : undefined),
+        [inherited, size, footprint, geometry]);
+    const body = <View testID={`${props.testID}.geometry`} onLayout={inherited ? undefined : onLayout} style={{ minWidth: 0 }}>
+        <WidgetSurfaceBody {...props} />
+    </View>;
+    return inherited ? body : <WidgetPresentationProvider value={value}>{body}</WidgetPresentationProvider>;
 }

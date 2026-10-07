@@ -1,7 +1,7 @@
 import {
     WORKFLOW_OPERATION_ERROR_CODES_V1,
     type WorkflowOperationErrorCodeV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { WorkflowActionFailureV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 /**

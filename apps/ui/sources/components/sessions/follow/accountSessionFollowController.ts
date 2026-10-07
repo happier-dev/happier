@@ -1,4 +1,4 @@
-import { EXPLICIT_SESSION_UNFOLLOW_STATE_V1 } from '@happier-dev/protocol';
+import { EXPLICIT_SESSION_UNFOLLOW_STATE_V1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
 import type {
     GetSessionFollowResponse,
     RemoveSessionFollowResponse,

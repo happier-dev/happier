@@ -1,13 +1,7 @@
-import {
-  ActionApprovalRequestCreatedResultSchema,
-  SessionHandoffActionResultV1Schema,
-  WorkspaceSyncPrepareBetweenResultV1Schema,
-  type ActionExecuteResult,
-  type ActionExecutorContext,
-  type HandoffWorkspaceActionV1,
-  type SessionHandoffActionResultV1,
-  type WorkspaceSyncPrepareBetweenResultV1,
-} from '@happier-dev/protocol';
+import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { SessionHandoffActionResultV1Schema, type SessionHandoffActionResultV1 } from '@happier-dev/protocol/sessions/control/handoff/handoffSchemas';
+import { WorkspaceSyncPrepareBetweenResultV1Schema, type HandoffWorkspaceActionV1, type WorkspaceSyncPrepareBetweenResultV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
 type ExecuteAction = (actionId: 'session.handoff', input: unknown, context?: ActionExecutorContext) => Promise<ActionExecuteResult>;
 

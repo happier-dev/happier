@@ -130,7 +130,7 @@ describe('browser-safe package exports', () => {
             resolve: {
                 alias: [
                     {
-                        find: '@happier-dev/protocol/plugins/manifest',
+                        find: /^@happier-dev\/protocol\/plugins\/manifest$/u,
                         replacement: protocolManifestEntry,
                     },
                     {

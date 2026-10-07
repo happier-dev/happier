@@ -1,12 +1,8 @@
-import {
-    isLaunchProfileV2,
-    buildBackendTargetKeyV2,
-    normalizeLegacyAiLaunchProfileReferenceV1,
-    readBackendTargetRefV2,
-    type AiLaunchProfile,
-    type ProviderSettingsMigrationStateV1,
-    type SessionModelSelectionV1,
-} from '@happier-dev/protocol';
+import { isLaunchProfileV2, type AiLaunchProfile } from '@happier-dev/protocol/profiles/read';
+import { buildBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { normalizeLegacyAiLaunchProfileReferenceV1 } from '@happier-dev/protocol/providers/migrations/legacyProfileReferencesV1';
+import type { ProviderSettingsMigrationStateV1 } from '@happier-dev/protocol/providers/settings/v1';
+import type { SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 
 export type LaunchProfileAuthoringIntent = Readonly<{
     profileId: string | null;

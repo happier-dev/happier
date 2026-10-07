@@ -35,8 +35,9 @@ import type { SettingsAnalyticsSource } from '@/track/settingsAnalytics/types';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { requireOneShotAccountSettingsMutationApplied } from '@/sync/engine/settings/syncSettings';
 import { areAccountSettingsScopesEqual, type AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
-import { writeConnectedAccountPurposeDefault, type QualifiedConnectedAccountPurposeV1,
-  type QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol';
+import { writeConnectedAccountPurposeDefault } from '@happier-dev/protocol/account/settings/connected-services';
+import type { QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
+import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 
 function requireSettingsVersion(settingsVersion: number | null): number {
   if (settingsVersion === null) throw new Error('Account settings version is unavailable');

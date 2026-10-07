@@ -84,6 +84,44 @@ test('language lookup and tokenization defer the highlighter runtime and themes'
     }
 });
 
+test('optional web renderers stay outside their entry static closures', async () => {
+    const cache = mkdtempSync(path.join(tmpdir(), 'happier-optional-renderers-'));
+    let server;
+    try {
+        delete require.cache[require.resolve(path.join(uiRoot, 'metro.config.js'))];
+        const config = require(path.join(uiRoot, 'metro.config.js'));
+        config.maxWorkers = 2;
+        config.cacheStores = [new (require('metro-cache').FileStore)({ root: path.join(cache, 'transforms') })];
+        config.fileMapCacheDirectory = path.join(cache, 'filemap');
+        mkdirSync(config.fileMapCacheDirectory, { recursive: true });
+        config.reporter = { update() {} };
+        const Server = require('metro/private/Server').default;
+        server = new Server(config, { watch: false });
+        const eagerlyLoaded = [];
+        for (const [entry, packagePattern] of [
+            ['sources/components/ui/markdown/editor/MarkdownEditor.web.tsx', /\/node_modules\/(?:@tiptap|prosemirror-[^/]+)\//],
+            ['sources/components/ui/code/diff/DiffViewer.web.tsx', /\/node_modules\/@pierre\/diffs\//],
+            ['sources/components/ui/code/diff/pierre/PierreScrollRootVirtualizerProvider.web.tsx', /\/node_modules\/@pierre\/diffs\//],
+            ['sources/components/terminal/embedded/EmbeddedTerminalPane.web.tsx', /\/node_modules\/@xterm\//],
+        ]) {
+            const result = await server.build({ ...Server.DEFAULT_BUNDLE_OPTIONS,
+                entryFile: path.join(uiRoot, entry), platform: 'web', dev: true, minify: false, lazy: true,
+                customTransformOptions: { engine: 'hermes', routerRoot: './sources/app' },
+                unstable_transformProfile: 'hermes-stable',
+            });
+            const graph = [...server.getBundler().getDeltaBundler()._deltaCalculators.keys()].at(-1);
+            const paths = [...graph.dependencies.keys()].map(file => file.replaceAll('\\', '/'));
+            const payloads = paths.filter(file => packagePattern.test(file));
+            console.log(JSON.stringify({ entry, modules: paths.length, bytes: Buffer.byteLength(result.code), payloadCount: payloads.length }));
+            if (payloads.length) eagerlyLoaded.push({ entry, payloads });
+        }
+        assert.deepEqual(eagerlyLoaded, [], 'optional engines must be admitted only on renderer demand');
+    } finally {
+        if (server) await server.end();
+        rmSync(cache, { recursive: true, force: true });
+    }
+});
+
 test('web development includes dynamic imports in one graph while native keeps lazy bundles', async () => {
     const fixture = mkdtempSync(path.join(tmpdir(), 'happier-web-single-graph-'));
     let server;

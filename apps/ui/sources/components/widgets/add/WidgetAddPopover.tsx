@@ -6,7 +6,7 @@ import { useDeviceType } from '@/utils/platform/responsive';
 
 import { WidgetAddPanel, type WidgetAddPanelProps } from './WidgetAddPanel';
 import { WidgetSetupStep } from './WidgetSetupStep';
-import type { WidgetSetup } from './widgetSetupModel';
+import type { WidgetSetup, WidgetSetupSubmitResult } from './widgetSetupModel';
 import { useWidgetAddView } from './useWidgetAddView';
 
 export type WidgetAddPopoverProps = Omit<WidgetAddPanelProps, 'view' | 'onViewChange' | 'phone' | 'onSetupOpenChange'> & Readonly<{
@@ -63,6 +63,8 @@ export function WidgetSetupPopover(props: Readonly<{
     /** Built when it opens; nothing reads while it is closed. */
     setup: () => WidgetSetup;
     onRequestClose: () => void;
+    /** Adds may keep their acknowledged outcome in the Gallery; edits close by default. */
+    onDone?: (result: Extract<WidgetSetupSubmitResult, { ok: true }>) => void;
     serverId?: string | null;
     sessionId?: string | null;
     /** A repair opens the step at the input it names, its choices open. */
@@ -82,7 +84,7 @@ function OpenWidgetSetupPopover(props: React.ComponentProps<typeof WidgetSetupPo
             phone={props.phone}
             onCancel={props.onRequestClose}
             onClose={props.onRequestClose}
-            onDone={props.onRequestClose}
+            onDone={props.onDone ?? props.onRequestClose}
             {...(props.serverId ? { serverId: props.serverId } : {})}
             {...(props.sessionId ? { sessionId: props.sessionId } : {})}
             {...(props.focusPath ? { focusPath: props.focusPath } : {})}

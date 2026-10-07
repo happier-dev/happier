@@ -5,13 +5,9 @@ import { serverFetch } from '@/sync/http/client';
 import { runTasksWithLimit } from '@/sync/runtime/orchestration/runTasksWithLimit';
 import { buildMachineDisplayRenderableFromMachine, type MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import type { MachineDisplayCacheEntryV1 } from '@/sync/domains/state/warmCachePersistence';
-import {
-    MachineKindFromLegacyProjectionSchema,
-    MachineOperationProtocolCapabilitiesV1Schema,
-    decodePlainMachineStoredContent,
-    isPlainMachineDataKeyMarker,
-    resolvePublishedMachineDataEncryptionKeyV1,
-} from '@happier-dev/protocol';
+import { MachineKindFromLegacyProjectionSchema } from '@happier-dev/protocol/machines/machineKind';
+import { MachineOperationProtocolCapabilitiesV1Schema } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
+import { decodePlainMachineStoredContent, isPlainMachineDataKeyMarker, resolvePublishedMachineDataEncryptionKeyV1 } from '@happier-dev/protocol/machines/machineStoredContent';
 import { resolveRunnerMachineContentKeyTrustV1 } from '@/sync/domains/machines/runnerMachineContentKeyTrust';
 
 type MachineEncryption = {

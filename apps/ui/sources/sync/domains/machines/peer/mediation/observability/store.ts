@@ -1,10 +1,5 @@
-import {
-    applyPeerMediationObservabilityEventToFlowSnapshot,
-    type PeerMediationObservabilityDeltaV1,
-    type PeerMediationObservabilityEventV1,
-    type PeerMediationObservabilityFlowSnapshotV1,
-    type PeerMediationObservabilitySnapshotV1,
-} from '@happier-dev/protocol';
+import { applyPeerMediationObservabilityEventToFlowSnapshot } from '@happier-dev/protocol/machines/peer/mediation/observability/flowSnapshotFold';
+import type { PeerMediationObservabilityDeltaV1, PeerMediationObservabilityEventV1, PeerMediationObservabilityFlowSnapshotV1, PeerMediationObservabilitySnapshotV1 } from '@happier-dev/protocol/machines/peer/mediation/observability/v1';
 
 import {
     peerMediationObservabilityFlowKey,

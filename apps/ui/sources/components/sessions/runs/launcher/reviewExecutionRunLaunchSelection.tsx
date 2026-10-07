@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
-import { ReviewStartInputSchema } from '@happier-dev/protocol';
+import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
 import type { PluginUiSelectActionInputResultV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';

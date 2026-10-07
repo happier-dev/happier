@@ -43,16 +43,12 @@ import { killProcessGroupOwnedByStack } from './utils/proc/ownership.mjs';
 import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 import { getInvokedCwd, inferComponentFromCwd } from './utils/cli/cwd_scope.mjs';
 import { mergeEnvForTuiSummary } from './utils/tui/summary_env.mjs';
-import { createTuiSummaryRefresh } from './utils/tui/summary_refresh.mjs';
+import { createTuiSummaryRefresh, readTuiDaemonView } from './utils/tui/summary_refresh.mjs';
 import {
   formatRuntimeExpoDevClientLines,
   formatRuntimePlacementSummaryLines,
-  resolveRuntimeRemoteServiceObservation,
   shouldPresentRuntimeServiceEndpoint,
 } from './utils/tui/runtime_placement_summary.mjs';
-import { hasStackCredentials } from './utils/auth/daemon_gate.mjs';
-import { applyTuiStackAuthScopeEnv } from './utils/tui/stack_scope_env.mjs';
-import { buildDaemonAuthNotice, parseStartDaemonFlagFromEnv } from './utils/tui/daemon_auth_notice.mjs';
 import { ensureTuiStdinMode, runWithTuiStdinHandoff } from './utils/tui/stdin_handoff.mjs';
 import { waitForHappierHealthOk } from './utils/server/server.mjs';
 import { buildTuiAuthArgs, buildTuiAuthExitNotice } from './utils/tui/actions.mjs';
@@ -68,8 +64,6 @@ import {
   formatTuiForwardedChildExit,
   resolveTuiShutdownChildren,
 } from './utils/tui/restart_operation.mjs';
-import { checkDaemonStatePingAware } from './daemon.mjs';
-import { getObservedStackDaemonAsync } from './utils/stack/runtime_daemon_state.mjs';
 import { loadDevTargetsConfig, resolveDevTargetExecutionPolicy } from './utils/dev_targets/config.mjs';
 import { resolveDevTargetServicePlans } from './utils/dev_targets/service_placement.mjs';
 import {
@@ -357,7 +351,7 @@ function formatRepoRef({ rootDir, dir }) {
   return abs;
 }
 
-async function buildStackSummaryLines({ rootDir, stackName }) {
+async function buildStackSummaryLines({ rootDir, stackName, onDaemonView }) {
   if (!stackName) {
     const { env, invokedCwd } = resolveStacklessSummaryEnv({ rootDir });
     const serverComponent =
@@ -400,9 +394,21 @@ async function buildStackSummaryLines({ rootDir, stackName }) {
   const { envPath, baseDir } = resolveStackEnvPath(stackName);
   const envFromFile = await readEnvObject(envPath);
   const env = mergeEnvForTuiSummary({ stackEnvFromFile: envFromFile, processEnv: process.env });
-  const authScopeEnv = applyTuiStackAuthScopeEnv({ env, stackName });
   const runtimePath = getStackRuntimeStatePath(stackName);
   const runtime = await readStackRuntimeStateFile(runtimePath);
+  const serverPort = Number(runtime?.ports?.server);
+  const internalServerUrl =
+    Number.isFinite(serverPort) && serverPort > 0 ? `http://127.0.0.1:${serverPort}` : '';
+  const daemonView = await readTuiDaemonView({
+    stackName,
+    cliHomeDir: join(baseDir, 'cli'),
+    internalServerUrl,
+    runtime,
+    env,
+  });
+  // The daemon pane remains usable if a later, unrelated summary projection fails.
+  onDaemonView(daemonView);
+  const { observedDaemon, notice } = daemonView;
   const runtimeInspection = await inspectActiveRuntimeSnapshot({ stackBaseDir: baseDir, env });
   const selectedSnapshotId = runtimeInspection.activeSnapshotId;
   const runtimeLifecycleLive = await hasTrustedStackRuntimeLifecycle(runtime, {
@@ -442,25 +448,6 @@ async function buildStackSummaryLines({ rootDir, stackName }) {
   const processes = runtime?.processes && typeof runtime.processes === 'object' ? runtime.processes : {};
   const serverLifecycle = readStackServerLifecycle(runtime);
 
-  const serverPort = Number(ports?.server);
-  const internalServerUrl =
-    Number.isFinite(serverPort) && serverPort > 0 ? `http://127.0.0.1:${serverPort}` : '';
-  const cliHomeDir = join(baseDir, 'cli');
-  const authed = internalServerUrl
-    ? hasStackCredentials({ cliHomeDir, serverUrl: internalServerUrl, env: authScopeEnv })
-    : hasStackCredentials({ cliHomeDir, serverUrl: '', env: authScopeEnv });
-  const remoteDaemon = resolveRuntimeRemoteServiceObservation(runtime, 'daemon');
-  const startDaemon = parseStartDaemonFlagFromEnv(env) && !remoteDaemon.target;
-  const observedDaemon = await getObservedStackDaemonAsync({
-    cliHomeDir,
-    internalServerUrl,
-    runtimeDaemonPid: processes?.daemonPid ?? null,
-    runtimeDaemonPids: processes?.daemonPids ?? [],
-    env: authScopeEnv,
-  }, {
-    checkDaemonStateImpl: checkDaemonStatePingAware,
-  });
-
   const lines = [];
   lines.push(`stack: ${stackName}`);
   lines.push(`server: ${serverComponent}`);
@@ -491,14 +478,6 @@ async function buildStackSummaryLines({ rootDir, stackName }) {
   }
 
   // Make daemon auth issues obvious even if the user never focuses the daemon pane.
-  const notice = buildDaemonAuthNotice({
-    stackName,
-    internalServerUrl,
-    daemonPid: observedDaemon.pid,
-    daemonRunning: observedDaemon.running,
-    authed,
-    startDaemon,
-  });
   if (notice.show) {
     lines.push('');
     for (const l of styleDaemonNoticeLines(notice.summaryLines)) lines.push(l);
@@ -1096,8 +1075,13 @@ async function main() {
       refreshRuntimeLogFollowers(runtime);
     }
     const idx = paneIndexById.get('summary');
+    let daemonView = null;
     try {
-      const lines = await buildStackSummaryLines({ rootDir, stackName });
+      const lines = await buildStackSummaryLines({
+        rootDir,
+        stackName,
+        onDaemonView: (view) => { daemonView = view; },
+      });
       panes[idx].lines = lines;
     } catch (e) {
       panes[idx].lines = [`summary error: ${e instanceof Error ? e.message : String(e)}`];
@@ -1119,41 +1103,8 @@ async function main() {
     // and clear stale guidance once either the local or target-hosted daemon starts.
     try {
       const daemonIdx = paneIndexById.get('daemon');
-      if (stackName) {
-        const runtimePath = getStackRuntimeStatePath(stackName);
-        const runtime = await readStackRuntimeStateFile(runtimePath);
-
-        const { baseDir } = resolveStackEnvPath(stackName);
-        const serverPort = Number(runtime?.ports?.server);
-        const internalServerUrl =
-          Number.isFinite(serverPort) && serverPort > 0 ? `http://127.0.0.1:${serverPort}` : '';
-        const cliHomeDir = join(baseDir, 'cli');
-
-        const scopedEnv = applyTuiStackAuthScopeEnv({ env: process.env, stackName });
-        const authed = internalServerUrl
-          ? hasStackCredentials({ cliHomeDir, serverUrl: internalServerUrl, env: scopedEnv })
-          : hasStackCredentials({ cliHomeDir, serverUrl: '', env: scopedEnv });
-        const observedDaemon = await getObservedStackDaemonAsync({
-          cliHomeDir,
-          internalServerUrl,
-          runtimeDaemonPid: runtime?.processes?.daemonPid ?? null,
-          runtimeDaemonPids: runtime?.processes?.daemonPids ?? [],
-          env: scopedEnv,
-        }, {
-          checkDaemonStateImpl: checkDaemonStatePingAware,
-        });
-
-        const remoteDaemon = resolveRuntimeRemoteServiceObservation(runtime, 'daemon');
-        const startDaemon = parseStartDaemonFlagFromEnv(process.env) && !remoteDaemon.target;
-        const daemonRunning = observedDaemon.running || remoteDaemon.running;
-        const notice = buildDaemonAuthNotice({
-          stackName,
-          internalServerUrl,
-          daemonPid: observedDaemon.pid,
-          daemonRunning,
-          authed,
-          startDaemon,
-        });
+      if (daemonView) {
+        const { observedDaemon, daemonRunning, notice } = daemonView;
 
         if (notice.show) {
           panes[daemonIdx].visible = true;

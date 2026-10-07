@@ -4,7 +4,7 @@ import * as React from 'react';
 import { Platform, ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { readServerEnabledBit } from '@happier-dev/protocol';
+import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 
 import { useAuth } from '@/auth/context/AuthContext';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';

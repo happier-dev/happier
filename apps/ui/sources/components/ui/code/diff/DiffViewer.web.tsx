@@ -6,10 +6,15 @@ import { LazyMountOnScreen } from '@/components/ui/performance/LazyMountOnScreen
 import type { DiffViewerProps } from './diffViewerTypes';
 import { HappierUnifiedDiffViewer } from './happier/HappierUnifiedDiffViewer';
 import { HappierTextDiffViewer } from './happier/HappierTextDiffViewer';
-import { PierreDiffViewer } from './pierre/PierreDiffViewer.web';
+import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 import { isPierreDiffKillSwitchEnabled, supportsPierreRuntime } from './pierre/pierreRuntimeSupport.web';
 import { useInitialPresentationReadiness } from '@/components/ui/presentation/InitialPresentationReadinessContext';
 import { useEffectiveDiffWrapLines } from './diffPresentationStyle';
+
+const PierreDiffViewer = React.lazy(async () => {
+    const renderer = await import('./pierre/PierreDiffViewer.web');
+    return { default: renderer.PierreDiffViewer };
+});
 
 export const DiffViewer = React.memo<DiffViewerProps>((props) => {
     const rendererMode = useSetting('filesDiffRendererMode');
@@ -30,7 +35,11 @@ export const DiffViewer = React.memo<DiffViewerProps>((props) => {
         && supportsPierreRuntime();
 
     if (pierreAllowed) {
-        const viewer = <PierreDiffViewer {...props} wrapLines={wrapLines} />;
+        const viewer = (
+            <React.Suspense fallback={<PaneLoadingFallback testID="pierre-diff-loading" />}>
+                <PierreDiffViewer {...props} wrapLines={wrapLines} />
+            </React.Suspense>
+        );
         return props.virtualized === true ? (
             <LazyMountOnScreen
                 initiallyVisible={initialPresentationReadiness?.presentationPending === true}

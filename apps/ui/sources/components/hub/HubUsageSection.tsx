@@ -7,7 +7,7 @@ import { t } from '@/text';
 
 import { SurfaceAsOfLabel } from '@/components/ui/surfaces/SurfaceAsOfLabel';
 import type { HubSectionProps } from './hubSectionProps';
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { openConnectedServiceSetupModal } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
 import { useConnectedServiceQuotaSummaries } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSummaries';
 

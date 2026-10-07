@@ -1,4 +1,4 @@
-import { readSessionDirectoryKind } from '@happier-dev/protocol';
+import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import {
     hasUnreadActivityForSessionViewer,
     isSessionPersonallyTrackedForViewer,
@@ -6,20 +6,14 @@ import {
 } from '@/sync/domains/session/readState/sessionViewer';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { AgentState, Metadata } from '@happier-dev/session-core/state';
-import {
-    SessionSharedMetadataV1Schema,
-    readSessionWorkStateV1FromMetadata,
-    parseSessionAgentActivityHeadlineV1,
-    SessionWorkflowActivityHeadlineV1Schema,
-    type SessionAgentActivityHeadlineV1,
-    type SessionWorkStateV1,
-    type SessionWorkflowActivityHeadlineV1,
-    type ExternalAgentObservationSnapshotV1,
-    type PendingActivationAuthorizationV1,
-    type PrimaryTurnStatusV1,
-    type SessionRuntimeIssueV1,
-    type SessionViewerProjectionV1,
-} from '@happier-dev/protocol';
+import { SessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { readSessionWorkStateV1FromMetadata, type SessionWorkStateV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
+import { parseSessionAgentActivityHeadlineV1, type SessionAgentActivityHeadlineV1 } from '@happier-dev/protocol/sessions/work/agentActivity/agentActivityHeadlineV1';
+import { SessionWorkflowActivityHeadlineV1Schema, type SessionWorkflowActivityHeadlineV1 } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowActivityHeadlineV1';
+import type { ExternalAgentObservationSnapshotV1 } from '@happier-dev/protocol/sessions/external/externalAgentObservationV1';
+import type { PendingActivationAuthorizationV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
+import type { PrimaryTurnStatusV1, SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import type { SessionViewerProjectionV1 } from '@happier-dev/protocol/sessions/personal/viewer';
 import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import { isSessionAccessRecipient } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 import { isSessionListRenderableOwnerProjection } from './sessionListRenderableSessionProjection';

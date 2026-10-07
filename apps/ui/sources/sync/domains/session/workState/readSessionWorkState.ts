@@ -2,7 +2,7 @@ import {
     readSessionWorkStateV1FromMetadata,
     type SessionWorkStateItemV1,
     type SessionWorkStateV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
 
 import type {
     SessionWorkStateGoalCapabilities,

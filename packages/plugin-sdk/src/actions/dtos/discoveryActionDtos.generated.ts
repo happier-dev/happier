@@ -73,6 +73,10 @@ export type DiscoveryActionInputById = {
                         };
                         authorAccountId?: string | undefined;
                     };
+                    sizeDeclaration: {
+                        sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                        defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+                    };
                     name: string;
                     body: {
                         kind: 'declarative';

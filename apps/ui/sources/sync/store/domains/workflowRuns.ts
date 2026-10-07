@@ -1,12 +1,6 @@
-import {
-    WORKFLOW_ATTENTION_INVOCATION_LIFECYCLES_V1,
-    type WorkflowRunInvocationIndexV1,
-    type WorkflowRunSummaryV1,
-    type WorkflowRunPrivateMetadataV1,
-    type WorkflowRunGetResultV1,
-    type WorkflowInvocationGetResultV1,
-    sameStrictJsonValue,
-} from '@happier-dev/protocol';
+import { WORKFLOW_ATTENTION_INVOCATION_LIFECYCLES_V1, type WorkflowRunInvocationIndexV1, type WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import type { WorkflowRunPrivateMetadataV1, WorkflowRunGetResultV1, WorkflowInvocationGetResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 import type { AutomationDefinitionRun } from '@/sync/domains/automations/automationTypes';
 

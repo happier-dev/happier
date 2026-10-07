@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -16,10 +16,22 @@ import fsPromises from 'node:fs/promises';
 import { installNativeAdmissionFixture } from '../testkit/core/native_admission_fixture.mjs';
 import { renderNativeExecutionProjection } from '../utils/dev_targets/native_execution_projection.mjs';
 
+async function initializeCaptureRepo(repo) {
+  for (const app of ['cli', 'ui', 'server']) {
+    await mkdir(join(repo, 'apps', app), { recursive: true });
+    await writeFile(join(repo, 'apps', app, 'package.json'), JSON.stringify({ name: `@fixture/${app}` }), { flag: 'wx' })
+      .catch(error => { if (error.code !== 'EEXIST') throw error; });
+  }
+  await writeFile(join(repo, 'package.json'), JSON.stringify({ workspaces: ['apps/*', 'packages/*'] }), { flag: 'wx' })
+    .catch(error => { if (error.code !== 'EEXIST') throw error; });
+  execFileSync('git', ['init', '--quiet'], { cwd: repo });
+}
+
 test('runtime publication resolves producer placement and admission before its target flight despite inherited execution markers', { skip: process.platform !== 'linux' }, async t => {
   for (const mode of ['local', 'prefer-target']) await t.test(mode, async t => {
   const root = await mkdtemp(join(tmpdir(), 'runtime-local-admission-'));
   t.after(() => rm(root, { recursive: true, force: true }));
+  await initializeCaptureRepo(root);
   const stackBaseDir = join(root, 'stack');
   await mkdir(stackBaseDir);
   const config = { version: 3,
@@ -90,7 +102,8 @@ test('source capture rereads only changed members once and admits continuing edi
   const sourceDir = join(root, 'source');
   const captureDir = join(root, 'capture');
   await mkdir(sourceDir);
-  await writeFile(join(sourceDir, 'a.ts'), 'initial');
+  const changing = Array.from({ length: 700 }, (_, index) => `member-${index}.ts`);
+  await Promise.all(changing.map(name => writeFile(join(sourceDir, name), 'initial')));
   await writeFile(join(sourceDir, 'z.ts'), 'unchanged');
   const counts = new Map();
   const realCopy = fsPromises.cp;
@@ -98,16 +111,63 @@ test('source capture rereads only changed members once and admits continuing edi
     await realCopy(source, target, options);
     const name = basename(source);
     counts.set(name, (counts.get(name) ?? 0) + 1);
-    if (name === 'a.ts') await writeFile(source, counts.get(name) === 1 ? 'trailing' : 'after trailing');
+    if (name !== 'z.ts') await writeFile(source, counts.get(name) === 1 ? 'trailing' : 'after trailing');
   });
   syncBuiltinESMExports();
   t.after(() => { copy.mock.restore(); syncBuiltinESMExports(); });
-  const captured = await captureBuildInputFiles({ sourceDir, captureDir, readPaths: () => ['a.ts', 'z.ts'] });
-  assert.deepEqual(captured.rereadPaths, ['a.ts']);
-  assert.equal(counts.get('a.ts'), 2);
+  let inventories = 0;
+  const started = performance.now();
+  const captured = await captureBuildInputFiles({ sourceDir, captureDir, readPaths: () => { inventories++; return [...changing, 'z.ts']; } });
+  t.diagnostic(JSON.stringify({ sourceMembers: changing.length + 1, trailingReads: captured.rereadPaths.length, captureMs: performance.now() - started }));
+  assert.deepEqual([...captured.rereadPaths].sort(), [...changing].sort());
+  assert.equal(inventories, 2, 'continuing edits cannot trigger a third inventory');
+  for (const name of changing) {
+    assert.equal(counts.get(name), 2);
+    assert.equal(await readFile(join(captureDir, name), 'utf8'), 'trailing');
+    assert.equal(await readFile(join(sourceDir, name), 'utf8'), 'after trailing');
+  }
   assert.equal(counts.get('z.ts'), 1);
-  assert.equal(await readFile(join(captureDir, 'a.ts'), 'utf8'), 'trailing');
-  assert.equal(await readFile(join(sourceDir, 'a.ts'), 'utf8'), 'after trailing');
+});
+
+test('runtime source upload completes before the worker enters admission', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'runtime-upload-admission-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const repo = join(root, 'repo');
+  const stackBaseDir = join(root, 'stack');
+  await mkdir(join(repo, 'apps/server/sources'), { recursive: true });
+  await mkdir(stackBaseDir);
+  await writeFile(join(repo, 'package.json'), JSON.stringify({ workspaces: ['apps/*'] }));
+  await writeFile(join(repo, 'apps/server/package.json'), JSON.stringify({ name: '@fixture/server' }));
+  await writeFile(join(repo, 'apps/server/sources/index.ts'), 'captured input');
+  await initializeCaptureRepo(repo);
+  const target = { name: 'worker', platform: 'posix', ssh: 'worker', repoDir: '/mirror', cliHomeDir: '/worker' };
+  await writeFile(join(stackBaseDir, 'dev-targets.json'), JSON.stringify({ version: 3, targets: [target],
+    runtimePlacement: { build: { mode: 'prefer-target', targets: ['worker'] } } }));
+  const uploaded = join(root, 'uploaded');
+  let enteredFlight = false;
+  await assert.rejects(withAdmittedRuntimeBuildPlacement({ rootDir: join(repo, 'apps/stack'), stackBaseDir,
+    selection: { components: { server: true } }, env: { ...process.env, HAPPIER_STACK_REPO_DIR: repo },
+    run: async execution => { enteredFlight = true; assert.equal(await readFile(uploaded, 'utf8'), 'ready'); return execution.buildComponents({ selection: { components: { server: true } } }); },
+    transport: {
+      // A physical control/SSH boundary that refuses admission until its
+      // source upload exists. Domain capture and producer orchestration stay real.
+      spawnController: () => spawn(process.execPath, ['-e', `
+const fs = require('node:fs');
+const input = require('node:readline').createInterface({input:process.stdin});
+const checkpoint = setTimeout(() => { console.error('fixture: source never uploaded before admission'); process.exit(24); }, 2000);
+console.log('HAPPIER_RUNTIME_BUILD_PREPARE=' + JSON.stringify({worker:'worker'}));
+input.once('line', line => {
+  if (!fs.existsSync(${JSON.stringify(uploaded)})) process.exit(24);
+  clearTimeout(checkpoint);
+  console.log('HAPPIER_RUNTIME_BUILD_READY=' + JSON.stringify({worker:'worker',runtimeTarget:{platform:process.platform,arch:process.arch}}));
+  input.once('line', () => process.exit(23));
+});
+`], { stdio: ['pipe', 'pipe', 'pipe'] }),
+      runCommand: async () => ({ code: 0 }),
+      transfer: async ({ remotePath }) => { if (remotePath.endsWith('source.tar')) await writeFile(uploaded, 'ready'); },
+    },
+  }), /exit 23.*no local replay/);
+  assert.equal(enteredFlight, true);
 });
 
 test('source capture preserves captured fingerprints after later producer edits and fails archive errors immediately', async (t) => {
@@ -130,7 +190,7 @@ test('source capture preserves captured fingerprints after later producer edits 
       await writeFile(join(repoDir, removed), 'vanished source');
       await writeFile(join(repoDir, retained), 'retained source');
       await symlink('absent-target', join(repoDir, 'notes/dangling-link'));
-      execFileSync('git', ['init', '--quiet'], { cwd: repoDir });
+      await initializeCaptureRepo(repoDir);
       const target = { name: 'worker', platform: 'posix', ssh: 'worker', repoDir: '/mirror', cliHomeDir: '/worker' };
       await writeFile(join(stackBaseDir, 'dev-targets.json'), JSON.stringify({ version: 3, targets: [target],
         runtimePlacement: { build: { mode: 'prefer-target', targets: ['worker'] } } }));
@@ -159,7 +219,7 @@ test('source capture preserves captured fingerprints after later producer edits 
         transport: {
           // Real child process standing in for worker admission, with no build.
           spawnController: () => realSpawn(process.execPath, ['-e',
-            'console.log("HAPPIER_RUNTIME_BUILD_READY=" + JSON.stringify({worker:"worker",runtimeTarget:{platform:process.platform,arch:process.arch}})); process.stdin.once("data",()=>process.exit(23)); process.stdin.once("end",()=>process.exit(0));',
+            'console.log("HAPPIER_RUNTIME_BUILD_PREPARE=" + JSON.stringify({worker:"worker"})); process.stdin.once("data",()=>{console.log("HAPPIER_RUNTIME_BUILD_READY=" + JSON.stringify({worker:"worker",runtimeTarget:{platform:process.platform,arch:process.arch}})); process.stdin.once("data",()=>process.exit(23));}); process.stdin.once("end",()=>process.exit(0));',
           ], { stdio: ['pipe', 'pipe', 'pipe'] }),
           runCommand: async () => ({ code: 0 }),
           transfer: async ({ localPath, remotePath }) => {
@@ -361,6 +421,42 @@ test('failed source extraction releases the transport archive without removing t
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('remote source delta preserves unchanged inputs and retained compiler state across builds', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'runtime-source-delta-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = join(root, 'source');
+  const workspaceDir = join(root, 'worker');
+  const repo = join(workspaceDir, 'repo');
+  const files = ['packages/example/src', 'packages/example/src/index.ts', 'packages/example/src/sibling.ts'];
+  for (const dir of [source, repo]) {
+    await mkdir(join(dir, 'packages/example/src'), { recursive: true });
+    await writeFile(join(dir, files[1]), 'export const value = 1;');
+    await writeFile(join(dir, files[2]), 'export const sibling = 1;');
+  }
+  const retained = ['packages/example/dist/index.js', 'packages/example/dist/.happier-build-inputs.json',
+    'packages/example/.happier/tsconfig.tsbuildinfo'];
+  for (const file of retained) {
+    await mkdir(join(repo, file, '..'), { recursive: true });
+    await writeFile(join(repo, file), 'retained compiler state');
+  }
+  const old = new Date('2020-01-01');
+  for (const file of [...files.slice(1), ...retained]) await utimes(join(repo, file), old, old);
+  const unchanged = await stat(join(repo, files[2]));
+  const archive = () => execFileSync('tar', ['-cf', join(workspaceDir, 'source.tar'), '--no-recursion', '-C', source, ...files]);
+  archive();
+  await extractCapturedBuildSource({ workspaceDir, files });
+  assert.equal((await stat(join(repo, files[2]))).mtimeMs, unchanged.mtimeMs, 'unchanged captured members must not be rewritten');
+  await writeFile(join(source, files[1]), 'export const value = 2;');
+  archive();
+  await extractCapturedBuildSource({ workspaceDir, files });
+  assert.equal(await readFile(join(repo, files[1]), 'utf8'), 'export const value = 2;');
+  assert.equal((await stat(join(repo, files[2]))).mtimeMs, unchanged.mtimeMs);
+  for (const file of retained) {
+    assert.equal(await readFile(join(repo, file), 'utf8'), 'retained compiler state');
+    assert.equal((await stat(join(repo, file))).mtimeMs, old.getTime());
+  }
+});
+
 test('capture rejection identifies changed input keys through the real fingerprint owner', async () => {
   const root = await mkdtemp(join(tmpdir(), 'runtime-build-diagnostics-'));
   try {
@@ -439,10 +535,12 @@ test('admitted source transfer stays independent of later producer edits and a d
     await writeFile(input, 'captured input');
     await writeFile(join(repoDir, '.gitignore'), 'apps/server/sources/generated.ts\npackages/example/tsconfig.tests.json\npackages/example/native/\n');
     await writeFile(join(repoDir, 'apps/server/sources/generated.ts'), 'consumed generated input');
-    execFileSync('git', ['init', '--quiet'], { cwd: repoDir });
+    await initializeCaptureRepo(repoDir);
     const target = { name: 'worker', platform: 'posix', ssh: 'worker', repoDir: '/mirror', cliHomeDir: '/worker' };
     const offline = { ...target, name: 'offline', ssh: 'offline' };
     await writeFile(join(stackBaseDir, 'dev-targets.json'), JSON.stringify({ version: 3, targets: [offline, target], runtimePlacement: { build: { mode: 'prefer-target', targets: ['offline', 'worker'] } } }));
+    await mkdir(join(stackBaseDir, 'commands-0.2'));
+    await writeFile(join(stackBaseDir, 'commands-0.2/dev-targets.json'), JSON.stringify({ version: 3, targets: [{ ...target, repoDir: '/mirror-0.2' }] }));
     const archive = join(root, 'source.tar');
     let request;
     let producerArchive;
@@ -458,12 +556,15 @@ import { readFile, writeFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
+const input = createInterface({input:process.stdin});
+process.stdout.write('HAPPIER_RUNTIME_BUILD_PREPARE='+JSON.stringify({worker:'worker'})+'\\n');
+await new Promise(resolve => input.once('line', resolve));
 process.stdout.write('HAPPIER_RUNTIME_BUILD_READY='+JSON.stringify({worker:'worker',runtimeTarget:{platform:process.platform,arch:process.arch}})+'\\n');
-for await (const line of createInterface({input:process.stdin})) {
+for await (const line of input) {
   const acknowledgment = JSON.parse(line);
   assert.ok(acknowledgment.requestPath.endsWith('/request.json'));
   const producerArchive = await readFile(${JSON.stringify(archivePointer)}, 'utf8');
-  await assert.rejects(stat(producerArchive), {code:'ENOENT'}, 'producer archive remains live after ACK');
+  assert.equal((await stat(producerArchive)).isFile(), true, 'capture archive remains available until all transfer channels finish');
   await writeFile(join(${JSON.stringify(remoteWorkspace)}, 'result.json'), JSON.stringify({artifacts:{}}));
   const archived = spawnSync('tar', ['-cf', join(${JSON.stringify(remoteWorkspace)}, 'artifacts.tar'), '-C', ${JSON.stringify(remoteWorkspace)}, 'result.json']);
   assert.equal(archived.status, 0);
@@ -484,7 +585,8 @@ for await (const line of createInterface({input:process.stdin})) {
             producerArchive = localPath;
             await writeFile(archivePointer, producerArchive);
             await writeFile(archive, await readFile(localPath));
-            await writeFile(join(remoteWorkspace, 'source.tar'), await readFile(localPath));
+            await mkdir(join(remoteWorkspace, 'incoming'), { recursive: true });
+            await writeFile(join(remoteWorkspace, 'incoming/source.tar'), await readFile(localPath));
             if (outcome === 'upload-failure') throw new Error('upload disconnected');
           } else {
             request = JSON.parse(await readFile(localPath, 'utf8'));
@@ -494,9 +596,12 @@ for await (const line of createInterface({input:process.stdin})) {
         runCommand: async ({ commandArgs, target: dispatchedTarget }) => {
           assert.equal(dispatchedTarget.name, 'worker');
           // Execute the actual OS cleanup command at the network boundary.
+          if (commandArgs[2]?.includes('renameSync')) {
+            return { code: spawnSync(process.execPath, ['-e', commandArgs[2], join(remoteWorkspace, 'incoming/source.tar'), join(remoteWorkspace, 'source.tar')]).status };
+          }
           if (commandArgs[2]?.includes('rmSync')) {
             if (outcome === 'cleanup-failure') return { code: 17 };
-            const args = commandArgs.map(arg => arg.startsWith(request.workspaceDir + '/')
+            const args = commandArgs.map(arg => arg.includes('/.incoming-') ? join(remoteWorkspace, 'incoming') : arg.startsWith(request.workspaceDir + '/')
               ? join(remoteWorkspace, arg.slice(request.workspaceDir.length + 1)) : arg);
             return { code: spawnSync(process.execPath, args.slice(1)).status };
           }
@@ -561,19 +666,27 @@ for await (const line of createInterface({input:process.stdin})) {
     outcome = 'cleanup-failure';
     await assert.rejects(buildRuntimeArtifactComponentsAtPlacement(options), /exit 23.*no local replay/);
     await assert.rejects(stat(join(producerArchive, '..')), { code: 'ENOENT' });
+    const previousTargetArchive = await readFile(join(remoteWorkspace, 'source.tar'));
     outcome = 'upload-failure';
     await assert.rejects(buildRuntimeArtifactComponentsAtPlacement({ ...options, selection: { components: {} } }), /upload disconnected/);
-    await assert.rejects(stat(join(remoteWorkspace, 'source.tar')), { code: 'ENOENT' });
+    assert.deepEqual(await readFile(join(remoteWorkspace, 'source.tar')), previousTargetArchive, 'a pre-admission upload failure cannot touch retained target staging');
+    await assert.rejects(stat(join(remoteWorkspace, 'incoming')), { code: 'ENOENT' });
     await assert.rejects(stat(join(producerArchive, '..')), { code: 'ENOENT' });
     outcome = 'success';
     const result = await buildRuntimeArtifactComponentsAtPlacement(options);
     assert.deepEqual(result.artifacts, {});
     const originalWorkspace = request.workspaceDir;
+    const originalCache = request.env.HAPPIER_STACK_PM_CACHE_BASE_DIR;
+    assert.deepEqual(request.cacheRepositoryDirectories, ['/mirror', '/mirror-0.2']);
+    assert.equal(originalCache, '/worker/cache', 'runtime targets share the worker package-cache owner');
+    assert.equal(request.env.CARGO_TARGET_DIR, '/worker/cache/iroh-native-target');
     await buildRuntimeArtifactComponentsAtPlacement({ ...options,
       target: { platform: requestedTarget.platform === 'darwin' ? 'linux' : 'darwin', arch: 'arm64' },
     });
     assert.notEqual(request.workspaceDir, originalWorkspace,
       'different target flights must not replace the same worker request, captured checkout, or artifact store');
+    assert.equal(request.env.HAPPIER_STACK_PM_CACHE_BASE_DIR, originalCache);
+    assert.equal(request.env.CARGO_TARGET_DIR, '/worker/cache/iroh-native-target');
     await buildRuntimeArtifactComponentsAtPlacement(options);
     assert.equal(request.workspaceDir, originalWorkspace, 'the same target reuses its incremental workspace');
     for (const name of ['source.tar', 'artifacts.tar']) await assert.rejects(stat(join(remoteWorkspace, name)), { code: 'ENOENT' });
@@ -581,6 +694,62 @@ for await (const line of createInterface({input:process.stdin})) {
     outcome = 'payload-75';
     await assert.rejects(buildRuntimeArtifactComponentsAtPlacement({ ...options, selection: { components: {} } }), /exit 75.*no local replay/);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('merged daemon and server demand admits the captured server closure in a reused worker', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'runtime-merged-capture-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const repoDir = join(root, 'producer');
+  const stackBaseDir = join(root, 'stack');
+  const workspaceDir = join(root, 'worker');
+  await mkdir(stackBaseDir);
+  await mkdir(join(repoDir, 'apps/cli/src'), { recursive: true });
+  await writeFile(join(repoDir, 'apps/cli/src/index.ts'), 'daemon source');
+  await mkdir(join(repoDir, 'apps/server/scripts/empty'), { recursive: true });
+  await writeFile(join(repoDir, 'apps/server/scripts/generated.mjs'), 'captured server input');
+  await writeFile(join(repoDir, '.gitignore'), 'apps/server/scripts/\n');
+  await initializeCaptureRepo(repoDir);
+  // A prior worker generation can contain descendants absent from both Git
+  // and the prior captured inventory. Complete directory membership retires them.
+  await mkdir(join(workspaceDir, 'repo/apps/server/scripts/stale'), { recursive: true });
+  await writeFile(join(workspaceDir, 'repo/apps/server/scripts/stale/fixture.mjs'), 'stale worker input');
+  await writeFile(join(workspaceDir, 'source-files.json'), '[]');
+  const worker = { name: 'worker', platform: 'posix', ssh: 'worker', repoDir: '/mirror', cliHomeDir: '/worker' };
+  await writeFile(join(stackBaseDir, 'dev-targets.json'), JSON.stringify({ version: 3, targets: [worker],
+    runtimePlacement: { build: { mode: 'prefer-target', targets: ['worker'] } } }));
+  const selection = { components: { daemon: true, server: true } };
+  let verified = false;
+  await assert.rejects(withAdmittedRuntimeBuildPlacement({ rootDir: join(repoDir, 'apps/stack'), stackBaseDir,
+    selection: { components: { daemon: true } }, env: { ...process.env, HAPPIER_STACK_REPO_DIR: repoDir },
+    run: execution => execution.buildComponents({ selection }),
+    transport: {
+      // Only the physical admission/SSH transport is replaced. Source capture,
+      // archive extraction and both component fingerprint owners remain real.
+      spawnController: () => spawn(process.execPath, ['-e',
+        'console.log("HAPPIER_RUNTIME_BUILD_PREPARE="+JSON.stringify({worker:"worker"})); process.stdin.once("data",()=>{console.log("HAPPIER_RUNTIME_BUILD_READY="+JSON.stringify({worker:"worker",runtimeTarget:{platform:process.platform,arch:process.arch}})); process.stdin.once("data",()=>process.exit(23));}); process.stdin.once("end",()=>process.exit(0));',
+      ], { stdio: ['pipe', 'pipe', 'pipe'] }),
+      runCommand: async () => ({ code: 0 }),
+      transfer: async ({ localPath, remotePath }) => {
+        if (remotePath.endsWith('source.tar')) {
+          await writeFile(join(workspaceDir, 'source.tar'), await readFile(localPath));
+          return;
+        }
+        const request = JSON.parse(await readFile(localPath, 'utf8'));
+        const extracted = await extractCapturedBuildSource({ workspaceDir, files: request.files });
+        assert.equal(await readFile(join(extracted, 'apps/server/scripts/generated.mjs'), 'utf8'), 'captured server input');
+        assert.equal((await stat(join(extracted, 'apps/server/scripts/empty'))).isDirectory(), true);
+        await assert.rejects(stat(join(extracted, 'apps/server/scripts/stale')), { code: 'ENOENT' });
+        const extractedInputEntries = {};
+        const extractedInputs = await collectRuntimeComponentSourceFingerprints({ selection, sourceMetadata: { ...request.sourceMetadata, repoDir: extracted },
+          identityRepoDir: repoDir, includeRuntimeSupportInputs: true, excludeGeneratedPluginArtifacts: true, inputEntries: extractedInputEntries });
+        assertCapturedRuntimeInputs({ expectedInputs: request.expectedInputs, extractedInputs,
+          expectedInputEntries: request.expectedInputEntries, extractedInputEntries });
+        assert.deepEqual(Object.keys(request.expectedInputs).sort(), ['daemon', 'server']);
+        verified = true;
+      },
+    },
+  }), /exit 23.*no local replay/);
+  assert.equal(verified, true);
 });
 
 test('local runtime source capture keeps post-capture producer edits out of the dispatched build', async t => {
@@ -594,7 +763,7 @@ test('local runtime source capture keeps post-capture producer edits out of the 
   await writeFile(join(repoDir, 'apps/server/package.json'), JSON.stringify({ name: '@fixture/server' }));
   const input = join(repoDir, 'apps/server/sources/index.ts');
   await writeFile(input, 'captured');
-  execFileSync('git', ['init', '--quiet'], { cwd: repoDir });
+  await initializeCaptureRepo(repoDir);
   await writeFile(join(stackBaseDir, 'dev-targets.json'), JSON.stringify({ version: 3, targets: [], runtimePlacement: { build: { mode: 'local' } } }));
   const observation = join(root, 'observation.json');
   await assert.rejects(buildRuntimeArtifactComponentsAtPlacement({ rootDir: join(repoDir, 'apps/stack'), stackBaseDir,
@@ -602,6 +771,8 @@ test('local runtime source capture keeps post-capture producer edits out of the 
     transport: { spawnController: () => spawn(process.execPath, ['--input-type=module', '-e', `
       import { readFileSync, writeFileSync } from 'node:fs';
       import { join } from 'node:path';
+      console.log('HAPPIER_RUNTIME_BUILD_PREPARE=' + JSON.stringify({ worker:'local' }));
+      await new Promise(resolve => process.stdin.once('data', resolve));
       console.log('HAPPIER_RUNTIME_BUILD_READY=' + JSON.stringify({ worker:'local', runtimeTarget:{platform:process.platform,arch:process.arch} }));
       process.stdin.once('data', line => {
         const request = JSON.parse(readFileSync(JSON.parse(String(line)).requestPath, 'utf8'));
@@ -619,11 +790,16 @@ test('local runtime source capture keeps post-capture producer edits out of the 
   assert.notEqual(observed.rootDir, join(repoDir, 'apps/stack'));
 });
 
-test('explicit local placement releases admission when source inventory fails without replay', async () => {
+test('explicit local placement fails source inventory before admission without replay', async () => {
   const root = await mkdtemp(join(tmpdir(), 'runtime-build-fallback-'));
   try {
     const stackBaseDir = join(root, 'stack');
     await mkdir(stackBaseDir);
+    for (const app of ['cli', 'ui', 'server']) {
+      await mkdir(join(root, 'apps', app), { recursive: true });
+      await writeFile(join(root, 'apps', app, 'package.json'), JSON.stringify({ name: `@fixture/${app}` }));
+    }
+    await writeFile(join(root, 'package.json'), JSON.stringify({ workspaces: ['apps/*'] }));
     await writeFile(join(stackBaseDir, 'dev-targets.json'), JSON.stringify({ version: 3,
       targets: [{ name: 'worker', platform: 'posix', ssh: 'worker', repoDir: '/mirror', cliHomeDir: '/builds' }],
       runtimePlacement: { build: { mode: 'local' } },
@@ -631,14 +807,11 @@ test('explicit local placement releases admission when source inventory fails wi
     const options = { rootDir: root, stackBaseDir, selection: { components: {} }, env: { ...process.env, HAPPIER_STACK_REPO_DIR: root },
       transport: { spawnController: (_command, args, options) => {
         assert.ok(args.includes('--local'), 'explicit local placement cannot enter the remote command pool');
-        const entry = fileURLToPath(new URL('./remote_runtime_build.mjs', import.meta.url));
-        return spawn(process.execPath, [entry, '--worker-request=stdin', `--artifact-target=${process.platform}-${process.arch}`], {
-          ...options, env: { ...options.env, HAPPIER_RUNTIME_BUILD_WORKER_NAME: 'local' },
-        });
+        return spawn(process.execPath, ['-e', 'console.log("HAPPIER_RUNTIME_BUILD_PREPARE="+JSON.stringify({worker:"local"})); process.stdin.once("data",()=>process.exit(24)); process.stdin.once("end",()=>process.exit(0));'], options);
       } },
     };
-    // An invalid producer repository fails before dispatch, and the real
-    // admitted worker exits when its unused control stream closes.
+    // An invalid producer repository fails before admission; its unused
+    // transfer channel exits when the producer closes the control stream.
     await assert.rejects(buildRuntimeArtifactComponentsAtPlacement(options),
       error => error.code === 'EEXIT' && error.exitCode === 128);
   } finally { await rm(root, { recursive: true, force: true }); }

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { getWidgetSizeFootprintV1, WIDGET_SIZE_POLICY_V1 } from '../../widgets/widgetPresentationV1.js';
 
 import { SessionBoardErrorCodeSchema, type SessionBoardErrorCode } from './errors.js';
 import { SessionBoardTabIdSchema, SessionSurfaceItemIdSchema } from './ids.js';
@@ -16,7 +17,9 @@ import {
  * the UI and the CLI/daemon Board adapters read it here so a Board authored by
  * an Agent and a Board authored by a person cannot disagree about the default.
  */
-export const SESSION_BOARD_DEFAULT_ITEM_WIDTH_V1: SessionBoardItemWidth = 'medium';
+export const SESSION_BOARD_DEFAULT_ITEM_WIDTH_V1: SessionBoardItemWidth = SessionBoardItemWidthSchema.parse(
+  getWidgetSizeFootprintV1('sessionBoard', WIDGET_SIZE_POLICY_V1.sessionBoard.defaultSize)!.width,
+);
 
 const SessionBoardTabAnchorV1Schema = z.object({
   side: z.enum(['before', 'after']),

@@ -1,6 +1,6 @@
 import {
     DaemonPluginUiArtifactByteIdentityV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import {
     deriveGeneratedHostedWebAssetPolicyV1,
     PluginUiArtifactsManifestEntryV2Schema,

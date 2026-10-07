@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import type { WorkspaceSyncPersistentModeV1, WorkspaceSyncDestinationIntentV1 } from '@happier-dev/protocol';
-import { evaluateSessionHandoffWorkspaceTransferSourcePathSafety } from '@happier-dev/protocol';
+import { evaluateSessionHandoffWorkspaceTransferSourcePathSafety } from '@happier-dev/protocol/sessions/control/handoff/workspaceTransferSourcePathSafety';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';

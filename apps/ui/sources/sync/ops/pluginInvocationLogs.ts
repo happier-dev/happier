@@ -3,7 +3,7 @@ import {
     DaemonPluginInvocationLogReadResponseV1Schema,
     type DaemonPluginInvocationLogReadResponseV1,
     type PluginInvocationLogReadQueryV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/plugin-invocation-logs';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 

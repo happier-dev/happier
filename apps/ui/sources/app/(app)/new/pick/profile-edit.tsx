@@ -26,7 +26,7 @@ import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCat
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
 import { useNewSessionPickerRoutePresentation } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
-import { readAiLaunchProfileCollection, type AiLaunchProfile } from '@happier-dev/protocol';
+import { readAiLaunchProfileCollection, type AiLaunchProfile } from '@happier-dev/protocol/profiles/read';
 import { Icon } from '@/components/ui/icons/Icon';
 import { promptLaunchProfileUnsavedChanges, useSaveLaunchProfile } from '@/components/profiles/edit/useSaveLaunchProfile';
 import { motionTokens } from '@/components/ui/motion/motionTokens';

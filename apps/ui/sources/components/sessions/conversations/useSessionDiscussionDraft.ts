@@ -3,7 +3,7 @@ import type {
     SessionDraftAddressV2,
     StrictJsonValue,
 } from '@happier-dev/protocol';
-import { SessionDiscussionDraftDocumentV2Schema } from '@happier-dev/protocol';
+import { SessionDiscussionDraftDocumentV2Schema } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import {

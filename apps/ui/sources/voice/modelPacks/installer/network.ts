@@ -1,4 +1,4 @@
-import { parseModelPackManifest, type ModelPackManifest } from '@happier-dev/protocol';
+import { parseModelPackManifest, type ModelPackManifest } from '@happier-dev/protocol/voice/modelPacks/manifest';
 import { assertManifestUrlsAllowed, assertModelPackUrlAllowed, type ModelPackUrlPolicy } from '@happier-dev/voice-modelpacks';
 
 export async function raceWithAbort<T>(signal: AbortSignal, promises: Array<Promise<T>>): Promise<T> {

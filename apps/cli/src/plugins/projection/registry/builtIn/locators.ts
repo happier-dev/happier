@@ -8,6 +8,7 @@ import { assertHostCanExcludeBundledPlugin, BUNDLED_PLUGIN_PUBLICATION_FAILURES_
 
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import { resolveCliRuntimeAssetPath } from '@/packagedRuntime/assets/resolveCliRuntimeAssetPath';
+import { defaultCanImportFirstPartyPluginSource, resolveAuthoritativePackagedRuntimeProjectRoot } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
 import { readGeneratedPluginUiArtifactsManifestSync } from '@/plugins/install/ui/generatedArtifacts';
 import { ingestCanonicalPluginManifest } from '../../../manifest/ingest';
 import { pluginSourceProvenanceForKind } from '../../../manifest/sourceProvenance';
@@ -265,8 +266,14 @@ export function loadCurrentBundledPluginLocatorResult() {
     // Imported bundled declarations are fixed for this process, as is its admitted
     // publication. Installed-plugin discovery reuses that graph instead of cloning
     // and validating every bundled manifest on each catalog/settings refresh.
-    return admittedBundledPlugins ??= loadBundledPluginLocatorResult(
+    if (admittedBundledPlugins) return admittedBundledPlugins;
+    const runtime = resolveAuthoritativePackagedRuntimeProjectRoot({ moduleUrl: import.meta.url });
+    // Current source declarations activate their real development modules.
+    // Distribution failures describe prepared package bytes, so only their
+    // executing role admits that inventory. Unknown roles remain fail closed.
+    return admittedBundledPlugins = loadBundledPluginLocatorResult(
         generatedBundledPluginManifests.BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS,
-        readCurrentBundledPluginPublicationFailures(),
+        runtime?.provenance === 'source-module' && defaultCanImportFirstPartyPluginSource()
+            ? [] : readCurrentBundledPluginPublicationFailures(),
     );
 }

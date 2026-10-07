@@ -1,27 +1,16 @@
-import {
-    AccountEncryptionMigrateAutomationsDirectiveSchema,
-    AutomationStoredContentEnvelopeV1ReadSchema,
-    AutomationOccurrenceEvidenceV1Schema,
-    AutomationOccurrenceKeyV1Schema,
-    convertWorkflowRunAccountEncryptionV1,
-    createAccountScopedCryptoMaterialSnapshotV1,
-    convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
-    deriveAutomationOccurrenceEvidenceEqualityTagV1,
-    deriveAutomationTriggerEvidenceEqualityKeyV1,
-    openAccountScopedBlobCiphertext,
-    openAutomationTemplateStoredV1,
-    openAutomationTemplateStoredForMigrationV1,
-    parseAutomationStoredDefinitionExecutionRecipeV1,
-    parseAutomationStoredWorkflowDefinitionRecipeV2,
-    parseAutomationRunResultStoredEnvelopeV1,
-    sealAccountScopedBlobCiphertext,
-    type AccountScopedBlobKind,
-    type AccountScopedCryptoMaterial,
-    type AvailableAutomationAccountEncryptionV1,
-    type AccountEncryptionMigrateAutomationsDirective,
-    type AccountEncryptionMigrateAutomationsInventoryResponse,
-    type AccountEncryptionAutomationTemplatesRecoverResultV1,
-} from '@happier-dev/protocol';
+import { AccountEncryptionMigrateAutomationsDirectiveSchema, type AccountEncryptionMigrateAutomationsDirective, type AccountEncryptionMigrateAutomationsInventoryResponse } from '@happier-dev/protocol/account/encryptionMigrate';
+import { AutomationStoredContentEnvelopeV1ReadSchema } from '@happier-dev/protocol/automations/automationStoredContentEnvelopeV1';
+import { AutomationOccurrenceEvidenceV1Schema, AutomationOccurrenceKeyV1Schema, deriveAutomationOccurrenceEvidenceEqualityTagV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
+import { convertWorkflowRunAccountEncryptionV1 } from '@happier-dev/protocol/workflows/workflowRunAccountEncryptionV1';
+import { createAccountScopedCryptoMaterialSnapshotV1, deriveAutomationTriggerEvidenceEqualityKeyV1, openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import { openAutomationTemplateStoredV1, openAutomationTemplateStoredForMigrationV1 } from '@happier-dev/protocol/automations/automationTemplateStoredV1';
+import { parseAutomationStoredDefinitionExecutionRecipeV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
+import { parseAutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
+import { parseAutomationRunResultStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationReplyHandoffStoredContent';
+import type { AccountScopedBlobKind } from '@happier-dev/protocol/crypto/accountScopedCipherEnvelope';
+import type { AvailableAutomationAccountEncryptionV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
+import type { AccountEncryptionAutomationTemplatesRecoverResultV1 } from '@happier-dev/protocol/auth/accountSecurity';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { Encryption } from '@/sync/encryption/encryption';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';

@@ -1,10 +1,6 @@
-import {
-  DaemonVoiceClientAccountOperationRequestV1Schema,
-  DaemonVoiceClientAccountOperationResponseV1Schema,
-  type DaemonVoiceClientMediatedCredentialDeclarationAuthorityV1,
-  type PluginContributionIdentityV1,
-  type QualifiedConnectedAccountPurposeBindingTargetV1,
-} from '@happier-dev/protocol';
+import { DaemonVoiceClientAccountOperationRequestV1Schema, DaemonVoiceClientAccountOperationResponseV1Schema, type DaemonVoiceClientMediatedCredentialDeclarationAuthorityV1 } from '@happier-dev/protocol/daemon/voiceCredentials';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { VoiceAccountOperationService } from '@happier-dev/plugin-sdk/voice';
 import { decodeBase64 } from '@/encryption/base64';

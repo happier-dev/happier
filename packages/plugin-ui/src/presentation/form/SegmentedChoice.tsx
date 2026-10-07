@@ -1,11 +1,11 @@
-import { useRef } from 'react';
+import { useRef, type ReactNode } from 'react';
 import { I18nManager, View } from 'react-native';
 
 import { useOptionalHappierUiLocalization } from '../../environment/context.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import { HAPPIER_PRESS_FEEDBACK_V1 } from '../interaction/pressFeedback.js';
 import { resolveHappierTabKeySelection } from '../navigation/Tabs.js';
-import type { HappierFocusable } from '../portableTypes.js';
+import type { HappierFocusable, HappierPortableStyle } from '../portableTypes.js';
 import { HappierText } from '../text/Text.js';
 
 /**
@@ -47,6 +47,8 @@ export type HappierSegmentedChoiceColors = Readonly<{
   track: string;
   /** The chosen segment's surface. */
   thumb: string;
+  /** The low elevation the chosen segment stands on (the host's control lift); absent, it sits flat. */
+  thumbLift?: HappierPortableStyle;
   label: string;
   activeLabel: string;
   focusRing: string;
@@ -59,6 +61,7 @@ export type HappierSegmentedChoiceSegment = Readonly<{
   disabled: boolean;
   accessibilityLabel?: string;
   testID?: string;
+  leading?: ReactNode;
 }>;
 
 export type HappierSegmentedChoiceProps = Readonly<{
@@ -71,6 +74,8 @@ export type HappierSegmentedChoiceProps = Readonly<{
   size?: HappierSegmentedSize;
   colors: HappierSegmentedChoiceColors;
   testID?: string;
+  /** Footprint choices may reflow at narrow widths or enlarged text. */
+  wrap?: boolean;
 }>;
 
 /** A segment's focus ring is a border, so it keeps its box; the padding gives the ring its room. */
@@ -105,6 +110,7 @@ export function HappierSegmentedChoice(props: HappierSegmentedChoiceProps) {
       testID={props.testID}
       style={{
         flexDirection: 'row',
+        flexWrap: props.wrap ? 'wrap' : 'nowrap',
         alignSelf: 'flex-start',
         maxWidth: '100%',
         padding: HAPPIER_SEGMENTED_METRICS.trackPaddingPx,
@@ -148,6 +154,8 @@ export function HappierSegmentedChoice(props: HappierSegmentedChoiceProps) {
             style={(state) => ({
               minWidth: HAPPIER_SEGMENTED_METRICS.segmentMinWidthPx,
               alignItems: 'center',
+              flexDirection: 'row',
+              gap: segment.leading ? HAPPIER_SEGMENTED_METRICS.trackPaddingPx * 2 : 0,
               justifyContent: 'center',
               paddingVertical: verticalPadding,
               paddingHorizontal: horizontalPadding,
@@ -155,11 +163,13 @@ export function HappierSegmentedChoice(props: HappierSegmentedChoiceProps) {
               borderWidth: FOCUS_RING_WIDTH_PX,
               borderColor: state.focused ? props.colors.focusRing : 'transparent',
               backgroundColor: segment.selected ? props.colors.thumb : 'transparent',
+              ...(segment.selected && !state.pressed ? props.colors.thumbLift : undefined),
               opacity: !groupDisabled && segment.disabled
                 ? HAPPIER_SEGMENTED_METRICS.disabledOpacity
                 : state.pressed ? HAPPIER_PRESS_FEEDBACK_V1.opacity : 1,
             })}
           >
+            {segment.leading}
             <HappierText
               accessible={false}
               numberOfLines={1}

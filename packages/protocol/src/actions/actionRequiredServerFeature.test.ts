@@ -3,6 +3,14 @@ import { describe, expect, it } from 'vitest';
 import { getActionRequiredServerFeatureId } from './actionRequiredServerFeature.js';
 
 describe('getActionRequiredServerFeatureId', () => {
+  it('requires automation for agent navigation, not human sidecar controls', () => {
+    for (const id of ['browser.navigate', 'browser.goBack', 'browser.goForward', 'browser.reload', 'browser.stop', 'browser.automation.snapshot']) {
+      expect(getActionRequiredServerFeatureId(id)).toBe('browser.automation');
+    }
+    for (const id of ['browser.view.open', 'browser.control.takeControl', 'browser.control.handBack', 'browser.unknown']) {
+      expect(getActionRequiredServerFeatureId(id)).toBeNull();
+    }
+  });
   it('owns the server feature required by each gated Action family', () => {
     expect(getActionRequiredServerFeatureId('workflow.run.start')).toBe('workflows');
     expect(getActionRequiredServerFeatureId('workflow.definition.get')).toBe('workflows');

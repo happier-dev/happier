@@ -6,7 +6,7 @@ import {
     DaemonLocalServiceInventoryWatchRequestV1Schema,
     DaemonLocalServiceInventoryWatchResponseV1Schema,
     LOCAL_SERVICE_INVENTORY_WATCH_WINDOW_MS,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/local/services/inventory/v1';
 import { isRpcMethodNotFoundResult, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';

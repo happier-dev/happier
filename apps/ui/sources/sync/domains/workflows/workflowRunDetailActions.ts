@@ -1,23 +1,7 @@
-import {
-    type ActionExecutorContext,
-    WorkflowInvocationCompleteReviewRequestV1Schema,
-    WorkflowInvocationCompleteReviewResultV1Schema,
-    WorkflowInvocationGetResultV1Schema,
-    WorkflowInvocationListRequestV1Schema,
-    WorkflowInvocationListResultV1Schema,
-    WorkflowInvocationPublishDraftRequestV1Schema,
-    WorkflowInvocationPublishDraftResultV1Schema,
-    WorkflowInvocationRetryResultV1Schema,
-    WorkflowRunControlResultV1Schema,
-    WorkflowRunDeleteResultV1Schema,
-    WorkflowRunGetResultV1Schema,
-    type ActionId,
-    type WorkflowInvocationCompleteReviewRequestV1,
-    type WorkflowInvocationLifecycleV1,
-    type WorkflowInvocationPublishDraftRequestV1,
-    type WorkflowInvocationRetryInputV1,
-    type WorkflowResumeInputV1,
-} from '@happier-dev/protocol';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import { WorkflowInvocationCompleteReviewRequestV1Schema, WorkflowInvocationCompleteReviewResultV1Schema, WorkflowInvocationGetResultV1Schema, WorkflowInvocationListRequestV1Schema, WorkflowInvocationListResultV1Schema, WorkflowInvocationPublishDraftRequestV1Schema, WorkflowInvocationPublishDraftResultV1Schema, WorkflowInvocationRetryResultV1Schema, WorkflowRunControlResultV1Schema, WorkflowRunDeleteResultV1Schema, WorkflowRunGetResultV1Schema, type WorkflowInvocationCompleteReviewRequestV1, type WorkflowInvocationPublishDraftRequestV1 } from '@happier-dev/protocol/workflows/actionsV1';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import type { WorkflowInvocationLifecycleV1, WorkflowInvocationRetryInputV1, WorkflowResumeInputV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 import { callWorkflowAction, type WorkflowActionExecute } from './callWorkflowAction';
 

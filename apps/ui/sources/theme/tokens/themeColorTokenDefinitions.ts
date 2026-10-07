@@ -80,7 +80,7 @@ export const EDITABLE_THEME_COLOR_TOKEN_DEFINITIONS = [
     defineEditableThemeColorToken({ id: 'border.strong', path: ['border', 'strong'], group: 'border', label: 'Strong border', description: 'Higher-emphasis outline for elevated or selected surface boundaries. Not the keyboard focus ring — that is border.focus.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'border.focus', path: ['border', 'focus'], group: 'border', label: 'Focus ring', description: 'Keyboard focus-visible ring for controls without an editable-text caret. Must stay legible against the surfaces a control sits on.', valueKind: 'color', contrastPairs: focusIndicatorContrast }),
     defineEditableThemeColorToken({ id: 'border.modal', path: ['border', 'modal'], group: 'border', label: 'Modal border', description: 'Border color for modal card and dialog chrome surfaces.', valueKind: 'color' }),
-    defineEditableThemeColorToken({ id: 'effect.surfaceHighlight', path: ['effect', 'surfaceHighlight'], group: 'effect', label: 'Surface highlight', description: 'Surface chrome accent for bounded cards, popovers, and composer surfaces.', valueKind: 'color' }),
+    defineEditableThemeColorToken({ id: 'effect.surfaceHighlight', path: ['effect', 'surfaceHighlight'], group: 'effect', label: 'Raised edge', description: 'The ink of the raised edge every bordered control and surface stands on: laid over the top border on dark themes and the bottom border on light ones. Defaults to the theme\'s own text colour at a whisper of strength; transparent draws every edge flat.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'chrome.header.background', path: ['chrome', 'header', 'background'], group: 'chrome', label: 'Header background', description: 'Navigation and screen header background color.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'chrome.header.foreground', path: ['chrome', 'header', 'foreground'], group: 'chrome', label: 'Header foreground', description: 'Navigation header title and icon color.', valueKind: 'color', contrastPairs: stateContrast('chrome.header.background') }),
 
@@ -265,6 +265,19 @@ export const THEME_COLOR_TOKEN_CLASSIFICATIONS = [
 
     { path: ['border', 'faint'], status: 'internal', reason: 'About half the weight of border.subtle: the content-width separator between groups of one section\'s rows. An internal chrome detail, like border.subtle, and absent from the theme-profile border palette.' },
     { path: ['border', 'subtle'], status: 'internal', reason: 'Half-weight seam hairline for pane edges and quiet toolbar controls; an internal chrome detail rather than a V1 public border token, and deliberately absent from the theme-profile border palette.' },
+
+    ...(['default', 'surface', 'strong', 'subtle', 'modal', 'danger'] as const).map((role) => ({
+        path: ['edge', role],
+        status: 'derived',
+        reason: 'Raised twin of a border role: the role\'s border with the theme\'s edge ink (effect.surfaceHighlight) composited over it (theme/raisedEdge.ts).',
+    } as const)),
+    { path: ['edge', 'gloss'], status: 'derived', reason: 'Gloss line of a filled accent control, derived from the theme\'s lightest ink (theme/raisedEdge.ts).' },
+    ...(['rimHi', 'rimMid', 'sheen'] as const).map((leaf) => ({
+        path: ['edge', leaf],
+        status: 'derived',
+        reason: 'Directional rim of a floating surface (one corner light anchored top-left), in the theme\'s own text ink (theme/raisedEdge.ts).',
+    } as const)),
+    { path: ['edge', 'fill'], status: 'derived', reason: 'Fill of a bordered control: the page, lifted by a breath of ink on dark themes (theme/raisedEdge.ts).' },
 
     { path: ['feed', 'card', 'background'], status: 'derived', reason: 'Tool feed card surface derived from surface.elevated so private transcript chrome follows active theme profiles.' },
     { path: ['shadow', 'color'], status: 'internal', reason: 'Legacy tint helper for computed shadows, not a standalone editable color token.' },

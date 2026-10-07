@@ -40,7 +40,6 @@ const state = vi.hoisted(() => ({
     layout: { order: [], hidden: [] } as Pick<HomeHubLayoutValue, 'order' | 'hidden'> & Partial<Pick<HomeHubLayoutValue, 'sections' | 'instances'>>,
     authenticated: true,
     featureSnapshot: vi.fn<typeof getServerFeaturesSnapshot>(async () => ({ status: 'error', reason: 'network' })),
-    pairingCredentials: null as null | { token: string },
     request: vi.fn<(path: string, init?: RequestInit) => Promise<Response>>(),
 }));
 installDisconnectedServerSocketBoundary();
@@ -78,22 +77,6 @@ vi.mock('@/modal', async () => {
     }) as never;
     return createModalModuleMock({ spies: { show } }).module;
 });
-// Pairing HTTP and persisted credentials are system boundaries; the real QR lifecycle runs below them.
-vi.mock('@/sync/http/client', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/http/client')>();
-    return { ...actual, createServerFetchAtEndpoint: (...args: Parameters<typeof actual.createServerFetchAtEndpoint>) => {
-        const request = actual.createServerFetchAtEndpoint(...args);
-        return async (...requestArgs: Parameters<typeof request>) => {
-            if (requestArgs[0] === '/v1/features' || requestArgs[0] === '/v1/features/authenticated') {
-                const snapshot = await state.featureSnapshot({});
-                if (snapshot.status !== 'ready') throw new Error('Test Home feature HTTP unavailable');
-                return Response.json(snapshot.features);
-            }
-            return requestArgs[0].startsWith('/v1/auth/pairing/') || requestArgs[0] === '/v1/auth/account/response'
-                ? state.request(requestArgs[0], requestArgs[1]) : request(...requestArgs);
-        };
-    } };
-});
 // Device storage for the recovery-key flag, and the server's feature answer (HTTP).
 vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/auth/storage/tokenStorage')>();
@@ -104,7 +87,6 @@ vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
             getRecoveryKeyReminderDismissed: async () => state.dismissed,
             setRecoveryKeyReminderDismissed: async (value: boolean) => { state.dismissed = value; return true; },
             getCachedRecoveryKeyReminderDismissed: () => null,
-            getCredentialsForServerUrl: async () => state.pairingCredentials,
         },
     };
 });
@@ -149,7 +131,6 @@ afterEach(async () => {
     state.layout = { order: [], hidden: [] };
     state.featureSnapshot.mockReset();
     state.featureSnapshot.mockResolvedValue({ status: 'error', reason: 'network' });
-    state.pairingCredentials = null;
     state.request.mockReset();
     vi.useRealTimers();
     vi.unstubAllGlobals();
@@ -167,11 +148,17 @@ async function renderSection(presentation?: 'tiles' | 'checklist') {
         await prepareSessionDraftPersistenceStorage();
         restoreActionLoader = await installRealActionExecutorModuleLoader();
         const snapshot = getActiveServerSnapshot();
-        connection = await restoreServerAccountForTest({ serverUrl: snapshot.serverUrl || 'https://setup-layout.test', accountId: 'account-setup', request: (url, init) => {
-            if (new URL(String(url)).pathname === '/v1/machines') return Promise.resolve(Response.json(state.machines.map(machine => ({
+        connection = await restoreServerAccountForTest({ serverUrl: snapshot.serverUrl || 'https://setup-layout.test', accountId: 'account-setup', request: async (url, init) => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/v1/features' || path === '/v1/features/authenticated') {
+                const features = await state.featureSnapshot({});
+                return features.status === 'ready' ? Response.json(features.features) : Response.json({ error: 'unavailable' }, { status: 503 });
+            }
+            if (path.startsWith('/v1/auth/pairing/') || path === '/v1/auth/account/response') return state.request(`${path}${new URL(String(url)).search}`, init);
+            if (path === '/v1/machines') return Response.json(state.machines.map(machine => ({
                 ...machine, metadata: encodePlainMachineStoredContent(machine.metadata), daemonState: encodePlainMachineStoredContent(machine.daemonState),
                 dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
-            } satisfies FetchedMachineRow))));
+            } satisfies FetchedMachineRow)));
             return artifact.request(url, init);
         } });
     }
@@ -191,7 +178,7 @@ function AccountShell({ children }: React.PropsWithChildren) {
         active: true,
         state: createWorkspaceState({ id: 'home', target: { kind: 'home', params: {} }, pinned: false, preview: true }),
         phone: state.phone ? { catalog: [], onTab: true, openHref: () => true, activateTab: () => {}, closeTab: () => {} } : null,
-        canGoBack: false, canGoForward: false, openHref: () => true,
+        canGoBack: false, canGoForward: false, openHref: (href) => { state.push?.(href); return true; },
         activateTab: () => {}, closeTab: () => {}, closeTabs: () => {}, dispatch: () => {},
         navigationForTab: () => { throw new Error('Unexpected tab navigation'); },
         registerBackStep: () => () => {}, back: () => {}, forward: () => {},
@@ -231,9 +218,8 @@ describe('HubSetupSection on Home (tiles)', () => {
         const home = await profiles.adoptHomeProfile({ descriptor, source: 'qr', descriptorAuthority: 'current_connection_observation' });
         state.featureSnapshot.mockResolvedValue({
             status: 'ready', serverIdentityId: descriptor.homeServerIdentityId,
-            features: FeaturesResponseSchema.parse({ features: { auth: { pairing: { boundQrV2: { enabled: true } } } }, capabilities: {}, homeConnectionDescriptor: descriptor }),
+            features: FeaturesResponseSchema.parse({ features: { auth: { pairing: { boundQrV2: { enabled: true } } } }, capabilities: { serverIdentity: { serverIdentityId: descriptor.homeServerIdentityId } }, homeConnectionDescriptor: descriptor }),
         });
-        state.pairingCredentials = { token: 'trusted-home-token' };
         state.dismissed = true;
         state.layout = { order: ['setup', 'future-section'], hidden: ['usage'], sections: { setup: { frameStyle: 'plain' } } };
         const expiresAt = new Date(Date.now() + 60_000).toISOString();

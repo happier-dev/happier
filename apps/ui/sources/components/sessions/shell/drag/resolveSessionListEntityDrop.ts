@@ -1,6 +1,6 @@
 import { entityDragScopesEqualV1, type EntityDragItemV1, type EntityDropAdmissionV1,
     type EntityDropPreviewV1, type EntityDropReasonV1 } from '@happier-dev/protocol/plugins/ui';
-import { SessionOrganizationMoveInputSchema } from '@happier-dev/protocol';
+import { SessionOrganizationMoveInputSchema } from '@happier-dev/protocol/actions/sessionOrganizationMoveAction';
 import { resolveSessionListDragIntent, resolveSessionListDragTree, type CommitSessionListDragIntentContext,
     type SessionListDragAdmission } from './commitSessionListDragIntent';
 import type { SessionListDragIntent } from './_types';

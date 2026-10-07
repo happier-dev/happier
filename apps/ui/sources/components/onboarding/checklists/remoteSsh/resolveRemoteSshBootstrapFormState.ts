@@ -1,4 +1,4 @@
-import { parseSshTarget } from '@happier-dev/protocol';
+import { parseSshTarget } from '@happier-dev/protocol/ssh/sshTarget';
 
 import type { RemoteSshBootstrapFormState } from '@/components/systemTasks/remoteSshBootstrap/useRemoteSshBootstrapTask';
 import type { SshCredentialsDraft } from '@/components/ssh/SshCredentialsFields';

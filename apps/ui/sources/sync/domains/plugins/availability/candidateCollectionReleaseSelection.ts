@@ -1,9 +1,5 @@
-import {
-    normalizePluginAccountCollectionContractsV1,
-    type NormalizedPluginAccountCollectionContractV1,
-    type PluginCollectionCandidatePreparationBindingV1,
-    type PluginCollectionContractRefV1,
-} from '@happier-dev/protocol';
+import { normalizePluginAccountCollectionContractsV1, type NormalizedPluginAccountCollectionContractV1, type PluginCollectionCandidatePreparationBindingV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
+import type { PluginCollectionContractRefV1 } from '@happier-dev/protocol/plugins/data/collectionContractRefV1';
 import type {
     PluginAvailabilityIntentSetActionInputV1,
     PluginAvailabilityIntentSetActionOutputV1,

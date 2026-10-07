@@ -3,6 +3,10 @@
 # Native preferred-execution owner. Node validates configuration and publishes
 # its shell-safe projection only when configuration changes.
 
+# Parse the complete program before execution so source edits cannot change an
+# in-flight dispatch. Braces preserve shell scope, traps and exec behavior.
+{
+
 case "$0" in
   /*) launcher_path=$0 ;;
   */*) launcher_path="$PWD/${0#./}" ;;
@@ -365,7 +369,30 @@ EOF
   [ -n "$heavyweight_service_reserved_memory" ]
 }
 
+heavyweight_cleanup_records() {
+  [ -n "${heavyweight_admission_root-}" ] || return 0
+  for heavyweight_entry in "$heavyweight_admission_root/owners"/*; do
+    [ -d "$heavyweight_entry" ] || continue
+    IFS=' ' read -r heavyweight_entry_pid heavyweight_entry_token < "$heavyweight_entry/process" 2>/dev/null || continue
+    if ! heavyweight_process_is_current "$heavyweight_entry_pid" "$heavyweight_entry_token"; then
+      rm -f -- "$heavyweight_entry/process" "$heavyweight_entry/class" "$heavyweight_entry/machine" 2>/dev/null || true
+      rmdir -- "$heavyweight_entry" 2>/dev/null || true
+    fi
+  done
+  # Dead waiters affect queue order and backfill even when capacity is busy.
+  for heavyweight_entry in "$heavyweight_admission_root/waiters"/*; do
+    [ -f "$heavyweight_entry" ] || continue
+    IFS=' ' read -r heavyweight_entry_pid heavyweight_entry_token _heavyweight_tail < "$heavyweight_entry" 2>/dev/null || continue
+    if ! heavyweight_process_is_current "$heavyweight_entry_pid" "$heavyweight_entry_token"; then
+      rm -f -- "$heavyweight_entry" 2>/dev/null || true
+    fi
+  done
+}
+
 heavyweight_resource_is_ready() {
+  # Admission, check-only probes and inherited escalation all hold the same
+  # capacity lock and reclaim dead incarnations before observing resources.
+  heavyweight_cleanup_records
   heavyweight_resource_reason=ready
   heavyweight_capacity_domain_is_ready || return 1
   heavyweight_cpu=$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)
@@ -677,35 +704,6 @@ run_heavyweight_admission() {
     heavyweight_release_lock
   }
 
-  heavyweight_cleanup_owners() {
-    heavyweight_check_owner_identity=${1-0}
-    for heavyweight_entry in "$heavyweight_owners_dir"/*; do
-      [ -d "$heavyweight_entry" ] || continue
-      IFS=' ' read -r heavyweight_entry_pid heavyweight_entry_token < "$heavyweight_entry/process" 2>/dev/null || true
-      # A dead owner frees capacity immediately through the shell builtin.
-      # Re-check the Linux start token periodically to catch PID reuse without
-      # making every queued waiter fork an awk per live owner on each pass.
-      if ! kill -0 "$heavyweight_entry_pid" 2>/dev/null \
-        || { [ "$heavyweight_check_owner_identity" = 1 ] && ! heavyweight_process_is_current "$heavyweight_entry_pid" "$heavyweight_entry_token"; }; then
-        rm -f -- "$heavyweight_entry/process" "$heavyweight_entry/class" "$heavyweight_entry/machine" 2>/dev/null || true
-        rmdir -- "$heavyweight_entry" 2>/dev/null || true
-      fi
-    done
-  }
-
-  heavyweight_cleanup_waiters() {
-    # Waiters do not consume a slot. Clean them only when an owner is being
-    # admitted: scanning every waiter on every waiter retry is O(N²) /proc
-    # work under pressure, while the next admission still reclaims crashes.
-    for heavyweight_entry in "$heavyweight_waiters_dir"/*; do
-      [ -f "$heavyweight_entry" ] || continue
-      IFS=' ' read -r heavyweight_entry_pid heavyweight_entry_token _heavyweight_tail < "$heavyweight_entry" 2>/dev/null || true
-      if ! heavyweight_process_is_current "$heavyweight_entry_pid" "$heavyweight_entry_token"; then
-        rm -f -- "$heavyweight_entry" 2>/dev/null || true
-      fi
-    done
-  }
-
   heavyweight_count_entries() {
     heavyweight_active_count=0
     for heavyweight_entry in "$heavyweight_owners_dir"/*; do
@@ -740,20 +738,11 @@ run_heavyweight_admission() {
   trap 'heavyweight_interrupt' HUP INT TERM
   heavyweight_wait_started=$(date +%s)
   heavyweight_last_wait_state=
-  heavyweight_owner_identity_check_attempt=0
   while :; do
     heavyweight_acquire_lock || {
       printf '[preferred-execution] heavyweight admission lock failed on %s\n' "$heavyweight_admission_machine" >&2
       exit 1
     }
-    heavyweight_owner_identity_check_attempt=$((heavyweight_owner_identity_check_attempt + 1))
-    heavyweight_check_owner_identity=0
-    if [ "$heavyweight_owner_identity_check_attempt" -ge 12 ]; then
-      heavyweight_owner_identity_check_attempt=0
-      heavyweight_check_owner_identity=1
-    fi
-    heavyweight_cleanup_owners "$heavyweight_check_owner_identity"
-    heavyweight_count_entries
     heavyweight_is_head=0
     heavyweight_ready=0
     heavyweight_wait_delay_seconds=$heavyweight_fast_retry_seconds
@@ -763,6 +752,7 @@ run_heavyweight_admission() {
     else
       heavyweight_wait_delay_seconds=$heavyweight_pressure_retry_seconds
     fi
+    heavyweight_count_entries
     if [ "$heavyweight_is_head" -eq 1 ] && [ "$heavyweight_ready" -eq 1 ] && mkdir "$heavyweight_owner_path" 2>/dev/null; then
       printf '%s %s\n' "$heavyweight_pid" "$heavyweight_token" > "$heavyweight_owner_path/process" || exit 1
       printf '%s\n' "$heavyweight_admission_class" > "$heavyweight_owner_path/class" || exit 1
@@ -772,7 +762,6 @@ run_heavyweight_admission() {
         exit 1
       fi
       rm -f -- "$heavyweight_waiter_path" 2>/dev/null || true
-      heavyweight_cleanup_waiters
       heavyweight_count_entries
       heavyweight_release_lock
       heavyweight_waited_seconds=$(( $(date +%s) - heavyweight_wait_started ))
@@ -920,6 +909,17 @@ mark_public_typecheck_dispatch() {
   esac
 }
 
+runtime_wait_for_source_upload() {
+  [ -n "${runtime_build_target-}" ] && [ "${HSTACK_EXEC_RUNTIME_SOURCE_UPLOAD-0}" = 1 ] || return 0
+  printf 'HAPPIER_RUNTIME_BUILD_PREPARE={"worker":"%s"}\n' "$1"
+  IFS= read -r runtime_source_ack || exit 130
+  [ "$runtime_source_ack" = source-uploaded ] || {
+    printf '%s\n' '[preferred-execution] invalid runtime source-upload acknowledgment' >&2
+    exit 64
+  }
+  unset HSTACK_EXEC_RUNTIME_SOURCE_UPLOAD
+}
+
 run_local() {
   if [ -n "${runtime_build_target-}" ] && [ "${HAPPIER_DEV_TARGET_EXECUTION-}" != 1 ]; then
     HAPPIER_RUNTIME_BUILD_WORKER_NAME=local
@@ -932,6 +932,7 @@ run_local() {
   HAPPIER_HSTACK_EXECUTION=1
   export HAPPIER_HSTACK_EXECUTION
   heavyweight_local_class=$policy_heavyClass
+  runtime_wait_for_source_upload "${HAPPIER_RUNTIME_BUILD_WORKER_NAME-local}"
   case "${1-}" in
     --script=*)
       local_script=${1#--script=}
@@ -1614,8 +1615,6 @@ sync_name_for_target() {
 configure_mutagen_environment() {
   MUTAGEN_DATA_DIRECTORY="$stack_dir/mutagen/data"
   export MUTAGEN_DATA_DIRECTORY
-  HAPPIER_DEV_TARGET_CONTROL_STATE_DIR="$cache_dir/sync-control"
-  export HAPPIER_DEV_TARGET_CONTROL_STATE_DIR
   if [ -d "$stack_dir/mutagen/openssh" ]; then
     MUTAGEN_SSH_PATH="$stack_dir/mutagen/openssh"
     export MUTAGEN_SSH_PATH
@@ -2366,6 +2365,7 @@ remote_executor_repo=$(value_for_target executor_repo_dir "$selected_number")
 [ -n "$remote_executor_repo" ] || remote_executor_repo=$remote_repo
 remote_home=$(value_for_target cli_home "$selected_number")
 remote_path=$(value_for_target remote_path "$selected_number")
+runtime_wait_for_source_upload "$selected_name"
 remote_cwd=$remote_repo
 [ -n "$relative_cwd" ] && remote_cwd="$remote_repo/$relative_cwd"
 
@@ -2905,3 +2905,4 @@ duration_ms=$((completed_at - admitted_at))
 printf '{"schemaVersion":%s,"phase":"completed","executionId":"%s","timestamp":%s,"target":"%s","commandClass":"%s","exitCode":%s,"signal":null,"durationMs":%s}\n' \
   "$execution_provenance_schema_version" "$execution_id" "$completed_at" "$selected_name" "$command_class" "$status" "$duration_ms" >> "$provenance_path"
 exit "$status"
+}

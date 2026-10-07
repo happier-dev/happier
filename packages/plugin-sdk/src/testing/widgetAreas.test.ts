@@ -1,4 +1,7 @@
 import { expect, it } from 'vitest';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { createPluginWidgetAreaHostPortV1 } from '@happier-dev/protocol/plugins/ui';
 import { createWidgetAreaActionPortV1, createWidgetSurfaceArtifactPortV1, createWidgetActionInputResolverV1 } from '@happier-dev/protocol/widgets';
@@ -10,6 +13,10 @@ import { createSurfaceContextFixture } from '../ui/surfaceContext.fixture.js';
 
 it('activates a real declared plugin and runs area inputs/layout/refresh through the public SDK client and host port', async () => {
     const plugin = await createPluginTestkit({ manifest: widgetAreasPlugin.manifest, module: widgetAreasPlugin });
+    const directory = await mkdtemp(join(tmpdir(), 'happier-widget-area-'));
+    await writeFile(join(directory, 'first.txt'), 'first');
+    await writeFile(join(directory, 'second.txt'), 'second');
+    await mkdir(join(directory, 'child'));
     const scope = { serverId: 'home', accountId: 'viewer' };
     const rows = new Map<string, NonNullable<Awaited<ReturnType<HomeHubArtifactTransportV1['read']>>>>();
     const transport: HomeHubArtifactTransportV1 = {
@@ -38,21 +45,38 @@ it('activates a real declared plugin and runs area inputs/layout/refresh through
         handlers: { widgetArea: ({ request, signal }) => port.execute(request, signal) },
     });
     try {
+        const resource = plugin.registration('resources', 'count');
+        if (!resource) throw new Error('Resource registration missing');
+        const read = async (filter: string) => {
+            const bytes = await resource.read({ context: { kind: 'surface', mountInstanceKey: 'area-test',
+                launchInput: { directory, filter } }, signal: new AbortController().signal });
+            return JSON.parse(typeof bytes === 'string' ? bytes : new TextDecoder().decode(bytes));
+        };
+        expect(await read('files')).toEqual({ directory, filter: 'files', count: 2 });
+        expect(await read('folders')).toEqual({ directory, filter: 'folders', count: 1 });
+        let invalidate: () => void = () => {};
+        const invalidated = new Promise<void>(resolve => { invalidate = resolve; });
+        const observer = resource.observe(invalidate, { context: { kind: 'surface', mountInstanceKey: 'area-test',
+            launchInput: { directory, filter: 'files' } }, signal: new AbortController().signal });
+        try {
+            await writeFile(join(directory, 'third.txt'), 'third');
+            await invalidated;
+        } finally { observer.dispose(); }
+        expect(await read('files')).toEqual({ directory, filter: 'files', count: 3 });
+        await expect(resource.read({ context: { kind: 'surface', mountInstanceKey: 'area-test',
+            launchInput: { directory: join(directory, 'missing'), filter: 'files' } }, signal: new AbortController().signal }))
+            .rejects.toMatchObject({ code: 'ENOENT' });
         const instance = { v: 1 as const, id: 'copy', definition: { kind: 'installed' as const, surface: { pluginId: widgetAreasPlugin.manifest.id, localId: widget.id } },
-            bindings: { filter: { kind: 'context' as const, slot: 'filter' } } };
-        expect(await runWidgetAreaExample(fixture.context.hostApi, { actionId: 'widgets.instance.add', instance })).toMatchObject({ ok: true });
-        expect(await runWidgetAreaExample(fixture.context.hostApi, { actionId: 'widgets.instance.inputs.validate', instanceId: 'copy', bindings: instance.bindings }, 'closed'))
-            .toEqual({ ok: true, result: { status: 'ready', input: { filter: 'closed' } } });
-        expect(await runWidgetAreaExample(fixture.context.hostApi, { actionId: 'widgets.instance.width.set', instanceId: 'copy', width: 'full' })).toMatchObject({ ok: true });
+            bindings: { directory: { kind: 'context' as const, slot: 'directory' }, filter: { kind: 'context' as const, slot: 'filter' } } };
+        expect(await runWidgetAreaExample(fixture.context.hostApi, { actionId: 'widgets.instance.add', instance }, 'files', directory)).toMatchObject({ ok: true });
+        expect(await runWidgetAreaExample(fixture.context.hostApi, { actionId: 'widgets.instance.inputs.validate', instanceId: 'copy', bindings: instance.bindings }, 'folders', directory))
+            .toEqual({ ok: true, result: { status: 'ready', input: { directory, filter: 'folders' } } });
+        expect(await runWidgetAreaExample(fixture.context.hostApi, { actionId: 'widgets.instance.size.set', instanceId: 'copy', size: 'full' })).toMatchObject({ ok: true });
         expect(await runWidgetAreaExample(fixture.context.hostApi, { actionId: 'widgets.instance.move', instanceId: 'copy', toIndex: 0 })).toMatchObject({ ok: true });
         // A headless SDK fixture has no UI contextual Resource store. Exercise
         // its real refusal, never install a second refresh implementation.
         expect(await runWidgetAreaExample(fixture.context.hostApi, { actionId: 'widgets.instance.refresh', instanceId: 'copy' }))
             .toMatchObject({ ok: false, errorCode: 'widget_refresh_unavailable' });
-        const resource = plugin.registration('resources', 'count');
-        if (!resource) throw new Error('Resource registration missing');
-        const bytes = await resource.read({ context: { kind: 'global' }, signal: new AbortController().signal });
-        expect(JSON.parse(typeof bytes === 'string' ? bytes : new TextDecoder().decode(bytes))).toEqual({ count: 42 });
-        expect(await runWidgetAreaExample(fixture.context.hostApi, { actionId: 'widgets.instance.list' })).toMatchObject({ ok: true, result: { instances: [{ instance, width: 'full' }] } });
-    } finally { await fixture.dispose(); await plugin.dispose(); }
+        expect(await runWidgetAreaExample(fixture.context.hostApi, { actionId: 'widgets.instance.list' })).toMatchObject({ ok: true, result: { instances: [{ instance, size: 'full' }] } });
+    } finally { await fixture.dispose(); await plugin.dispose(); await rm(directory, { recursive: true, force: true }); }
 });

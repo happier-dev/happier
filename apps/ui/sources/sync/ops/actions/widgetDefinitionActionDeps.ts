@@ -1,5 +1,5 @@
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
-import { readWorkBoardArtifactV1, WORK_BOARD_ARTIFACT_KIND_V1 } from '@happier-dev/protocol';
+import { readWorkBoardArtifactV1, WORK_BOARD_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/boards/workBoardArtifactV1';
 import { createWidgetDefinitionArtifactPortV1, createSessionWidgetDefinitionSourceReaderV1,
     isSameWidgetDefinitionV1, widgetCandidateDefinitionV1 } from '@happier-dev/protocol/widgets';
 import type { LazyActionAccountContext } from './actionAccountContext';

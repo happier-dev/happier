@@ -1,151 +1,604 @@
+
+import { workspaceTabKeyboardTranslations } from './workspaceTabTranslations.shared';
+
+import { terminalWorkspaceKeyboardTranslations } from './terminalWorkspaceTranslations.shared';
+
+
 import { defineTranslations } from '../_types';
-import { promptPickerTranslations } from './promptPickerTranslations';
-import { pendingNavigationTranslations } from './pendingNavigationTranslations';
-import { fileContentSearchTranslations } from './fileContentSearchTranslations';
-import { voiceSettingsPagesTranslations } from './voiceSettingsPagesTranslations';
-import { folderlessSessionTranslations } from './folderlessSessionTranslations';
-import { sessionCollaborationTranslations } from './sessionCollaborationTranslations';
-import { sessionMessageAccountActorTranslations } from './sessionMessageAccountActorTranslations';
-import { sessionAccessTranslations } from './sessionAccessTranslations';
-import { nativePasswordTranslations } from './nativePasswordTranslations';
-import { sessionFollowTranslations } from './sessionFollowTranslations';
-import { sessionHomeFreshnessTranslations } from './sessionHomeFreshnessTranslations';
-import { sessionEmbeddedTranslations } from './sessionEmbeddedTranslations';
-import { sessionReminderTranslations } from './sessionReminderTranslations';
-import { settingsProvidersTranslations } from './settingsProvidersTranslations';
-import { providerSessionTranslations } from './providerSessionTranslations';
-import { externalSessionOperationTranslations } from './externalSessionOperationTranslations';
-import { externalSessionSettingsTranslations } from './externalSessionSettingsTranslations';
-import { machinePoolTranslations } from './machinePoolTranslations';
-import { settingsConnectionsTranslations } from './settingsConnectionsTranslations';
-import { settingsMachinesTranslations } from './settingsMachinesTranslations';
-import { connectedServicesSettingsTranslations } from './connectedServicesSettingsTranslations';
-import { connectedServicesPoolTranslations } from './connectedServicesPoolTranslations';
-import { connectedServicesCollectionTranslations } from './connectedServicesCollectionTranslations';
-import { cliPathExposureTranslations } from './cliPathExposureTranslations';
-import { agentInstallJobTranslations } from './agentInstallJobTranslations';
-import { thisComputerConnectionTranslations } from './thisComputerConnectionTranslations';
-import { menuBarModeTranslations } from './menuBarModeTranslations';
-import { personalHomeDecisionTranslations } from './personalHomeDecisionTranslations';
-import { cliTrustPromptTranslations } from './cliTrustPromptTranslations';
-import { pluginUpdateReviewTranslations } from './pluginUpdateReviewTranslations';
-import { sessionResponsibilityTranslations } from './sessionResponsibilityTranslations';
-import { sessionListFilterTranslations } from './sessionListFilterTranslations';
-import { pluginPermissionTranslations } from './pluginPermissionTranslations';
-import { sessionBoardTranslations } from './sessionBoardTranslations';
-import { pluginMarketplaceDiscoverTranslations } from './pluginMarketplaceDiscoverTranslations';
-import { pluginSettingsPresentationTranslations } from './pluginSettingsPresentationTranslations';
-import { sessionRemotePermissionGrantTranslations } from './sessionRemotePermissionGrantTranslations';
-import { sessionAgentActivityTranslations } from './sessionAgentActivityTranslations';
-import { sessionWorkTranslations } from './sessionWorkTranslations';
-import { entityDragDropTranslations } from './entityDragDropTranslations';
-import { agentStartTranslations } from './agentStartTranslations';
-import { goalControlTranslations } from './goalControlTranslations';
-import { inboxWorkTranslations } from './inboxWorkTranslations';
-import { sessionGitPaneTranslations } from './sessionGitPaneTranslations';
-import { sessionGitDisplayTranslations } from './sessionGitDisplayTranslations';
-import { sessionGitBranchesTranslations } from './sessionGitBranchesTranslations';
-import { sessionGitPullRequestTranslations } from './sessionGitPullRequestTranslations';
-import { sessionConversationSurfaceTranslations } from './sessionConversationSurfaceTranslations';
-import { changedFileEvidenceTranslations } from './changedFileEvidenceTranslations';
-import { turnChangesTranslations } from './turnChangesTranslations';
-import { committedMessageActionTranslations } from './committedMessageActionTranslations';
-import { scmComparisonTranslations } from './scmComparisonTranslations';
-import { walkthroughTranslations } from './walkthroughTranslations';
-import { walkthroughSettingsTranslations } from './walkthroughSettingsTranslations';
-import { walkthroughStartTranslations } from './walkthroughStartTranslations';
-import { reviewWalkthroughTranslations } from './reviewWalkthroughTranslations';
-import { commitProposalTranslations } from './commitProposalTranslations';
-import { voiceReadinessTranslations } from './voiceReadinessTranslations';
-import { voiceDiagnosticsTranslations } from './voiceDiagnosticsTranslations';
-import { voiceProviderPrivacyTranslations } from './voiceProviderPrivacyTranslations';
-import { voiceRealtimeProviderSetupTranslations } from './voiceRealtimeProviderSetupTranslations';
-import { voiceExternalCredentialApprovalTranslations } from './voiceExternalCredentialApprovalTranslations';
-import { voiceLocalCredentialTranslations } from './voiceLocalCredentialTranslations';
-import { pluginWebhookAdministrationTranslations } from './pluginWebhookAdministrationTranslations';
-import { pluginAccountDataEraseTranslations } from './pluginAccountDataEraseTranslations';
-import { apiTokenSettingsTranslations } from './apiTokenSettingsTranslations';
-import { embedSettingsTranslations } from './embedSettingsTranslations';
-import { embedTranslations } from './embedTranslations';
-import { actionFamilyTranslations } from './actionFamilyTranslations';
-import { providerCollectionTranslations } from './providerCollectionTranslations';
-import { settingsSearchKeywordsTranslations } from './settingsSearchKeywordsTranslations';
-import { automationPageTranslations } from './automationPageTranslations';
-import { settingsSessionPagesTranslations } from './settingsSessionPagesTranslations';
-import { workspaceTabKeyboardTranslations, workspaceTabTranslations } from './workspaceTabTranslations';
-import { terminalWorkspaceKeyboardTranslations, terminalWorkspaceTranslations } from './terminalWorkspaceTranslations';
-import { phoneNavigationTranslations } from './phoneNavigationTranslations';
-import { workspaceBarTranslations } from './workspaceBarTranslations';
-import { settingsProfilesRemoteHostsPageTranslations } from './settingsProfilesRemoteHostsPageTranslations';
-import { profilesPageTranslations } from './profilesPageTranslations';
-import { machineDetailPageTranslations } from './machineDetailPageTranslations';
-import { sessionPageTranslations } from './sessionPageTranslations';
-import { pluginAccountReleaseSelectionTranslations } from './pluginAccountReleaseSelectionTranslations';
-import { pluginMachineMatrixTranslations } from './pluginMachineMatrixTranslations';
-import { pluginInvocationLogTranslations } from './pluginInvocationLogTranslations';
-import { eventAutomationComposerTranslations } from './eventAutomationComposerTranslations';
-import { automationTriggerSetTranslations } from './automationTriggerSetTranslations';
+
+import { promptPickerTranslations as feature_promptPickerTranslations } from './features/pl';
+
+import { pendingNavigationTranslations as feature_pendingNavigationTranslations } from './features/pl';
+
+import { fileContentSearchTranslations as feature_fileContentSearchTranslations } from './features/pl';
+
+import { voiceSettingsPagesTranslations as feature_voiceSettingsPagesTranslations } from './features/pl';
+
+import { folderlessSessionTranslations as feature_folderlessSessionTranslations } from './features/pl';
+
+import { sessionCollaborationTranslations as feature_sessionCollaborationTranslations } from './features/pl';
+
+import { sessionMessageAccountActorTranslations as feature_sessionMessageAccountActorTranslations } from './features/pl';
+
+import { sessionAccessTranslations as feature_sessionAccessTranslations } from './features/pl';
+
+import { nativePasswordTranslations as feature_nativePasswordTranslations } from './features/pl';
+
+import { sessionFollowTranslations as feature_sessionFollowTranslations } from './features/pl';
+
+import { sessionHomeFreshnessTranslations as feature_sessionHomeFreshnessTranslations } from './features/pl';
+
+import { sessionEmbeddedTranslations as feature_sessionEmbeddedTranslations } from './features/pl';
+
+import { sessionReminderTranslations as feature_sessionReminderTranslations } from './features/pl';
+
+import { settingsProvidersTranslations as feature_settingsProvidersTranslations } from './features/pl';
+
+import { providerSessionTranslations as feature_providerSessionTranslations } from './features/pl';
+
+import { externalSessionOperationTranslations as feature_externalSessionOperationTranslations } from './features/pl';
+
+import { externalSessionSettingsTranslations as feature_externalSessionSettingsTranslations } from './features/pl';
+
+import { machinePoolTranslations as feature_machinePoolTranslations } from './features/pl';
+
+import { settingsConnectionsTranslations as feature_settingsConnectionsTranslations } from './features/pl';
+
+import { settingsMachinesTranslations as feature_settingsMachinesTranslations } from './features/pl';
+
+import { connectedServicesSettingsTranslations as feature_connectedServicesSettingsTranslations } from './features/pl';
+
+import { connectedServicesPoolTranslations as feature_connectedServicesPoolTranslations } from './features/pl';
+
+import { connectedServicesCollectionTranslations as feature_connectedServicesCollectionTranslations } from './features/pl';
+
+import { cliPathExposureTranslations as feature_cliPathExposureTranslations } from './features/pl';
+
+import { agentInstallJobTranslations as feature_agentInstallJobTranslations } from './features/pl';
+
+import { thisComputerConnectionTranslations as feature_thisComputerConnectionTranslations } from './features/pl';
+
+import { menuBarModeTranslations as feature_menuBarModeTranslations } from './features/pl';
+
+import { personalHomeDecisionTranslations as feature_personalHomeDecisionTranslations } from './features/pl';
+
+import { cliTrustPromptTranslations as feature_cliTrustPromptTranslations } from './features/pl';
+
+import { pluginUpdateReviewTranslations as feature_pluginUpdateReviewTranslations } from './features/pl';
+
+import { sessionResponsibilityTranslations as feature_sessionResponsibilityTranslations } from './features/pl';
+
+import { sessionListFilterTranslations as feature_sessionListFilterTranslations } from './features/pl';
+
+import { pluginPermissionTranslations as feature_pluginPermissionTranslations } from './features/pl';
+
+import { sessionBoardTranslations as feature_sessionBoardTranslations } from './features/pl';
+
+import { pluginMarketplaceDiscoverTranslations as feature_pluginMarketplaceDiscoverTranslations } from './features/pl';
+
+import { pluginSettingsPresentationTranslations as feature_pluginSettingsPresentationTranslations } from './features/pl';
+
+import { sessionRemotePermissionGrantTranslations as feature_sessionRemotePermissionGrantTranslations } from './features/pl';
+
+import { sessionAgentActivityTranslations as feature_sessionAgentActivityTranslations } from './features/pl';
+
+import { sessionWorkTranslations as feature_sessionWorkTranslations } from './features/pl';
+
+import { entityDragDropTranslations as feature_entityDragDropTranslations } from './features/pl';
+
+import { agentStartTranslations as feature_agentStartTranslations } from './features/pl';
+
+import { goalControlTranslations as feature_goalControlTranslations } from './features/pl';
+
+import { inboxWorkTranslations as feature_inboxWorkTranslations } from './features/pl';
+
+import { sessionGitPaneTranslations as feature_sessionGitPaneTranslations } from './features/pl';
+
+import { sessionGitDisplayTranslations as feature_sessionGitDisplayTranslations } from './features/pl';
+
+import { sessionGitBranchesTranslations as feature_sessionGitBranchesTranslations } from './features/pl';
+
+import { sessionGitPullRequestTranslations as feature_sessionGitPullRequestTranslations } from './features/pl';
+
+import { sessionConversationSurfaceTranslations as feature_sessionConversationSurfaceTranslations } from './features/pl';
+
+import { changedFileEvidenceTranslations as feature_changedFileEvidenceTranslations } from './features/pl';
+
+import { turnChangesTranslations as feature_turnChangesTranslations } from './features/pl';
+
+import { committedMessageActionTranslations as feature_committedMessageActionTranslations } from './features/pl';
+
+import { scmComparisonTranslations as feature_scmComparisonTranslations } from './features/pl';
+
+import { walkthroughTranslations as feature_walkthroughTranslations } from './features/pl';
+
+import { walkthroughSettingsTranslations as feature_walkthroughSettingsTranslations } from './features/pl';
+
+import { walkthroughStartTranslations as feature_walkthroughStartTranslations } from './features/pl';
+
+import { reviewWalkthroughTranslations as feature_reviewWalkthroughTranslations } from './features/pl';
+
+import { commitProposalTranslations as feature_commitProposalTranslations } from './features/pl';
+
+import { voiceReadinessTranslations as feature_voiceReadinessTranslations } from './features/pl';
+
+import { voiceDiagnosticsTranslations as feature_voiceDiagnosticsTranslations } from './features/pl';
+
+import { voiceProviderPrivacyTranslations as feature_voiceProviderPrivacyTranslations } from './features/pl';
+
+import { voiceRealtimeProviderSetupTranslations as feature_voiceRealtimeProviderSetupTranslations } from './features/pl';
+
+import { voiceExternalCredentialApprovalTranslations as feature_voiceExternalCredentialApprovalTranslations } from './features/pl';
+
+import { voiceLocalCredentialTranslations as feature_voiceLocalCredentialTranslations } from './features/pl';
+
+import { pluginWebhookAdministrationTranslations as feature_pluginWebhookAdministrationTranslations } from './features/pl';
+
+import { pluginAccountDataEraseTranslations as feature_pluginAccountDataEraseTranslations } from './features/pl';
+
+import { apiTokenSettingsTranslations as feature_apiTokenSettingsTranslations } from './features/pl';
+
+import { embedSettingsTranslations as feature_embedSettingsTranslations } from './features/pl';
+
+import { embedTranslations as feature_embedTranslations } from './features/pl';
+
+import { actionFamilyTranslations as feature_actionFamilyTranslations } from './features/pl';
+
+import { providerCollectionTranslations as feature_providerCollectionTranslations } from './features/pl';
+
+import { settingsSearchKeywordsTranslations as feature_settingsSearchKeywordsTranslations } from './features/pl';
+
+import { automationPageTranslations as feature_automationPageTranslations } from './features/pl';
+
+import { settingsSessionPagesTranslations as feature_settingsSessionPagesTranslations } from './features/pl';
+
+import { workspaceTabTranslations as feature_workspaceTabTranslations } from './features/pl';
+
+import { terminalWorkspaceTranslations as feature_terminalWorkspaceTranslations } from './features/pl';
+
+import { phoneNavigationTranslations as feature_phoneNavigationTranslations } from './features/pl';
+
+import { workspaceBarTranslations as feature_workspaceBarTranslations } from './features/pl';
+
+import { settingsProfilesRemoteHostsPageTranslations as feature_settingsProfilesRemoteHostsPageTranslations } from './features/pl';
+
+import { profilesPageTranslations as feature_profilesPageTranslations } from './features/pl';
+
+import { machineDetailPageTranslations as feature_machineDetailPageTranslations } from './features/pl';
+
+import { sessionPageTranslations as feature_sessionPageTranslations } from './features/pl';
+
+import { pluginAccountReleaseSelectionTranslations as feature_pluginAccountReleaseSelectionTranslations } from './features/pl';
+
+import { pluginMachineMatrixTranslations as feature_pluginMachineMatrixTranslations } from './features/pl';
+
+import { pluginInvocationLogTranslations as feature_pluginInvocationLogTranslations } from './features/pl';
+
+import { eventAutomationComposerTranslations as feature_eventAutomationComposerTranslations } from './features/pl';
+
+import { automationTriggerSetTranslations as feature_automationTriggerSetTranslations } from './features/pl';
+
 import { actionOperationInboxTranslations } from './actionOperationInboxTranslations';
-import { actionConfirmationTranslations } from './actionConfirmationTranslations';
-import { detailPageTranslations } from './detailPageTranslations';
-import { rolesTranslations } from './rolesTranslations';
-import { boardsTranslations } from './boardsTranslations';
-import { findTranslations } from './findTranslations';
-import { transcriptFindTranslations } from './transcriptFindTranslations';
-import { artifactsBrowserTranslations } from './artifactsBrowserTranslations';
-import { workStatusTranslations } from './workStatusTranslations';
-import { shareSheetTranslations } from './shareSheetTranslations';
-import { surfaceStateTranslations } from './surfaceStateTranslations';
-import { sessionCompanionTranslations } from './sessionCompanionTranslations';
-import { runPageTranslations } from './runPageTranslations';
-import { detailsChromeTranslations } from './detailsChromeTranslations';
-import { browserPresenceTranslations } from './browserPresenceTranslations';
-import { computerUseTranslations } from './computerUseTranslations';
-import { browserToolTranslations } from './browserToolTranslations';
-import { detailsFileTranslations } from './detailsFileTranslations';
-import { filesPaneTranslations } from './filesPaneTranslations';
-import { detailsHistoryTranslations } from './detailsHistoryTranslations';
-import { detailsReviewTranslations } from './detailsReviewTranslations';
-import { sessionDraftTranslations } from './sessionDraftTranslations';
-import { sessionDirectoryRecoveryTranslations } from './sessionDirectoryRecoveryTranslations';
-import { accountServiceOAuthTranslations } from './accountServiceOAuthTranslations';
-import { personalHomeSettingsTranslations } from './personalHomeSettingsTranslations';
-import { homeDeviceApprovalTranslations } from './homeDeviceApprovalTranslations';
-import { settingsOverviewTranslations } from './settingsOverviewTranslations';
-import { homeSetupTranslations } from './homeSetupTranslations';
-import { personalizeTranslations } from './personalizeTranslations';
-import { connectedServicesSetupTranslations } from './connectedServicesSetupTranslations';
-import { homeWidgetTranslations } from './homeWidgetTranslations';
-import { widgetAddTranslations } from './widgetAddTranslations';
-import { widgetDefinitionTranslations } from './widgetDefinitionTranslations';
-import { widgetFrameTranslations } from './widgetFrameTranslations';
-import { navigationPlacementTranslations } from './navigationPlacementTranslations';
-import { inputPickerTranslations } from './inputPickerTranslations';
-import { widgetGlanceTranslations } from './widgetGlanceTranslations';
-import { voicePresenceTranslations } from './voicePresenceTranslations';
-import { voiceMomentsTranslations } from './voiceMomentsTranslations';
-import { homeIndexTranslations } from './homeIndexTranslations';
-import { addFlowsTranslations } from './addFlowsTranslations';
-import { machineAddTranslations } from './machineAddTranslations';
-import { machineAgentsTranslations } from './machineAgentsTranslations';
-import { homeComposerTranslations } from './homeComposerTranslations';
-import { sidebarFooterTranslations } from './sidebarFooterTranslations';
-import { accountPopoverTranslations } from './accountPopoverTranslations';
-import { homesHubTranslations } from './homesHubTranslations';
-import { homesJourneysTranslations } from './homesJourneysTranslations';
-import { homeAddTranslations } from './homeAddTranslations';
-import { accountDisplayTranslations } from './accountDisplayTranslations';
-import { homeFeatureTranslations } from './homeFeatureTranslations';
-import { homeSettingsTranslations } from './homeSettingsTranslations';
-import { homeGovernanceTranslations } from './homeGovernanceTranslations';
-import { workflowTranslations } from './workflowTranslations';
-import { teamsTranslations } from './teamsTranslations';
-import { identityAdministrationTranslations } from './identityAdministrationTranslations';
+
+import { actionConfirmationTranslations as feature_actionConfirmationTranslations } from './features/pl';
+
+import { detailPageTranslations as feature_detailPageTranslations } from './features/pl';
+
+import { rolesTranslations as feature_rolesTranslations } from './features/pl';
+
+import { boardsTranslations as feature_boardsTranslations } from './features/pl';
+
+import { findTranslations as feature_findTranslations } from './features/pl';
+
+import { transcriptFindTranslations as feature_transcriptFindTranslations } from './features/pl';
+
+import { artifactsBrowserTranslations as feature_artifactsBrowserTranslations } from './features/pl';
+
+import { workStatusTranslations as feature_workStatusTranslations } from './features/pl';
+
+import { shareSheetTranslations as feature_shareSheetTranslations } from './features/pl';
+
+import { surfaceStateTranslations as feature_surfaceStateTranslations } from './features/pl';
+
+import { sessionCompanionTranslations as feature_sessionCompanionTranslations } from './features/pl';
+
+import { runPageTranslations as feature_runPageTranslations } from './features/pl';
+
+import { detailsChromeTranslations as feature_detailsChromeTranslations } from './features/pl';
+
+import { browserPresenceTranslations as feature_browserPresenceTranslations } from './features/pl';
+
+import { computerUseTranslations as feature_computerUseTranslations } from './features/pl';
+
+import { browserToolTranslations as feature_browserToolTranslations } from './features/pl';
+
+import { detailsFileTranslations as feature_detailsFileTranslations } from './features/pl';
+
+import { filesPaneTranslations as feature_filesPaneTranslations } from './features/pl';
+
+import { detailsHistoryTranslations as feature_detailsHistoryTranslations } from './features/pl';
+
+import { detailsReviewTranslations as feature_detailsReviewTranslations } from './features/pl';
+
+import { sessionDraftTranslations as feature_sessionDraftTranslations } from './features/pl';
+
+import { sessionDirectoryRecoveryTranslations as feature_sessionDirectoryRecoveryTranslations } from './features/pl';
+
+import { accountServiceOAuthTranslations as feature_accountServiceOAuthTranslations } from './features/pl';
+
+import { personalHomeSettingsTranslations as feature_personalHomeSettingsTranslations } from './features/pl';
+
+import { homeDeviceApprovalTranslations as feature_homeDeviceApprovalTranslations } from './features/pl';
+
+import { settingsOverviewTranslations as feature_settingsOverviewTranslations } from './features/pl';
+
+import { homeSetupTranslations as feature_homeSetupTranslations } from './features/pl';
+
+import { personalizeTranslations as feature_personalizeTranslations } from './features/pl';
+
+import { connectedServicesSetupTranslations as feature_connectedServicesSetupTranslations } from './features/pl';
+
+import { homeWidgetTranslations as feature_homeWidgetTranslations } from './features/pl';
+
+import { widgetAddTranslations as feature_widgetAddTranslations } from './features/pl';
+
+import { widgetDefinitionTranslations as feature_widgetDefinitionTranslations } from './features/pl';
+
+import { widgetFrameTranslations as feature_widgetFrameTranslations } from './features/pl';
+
+import { navigationPlacementTranslations as feature_navigationPlacementTranslations } from './features/pl';
+
+import { inputPickerTranslations as feature_inputPickerTranslations } from './features/pl';
+
+import { widgetGlanceTranslations as feature_widgetGlanceTranslations } from './features/pl';
+
+import { voicePresenceTranslations as feature_voicePresenceTranslations } from './features/pl';
+
+import { voiceMomentsTranslations as feature_voiceMomentsTranslations } from './features/pl';
+
+import { homeIndexTranslations as feature_homeIndexTranslations } from './features/pl';
+
+import { addFlowsTranslations as feature_addFlowsTranslations } from './features/pl';
+
+import { machineAddTranslations as feature_machineAddTranslations } from './features/pl';
+
+import { machineAgentsTranslations as feature_machineAgentsTranslations } from './features/pl';
+
+import { homeComposerTranslations as feature_homeComposerTranslations } from './features/pl';
+
+import { sidebarFooterTranslations as feature_sidebarFooterTranslations } from './features/pl';
+
+import { accountPopoverTranslations as feature_accountPopoverTranslations } from './features/pl';
+
+import { homesHubTranslations as feature_homesHubTranslations } from './features/pl';
+
+import { homesJourneysTranslations as feature_homesJourneysTranslations } from './features/pl';
+
+import { homeAddTranslations as feature_homeAddTranslations } from './features/pl';
+
+import { accountDisplayTranslations as feature_accountDisplayTranslations } from './features/pl';
+
+import { homeFeatureTranslations as feature_homeFeatureTranslations } from './features/pl';
+
+import { homeSettingsTranslations as feature_homeSettingsTranslations } from './features/pl';
+
+import { homeGovernanceTranslations as feature_homeGovernanceTranslations } from './features/pl';
+
+import { workflowTranslations as feature_workflowTranslations } from './features/pl';
+
+import { teamsTranslations as feature_teamsTranslations } from './features/pl';
+
+import { identityAdministrationTranslations as feature_identityAdministrationTranslations } from './features/pl';
+
 import { en } from './en';
-import { workspaceSyncTranslations } from './workspaceSyncDiagnosticTranslations';
-import { personalHomeBootstrapBlockedTranslations } from './personalHomeBootstrapBlockedTranslations';
-import { secretsSettingsTranslations } from './secretsSettingsTranslations';
-import { mcpSettingsTranslations } from './mcpSettingsTranslations';
+
+import { workspaceSyncDiagnosticTranslations as feature_workspaceSyncDiagnosticTranslations } from './features/pl';
+
+import { personalHomeBootstrapBlockedTranslations as feature_personalHomeBootstrapBlockedTranslations } from './features/pl';
+
+import { secretsSettingsTranslations as feature_secretsSettingsTranslations } from './features/pl';
+
+import { mcpSettingsTranslations as feature_mcpSettingsTranslations } from './features/pl';
+
+import { PRODUCT_STORY_DETAILS_ENGLISH } from '@happier-dev/brand/product-story';
+
+import { accountEncryptionRecoveryTranslations as feature_accountEncryptionRecoveryTranslations } from './features/pl';
+
+import { glassAppearanceTranslations as feature_glassAppearanceTranslations } from './features/pl';
+const { promptPickerTranslations } = feature_promptPickerTranslations;
+
+const { pendingNavigationTranslations } = feature_pendingNavigationTranslations;
+
+const { fileContentSearchTranslations } = feature_fileContentSearchTranslations;
+
+const { voiceSettingsPagesTranslations } = feature_voiceSettingsPagesTranslations;
+
+const { folderlessSessionTranslations } = feature_folderlessSessionTranslations;
+
+const { sessionCollaborationTranslations } = feature_sessionCollaborationTranslations;
+
+const { sessionMessageAccountActorTranslations } = feature_sessionMessageAccountActorTranslations;
+
+const { sessionAccessTranslations } = feature_sessionAccessTranslations;
+
+const { nativePasswordTranslations } = feature_nativePasswordTranslations;
+
+const { sessionFollowTranslations } = feature_sessionFollowTranslations;
+
+const { sessionHomeFreshnessTranslations } = feature_sessionHomeFreshnessTranslations;
+
+const { sessionEmbeddedTranslations } = feature_sessionEmbeddedTranslations;
+
+const { sessionReminderTranslations } = feature_sessionReminderTranslations;
+
+const { settingsProvidersTranslations } = feature_settingsProvidersTranslations;
+
+const { providerSessionTranslations } = feature_providerSessionTranslations;
+
+const { externalSessionOperationTranslations } = feature_externalSessionOperationTranslations;
+
+const { externalSessionSettingsTranslations } = feature_externalSessionSettingsTranslations;
+
+const { machinePoolTranslations } = feature_machinePoolTranslations;
+
+const { settingsConnectionsTranslations } = feature_settingsConnectionsTranslations;
+
+const { settingsMachinesTranslations } = feature_settingsMachinesTranslations;
+
+const { connectedServicesSettingsTranslations } = feature_connectedServicesSettingsTranslations;
+
+const { connectedServicesPoolTranslations } = feature_connectedServicesPoolTranslations;
+
+const { connectedServicesCollectionTranslations } = feature_connectedServicesCollectionTranslations;
+
+const { cliPathExposureTranslations } = feature_cliPathExposureTranslations;
+
+const { agentInstallJobTranslations } = feature_agentInstallJobTranslations;
+
+const { thisComputerConnectionTranslations } = feature_thisComputerConnectionTranslations;
+
+const { menuBarModeTranslations } = feature_menuBarModeTranslations;
+
+const { personalHomeDecisionTranslations } = feature_personalHomeDecisionTranslations;
+
+const { cliTrustPromptTranslations } = feature_cliTrustPromptTranslations;
+
+const { pluginUpdateReviewTranslations } = feature_pluginUpdateReviewTranslations;
+
+const { sessionResponsibilityTranslations } = feature_sessionResponsibilityTranslations;
+
+const { sessionListFilterTranslations } = feature_sessionListFilterTranslations;
+
+const { pluginPermissionTranslations } = feature_pluginPermissionTranslations;
+
+const { sessionBoardTranslations } = feature_sessionBoardTranslations;
+
+const { pluginMarketplaceDiscoverTranslations } = feature_pluginMarketplaceDiscoverTranslations;
+
+const { pluginSettingsPresentationTranslations } = feature_pluginSettingsPresentationTranslations;
+
+const { sessionRemotePermissionGrantTranslations } = feature_sessionRemotePermissionGrantTranslations;
+
+const { sessionAgentActivityTranslations } = feature_sessionAgentActivityTranslations;
+
+const { sessionWorkTranslations } = feature_sessionWorkTranslations;
+
+const { entityDragDropTranslations } = feature_entityDragDropTranslations;
+
+const { agentStartTranslations } = feature_agentStartTranslations;
+
+const { goalControlTranslations } = feature_goalControlTranslations;
+
+const { inboxWorkTranslations } = feature_inboxWorkTranslations;
+
+const { sessionGitPaneTranslations } = feature_sessionGitPaneTranslations;
+
+const { sessionGitDisplayTranslations } = feature_sessionGitDisplayTranslations;
+
+const { sessionGitBranchesTranslations } = feature_sessionGitBranchesTranslations;
+
+const { sessionGitPullRequestTranslations } = feature_sessionGitPullRequestTranslations;
+
+const { sessionConversationSurfaceTranslations } = feature_sessionConversationSurfaceTranslations;
+
+const { changedFileEvidenceTranslations } = feature_changedFileEvidenceTranslations;
+
+const { turnChangesTranslations } = feature_turnChangesTranslations;
+
+const { committedMessageActionTranslations } = feature_committedMessageActionTranslations;
+
+const { scmComparisonTranslations } = feature_scmComparisonTranslations;
+
+const { walkthroughTranslations } = feature_walkthroughTranslations;
+
+const { walkthroughSettingsTranslations } = feature_walkthroughSettingsTranslations;
+
+const { walkthroughStartTranslations } = feature_walkthroughStartTranslations;
+
+const { reviewWalkthroughTranslations } = feature_reviewWalkthroughTranslations;
+
+const { commitProposalTranslations } = feature_commitProposalTranslations;
+
+const { voiceReadinessTranslations } = feature_voiceReadinessTranslations;
+
+const { voiceDiagnosticsTranslations } = feature_voiceDiagnosticsTranslations;
+
+const { voiceProviderPrivacyTranslations } = feature_voiceProviderPrivacyTranslations;
+
+const { voiceRealtimeProviderSetupTranslations } = feature_voiceRealtimeProviderSetupTranslations;
+
+const { voiceExternalCredentialApprovalTranslations } = feature_voiceExternalCredentialApprovalTranslations;
+
+const { voiceLocalCredentialTranslations } = feature_voiceLocalCredentialTranslations;
+
+const { pluginWebhookAdministrationTranslations } = feature_pluginWebhookAdministrationTranslations;
+
+const { pluginAccountDataEraseTranslations } = feature_pluginAccountDataEraseTranslations;
+
+const { apiTokenSettingsTranslations } = feature_apiTokenSettingsTranslations;
+
+const { embedSettingsTranslations } = feature_embedSettingsTranslations;
+
+const { embedTranslations } = feature_embedTranslations;
+
+const { actionFamilyTranslations } = feature_actionFamilyTranslations;
+
+const { providerCollectionTranslations } = feature_providerCollectionTranslations;
+
+const { settingsSearchKeywordsTranslations } = feature_settingsSearchKeywordsTranslations;
+
+const { automationPageTranslations } = feature_automationPageTranslations;
+
+const { settingsSessionPagesTranslations } = feature_settingsSessionPagesTranslations;
+
+const { workspaceTabTranslations } = feature_workspaceTabTranslations;
+
+const { terminalWorkspaceTranslations } = feature_terminalWorkspaceTranslations;
+
+const { phoneNavigationTranslations } = feature_phoneNavigationTranslations;
+
+const { workspaceBarTranslations } = feature_workspaceBarTranslations;
+
+const { settingsProfilesRemoteHostsPageTranslations } = feature_settingsProfilesRemoteHostsPageTranslations;
+
+const { profilesPageTranslations } = feature_profilesPageTranslations;
+
+const { machineDetailPageTranslations } = feature_machineDetailPageTranslations;
+
+const { sessionPageTranslations } = feature_sessionPageTranslations;
+
+const { pluginAccountReleaseSelectionTranslations } = feature_pluginAccountReleaseSelectionTranslations;
+
+const { pluginMachineMatrixTranslations } = feature_pluginMachineMatrixTranslations;
+
+const { pluginInvocationLogTranslations } = feature_pluginInvocationLogTranslations;
+
+const { eventAutomationComposerTranslations } = feature_eventAutomationComposerTranslations;
+
+const { automationTriggerSetTranslations } = feature_automationTriggerSetTranslations;
+
+const { actionConfirmationTranslations } = feature_actionConfirmationTranslations;
+
+const { detailPageTranslations } = feature_detailPageTranslations;
+
+const { rolesTranslations } = feature_rolesTranslations;
+
+const { boardsTranslations } = feature_boardsTranslations;
+
+const { findTranslations } = feature_findTranslations;
+
+const { transcriptFindTranslations } = feature_transcriptFindTranslations;
+
+const { artifactsBrowserTranslations } = feature_artifactsBrowserTranslations;
+
+const { workStatusTranslations } = feature_workStatusTranslations;
+
+const { shareSheetTranslations } = feature_shareSheetTranslations;
+
+const { surfaceStateTranslations } = feature_surfaceStateTranslations;
+
+const { sessionCompanionTranslations } = feature_sessionCompanionTranslations;
+
+const { runPageTranslations } = feature_runPageTranslations;
+
+const { detailsChromeTranslations } = feature_detailsChromeTranslations;
+
+const { browserPresenceTranslations } = feature_browserPresenceTranslations;
+
+const { computerUseTranslations } = feature_computerUseTranslations;
+
+const { browserToolTranslations } = feature_browserToolTranslations;
+
+const { detailsFileTranslations } = feature_detailsFileTranslations;
+
+const { filesPaneTranslations } = feature_filesPaneTranslations;
+
+const { detailsHistoryTranslations } = feature_detailsHistoryTranslations;
+
+const { detailsReviewTranslations } = feature_detailsReviewTranslations;
+
+const { sessionDraftTranslations } = feature_sessionDraftTranslations;
+
+const { sessionDirectoryRecoveryTranslations } = feature_sessionDirectoryRecoveryTranslations;
+
+const { accountServiceOAuthTranslations } = feature_accountServiceOAuthTranslations;
+
+const { personalHomeSettingsTranslations } = feature_personalHomeSettingsTranslations;
+
+const { homeDeviceApprovalTranslations } = feature_homeDeviceApprovalTranslations;
+
+const { settingsOverviewTranslations } = feature_settingsOverviewTranslations;
+
+const { homeSetupTranslations } = feature_homeSetupTranslations;
+
+const { personalizeTranslations } = feature_personalizeTranslations;
+
+const { connectedServicesSetupTranslations } = feature_connectedServicesSetupTranslations;
+
+const { homeWidgetTranslations } = feature_homeWidgetTranslations;
+
+const { widgetAddTranslations } = feature_widgetAddTranslations;
+
+const { widgetDefinitionTranslations } = feature_widgetDefinitionTranslations;
+
+const { widgetFrameTranslations } = feature_widgetFrameTranslations;
+
+const { navigationPlacementTranslations } = feature_navigationPlacementTranslations;
+
+const { inputPickerTranslations } = feature_inputPickerTranslations;
+
+const { widgetGlanceTranslations } = feature_widgetGlanceTranslations;
+
+const { voicePresenceTranslations } = feature_voicePresenceTranslations;
+
+const { voiceMomentsTranslations } = feature_voiceMomentsTranslations;
+
+const { homeIndexTranslations } = feature_homeIndexTranslations;
+
+const { addFlowsTranslations } = feature_addFlowsTranslations;
+
+const { machineAddTranslations } = feature_machineAddTranslations;
+
+const { machineAgentsTranslations } = feature_machineAgentsTranslations;
+
+const { homeComposerTranslations } = feature_homeComposerTranslations;
+
+const { sidebarFooterTranslations } = feature_sidebarFooterTranslations;
+
+const { accountPopoverTranslations } = feature_accountPopoverTranslations;
+
+const { homesHubTranslations } = feature_homesHubTranslations;
+
+const { homesJourneysTranslations } = feature_homesJourneysTranslations;
+
+const { homeAddTranslations } = feature_homeAddTranslations;
+
+const { accountDisplayTranslations } = feature_accountDisplayTranslations;
+
+const { homeFeatureTranslations } = feature_homeFeatureTranslations;
+
+const { homeSettingsTranslations } = feature_homeSettingsTranslations;
+
+const { homeGovernanceTranslations } = feature_homeGovernanceTranslations;
+
+const { workflowTranslations } = feature_workflowTranslations;
+
+const { teamsTranslations } = feature_teamsTranslations;
+
+const { identityAdministrationTranslations } = feature_identityAdministrationTranslations;
+
+const { workspaceSyncTranslations } = feature_workspaceSyncDiagnosticTranslations;
+
+const { personalHomeBootstrapBlockedTranslations } = feature_personalHomeBootstrapBlockedTranslations;
+
+const { secretsSettingsTranslations } = feature_secretsSettingsTranslations;
+
+const { mcpSettingsTranslations } = feature_mcpSettingsTranslations;
+
+const { accountEncryptionRecoveryTranslations } = feature_accountEncryptionRecoveryTranslations;
+
+const { glassAppearanceTranslations } = feature_glassAppearanceTranslations;
+
 
 const mcpServersUxTranslationExtension = {
   mcpServersConfiguredEmptySubtitle: 'Utwórz serwer, zaimportuj JSON hosta albo zainstaluj zalecany preset.',
@@ -248,6 +701,7 @@ const mcpServersUxTranslationExtension = {
   mcpServersDeliveryUnsupportedSubtitle: 'Ten backend obecnie nie otrzymuje narzędzi Happier.',
 } as const;
 
+
 const newSessionMcpTranslationExtension = {
   mcpChipLabel: 'MCP',
   mcpChipLabelWithCount: ({ count }: { count: number }) => `MCP ${count}`,
@@ -282,6 +736,7 @@ const newSessionMcpTranslationExtension = {
   profileReasonNotPortable: 'Niezgodne z tą sesją',
   connectedServicesReasonNotPortable: 'Niezgodne z tą sesją',
 } as const;
+
 
 const settingsAppearanceTranslationExtension = {
   glassControls: glassAppearanceTranslations['pl'],
@@ -463,6 +918,7 @@ const settingsAppearanceTranslationExtension = {
   },
 } as const;
 
+
 const plAcpCatalogSettingsExtension = {
     acpCatalog: 'Backendy ACP',
     acpCatalogSubtitle: 'Zarządzaj wbudowanymi i własnymi backendami ACP',
@@ -511,10 +967,12 @@ const plAcpCatalogSettingsExtension = {
     acpCatalogValidationFailed: 'Ustawienia katalogu ACP są nieprawidłowe.',
 } as const;
 
+
 const acpCatalogTranslationExtension = {
   settings: plAcpCatalogSettingsExtension,
   newSession: {},
 } as const;
+
 
 const memoryEmbeddingsTranslationExtension = {
   status: {
@@ -584,6 +1042,7 @@ const memoryEmbeddingsTranslationExtension = {
     },
   },
 } as const;
+
 
 const promptLibraryUxRefinementTranslationExtension = {
   pl: {
@@ -674,6 +1133,7 @@ const promptLibraryUxRefinementTranslationExtension = {
   },
 } as const;
 
+
 const sessionHandoffTranslationExtensions = {
   pl: {
     awaitingAdmission: 'Sprawdzanie miejsca docelowego przed rozpoczęciem. Twoje wybory są tutaj zapisane.',
@@ -735,6 +1195,7 @@ const sessionHandoffTranslationExtensions = {
     },
   },
 } as const;
+
 
 const settingsSessionHandoffTranslationExtensions = {
   pl: {
@@ -821,6 +1282,7 @@ const settingsSessionHandoffTranslationExtensions = {
   },
 } as const;
 
+
 /**
  * Polish plural helper function
  * Polish has 3 plural forms: one, few, many
@@ -851,6 +1313,7 @@ function plural({
   // Rule: everything else (0, 5-19, 11, 12-14, etc.)
   return many;
 }
+
 
 /**
  * Polish translations for the Happier app
@@ -15426,9 +15889,8 @@ settingsSession: {
     },
 } as const;
 
+
 export const pl = defineTranslations(plValues);
 
+
 export type TranslationsPl = typeof pl;
-import { PRODUCT_STORY_DETAILS_ENGLISH } from '@happier-dev/brand/product-story';
-import { accountEncryptionRecoveryTranslations } from './accountEncryptionRecoveryTranslations';
-import { glassAppearanceTranslations } from './glassAppearanceTranslations';

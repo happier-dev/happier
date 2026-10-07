@@ -40,7 +40,7 @@ import {
     DEFAULT_WORKSPACE_FILE_VIEWER_PREFERENCES_V1,
     WorkspaceFileViewerPreferencesV1Schema,
     applyWorkspaceFileViewerPreferenceMutationV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/settings/workspaceFileViewerPreferencesV1';
 import type { OpenableContentStatResultV1 } from '@happier-dev/protocol';
 
 import { useWorkspaceFileDetailsLoading } from '@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceFileDetailsLoading';

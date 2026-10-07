@@ -1,15 +1,9 @@
-import {
-  isQualifiedConnectedAccountProfileActiveV4,
-  isQualifiedConnectedAccountProfileUsableV4,
-  resolveQualifiedConnectedAccountGroupActiveAccountV4,
-  sameQualifiedConnectedAccountRef,
-  type PluginConnectedAccountAuthenticationV2,
-  type PluginContributionIdentityV1,
-  type QualifiedConnectedAccountGroupV4,
-  type QualifiedConnectedAccountProfileV4,
-  type QualifiedConnectedAccountPurposeBindingTargetV1,
-  type TeamResourceConnectedServiceSelectionV2,
-} from '@happier-dev/protocol';
+import { isQualifiedConnectedAccountProfileActiveV4, isQualifiedConnectedAccountProfileUsableV4, resolveQualifiedConnectedAccountGroupActiveAccountV4, type QualifiedConnectedAccountGroupV4, type QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import type { PluginConnectedAccountAuthenticationV2 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import type { TeamResourceConnectedServiceSelectionV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
 
 import { areTeamResourceConnectedServiceSelectionsEqual } from './connectedServicesAgentOptionStateBindings';

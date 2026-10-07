@@ -1,7 +1,7 @@
 import {
     DaemonLocalServiceLauncherSnapshotRequestV1Schema,
     LocalServiceLauncherSnapshotV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/local/services/launcher/v1';
 
 import type { LocalServiceLauncherSnapshot } from './types';
 

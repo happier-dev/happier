@@ -1,13 +1,7 @@
-import {
-  sealAccountScopedBlobCiphertext,
-  createSessionDraftPrivatePayloadV2,
-  AccountEncryptionMigrateSessionDraftsDirectiveSchema,
-  isSessionDraftContentV1,
-  type AccountEncryptionMigrateSessionDraftsDirective,
-  type AccountScopedCryptoMaterial,
-  type SessionDraftAddressV1,
-  type SessionDraftDocumentV2,
-} from '@happier-dev/protocol';
+import { sealAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { createSessionDraftPrivatePayloadV2, isSessionDraftContentV1, type SessionDraftDocumentV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
+import { AccountEncryptionMigrateSessionDraftsDirectiveSchema, type AccountEncryptionMigrateSessionDraftsDirective } from '@happier-dev/protocol/account/encryptionMigrate';
+import type { SessionDraftAddressV1 } from '@happier-dev/protocol/drafts/sessionDrafts';
 
 export type AccountEncryptionSessionDraftMigrationCandidate = Readonly<{
   address: Extract<SessionDraftAddressV1, { kind: 'newSession' }>;

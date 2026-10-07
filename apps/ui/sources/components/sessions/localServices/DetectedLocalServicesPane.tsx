@@ -388,6 +388,7 @@ export function DetectedLocalServicesPane(props: Readonly<{
                 testID={`${testID}-empty`}
                 kind="empty"
                 iconName="globe"
+                scene="nothingListening"
                 title={t('localServices.pane.emptyTitle')}
                 reason={t('localServices.pane.emptyReason')}
                 {...(checkAgain ? { action: checkAgain } : {})}
@@ -473,6 +474,7 @@ export function DetectedLocalServicesPane(props: Readonly<{
                             testID={`${testID}-empty`}
                             kind="empty"
                             iconName="globe"
+                            scene="nothingListening"
                             title={t('localServices.pane.emptyTitle')}
                             reason={t('localServices.pane.emptyReason')}
                             {...(checkAgain ? { action: checkAgain } : {})}

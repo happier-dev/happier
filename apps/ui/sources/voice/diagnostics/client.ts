@@ -6,7 +6,7 @@ import {
   VoiceSpeechDiagnosticsRevokeCaptureResponseV1Schema,
   VoiceSpeechDiagnosticsStatusResponseV1Schema,
   type VoiceSpeechDiagnosticsSettingsV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/voice/diagnostics';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import {

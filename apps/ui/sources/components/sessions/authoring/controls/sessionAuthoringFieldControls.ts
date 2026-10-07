@@ -6,8 +6,9 @@ import type {
     WindowsRemoteSessionLaunchMode,
 } from '@happier-dev/protocol';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
-import { buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
-import { AgentExecutionTargetV1Schema, PortableRuntimeDescriptorV1Schema } from '@happier-dev/protocol';
+import { buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
+import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
+import { PortableRuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import type {
     WorkflowSessionAuthoringSelection,
     WorkflowSessionAuthoringSelectionFieldId,

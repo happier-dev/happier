@@ -1,8 +1,6 @@
-import {
-    resolveRunnerMcpMaterialV1,
-    type SavedSecret,
-    type SessionMcpSelectionV1,
-} from '@happier-dev/protocol';
+import { resolveRunnerMcpMaterialV1 } from '@happier-dev/protocol/ephemeralRunner/runnerMcpMaterial';
+import type { SavedSecret } from '@happier-dev/protocol/profiles/backendProfileSchema';
+import type { SessionMcpSelectionV1 } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
 import type { RunnerMcpMaterialV1, RunnerMcpMaterializationFailureV1 } from '@happier-dev/protocol/ephemeralRunner/runnerMcpMaterial';
 import { normalizeMcpServersSettingsV1 } from '@/sync/domains/settings/mcpServers/normalizeMcpServersSettingsV1';
 

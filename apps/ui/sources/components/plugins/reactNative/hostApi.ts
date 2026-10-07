@@ -63,7 +63,7 @@ import {
 import {
     OpenableContentReadResultV1Schema,
     OpenableContentStatResultV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/openableContent';
 import { qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type {
     PluginUiHostApi,

@@ -1,11 +1,5 @@
-import {
-    applyWorkBoardIntentV1,
-    WorkBoardMutationErrorV1,
-    WorkBoardWidgetMutationErrorV1,
-    type WorkBoardIntentV1,
-    type WorkBoardsV1,
-    type WorkBoardArtifactPortV1,
-} from '@happier-dev/protocol';
+import { applyWorkBoardIntentV1, WorkBoardWidgetMutationErrorV1, type WorkBoardIntentV1, type WorkBoardsV1 } from '@happier-dev/protocol/boards/workBoardV1';
+import { WorkBoardMutationErrorV1, type WorkBoardArtifactPortV1 } from '@happier-dev/protocol/boards/workBoardArtifactV1';
 
 /**
  * The optimistic queue of a Home's Board Artifacts.
@@ -32,6 +26,7 @@ export type WorkBoardSaveState = Readonly<{
 }>;
 
 export type WorkBoardSaveOutcome = Readonly<{ status: 'applied'; boards: WorkBoardsV1 }>
+    | Readonly<{ status: 'pending'; code: 'approval_required' }>
     | Readonly<{ status: 'refused' | 'unknown'; code: string }>;
 
 const INITIAL_STATE: WorkBoardSaveState = Object.freeze({ pending: Object.freeze([]), failure: null });

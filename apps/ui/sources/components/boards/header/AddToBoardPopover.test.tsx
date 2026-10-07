@@ -7,10 +7,13 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { widgetInstalledPackage, widgetProjectionOf } from '@/dev/testkit/fixtures/pluginWidgetProjectionFixtures';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { ARTIFACT_LIST_PATH, RUN_STORAGE_PATH, boardDefinitionArtifact, boardRunStoragePage, installBoardLibraryTestHarness } from '../boardLibraryTestHarness';
 
 const harness = installBoardLibraryTestHarness();
+const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
 const { SelectionList } = await import('@/components/ui/selectionList');
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { AddToBoardButton } = await import('./AddToBoardPopover');
@@ -63,6 +66,67 @@ afterEach(async () => {
 });
 
 describe('AddToBoardButton library recovery', () => {
+    it.each(['refused', 'pending'] as const)('preserves the quick widget add %s result in the shared Gallery without adding twice', async kind => {
+        harness.home.answer(serverId, ARTIFACT_LIST_PATH, { body: [] });
+        harness.home.answer(serverId, RUN_STORAGE_PATH, { body: await boardRunStoragePage([]) });
+        const projection = widgetProjectionOf([{ pluginId: 'acme.widgets', localId: 'counter', target: 'app', title: 'Counter' }],
+            { 'acme.widgets': widgetInstalledPackage('acme.widgets', 'Widgets') });
+        const addInstance = vi.fn(async () => kind === 'pending' ? { ok: true as const, approvalPending: true as const }
+            : { ok: false as const, message: 'permission_denied' });
+        const button = picker();
+        const widgets = { scope: null, instances: [], addInstance };
+        function QuickWidgetPicker() {
+            const [open, setOpen] = React.useState(true);
+            return React.cloneElement(button, { widgets, open, onOpenChange: setOpen });
+        }
+        const screen = await renderScreen(
+            <AppShellPluginUiProjectionValueProvider value={{ pluginUiProjection: projection, pluginBrowserProjection: null, phase: 'current',
+                interactionEnabled: true, machineId: 'machine', serverId, platform: 'web',
+                clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {} }}>
+                <QuickWidgetPicker />
+            </AppShellPluginUiProjectionValueProvider>, layout,
+        );
+        await flushHookEffects({ cycles: 4 });
+        await act(async () => { screen.findByType(SelectionList).props.onSelect('widget:plugin-acme.widgets/counter'); });
+        await flushHookEffects({ cycles: 4 });
+        expect(addInstance).toHaveBeenCalledTimes(1);
+        expect(screen.findAllByTestId(`board-add.gallery.entry.plugin-acme.widgets/counter.${kind === 'pending' ? 'pending' : 'failed'}`).length).toBeGreaterThan(0);
+        expect(screen.getTextContent()).not.toContain('widgetAdd.justAdded');
+    });
+    it('preserves approval pending after the quick widget required-input setup without submitting twice', async () => {
+        harness.home.answer(serverId, ARTIFACT_LIST_PATH, { body: [] });
+        harness.home.answer(serverId, RUN_STORAGE_PATH, { body: await boardRunStoragePage([]) });
+        const projection = widgetProjectionOf([{ pluginId: 'acme.widgets', localId: 'filtered', target: 'app', title: 'Filtered',
+            inputs: { fields: [{ path: 'filter', title: 'Filter', widget: 'text', required: true }] },
+            inputSchema: { type: 'object', properties: { filter: { type: 'string', minLength: 1 } },
+                required: ['filter'], additionalProperties: false },
+        }], { 'acme.widgets': widgetInstalledPackage('acme.widgets', 'Widgets') });
+        // The Board's injected writer is the acknowledgement boundary; the setup/parser path stays real.
+        const addInstance = vi.fn(async () => ({ ok: true as const, approvalPending: true as const }));
+        const button = picker();
+        const widgets = { scope: null, instances: [], addInstance };
+        function QuickWidgetPicker() {
+            const [open, setOpen] = React.useState(true);
+            return React.cloneElement(button, { widgets, open, onOpenChange: setOpen });
+        }
+        const screen = await renderScreen(
+            <AppShellPluginUiProjectionValueProvider value={{ pluginUiProjection: projection, pluginBrowserProjection: null, phase: 'current',
+                interactionEnabled: true, machineId: 'machine', serverId, platform: 'web',
+                clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {} }}>
+                <QuickWidgetPicker />
+            </AppShellPluginUiProjectionValueProvider>, layout,
+        );
+        await act(async () => { screen.findByType(SelectionList).props.onSelect('widget:plugin-acme.widgets/filtered'); });
+        expect(screen.findByTestId('board-add.setup.submit')!.props.disabled).toBe(true);
+        expect(addInstance).not.toHaveBeenCalled();
+        await act(async () => { screen.changeTextByTestId('board-add.setup.field.filter.input', 'open'); });
+        expect(screen.findByTestId('board-add.setup.submit')!.props.disabled).toBe(false);
+        await screen.pressByTestIdAsync('board-add.setup.submit');
+        await flushHookEffects({ cycles: 4 });
+        expect(addInstance).toHaveBeenCalledTimes(1);
+        expect(addInstance).toHaveBeenCalledWith(expect.objectContaining({ bindings: { filter: { kind: 'value', value: 'open' } } }), { place: false });
+        expect(screen.findAllHostsByTestId('board-add.gallery.entry.plugin-acme.widgets/filtered.pending').length).toBeGreaterThan(0);
+    });
     it('does not read while closed and offers independent Retry actions after initial failures', async () => {
         harness.home.answer(serverId, ARTIFACT_LIST_PATH, { dispatchThenFail: true });
         harness.home.answer(serverId, RUN_STORAGE_PATH, { dispatchThenFail: true });

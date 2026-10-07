@@ -24,7 +24,7 @@ import {
 } from '@happier-dev/protocol/ephemeralRunner/materialization';
 import { RunnerActivationCreateRequestV1Schema } from '@happier-dev/protocol/ephemeralRunner/activation';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
-import { SessionDraftAddressV1Schema } from '@happier-dev/protocol';
+import { SessionDraftAddressV1Schema } from '@happier-dev/protocol/drafts/sessionDrafts';
 import {
     TeamCredentialProviderModelSelectionV1Schema,
     type TeamCredentialProviderModelSelectionV1,

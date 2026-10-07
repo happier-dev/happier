@@ -1,10 +1,7 @@
-import {
-    AUTOMATION_INT_COLUMN_MAX,
-    AutomationTriggerDefinitionInputSchema,
-    type AutomationAssignmentInput,
-    type AutomationStoredDefinitionExecutionRecipeV1,
-    type AutomationTriggerDefinitionInput,
-} from '@happier-dev/protocol';
+import { AUTOMATION_INT_COLUMN_MAX } from '@happier-dev/protocol/automations/automationColumnBoundsV1';
+import { AutomationTriggerDefinitionInputSchema, type AutomationTriggerDefinitionInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
+import type { AutomationAssignmentInput } from '@happier-dev/protocol/automations/automationApiV3';
+import type { AutomationStoredDefinitionExecutionRecipeV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 import {
     createAutomationEditorAutomationId,
     createAutomationEditorSourceSelectorId,

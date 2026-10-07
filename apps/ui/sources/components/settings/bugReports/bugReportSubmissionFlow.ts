@@ -1,4 +1,5 @@
-import { appendBugReportReporterToSummary, type BugReportFormPayload } from '@happier-dev/protocol';
+import { appendBugReportReporterToSummary } from '@happier-dev/protocol/bugs/reports/reporter';
+import type { BugReportFormPayload } from '@happier-dev/protocol/bugs/reports/types';
 
 import type { Machine } from '@/sync/domains/state/storageTypes';
 

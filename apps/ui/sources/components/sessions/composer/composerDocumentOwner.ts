@@ -1,12 +1,7 @@
-import {
-    pluginJsonValuesEqual,
-    type ComposerAttachmentDraftV1,
-    type ComposerAttachmentViewV1,
-    type ComposerCapabilitiesV1,
-    type ComposerRefV1,
-    type ComposerSnapshotV1,
-    type ComposerTransactionResultV1,
-} from '@happier-dev/protocol';
+import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
+import type { ComposerAttachmentDraftV1, ComposerAttachmentViewV1 } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import type { ComposerCapabilitiesV1, ComposerSnapshotV1, ComposerTransactionResultV1 } from '@happier-dev/protocol/plugins/ui/composer';
+import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef';
 import { composerRefsV1Equal } from '@happier-dev/protocol/plugins/ui/composerRef';
 
 import type { ComposerStructuredInputMention } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';

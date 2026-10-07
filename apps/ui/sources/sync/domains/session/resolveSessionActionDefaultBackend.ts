@@ -1,14 +1,10 @@
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
-import {
-    AgentExecutionTargetV1Schema,
-    SessionCreationCorrespondenceV1Schema,
-    agentRoutingIdAddressesContributionIdentityV1,
-    readAcpConfiguredBackendV1FromMetadata,
-    resolveLinkedExternalSessionMetadataV1,
-    type AgentExecutionTargetV1,
-    type BackendTargetRefV2,
-    type PersistedBackendTargetRefV2,
-} from '@happier-dev/protocol';
+import { AgentExecutionTargetV1Schema, type AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { agentRoutingIdAddressesContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { readAcpConfiguredBackendV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/acpConfiguredBackendV1';
+import { resolveLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import type { BackendTargetRefV2, PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 import {
     isBundledAgentId,

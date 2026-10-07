@@ -1,8 +1,5 @@
-import {
-    buildQualifiedPluginContributionKey,
-    TeamResourceConnectedServiceSelectionV2Schema,
-    type TeamResourceConnectedServiceSelectionV2,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { TeamResourceConnectedServiceSelectionV2Schema, type TeamResourceConnectedServiceSelectionV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
 
 export type ConnectedServicesServiceBinding =
     | Readonly<{

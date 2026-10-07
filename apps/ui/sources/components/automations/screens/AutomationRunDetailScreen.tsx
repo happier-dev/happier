@@ -2,11 +2,8 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import {
-    createCanonicalJsonSigningInput,
-    type AutomationRunCause,
-    type AutomationV3RunDetail,
-} from '@happier-dev/protocol';
+import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
+import type { AutomationRunCause, AutomationV3RunDetail } from '@happier-dev/protocol/automations/automationApiV3';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';

@@ -1,4 +1,5 @@
-import { readNonBlankOpaqueIdentifier, type ExternalSessionFollowPolicy } from '@happier-dev/protocol';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import type { ExternalSessionFollowPolicy } from '@happier-dev/protocol/sessions/external/linked-metadata';
 
 import { updateMetadataWithExternalSessionFollowPolicy } from '@/sync/domains/session/external/externalSessionFollowMetadata';
 import { readExternalSessionLink, type ExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';

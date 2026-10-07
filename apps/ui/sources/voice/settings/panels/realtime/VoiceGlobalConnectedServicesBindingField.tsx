@@ -1,14 +1,8 @@
 import * as React from 'react';
 import { useRouter } from 'expo-router';
 
-import {
-  ConnectedServiceBindingsV1Schema,
-  ConnectedServiceIdSchema,
-  PluginContributionIdentityV1Schema,
-  buildQualifiedPluginContributionKey,
-  type ConnectedServiceBindingsV1,
-  type ConnectedServiceId,
-} from '@happier-dev/protocol';
+import { ConnectedServiceBindingsV1Schema, ConnectedServiceIdSchema, type ConnectedServiceBindingsV1, type ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { PluginContributionIdentityV1Schema, buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import {
   isBundledAgentId,

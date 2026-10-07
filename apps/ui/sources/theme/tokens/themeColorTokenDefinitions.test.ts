@@ -237,12 +237,12 @@ describe('editable theme color token definitions', () => {
         expect(classifiedPaths).toContain('glass.composerSurface');
     });
 
-    it('exposes surface highlight as an editable color token with transparent base defaults', () => {
+    it('exposes the raised-edge ink as an editable color token that defaults to each theme\'s own text ink', () => {
         const definition = getEditableThemeColorTokenDefinition('effect.surfaceHighlight');
 
         expect(definition?.valueKind).toBe('color');
-        expect(resolveThemeColorTokenBaseValue(lightTheme, 'effect.surfaceHighlight')).toBe('transparent');
-        expect(resolveThemeColorTokenBaseValue(darkTheme, 'effect.surfaceHighlight')).toBe('transparent');
+        expect(resolveThemeColorTokenBaseValue(lightTheme, 'effect.surfaceHighlight')).toBe('rgba(34, 34, 34, 0.04)');
+        expect(resolveThemeColorTokenBaseValue(darkTheme, 'effect.surfaceHighlight')).toBe('rgba(239, 239, 239, 0.06)');
     });
 
     it('records contrast guidance for foreground tokens that depend on another editable color', () => {

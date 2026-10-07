@@ -1,4 +1,6 @@
-import { getActionSpec, maybeParseJson, type ActionId } from '@happier-dev/protocol';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { maybeParseJson } from '@happier-dev/protocol/activity/parseJson';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 
 /**
  * How a first-party Happier Action reaches a transcript tool row.

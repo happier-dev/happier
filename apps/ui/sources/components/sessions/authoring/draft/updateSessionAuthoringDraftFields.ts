@@ -1,5 +1,5 @@
 import type { ModelMode, PermissionMode } from '@/sync/domains/permissions/permissionTypes';
-import { buildBackendTargetKeyV2 } from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 import { buildSessionModelSelectionForAgentTarget } from '../sessionModelSelectionValue';
 import type { SessionAuthoringDraft } from './sessionAuthoringDraft';

@@ -17,8 +17,8 @@ const modalShowMock = vi.hoisted(() => vi.fn<IModal['show']>());
 const finalizeHttp = vi.hoisted(() => vi.fn<(url: RequestInfo | URL, init?: RequestInit) => Promise<Response>>());
 const abortRpc = vi.hoisted(() => vi.fn<(request: { method: string; payload: unknown }) => Promise<unknown>>());
 
-vi.mock('react-native', async () => (await import('@/dev/testkit')).createReactNativeNativeMock({ platformOS: 'ios' }));
-vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit')).createUnistylesMock());
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeNativeMock({ platformOS: 'ios' }));
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit')).createExpoVectorIconsMock());
 vi.mock('expo-router', async () => (await import('@/dev/testkit')).createExpoRouterMock().module);
 vi.mock('@/modal', async () => (await import('@/dev/testkit')).createModalModuleMock({ spies: { show: modalShowMock } }).module);

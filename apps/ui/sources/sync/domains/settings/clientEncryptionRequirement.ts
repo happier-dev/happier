@@ -3,7 +3,7 @@ import {
     isAccountEncryptionModeAllowedByClientRequirement,
     isSessionEncryptionModeAllowedByClientRequirement,
     type ClientEncryptionRequirement,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/encryption/clientEncryptionRequirement';
 
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';

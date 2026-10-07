@@ -9,10 +9,8 @@ import {
     type TeamCredentialResourceListFilterV1,
     type TeamsListInputV1,
 } from '@happier-dev/protocol/teams';
-import {
-    bindHomeDomainActionHttpRequestV1,
-    TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1,
-} from '@happier-dev/protocol';
+import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
+import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 
 import {
     requestHomeDomain,

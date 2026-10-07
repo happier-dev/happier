@@ -362,6 +362,7 @@ function CollectionBoard<Item>(props: CollectionCardsProps<Item>): ReactElement 
               colors={{
                 track: palette.segmentTrack,
                 thumb: palette.segmentThumb,
+                thumbLift: palette.segmentThumbLift,
                 label: theme.colors.secondaryText,
                 activeLabel: theme.colors.text,
                 focusRing: theme.colors.focus,

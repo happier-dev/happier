@@ -3,7 +3,7 @@ import {
     parseSessionRuntimeActivityProjectionFields,
     type SessionRuntimeActivityProjection,
     type SessionRuntimeActivityState,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 
 export type SessionRuntimeActivityProjectionBase = Readonly<{
     runtimeActivityState?: SessionRuntimeActivityState | null;

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { pluginJsonValuesEqual } from '@happier-dev/protocol';
+import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 
 export type WorkflowEditorHistoryControls = Readonly<{
     undoLabel: string | null;

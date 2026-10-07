@@ -2,7 +2,7 @@ import {
     encodeHomeQrInviteV2Payload,
     parseHomeQrInviteV2Payload,
     type HomeQrInviteV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/crypto/qrProvisioningV2';
 import { tryCreateQRMatrix } from '@/components/qr/qrMatrix';
 import { randomUUID } from '@/platform/randomUUID';
 import { isAcceptedHappierUrlProtocol, resolveAppUrlScheme } from '@/utils/url/appScheme';

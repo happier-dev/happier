@@ -4,7 +4,7 @@ import {
   type ScmDiffSummaryResultListResponse, type ScmDiffSummaryResultClearInput,
   type ScmDiffSummaryResultClearResponse, type ScmDiffSummaryResultFailure,
 } from '@happier-dev/protocol/scm';
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { getCurrentAuth } from '@/auth/context/currentAuth';
 import { randomUUID } from '@/platform/randomUUID';

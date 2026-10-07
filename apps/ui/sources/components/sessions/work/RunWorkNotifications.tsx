@@ -1,6 +1,9 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { sameStrictJsonValue, type AutomationRunLifecycleSource, type WorkflowProjectTargetV1, type WorkflowTriggerAddRequestV1, type WorkflowTriggerSetV1 } from '@happier-dev/protocol';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { AutomationRunLifecycleSource } from '@happier-dev/protocol/automations/automationRunLifecycle';
+import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
+import type { WorkflowTriggerAddRequestV1, WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { buildTriggerTarget, readTriggerThen } from '@/components/workflows/triggers/sessionTriggerForm';
 import type { WorkflowActionExecute } from '@/sync/domains/workflows/callWorkflowAction';
 import { addWorkflowTrigger, listWorkflowTriggerSets, removeWorkflowTrigger, type WorkflowTriggerWriteResult } from '@/sync/domains/workflows/workflowTriggerActions';

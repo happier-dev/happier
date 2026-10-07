@@ -2,7 +2,7 @@ import { happierPageTextMetrics, HAPPIER_WORK_PANE_METRICS } from '@happier-dev/
 import * as React from 'react';
 import { type LayoutChangeEvent, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { readSessionRolesV1 } from '@happier-dev/protocol';
+import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
 
 import { settleSessionRoleWrite } from '@/components/roles/session/sessionRole';
 import { WorkSection } from '@/components/sessions/work/WorkSection';

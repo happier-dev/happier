@@ -3,10 +3,11 @@ import { pathToFileURL } from 'node:url';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
-import { ensureDepsInstalled, ensureWorkspacePackagesBuiltForComponent } from '../proc/pm.mjs';
+import { ensureDepsInstalled, ensureWorkspacePackagesBuiltForComponent, resolveDependencyInstallRoot } from '../proc/pm.mjs';
+import { inspectDependencyRefresh, SCRIPTLESS_DEPENDENCY_INSTALL_MODE, withDependencyRefreshLock } from '../proc/dependency_refresh.mjs';
 import { resolveWorkspaceToolBinDirs } from '../proc/workspace_tool_bins.mjs';
 import { run } from '../proc/proc.mjs';
-import { spawnProc } from '../proc/proc.mjs';
+import { killProcessTree, spawnProc } from '../proc/proc.mjs';
 import { ensureExpoIsolationEnv, getExpoStatePaths, resolveExpoTmpDir, wantsExpoClearCache } from './expo.mjs';
 import { coerceHappyMonorepoRootFromPath } from '../paths/paths.mjs';
 import { pathExists } from '../fs/fs.mjs';
@@ -246,6 +247,7 @@ export async function expoSpawn({
   ensureDepsLabel = 'happy',
   quiet = false,
   workspacePrepared = false,
+  onSpawned = null,
   options,
 }) {
   const runnerDir = dir;
@@ -275,26 +277,51 @@ export async function expoSpawn({
         );
       }
     }
-    await repairExpoYarnPackageBinShims({ runnerDir, projectDir: workspaceDepsDir });
-    if (isIosRunCommand(args)) {
-      await ensureReactNativeSkiaIosBinaries({ runnerDir, projectDir: workspaceDepsDir, env: preparationEnv, quiet });
-      await ensureReactNativeLibsodiumNativeBuild({ runnerDir, projectDir: workspaceDepsDir, env: preparationEnv, quiet });
+  });
+  const installDir = resolveDependencyInstallRoot(runnerDir);
+  return await withDependencyRefreshLock({ installDir, env }, async () => {
+    const readiness = await inspectDependencyRefresh({
+      installDir, componentDir: runnerDir, installMode: SCRIPTLESS_DEPENDENCY_INSTALL_MODE,
+    });
+    // Canonical workspace consumers require the completed install certificate.
+    // Standalone/manual fixtures retain their existing explicit dependency
+    // policy, but are not advertised as safely restartable install consumers.
+    if (coerceHappyMonorepoRootFromPath(runnerDir) && !readiness.admitted) {
+      const error = new Error('[expo] dependencies are not ready; complete dependency refresh before starting Metro');
+      error.code = 'HAPPIER_EXPO_DEPENDENCIES_NOT_READY';
+      throw error;
     }
-    if (isAndroidRunCommand(args)) {
-      await ensureReactNativeSkiaAndroidBinaries({
-        runnerDir,
-        projectDir: workspaceDepsDir,
-        architectures: resolveReactNativeSkiaAndroidArchitecturesFromEnv(preparationEnv),
-        env: preparationEnv,
-        quiet,
-      });
+    await withExpoPreparationEnv(env, async (preparationEnv) => {
+      await repairExpoYarnPackageBinShims({ runnerDir, projectDir: workspaceDepsDir });
+      if (isIosRunCommand(args)) {
+        await ensureReactNativeSkiaIosBinaries({ runnerDir, projectDir: workspaceDepsDir, env: preparationEnv, quiet });
+        await ensureReactNativeLibsodiumNativeBuild({ runnerDir, projectDir: workspaceDepsDir, env: preparationEnv, quiet });
+      }
+      if (isAndroidRunCommand(args)) {
+        await ensureReactNativeSkiaAndroidBinaries({
+          runnerDir,
+          projectDir: workspaceDepsDir,
+          architectures: resolveReactNativeSkiaAndroidArchitecturesFromEnv(preparationEnv),
+          env: preparationEnv,
+          quiet,
+        });
+      }
+    });
+    const expoBin = await resolveExpoBin(runnerDir);
+    const effectiveEnv = applyExpoNodeHeapEnv(env, {
+      envKey: 'HAPPIER_STACK_EXPO_MAX_OLD_SPACE_SIZE_MB',
+    });
+    effectiveEnv.EXPO_UNSTABLE_WEB_MODAL = '1';
+    const effectiveArgs = applyExpoExportMaxWorkersArgs(args, effectiveEnv);
+    const proc = spawnProc(label, expoBin, effectiveArgs, effectiveEnv, { cwd, ...(options ?? {}) });
+    try {
+      // Publish the canonical PID before releasing the same lock installers
+      // acquire, so an install can never miss a newly launched managed reader.
+      await onSpawned?.(proc, { dependencyReady: readiness.admitted });
+      return proc;
+    } catch (error) {
+      await killProcessTree(proc, 'SIGTERM');
+      throw error;
     }
   });
-  const expoBin = await resolveExpoBin(runnerDir);
-  const effectiveEnv = applyExpoNodeHeapEnv(env, {
-    envKey: 'HAPPIER_STACK_EXPO_MAX_OLD_SPACE_SIZE_MB',
-  });
-  effectiveEnv.EXPO_UNSTABLE_WEB_MODAL = '1';
-  const effectiveArgs = applyExpoExportMaxWorkersArgs(args, effectiveEnv);
-  return spawnProc(label, expoBin, effectiveArgs, effectiveEnv, { cwd, ...(options ?? {}) });
 }

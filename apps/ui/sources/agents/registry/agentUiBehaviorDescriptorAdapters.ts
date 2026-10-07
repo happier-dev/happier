@@ -2,7 +2,8 @@ import type {
     AgentUiSettingReferenceV1,
     ExternalSessionsSource,
 } from '@happier-dev/protocol';
-import { mergeSpawnConfigOptionAliases, RuntimeDescriptorV1Schema } from '@happier-dev/protocol';
+import { mergeSpawnConfigOptionAliases } from '@happier-dev/protocol/actions/sessionSpawnConfigOptions';
+import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { parseConnectedServicesBindingsByServiceIdFromAgentOptionState } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';

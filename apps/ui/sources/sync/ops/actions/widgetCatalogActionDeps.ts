@@ -34,6 +34,11 @@ export type WidgetActionRuntimeV1 = Readonly<{
     isCurrent(): boolean;
 }>;
 
+/** Installed App metadata belongs to the proven active UI Account, not an arbitrary captured Home. */
+export function canReadActiveWidgetCatalogV1(account: Pick<LazyActionAccountContext, 'serverId' | 'accountId'>): boolean {
+    return areServerAccountScopesEqual(getActiveServerAccountScope(), { serverId: account.serverId, accountId: account.accountId });
+}
+
 export async function readWidgetActionRuntimeV1(
     surface: WidgetSurfaceRefV1, account: LazyActionAccountContext, signal?: AbortSignal,
     sessionTarget?: Readonly<{ serverId: string; sessionId: string }>,
@@ -43,10 +48,9 @@ export async function readWidgetActionRuntimeV1(
     if (surface.serverId !== account.serverId || surface.accountId !== account.accountId) return unavailable('widget_scope_mismatch');
     const owner = surface.owner;
     const selectedSession = sessionTarget ?? (owner.kind === 'sessionBoard' || owner.kind === 'companion' ? { serverId: surface.serverId, sessionId: owner.sessionId } : undefined);
-    const accountIsCurrent = () => account.accountLifetime?.isCurrent() === true
-        && areServerAccountScopesEqual(getActiveServerAccountScope(), { serverId: account.serverId, accountId: account.accountId });
+    const accountIsCurrent = () => account.accountLifetime?.isCurrent() === true && canReadActiveWidgetCatalogV1(account);
     if (!selectedSession) {
-        if (!areServerAccountScopesEqual(getActiveServerAccountScope(), { serverId: account.serverId, accountId: account.accountId })) return unavailable('widget_catalog_unavailable');
+        if (!canReadActiveWidgetCatalogV1(account)) return unavailable('widget_catalog_unavailable');
         const projection = readCurrentAppShellPluginUiProjection();
         return { candidates: selectWidgetCandidates(projection), projection, machineId: null,
             isCurrent: () => accountIsCurrent() && readCurrentAppShellPluginUiProjection() === projection };
@@ -114,6 +118,7 @@ export function createWidgetCatalogActionDepsV1(account: LazyActionAccountContex
                 summary.sourceDefinition ? candidates.find(candidate => isSameWidgetDefinitionV1(widgetCandidateDefinitionV1(candidate), summary.sourceDefinition!)) : null));
             account.assertCurrent();
             return [...candidates, ...authored].map(candidate => ({ definition: widgetCandidateDefinitionV1(candidate), title: candidate.title,
+                sizeDeclaration: candidate.sizeDeclaration,
                 fields: [...candidate.inputs?.fields ?? []], availability: candidate.sourceDefinition
                     && !candidates.some(current => isSameWidgetDefinitionV1(widgetCandidateDefinitionV1(current), candidate.sourceDefinition!))
                     ? 'unavailable' as const : 'available' as const,

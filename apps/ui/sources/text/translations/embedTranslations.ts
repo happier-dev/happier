@@ -1,248 +1,28 @@
-const english = {
-    embed: {
-        errors: {
-            originNotAllowed: 'This page isn’t allowed to show this conversation.',
-            originNotAllowedReason: 'Add this site to the embed’s allowed sites in Happier.',
-            unavailable: 'This conversation isn’t available here.',
-            encrypted: 'This conversation is encrypted and can’t be opened here.',
-            createNotGranted: 'This app can’t start new chats.',
-            unsupportedVersion: 'This chat needs a newer embed.',
-            unsupportedVersionReason: 'Update @happier-dev/embed in this app.',
-        },
-        nothingToShow: 'Nothing to show yet',
-        nothingToShowReason: 'This app hasn’t opened a conversation.',
-        reconnecting: 'Reconnecting…',
-        previewUnavailable: 'Preview unavailable',
-        previewUser: "Analyse this lead and record the result: Acme Robotics, 40 seats, evaluating in Q4.",
-        previewAgent: "Strong fit. Budget is confirmed and the champion owns the decision. I recorded the analysis:",
-        previewFollowUp: "Should we move this lead to qualified?",
-    },
-};
-
-function translated(value: typeof english): typeof english {
-    return value;
-}
+// Tooling aggregate. Product locale roots import only their locale payload.
+import { embedTranslations as en } from './features/en';
+import { embedTranslations as ca } from './features/ca';
+import { embedTranslations as de } from './features/de';
+import { embedTranslations as es } from './features/es';
+import { embedTranslations as fr } from './features/fr';
+import { embedTranslations as it } from './features/it';
+import { embedTranslations as ja } from './features/ja';
+import { embedTranslations as pl } from './features/pl';
+import { embedTranslations as pt } from './features/pt';
+import { embedTranslations as ru } from './features/ru';
+import { embedTranslations as zh_Hans } from './features/zh-Hans';
+import { embedTranslations as zh_Hant } from './features/zh-Hant';
 
 export const embedTranslations = {
-    en: english,
-    ca: translated({
-        embed: {
-            errors: {
-                originNotAllowed: 'Aquesta pàgina no pot mostrar aquesta conversa.',
-                originNotAllowedReason: 'Afegeix aquest lloc als llocs permesos de la incrustació a Happier.',
-                unavailable: 'Aquesta conversa no està disponible aquí.',
-                encrypted: 'Aquesta conversa està xifrada i no es pot obrir aquí.',
-                createNotGranted: 'Aquesta aplicació no pot iniciar xats nous.',
-                unsupportedVersion: 'Aquest xat necessita una incrustació més nova.',
-                unsupportedVersionReason: 'Actualitza @happier-dev/embed en aquesta aplicació.',
-            },
-            nothingToShow: 'Encara no hi ha res a mostrar',
-            nothingToShowReason: 'Aquesta aplicació no ha obert cap conversa.',
-            reconnecting: 'S’està reconnectant…',
-            previewUnavailable: 'Previsualització no disponible',
-            previewUser: "Analitza aquest contacte i desa el resultat: Acme Robotics, 40 llicències, avaluant al quart trimestre.",
-            previewAgent: "Molt bon encaix. El pressupost està confirmat i el promotor decideix. He desat l’anàlisi:",
-            previewFollowUp: "Passem aquest contacte a qualificat?",
-        },
-    }),
-    de: translated({
-        embed: {
-            errors: {
-                originNotAllowed: 'Diese Seite darf diese Unterhaltung nicht anzeigen.',
-                originNotAllowedReason: 'Füge diese Website in Happier zu den erlaubten Websites der Einbettung hinzu.',
-                unavailable: 'Diese Unterhaltung ist hier nicht verfügbar.',
-                encrypted: 'Diese Unterhaltung ist verschlüsselt und kann hier nicht geöffnet werden.',
-                createNotGranted: 'Diese App kann keine neuen Chats starten.',
-                unsupportedVersion: 'Dieser Chat braucht eine neuere Einbettung.',
-                unsupportedVersionReason: 'Aktualisiere @happier-dev/embed in dieser App.',
-            },
-            nothingToShow: 'Noch nichts anzuzeigen',
-            nothingToShowReason: 'Diese App hat noch keine Unterhaltung geöffnet.',
-            reconnecting: 'Verbindung wird wiederhergestellt…',
-            previewUnavailable: 'Vorschau nicht verfügbar',
-            previewUser: "Analysiere diesen Lead und halte das Ergebnis fest: Acme Robotics, 40 Plätze, Evaluierung im 4. Quartal.",
-            previewAgent: "Passt sehr gut. Das Budget ist bestätigt und der Champion entscheidet. Ich habe die Analyse festgehalten:",
-            previewFollowUp: "Sollen wir diesen Lead auf qualifiziert setzen?",
-        },
-    }),
-    es: translated({
-        embed: {
-            errors: {
-                originNotAllowed: 'Esta página no puede mostrar esta conversación.',
-                originNotAllowedReason: 'Añade este sitio a los sitios permitidos de la inserción en Happier.',
-                unavailable: 'Esta conversación no está disponible aquí.',
-                encrypted: 'Esta conversación está cifrada y no se puede abrir aquí.',
-                createNotGranted: 'Esta aplicación no puede iniciar chats nuevos.',
-                unsupportedVersion: 'Este chat necesita una inserción más reciente.',
-                unsupportedVersionReason: 'Actualiza @happier-dev/embed en esta aplicación.',
-            },
-            nothingToShow: 'Todavía no hay nada que mostrar',
-            nothingToShowReason: 'Esta aplicación no ha abierto ninguna conversación.',
-            reconnecting: 'Reconectando…',
-            previewUnavailable: 'Vista previa no disponible',
-            previewUser: "Analiza este lead y registra el resultado: Acme Robotics, 40 puestos, evaluando en el cuarto trimestre.",
-            previewAgent: "Encaja muy bien. El presupuesto está confirmado y el promotor decide. Registré el análisis:",
-            previewFollowUp: "¿Pasamos este lead a calificado?",
-        },
-    }),
-    fr: translated({
-        embed: {
-            errors: {
-                originNotAllowed: 'Cette page n’est pas autorisée à afficher cette conversation.',
-                originNotAllowedReason: 'Ajoutez ce site aux sites autorisés de l’intégration dans Happier.',
-                unavailable: 'Cette conversation n’est pas disponible ici.',
-                encrypted: 'Cette conversation est chiffrée et ne peut pas être ouverte ici.',
-                createNotGranted: 'Cette application ne peut pas démarrer de nouvelles discussions.',
-                unsupportedVersion: 'Cette discussion nécessite une intégration plus récente.',
-                unsupportedVersionReason: 'Mettez à jour @happier-dev/embed dans cette application.',
-            },
-            nothingToShow: 'Rien à afficher pour le moment',
-            nothingToShowReason: 'Cette application n’a ouvert aucune conversation.',
-            reconnecting: 'Reconnexion…',
-            previewUnavailable: 'Aperçu indisponible',
-            previewUser: "Analyse ce prospect et enregistre le résultat : Acme Robotics, 40 postes, évaluation au quatrième trimestre.",
-            previewAgent: "Très bonne adéquation. Le budget est confirmé et le sponsor décide. J’ai enregistré l’analyse :",
-            previewFollowUp: "On passe ce prospect en qualifié ?",
-        },
-    }),
-    it: translated({
-        embed: {
-            errors: {
-                originNotAllowed: 'Questa pagina non può mostrare questa conversazione.',
-                originNotAllowedReason: 'Aggiungi questo sito ai siti consentiti dell’incorporamento in Happier.',
-                unavailable: 'Questa conversazione non è disponibile qui.',
-                encrypted: 'Questa conversazione è cifrata e non può essere aperta qui.',
-                createNotGranted: 'Questa app non può avviare nuove chat.',
-                unsupportedVersion: 'Questa chat richiede un incorporamento più recente.',
-                unsupportedVersionReason: 'Aggiorna @happier-dev/embed in questa app.',
-            },
-            nothingToShow: 'Ancora niente da mostrare',
-            nothingToShowReason: 'Questa app non ha aperto nessuna conversazione.',
-            reconnecting: 'Riconnessione…',
-            previewUnavailable: 'Anteprima non disponibile',
-            previewUser: "Analizza questo lead e registra il risultato: Acme Robotics, 40 postazioni, valutazione nel quarto trimestre.",
-            previewAgent: "Ottima corrispondenza. Il budget è confermato e il promotore decide. Ho registrato l’analisi:",
-            previewFollowUp: "Spostiamo questo lead a qualificato?",
-        },
-    }),
-    ja: translated({
-        embed: {
-            errors: {
-                originNotAllowed: 'このページではこの会話を表示できません。',
-                originNotAllowedReason: 'Happier で、このサイトを埋め込みの許可サイトに追加してください。',
-                unavailable: 'この会話はここでは利用できません。',
-                encrypted: 'この会話は暗号化されているため、ここでは開けません。',
-                createNotGranted: 'このアプリでは新しいチャットを開始できません。',
-                unsupportedVersion: 'このチャットには新しい埋め込みが必要です。',
-                unsupportedVersionReason: 'このアプリの @happier-dev/embed を更新してください。',
-            },
-            nothingToShow: 'まだ表示するものはありません',
-            nothingToShowReason: 'このアプリはまだ会話を開いていません。',
-            reconnecting: '再接続しています…',
-            previewUnavailable: 'プレビューを表示できません',
-            previewUser: "このリードを分析して結果を記録して: Acme Robotics、40 席、第 4 四半期に評価中。",
-            previewAgent: "相性は良好です。予算は確定し、推進者が決裁者です。分析を記録しました:",
-            previewFollowUp: "このリードを「見込みあり」に移しますか?",
-        },
-    }),
-    pl: translated({
-        embed: {
-            errors: {
-                originNotAllowed: 'Ta strona nie może wyświetlać tej rozmowy.',
-                originNotAllowedReason: 'Dodaj tę witrynę do dozwolonych witryn osadzenia w Happier.',
-                unavailable: 'Ta rozmowa nie jest tu dostępna.',
-                encrypted: 'Ta rozmowa jest zaszyfrowana i nie można jej tu otworzyć.',
-                createNotGranted: 'Ta aplikacja nie może rozpoczynać nowych czatów.',
-                unsupportedVersion: 'Ten czat wymaga nowszego osadzenia.',
-                unsupportedVersionReason: 'Zaktualizuj @happier-dev/embed w tej aplikacji.',
-            },
-            nothingToShow: 'Na razie nie ma nic do pokazania',
-            nothingToShowReason: 'Ta aplikacja nie otworzyła żadnej rozmowy.',
-            reconnecting: 'Ponowne łączenie…',
-            previewUnavailable: 'Podgląd niedostępny',
-            previewUser: "Przeanalizuj tego leada i zapisz wynik: Acme Robotics, 40 stanowisk, ocena w czwartym kwartale.",
-            previewAgent: "Bardzo dobre dopasowanie. Budżet jest potwierdzony, a decyzję podejmuje ambasador. Zapisałem analizę:",
-            previewFollowUp: "Przenieść tego leada do zakwalifikowanych?",
-        },
-    }),
-    pt: translated({
-        embed: {
-            errors: {
-                originNotAllowed: 'Esta página não pode mostrar esta conversa.',
-                originNotAllowedReason: 'Adicione este site aos sites permitidos da incorporação no Happier.',
-                unavailable: 'Esta conversa não está disponível aqui.',
-                encrypted: 'Esta conversa está criptografada e não pode ser aberta aqui.',
-                createNotGranted: 'Este app não pode iniciar novos chats.',
-                unsupportedVersion: 'Este chat precisa de uma incorporação mais recente.',
-                unsupportedVersionReason: 'Atualize @happier-dev/embed neste app.',
-            },
-            nothingToShow: 'Nada para mostrar ainda',
-            nothingToShowReason: 'Este app ainda não abriu nenhuma conversa.',
-            reconnecting: 'Reconectando…',
-            previewUnavailable: 'Pré-visualização indisponível',
-            previewUser: "Analise este lead e registre o resultado: Acme Robotics, 40 licenças, avaliando no quarto trimestre.",
-            previewAgent: "Encaixe excelente. O orçamento está confirmado e o patrocinador decide. Registrei a análise:",
-            previewFollowUp: "Movemos este lead para qualificado?",
-        },
-    }),
-    ru: translated({
-        embed: {
-            errors: {
-                originNotAllowed: 'Эта страница не может показывать этот разговор.',
-                originNotAllowedReason: 'Добавьте этот сайт в разрешённые сайты встраивания в Happier.',
-                unavailable: 'Этот разговор здесь недоступен.',
-                encrypted: 'Этот разговор зашифрован и не может быть открыт здесь.',
-                createNotGranted: 'Это приложение не может начинать новые чаты.',
-                unsupportedVersion: 'Этому чату нужна более новая версия встраивания.',
-                unsupportedVersionReason: 'Обновите @happier-dev/embed в этом приложении.',
-            },
-            nothingToShow: 'Пока нечего показать',
-            nothingToShowReason: 'Это приложение ещё не открыло разговор.',
-            reconnecting: 'Переподключение…',
-            previewUnavailable: 'Предпросмотр недоступен',
-            previewUser: "Проанализируй этого лида и запиши результат: Acme Robotics, 40 мест, оценка в четвёртом квартале.",
-            previewAgent: "Отличное совпадение. Бюджет подтверждён, решение принимает инициатор. Я записал анализ:",
-            previewFollowUp: "Перевести этого лида в квалифицированные?",
-        },
-    }),
-    'zh-Hans': translated({
-        embed: {
-            errors: {
-                originNotAllowed: '此页面不能显示这段对话。',
-                originNotAllowedReason: '请在 Happier 中将此网站加入嵌入的允许网站。',
-                unavailable: '这段对话在此不可用。',
-                encrypted: '这段对话已加密，无法在此打开。',
-                createNotGranted: '此应用无法开始新对话。',
-                unsupportedVersion: '此对话需要更新的嵌入版本。',
-                unsupportedVersionReason: '请在此应用中更新 @happier-dev/embed。',
-            },
-            nothingToShow: '暂无内容',
-            nothingToShowReason: '此应用尚未打开任何对话。',
-            reconnecting: '正在重新连接…',
-            previewUnavailable: '预览不可用',
-            previewUser: "分析这个线索并记录结果：Acme Robotics，40 个席位，第四季度评估。",
-            previewAgent: "非常匹配。预算已确认，推动者负责决策。我已记录分析：",
-            previewFollowUp: "要把这个线索移到“已确认”吗？",
-        },
-    }),
-    'zh-Hant': translated({
-        embed: {
-            errors: {
-                originNotAllowed: '此頁面不能顯示這段對話。',
-                originNotAllowedReason: '請在 Happier 中將此網站加入嵌入的允許網站。',
-                unavailable: '這段對話在此無法使用。',
-                encrypted: '這段對話已加密，無法在此開啟。',
-                createNotGranted: '此應用程式無法開始新對話。',
-                unsupportedVersion: '此對話需要更新的嵌入版本。',
-                unsupportedVersionReason: '請在此應用程式中更新 @happier-dev/embed。',
-            },
-            nothingToShow: '目前沒有內容',
-            nothingToShowReason: '此應用程式尚未開啟任何對話。',
-            reconnecting: '正在重新連線…',
-            previewUnavailable: '無法預覽',
-            previewUser: "分析這個潛在客戶並記錄結果：Acme Robotics，40 個席位，第四季評估。",
-            previewAgent: "非常契合。預算已確認，推動者負責決策。我已記錄分析：",
-            previewFollowUp: "要把這個潛在客戶移到「已確認」嗎？",
-        },
-    }),
+    ...en.embedTranslations,
+    ...ca.embedTranslations,
+    ...de.embedTranslations,
+    ...es.embedTranslations,
+    ...fr.embedTranslations,
+    ...it.embedTranslations,
+    ...ja.embedTranslations,
+    ...pl.embedTranslations,
+    ...pt.embedTranslations,
+    ...ru.embedTranslations,
+    ...zh_Hans.embedTranslations,
+    ...zh_Hant.embedTranslations,
 };

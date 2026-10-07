@@ -1,10 +1,7 @@
 import * as React from 'react';
-import {
-    supportsMachineSessionFollowWakeOnHumanChangeV1,
-    type SessionFollowSourceKeyPreparationWaitingReasonV1,
-    type SessionFollowSourceModeV1,
-    type SessionFollowSourceV1,
-} from '@happier-dev/protocol';
+import { supportsMachineSessionFollowWakeOnHumanChangeV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
+import type { SessionFollowSourceKeyPreparationWaitingReasonV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceKeyPreparationV1';
+import type { SessionFollowSourceModeV1, SessionFollowSourceV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourcesApi';
 import { Pressable, View } from 'react-native';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';

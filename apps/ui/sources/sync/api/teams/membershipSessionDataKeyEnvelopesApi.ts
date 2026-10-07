@@ -2,7 +2,7 @@ import {
     MembershipSessionDataKeyEnvelopeErrorV1Schema,
     MembershipSessionDataKeyEnvelopePageV1Schema,
     PatchMembershipSessionDataKeyEnvelopesResultV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/encryption/membershipSessionDataKeyEnvelopes';
 
 import { SessionAccessApiError, type SessionAccessRequestOptions } from '@/sync/api/session/sessionAccessApi';
 import { serverAccountScopedResourceKey } from '@/sync/domains/scope/serverAccountScope';
@@ -15,7 +15,7 @@ import {
 import {
     runSessionDataKeyPreparationDetached,
     type SessionDataKeyPreparationProgress,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/encryption/sessionDataKeyPreparationPass';
 import {
     runWithServerRequestAuthorityForServerAccountScope,
     type ServerAccountRequestAuthority,

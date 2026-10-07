@@ -8,7 +8,7 @@ import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { t } from '@/text';
 import { sync } from '@/sync/sync';
 import { randomUUID } from '@/platform/randomUUID';
-import { parseSshTarget, buildSshTarget } from '@happier-dev/protocol';
+import { parseSshTarget, buildSshTarget } from '@happier-dev/protocol/ssh/sshTarget';
 
 import { SshCredentialsFields, type SshCredentialsDraft } from '@/components/ssh/SshCredentialsFields';
 import { applyConfiguredSshHostSuggestionToDraft, createDefaultSshCredentialsDraft, isSshCredentialsDraftReady, parseSshPortNumber } from '@/components/ssh/sshCredentialsDraft';

@@ -1,17 +1,19 @@
-import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol';
+import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { InputFieldHint, InputOptionsConsumerV1 } from '@happier-dev/protocol/inputs';
 import type {
     WidgetBindingResolutionV1,
     WidgetInputBindingV1,
     WidgetInputBindingsV1,
     WidgetInputIssueV1,
+    WidgetSizeV1,
+    WidgetSurfaceRefV1,
 } from '@happier-dev/protocol/widgets';
 
 import type { IconName } from '@/components/ui/icons/Icon';
 
 /**
  * The Set up / Edit inputs step's model (lab `dashboards` dadd A/Ab/IN, dbind E/X). It only presents
- * bindings: what each input is bound to, which choices the person has, and whether the step can
+ * bindings and admitted sizes: what each input is bound to, which choices the person has, and whether the step can
  * finish. Admission belongs to the binder (`resolveConfiguredWidgetInputs`) and to the
  * `widgets.instance.*` Actions behind `submit`; this file never decides that a value is valid.
  */
@@ -53,9 +55,10 @@ export function isLiteralWidgetSetupField(field: InputFieldHint): boolean {
     return field.inputType === undefined || field.widget !== 'select';
 }
 
-/** What the step edits: the copy's durable bindings. */
+/** What Add submits atomically: this copy's bindings and its chosen presentation size. */
 export type WidgetSetupDraft = Readonly<{
     bindings: WidgetInputBindingsV1;
+    size?: WidgetSizeV1;
 }>;
 
 export type WidgetSetupSubmitResult = Readonly<{ ok: true; approvalPending?: true }> | Readonly<{ ok: false; message: string }>;
@@ -72,6 +75,8 @@ export type WidgetSetup = Readonly<{
     widget?: Readonly<{ title: string; mark: IconName }>;
     fields: readonly WidgetSetupField[];
     initial: WidgetSetupDraft;
+    /** Resolved once from the declaration and host surface; linear surfaces omit it. */
+    sizeChoices?: Readonly<{ surface: WidgetSurfaceRefV1['owner']['kind']; sizes: readonly WidgetSizeV1[] }>;
     /** The binder's answer for a draft (pure; re-run on every change). */
     resolve: (draft: WidgetSetupDraft) => WidgetBindingResolutionV1;
     /**
@@ -231,5 +236,5 @@ export function setWidgetSetupBinding(
         case 'pin': bindings[path] = { kind: 'value', value: next.value }; break;
         case 'clear': delete bindings[path]; break;
     }
-    return { bindings };
+    return { ...draft, bindings };
 }

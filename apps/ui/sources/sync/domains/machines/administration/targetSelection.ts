@@ -1,7 +1,7 @@
 import {
     MachineAdministrationTargetV1Schema,
     type MachineAdministrationTargetV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
 
 type MachineAdministrationRouteParamV1 = string | readonly string[] | undefined;
 

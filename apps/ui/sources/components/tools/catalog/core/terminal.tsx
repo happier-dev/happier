@@ -1,4 +1,4 @@
-import { extractShellCommand, stripShellCommandPreludeForDisplay } from '@happier-dev/protocol';
+import { extractShellCommand, stripShellCommandPreludeForDisplay } from '@happier-dev/protocol/activity/shellCommand';
 import type { Metadata } from '@happier-dev/session-core/state';
 import type { ToolCall } from "@happier-dev/session-core/messages";
 import { t } from '@/text';
@@ -6,7 +6,7 @@ import { ICON_TERMINAL, ICON_EXIT } from '../icons';
 import type { KnownToolDefinition } from '../_types';
 import { extractHappierToolsShellBridgeCommand } from "@happier-dev/session-core/tools";
 import { getHappierToolsShellBridgeDisplay } from "@happier-dev/session-core/tools";
-import { BashInputV2Schema, BashResultV2Schema, ExitPlanModeInputV2Schema } from '@happier-dev/protocol';
+import { BashInputV2Schema, BashResultV2Schema, ExitPlanModeInputV2Schema } from '@happier-dev/protocol/tools/v2/schemas';
 
 export const coreTerminalTools = {
     'Bash': {

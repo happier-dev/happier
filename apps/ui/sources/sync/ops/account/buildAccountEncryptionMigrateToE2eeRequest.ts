@@ -3,22 +3,14 @@ import { isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
 import { stripLocalOnlyAccountSettings } from '@/sync/domains/settings/localOnlyAccountSettings';
 import type { Settings } from '@/sync/domains/settings/settings';
 import { normalizeVoiceSettingsServerDelta } from '@/sync/domains/settings/voiceSettingsPersistence';
-import {
-  ConnectedServiceCredentialRecordV1Schema,
-  AccountEncryptionMigrateUnsignedRequestSchema,
-  attachAccountEncryptionMigrateProofSignatureV1,
-  createAccountEncryptionMigrateProofSigningInputV1,
-  assertConnectedServiceCredentialRecordBinding,
-  sealAccountScopedBlobCiphertext,
-  sealConnectedServiceCredentialCiphertext,
-  type ConnectedServiceCredentialRevisionBoundaryV1,
-  type ConnectedServiceId,
-  type QualifiedConnectedAccountConfigurationSnapshotV4,
-  type QualifiedConnectedAccountCredentialSnapshotV4,
-  type QualifiedConnectedAccountProfileV4,
-  type QualifiedConnectedAccountRef,
-  type AccountEncryptionMigrateTransitionPasswordCredential,
-} from '@happier-dev/protocol';
+import { ConnectedServiceCredentialRecordV1Schema, type ConnectedServiceCredentialRevisionBoundaryV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { AccountEncryptionMigrateUnsignedRequestSchema, attachAccountEncryptionMigrateProofSignatureV1, createAccountEncryptionMigrateProofSigningInputV1, type AccountEncryptionMigrateTransitionPasswordCredential } from '@happier-dev/protocol/account/encryptionMigrate';
+import { assertConnectedServiceCredentialRecordBinding } from '@happier-dev/protocol/connect/connectedServiceCredentialBinding';
+import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { sealConnectedServiceCredentialCiphertext } from '@happier-dev/protocol/connect/connectedServiceCipher';
+import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { QualifiedConnectedAccountConfigurationSnapshotV4, QualifiedConnectedAccountCredentialSnapshotV4, QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';

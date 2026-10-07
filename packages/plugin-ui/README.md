@@ -60,10 +60,13 @@ export const renderSurface = defineUiSurface(Summary);
 passes, so your components never thread `hostApi` or `context` and never mount a
 provider themselves.
 
-It must run inside your plugin bundle, not in the host. `@happier-dev/plugin-ui`
-is bundled into each plugin artifact rather than host-provided, so a provider
-created from a host-owned copy would publish React contexts that your bundled
-components cannot read.
+For universal executable UI, the compiler externalizes the public
+`@happier-dev/plugin-ui` export family. The app supplies one physical package
+instance through its same-realm host module map, so the wrapper and your
+components share React contexts. Export `defineUiSurface(Summary)` from your
+artifact entry; the wrapper binds the host-supplied render context and the host
+attaches its private provider services. Hosted web runs in a separate iframe
+realm. See the canonical [UI artifact contract](https://docs.happier.dev/plugins/ui/ui-artifacts).
 
 The surface stays live: the snapshot the host passes is the FIRST paint, and
 every later theme, locale, direction, text-scale and safe-area change arrives

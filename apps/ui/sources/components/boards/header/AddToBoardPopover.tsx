@@ -1,8 +1,8 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { buildWorkBoardItemKeyV1, type BoardItemRefV1, type WorkBoardV1 } from '@happier-dev/protocol';
-import type { WidgetInstanceV1, WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
+import { buildWorkBoardItemKeyV1, type BoardItemRefV1, type WorkBoardV1 } from '@happier-dev/protocol/boards/workBoardV1';
+import type { WidgetInstanceV1, WidgetSizeV1, WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
@@ -10,9 +10,9 @@ import { Popover } from '@/components/ui/popover';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { useAccountWidgetAddSections, type AccountWidgetSurfaceLabels } from '@/components/widgets/add/accountWidgetAddSections';
 import { WidgetAddPopover, WidgetSetupPopover } from '@/components/widgets/add/WidgetAddPopover';
-import { resolveWidgetAddPick, type WidgetAddEntry } from '@/components/widgets/add/widgetAddModel';
+import { resolveWidgetAddPick, type WidgetAddEntry, type WidgetAddOutcome } from '@/components/widgets/add/widgetAddModel';
 import type { WidgetSetup } from '@/components/widgets/add/widgetSetupModel';
-import type { WidgetSetupCommandResult } from '@/components/widgets/surface/widgetSurfaceSetup';
+import { runWidgetSetupCommand, type WidgetSetupCommandResult } from '@/components/widgets/surface/widgetSurfaceSetup';
 import { SelectionList, type SelectionListOption, type SelectionListStep } from '@/components/ui/selectionList';
 import { Text } from '@/components/ui/text/Text';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -53,7 +53,7 @@ const BOARD_WIDGET_LABELS: AccountWidgetSurfaceLabels = {
 export type AddToBoardWidgets = Readonly<{
     scope: WidgetSurfaceRefV1 | null;
     instances: readonly WidgetInstanceV1[];
-    addInstance: (instance: WidgetInstanceV1, options: Readonly<{ place: boolean }>) => Promise<WidgetSetupCommandResult>;
+    addInstance: (instance: WidgetInstanceV1, options: Readonly<{ place: boolean; size?: WidgetSizeV1 }>) => Promise<WidgetSetupCommandResult>;
 }>;
 
 export const AddToBoardButton = React.memo(function AddToBoardButton(props: Readonly<{
@@ -71,25 +71,34 @@ export const AddToBoardButton = React.memo(function AddToBoardButton(props: Read
     const { onOpenChange } = props;
     const close = React.useCallback(() => onOpenChange(false), [onOpenChange]);
     const [galleryOpen, setGalleryOpen] = React.useState(false);
-    const [setup, setSetup] = React.useState<WidgetSetup | null>(null);
+    const [galleryOutcome, setGalleryOutcome] = React.useState<WidgetAddOutcome | undefined>(undefined);
+    const [setup, setSetup] = React.useState<Readonly<{ entryId: string; title: string; setup: WidgetSetup }> | null>(null);
     // ⌘↵ on a widget: the add it leads to (now, or when its Set up step is done) also places it.
     const place = React.useRef(false);
     const { addInstance } = props.widgets;
-    const addWidget = React.useCallback((instance: WidgetInstanceV1) => {
-        const options = { place: place.current };
+    const addWidget = React.useCallback((instance: WidgetInstanceV1, size?: WidgetSizeV1) => {
+        const options = { place: place.current, ...(size ? { size } : {}) };
         place.current = false;
         return addInstance(instance, options);
     }, [addInstance]);
+    const showUnfinishedAdd = React.useCallback((outcome: WidgetAddOutcome) => {
+        if (!outcome.result.ok || outcome.result.approvalPending) {
+            setGalleryOutcome(outcome);
+            setGalleryOpen(true);
+        }
+    }, []);
     const pickWidget = React.useCallback((entry: WidgetAddEntry, options: Readonly<{ place: boolean }>) => {
         const decision = resolveWidgetAddPick(entry);
         if (decision.kind === 'added') return;
         place.current = options.place;
         close();
-        if (decision.kind === 'setup') setSetup(decision.setup);
-        else if (decision.kind === 'submit') void decision.setup.submit(decision.setup.initial);
-        else entry.onPick();
-    }, [close]);
-    const openGallery = React.useCallback(() => { close(); setGalleryOpen(true); }, [close]);
+        if (decision.kind === 'setup') setSetup({ entryId: entry.id, title: entry.title, setup: decision.setup });
+        else {
+            void runWidgetSetupCommand(() => decision.kind === 'submit' ? decision.setup.submit(decision.setup.initial) : entry.onPick(), t('widgetAdd.addFailed'))
+                .then(result => showUnfinishedAdd({ entryId: entry.id, title: entry.title, result }));
+        }
+    }, [close, showUnfinishedAdd]);
+    const openGallery = React.useCallback(() => { close(); setGalleryOutcome(undefined); setGalleryOpen(true); }, [close]);
     const closeSetup = React.useCallback(() => { place.current = false; setSetup(null); }, []);
     return (
         <View ref={anchorRef} collapsable={false}>
@@ -142,14 +151,18 @@ export const AddToBoardButton = React.memo(function AddToBoardButton(props: Read
                 </Popover>
             ) : null}
             {galleryOpen ? (
-                <BoardWidgetGallery widgets={props.widgets} addWidget={addWidget} anchorRef={anchorRef} onRequestClose={() => setGalleryOpen(false)} />
+                <BoardWidgetGallery widgets={props.widgets} addWidget={addWidget} anchorRef={anchorRef} initialOutcome={galleryOutcome} onRequestClose={() => setGalleryOpen(false)} />
             ) : null}
             {setup ? (
                 <WidgetSetupPopover
                     open
                     anchorRef={anchorRef}
-                    setup={() => setup}
+                    setup={() => setup.setup}
                     onRequestClose={closeSetup}
+                    onDone={result => {
+                        closeSetup();
+                        showUnfinishedAdd({ entryId: setup.entryId, title: setup.title, result });
+                    }}
                     {...(props.widgets.scope ? { serverId: props.widgets.scope.serverId } : {})}
                     testID="board-add.setup"
                 />
@@ -161,8 +174,9 @@ export const AddToBoardButton = React.memo(function AddToBoardButton(props: Read
 /** The shared Gallery | List popover for this Board, mounted only while open. */
 function BoardWidgetGallery(props: Readonly<{
     widgets: AddToBoardWidgets;
-    addWidget: (instance: WidgetInstanceV1) => Promise<WidgetSetupCommandResult>;
+    addWidget: (instance: WidgetInstanceV1, size?: WidgetSizeV1) => Promise<WidgetSetupCommandResult>;
     anchorRef: React.RefObject<View | null>;
+    initialOutcome: WidgetAddOutcome | undefined;
     onRequestClose: () => void;
 }>): React.ReactElement {
     const sections = useAccountWidgetAddSections({ scope: props.widgets.scope, instances: props.widgets.instances,
@@ -176,6 +190,7 @@ function BoardWidgetGallery(props: Readonly<{
             hint={t('boards.widgets.addHint')}
             searchPlaceholder={t('widgetAdd.searchWidgets')}
             sections={sections}
+            {...(props.initialOutcome ? { initialOutcome: props.initialOutcome } : {})}
             {...(props.widgets.scope ? { serverId: props.widgets.scope.serverId } : {})}
             testID="board-add.gallery"
         />
@@ -187,7 +202,7 @@ const AddToBoardList = React.memo(function AddToBoardList(props: Readonly<{
     homes: BoardHomes;
     onBoardKeys: ReadonlySet<string>;
     widgets: AddToBoardWidgets;
-    addWidget: (instance: WidgetInstanceV1) => Promise<WidgetSetupCommandResult>;
+    addWidget: (instance: WidgetInstanceV1, size?: WidgetSizeV1) => Promise<WidgetSetupCommandResult>;
     onPickWidget: (entry: WidgetAddEntry, options: Readonly<{ place: boolean }>) => void;
     onOpenGallery: () => void;
     maxHeight: number;

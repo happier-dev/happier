@@ -42,13 +42,9 @@ import {
     TeamDirectorySourceRemovalPreflightV1Schema,
     TeamIdentityConnectionRemovalPreflightV1Schema,
 } from '@happier-dev/protocol/teams';
-import {
-    type ActionExecuteFailure,
-    homeDomainActionInputSchemaV1,
-    homeDomainActionOutputSchemaV1,
-    type HomeDomainActionIdV1,
-    type TeamIdentityActionIdV1,
-} from '@happier-dev/protocol';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { homeDomainActionInputSchemaV1, homeDomainActionOutputSchemaV1, type HomeDomainActionIdV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
+import type { TeamIdentityActionIdV1 } from '@happier-dev/protocol/teams/identity/actionIds';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';

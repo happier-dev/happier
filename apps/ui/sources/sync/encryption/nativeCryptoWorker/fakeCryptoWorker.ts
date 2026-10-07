@@ -1,5 +1,5 @@
 import { encodeBase64 } from '@/encryption/base64';
-import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
+import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 
 import { AES256Encryption, SecretBoxEncryption } from '../encryptor';
 import { cryptoWorkerBase64ToBytes } from './nativeCryptoWorkerBridgePayload';

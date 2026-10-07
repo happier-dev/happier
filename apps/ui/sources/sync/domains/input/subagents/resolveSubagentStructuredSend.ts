@@ -1,9 +1,5 @@
-import {
-    SubagentCommandV1Schema,
-    resolveSubagentLaunchStructuredSend,
-    type SubagentCommandV1,
-    type SubagentLaunchV1,
-} from '@happier-dev/protocol';
+import { SubagentCommandV1Schema, type SubagentCommandV1 } from '@happier-dev/protocol/messages/structured/subagentCommandV1';
+import { resolveSubagentLaunchStructuredSend, type SubagentLaunchV1 } from '@happier-dev/protocol/messages/structured/subagentLaunchV1';
 
 type ResolveSubagentStructuredSendParams =
     | Readonly<{

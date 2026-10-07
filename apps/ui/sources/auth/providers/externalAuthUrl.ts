@@ -1,4 +1,4 @@
-import { isLoopbackHostname } from '@happier-dev/protocol';
+import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
 
 const ALLOWED_PROTOCOLS = new Set(['https:', 'happier:']);
 

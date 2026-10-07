@@ -1,7 +1,7 @@
 import {
     AccountSettingsV2HistoryListResponseSchema,
     type AccountSettingsV2HistoryListResponse,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';

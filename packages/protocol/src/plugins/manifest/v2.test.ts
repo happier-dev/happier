@@ -26,7 +26,7 @@ describe('plugin manifest v2 root contract', () => {
     const resources = [{ id: 'live-status', source: 'dynamic', kind: 'config', contentType: 'text/plain' }];
     const renderer = { id: 'native', kind: 'hostedHtml', source: { kind: 'html', html: '<p>Status</p>' } };
     const ingest = (resource: unknown) => ingestPluginManifestV2(manifest({ contributes: {
-      resources, ui: { renderers: [renderer], views: [{ id: 'status', container: 'widget', renderer: 'native',
+      resources, ui: { renderers: [renderer], views: [{ sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' }, id: 'status', container: 'widget', renderer: 'native',
         target: { kind: 'app' }, resources: [resource] }] },
     } }));
     const admitted = ingest({ pluginId: 'com.acme.fixture', localId: 'live-status' });

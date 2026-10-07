@@ -1,9 +1,6 @@
-import {
-  ProviderModelIdSchema,
-  ProviderConnectionIdSchema,
-  migrateProviderAccountSettingsV1,
-  normalizeCustomProviderTemplateV1,
-} from '@happier-dev/protocol';
+import { ProviderModelIdSchema, ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
+import { migrateProviderAccountSettingsV1 } from '@happier-dev/protocol/providers/migrations/accountSettingsV1';
+import { normalizeCustomProviderTemplateV1 } from '@happier-dev/protocol/providers/connections/normalizeCustomTemplateV1';
 
 import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
 

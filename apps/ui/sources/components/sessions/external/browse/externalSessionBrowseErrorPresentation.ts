@@ -1,7 +1,5 @@
-import {
-    RPC_ERROR_CODES,
-    type ExternalSessionsRpcErrorCode,
-} from '@happier-dev/protocol';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import type { ExternalSessionsRpcErrorCode } from '@happier-dev/protocol/sessions/external/rpcErrorCodes';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 import { t } from '@/text';

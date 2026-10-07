@@ -1,9 +1,5 @@
-import {
-    SESSION_WORKFLOW_RUN_SNAPSHOT_PROJECTION_VERSION,
-    SessionWorkflowRunSnapshotV1Schema,
-    buildWorkflowRunSystemRecordLocalId,
-    type SessionWorkflowRunSnapshotV1,
-} from '@happier-dev/protocol';
+import { SESSION_WORKFLOW_RUN_SNAPSHOT_PROJECTION_VERSION, SessionWorkflowRunSnapshotV1Schema, type SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowRunSnapshotV1';
+import { buildWorkflowRunSystemRecordLocalId } from '@happier-dev/protocol/sessions/system/records/activity/activitySystemRecordKinds';
 import {
     openSessionSystemRecord,
     type OpenSessionSystemRecordResult,

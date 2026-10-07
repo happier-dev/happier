@@ -4,7 +4,7 @@ import type {
     DaemonLocalServiceLauncherStartRequestV1,
     RuntimeActionExecute,
 } from '@happier-dev/protocol';
-import { DaemonLocalServiceLauncherStartResponseV1Schema } from '@happier-dev/protocol';
+import { DaemonLocalServiceLauncherStartResponseV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { useDestinationPaneScopeId } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';

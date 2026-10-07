@@ -1,7 +1,7 @@
 import {
     SavedSecretResourceMaterialsResponseV1Schema,
     type SavedSecretResourceMaterialV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { requestHomeDomain, type HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';

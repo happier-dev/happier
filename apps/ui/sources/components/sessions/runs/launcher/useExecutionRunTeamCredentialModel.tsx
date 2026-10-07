@@ -1,4 +1,4 @@
-import { buildBackendTargetKeyV2 } from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { TeamCredentialProviderModelSelectionV1Schema, type TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
 import * as React from 'react';
 

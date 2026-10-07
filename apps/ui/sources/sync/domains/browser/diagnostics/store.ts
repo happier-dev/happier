@@ -1,11 +1,6 @@
-import {
-    browserViewKey,
-    BrowserDiagnosticEventV1Schema,
-    INJECTED_CONSOLE_TEXT_MAX_LENGTH,
-    type BrowserDiagnosticEventV1,
-    type BrowserDiagnosticFamilyV1,
-    type BrowserDiagnosticFidelityV1,
-} from '@happier-dev/protocol';
+import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
+import { BrowserDiagnosticEventV1Schema, type BrowserDiagnosticEventV1, type BrowserDiagnosticFamilyV1, type BrowserDiagnosticFidelityV1 } from '@happier-dev/protocol/browser/diagnostics/v1';
+import { INJECTED_CONSOLE_TEXT_MAX_LENGTH } from '@happier-dev/protocol/browser/diagnostics/egress/classifier';
 
 import { BROWSER_DIAGNOSTIC_FAMILIES } from './families';
 import type {

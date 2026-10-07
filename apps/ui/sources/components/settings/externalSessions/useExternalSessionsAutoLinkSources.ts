@@ -2,7 +2,7 @@ import * as React from 'react';
 import {
     readExternalSessionsSettingsV1,
     removeExternalSessionsAutoLinkSourcePolicyV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/external/followLifecycleV1';
 
 import { sync } from '@/sync/sync';
 import { useSettingsVersion } from '@/sync/store/hooks';

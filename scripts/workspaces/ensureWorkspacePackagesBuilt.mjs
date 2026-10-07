@@ -20,6 +20,7 @@ import { assertNoMissingLocalImports } from './distLocalImports.mjs';
 import { resolveYarnCommandInvocation } from './execYarnCommand.mjs';
 import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation.mjs';
 import {
+  WORKSPACE_PACKAGE_BUILD_INPUT_RECORD as BUILD_INPUT_RECORD,
   collectPackageBuildOutputTargets,
   isLocalPackageBuildOutputTarget,
   isPackageBuildDistOutputTarget,
@@ -45,7 +46,7 @@ import {
 const GENERATED_PLUGIN_UI_ARTIFACTS_MANIFEST_RELATIVE_PATH =
   'dist/happier-plugin-ui/ui-artifacts.json';
 const DEFAULT_MAX_CONCURRENT_WORKSPACE_BUILDS = 2;
-export const BUILD_INPUT_RECORD = '.happier-build-inputs.json';
+export { BUILD_INPUT_RECORD };
 
 function compilerDiagnosticSummary(error) {
   if (!(error instanceof WorkspacePackageBuildError) || error.code !== 'EEXIT') return null;
@@ -88,7 +89,7 @@ function readQaStalePackage(packageDir, packageName, { monorepoRoot, dependencyD
 export async function inspectWorkspaceQaStalePackages(monorepoPath, packageNames, { includeDevDependencies = false } = {}) {
   const monorepoRoot = coerceHappyMonorepoRootFromPath(monorepoPath);
   if (!monorepoRoot) return [];
-  const packageDirsByName = await collectWorkspacePackageDirsByName(monorepoRoot);
+  const { packageDirsByName } = await readWorkspacePackageGraph(monorepoRoot);
   const closure = await collectWorkspaceDependencyClosure(packageNames, packageDirsByName, { includeDevDependencies });
   const stalePackages = [];
   for (const packageName of [...closure].sort()) {
@@ -110,7 +111,7 @@ export async function inspectWorkspaceQaStalePackagesForComponent(componentDir) 
   const monorepoRoot = coerceHappyMonorepoRootFromPath(componentDir);
   if (!monorepoRoot || !existsSync(join(componentDir, 'package.json'))) return [];
   const component = await readJson(join(componentDir, 'package.json'));
-  const packageDirsByName = await collectWorkspacePackageDirsByName(monorepoRoot);
+  const { packageDirsByName } = await readWorkspacePackageGraph(monorepoRoot);
   const names = collectInternalWorkspaceDependencyNames(component, component.name, {
     workspacePackageNames: packageDirsByName.keys(),
   });
@@ -147,9 +148,10 @@ async function readJson(path) {
   return JSON.parse(await readFile(path, 'utf-8'));
 }
 
-async function collectWorkspacePackageDirsByName(monorepoRoot) {
+async function readWorkspacePackageGraph(monorepoRoot) {
   const paths = await collectWorkspacePackageJsonPaths(monorepoRoot);
   const packageDirsByName = new Map();
+  const packageJsonByDir = new Map();
 
   for (const packageJsonPath of paths) {
     let packageJson = null;
@@ -159,13 +161,17 @@ async function collectWorkspacePackageDirsByName(monorepoRoot) {
       continue;
     }
     const packageName = typeof packageJson?.name === 'string' ? packageJson.name.trim() : '';
-    if (packageName) packageDirsByName.set(packageName, dirname(packageJsonPath));
+    if (packageName) {
+      const packageDir = dirname(packageJsonPath);
+      packageDirsByName.set(packageName, packageDir);
+      packageJsonByDir.set(packageDir, packageJson);
+    }
   }
 
-  return packageDirsByName;
+  return { packageDirsByName, packageJsonByDir };
 }
 
-async function collectWorkspaceDependencyClosure(packageNames, packageDirsByName, { includeDevDependencies = true } = {}) {
+async function collectWorkspaceDependencyClosure(packageNames, packageDirsByName, { includeDevDependencies = true, packageJsonByDir } = {}) {
   const admitted = new Set();
   const workspacePackageNames = new Set(packageDirsByName.keys());
   const visit = async (name) => {
@@ -173,7 +179,7 @@ async function collectWorkspaceDependencyClosure(packageNames, packageDirsByName
     const dir = packageDirsByName.get(name);
     if (!dir) return;
     admitted.add(name);
-    const packageJson = await readJson(join(dir, 'package.json'));
+    const packageJson = packageJsonByDir?.get(dir) ?? await readJson(join(dir, 'package.json'));
     await Promise.all(collectInternalWorkspaceDependencyNames(packageJson, name, {
       includeDevDependencies, workspacePackageNames,
     }).map(visit));
@@ -753,6 +759,7 @@ async function captureWorkspacePackage({ monorepoRoot, packageDir, dependencyDir
     const builtDependencies = readWorkspaceBuiltDependencies({ monorepoRoot: repoDir, dependencyDirs: captureDependencyDirs });
     return { packageDir: capturePackageDir, dependencyDirs: captureDependencyDirs, repoDir, inputFingerprint, builtDependencies,
       env: { ...env, HAPPIER_STACK_REPO_DIR: repoDir,
+        HAPPIER_WORKSPACE_CAPTURE_SOURCE_REPO_DIR: monorepoRoot,
         HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR: identityRepoDir },
       cleanup: () => rm(directory, { recursive: true, force: true }) };
   } catch (error) {
@@ -846,7 +853,7 @@ async function ensureWorkspacePackageBuiltUnderLock({
     };
     // QA fallback needs the compiler's diagnostic even when preparation is
     // verbose. The adapters transport evidence; this owner decides eligibility.
-    const options = { env: buildEnv, quiet, timeoutMs, captureFailureDiagnostic: quiet || buildMode === 'qa-runtime' };
+    const options = { env: buildEnv, quiet, timeoutMs, captureFailureDiagnostic: quiet || buildMode !== 'strict' };
     try {
       if (refreshOnly) {
         const runScript = workspaceBuildBoundary.runPackageScript ?? defaultWorkspaceBuildBoundary.runPackageScript;
@@ -905,7 +912,7 @@ async function ensureWorkspacePackageBuiltUnderLock({
     const record = {
       version: 2,
       // A runtime-only refresh cannot upgrade emit-only compiler evidence.
-      buildMode: refreshOnly ? priorRecord.buildMode ?? 'strict' : buildMode,
+      buildMode: refreshOnly ? priorRecord.buildMode ?? 'strict' : buildMode === 'source-dev' ? 'qa-runtime' : buildMode,
       builtAt: refreshOnly ? priorRecord.builtAt : new Date().toISOString(),
       fingerprint: inputFingerprint,
       dependencies: builtDependencies,
@@ -928,7 +935,7 @@ async function ensureWorkspacePackageBuiltUnderLock({
     // Keep the phase's existing trailing pass before admitting retained bytes.
     // Drift can also reject an output-only refresh; neither case certifies the
     // moving staged output, and both use the same last-green integrity checks.
-    const diagnosticSummary = buildMode === 'qa-runtime'
+    const diagnosticSummary = buildMode !== 'strict'
       ? error instanceof BuildInputDriftError && trailingPass ? error.message
         : !refreshOnly ? compilerDiagnosticSummary(error) : null
       : null;
@@ -1103,7 +1110,7 @@ async function ensureWorkspacePackageNamesBuiltPass(monorepoRoot, packageNames, 
   onPackageBuildResult,
   visitedNames = [],
   includeDevDependencies,
-  packageDirsByName: packageDirsByNameIn = null,
+  workspaceGraph: workspaceGraphIn = null,
   workspaceBuildBoundary,
   publicationMode,
   buildMode,
@@ -1119,11 +1126,13 @@ async function ensureWorkspacePackageNamesBuiltPass(monorepoRoot, packageNames, 
   const forced = new Set(forcePackageNames);
   const changedClosures = new Set();
   const closureBuildPromises = new Map();
-  const packageDirsByName = packageDirsByNameIn
-    ?? await collectWorkspacePackageDirsByName(monorepoRoot);
+  // Scheduling shares one graph observation. Admission and publication still
+  // read current inputs independently, and drift starts a fresh graph pass.
+  const { packageDirsByName, packageJsonByDir } = !trailingPass && workspaceGraphIn
+    ? workspaceGraphIn : await readWorkspacePackageGraph(monorepoRoot);
   const workspacePackageNames = new Set(packageDirsByName.keys());
   const admittedWorkspacePackageNames = await collectWorkspaceDependencyClosure(
-    packageNames ?? [], packageDirsByName, { includeDevDependencies },
+    packageNames ?? [], packageDirsByName, { includeDevDependencies, packageJsonByDir },
   );
   const scheduleConcurrentPackageBuild = createAsyncConcurrencyLimiter(maxConcurrentBuilds);
   const scheduleBundledWorkspacePackageBuild = createAsyncConcurrencyLimiter(1);
@@ -1149,6 +1158,9 @@ async function ensureWorkspacePackageNamesBuiltPass(monorepoRoot, packageNames, 
       if (!existsSync(packageJsonPath)) return false;
 
       const packageJson = await readJson(packageJsonPath);
+      if (JSON.stringify(packageJson) !== JSON.stringify(packageJsonByDir.get(resolvedPackageDir))) {
+        throw new BuildInputDriftError(`[workspace-build] package graph changed: ${resolvedPackageDir}`);
+      }
       const packageName = typeof packageJson?.name === 'string' ? packageJson.name : '';
       // Optional compiler failures retain the existing isolation contract;
       // another package's drift must not retry a genuine failed command.
@@ -1328,7 +1340,8 @@ export async function ensureWorkspacePackagesBuiltForComponent(componentDir, {
   const componentName = typeof componentPackageJson?.name === 'string'
     ? componentPackageJson.name
     : '';
-  const packageDirsByName = await collectWorkspacePackageDirsByName(monorepoRoot);
+  const workspaceGraph = await readWorkspacePackageGraph(monorepoRoot);
+  const { packageDirsByName } = workspaceGraph;
   const packageNames = collectInternalWorkspaceDependencyNames(componentPackageJson, componentName, {
     workspacePackageNames: packageDirsByName.keys(),
   });
@@ -1339,7 +1352,7 @@ export async function ensureWorkspacePackagesBuiltForComponent(componentDir, {
     env: { ...env, [WORKSPACE_BUILD_MODE_ENV]: resolvedBuildMode },
     visitedNames: [componentName].filter(Boolean),
     includeDevDependencies: true,
-    packageDirsByName,
+    workspaceGraph,
     workspaceBuildBoundary,
     publicationMode: resolvedPublicationMode,
     buildMode: resolvedBuildMode,

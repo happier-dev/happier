@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { resolveEffectiveApiTokenModelRefV1, resolveEffectiveApiTokenPermissionModeV1, type SessionModelSelectionV1 } from '@happier-dev/protocol';
+import { resolveEffectiveApiTokenModelRefV1, resolveEffectiveApiTokenPermissionModeV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import type { SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 
 import type { NewSessionSimplePanelProps } from '@/components/sessions/new/components/NewSessionSimplePanel';
 import type { NewSessionCreationProfile } from '@/components/sessions/new/navigation/newSessionHost';

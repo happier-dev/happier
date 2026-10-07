@@ -2613,6 +2613,8 @@
 | `./ui` | `UiResource` | type | any |
 | `./ui` | `UiTranslationBundle` | type | any |
 | `./ui` | `UiView` | type | any |
+| `./ui` | `WidgetSizeFootprintV1` | type | any |
+| `./ui` | `WidgetSizeV1` | type | any |
 | `./ui` | `WorkBoardPreviewLayoutV1` | type | any |
 | `./ui` | `defineHostedWebBridgeMessage` | value | any |
 | `./ui` | `definePluginDeclarativeDocumentV1` | value | any |

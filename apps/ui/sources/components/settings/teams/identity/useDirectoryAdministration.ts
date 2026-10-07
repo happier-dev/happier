@@ -13,7 +13,7 @@ import type {
     TeamDirectorySourceRemoveResultV1,
     TeamDirectorySourceSummaryV1,
 } from '@happier-dev/protocol/teams';
-import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol';
+import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import type { IdentityAdministrationActionResult } from './identityAdministrationClient';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';

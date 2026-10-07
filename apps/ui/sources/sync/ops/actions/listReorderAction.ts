@@ -1,5 +1,5 @@
 import { PendingReorderInputV1Schema, TodoReorderInputV1Schema,
-    type ListReorderOutputV1 } from '@happier-dev/protocol';
+    type ListReorderOutputV1 } from '@happier-dev/protocol/actions/listReorderAction';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';

@@ -37,7 +37,7 @@ describe('mounted Companion widget Action dependency', () => {
         await homeHubArtifacts.apply({ kind: 'widget_add', instance: sibling });
         const deps = { homeHubArtifacts, workBoardArtifacts, widgetAccountScope: () => scope,
             widgetInputs: createWidgetActionInputResolverV1({
-                readDescriptor: async () => ({ inputs: { fields: [{ path: 'count', title: 'Count', widget: 'integer' }] },
+                readDescriptor: async () => ({ sizeDeclaration: { sizes: ['medium', 'full'], defaultSize: 'medium' }, inputs: { fields: [{ path: 'count', title: 'Count', widget: 'integer' }] },
                     inputSchema: { type: 'object', properties: { count: { type: 'integer' } }, required: ['count'], additionalProperties: false } }),
                 readContext: async request => {
                     const context: Readonly<Record<string, readonly import('@happier-dev/protocol').JsonValue[]>> = request.ref.surface.owner.kind === 'home' ? { sessionCount: [3] } : {};
@@ -115,7 +115,7 @@ describe('mounted Companion widget Action dependency', () => {
             const deps = { ...mounted, homeHubArtifacts, widgetAccountScope: () => scope,
                 // Fixed descriptor facts are the host boundary; binding and strict input-schema admission remain real.
                 widgetInputs: createWidgetActionInputResolverV1({
-                    readDescriptor: async () => ({ inputs: { fields: [{ path: 'count', title: 'Count', widget: 'integer' }] },
+                    readDescriptor: async () => ({ sizeDeclaration: { sizes: ['medium', 'full'], defaultSize: 'medium' }, inputs: { fields: [{ path: 'count', title: 'Count', widget: 'integer' }] },
                         inputSchema: { type: 'object', properties: { count: { type: 'integer' } }, required: ['count'], additionalProperties: false } }),
                     readContext: async request => {
                         const context: Readonly<Record<string, readonly import('@happier-dev/protocol').JsonValue[]>> = request.ref.surface.owner.kind === 'companion' ? { sessionCount: [3] } : {};

@@ -1,24 +1,11 @@
-import {
-    createUnavailableRuntimeActionExecutor,
-    DaemonLocalServicePreviewOpenOrCreateRequestV1Schema,
-    DaemonLocalServicePreviewRevokeRequestV1Schema,
-    DaemonLocalServicePublicPreviewCopyUrlRequestV1Schema,
-    DaemonLocalServicePublicPreviewCreateRequestV1Schema,
-    DaemonLocalServicePublicPreviewRevokeRequestV1Schema,
-    DaemonLocalServicePublicPreviewStatusRequestV1Schema,
-    getActionSpec,
-    LocalServiceActionRequestV1Schema,
-    redactLocalServicePublicPreviewCreateResponseForAgentEgress,
-    redactLocalServicePublicPreviewRevokeResponseForAgentEgress,
-    redactLocalServicePublicPreviewSnapshotForAgentEgress,
-    requiresAgentEgressRedaction,
-    resolveLocalServiceActionKindForRuntimeActionId,
-    resolveRuntimeActionExecutionFamily,
-    type LocalServicePreviewSnapshotV1,
-    type LocalServicePublicPreviewSnapshotV1,
-    type RuntimeActionExecute,
-    type RuntimeActionExecuteArgs,
-} from '@happier-dev/protocol';
+import { createUnavailableRuntimeActionExecutor, resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol/actions/executor/dispatch';
+import { DaemonLocalServicePreviewOpenOrCreateRequestV1Schema, DaemonLocalServicePreviewRevokeRequestV1Schema, type LocalServicePreviewSnapshotV1 } from '@happier-dev/protocol/local/services/preview/v1';
+import { DaemonLocalServicePublicPreviewCopyUrlRequestV1Schema, DaemonLocalServicePublicPreviewCreateRequestV1Schema, DaemonLocalServicePublicPreviewRevokeRequestV1Schema, DaemonLocalServicePublicPreviewStatusRequestV1Schema, redactLocalServicePublicPreviewCreateResponseForAgentEgress, redactLocalServicePublicPreviewRevokeResponseForAgentEgress, redactLocalServicePublicPreviewSnapshotForAgentEgress, type LocalServicePublicPreviewSnapshotV1 } from '@happier-dev/protocol/local/services/public/v1';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { LocalServiceActionRequestV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
+import { requiresAgentEgressRedaction } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { resolveLocalServiceActionKindForRuntimeActionId } from '@happier-dev/protocol/actions/specs/localServices';
+import type { RuntimeActionExecute, RuntimeActionExecuteArgs } from '@happier-dev/protocol/actions/executor/types';
 
 import {
     executeLocalServiceActionViaRequest,

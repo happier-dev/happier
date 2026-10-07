@@ -1,14 +1,9 @@
-import {
-    LegacyProfileReviewedMappingV1Schema,
-    compareProviderCanonicalStringsV1,
-    isLegacyAiLaunchEndpointLikeEnvironmentNameV1,
-    parseProviderManualModelInput,
-    normalizeCustomProviderTemplateV1,
-    type AIBackendProfile,
-    type CustomProviderCredentialStyleV1,
-    type LegacyProfileReviewedMappingV1,
-    type ProviderWireProtocol,
-} from '@happier-dev/protocol';
+import { LegacyProfileReviewedMappingV1Schema, isLegacyAiLaunchEndpointLikeEnvironmentNameV1, type LegacyProfileReviewedMappingV1 } from '@happier-dev/protocol/providers/migrations/legacyProfilesV1';
+import { compareProviderCanonicalStringsV1 } from '@happier-dev/protocol/providers/canonicalOrderV1';
+import { parseProviderManualModelInput } from '@happier-dev/protocol/providers/manualModelInput';
+import { normalizeCustomProviderTemplateV1, type CustomProviderCredentialStyleV1 } from '@happier-dev/protocol/providers/connections/normalizeCustomTemplateV1';
+import type { AIBackendProfile } from '@happier-dev/protocol/profiles/backendProfileSchema';
+import type { ProviderWireProtocol } from '@happier-dev/protocol/providers/capabilities/v1';
 
 type SupportedMigrationProtocol = Extract<ProviderWireProtocol, 'openai-responses' | 'openai-chat' | 'anthropic'>;
 export type SupportedMigrationCredentialStyle = Extract<CustomProviderCredentialStyleV1, 'bearer' | 'x-api-key'>;

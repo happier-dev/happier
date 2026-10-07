@@ -1,9 +1,6 @@
-import {
-    SessionViewerProjectionV1Schema,
-    isSessionPersonallyTrackedForViewerV1,
-    type SessionPersonalAttentionReasonV1,
-    type SessionViewerProjectionV1,
-} from '@happier-dev/protocol';
+import { SessionViewerProjectionV1Schema, type SessionViewerProjectionV1 } from '@happier-dev/protocol/sessions/personal/viewer';
+import { isSessionPersonallyTrackedForViewerV1 } from '@happier-dev/protocol/sessions/personal/tracking';
+import type { SessionPersonalAttentionReasonV1 } from '@happier-dev/protocol/sessions/personal/attention';
 import {
     isSessionAccessOwner,
     type NormalizedSessionAccessProjection,

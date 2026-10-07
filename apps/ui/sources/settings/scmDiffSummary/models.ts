@@ -1,4 +1,5 @@
-import { buildBackendTargetKeyV2, resolveModelStructuredOutputSupport, type BackendTargetRefV2, type ProviderModelDescriptorV1 } from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2, type BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { resolveModelStructuredOutputSupport, type ProviderModelDescriptorV1 } from '@happier-dev/protocol/models/descriptor';
 import { encodeScmDiffSummaryModelOverride, type ScmDiffSummaryCatalogProfile } from './settings';
 
 /** Project the owning catalog's actual model descriptors into the shared Summary preference. */

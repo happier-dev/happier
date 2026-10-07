@@ -1,18 +1,12 @@
-import {
-  BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
-  ConnectedServiceCredentialRecordV1Schema,
-  QualifiedConnectedAccountConfigurationSnapshotV4Schema,
-  QualifiedConnectedAccountCredentialSnapshotV4Schema,
-  openQualifiedConnectedAccountContentEnvelope,
-  parseQualifiedConnectedAccountCredentialPlaintextV1,
-  sealQualifiedConnectedAccountContentEnvelope,
-  type AccountScopedCryptoMaterial,
-  type AccountEncryptionMigrateConnectedServicesDirective,
-  type QualifiedConnectedAccountConfigurationSnapshotV4,
-  type QualifiedConnectedAccountCredentialSnapshotV4,
-  type QualifiedConnectedAccountProfileV4,
-  type QualifiedConnectedAccountRef,
-} from '@happier-dev/protocol';
+import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
+import { ConnectedServiceCredentialRecordV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { QualifiedConnectedAccountConfigurationSnapshotV4Schema, QualifiedConnectedAccountCredentialSnapshotV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import { openQualifiedConnectedAccountContentEnvelope, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
+import { parseQualifiedConnectedAccountCredentialPlaintextV1 } from '@happier-dev/protocol/connect/legacyConnectedServiceCompatibility';
+import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import type { AccountEncryptionMigrateConnectedServicesDirective } from '@happier-dev/protocol/account/encryptionMigrate';
+import type { QualifiedConnectedAccountConfigurationSnapshotV4, QualifiedConnectedAccountCredentialSnapshotV4, QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 
 type MigrationItem = Extract<
   AccountEncryptionMigrateConnectedServicesDirective,

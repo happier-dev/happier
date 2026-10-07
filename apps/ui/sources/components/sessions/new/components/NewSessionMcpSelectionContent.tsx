@@ -7,7 +7,7 @@ import type {
     McpServerCatalogEntryV1,
     SessionMcpSelectionV1,
 } from '@happier-dev/protocol';
-import { resolveManagedSessionMcpSelectionV1 } from '@happier-dev/protocol';
+import { resolveManagedSessionMcpSelectionV1 } from '@happier-dev/protocol/mcp/servers/resolveManagedSessionMcpSelectionV1';
 
 import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
 import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';

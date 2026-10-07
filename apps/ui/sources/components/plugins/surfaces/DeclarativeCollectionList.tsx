@@ -11,14 +11,8 @@ import {
     HappierText,
 } from '@happier-dev/plugin-ui/presentation';
 import type { HappierUiTheme } from '@happier-dev/plugin-ui/environment';
-import {
-    NormalizedPluginCollectionUiQueryDescriptorV1Schema,
-    PluginCollectionUiQueryInputV1Schema,
-    PluginDeclarativeCollectionListProjectionV1Schema,
-    type NormalizedPluginCollectionUiQueryDescriptorV1,
-    type PluginCollectionUiQueryInputV1,
-    type PluginDeclarativeCollectionListProjectionV1,
-} from '@happier-dev/protocol';
+import { NormalizedPluginCollectionUiQueryDescriptorV1Schema, PluginCollectionUiQueryInputV1Schema, type NormalizedPluginCollectionUiQueryDescriptorV1, type PluginCollectionUiQueryInputV1 } from '@happier-dev/protocol/plugins/data/collectionUiQueryWireV1';
+import { PluginDeclarativeCollectionListProjectionV1Schema, type PluginDeclarativeCollectionListProjectionV1 } from '@happier-dev/protocol/plugins/contributions/ui/v2';
 import type {
     PluginUiCollectionQueryPager,
     PluginUiCollectionQuerySnapshot,

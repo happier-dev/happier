@@ -7,6 +7,8 @@ import {
     Button,
     Card,
     CodeBlock,
+    defineHappierScene,
+    defineHappierSceneProp,
     defineUiSurface,
     EmptyState,
     ErrorState,
@@ -33,6 +35,25 @@ import {
     type ReviewOpenableContentResult,
 } from './reviewOpenableContent.js';
 import { PROJECT_COMPANION_ACTIVITY_CURRENT_UI_CONTEXT } from './reviewClientActions.js';
+
+/**
+ * This plugin's empty-state scene, composed from Happier's scene parts: the desk at golden hour, the
+ * plugin's own prop (a review card waiting) as the focal prop, and the built-in mug beside it. The host
+ * draws it in the scene's ink, size and motion.
+ */
+const REVIEW_CARD = defineHappierSceneProp({
+    name: 'example.review-card',
+    marks: [
+        { shape: 'rect', x: -8, y: -12, width: 16, height: 12, radius: 2 },
+        { shape: 'path', d: 'M-5 -8h10M-5 -4.5h6', tone: 'faint' },
+    ],
+});
+const NO_REVIEW_STATUS_SCENE = defineHappierScene({
+    name: 'example.no-review-status',
+    horizon: 'desk',
+    moment: 'golden',
+    props: [{ prop: REVIEW_CARD, x: 56 }, { prop: 'mug', x: 80 }],
+});
 
 const REVIEW_PANEL_VIEW_ID = 'review-panel';
 const REVIEW_SESSION_STATUS_VIEW_ID = 'review-session-status-details';
@@ -193,6 +214,7 @@ function ReviewSessionStatusPanel({
         return (
             <ReviewFrame accessibilityLabel={title}>
                 <EmptyState
+                    scene={NO_REVIEW_STATUS_SCENE}
                     title="No review status"
                     description="This Session does not have a declared review status yet."
                     action={recoveryActions}
@@ -218,6 +240,7 @@ function ReviewSessionStatusPanel({
         return (
             <ReviewFrame accessibilityLabel={title}>
                 <EmptyState
+                    scene={NO_REVIEW_STATUS_SCENE}
                     title="No review status"
                     description="This Session does not have a declared review status yet."
                     action={recoveryActions}

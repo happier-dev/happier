@@ -1,10 +1,6 @@
-import {
-    buildQualifiedPluginContributionKey,
-    ConnectedServiceIdSchema,
-    QualifiedConnectedAccountRefSchema,
-    type ConnectedServiceId,
-    type QualifiedConnectedAccountRef,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { ConnectedServiceIdSchema, type ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { QualifiedConnectedAccountRefSchema, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 
 import { connectedServiceProfileKey } from './connectedServiceProfilePreferences';
 

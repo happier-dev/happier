@@ -1,7 +1,5 @@
-import {
-    buildMachineLiveStreamAvcCodecStringV1,
-    type SimulatorOrientationV1,
-} from '@happier-dev/protocol';
+import { buildMachineLiveStreamAvcCodecStringV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/codecsV1';
+import type { SimulatorOrientationV1 } from '@happier-dev/protocol/devices/simulator/inputV1';
 
 export type LiveStreamWebCodecsUnsupportedReasonCode =
     | 'webcodecs_unavailable'

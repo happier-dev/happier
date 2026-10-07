@@ -1,4 +1,4 @@
-import { projectPluginSettingsContributionV2 } from '@happier-dev/protocol';
+import { projectPluginSettingsContributionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 
 import {

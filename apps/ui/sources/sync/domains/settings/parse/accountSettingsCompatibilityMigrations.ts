@@ -1,8 +1,5 @@
-import {
-    SecretStringV1Schema,
-    SessionTmuxMachineOverrideSchema,
-    TRANSCRIPT_MESSAGE_TIMESTAMP_DISPLAY_MODE_VALUES,
-} from '@happier-dev/protocol';
+import { SecretStringV1Schema } from '@happier-dev/protocol/crypto/settingsSecretStringSchemasV1';
+import { SessionTmuxMachineOverrideSchema, TRANSCRIPT_MESSAGE_TIMESTAMP_DISPLAY_MODE_VALUES } from '@happier-dev/protocol/account/settings/accountSettings';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
 import { z } from 'zod';
 

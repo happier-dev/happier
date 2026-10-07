@@ -1,9 +1,6 @@
-import {
-    createUnavailableRuntimeActionExecutor,
-    type BrowserCommandV1,
-    type RuntimeActionExecute,
-    type RuntimeActionExecuteArgs,
-} from '@happier-dev/protocol';
+import { createUnavailableRuntimeActionExecutor } from '@happier-dev/protocol/actions/executor/dispatch';
+import type { BrowserCommandV1 } from '@happier-dev/protocol/browser/control/v1';
+import type { RuntimeActionExecute, RuntimeActionExecuteArgs } from '@happier-dev/protocol/actions/executor/types';
 
 import {
     createBrowserRuntimeActionExecutor,

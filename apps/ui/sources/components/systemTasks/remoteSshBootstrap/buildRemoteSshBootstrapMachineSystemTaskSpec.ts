@@ -1,5 +1,5 @@
 import type { SystemTaskSpec } from '@happier-dev/protocol';
-import { buildSshTarget, parseSshTarget } from '@happier-dev/protocol';
+import { buildSshTarget, parseSshTarget } from '@happier-dev/protocol/ssh/sshTarget';
 import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
 
 export type RemoteSshPromptResolution = Readonly<{

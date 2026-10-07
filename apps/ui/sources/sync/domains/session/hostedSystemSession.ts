@@ -1,12 +1,6 @@
-import {
-    SESSION_METADATA_LAYOUT_VERSION_V1,
-    V2SessionByIdResponseSchema,
-    createPlainSessionOwnerMetadataEnvelopeV1,
-    createSessionOwnerMetadataV1,
-    projectSessionSharedMetadataV1,
-    sealSessionOwnerMetadataEnvelopeV1,
-    type SessionOwnerMetadataEnvelopeV1,
-} from '@happier-dev/protocol';
+import { SESSION_METADATA_LAYOUT_VERSION_V1, createPlainSessionOwnerMetadataEnvelopeV1, createSessionOwnerMetadataV1, projectSessionSharedMetadataV1, type SessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { V2SessionByIdResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
+import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { encodeBase64 } from '@/encryption/base64';

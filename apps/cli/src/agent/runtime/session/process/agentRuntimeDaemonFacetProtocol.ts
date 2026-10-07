@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { NonBlankOpaqueIdentifierSchema } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { z } from 'zod';
 
@@ -35,10 +36,10 @@ import {
 import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';
 
 /** Happier-minted ids on this seam (request/follow/boundary/generation). */
-const BoundedIdSchema = z.string().trim().min(1).max(512);
-const HostPluginContributionIdentityV1Schema = asHostProtocolZod(
+const BoundedIdSchema = lazyZodSchema(() => z.string().trim().min(1).max(512));
+const HostPluginContributionIdentityV1Schema = lazyZodSchema(() => asHostProtocolZod(
   PluginContributionIdentityV1Schema,
-);
+));
 /**
  * An Agent-minted external Session id crossing the runner/daemon seam. The
  * runtime transports it back to its issuer, so this schema bounds and
@@ -46,21 +47,21 @@ const HostPluginContributionIdentityV1Schema = asHostProtocolZod(
  * never re-canonicalizes the bytes.
  */
 const ExternalSessionRemoteIdSchema =
-  NonBlankOpaqueIdentifierSchema.max(2_000);
-const ExternalSessionJsonObjectSchema = z.record(
+  lazyZodSchema(() => NonBlankOpaqueIdentifierSchema.max(2_000));
+const ExternalSessionJsonObjectSchema = lazyZodSchema(() => z.record(
   z.string(),
   AgentRuntimeJsonValueV1Schema,
-);
+));
 export const RunnerAgentDaemonExternalSessionCursorV1Schema =
-  z.string().max(32_768);
-export const RunnerAgentDaemonExternalSessionRefV1Schema = z.object({
+  lazyZodSchema(() => z.string().max(32_768));
+export const RunnerAgentDaemonExternalSessionRefV1Schema = lazyZodSchema(() => z.object({
   agentId: AgentIdV1Schema,
   remoteSessionId: ExternalSessionRemoteIdSchema,
   // A plugin-declared contribution id, not an Agent-minted identity.
   sourceId: z.string().trim().min(1).max(2_000),
-}).strict();
+}).strict());
 
-const ExternalSessionTranscriptItemSchema = z.object({
+const ExternalSessionTranscriptItemSchema = lazyZodSchema(() => z.object({
   id: ExternalSessionTranscriptItemIdV1Schema,
   localId: ExternalSessionTranscriptItemIdV1Schema.optional(),
   sidechainId: SidechainIdSchema.nullable().optional(),
@@ -89,16 +90,16 @@ const ExternalSessionTranscriptItemSchema = z.object({
       message: 'External Session user projection requires a user raw envelope',
     });
   }
-});
-const ExternalSessionTerminalObservationSchema = z.object({
+}));
+const ExternalSessionTerminalObservationSchema = lazyZodSchema(() => z.object({
   id: ExternalSessionTranscriptItemIdV1Schema,
   timestampMs: ExternalSessionTranscriptSourceTimestampV1Schema,
   kind: z.literal('source_observation'),
   data: ExternalSessionTerminalSourceObservationV1Schema.shape.raw.shape.content,
-}).strict();
+}).strict());
 
 const AgentSessionRealtimeVoiceDeclarationV1Schema =
-  VoiceProviderContributionSchema.transform(
+  lazyZodSchema(() => VoiceProviderContributionSchema.transform(
     (declaration, context) => {
       if (
         declaration.kind !== 'conversation'
@@ -114,10 +115,10 @@ const AgentSessionRealtimeVoiceDeclarationV1Schema =
       }
       return declaration;
     },
-  );
+  ));
 
 export const AgentRuntimeDaemonExternalSessionFollowEventV1Schema =
-  z.discriminatedUnion('kind', [
+  lazyZodSchema(() => z.discriminatedUnion('kind', [
     z.object({
       kind: z.literal('data'),
       phase: z.literal('initial_replay').optional(),
@@ -148,10 +149,10 @@ export const AgentRuntimeDaemonExternalSessionFollowEventV1Schema =
       cursor: RunnerAgentDaemonExternalSessionCursorV1Schema.nullable(),
       code: z.string().trim().min(1).max(256).optional(),
     }).strict(),
-  ]);
+  ]));
 
 export const AgentRuntimeDaemonExternalSessionFollowOpenResultV1Schema =
-  z.discriminatedUnion('status', [
+  lazyZodSchema(() => z.discriminatedUnion('status', [
     z.object({
       status: z.literal('following'),
       startingCursor:
@@ -161,9 +162,9 @@ export const AgentRuntimeDaemonExternalSessionFollowOpenResultV1Schema =
       status: z.literal('unavailable'),
       code: z.string().trim().min(1).max(256),
     }).strict(),
-  ]);
+  ]));
 
-const FollowTargetSchema = z.discriminatedUnion('kind', [
+const FollowTargetSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('externalSession'),
     ref: RunnerAgentDaemonExternalSessionRefV1Schema,
@@ -174,13 +175,13 @@ const FollowTargetSchema = z.discriminatedUnion('kind', [
     agentId: AgentIdV1Schema,
     providerSessionId: NonBlankOpaqueIdentifierSchema.max(2_000),
   }).strict(),
-]);
+]));
 
-const ExternalSessionTranscriptMediaReadRootsSchema = z.array(
+const ExternalSessionTranscriptMediaReadRootsSchema = lazyZodSchema(() => z.array(
   z.string().min(1).max(4_096),
-).max(16).optional();
+).max(16).optional());
 
-const ExternalSessionSourceValidationResultSchema = z.discriminatedUnion(
+const ExternalSessionSourceValidationResultSchema = lazyZodSchema(() => z.discriminatedUnion(
   'ok',
   [
     z.object({
@@ -193,13 +194,13 @@ const ExternalSessionSourceValidationResultSchema = z.discriminatedUnion(
       error: z.string().trim().min(1).max(2_000),
     }).strict(),
   ],
-);
+));
 
 const ExternalSessionStateUpdateBase = {
   updatedAt: z.number().finite().optional(),
 } as const;
 
-const ExternalSessionStateUpdateSchema = z.discriminatedUnion(
+const ExternalSessionStateUpdateSchema = lazyZodSchema(() => z.discriminatedUnion(
   'fieldId',
   [
     z.object({
@@ -278,9 +279,9 @@ const ExternalSessionStateUpdateSchema = z.discriminatedUnion(
       ...ExternalSessionStateUpdateBase,
     }).strict(),
   ],
-);
+));
 
-const ExternalSessionLinkIdentitySchema = z.object({
+const ExternalSessionLinkIdentitySchema = lazyZodSchema(() => z.object({
   remoteSessionId: ExternalSessionRemoteIdSchema,
   source: ExternalSessionsSourceSchema,
   transcriptMediaReadRoots: ExternalSessionTranscriptMediaReadRootsSchema,
@@ -289,9 +290,9 @@ const ExternalSessionLinkIdentitySchema = z.object({
   externalSessionMetadata: ExternalSessionJsonObjectSchema.optional(),
   sessionStateUpdates:
     z.array(ExternalSessionStateUpdateSchema).max(128).optional(),
-}).strict();
+}).strict());
 
-const ExternalSessionTranscriptPageSchema = z.object({
+const ExternalSessionTranscriptPageSchema = lazyZodSchema(() => z.object({
   items: z.array(z.union([ExternalSessionTranscriptRawMessageV1Schema, ExternalSessionTerminalSourceObservationV1Schema])).max(5_000),
   nextCursor:
     RunnerAgentDaemonExternalSessionCursorV1Schema.nullable(),
@@ -299,9 +300,9 @@ const ExternalSessionTranscriptPageSchema = z.object({
     RunnerAgentDaemonExternalSessionCursorV1Schema.nullable(),
   hasMore: z.boolean(),
   truncated: z.boolean(),
-}).strict();
+}).strict());
 
-const ExternalSessionTranscriptReadAfterSchema = z.discriminatedUnion(
+const ExternalSessionTranscriptReadAfterSchema = lazyZodSchema(() => z.discriminatedUnion(
   'outcome',
   [
     z.object({ outcome: z.literal('already_current') }).strict(),
@@ -323,10 +324,10 @@ const ExternalSessionTranscriptReadAfterSchema = z.discriminatedUnion(
     z.object({ outcome: z.literal('source_unavailable') }).strict(),
     z.object({ outcome: z.literal('read_failed') }).strict(),
   ],
-);
+));
 
 export const RunnerAgentDaemonExternalSessionFollowProviderRequestV1Schema =
-  z.discriminatedUnion('kind', [
+  lazyZodSchema(() => z.discriminatedUnion('kind', [
     z.object({
       kind: z.literal('validateSource'),
       source: ExternalSessionsSourceSchema,
@@ -359,10 +360,10 @@ export const RunnerAgentDaemonExternalSessionFollowProviderRequestV1Schema =
       maxItems: z.number().int().min(1).max(200),
       deadlineAtMs: z.number().int().nonnegative().safe().optional(),
     }).strict(),
-  ]);
+  ]));
 
 const RunnerAgentDaemonExternalSessionFollowProviderSuccessV1Schema =
-  z.discriminatedUnion('kind', [
+  lazyZodSchema(() => z.discriminatedUnion('kind', [
     z.object({
       kind: z.literal('validateSource'),
       value: ExternalSessionSourceValidationResultSchema,
@@ -379,10 +380,10 @@ const RunnerAgentDaemonExternalSessionFollowProviderSuccessV1Schema =
       kind: z.literal('readAfterTranscript'),
       value: ExternalSessionTranscriptReadAfterSchema,
     }).strict(),
-  ]);
+  ]));
 
 export const RunnerAgentDaemonExternalSessionFollowProviderResponseV1Schema =
-  z.discriminatedUnion('status', [
+  lazyZodSchema(() => z.discriminatedUnion('status', [
     z.object({
       providerRequestId: BoundedIdSchema,
       status: z.literal('success'),
@@ -395,7 +396,7 @@ export const RunnerAgentDaemonExternalSessionFollowProviderResponseV1Schema =
       code: z.string().trim().min(1).max(256),
       message: z.string().trim().min(1).max(2_000),
     }).strict(),
-  ]);
+  ]));
 
 export type RunnerAgentDaemonExternalSessionFollowProviderRequestV1 =
   z.infer<
@@ -407,7 +408,7 @@ export type RunnerAgentDaemonExternalSessionFollowProviderResponseV1 =
   >;
 
 export const RUNNER_AGENT_DAEMON_FACET_OPERATION_SCHEMAS = [
-  z.object({
+  lazyZodSchema(() => z.object({
     kind: z.literal('external_session.follow.open'),
     requestId: BoundedIdSchema,
     followId: BoundedIdSchema,
@@ -421,8 +422,8 @@ export const RUNNER_AGENT_DAEMON_FACET_OPERATION_SCHEMAS = [
       z.number().int().nonnegative().safe().optional(),
     witness:
       AgentRuntimeDaemonServiceTurnWitnessV1Schema.optional(),
-  }).strict(),
-  z.object({
+  }).strict()),
+  lazyZodSchema(() => z.object({
     kind: z.literal('external_session.follow.next'),
     requestId: BoundedIdSchema,
     followId: BoundedIdSchema,
@@ -432,38 +433,38 @@ export const RUNNER_AGENT_DAEMON_FACET_OPERATION_SCHEMAS = [
         .optional(),
     witness:
       AgentRuntimeDaemonServiceTurnWitnessV1Schema.optional(),
-  }).strict(),
-  z.object({
+  }).strict()),
+  lazyZodSchema(() => z.object({
     kind: z.literal('external_session.follow.close'),
     requestId: BoundedIdSchema,
     followId: BoundedIdSchema,
     acknowledgeEventId: BoundedIdSchema.optional(),
-  }).strict(),
-  z.object({
+  }).strict()),
+  lazyZodSchema(() => z.object({
     kind: z.literal('voice.authority.snapshot'),
     requestId: BoundedIdSchema,
-  }).strict(),
-  z.object({
+  }).strict()),
+  lazyZodSchema(() => z.object({
     kind: z.literal('voice.authority.waitRetired'),
     requestId: BoundedIdSchema,
     provider: HostPluginContributionIdentityV1Schema,
     providerGeneration: BoundedIdSchema,
     witness:
       AgentRuntimeDaemonServiceTurnWitnessV1Schema.optional(),
-  }).strict(),
+  }).strict()),
 ] as const;
 
 export const RunnerAgentDaemonFacetOperationV1Schema =
-  z.discriminatedUnion(
+  lazyZodSchema(() => z.discriminatedUnion(
     'kind',
     RUNNER_AGENT_DAEMON_FACET_OPERATION_SCHEMAS,
-  );
+  ));
 
 export type RunnerAgentDaemonFacetOperationV1 =
   z.infer<typeof RunnerAgentDaemonFacetOperationV1Schema>;
 
 export const RunnerAgentDaemonFacetResultV1Schema:
-  z.ZodType<RunnerAgentDaemonFacetResultV1> = z.discriminatedUnion(
+  z.ZodType<RunnerAgentDaemonFacetResultV1> = lazyZodSchema(() => z.discriminatedUnion(
   'kind',
   [
     z.object({
@@ -506,7 +507,7 @@ export const RunnerAgentDaemonFacetResultV1Schema:
       providerGeneration: BoundedIdSchema,
     }).strict(),
   ],
-);
+));
 
 type AgentSessionRealtimeVoiceDeclarationV1 = Extract<
   VoiceProviderContribution,

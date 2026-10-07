@@ -1,16 +1,10 @@
-import {
-    RPC_ERROR_CODES,
-    SessionCreationKeyV1Schema,
-    SessionSpawnNewResultV1Schema,
-    projectSessionFollowSourceKeyPreparationAfterSetV1,
-    type SessionFollowSourceKeyPreparationResultV1,
-    SessionFollowSourceKeyPreparationResultV1Schema,
-    SESSION_FOLLOW_SOURCE_KEY_PREPARATION_WAITING_ACTION_ERROR_V1,
-    type ActionExecuteResult,
-    type ActionExecutorContext,
-    type SessionSpawnNewInputV2,
-    type SessionSpawnNewResultV1,
-} from '@happier-dev/protocol';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { SessionCreationKeyV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
+import { SessionSpawnNewResultV1Schema, type SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { projectSessionFollowSourceKeyPreparationAfterSetV1, type SessionFollowSourceKeyPreparationResultV1, SessionFollowSourceKeyPreparationResultV1Schema, SESSION_FOLLOW_SOURCE_KEY_PREPARATION_WAITING_ACTION_ERROR_V1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceKeyPreparationV1';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { createSpawnAttemptKeyForSessionSpawnNewInput } from '@/sync/domains/session/spawn/spawnAttemptKey';
 import {

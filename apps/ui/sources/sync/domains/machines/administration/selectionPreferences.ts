@@ -1,11 +1,5 @@
-import {
-    MachineAdministrationSelectionsV1Schema,
-    MachineAdministrationTargetsV1Schema,
-    type MachineAdministrationTargetsV1,
-    type MachineAdministrationSelectionsV1,
-    type MachineAdministrationTargetV1,
-    type PluginMachineExecutionOriginV1,
-} from '@happier-dev/protocol';
+import { MachineAdministrationSelectionsV1Schema, MachineAdministrationTargetsV1Schema, type MachineAdministrationTargetsV1, type MachineAdministrationSelectionsV1, type MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
+import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import type { OneShotAccountSettingsMutationResult } from '@/sync/engine/settings/syncSettings';

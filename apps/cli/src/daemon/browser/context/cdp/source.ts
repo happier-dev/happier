@@ -1,5 +1,5 @@
 import { resolveAnnotationCropClip } from '@happier-dev/protocol/browser/context/annotationCropGeometry';
-import { browserContextSensitiveFieldsExpression } from '@happier-dev/protocol';
+import { browserContextSensitiveFieldsExpression } from '@happier-dev/protocol/browser/context/privacy';
 
 import type { BrowserContextCaptureScope, BrowserContextSource } from '../capture';
 import type { BrowserContextRegionRect } from '../capture';

@@ -58,6 +58,33 @@ test('snapshot retention keeps the newest publication for each consumer target',
   assert.deepEqual(result.keptSnapshotIds.sort(), ['arm-new', 'x64']);
 });
 
+test('worker artifact retention uses the canonical count but preserves live descriptors and unknown observations', async t => {
+  const stackBaseDir = await mkdtemp(join(tmpdir(), 'hstack-worker-artifact-retention-'));
+  t.after(() => rm(stackBaseDir, { recursive: true, force: true }));
+  const procRoot = join(stackBaseDir, 'proc');
+  await mkdir(join(procRoot, '42', 'fd'), { recursive: true });
+  await writeFile(join(procRoot, '42', 'status'), 'State:\tS (sleeping)\n');
+  const { symlink, access } = await import('node:fs/promises');
+  await symlink(stackBaseDir, join(procRoot, '42', 'cwd'));
+  await writeFile(join(procRoot, '42', 'maps'), '');
+  const held = await writeArtifact(stackBaseDir, 'server', 'held', '2026-10-01T00:00:00Z');
+  const obsolete = await writeArtifact(stackBaseDir, 'server', 'obsolete', '2026-10-02T00:00:00Z');
+  await writeArtifact(stackBaseDir, 'server', 'latest', '2026-10-03T00:00:00Z');
+  await symlink(join(held, 'payload', 'happier-server'), join(procRoot, '42', 'fd', '9'));
+  const options = { stackBaseDir, component: 'server', keepCount: 1, unusedArtifactProcRoot: procRoot };
+  const result = await pruneComponentArtifacts(options);
+  assert.deepEqual(result.keptFingerprints.sort(), ['held', 'latest']);
+  await access(held);
+  await assert.rejects(access(obsolete), { code: 'ENOENT' });
+  await rm(join(procRoot, '42', 'fd', '9'));
+  await rm(join(procRoot, '42', 'maps'));
+  await pruneComponentArtifacts(options);
+  await access(held);
+  await writeFile(join(procRoot, '42', 'maps'), '');
+  await pruneComponentArtifacts(options);
+  await assert.rejects(access(held), { code: 'ENOENT' });
+});
+
 async function writeArtifact(stackBaseDir, component, fingerprint, createdAt, extraManifest = {}) {
   const artifactDir = join(stackBaseDir, 'artifacts', component, fingerprint);
   const payloadDir = join(artifactDir, 'payload');

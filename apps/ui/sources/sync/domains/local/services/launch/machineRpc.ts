@@ -7,7 +7,7 @@ import {
     DaemonLocalServiceLauncherSnapshotResponseV1Schema,
     DaemonLocalServiceLauncherStartRequestV1Schema,
     DaemonLocalServiceLauncherStartResponseV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/local/services/launcher/v1';
 import {
     isRpcMethodNotFoundResult,
     RPC_ERROR_CODES,

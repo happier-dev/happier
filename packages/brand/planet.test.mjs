@@ -268,3 +268,27 @@ test('the failed pose stays visible on the smallest mark tier and keeps its half
     assert.ok(visibleShare(28, theme) < 0.4);
   }
 });
+
+test('"needs you" is the amber attention colour in both themes; rose stays for failure', () => {
+  for (const theme of ['light', 'dark']) {
+    const lit = planet.createPlanetStatusCell({ kind: 'needs_you', theme }).filter((dot) => dot.opacity === 1);
+    const amber = planet.PLANET_PALETTES[theme].attention;
+    assert.ok(lit.length > 0);
+    lit.forEach((dot) => assert.deepEqual(dot.rgb, [...amber]));
+    assert.notDeepEqual([...amber], [...planet.PLANET_PALETTES[theme].rose]);
+  }
+  const hex = (rgb) => `#${rgb.map((channel) => channel.toString(16).padStart(2, '0')).join('')}`.toUpperCase();
+  assert.equal(hex(planet.PLANET_PALETTES.light.attention), planet.PLANET_ATTENTION_HEX.light.toUpperCase());
+  assert.equal(hex(planet.PLANET_PALETTES.dark.attention), planet.PLANET_ATTENTION_HEX.dark.toUpperCase());
+});
+
+test('scene art samples the same planet on a finer lattice, with a quieter halo and golden-hour warmth', () => {
+  const coarse = planet.createPlanetDots({ size: 30 });
+  const fine = planet.createPlanetDots({ size: 30, rows: 24 });
+  assert.equal(fine.length, 24 * 24);
+  assert.ok(fine.length > coarse.length);
+  const haloOf = (dots) => dots.filter((dot) => Math.hypot(dot.x - 15, dot.y - 15) >= 12 && dot.opacity > 0).length;
+  assert.ok(haloOf(planet.createPlanetDots({ size: 30, rows: 24, halo: 0.55 })) < haloOf(fine));
+  const sum = (dots) => dots.reduce((total, dot) => total + dot.rgb[0] - dot.rgb[2], 0);
+  assert.ok(sum(planet.createPlanetDots({ size: 30, rows: 24, warmth: 0.25 })) > sum(fine));
+});

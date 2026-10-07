@@ -1,7 +1,5 @@
-import {
-    LEGACY_AI_LAUNCH_RESERVED_ENV_NAMES_V1,
-    type SessionAuthoringFieldId,
-} from '@happier-dev/protocol';
+import { LEGACY_AI_LAUNCH_RESERVED_ENV_NAMES_V1 } from '@happier-dev/protocol/profiles/v2/schema';
+import type { SessionAuthoringFieldId } from '@happier-dev/protocol/sessions/authoring/index';
 // Deep import: this owner is consumed by the picker and composer chips, which
 // must not pull the whole Protocol barrel to answer one portability question.
 import { classifyRunnerConnectedServiceSelectionV1 } from '@happier-dev/protocol/ephemeralRunner/runnerConnectedServices';

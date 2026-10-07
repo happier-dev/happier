@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import { happierPageTextMetrics, type HappierSceneId } from '@happier-dev/plugin-ui/presentation';
 import { Platform, Pressable, View } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -167,14 +167,14 @@ export const InboxContent = React.memo(function InboxContent(props: Readonly<{
         </Pressable>
     );
 
-    const renderEmpty = (title: string, subtitle: string) => (page ? (
+    const renderEmpty = (title: string, subtitle: string, scene: HappierSceneId) => (page ? (
         // A sheetless page section, so the state sits in the page's content column.
         <ItemGroup surface="none">
-            <EmptyState testID="inbox.empty" layout="page" iconName="check-circle" title={title} subtitle={subtitle} />
+            <EmptyState testID="inbox.empty" layout="page" scene={scene} title={title} subtitle={subtitle} />
         </ItemGroup>
     ) : (
         <View style={styles.emptyContainer}>
-            <EmptyState testID="inbox.empty" iconName="check" title={title} subtitle={subtitle} />
+            <EmptyState testID="inbox.empty" scene={scene} title={title} subtitle={subtitle} />
         </View>
     ));
 
@@ -270,9 +270,9 @@ export const InboxContent = React.memo(function InboxContent(props: Readonly<{
 
                     {!model.isLoading && !workflowUnavailable && needsYouCount === 0 && page && updatesCount === 0
                         // Nothing anywhere: the page's calm caught-up state.
-                        ? renderEmpty(t('inbox.emptyTitle'), t('inbox.emptyDescription'))
+                        ? renderEmpty(t('inbox.emptyTitle'), t('inbox.emptyDescription'), 'inboxZero')
                         : !model.isLoading && !workflowUnavailable && needsYouCount === 0 && (page || updatesCount === 0)
-                            ? renderEmpty(t('inbox.work.empty.title'), t('inbox.work.empty.description'))
+                            ? renderEmpty(t('inbox.work.empty.title'), t('inbox.work.empty.description'), 'inboxZero')
                             : null}
                 </>
             ) : (
@@ -336,7 +336,7 @@ export const InboxContent = React.memo(function InboxContent(props: Readonly<{
                     ) : null}
 
                     {!loading && updatesCount === 0
-                        ? renderEmpty(t('inbox.work.updatesEmpty.title'), t('inbox.work.updatesEmpty.description'))
+                        ? renderEmpty(t('inbox.work.updatesEmpty.title'), t('inbox.work.updatesEmpty.description'), 'agentFinished')
                         : null}
                 </>
             )}

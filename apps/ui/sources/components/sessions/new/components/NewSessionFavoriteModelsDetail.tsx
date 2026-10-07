@@ -25,12 +25,9 @@ import {
 } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import { computeAcpConfigOptionControlsForProvider } from '@/sync/domains/sessionControl/configOptionsControl';
 import type { Settings } from '@/sync/domains/settings/settings';
-import {
-    readProviderSettingsFromAccountSettingsV1,
-    serializeModelVisibilityRefV1,
-    type SessionModelSelectionV1,
-    type ProviderErrorV1,
-} from '@happier-dev/protocol';
+import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
+import { serializeModelVisibilityRefV1, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type {
     SessionConfigOptionControl,
     SessionConfigOptionValueId,

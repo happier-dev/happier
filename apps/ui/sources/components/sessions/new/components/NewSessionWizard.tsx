@@ -47,7 +47,7 @@ import type {
     ProviderErrorV1,
     SessionModelSelectionV1,
 } from '@happier-dev/protocol';
-import { parseBackendTargetKeyV2 } from '@happier-dev/protocol';
+import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { DaemonProviderCurrentSelectionRecoveryV1 } from '@happier-dev/protocol/rpc';
 import { useNewSessionAttachmentsController } from '@/components/sessions/new/attachments/useNewSessionAttachmentsController';
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';

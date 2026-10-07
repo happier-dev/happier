@@ -1,4 +1,4 @@
-import { normalizeConnectedServiceCredentialHealthStatus } from '@happier-dev/protocol';
+import { normalizeConnectedServiceCredentialHealthStatus } from '@happier-dev/protocol/connect/connected-service-schemas';
 
 import { deriveAccountHealth } from './deriveAccountHealth';
 import type { ConnectedAccountUiNegotiation } from './resolveConnectedAccountUiNegotiation';

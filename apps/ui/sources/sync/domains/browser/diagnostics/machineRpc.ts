@@ -2,7 +2,7 @@ import {
     DaemonBrowserDiagnosticsSnapshotRequestV1Schema,
     DaemonBrowserDiagnosticsSnapshotResponseV1Schema,
     type BrowserDiagnosticsSnapshotV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/diagnostics/v1';
 import { isRpcMethodNotFoundResult, RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { callGuardedMachineRpcWithPolicy } from '@/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpc';

@@ -11,6 +11,9 @@ owner, do not create one. Paths are under `apps/ui/sources/` unless stated.
 | Type scale and weights (`regular`, `medium`, `bold`) | `constants/Typography.ts` + app `Text` / `TextInput` |
 | Page column, title block, section spacing, sheet radius and insets, row insets, back-arrow gutter, stack breakpoint | `components/ui/lists/pageListMetrics.ts` |
 | Row density (a section sets it with `ItemGroup density`) | `components/ui/lists/itemDensityMetrics.ts`, `useResolvedItemDensity.ts` |
+| Raised edge (which side, which states drop it), the rim and their colours | `@happier-dev/plugin-ui/presentation` raisedEdge + `theme/raisedEdge.ts` |
+| Elevation ladder by role | `shadowElevation.ts` |
+| Focus ring | `border.focus` and its single focus-visible treatment |
 | Motion durations and easing | `components/ui/motion/index.ts` (`motionTokens`) |
 | Content width | `components/ui/layout` (`layout.ts`, `contentWidthMode.ts`) |
 
@@ -46,6 +49,7 @@ owner, do not create one. Paths are under `apps/ui/sources/` unless stated.
 | --- | --- | --- |
 | On / off | Switch | `Item` with switch |
 | One of 2–4 short options | Segmented, all visible; announces a radio group, an unavailable option says why (`unavailableReason`) | `SegmentedChoiceItem`; outside a row, `SegmentedTabBar role="radiogroup"` |
+| A fixed choice inside a typed input form (Actions, Workflows, widget inputs) | The shared option list of the input field, at any option count | `HappierInputField` (plugin-ui) |
 | Which view of the same content to show (Steps · Flow, list filters, chart lenses) | Segmented view switch; announces tabs | `SegmentedTabBar` (default `role="tablist"`) |
 | One of many, or long labels | Bordered field select | `DropdownMenu` (field trigger on pages) |
 | A value on a scale with steps | Slider with end glyphs | `components/ui/forms/Slider.tsx` |
@@ -61,6 +65,8 @@ Rules that come with the table:
 - Visual previews render the real component (session row, avatar, theme window) at static props.
   No subscriptions, no RPCs, no drawn replicas.
 - A slider exists only for a real ordered scale; its steps are the setting's real values.
+- Typed input forms never hand-pick a segmented control for small choices: the field owner decides
+  their presentation once, for every form.
 - A "+" with more than one way to add is a menu, not a guess at the most common path.
 - One primary `RoundButton` per view. Dark themes use an inverted primary (light fill, dark text);
   check that a filled secondary does not read as disabled, and use `display="destructive"` for the

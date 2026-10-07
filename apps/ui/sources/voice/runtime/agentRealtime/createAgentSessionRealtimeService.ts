@@ -15,7 +15,7 @@ import {
   AgentSessionRealtimeStartResultV1Schema,
   AgentSessionRealtimeStopResultV1Schema,
   AgentSessionRealtimeWatchResultV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/voice/realtime/agentSession';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';

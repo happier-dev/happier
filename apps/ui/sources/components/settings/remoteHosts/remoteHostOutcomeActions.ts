@@ -7,7 +7,8 @@ import type { RemoteHostEffectiveSshConfig } from '@/sync/domains/remoteHosts/re
 import type { SshCredentialsDraft } from '@/components/ssh/SshCredentialsFields';
 import { buildRemoteSshBootstrapMachineSystemTaskSpec } from '@/components/systemTasks/remoteSshBootstrap/buildRemoteSshBootstrapMachineSystemTaskSpec';
 import { resolvePreferredPublicReleaseRingLabelForCurrentApp } from '@/sync/runtime/resolvePublicReleaseRing';
-import { parseSshTarget, type SshTunnelEnsureRequest } from '@happier-dev/protocol';
+import { parseSshTarget } from '@happier-dev/protocol/ssh/sshTarget';
+import type { SshTunnelEnsureRequest } from '@happier-dev/protocol/ssh/tunnels';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import type { NativeSshTunnelRequest } from '@/sync/runtime/nativeSshTunnels/types';

@@ -1,4 +1,4 @@
-import { extractCanonicalDiffFiles, readTurnChangeToolMetadataFromToolCall } from '@happier-dev/protocol';
+import { extractCanonicalDiffFiles, readTurnChangeToolMetadataFromToolCall } from '@happier-dev/protocol/sessions/messages/canonicalTurnDiffTool';
 
 import { buildScmFileStatusFromChangeEvidence } from '@/scm/scmEvidenceFileStatus';
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';

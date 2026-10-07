@@ -4,7 +4,7 @@ import {
   VoiceRealtimeStableIdSchema,
   VoiceTranscriptCanonicalEventV1Schema,
   type VoiceTranscriptCanonicalEventV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/voice/realtime/events';
 import { randomUUID } from '@/platform/randomUUID';
 
 export type CanonicalVoiceTranscriptItem = Readonly<{

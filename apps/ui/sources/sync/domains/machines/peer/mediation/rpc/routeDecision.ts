@@ -1,11 +1,8 @@
-import {
-    PEER_MEDIATION_RECEIPTS,
-    isMachineRpcDirectRoutePolicy,
-    readServerEnabledBit,
-    resolveMachineRpcRoutePolicy,
-    type FeaturesResponse,
-    type PeerMachineRpcDirectFallbackReasonCodeV1,
-} from '@happier-dev/protocol';
+import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/mediation/receipts';
+import { isMachineRpcDirectRoutePolicy, resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
+import type { FeaturesResponse } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import type { PeerMachineRpcDirectFallbackReasonCodeV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/directV1';
 import {
     resolveEffectivePeerDirectRoutePolicy,
     type PeerDirectPreference,

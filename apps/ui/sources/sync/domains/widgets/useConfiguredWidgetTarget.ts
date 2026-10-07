@@ -1,4 +1,6 @@
-import { buildQualifiedPluginContributionKey, VoiceTrackedSessionAddressV1Schema, type JsonValue } from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { VoiceTrackedSessionAddressV1Schema } from '@happier-dev/protocol/sessions/follow/voiceTrackedTargetsCompatibilityV1';
+import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { validateInputTypeValue } from '@happier-dev/protocol/inputs/runtime';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { readInputPath, resolveEffectiveInputFields, isSameInputOptionValue } from '@happier-dev/protocol/inputs';

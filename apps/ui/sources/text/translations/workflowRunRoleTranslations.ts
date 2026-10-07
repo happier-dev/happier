@@ -1,20 +1,28 @@
-const en = {
-    rolesTitle: 'Roles for this run', rolesYour: 'Your roles',
-    rolesChanged: ({ count }: { count: number }) => `${count} changed for this run`,
-    rolesUnchanged: 'Everything else stays the same.', useYourRole: 'Use your role',
-    targetsTitle: 'Each step runs in', rolesPrefillFailed: 'Could not read the roles from your last run. Try again.',
-};
-export const workflowRunRoleTranslations: Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', typeof en> = {
-    en,
-    de: { rolesTitle: 'Rollen für diesen Lauf', rolesYour: 'Deine Rollen', rolesChanged: ({ count }) => `${count} für diesen Lauf geändert`, rolesUnchanged: 'Alles andere bleibt gleich.', useYourRole: 'Deine Rolle verwenden', targetsTitle: 'Jeder Schritt läuft in', rolesPrefillFailed: 'Die Rollen deines letzten Laufs konnten nicht gelesen werden. Versuche es erneut.' },
-    es: { rolesTitle: 'Roles para esta ejecución', rolesYour: 'Tus roles', rolesChanged: ({ count }) => `${count} cambiados para esta ejecución`, rolesUnchanged: 'Todo lo demás sigue igual.', useYourRole: 'Usar tu rol', targetsTitle: 'Cada paso se ejecuta en', rolesPrefillFailed: 'No se pudieron leer los roles de tu última ejecución. Inténtalo de nuevo.' },
-    fr: { rolesTitle: 'Rôles pour cette exécution', rolesYour: 'Vos rôles', rolesChanged: ({ count }) => `${count} modifiés pour cette exécution`, rolesUnchanged: 'Tout le reste reste identique.', useYourRole: 'Utiliser votre rôle', targetsTitle: 'Chaque étape s’exécute dans', rolesPrefillFailed: 'Impossible de lire les rôles de votre dernière exécution. Réessayez.' },
-    it: { rolesTitle: 'Ruoli per questa esecuzione', rolesYour: 'I tuoi ruoli', rolesChanged: ({ count }) => `${count} modificati per questa esecuzione`, rolesUnchanged: 'Tutto il resto rimane invariato.', useYourRole: 'Usa il tuo ruolo', targetsTitle: 'Ogni passaggio viene eseguito in', rolesPrefillFailed: 'Impossibile leggere i ruoli della tua ultima esecuzione. Riprova.' },
-    pt: { rolesTitle: 'Funções para esta execução', rolesYour: 'Suas funções', rolesChanged: ({ count }) => `${count} alteradas para esta execução`, rolesUnchanged: 'Todo o resto permanece igual.', useYourRole: 'Usar sua função', targetsTitle: 'Cada passo é executado em', rolesPrefillFailed: 'Não foi possível ler as funções da sua última execução. Tente novamente.' },
-    ca: { rolesTitle: 'Rols per a aquesta execució', rolesYour: 'Els teus rols', rolesChanged: ({ count }) => `${count} canviats per a aquesta execució`, rolesUnchanged: 'Tota la resta continua igual.', useYourRole: 'Fes servir el teu rol', targetsTitle: 'Cada pas s’executa en', rolesPrefillFailed: 'No s’han pogut llegir els rols de la teva última execució. Torna-ho a provar.' },
-    pl: { rolesTitle: 'Role dla tego uruchomienia', rolesYour: 'Twoje role', rolesChanged: ({ count }) => `${count} zmienionych dla tego uruchomienia`, rolesUnchanged: 'Wszystko inne pozostaje bez zmian.', useYourRole: 'Użyj swojej roli', targetsTitle: 'Każdy krok działa w', rolesPrefillFailed: 'Nie udało się odczytać ról z ostatniego uruchomienia. Spróbuj ponownie.' },
-    ru: { rolesTitle: 'Роли для этого запуска', rolesYour: 'Ваши роли', rolesChanged: ({ count }) => `${count} изменено для этого запуска`, rolesUnchanged: 'Всё остальное остаётся прежним.', useYourRole: 'Использовать вашу роль', targetsTitle: 'Каждый шаг выполняется в', rolesPrefillFailed: 'Не удалось прочитать роли вашего последнего запуска. Попробуйте ещё раз.' },
-    ja: { rolesTitle: 'この実行のロール', rolesYour: 'あなたのロール', rolesChanged: ({ count }) => `この実行で${count}件変更`, rolesUnchanged: 'その他は変わりません。', useYourRole: '自分のロールを使用', targetsTitle: '各ステップの実行先', rolesPrefillFailed: '前回の実行のロールを読み込めませんでした。再試行してください。' },
-    zhHans: { rolesTitle: '本次运行的角色', rolesYour: '你的角色', rolesChanged: ({ count }) => `本次运行更改了 ${count} 个`, rolesUnchanged: '其他内容保持不变。', useYourRole: '使用你的角色', targetsTitle: '每个步骤运行于', rolesPrefillFailed: '无法读取你上次运行的角色。请重试。' },
-    zhHant: { rolesTitle: '本次執行的角色', rolesYour: '你的角色', rolesChanged: ({ count }) => `本次執行更改了 ${count} 個`, rolesUnchanged: '其他內容保持不變。', useYourRole: '使用你的角色', targetsTitle: '每個步驟執行於', rolesPrefillFailed: '無法讀取你上次執行的角色。請重試。' },
+// Tooling aggregate. Product locale roots import only their locale payload.
+import { workflowRunRoleTranslations as en } from './features/en';
+import { workflowRunRoleTranslations as ca } from './features/ca';
+import { workflowRunRoleTranslations as de } from './features/de';
+import { workflowRunRoleTranslations as es } from './features/es';
+import { workflowRunRoleTranslations as fr } from './features/fr';
+import { workflowRunRoleTranslations as it } from './features/it';
+import { workflowRunRoleTranslations as ja } from './features/ja';
+import { workflowRunRoleTranslations as pl } from './features/pl';
+import { workflowRunRoleTranslations as pt } from './features/pt';
+import { workflowRunRoleTranslations as ru } from './features/ru';
+import { workflowRunRoleTranslations as zh_Hans } from './features/zh-Hans';
+import { workflowRunRoleTranslations as zh_Hant } from './features/zh-Hant';
+
+export const workflowRunRoleTranslations = {
+    ...en.workflowRunRoleTranslations,
+    ...ca.workflowRunRoleTranslations,
+    ...de.workflowRunRoleTranslations,
+    ...es.workflowRunRoleTranslations,
+    ...fr.workflowRunRoleTranslations,
+    ...it.workflowRunRoleTranslations,
+    ...ja.workflowRunRoleTranslations,
+    ...pl.workflowRunRoleTranslations,
+    ...pt.workflowRunRoleTranslations,
+    ...ru.workflowRunRoleTranslations,
+    ...zh_Hans.workflowRunRoleTranslations,
+    ...zh_Hant.workflowRunRoleTranslations,
 };

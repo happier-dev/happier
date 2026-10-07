@@ -395,6 +395,13 @@ describe('Session Board Action contracts', () => {
       itemId: 'note', expectedItemRevision: revision, item,
     }).success).toBe(true);
     expect(SessionBoardItemUpsertInputV1Schema.safeParse({
+      itemId: 'note', expectedItemRevision: revision, expectedLayoutRevision: revision, item,
+      placement: { tabId: 'overview', width: 'medium' },
+    }).success).toBe(true);
+    expect(SessionBoardItemUpsertInputV1Schema.safeParse({
+      itemId: 'note', expectedItemRevision: revision, expectedLayoutRevision: revision, item,
+    }).success).toBe(false);
+    expect(SessionBoardItemUpsertInputV1Schema.safeParse({
       ...create, placement: { tabId: 'overview', tabTitle: 'Overview', index: 0 },
     }).success).toBe(false);
     expect(SessionBoardItemUpsertInputV1Schema.safeParse({
@@ -517,6 +524,13 @@ describe('Session Board Action contracts', () => {
     };
 
     // An omitted width preserves the existing placement width, so the evidence must accept it.
+    const captured = upsertEvidence({ tabId: 'overview', width: 'wide' }, layoutWithWideNote);
+    expect(SessionBoardActionRecoveryEvidenceV1Schema.safeParse({ ...captured,
+      intent: { ...captured.intent, expectedLayoutRevision: revision },
+    }).success).toBe(true);
+    expect(SessionBoardActionRecoveryEvidenceV1Schema.safeParse({ ...captured,
+      intent: { ...captured.intent, expectedLayoutRevision: null },
+    }).success).toBe(false);
     expect(SessionBoardActionRecoveryEvidenceV1Schema.safeParse(
       upsertEvidence({ tabId: 'overview' }, layoutWithWideNote),
     ).success).toBe(true);

@@ -8,10 +8,8 @@ import type { Metadata } from '@happier-dev/session-core/state';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { readSessionModelsState } from '@/sync/domains/sessionControl/readSessionControlMetadata';
 import { getAgentStaticModels } from '@happier-dev/agents';
-import {
-    readSessionProviderBindingMetadataV1,
-    type SessionContextUsageSnapshotV1,
-} from '@happier-dev/protocol';
+import { readSessionProviderBindingMetadataV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import type { SessionContextUsageSnapshotV1 } from '@happier-dev/protocol/usage/contextUsage';
 
 const CONTEXT_WARNING_WINDOW_RATIO = 0.95;
 

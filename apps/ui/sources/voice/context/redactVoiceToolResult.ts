@@ -1,11 +1,7 @@
 import { redactVoicePathLikeData } from '@/voice/shared/redactVoicePathLikeData';
-import {
-  getActionSpec,
-  SESSION_AWARENESS_OPERATIONAL_PRIMARY_PRECEDENCE_V1,
-  SessionActivityCompatibilityResultV1Schema,
-  SessionAwarenessProjectionV1Schema,
-  type SessionOperationalReasonV1,
-} from '@happier-dev/protocol';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { SESSION_AWARENESS_OPERATIONAL_PRIMARY_PRECEDENCE_V1, SessionAwarenessProjectionV1Schema, type SessionOperationalReasonV1 } from '@happier-dev/protocol/sessions/awareness/projectionV1';
+import { SessionActivityCompatibilityResultV1Schema } from '@happier-dev/protocol/sessions/awareness/action';
 import { PluginUiHostApiErrorCodeV1Schema } from '@happier-dev/protocol/plugins/ui';
 import {
   isInventoryPrivacyVoiceToolName,

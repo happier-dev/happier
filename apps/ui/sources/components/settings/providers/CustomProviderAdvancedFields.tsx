@@ -1,12 +1,7 @@
 import * as React from 'react';
 import type { TextInput } from 'react-native';
-import {
-    BUNDLED_PROVIDER_CATALOG_PARSERS_V1,
-    BundledProviderCatalogParserV1Schema,
-    CustomProviderCredentialStyleV1Schema,
-    type BundledProviderCatalogParserV1,
-    type CustomProviderCredentialStyleV1,
-} from '@happier-dev/protocol';
+import { BUNDLED_PROVIDER_CATALOG_PARSERS_V1, BundledProviderCatalogParserV1Schema, type BundledProviderCatalogParserV1 } from '@happier-dev/protocol/providers/catalog/descriptorV1';
+import { CustomProviderCredentialStyleV1Schema, type CustomProviderCredentialStyleV1 } from '@happier-dev/protocol/providers/connections/normalizeCustomTemplateV1';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Switch } from '@/components/ui/forms/Switch';

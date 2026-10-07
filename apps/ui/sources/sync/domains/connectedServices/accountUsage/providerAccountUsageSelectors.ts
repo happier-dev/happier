@@ -3,13 +3,8 @@ import {
     isBundledAgentId,
 } from '@/agents/catalog/catalog';
 
-import {
-    ProviderAccountUsageRecordIdSchema,
-    type ConnectedServiceQuotaSnapshotV1,
-    type ProviderAccountUsageRecordId,
-    type ProviderAccountUsageSnapshotV1,
-    type ProviderAccountUsageStateV1,
-} from '@happier-dev/protocol';
+import { ProviderAccountUsageRecordIdSchema, type ProviderAccountUsageRecordId, type ProviderAccountUsageSnapshotV1, type ProviderAccountUsageStateV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
+import type { ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 
 import {
     computeConnectedServiceQuotaGaugeViewModel,

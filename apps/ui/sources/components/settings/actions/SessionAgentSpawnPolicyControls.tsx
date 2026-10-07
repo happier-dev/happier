@@ -2,12 +2,9 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import {
-    SESSION_PERMISSION_MODES,
-    SessionAgentSpawnPolicyV1Schema,
-    type SessionAgentSpawnPolicyV1,
-    type SessionAgentStartAllowListsV1,
-} from '@happier-dev/protocol';
+import { SESSION_PERMISSION_MODES } from '@happier-dev/protocol/sessions/metadata/permission-modes';
+import { SessionAgentSpawnPolicyV1Schema, type SessionAgentSpawnPolicyV1 } from '@happier-dev/protocol/account/settings/sessionAgentSpawnPolicyV1';
+import type { SessionAgentStartAllowListsV1 } from '@happier-dev/protocol/account/settings/sessionAgentStartAllowListsV1';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Switch } from '@/components/ui/forms/Switch';

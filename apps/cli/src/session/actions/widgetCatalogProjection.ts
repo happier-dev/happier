@@ -11,7 +11,8 @@ import { selectPluginUiWidgetEntriesV1 } from '@happier-dev/protocol/plugins/con
 import { PluginUiWidgetHomeV1Schema } from '@happier-dev/protocol/plugins/contributions/ui/v2';
 import { BUILTIN_WIDGET_DESCRIPTORS_V1, widgetCandidateDefinitionV1 } from '@happier-dev/protocol/widgets/builtinWidgetDescriptorV1';
 import { WidgetConnectedAccountPurposeBindingV1Schema } from '@happier-dev/protocol/widgets/widgetConnectedAccountPurposeBindingV1';
-import type { WidgetCatalogEntryV1 } from '@happier-dev/protocol/widgets';
+import { WidgetSizeDeclarationV1Schema } from '@happier-dev/protocol/widgets/widgetPresentationV1';
+import type { WidgetCatalogSourceEntryV1 } from '@happier-dev/protocol/widgets';
 
 const display = z.object({ title: z.string().trim().min(1).optional(), developerFallback: z.string().trim().min(1).optional() }).passthrough();
 
@@ -31,6 +32,8 @@ export function readCliWidgetCatalogProjectionV1(projection: PluginProjectionV2)
         const purposeBindings = Array.isArray(entry.connectedAccountPurposeBindings)
             ? entry.connectedAccountPurposeBindings.map(value => WidgetConnectedAccountPurposeBindingV1Schema.safeParse(value)) : [];
         const resources = defineProtocolArray(PluginContributionIdentityV1Schema).safeParse(entry.resources ?? []);
+        const sizeDeclaration = WidgetSizeDeclarationV1Schema.safeParse(entry.sizeDeclaration);
+        if (!sizeDeclaration.success) return [];
         if (!title.success || entry.inputs !== undefined && !inputs.success || entry.inputSchema !== undefined && !inputSchema.success) return [];
         if (entry.connectedAccountPurposeBindings !== undefined && !Array.isArray(entry.connectedAccountPurposeBindings)
             || purposeBindings.some(value => !value.success)) return [];
@@ -38,6 +41,7 @@ export function readCliWidgetCatalogProjectionV1(projection: PluginProjectionV2)
         const available = technical === undefined || technical !== null && typeof technical === 'object' && !Array.isArray(technical)
             && Reflect.get(technical, 'state') === 'available' && Reflect.get(technical, 'when') === undefined && Reflect.get(technical, 'disabledWhen') === undefined;
         return [{ surface: entry.binding.surface, key: buildQualifiedPluginContributionKey(entry.binding.surface),
+            sizeDeclaration: sizeDeclaration.data,
             title: title.data.title ?? title.data.developerFallback ?? entry.binding.surface.localId,
             fields: inputs.success ? inputs.data.fields : [],
             ...(inputs.success ? { inputs: inputs.data } : {}),
@@ -56,7 +60,7 @@ export function readCliWidgetCatalogProjectionV1(projection: PluginProjectionV2)
     return [...BUILTIN_WIDGET_DESCRIPTORS_V1.map(descriptor => ({ ...descriptor, fields: descriptor.inputs?.fields ?? [], connectedAccountPurposeBindings: [] })), ...installed];
 }
 
-export function cliWidgetCatalogEntryV1(candidate: ReturnType<typeof readCliWidgetCatalogProjectionV1>[number], instanceCount: number): WidgetCatalogEntryV1 {
+export function cliWidgetCatalogEntryV1(candidate: ReturnType<typeof readCliWidgetCatalogProjectionV1>[number], instanceCount: number): WidgetCatalogSourceEntryV1 {
     return { definition: widgetCandidateDefinitionV1(candidate), title: candidate.title,
-        fields: [...candidate.fields], availability: candidate.availability, instanceCount };
+        sizeDeclaration: candidate.sizeDeclaration, fields: [...candidate.fields], availability: candidate.availability, instanceCount };
 }

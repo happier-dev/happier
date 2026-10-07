@@ -1,12 +1,7 @@
-import {
-    BrowserAdapterCapabilitiesV1Schema,
-    type BrowserAutomationActionCapabilityMapV1,
-    type BrowserAutomationActionCapabilityV1,
-    type BrowserAdapterCapabilitiesV1,
-    type BrowserRenderEngineKindV1,
-    type BrowserSemanticAdapterKindV1,
-    type BrowserViewTargetKindV1,
-} from '@happier-dev/protocol';
+import { BrowserAdapterCapabilitiesV1Schema, type BrowserAdapterCapabilitiesV1 } from '@happier-dev/protocol/browser/adapters/v1';
+import type { BrowserAutomationActionCapabilityMapV1, BrowserAutomationActionCapabilityV1 } from '@happier-dev/protocol/browser/automation/v1';
+import type { BrowserRenderEngineKindV1, BrowserSemanticAdapterKindV1 } from '@happier-dev/protocol/browser/adapters/kinds';
+import type { BrowserViewTargetKindV1 } from '@happier-dev/protocol/browser/target/v1';
 
 import {
     resolveDesktopWebViewUnavailableReason,

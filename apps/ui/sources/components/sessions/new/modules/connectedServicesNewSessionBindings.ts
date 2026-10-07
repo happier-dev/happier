@@ -10,15 +10,8 @@ import {
   type ConnectedServicesProfileOption,
   type ConnectedServicesProfileOptionsByServiceId,
 } from '@happier-dev/agents';
-import {
-  ConnectedAccountServiceKeySchema,
-  ConnectedServiceBindingSelectionV2Schema,
-  ConnectedServiceBindingsV2Schema,
-  buildQualifiedPluginContributionKey,
-  type ConnectedServiceBindingSelectionV2,
-  type ConnectedServiceBindingsV2,
-  type PluginContributionIdentityV1,
-} from '@happier-dev/protocol';
+import { ConnectedAccountServiceKeySchema, ConnectedServiceBindingSelectionV2Schema, ConnectedServiceBindingsV2Schema, type ConnectedServiceBindingSelectionV2, type ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type {
   SessionTeamCredentialBindingIntentV1,
   TeamCredentialResourceCatalogEntryV1,

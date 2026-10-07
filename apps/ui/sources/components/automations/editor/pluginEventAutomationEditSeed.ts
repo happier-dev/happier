@@ -1,21 +1,13 @@
-import {
-    AutomationEventTriggerDefinitionStoredPayloadV1Schema,
-    AutomationSourceSelectorIdV1Schema,
-    AutomationTriggerIdSchema,
-    AutomationTriggerRevisionSchema,
-    PluginEventAutomationSetupResultV1Schema,
-    PluginWebhookEndpointIdV1Schema,
-    openAutomationTriggerDefinitionStoredEnvelopeV1,
-    type AccountScopedCryptoMaterial,
-    type AutomationDefinitionDetail,
-    type AutomationEventFilterV1,
-    type AutomationEventTriggerDefinitionStoredPayloadV1,
-    type AutomationPluginEventDefinitionTrigger,
-    type AutomationTriggerId,
-    type AutomationTriggerRevision,
-    type PluginEventAutomationSetupResultV1,
-    type PluginWebhookEndpointIdV1,
-} from '@happier-dev/protocol';
+import { AutomationEventTriggerDefinitionStoredPayloadV1Schema, type AutomationEventTriggerDefinitionStoredPayloadV1 } from '@happier-dev/protocol/automations/event';
+import { AutomationSourceSelectorIdV1Schema } from '@happier-dev/protocol/automations/automationEventJsonBoundsV1';
+import { AutomationTriggerIdSchema, AutomationTriggerRevisionSchema, type AutomationTriggerId, type AutomationTriggerRevision } from '@happier-dev/protocol/automations/automationTriggerIdentity';
+import { PluginEventAutomationSetupResultV1Schema, type PluginEventAutomationSetupResultV1 } from '@happier-dev/protocol/automations/event-setup-result';
+import { PluginWebhookEndpointIdV1Schema, type PluginWebhookEndpointIdV1 } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
+import { openAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
+import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import type { AutomationDefinitionDetail } from '@happier-dev/protocol/automations/automationApiV3';
+import type { AutomationEventFilterV1 } from '@happier-dev/protocol/automations/automationEventFilterV1';
+import type { AutomationPluginEventDefinitionTrigger } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 
 import type { AutomationDefinition } from '@/sync/domains/automations/automationTypes';
 

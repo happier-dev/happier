@@ -13,7 +13,7 @@ import { usePlanChecklistController } from '@/components/systemTasks/planCheckli
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { useSetting } from '@/sync/store/hooks';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
-import { parseSshTarget } from '@happier-dev/protocol';
+import { parseSshTarget } from '@happier-dev/protocol/ssh/sshTarget';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 import { readRemoteHosts, type RemoteHost } from '@/sync/domains/remoteHosts/remoteHostModel';
 import { getRemoteHostLocalOverridesStore } from '@/sync/domains/remoteHosts/remoteHostLocalOverrides';

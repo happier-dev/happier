@@ -1,4 +1,4 @@
-import { parseSetupCliChoicePromptData, type SetupCliChoicePromptData } from '@happier-dev/protocol';
+import { parseSetupCliChoicePromptData, type SetupCliChoicePromptData } from '@happier-dev/protocol/system/tasks/promptPayloadContracts';
 
 import { readLatestSystemTaskPrompt, type SystemTaskPromptEnvelope } from '../prompts/readLatestSystemTaskPrompt';
 import {

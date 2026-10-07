@@ -1,15 +1,9 @@
 import type { TerminalSpawnOptions } from '@/sync/domains/settings/terminalSettings';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type { AgentSessionStartupInstructionsV1 } from '@happier-dev/protocol';
-import {
-    AgentExecutionTargetV1Schema,
-    buildBackendTargetKeyV2,
-    readBackendTargetRefV2,
-    SessionModelSelectionV1Schema,
-    type BackendTargetRefV2Input,
-    type BackendTargetRefV2,
-    type AgentExecutionTargetV1,
-} from '@happier-dev/protocol';
+import { AgentExecutionTargetV1Schema, type AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { buildBackendTargetKeyV2, readBackendTargetRefV2, type BackendTargetRefV2Input, type BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
 import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/catalog';
 import type {
     AcpConfigOptionOverridesV1,

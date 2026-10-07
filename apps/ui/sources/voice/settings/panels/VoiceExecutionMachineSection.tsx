@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { Platform } from 'react-native';
 
-import { VoiceRuntimePlatformSchema } from '@happier-dev/protocol';
+import { VoiceRuntimePlatformSchema } from '@happier-dev/protocol/voice/realtime/capabilities';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { getMachineDropdownMenuItems } from '@/components/settings/pickers/machineDropdownItems';

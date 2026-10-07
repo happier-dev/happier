@@ -1,15 +1,5 @@
-import {
-    BackendTargetKeyV2Schema,
-    PersistedBackendTargetRefV2Schema,
-    buildBackendTargetKeyV2,
-    parseBackendTargetKeyV2,
-    parseQualifiedPluginContributionKey,
-    readBackendTargetRefV2,
-    type BackendTargetKeyV2,
-    type BackendTargetRefV2Input,
-    type PersistedBackendTargetRefV2,
-    type PluginContributionIdentityV1,
-} from '@happier-dev/protocol';
+import { BackendTargetKeyV2Schema, PersistedBackendTargetRefV2Schema, buildBackendTargetKeyV2, parseBackendTargetKeyV2, readBackendTargetRefV2, type BackendTargetKeyV2, type BackendTargetRefV2Input, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { parseQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 
 function resolveAgentIdentityForBackendId(backendId: string): PluginContributionIdentityV1 | null {
     // A bundled Agent's single canonical key comes from the protocol key owner

@@ -8,13 +8,10 @@ import {
 } from '@/sync/api/account/apiQualifiedConnectedAccountsV4';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import type { ExpectedActiveServerFetchBasis } from '@/sync/http/client';
-import {
-    openQualifiedConnectedAccountQuotaResponseV4,
-    type BuiltInLegacyConnectedAccountOperation,
-    type QualifiedConnectedAccountQuotaSnapshotV4,
-    type QualifiedConnectedAccountRef,
-    type ProviderAccountUsageRecordId,
-} from '@happier-dev/protocol';
+import { openQualifiedConnectedAccountQuotaResponseV4, type QualifiedConnectedAccountQuotaSnapshotV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import type { BuiltInLegacyConnectedAccountOperation } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
+import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import type { ProviderAccountUsageRecordId } from '@happier-dev/protocol/connect/account-usage-primitives';
 
 export type QualifiedConnectedAccountQuotaTransportContext = Readonly<{
     credentials: AuthCredentials;

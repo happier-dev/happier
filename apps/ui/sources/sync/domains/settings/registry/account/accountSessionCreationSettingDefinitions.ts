@@ -12,7 +12,7 @@ export {
     type NewSessionPresentationModeV1,
     type NewSessionWizardSectionPresentation,
     type NewSessionWizardSelectionSectionId,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/settings/accountSettings';
 
 export {
     NewSessionAgentPickerViewV1Schema,

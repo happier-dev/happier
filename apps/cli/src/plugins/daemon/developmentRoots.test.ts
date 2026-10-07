@@ -101,6 +101,8 @@ describe('daemon plugin development root ownership', () => {
       expect(log).toContain('[WARN]');
       expect(log).toContain('plugin_dev_dependency_preparation_failed');
       expect(log).toContain(missingDependencyPath);
+      expect(log).toMatch(/dependency prep failed in \d+\.\d s/u);
+      expect(log).toMatch(/"elapsedMs":\d/u);
       for (const args of [
         ['install', sourceRoot, '--dev', '--json'],
         ['dev', sourceRoot, '--json'],

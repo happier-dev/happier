@@ -1,18 +1,9 @@
-import {
-  containsProviderRegisteredSensitiveValue,
-  materializeRecipientOperationRequestV1,
-  normalizeRecipientContractV1,
-  resolveVoiceCredentialOperationAuthorization,
-  resolveRequiredRecipientContractApprovalDigestV1,
-  type PluginContributionIdentityV1,
-  type QualifiedConnectedAccountPurposeBindingTargetV1,
-  type QualifiedConnectedAccountPurposeV1,
-  type RecipientContractV1,
-  type VoiceCredentialAccessPhase,
-  type VoiceCredentialOperationAuthorization,
-  type VoiceCredentialOperationSelectedSource,
-  type VoiceProviderContribution,
-} from '@happier-dev/protocol';
+import { containsProviderRegisteredSensitiveValue } from '@happier-dev/protocol/providers/sensitive-value-redaction';
+import { materializeRecipientOperationRequestV1, normalizeRecipientContractV1, resolveRequiredRecipientContractApprovalDigestV1, type RecipientContractV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
+import { resolveVoiceCredentialOperationAuthorization, type VoiceCredentialAccessPhase, type VoiceCredentialOperationAuthorization, type VoiceCredentialOperationSelectedSource, type VoiceProviderContribution } from '@happier-dev/protocol/plugins/contributions/voice';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import type { QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
 import {
   classifyVoiceProviderHttpFailure,
   type VoiceAccountOperationService,

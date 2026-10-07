@@ -1,38 +1,10 @@
-import {
-    ACCOUNT_EMAIL_CHANGE_PATH_V1,
-    ACCOUNT_PASSWORD_CHANGE_PATH_V1,
-    ACCOUNT_PASSWORD_ENROLL_PATH_V1,
-    ACCOUNT_PASSWORD_ENROLL_EMAIL_REQUEST_PATH_V1,
-    ACCOUNT_PASSWORD_MUTATION_CHALLENGE_PATH_V1,
-    ACCOUNT_PASSWORD_REMOVE_PATH_V1,
-    ACCOUNT_EMAIL_CHANGE_REQUEST_PATH_V1,
-    ACCOUNT_SECURITY_PATH_V1,
-    ACCOUNT_TERMINAL_PRESENT_USER_POLICY_PATH_V1,
-    AccountPasswordMutationResponseV1Schema,
-    AccountEmailChangeRequestResponseV1Schema,
-    AccountSecurityGetResponseV1Schema,
-    AccountTerminalPresentUserPolicySetResponseV1Schema,
-    type AccountTerminalPresentUserPolicySetRequestV1,
-    AccountSecurityRouteErrorV1Schema,
-    PasswordMutationPreparationResponseV1Schema,
-    createAccountEncryptionMigrateRequestBindingDigestV1,
-    buildE2eeAccountPasswordEnrollRequestV1,
-    buildE2eeAccountPasswordChangeRequestV1,
-    buildE2eeAccountPasswordRemoveRequestV1,
-    createE2eePasswordMutationChallengeProofV1,
-    createPasswordCredentialTargetDigestV1,
-    PlainAccountPasswordCredentialV1Schema,
-    readE2eePasswordPreparationV1,
-    classifyHomeDomainHttpMutationFailureV1,
-    type AccountPasswordChangeRequestV1,
-    type AccountPasswordEnrollRequestV1,
-    type AccountPasswordRemoveRequestV1,
-    type AccountSecurityGetResponseV1,
-    type AccountEncryptionMigrateRequest,
-    type AccountEncryptionMigrateTransitionPasswordCredential,
-    type KeyChallengeV2Audience,
-    type PlainAccountPasswordCredentialV1,
-} from '@happier-dev/protocol';
+import { ACCOUNT_EMAIL_CHANGE_PATH_V1, ACCOUNT_PASSWORD_CHANGE_PATH_V1, ACCOUNT_PASSWORD_ENROLL_PATH_V1, ACCOUNT_PASSWORD_ENROLL_EMAIL_REQUEST_PATH_V1, ACCOUNT_PASSWORD_MUTATION_CHALLENGE_PATH_V1, ACCOUNT_PASSWORD_REMOVE_PATH_V1, ACCOUNT_EMAIL_CHANGE_REQUEST_PATH_V1, ACCOUNT_SECURITY_PATH_V1, ACCOUNT_TERMINAL_PRESENT_USER_POLICY_PATH_V1, AccountPasswordMutationResponseV1Schema, AccountEmailChangeRequestResponseV1Schema, AccountSecurityGetResponseV1Schema, AccountTerminalPresentUserPolicySetResponseV1Schema, type AccountTerminalPresentUserPolicySetRequestV1, AccountSecurityRouteErrorV1Schema, PasswordMutationPreparationResponseV1Schema, type AccountPasswordChangeRequestV1, type AccountPasswordEnrollRequestV1, type AccountPasswordRemoveRequestV1, type AccountSecurityGetResponseV1 } from '@happier-dev/protocol/auth/accountSecurity';
+import { createAccountEncryptionMigrateRequestBindingDigestV1, type AccountEncryptionMigrateRequest, type AccountEncryptionMigrateTransitionPasswordCredential } from '@happier-dev/protocol/account/encryptionMigrate';
+import { buildE2eeAccountPasswordEnrollRequestV1, buildE2eeAccountPasswordChangeRequestV1, buildE2eeAccountPasswordRemoveRequestV1, createE2eePasswordMutationChallengeProofV1, readE2eePasswordPreparationV1 } from '@happier-dev/protocol/auth/accountSecurityCrypto';
+import { createPasswordCredentialTargetDigestV1 } from '@happier-dev/protocol/auth/passwordMutationChallenge';
+import { PlainAccountPasswordCredentialV1Schema, type PlainAccountPasswordCredentialV1 } from '@happier-dev/protocol/auth/accountPasswordCredential';
+import { classifyHomeDomainHttpMutationFailureV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
+import type { KeyChallengeV2Audience } from '@happier-dev/protocol/auth/keyChallenge';
 import { z } from 'zod';
 
 import type { ServerFetch } from '@/sync/http/client';

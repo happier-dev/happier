@@ -1,7 +1,5 @@
-import {
-    TemporaryComputerActivationRefV1Schema,
-    type SessionDraftDocumentV2,
-} from '@happier-dev/protocol';
+import { TemporaryComputerActivationRefV1Schema } from '@happier-dev/protocol/sessions/authoring/fieldCatalog';
+import type { SessionDraftDocumentV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import {

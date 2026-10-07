@@ -164,29 +164,18 @@ describe('capabilities.invoke native preflight catalogs', () => {
       .toEqual({commands:{supported:false,items:[]},skills:{supported:false,items:[]}});
     expect(existsSync(capture)).toBe(false);
   });
-  it('coalesces only current identical in-flight scopes and retains no settled catalog', async () => {
-    const params = {agentId:'pi',runtimeCacheKey:'current-fixture-occurrence',cwd:directory,timeoutMs:10_000,
-      env:process.env,materializedEnv:{DEBUG:'200'}};
-    const results = await Promise.all([probeAgentCatalogs(params),probeAgentCatalogs(params)]);
-    expect(results[0]).toEqual(results[1]);
-    const launches = () => readFileSync(join(directory,'launches.jsonl'),'utf8').trim().split('\n');
-    expect(launches()).toHaveLength(1);
-    const [populated,empty] = await Promise.all([probeAgentCatalogs(params),probeAgentCatalogs({...params,
-      materializedEnv:{PI_OFFLINE:'empty'}})]);
-    expect(populated.commands.items).toHaveLength(2);
-    expect(empty.commands).toEqual({supported:true,items:[]});
-    expect(launches()).toHaveLength(3);
-  });
   it('keeps a cancelled caller independent from a healthy caller with the same launch scope', async () => {
     const controller = new AbortController();
-    const params = {agentId:'pi',runtimeCacheKey:'current-fixture-occurrence',cwd:directory,timeoutMs:10_000,
-      env:process.env,materializedEnv:{DEBUG:'1000'}};
-    const cancelled = probeAgentCatalogs({...params,signal:controller.signal}).then(()=> 'unexpected-success',()=> 'cancelled');
-    const healthy = probeAgentCatalogs(params);
+    const rpc = client();
+    const request = {id:'cli.pi',method:'probeCatalogs',params:{cwd:directory,timeoutMs:10_000,
+      environmentVariables:{DEBUG:'1000'}}} satisfies CapabilitiesInvokeRequest;
+    const cancelled = rpc.manager.invokeLocal(RPC_METHODS.CAPABILITIES_INVOKE, request, {signal:controller.signal});
+    const healthy = rpc.call<CapabilitiesInvokeResponse, CapabilitiesInvokeRequest>(RPC_METHODS.CAPABILITIES_INVOKE, request);
     await vi.waitFor(()=> expect(readFileSync(join(directory,'launches.jsonl'),'utf8').trim().split('\n')).toHaveLength(2));
     controller.abort();
-    expect(await cancelled).toBe('cancelled');
-    expect((await healthy).commands.items).toHaveLength(2);
+    expect(await cancelled).toMatchObject({ok:false,error:{code:'preflight-catalog-unavailable'}});
+    expect(await healthy).toMatchObject({ok:true,result:{commands:{items:[
+      {command:'mixed-case',description:'Native command'},{command:'skill:design'}]}}});
   });
   it('rejects an invalid value-free secret overlay before launching the native process', async () => {
     expect(await invoke({secretReferenceOverlay:{v:1,bindings:{TOKEN:{ref:'invalid',value:'forbidden'}}}}))

@@ -1,4 +1,4 @@
-import { WorkspaceSyncRuntimeEventV1Schema } from '@happier-dev/protocol';
+import { WorkspaceSyncRuntimeEventV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
 import { invalidateWorkspaceSyncConflicts } from './workspaceSyncConflictStore';
 import { applyWorkspaceSyncEngineReadinessEvent } from './workspaceSyncEngineReadinessStore';

@@ -1,15 +1,6 @@
 import * as React from 'react';
-import {
-    projectChangedFilesAttribution,
-    type CheckpointOverlapObservation,
-    type FileChangeEvidence,
-    type RepositoryCheckpointTurnMetadata,
-    type SessionChangeAttribution,
-    type SessionChangeSet,
-    type SessionChangeSetFile,
-    type TurnChangeSet,
-    type WorkspaceTouchedFileEvidence,
-} from '@happier-dev/protocol';
+import { projectChangedFilesAttribution } from '@happier-dev/protocol/sessions/changes/mergeTurnChangeSets';
+import type { CheckpointOverlapObservation, FileChangeEvidence, RepositoryCheckpointTurnMetadata, SessionChangeAttribution, SessionChangeSet, SessionChangeSetFile, TurnChangeSet, WorkspaceTouchedFileEvidence } from '@happier-dev/protocol/sessions/changes/types';
 
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import type { SessionAttributedFile } from '@/scm/scmAttribution';

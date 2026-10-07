@@ -16,12 +16,8 @@ import {
     type PluginUiResourceProjection,
     type PluginUiInputTypeProjection,
 } from './projection';
-import {
-    arePluginMachineExecutionOriginsEqual,
-    PluginMachineExecutionOriginV1Schema,
-    type PluginMachineExecutionOriginV1,
-    type PluginProjectionInstalledPackageV2,
-} from '@happier-dev/protocol';
+import { arePluginMachineExecutionOriginsEqual, PluginMachineExecutionOriginV1Schema, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import type { PluginProjectionInstalledPackageV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginUiProjectionPhase } from './usePluginUiProjectionCurrentness';
 
 type UnknownRecord = Readonly<Record<string, unknown>>;

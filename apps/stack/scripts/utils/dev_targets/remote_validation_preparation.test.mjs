@@ -171,7 +171,7 @@ test('remote validation preparation delegates component dependency outputs to th
   const result = await prepareRemoteValidationWorkspace({
     repoDir: '/remote/happier',
     componentRelativeDir: 'apps/cli',
-    env: { TEST_ENV: '1' },
+    env: { TEST_ENV: '1', HAPPIER_WORKSPACE_BUILD_MODE: 'strict' },
     loadWorkspaceBuildOwner: async () => ({
       ensureWorkspacePackagesBuiltForComponent: async (...args) => {
         calls.push(args);

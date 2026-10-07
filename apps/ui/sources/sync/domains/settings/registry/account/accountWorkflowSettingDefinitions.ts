@@ -1,4 +1,6 @@
-import { NotificationChannelsV1Schema, AttentionDeliveryPolicyV1Schema, ExternalSessionsSettingsV1Schema, NotificationsSettingsV1Schema } from '@happier-dev/protocol';
+import { NotificationChannelsV1Schema } from '@happier-dev/protocol/account/settings/notificationChannels';
+import { AttentionDeliveryPolicyV1Schema, NotificationsSettingsV1Schema } from '@happier-dev/protocol/account/settings/accountSettings';
+import { ExternalSessionsSettingsV1Schema } from '@happier-dev/protocol/sessions/external/followLifecycleV1';
 import { z } from 'zod';
 import { SessionHandoffDefaultsV1Schema } from '@/sync/domains/sessionHandoff/sessionHandoffDefaults';
 import { defineAccountSettingAnalytics } from './accountSettingAnalyticsPresentation';

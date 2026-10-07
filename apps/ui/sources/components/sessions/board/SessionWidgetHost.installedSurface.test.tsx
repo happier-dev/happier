@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createPlainSessionOwnerMetadataEnvelopeV1, createSessionOwnerMetadataV1, projectSessionSharedMetadataV1, SessionCurrentProjectionRecordV1Schema, projectLegacySessionAccessCapabilitiesV1, tryWriteServerEnabledBitInPlace, AccountProfileSchema, DaemonPluginUiArtifactBytesReadResponseSchema, DaemonPluginUiTargetedContributionsReadResponseSchema, PluginProjectionV2Schema, type PluginProjectionV2 } from '@happier-dev/protocol';
+import { createPlainSessionOwnerMetadataEnvelopeV1, createSessionOwnerMetadataV1, projectSessionSharedMetadataV1, SessionCurrentProjectionRecordV1Schema, projectLegacySessionAccessCapabilitiesV1, tryWriteServerEnabledBitInPlace, AccountProfileSchema, DaemonPluginUiArtifactBytesReadResponseSchema, DaemonPluginUiTargetedContributionsReadResponseSchema, PluginProjectionV2Schema, decodePlainArtifactStoredContent, StoredApprovalRequestSchema, type PluginProjectionV2 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { computePluginUiArtifactFileSetSha256DigestV1, computePluginUiArtifactSha256DigestV1, normalizePluginUiInlineSurfaceBindingV1 } from '@happier-dev/protocol/plugins/ui';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
@@ -33,6 +33,7 @@ import { selectWidgetCandidates } from '@/components/widgets/widgetCatalog';
 import { PluginInlineSurfaceHost } from '@/components/plugins/surfaces';
 import { PluginReactNativeSurface } from '@/components/plugins/reactNative/PluginReactNativeSurface';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { readPresentationNotice, retirePresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { encodeBase64 } from '@/encryption/base64';
 
 import { SessionWidgetHost } from './SessionWidgetHost';
@@ -55,6 +56,8 @@ import { createSessionBoardSourceAvailabilityResolver } from './sessionBoardItem
 const state = vi.hoisted(() => ({
     mounts: [] as Record<string, unknown>[],
     rawAuthorExecutions: [] as Record<string, unknown>[],
+    presentations: [] as RenderContext[],
+    localStates: [] as unknown[],
     activeExecutions: new Set<Record<string, unknown>>(),
     screen: null as Awaited<ReturnType<typeof renderScreen>> | null,
     get activeMountKeys(): Set<string> {
@@ -69,6 +72,8 @@ const state = vi.hoisted(() => ({
     deferredProjection: null as Promise<unknown> | null,
     sessionResponse: null as Promise<Response> | null,
     sessionRequests: [] as string[],
+    approvalWriteMode: 'none' as 'none' | 'refused' | 'created',
+    approvalWriteBody: null as unknown,
 }));
 
 // The daemon RPC is the external boundary; the scoped runtime and target binder remain real.
@@ -170,7 +175,8 @@ vi.mock('react-native', async () => {
         // Adding the native observer preserves the existing Node test adapter;
         // the real plugin runtime still admits this surface for explicit web.
         Platform: { OS: 'node' },
-        NativeModules: { InstalledWidgetAuthorObserver: { mounted: (context: RenderContext) => observeAuthorExecution(context) } },
+        NativeModules: { InstalledWidgetAuthorObserver: { mounted: (context: RenderContext) => observeAuthorExecution(context),
+            presented: (context: RenderContext, localState: unknown) => { state.presentations.push(context); state.localStates.push(localState); } } },
     });
 });
 
@@ -196,6 +202,8 @@ const nativeBytes = new TextEncoder().encode(`
 const React = require('react');
 const Native = require('react-native');
 function WidgetAuthor({ context }) {
+    const [localState] = React.useState(() => ({ count: 1 }));
+    Native.NativeModules.InstalledWidgetAuthorObserver.presented(context, localState);
     React.useEffect(() => Native.NativeModules.InstalledWidgetAuthorObserver.mounted(context), [context.signal]);
     return React.createElement(Native.View, { testID: 'installed-widget-author' });
 }
@@ -271,6 +279,7 @@ function publicAuthoringProjection() {
         target: binding.target,
         renderer: { kind: primaryRenderer.kind, contributionId: primaryRenderer.id },
         display: { title: view.title },
+        ...(view.sizeDeclaration ? { sizeDeclaration: view.sizeDeclaration } : {}),
         ...(view.inputs ? { inputs: view.inputs } : {}),
         ...(view.inputSchema ? { inputSchema: view.inputSchema } : {}),
         ...(view.sessionInputPath ? { sessionInputPath: view.sessionInputPath } : {}),
@@ -322,6 +331,7 @@ function projection(options: Readonly<{
         target: binding.target,
         renderer: { kind: 'reactNative', contributionId: 'review-native' },
         display: { title: 'Review status' },
+        sizeDeclaration: { sizes: ['medium', 'large'], defaultSize: 'medium' },
         inputs: { fields: [{ path: 'session', title: 'Session', widget: 'json', required: true }, { path: 'view', title: 'View', widget: 'text' }] },
         inputSchema: { type: 'object', properties: {
             session: { type: 'object', properties: { serverId: { type: 'string' }, sessionId: { type: 'string' } }, required: ['serverId', 'sessionId'], additionalProperties: false },
@@ -411,9 +421,11 @@ async function renderPlacement(input: Readonly<{
     primaryHost: SessionBoardMountHost | null;
     density: 'full' | 'compact' | 'preview';
     expanded?: boolean;
+    width?: React.ComponentProps<typeof SessionWidgetHost>['width'];
     runtimeOverrides?: Partial<SessionPluginRuntimeState>;
     onManagePlugin?: () => void;
     onOpenHere?: () => void;
+    onResize?: React.ComponentProps<typeof SessionWidgetHost>['onResize'];
     executableCurrentness?: 'current' | 'stale' | 'offline' | 'unverified';
     screen?: Awaited<ReturnType<typeof renderScreen>>;
 }>) {
@@ -426,6 +438,7 @@ async function renderPlacement(input: Readonly<{
         primaryHost: input.primaryHost,
         density: input.density,
         expanded: input.expanded,
+        width: input.width,
         canEdit: true,
         executableCurrentness: input.executableCurrentness ?? 'current',
         heightBounds: { min: 96, max: 520 },
@@ -433,6 +446,7 @@ async function renderPlacement(input: Readonly<{
         resolveSourceAvailability: createSessionBoardSourceAvailabilityResolver(),
         ...(input.onManagePlugin ? { onManagePlugin: input.onManagePlugin } : {}),
         ...(input.onOpenHere ? { onOpenHere: input.onOpenHere } : {}),
+        ...(input.onResize ? { onResize: input.onResize } : {}),
         testID: 'widget',
     });
     const screen = input.screen ?? await renderScreen(node);
@@ -458,8 +472,11 @@ function actionsOf(screen: Awaited<ReturnType<typeof renderScreen>>): ReadonlyAr
 describe('SessionWidgetHost installed surface placements', () => {
     beforeEach(async () => {
         standardCleanup();
+        retirePresentationNotice();
         state.mounts = [];
         state.rawAuthorExecutions = [];
+        state.presentations = [];
+        state.localStates = [];
         state.activeExecutions.clear();
         state.screen = null;
         clearDaemonMergedProjectionCacheForTests();
@@ -467,6 +484,8 @@ describe('SessionWidgetHost installed surface placements', () => {
         state.deferredProjection = null;
         state.sessionResponse = null;
         state.sessionRequests = [];
+        state.approvalWriteMode = 'none';
+        state.approvalWriteBody = null;
         state.session = createSessionFixture({ id: 'session-1' });
         await import('@/sync/syncEngine');
         restoreExecutorLoader = await installRealActionExecutorModuleLoader();
@@ -481,6 +500,14 @@ describe('SessionWidgetHost installed surface placements', () => {
             serverIdentityId: state.serverIdentityId,
             request: async (input, init) => {
                 const path = new URL(String(input)).pathname;
+                if (path === '/v1/artifacts' && init?.method === 'POST' && state.approvalWriteMode !== 'none') {
+                    const payload: unknown = typeof init.body === 'string' ? JSON.parse(init.body) : null;
+                    state.approvalWriteBody = payload;
+                    if (state.approvalWriteMode === 'refused') return Response.json({ error: 'forbidden' }, { status: 403 });
+                    if (!payload || typeof payload !== 'object') throw new Error('Expected Artifact creation payload');
+                    return Response.json({ ...payload, ownerAccountId: 'viewer', access: 'owner', encryptionMode: 'plain',
+                        headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+                }
                 if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(features);
                 // Dynamic Widget options discover their consuming descriptor
                 // through the real Board port; this Home has an empty Board.
@@ -512,10 +539,75 @@ describe('SessionWidgetHost installed surface placements', () => {
 
     afterEach(async () => {
         standardCleanup();
+        retirePresentationNotice();
         restoreExecutorLoader?.();
         restoreExecutorLoader = undefined;
         await accountConnection?.dispose();
         accountConnection = undefined;
+    });
+
+    it('retains configured local state and executable lifetime after an acknowledged native height record revision changes', async () => {
+        // The unchanged daemon projection is one external lifetime boundary; recreating it would
+        // publish a registry invalidation independently of the acknowledged item-height edit.
+        const runtimeOverrides = { pluginUiProjection: projection() };
+        const screen = await renderPlacement({ host: 'details', primaryHost: 'details', density: 'full', width: 'medium', runtimeOverrides });
+        const physicalMount = state.mounts[0]?.mountInstanceKey;
+        const localState = state.localStates.at(-1);
+        // The persisted record boundary publishes a new revision after the native item-height upsert;
+        // the configured instance itself is unchanged. Native mutation/revision correctness is owner-tested.
+        if (item.state.kind !== 'ready') throw new Error('Expected readable native item');
+        const instance = item.state.item.source.kind === 'widget' ? item.state.item.source.instance : null;
+        item = { ...item, revision: 'rev-2', state: { kind: 'ready', item: { ...item.state.item,
+            height: { mode: 'fixed', size: 'tall' } } } };
+        await renderPlacement({ host: 'details', primaryHost: 'details', density: 'full', width: 'medium', screen, runtimeOverrides });
+        expect(state.activeMountKeys).toEqual(new Set([physicalMount]));
+        expect(state.localStates.at(-1)).toBe(localState);
+        expect(state.mounts).toHaveLength(1);
+        expect(item.state.kind === 'ready' && item.state.item.source.kind === 'widget' ? item.state.item.source.instance : null).toBe(instance);
+        expect(state.presentations.at(-1)?.widgetPresentation?.footprint).toMatchObject({ columnSpan: 6, rowSpan: 4 });
+        await act(async () => { screen.findByTestId('widget.viewport')!.props.onLayout({ nativeEvent: { layout: { width: 350, height: 520 } } }); });
+        expect(state.presentations.at(-1)?.widgetPresentation?.geometry).toEqual({ width: 350, height: 520 });
+    });
+
+    it.each([
+        { mode: 'refused' as const, severity: 'error' as const },
+        { mode: 'created' as const, severity: 'info' as const },
+    ])('reports a $mode size approval without changing the retained Board rectangle', async ({ mode, severity }) => {
+        const previous = JSON.stringify(item);
+        const screen = await renderPlacement({ host: 'details', primaryHost: 'details', density: 'full',
+            width: 'medium', onResize: () => {} });
+        state.approvalWriteMode = mode;
+        await screen.pressByTestIdAsync('widget-actions');
+        await screen.pressByTestIdAsync('widget.size.large');
+        // The native Board's shared approval owner runs for real. Only its HTTP
+        // Artifact write is refused or accepted; neither outcome mutates the Board.
+        await act(async () => { await vi.waitFor(() => {
+            expect(screen.findByTestId('widget.size.large')?.props.disabled).toBe(false);
+        }); });
+        const payload = state.approvalWriteBody;
+        if (!payload || typeof payload !== 'object' || !('body' in payload) || typeof payload.body !== 'string')
+            throw new Error('Expected encoded approval Artifact');
+        const content: unknown = decodePlainArtifactStoredContent(payload.body);
+        if (!content || typeof content !== 'object' || !('body' in content) || typeof content.body !== 'string')
+            throw new Error('Expected approval request body');
+        const request = StoredApprovalRequestSchema.parse(JSON.parse(content.body));
+        expect(request).toMatchObject({ actionId: 'widgets.instance.size.set', actionArgs: {
+            ref: { surface: { serverId: state.serverId, accountId: 'viewer', owner: { kind: 'sessionBoard', sessionId: 'session-1' } },
+                instanceId: 'widget-1' }, size: 'large',
+        } });
+        expect(readPresentationNotice()).toMatchObject({ key: 'session-1:widget-1:size', severity });
+        expect(JSON.stringify(item)).toBe(previous);
+        expect(screen.findByTestId('widget.size.medium')?.props.accessibilityState?.checked).toBe(true);
+    });
+
+    it('shows no named size selected for an existing custom native rectangle', async () => {
+        if (item.state.kind !== 'ready') throw new Error('Expected installed item');
+        item = { ...item, state: { kind: 'ready', item: { ...item.state.item, height: { mode: 'fixed', size: 'tall' } } } };
+        const screen = await renderPlacement({ host: 'details', primaryHost: 'details', density: 'full',
+            width: 'compact', onResize: () => {} });
+        await screen.pressByTestIdAsync('widget-actions');
+        expect(screen.findByTestId('widget.size.medium')?.props.accessibilityState?.checked).toBe(false);
+        expect(screen.findByTestId('widget.size.large')?.props.accessibilityState?.checked).toBe(false);
     });
 
     it('mounts the maintained emitted public-authoring widget through the real candidate and host path', async () => {
@@ -594,6 +686,22 @@ describe('SessionWidgetHost installed surface placements', () => {
             session: { serverId: state.serverId, sessionId: 'session-1' }, view: 'summary',
         });
         expect(state.sessionRequests).toEqual([]);
+    });
+
+    it('delivers the actual unnamed native Board rectangle and measured viewport without resizing or replacing the executable', async () => {
+        if (item.state.kind !== 'ready') throw new Error('Expected installed item');
+        item = { ...item, state: { kind: 'ready', item: { ...item.state.item, height: { mode: 'fixed', size: 'tall' } } } };
+        const before = JSON.stringify(item);
+        const screen = await renderPlacement({ host: 'details', primaryHost: 'details', density: 'full', width: 'compact' });
+        expect(state.presentations.at(-1)?.widgetPresentation?.size).toBeUndefined();
+        expect(state.presentations.at(-1)?.widgetPresentation?.footprint).toMatchObject({ columns: 12, columnSpan: 4, rowSpan: 4 });
+        const viewport = screen.findByTestId('widget.viewport');
+        expect(viewport).not.toBeNull();
+        await act(async () => { viewport!.props.onLayout({ nativeEvent: { layout: { width: 350, height: 520 } } }); });
+        expect(state.presentations.at(-1)?.widgetPresentation).toMatchObject({
+            footprint: { columnSpan: 4, rowSpan: 4 }, geometry: { width: 350, height: 520 } });
+        expect(JSON.stringify(item)).toBe(before);
+        expect(state.activeMountKeys.size).toBe(1);
     });
 
     it('uses current installed-frame height for Auto, ignores it while fixed, and restores it with Fit content', async () => {

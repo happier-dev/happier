@@ -15,7 +15,7 @@ import type { IconName } from '@/components/ui/icons/Icon';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { t, type TranslationKeyNoParams } from '@/text';
-import { inferMcpServerAuthModeV1 } from '@happier-dev/protocol';
+import { inferMcpServerAuthModeV1 } from '@happier-dev/protocol/mcp/servers/authModeV1';
 
 export function describeMachine(machineId: string, machines: readonly Machine[]): string {
     const machine = machines.find((item) => item.id === machineId) ?? null;

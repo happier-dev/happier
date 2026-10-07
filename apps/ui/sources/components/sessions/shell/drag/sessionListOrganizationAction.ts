@@ -1,4 +1,4 @@
-import { SessionOrganizationMoveInputSchema, type SessionOrganizationMoveOutput } from '@happier-dev/protocol';
+import { SessionOrganizationMoveInputSchema, type SessionOrganizationMoveOutput } from '@happier-dev/protocol/actions/sessionOrganizationMoveAction';
 import { commitSessionListDragIntent, resolveSessionListDragIntent, type CommitSessionListDragIntentContext } from './commitSessionListDragIntent';
 import type { SessionOrganizationMutationScope } from '@/sync/ops/sessionOrganization/sessionOrganizationMutationOwner';
 

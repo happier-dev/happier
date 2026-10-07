@@ -27,7 +27,7 @@ import {
     type AutomationV3RunMutationResponse,
     type AutomationV3Settings,
     type AutomationV3SettingsUpdateRequest,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/automations/automationApiV3';
 
 import {
     getAutomationAuthHeaders,

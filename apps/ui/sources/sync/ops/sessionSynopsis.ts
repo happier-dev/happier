@@ -1,9 +1,5 @@
-import {
-    MEMORY_SESSION_SYSTEM_RECORD_KINDS,
-    SESSION_SYSTEM_RECORD_MEMORY_NAMESPACE,
-    SessionSynopsisV1Schema,
-    type SessionSynopsisV1,
-} from '@happier-dev/protocol';
+import { MEMORY_SESSION_SYSTEM_RECORD_KINDS, SESSION_SYSTEM_RECORD_MEMORY_NAMESPACE } from '@happier-dev/protocol/sessions/system/records/memory/memorySystemRecordKinds';
+import { SessionSynopsisV1Schema, type SessionSynopsisV1 } from '@happier-dev/protocol/messages/structured/sessionSynopsisV1';
 
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';

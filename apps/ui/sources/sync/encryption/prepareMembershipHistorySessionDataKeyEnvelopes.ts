@@ -1,11 +1,5 @@
-import {
-    ENCRYPTED_DATA_KEY_V1_BYTES,
-    type MembershipSessionDataKeyEnvelopeExceptionsV1,
-    type MembershipSessionDataKeyEnvelopeItemV1,
-    type MembershipSessionDataKeyEnvelopePageV1,
-    type PatchMembershipSessionDataKeyEnvelopesResultV1,
-    type PatchMembershipSessionDataKeyEnvelopesV1,
-} from '@happier-dev/protocol';
+import { ENCRYPTED_DATA_KEY_V1_BYTES } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import type { MembershipSessionDataKeyEnvelopeExceptionsV1, MembershipSessionDataKeyEnvelopeItemV1, MembershipSessionDataKeyEnvelopePageV1, PatchMembershipSessionDataKeyEnvelopesResultV1, PatchMembershipSessionDataKeyEnvelopesV1 } from '@happier-dev/protocol/sessions/encryption/membershipSessionDataKeyEnvelopes';
 
 import {
     encryptDataKeyForRecipientV0,
@@ -18,7 +12,7 @@ import type { ScopedRpcSessionEncryptionContext } from '@/sync/runtime/orchestra
 import {
     runSessionDataKeyPreparationPass,
     type SessionDataKeyPreparationProgress,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/encryption/sessionDataKeyPreparationPass';
 import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 
 /**

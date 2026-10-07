@@ -3,7 +3,7 @@ import { createWorkBoardArtifactBoundary } from '../boards/workBoardArtifactV1.t
 import { createWidgetDefinitionArtifactPortV1, type WidgetDefinitionArtifactTransportV1 } from './widgetDefinitionArtifactV1.js';
 import { WidgetDefinitionV1Schema, type WidgetDefinitionV1 } from './widgetDefinitionV1.js';
 
-const original = (id = 'definition'): WidgetDefinitionV1 => ({ v: 1, id, name: 'Checks', body: { kind: 'declarative',
+const original = (id = 'definition'): WidgetDefinitionV1 => ({ sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' }, v: 1, id, name: 'Checks', body: { kind: 'declarative',
     document: { version: 1, root: { kind: 'text', text: 'Before' } } }, inputs: { fields: [] },
     inputSchema: { type: 'object', additionalProperties: false }, provenance: { source: { kind: 'authored' }, authorAccountId: 'owner' } });
 function boundary() {
@@ -15,6 +15,18 @@ function boundary() {
     return { ...b, transport };
 }
 describe('Account widget definition Artifact owner', () => {
+    it('admits explicit useful sizes, requires the default to be declared and retains them in setup metadata', async () => {
+        const sizeDeclaration = { sizes: ['medium', 'tall'], defaultSize: 'tall' };
+        const definition = { ...original(), sizeDeclaration };
+        expect(WidgetDefinitionV1Schema.safeParse(definition).success).toBe(true);
+        expect(WidgetDefinitionV1Schema.safeParse({ ...definition, sizeDeclaration: { ...sizeDeclaration, defaultSize: 'full' } }).success).toBe(false);
+        expect(WidgetDefinitionV1Schema.safeParse({ ...definition, sizeDeclaration: undefined }).success).toBe(false);
+        const b = boundary();
+        const port = createWidgetDefinitionArtifactPortV1(b.transport, { accountId: 'owner' });
+        await port.create(WidgetDefinitionV1Schema.parse(definition));
+        expect(await port.get('definition')).toMatchObject({ sizeDeclaration });
+        expect(await port.list()).toMatchObject([{ sizeDeclaration }]);
+    });
     it('drops stored body and summary extras, refuses missing required fields and writes canonical content', async () => {
         const b = boundary();
         const port = createWidgetDefinitionArtifactPortV1(b.transport, { accountId: 'owner' });
@@ -47,7 +59,7 @@ describe('Account widget definition Artifact owner', () => {
             throw new Error('list_must_not_open_bodies');
         } }, { accountId: 'owner' });
         expect(await listed.list()).toEqual([{ artifactId: 'definition', name: 'Checks', bodyKind: 'declarative',
-            inputs: original().inputs, inputSchema: original().inputSchema, resources: [] }]);
+            inputs: original().inputs, inputSchema: original().inputSchema, sizeDeclaration: original().sizeDeclaration, resources: [] }]);
     });
     it('replays independent changes on the CAS winner, updates every reference, duplicates independently and leaves deleted refs intact', async () => {
         const b = boundary();

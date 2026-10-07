@@ -2,7 +2,7 @@ import {
     SessionModelSelectionIntentV1Schema,
     type ProviderBoundModelRef,
     type SessionModelSelectionIntentV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/providers/model-selection';
 
 export function buildSessionModelSelectionIntent(input: Readonly<{
     updatedAt: number;

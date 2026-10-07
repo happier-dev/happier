@@ -1,12 +1,5 @@
-import {
-  VoiceAssistantActionSchema,
-  VoiceRealtimeJsonValueSchema,
-  VoiceRealtimeToolCallV1Schema,
-  VoiceRealtimeToolResultV1Schema,
-  type VoiceRealtimeJsonValue,
-  type VoiceRealtimeToolCallV1,
-  type VoiceRealtimeToolResultV1,
-} from '@happier-dev/protocol';
+import { VoiceAssistantActionSchema } from '@happier-dev/protocol/voice/actions';
+import { VoiceRealtimeJsonValueSchema, VoiceRealtimeToolCallV1Schema, VoiceRealtimeToolResultV1Schema, type VoiceRealtimeJsonValue, type VoiceRealtimeToolCallV1, type VoiceRealtimeToolResultV1 } from '@happier-dev/protocol/voice/realtime/events';
 
 export class RealtimeToolBarrierError extends Error {
   readonly code: 'duplicate_call_id' | 'response_conflict' | 'too_many_calls' | 'capacity_exceeded' | 'disposed';

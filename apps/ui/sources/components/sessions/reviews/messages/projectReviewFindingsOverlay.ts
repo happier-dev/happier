@@ -3,4 +3,4 @@ export {
     type ReviewFindingsOverlayReview,
     type ReviewFindingOverlayEntry,
     type ReviewFindingsOverlay,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/reviews/projectReviewFindingsOverlay';

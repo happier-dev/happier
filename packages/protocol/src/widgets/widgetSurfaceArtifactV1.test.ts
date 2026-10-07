@@ -38,17 +38,18 @@ describe('personal widget areas at the Account Artifact owner', () => {
         await expect(delayed.apply({ kind: 'add', instance: instance('a') })).resolves.toMatchObject({ instances: [{ instance: { id: 'b' } }, { instance: { id: 'a' } }] });
         expect((await b.port.read()).instances.map(entry => entry.instance.id)).toEqual(['b', 'a']);
     });
-    it('persists independent copies, bindings, frame, width and order through conflict replay and reload', async () => {
+    it('persists independent copies, bindings, frame, size and order through conflict replay and reload', async () => {
         const b = boundary();
         expect((await b.port.read()).instances).toEqual([]);
         expect(b.rows.size).toBe(0);
-        await Promise.all([b.port.apply({ kind: 'add', instance: instance('a') }), b.port.apply({ kind: 'add', instance: instance('b', 'B') })]);
-        await Promise.all([b.port.apply({ kind: 'width', instanceId: 'a', width: 'full' }), b.port.apply({ kind: 'frame', instanceId: 'b', frameStyle: 'card' })]);
+        await Promise.all([b.port.apply({ kind: 'add', instance: instance('a'), size: 'tall' }), b.port.apply({ kind: 'add', instance: instance('b', 'B') })]);
+        expect((await b.port.read()).instances.find(entry => entry.instance.id === 'a')).toMatchObject({ size: 'tall' });
+        await Promise.all([b.port.apply({ kind: 'size', instanceId: 'a', size: 'large' }), b.port.apply({ kind: 'frame', instanceId: 'b', frameStyle: 'card' })]);
         await b.port.apply({ kind: 'inputs', instanceId: 'a', bindings: instance('a', 'C').bindings });
         await b.port.apply({ kind: 'move', instanceId: 'b', toIndex: 0 });
         const reload = createWidgetSurfaceArtifactPortV1(b.transport, { surface, isCurrent: () => true });
         expect((await reload.read()).instances).toEqual([
-            { instance: instance('b', 'B'), width: 'half', frameStyle: 'card' }, { instance: instance('a', 'C'), width: 'full' },
+            { instance: instance('b', 'B'), size: 'medium', frameStyle: 'card' }, { instance: instance('a', 'C'), size: 'large' },
         ]);
         expect(b.rows.size).toBe(1);
     });
@@ -84,10 +85,10 @@ describe('personal widget areas at the Account Artifact owner', () => {
         await expect(retired.apply({ kind: 'remove', instanceId: 'a' })).rejects.toMatchObject({ code: 'widget_area_scope_retired' });
         expect(b.updates).toHaveLength(updates);
     });
-    it('keeps Project order/Plain geometry distinct from plugin half/full geometry', async () => {
+    it('keeps Project order/Plain geometry linear while plugin areas admit grid sizes', async () => {
         const b = boundary();
         const project = createWidgetSurfaceArtifactPortV1(b.transport, { surface: { ...surface, owner: { kind: 'project', projectId: 'source' } }, isCurrent: () => true });
         expect((await project.apply({ kind: 'add', instance: instance('a') })).instances).toEqual([{ instance: instance('a') }]);
-        await expect(project.apply({ kind: 'width', instanceId: 'a', width: 'full' })).rejects.toMatchObject({ code: 'widget_width_unsupported' });
+        await expect(project.apply({ kind: 'size', instanceId: 'a', size: 'full' })).rejects.toMatchObject({ code: 'widget_size_unsupported' });
     });
 });

@@ -1,7 +1,7 @@
 import {
   readConversationTurnOriginV1FromMessageMeta,
   type ConversationTurnOriginV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/messages/structured/conversationTurnOriginV1';
 
 import type { Message } from "@happier-dev/session-core/messages";
 import type { SessionDeleteResult } from '@/sync/ops/sessions';

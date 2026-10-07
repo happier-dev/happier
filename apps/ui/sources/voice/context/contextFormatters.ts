@@ -1,7 +1,7 @@
 import {
     buildAgentRequestSemanticSummary,
     formatPermissionRequestSummary,
-} from "@happier-dev/protocol";
+} from "@happier-dev/protocol/activity/agentRequestSummary";
 import { Session } from "@/sync/domains/state/storageTypes";
 import { Message } from "@happier-dev/session-core/messages";
 import { storage } from '@/sync/domains/state/storage';

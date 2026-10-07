@@ -1,4 +1,4 @@
-import { AccountDirectoryErrorCodeV1Schema } from '@happier-dev/protocol';
+import { AccountDirectoryErrorCodeV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { t } from '@/text';
 import {
     isCompletedAccountPostAuthResult,

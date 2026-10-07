@@ -3,7 +3,7 @@ import type { PluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/us
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { InstalledWidgetTarget } from '@/components/widgets/InstalledWidgetSurface';
 import { isSameInputOptionValue, readInputPath } from '@happier-dev/protocol/inputs';
-import { VoiceTrackedSessionAddressV1Schema } from '@happier-dev/protocol';
+import { VoiceTrackedSessionAddressV1Schema } from '@happier-dev/protocol/sessions/follow/voiceTrackedTargetsCompatibilityV1';
 import type { JsonValue, PluginContributionIdentityV1, PluginProjectedResourceV2, QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 

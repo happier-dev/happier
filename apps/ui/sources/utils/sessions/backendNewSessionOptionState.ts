@@ -1,4 +1,4 @@
-import { readBackendTargetRefV2, type BackendTargetRefV2Input } from '@happier-dev/protocol';
+import { readBackendTargetRefV2, type BackendTargetRefV2Input } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 

@@ -192,6 +192,31 @@ function createDeferred<T>() {
 }
 
 describe('defineUiSurface', () => {
+  it('delivers widget size and measured body geometry without changing launch input or remounting', async () => {
+    let mounts = 0;
+    let observed: RenderContext | undefined;
+    function WidgetAuthor(context: RenderContext) {
+      observed = context;
+      useEffect(() => { mounts += 1; }, []);
+      return <Text value="widget" />;
+    }
+    const render = defineUiSurface(WidgetAuthor);
+    const surface = createSurfaceContext();
+    const widgetPresentation = {
+      size: 'wide' as const,
+      footprint: { columns: 2, columnSpan: 2, rowSpan: 1, height: 'compact' as const, width: 'full' as const },
+      geometry: { width: 620, height: 160 },
+    };
+    const context = { ...createRenderContext(surface, undefined, undefined, { filter: 'open' }), widgetPresentation };
+    const mount = await mountThroughReactNativeWebAsync(render(context) as ReactElement);
+    expect(Reflect.get(observed!, 'widgetPresentation')).toEqual(widgetPresentation);
+    await mount.render(render({ ...context, widgetPresentation: { ...widgetPresentation, geometry: { width: 350, height: 160 } } }) as ReactElement);
+    expect(Reflect.get(observed!, 'widgetPresentation')).toMatchObject({ size: 'wide', geometry: { width: 350, height: 160 } });
+    expect(observed?.launchInput).toEqual({ filter: 'open' });
+    expect(mounts).toBe(1);
+    mount.unmount();
+  });
+
   it('projects host-owned activity into a retained author surface', async () => {
     activityMounts = 0;
     const surface = createSurfaceContext();

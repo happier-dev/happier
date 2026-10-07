@@ -1,26 +1,5 @@
-import {
-    ActionApprovalRequestCreatedResultSchema,
-    ReadWorkspaceSyncFileResultV1Schema,
-    ReadWorkspaceSyncFileV1Schema,
-    WorkspaceSyncConflictPageRequestV1Schema,
-    WorkspaceSyncConflictPageV1Schema,
-    WorkspaceSyncRelationshipIdV1Schema,
-    WorkspaceSyncLegacyStateInspectionV1Schema,
-    WorkspaceSyncStatusV1Schema,
-    WorkspaceSyncConflictResolveActionInputV1Schema,
-    WorkspaceSyncConflictResolutionResultV1Schema,
-    WorkspaceSyncConflictInspectRpcRequestV1Schema,
-    WorkspaceSyncConflictInspectRpcResultV1Schema,
-    type WorkspaceSyncConflictResolutionV1,
-    type WorkspaceSyncConflictResolutionResultV1,
-    type WorkspaceSyncConflictInspectRpcRequestV1,
-    type WorkspaceSyncConflictInspectRpcResultV1,
-    type ReadWorkspaceSyncFileResultV1,
-    type ReadWorkspaceSyncFileV1,
-    type WorkspaceSyncConflictPageV1,
-    type WorkspaceSyncStatusV1,
-    type WorkspaceSyncLegacyStateInspectionV1,
-} from '@happier-dev/protocol';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ReadWorkspaceSyncFileResultV1Schema, ReadWorkspaceSyncFileV1Schema, WorkspaceSyncConflictPageRequestV1Schema, WorkspaceSyncConflictPageV1Schema, WorkspaceSyncRelationshipIdV1Schema, WorkspaceSyncLegacyStateInspectionV1Schema, WorkspaceSyncStatusV1Schema, WorkspaceSyncConflictResolveActionInputV1Schema, WorkspaceSyncConflictResolutionResultV1Schema, WorkspaceSyncConflictInspectRpcRequestV1Schema, WorkspaceSyncConflictInspectRpcResultV1Schema, type WorkspaceSyncConflictResolutionV1, type WorkspaceSyncConflictResolutionResultV1, type WorkspaceSyncConflictInspectRpcRequestV1, type WorkspaceSyncConflictInspectRpcResultV1, type ReadWorkspaceSyncFileResultV1, type ReadWorkspaceSyncFileV1, type WorkspaceSyncConflictPageV1, type WorkspaceSyncStatusV1, type WorkspaceSyncLegacyStateInspectionV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 

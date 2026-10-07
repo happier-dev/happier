@@ -1,11 +1,6 @@
 import { z } from 'zod';
-import {
-    ProviderConnectionDisplaySnapshotV1Schema,
-    ProviderBoundModelRefSchema,
-    SessionModelSelectionV1Schema,
-    type ProviderConnectionDisplaySnapshotV1,
-    type ProviderBoundModelRef,
-} from '@happier-dev/protocol';
+import { ProviderConnectionDisplaySnapshotV1Schema, type ProviderConnectionDisplaySnapshotV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import { ProviderBoundModelRefSchema, SessionModelSelectionV1Schema, type ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
 
 import type { ModelOption, PreflightModelList } from '@/sync/domains/models/modelOptions';
 

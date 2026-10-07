@@ -4,7 +4,7 @@ import { Pressable, View, type GestureResponderEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { ICON_SIZE } from '@/components/ui/icons/Icon';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { resolveTouchTargetFloorPx } from '@/components/ui/interactiveTargetSize';
 import { DocumentTabStrip, type DocumentTabItem } from '@/components/ui/navigation/DocumentTabStrip';
@@ -261,7 +261,8 @@ export const SessionTerminalPageView = React.memo(function SessionTerminalPageVi
                             testID={testId('empty')}
                             kind="empty"
                             title={t('terminalWorkspace.states.empty')}
-                            icon={<Icon name="terminal" size={ICON_SIZE.xl} color={theme.colors.text.secondary} />}
+                            iconName="terminal"
+                            scene="noTerminal"
                             action={{ label: t('terminalWorkspace.states.emptyAction'), onPress: openShell, testID: testId('empty-new-shell') }}
                         />
                     </View>

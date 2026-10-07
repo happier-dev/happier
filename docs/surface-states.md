@@ -12,6 +12,29 @@ The app consumes [`SurfaceStateCard`](../apps/ui/sources/components/ui/surfaces/
 
 Plugins use the public Plugin UI state components. Both adapters consume the shared state frame, compact line and diagnostic disclosure renderers in `InfoState.tsx`; placement and disclosure are not consumer-owned copies. App-specific `SurfaceStateCard` is a host composition, not permission to import app internals into a plugin or claim all its props exist on each public component. Exact public props are package-owned. Public `ErrorState` distinguishes error, unavailable and denied states and supports compact lines. Static failure states stay silent by default; a caller can explicitly request an announcement for a lifecycle transition, without announcing the diagnostic disclosure again.
 
+### Empty-state scenes
+
+In 0.3 development source, the state's mark slot can draw a Daybreak scene (widgets plan A5 and its library extension) instead of a glyph. [`presentation/state/scenes.ts`](../packages/plugin-ui/src/presentation/state/scenes.ts) is the one scene registry. A scene is data, `{ horizon, moment, planet, planetAt, props[], sky[], accent }`, composed from named parts:
+
+- 11 horizons;
+- 7 moments, which place and light the planet;
+- 7 planet states;
+- 51 single-stroke props, each placed with `x`, `ground`, `scale` and `flip`;
+- 6 sky marks.
+
+The registry enforces the composition rules per size: 3, 2 and 1 props and 2, 1 and 0 sky marks at page, pane and thumb, with detail dropped at thumb, and one accent. The 37 built-in scenes (`HAPPIER_SCENE_IDS`) are compositions of these parts. Plugins compose theirs through the same public API (`defineHappierScene`, `defineHappierSceneProp`). `resolveHappierSceneArtSize` decides which states draw a scene: centred or page states with room. Line and inline states keep their glyph.
+
+Core's `EmptyState` and `SurfaceStateCard` take `scene`. The public plugin `EmptyState` takes it too and draws through the presentation host's `renderScene`. Both reach the same host renderer, [`SceneArt`](../apps/ui/sources/components/ui/surfaces/SceneArt.tsx). It owns:
+
+- the line ink and widths, from theme tokens;
+- the accent and the "needs you" beacon, in the attention amber;
+- the Brand dot planet (`createPlanetDots` with the scene lattice, halo and warmth options; drawn in ink when out of reach);
+- the one-shot rise of a `rising` planet, which stays still under reduced motion or when the surface is inactive.
+
+Callers choose a scene; they do not draw their own empty-state illustrations.
+
+"Needs you" uses one amber everywhere: Brand's `PLANET_ATTENTION_HEX` feeds the app theme's `state.attention`, the status cell (`createPlanetStatusCell`) and scene beacons. Rose is for failure only.
+
 Notices above retained content share [`HappierBanner`](../packages/plugin-ui/src/presentation/content/Foundation.tsx): the app's `AttentionBanner` binds its theme, actions and diagnostic disclosure, and the public `Banner` binds plugin text and glyphs. The shared renderer owns the tint, outline and responsive action placement. Whole-surface states continue to use the state-card composition.
 
 Progress and capacity bars share `HappierProgress` in the same presentation module. The app's `MeterBar` supplies the domain's fill and colours; a capacity meter stays silent while named progress reports its value. Numbered setup and checklist markers share [`HappierStep`](../packages/plugin-ui/src/presentation/content/Step.tsx) and its marker renderer. Adapters retain their own step decisions, labels, actions and details.

@@ -1,4 +1,4 @@
-import { isLoopbackHostname as isProtocolLoopbackHostname, normalizeHostnameForLoopbackCheck } from '@happier-dev/protocol';
+import { isLoopbackHostname as isProtocolLoopbackHostname, normalizeHostnameForLoopbackCheck } from '@happier-dev/protocol/server/urls/loopbackHostname';
 
 function stripBrackets(hostname: string): string {
     const host = String(hostname ?? '').trim();

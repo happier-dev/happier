@@ -4,7 +4,7 @@ import {
     SessionMcpSelectionV1Schema,
     readSessionMcpSelectionV1FromMetadata,
     type SessionMcpSelectionV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
 
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { useNewSessionMcpSelection } from '@/components/sessions/new/hooks/useNewSessionMcpSelection';

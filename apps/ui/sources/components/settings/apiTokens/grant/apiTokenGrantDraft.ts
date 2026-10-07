@@ -1,11 +1,6 @@
-import {
-    API_TOKEN_FULL_GRANT_V1,
-    ApiTokenGrantOriginV1Schema,
-    ApiTokenGrantV1Schema,
-    type ActionIdFamilyV1,
-    type ApiTokenGrantV1,
-    type ProviderBoundModelRef,
-} from '@happier-dev/protocol';
+import { API_TOKEN_FULL_GRANT_V1, ApiTokenGrantOriginV1Schema, ApiTokenGrantV1Schema, type ApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import type { ActionIdFamilyV1 } from '@happier-dev/protocol/actions/actionIds';
+import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
 
 /**
  * The draft a person edits in the grant editor is the protocol grant itself: every edit produces a

@@ -1,7 +1,7 @@
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { rename as renameFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -253,6 +253,8 @@ describe('cli-common atomic build contract', () => {
         buildIntoDistDir: async ({ stagingDistDir }) => {
           sawOldDistDuringBuild = existsSync(join(distDir, 'relayAccess', 'catalog.js'));
           mkdirSync(join(stagingDistDir, 'relayAccess'), { recursive: true });
+          expect(dirname(dirname(stagingDistDir))).toBe(packageDir);
+          expect(statSync(stagingDistDir).dev).toBe(statSync(distDir).dev);
           writeFileSync(join(stagingDistDir, 'index.js'), 'export const version = "new";\n', 'utf8');
           writeFileSync(join(stagingDistDir, 'index.d.ts'), 'export declare const version: string;\n', 'utf8');
           writeFileSync(join(stagingDistDir, 'relayAccess', 'catalog.js'), 'export const version = "new";\n', 'utf8');

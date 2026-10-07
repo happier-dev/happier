@@ -1,9 +1,6 @@
-import {
-    isLaunchProfileV2,
-    readProviderSettingsFromAccountSettingsV1,
-    type AiLaunchProfile,
-    type ProviderSettingsMigrationPendingConflictV1,
-} from '@happier-dev/protocol';
+import { isLaunchProfileV2, type AiLaunchProfile } from '@happier-dev/protocol/profiles/read';
+import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
+import type { ProviderSettingsMigrationPendingConflictV1 } from '@happier-dev/protocol/providers/settings/v1';
 
 const RETAINED_LEGACY_PROFILE_IDS = new Set(['azure-openai', 'gemini-api-key', 'gemini-vertex']);
 

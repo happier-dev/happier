@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { getActionSpec } from '@happier-dev/protocol';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { storage } from '@/sync/domains/state/storage';

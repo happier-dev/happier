@@ -10,11 +10,14 @@ describe('one Artifact per Board', () => {
     it('reads only canonical Board header summary and preview fields', () => {
         const known = createWorkBoardV1({ id: 'one', name: 'One' });
         const preview = buildWorkBoardPreviewLayoutV1(known);
+        const footprint = { columns: 2, columnSpan: 1, rowSpan: 2 };
         expect(WorkBoardPreviewLayoutV1Schema.parse({ ...preview, obsolete: true,
-            source: { ...preview.source, obsolete: true }, widgets: [{ title: 'Snapshot', width: 1,
+            source: { ...preview.source, obsolete: true }, widgets: [{ title: 'Snapshot', size: 'medium',
+                footprint: { ...footprint, obsolete: true },
                 position: { x: 1, y: 2, obsolete: true }, obsolete: true }] })).toEqual({
-            ...preview, widgets: [{ title: 'Snapshot', width: 1, position: { x: 1, y: 2 } }],
+            ...preview, widgets: [{ title: 'Snapshot', size: 'medium', footprint, position: { x: 1, y: 2 } }],
         });
+        expect(WorkBoardPreviewLayoutV1Schema.safeParse({ ...preview, widgets: [{ title: null, size: 'medium' }] }).success).toBe(false);
         expect(WorkBoardPreviewLayoutV1Schema.safeParse({ ...preview, source: { sections: [], pickedCount: 0 } }).success).toBe(false);
         const header = { kind: 'work-board.v1', v: 1, title: 'One', pinnedInSessions: false, readsNeedsYou: false, obsolete: true };
         expect(readWorkBoardArtifactSummaryV1('one', header)).toEqual({ id: 'one', name: 'One', pinnedInSessions: false, source: { sections: [] } });
@@ -85,16 +88,17 @@ describe('one Artifact per Board', () => {
         const workKey = buildWorkBoardItemKeyV1({ kind: 'session', qualifiedId: { serverId: 'home', id: 's1' } });
         await Promise.all([
             port.apply(WorkBoardIntentV1Schema.parse({ kind: 'widget_inputs', boardId: 'one', ref, bindings: { count: { kind: 'value', value: 7 } } })),
-            port.apply(WorkBoardIntentV1Schema.parse({ kind: 'widget_width', boardId: 'one', ref, width: 2 })),
+            port.apply(WorkBoardIntentV1Schema.parse({ kind: 'widget_size', boardId: 'one', ref, size: 'full' })),
             port.apply({ kind: 'add_items', boardId: 'one', refs: [{ kind: 'session', qualifiedId: { serverId: 'home', id: 's1' } }], positionsByItemRef: { [workKey]: { x: 36, y: 48 } } }),
         ]);
         await port.apply(WorkBoardIntentV1Schema.parse({ kind: 'widget_move', boardId: 'one', ref, nativeIndex: 2 }));
         const board = await createWorkBoardArtifactPortV1(b.transport).readBoard('one');
-        expect(board?.widgets).toMatchObject([{ instance: { id: 'copy-a', bindings: { count: { kind: 'value', value: 7 } } }, width: 2 }, { instance: { id: 'copy-b', bindings: {} }, width: 1 }]);
+        expect(board?.widgets).toMatchObject([{ instance: { id: 'copy-a', bindings: { count: { kind: 'value', value: 7 } } }, size: 'full' }, { instance: { id: 'copy-b', bindings: {} }, size: 'medium' }]);
         expect(board?.itemOrder?.[2]).toBe(JSON.stringify(['widget', 'home', 'account', 'one', 'copy-a']));
         expect(board?.positionsByItemRef).toEqual({ [workKey]: { x: 36, y: 48 }, [JSON.stringify(['widget', 'home', 'account', 'one', 'copy-a'])]: { x: 12, y: 24 } });
         const previewLayout = { mode: 'canvas', source: { sections: [], hasFilter: false, pickedCount: 1 },
-            widgets: [{ title: null, width: 1 }, { title: null, width: 2, position: { x: 12, y: 24 } }] };
+            widgets: [{ title: null, size: 'medium', footprint: { columns: 2, columnSpan: 1, rowSpan: 2 } },
+                { title: null, size: 'full', footprint: { columns: 2, columnSpan: 2, rowSpan: 2 }, position: { x: 12, y: 24 } }] };
         expect(b.rows.get('one')?.header.previewLayout).toEqual(previewLayout);
         // Generic writes and restores cannot retain a displaced layout projection.
         const header = { ...b.rows.get('one')!.header, previewLayout: { stale: true } };

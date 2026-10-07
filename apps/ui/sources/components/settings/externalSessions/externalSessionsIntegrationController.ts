@@ -9,7 +9,7 @@ import {
     type PluginSessionHookStatusResponseV1,
     type PluginSessionHookToggleResponseV1,
     type PluginSessionHookUninstallResponseV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/external/hookManagementV1';
 
 import {
     machinePluginSessionHookDisable,

@@ -3,7 +3,7 @@ import { useToggleThemeMode } from '@/components/settings/appearance/useApplyThe
 import { Platform } from 'react-native';
 import { useGlobalSearchParams, useSegments } from 'expo-router';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { Modal } from '@/modal';
 import { COMMAND_SURFACE_WEB_PLACEMENT } from '@/modal/components/card/commandSurfaceCard';
 import { UniversalSearchModal, type UniversalSearchModalProps } from '@/components/appShell/search/UniversalSearchModal';

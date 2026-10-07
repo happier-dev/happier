@@ -1,4 +1,7 @@
-import { PluginInvocableActionIdSchema, PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE, validatePluginDragSourceReferenceV1, isPluginDropTargetActionAllowedV1, parseQualifiedPluginContributionKey, type PluginDragSourceContributionV1, type PluginDropTargetContributionV1 } from '@happier-dev/protocol';
+import { PluginInvocableActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
+import { PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
+import { validatePluginDragSourceReferenceV1, isPluginDropTargetActionAllowedV1, type PluginDragSourceContributionV1, type PluginDropTargetContributionV1 } from '@happier-dev/protocol/plugins/contributions/entityDragDrop';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { EntityDropAdmissionV1Schema, PluginUiJsonValueV1Schema, type EntityDragScopeV1, type EntityDropAdmissionV1, type PluginUiJsonValueV1, type EntityDropOutcomeV1, type PluginUiSurfaceContextV1 } from '@happier-dev/protocol/plugins/ui';
 import type { EntityDragCarry, EntityDragDropRuntime, EntityDropResolveContext, EntityDragSourceDescription } from '@/components/ui/treeDragDrop/entityDragDropTypes';
 import type { WindowBounds } from '@/components/ui/treeDragDrop/treeDragDropTypes';

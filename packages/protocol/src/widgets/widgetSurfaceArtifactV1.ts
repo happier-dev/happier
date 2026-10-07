@@ -6,24 +6,25 @@ import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import type { HomeHubArtifactTransportV1 } from '../home/homeHubArtifactV1.js';
 import { WidgetInstanceV1Schema, WidgetInputBindingsV1Schema, WidgetSurfaceRefV1Schema, type WidgetSurfaceRefV1 } from './widgetInstanceV1.js';
 import { WidgetExpectedPresentationV1Schema, type WidgetActionSurfacePortV1, type WidgetSurfaceMutationV1, type WidgetMoveCaptureV1 } from './actionsV1.js';
+import { WidgetGridSizeV1Schema, normalizeWidgetSizeForSurfaceV1 } from './widgetPresentationV1.js';
 
 export const WIDGET_SURFACE_ARTIFACT_KIND_V1 = 'widget-area-layout.v1';
 export const WidgetAreaSurfaceRefV1Schema = WidgetSurfaceRefV1Schema.refine(surface => surface.owner.kind === 'project' || surface.owner.kind === 'pluginArea', 'Personal area required');
 export const WidgetAreaLayoutV1Schema = z.object({
     v: z.literal(1), surface: WidgetAreaSurfaceRefV1Schema,
-    instances: z.array(z.object({ instance: WidgetInstanceV1Schema, width: z.enum(['half', 'full']).optional(), frameStyle: z.enum(['card', 'plain']).optional() }).strict()),
+    instances: z.array(z.object({ instance: WidgetInstanceV1Schema, size: WidgetGridSizeV1Schema.optional(), frameStyle: z.enum(['card', 'plain']).optional() }).strict()),
 }).strict().refine(layout => new Set(layout.instances.map(entry => entry.instance.id)).size === layout.instances.length, 'Duplicate instance');
 export type WidgetAreaLayoutV1 = z.infer<typeof WidgetAreaLayoutV1Schema>;
 export const WidgetAreaLayoutV1StoredSchema = createStoredReadSchema(WidgetAreaLayoutV1Schema);
 const instanceId = WidgetInstanceV1Schema.shape.id;
 const index = z.number().int().nonnegative().safe();
 export const WidgetAreaLayoutIntentV1Schema = z.discriminatedUnion('kind', [
-    z.object({ kind: z.literal('add'), instance: WidgetInstanceV1Schema, toIndex: index.optional(), width: z.enum(['half', 'full']).optional(), frameStyle: z.enum(['card', 'plain']).optional() }).strict(),
+    z.object({ kind: z.literal('add'), instance: WidgetInstanceV1Schema, toIndex: index.optional(), size: WidgetGridSizeV1Schema.optional(), frameStyle: z.enum(['card', 'plain']).optional() }).strict(),
     z.object({ kind: z.literal('remove'), instanceId, expectedInstance: WidgetInstanceV1Schema.optional(), expectedPresentation: WidgetExpectedPresentationV1Schema.optional() }).strict(),
     z.object({ kind: z.literal('move'), instanceId, toIndex: index }).strict(),
     z.object({ kind: z.literal('rename'), instanceId, displayName: z.string().trim().min(1).nullable() }).strict(),
     z.object({ kind: z.literal('inputs'), instanceId, bindings: WidgetInputBindingsV1Schema }).strict(),
-    z.object({ kind: z.literal('width'), instanceId, width: z.enum(['half', 'full']) }).strict(),
+    z.object({ kind: z.literal('size'), instanceId, size: WidgetGridSizeV1Schema }).strict(),
     z.object({ kind: z.literal('frame'), instanceId, frameStyle: z.enum(['card', 'plain']).nullable() }).strict(),
 ]);
 export type WidgetAreaLayoutIntentV1 = z.infer<typeof WidgetAreaLayoutIntentV1Schema>;
@@ -42,15 +43,16 @@ function presentation(layout: WidgetAreaLayoutV1, id: string) {
     const nativeIndex = layout.instances.findIndex(entry => entry.instance.id === id);
     const entry = layout.instances[nativeIndex];
     if (!entry) throw new WidgetAreaMutationErrorV1('widget_instance_not_found');
-    return { nativeIndex, frameStyle: entry.frameStyle ?? null, ...(entry.width ? { width: entry.width } : {}) };
+    return { nativeIndex, frameStyle: entry.frameStyle ?? null, ...(entry.size ? { size: entry.size } : {}) };
 }
 export function applyWidgetAreaLayoutIntentV1(layout: WidgetAreaLayoutV1, raw: WidgetAreaLayoutIntentV1): WidgetAreaLayoutV1 {
     const intent = WidgetAreaLayoutIntentV1Schema.parse(raw);
     const instances = [...layout.instances];
     if (intent.kind === 'add') {
         if (instances.some(entry => entry.instance.id === intent.instance.id)) throw new WidgetAreaMutationErrorV1('widget_instance_already_exists');
+        const size = normalizeWidgetSizeForSurfaceV1(layout.surface.owner.kind === 'project' ? 'project' : 'pluginArea', intent.size);
         instances.splice(Math.min(intent.toIndex ?? instances.length, instances.length), 0, { instance: intent.instance,
-            ...(layout.surface.owner.kind === 'pluginArea' ? { width: intent.width ?? 'half' } : {}), ...(intent.frameStyle ? { frameStyle: intent.frameStyle } : {}) });
+            ...(size ? { size } : {}), ...(intent.frameStyle ? { frameStyle: intent.frameStyle } : {}) });
     } else {
         const at = instances.findIndex(entry => entry.instance.id === intent.instanceId);
         const current = instances[at];
@@ -66,9 +68,9 @@ export function applyWidgetAreaLayoutIntentV1(layout: WidgetAreaLayoutV1, raw: W
                 instances[at] = { ...current, instance: { ...instance, ...(intent.displayName ? { displayName: intent.displayName } : {}) } }; break;
             }
             case 'inputs': instances[at] = { ...current, instance: { ...current.instance, bindings: intent.bindings } }; break;
-            case 'width':
-                if (layout.surface.owner.kind === 'project') throw new WidgetAreaMutationErrorV1('widget_width_unsupported');
-                instances[at] = { ...current, width: intent.width }; break;
+            case 'size':
+                if (!normalizeWidgetSizeForSurfaceV1(layout.surface.owner.kind, intent.size)) throw new WidgetAreaMutationErrorV1('widget_size_unsupported');
+                instances[at] = { ...current, size: intent.size }; break;
             case 'frame': {
                 const { frameStyle: _previous, ...entry } = current;
                 instances[at] = { ...entry, ...(intent.frameStyle ? { frameStyle: intent.frameStyle } : {}) }; break;
@@ -141,12 +143,15 @@ export function createWidgetAreaActionPortV1(resolve: (surface: WidgetSurfaceRef
         async apply(surface, mutation: WidgetSurfaceMutationV1, _context, signal) {
             try {
                 if (mutation.kind === 'add' && (mutation.placement || mutation.position?.tabId) || mutation.kind === 'move' && 'tabId' in mutation && mutation.tabId) throw new WidgetAreaMutationErrorV1('widget_placement_unsupported');
-                if (mutation.kind === 'width' && mutation.width !== 'half' && mutation.width !== 'full') throw new WidgetAreaMutationErrorV1('widget_width_unsupported');
+                if (mutation.kind === 'size' && (!WidgetGridSizeV1Schema.safeParse(mutation.size).success || !normalizeWidgetSizeForSurfaceV1(surface.owner.kind, mutation.size))) throw new WidgetAreaMutationErrorV1('widget_size_unsupported');
                 let intent: WidgetAreaLayoutIntentV1;
-                if (mutation.kind === 'add') intent = { kind: 'add', instance: mutation.instance,
+                if (mutation.kind === 'add') {
+                    const size = normalizeWidgetSizeForSurfaceV1(surface.owner.kind === 'project' ? 'project' : 'pluginArea', mutation.presentation?.size);
+                    intent = { kind: 'add', instance: mutation.instance,
                     ...(mutation.position || mutation.toIndex !== undefined ? { toIndex: mutation.position?.index ?? mutation.toIndex } : {}),
-                    ...(mutation.presentation?.width === 'half' || mutation.presentation?.width === 'full' ? { width: mutation.presentation.width } : {}),
+                    ...(size ? { size } : {}),
                     ...(mutation.presentation?.frameStyle ? { frameStyle: mutation.presentation.frameStyle } : {}) };
+                }
                 else if (mutation.kind === 'move') intent = { kind: 'move', instanceId: mutation.instanceId, toIndex: 'nativeIndex' in mutation ? mutation.nativeIndex : mutation.toIndex };
                 else intent = WidgetAreaLayoutIntentV1Schema.parse(mutation);
                 const layout = await (await portFor(surface)).apply(intent, signal);

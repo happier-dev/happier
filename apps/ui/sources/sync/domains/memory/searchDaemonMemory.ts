@@ -1,12 +1,6 @@
-import {
-    MemorySearchResultV1Schema,
-    RPC_ERROR_CODES,
-    RPC_METHODS,
-    readRpcErrorCode,
-    type MemorySearchMode,
-    type MemorySearchResultV1,
-    type MemorySearchScope,
-} from '@happier-dev/protocol';
+import { MemorySearchResultV1Schema, type MemorySearchMode, type MemorySearchResultV1, type MemorySearchScope } from '@happier-dev/protocol/memory/memorySearch';
+import { RPC_ERROR_CODES, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { applyMemorySearchSessionEligibility } from './applyMemorySearchSessionEligibility';

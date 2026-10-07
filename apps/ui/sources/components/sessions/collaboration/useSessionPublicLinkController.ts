@@ -21,7 +21,7 @@ import {
     resolvePreferredShareableServerUrl,
     resolveValidatedShareableServerUrl,
 } from '@/sync/domains/server/url/shareableServerUrl';
-import { buildStoredContentPublicShareUrlV1 } from '@happier-dev/protocol';
+import { buildStoredContentPublicShareUrlV1 } from '@happier-dev/protocol/sharing/storedContentPublicShareV1';
 
 type PublicLinkState = Readonly<{
     epoch: number;

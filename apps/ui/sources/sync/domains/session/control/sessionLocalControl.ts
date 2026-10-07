@@ -1,6 +1,6 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { AgentState } from '@happier-dev/session-core/state';
-import { isSessionTerminalPermanentlyAbsent, readSessionTerminalControlServiceabilityStateV1 } from '@happier-dev/protocol';
+import { isSessionTerminalPermanentlyAbsent, readSessionTerminalControlServiceabilityStateV1 } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 export type SessionLocalControlTopology = 'exclusive' | 'shared';

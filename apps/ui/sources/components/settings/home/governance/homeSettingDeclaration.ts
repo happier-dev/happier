@@ -1,4 +1,5 @@
-import { validateServerConfigText, type ServerConfigEntryInput } from '@happier-dev/protocol';
+import { validateServerConfigText } from '@happier-dev/protocol/serverConfig/serverConfigCodec';
+import type { ServerConfigEntryInput } from '@happier-dev/protocol/serverConfig/serverConfigEntry';
 import type { HomeSettingEntryV1 } from '@happier-dev/protocol/home/governance';
 
 /**

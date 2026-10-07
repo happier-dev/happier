@@ -11,13 +11,9 @@ import type {
     SpawnSessionNonceResolution,
 } from '@happier-dev/protocol';
 import { MACHINE_RPC_POLL_INTERVAL_MS } from './machineRpcPollInterval';
-import {
-    decodePlainMachineStoredContent,
-    encodePlainMachineStoredContent,
-    normalizeSpawnSessionNonceResolution,
-    SPAWN_SESSION_ERROR_CODES,
-    settleSpawnSessionNonce,
-} from '@happier-dev/protocol';
+import { decodePlainMachineStoredContent, encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
+import { normalizeSpawnSessionNonceResolution, settleSpawnSessionNonce } from '@happier-dev/protocol/sessions/spawnSessionNonce';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import { RPC_ERROR_CODES, RPC_METHODS, isRpcMethodNotFoundResult } from '@happier-dev/protocol/rpc';
 
 import { apiSocket } from '../api/session/apiSocket';

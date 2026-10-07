@@ -1,11 +1,13 @@
 import type { InputHints } from '../inputs/inputFields.js';
 import type { PluginJsonSchemaV2 } from '../plugins/contributions/publicTypes.js';
 import type { WidgetConnectedAccountPurposeBindingV1 } from './widgetConnectedAccountPurposeBindingV1.js';
+import type { WidgetSizeDeclarationV1 } from './widgetPresentationV1.js';
 export { WidgetConnectedAccountPurposeBindingV1Schema, type WidgetConnectedAccountPurposeBindingV1 } from './widgetConnectedAccountPurposeBindingV1.js';
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue, type PluginJsonSchemaValidator } from '../plugins/actions/jsonSchemaValidation.js';
 import { resolveWidgetBindingsV1, type WidgetBindingResolutionInputV1, type WidgetBindingResolutionV1, type WidgetInstanceV1 } from './widgetInstanceV1.js';
 
 export type WidgetInputDescriptorV1 = Readonly<{
+    sizeDeclaration?: WidgetSizeDeclarationV1;
     inputs?: InputHints;
     inputSchema?: PluginJsonSchemaV2;
     sessionInputPath?: string;

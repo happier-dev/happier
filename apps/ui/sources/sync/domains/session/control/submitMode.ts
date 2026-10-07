@@ -1,9 +1,7 @@
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
-import {
-    isNonSteerablePromptPayload,
-    type PendingRequestedActionV1,
-    type SessionInactiveResumePolicy,
-} from '@happier-dev/protocol';
+import { isNonSteerablePromptPayload } from '@happier-dev/protocol/sessions/messages/special-commands';
+import type { PendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
+import type { SessionInactiveResumePolicy } from '@happier-dev/protocol/account/settings/accountSettings';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import {
     getVersionSupportState,

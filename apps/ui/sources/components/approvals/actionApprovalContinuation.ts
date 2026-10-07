@@ -1,13 +1,11 @@
-import {
-    approvalArtifactBodyMatchesHeaderV1,
-    getActionSpec,
-    readApprovalExecutionFailure,
-    resolveApprovalPresentationInput,
-    type ActionExecuteFailure,
-    type ActionId,
-    type ApprovalRequestV2,
-    type HomeDomainActionIdV1,
-} from '@happier-dev/protocol';
+import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
+import { resolveApprovalPresentationInput } from '@happier-dev/protocol/actions/actionApprovalPresentation';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import type { ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import type { HomeDomainActionIdV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';

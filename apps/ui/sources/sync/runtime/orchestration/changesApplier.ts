@@ -10,7 +10,7 @@ import {
 } from './changesPlanner';
 import { runTasksWithLimit } from './runTasksWithLimit';
 import type { ApiChangeEntry } from '@/sync/api/types/apiTypes';
-import { canonicalSessionDraftAddressV2, type SessionDraftAddressV2 } from '@happier-dev/protocol';
+import { canonicalSessionDraftAddressV2, type SessionDraftAddressV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 import { readSessionUpdatedMessageChangeHintV1 } from '@happier-dev/protocol/changes';
 
 export type TodoSocketUpdate = Readonly<{

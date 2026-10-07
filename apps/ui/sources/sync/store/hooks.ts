@@ -5,7 +5,9 @@ import type { AuthoringMemory } from './domains/authoringMemory';
 import type { SessionMessagesTailBoundary } from '@/sync/runtime/sessionMessagesTailDiscontinuity';
 import { isPendingMessageForRecipient } from '@/sync/domains/pending/pendingMessageRecipient';
 import { useShallow } from 'zustand/react/shallow';
-import { readSessionDirectoryKind, type MachinePoolViewV1, type PrimaryTurnStatusV1 } from '@happier-dev/protocol';
+import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
+import type { MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
+import type { PrimaryTurnStatusV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import { readSessionListRenderableOwnerMetadataView } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 import {

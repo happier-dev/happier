@@ -1,7 +1,7 @@
 import {
     redactBugReportSensitiveText,
     trimBugReportTextToMaxBytes,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/bugs/reports/redaction';
 import { PLUGIN_UI_HOST_API_DIAGNOSTIC_MAX_UTF8_BYTES_V1 } from '@happier-dev/protocol/plugins/ui';
 
 import { log } from '@/log';

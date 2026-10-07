@@ -12,7 +12,7 @@ import type { PersonalizeFlow } from './usePersonalizeFlow';
 import { WorkspaceNavigationContext, type WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { createWorkspaceState } from '@/components/appShell/workspace/workspaceState';
 
-const boundary = vi.hoisted(() => ({ width: 1440, height: 940, notificationGranted: false, requestNotificationPermission: vi.fn() }));
+const boundary = vi.hoisted(() => ({ width: 1440, height: 940, notificationGranted: false, requestNotificationPermission: vi.fn(), setTheme: vi.fn() }));
 // OS notification permission is an external boundary; the diagnostics hook and step remain real.
 vi.mock('@tauri-apps/plugin-notification', () => ({
     isPermissionGranted: async () => boundary.notificationGranted,
@@ -25,7 +25,7 @@ vi.mock('react-native', async () => {
 });
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
+    return createUnistylesMock({ runtime: { setTheme: boundary.setTheme } });
 });
 vi.mock('react-native-reanimated', async () => {
     const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
@@ -89,6 +89,7 @@ function route(phone: boolean) {
 
 afterEach(() => { standardCleanup(); boundary.width = 1440; boundary.height = 940; boundary.notificationGranted = false;
     boundary.requestNotificationPermission.mockClear(); vi.mocked(Modal.show).mockClear();
+    boundary.setTheme.mockClear();
     setReducedMotionPreferenceOverride(null); vi.unstubAllGlobals(); });
 describe('Personalize responsive route', () => {
     it.each([false, true])('keeps choice groups flush with their already-inset narrative column (phone=%s)', async (phone) => {
@@ -158,6 +159,37 @@ describe('Personalize responsive route', () => {
         }
         await act(async () => { flow().skip(); });
         expect(flow().page).toBe('summary');
+    });
+
+    it('commits the selected Light draft after resizing to phone and back and keeps it through Style', async () => {
+        vi.stubGlobal('navigator', { userAgent: 'Desktop browser', maxTouchPoints: 0 });
+        setReducedMotionPreferenceOverride(true);
+        storage.setState({ settings: settingsDefaults, localSettings: { ...localSettingsDefaults, themePreference: 'dark' },
+            settingsScope: { serverId: 'home-a', accountId: 'alice' } });
+        const account = storage.getState().settings;
+        const screen = await renderScreen(route(false));
+        const flow = (): PersonalizeFlow => screen.root.findByType(PersonalizeStepBody).props.flow;
+        await act(async () => { flow().open('look'); });
+        await screen.pressByTestIdAsync('personalize-flow-theme:light');
+        expect(flow().draft.theme).toBe('light');
+        expect(storage.getState().localSettings.themePreference).toBe('dark');
+        expect(boundary.setTheme).toHaveBeenLastCalledWith('light');
+
+        for (const width of [390, 1440]) {
+            boundary.width = width;
+            await screen.update(route(width === 390));
+            expect(flow()).toMatchObject({ page: 'look', draft: { theme: 'light' } });
+            expect(storage.getState().localSettings.themePreference).toBe('dark');
+        }
+        await screen.pressByTestIdAsync('personalize-flow-config-primary');
+        expect(flow()).toMatchObject({ page: 'style', draft: { theme: 'light' } });
+        expect(storage.getState().localSettings.themePreference).toBe('light');
+        expect(boundary.setTheme).toHaveBeenLastCalledWith('light');
+        await screen.pressByTestIdAsync('personalize-flow-config-primary');
+        expect(flow()).toMatchObject({ page: 'conversation', draft: { theme: 'light' } });
+        expect(storage.getState().localSettings.themePreference).toBe('light');
+        expect(boundary.setTheme).toHaveBeenLastCalledWith('light');
+        expect(storage.getState().settings).toBe(account);
     });
 
     it('uses the shell phone layout in a narrow pointer browser, including the Home card entry', async () => {

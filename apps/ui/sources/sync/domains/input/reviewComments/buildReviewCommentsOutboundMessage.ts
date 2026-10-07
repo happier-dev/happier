@@ -1,1 +1,1 @@
-export { buildReviewCommentsOutboundMessage } from '@happier-dev/protocol';
+export { buildReviewCommentsOutboundMessage } from '@happier-dev/protocol/messages/structured/reviewCommentsInput';

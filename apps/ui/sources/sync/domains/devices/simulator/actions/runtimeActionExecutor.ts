@@ -1,15 +1,9 @@
-import {
-    classifySimulatorRuntimeActionBackingV1,
-    createUnavailableRuntimeActionExecutor,
-    getActionSpec,
-    isBackedSimulatorSidebandKindV1,
-    isSimulatorRuntimeActionIdV1,
-    resolveRuntimeActionExecutionFamily,
-    type RuntimeActionExecute,
-    type RuntimeActionExecuteArgs,
-    type SimulatorRuntimeActionIdV1,
-    type SimulatorSidebandKindV1,
-} from '@happier-dev/protocol';
+import { classifySimulatorRuntimeActionBackingV1, isSimulatorRuntimeActionIdV1, type SimulatorRuntimeActionIdV1 } from '@happier-dev/protocol/devices/simulator/runtimeActionBacking';
+import { createUnavailableRuntimeActionExecutor, resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol/actions/executor/dispatch';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { isBackedSimulatorSidebandKindV1 } from '@happier-dev/protocol/devices/simulator/actionBuilders';
+import type { RuntimeActionExecute, RuntimeActionExecuteArgs } from '@happier-dev/protocol/actions/executor/types';
+import type { SimulatorSidebandKindV1 } from '@happier-dev/protocol/devices/simulator/sidebandV1';
 
 import {
     dispatchSimulatorPreviewActionViaMachineRpc,

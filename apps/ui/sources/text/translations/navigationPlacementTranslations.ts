@@ -1,20 +1,28 @@
-type NavigationPlacementTranslation = Readonly<{
-    customize: string; title: string; description: string;
-    pinned: string; overflow: string; hidden: string; reset: string;
-    appRail: string; sessionRail: string; workspaceRail: string; sessionTabBar: string;
-}>;
+// Tooling aggregate. Product locale roots import only their locale payload.
+import { navigationPlacementTranslations as en } from './features/en';
+import { navigationPlacementTranslations as ca } from './features/ca';
+import { navigationPlacementTranslations as de } from './features/de';
+import { navigationPlacementTranslations as es } from './features/es';
+import { navigationPlacementTranslations as fr } from './features/fr';
+import { navigationPlacementTranslations as it } from './features/it';
+import { navigationPlacementTranslations as ja } from './features/ja';
+import { navigationPlacementTranslations as pl } from './features/pl';
+import { navigationPlacementTranslations as pt } from './features/pt';
+import { navigationPlacementTranslations as ru } from './features/ru';
+import { navigationPlacementTranslations as zh_Hans } from './features/zh-Hans';
+import { navigationPlacementTranslations as zh_Hant } from './features/zh-Hant';
 
 export const navigationPlacementTranslations = {
-    en: { customize: 'Customize…', title: 'Navigation', description: 'Choose what stays visible, goes in More, or is hidden. Drag to reorder. Saved on this device.', pinned: 'Pinned', overflow: 'More', hidden: 'Hidden', reset: 'Reset', appRail: 'Left rail', sessionRail: 'Session rail', workspaceRail: 'Workspace rail', sessionTabBar: 'Phone tab bar' },
-    ca: { customize: 'Personalitza…', title: 'Navegació', description: 'Tria què és visible, va a Més o queda ocult. Arrossega per ordenar. Es desa en aquest dispositiu.', pinned: 'Fixat', overflow: 'Més', hidden: 'Ocult', reset: 'Restableix', appRail: 'Barra esquerra', sessionRail: 'Barra de sessió', workspaceRail: 'Barra de l’espai de treball', sessionTabBar: 'Pestanyes del telèfon' },
-    de: { customize: 'Anpassen…', title: 'Navigation', description: 'Wähle, was sichtbar bleibt, unter Mehr erscheint oder ausgeblendet wird. Ziehen zum Sortieren. Auf diesem Gerät gespeichert.', pinned: 'Angeheftet', overflow: 'Mehr', hidden: 'Ausgeblendet', reset: 'Zurücksetzen', appRail: 'Linke Leiste', sessionRail: 'Sitzungsleiste', workspaceRail: 'Arbeitsbereichsleiste', sessionTabBar: 'Telefon-Tableiste' },
-    es: { customize: 'Personalizar…', title: 'Navegación', description: 'Elige qué se muestra, va a Más o se oculta. Arrastra para ordenar. Se guarda en este dispositivo.', pinned: 'Fijado', overflow: 'Más', hidden: 'Oculto', reset: 'Restablecer', appRail: 'Barra izquierda', sessionRail: 'Barra de sesión', workspaceRail: 'Barra del espacio de trabajo', sessionTabBar: 'Pestañas del teléfono' },
-    fr: { customize: 'Personnaliser…', title: 'Navigation', description: 'Choisissez ce qui reste visible, apparaît dans Plus ou est masqué. Faites glisser pour réordonner. Enregistré sur cet appareil.', pinned: 'Épinglé', overflow: 'Plus', hidden: 'Masqué', reset: 'Réinitialiser', appRail: 'Barre gauche', sessionRail: 'Barre de session', workspaceRail: 'Barre de l’espace de travail', sessionTabBar: 'Onglets du téléphone' },
-    it: { customize: 'Personalizza…', title: 'Navigazione', description: 'Scegli cosa resta visibile, va in Altro o viene nascosto. Trascina per riordinare. Salvato su questo dispositivo.', pinned: 'Fissato', overflow: 'Altro', hidden: 'Nascosto', reset: 'Ripristina', appRail: 'Barra sinistra', sessionRail: 'Barra della sessione', workspaceRail: 'Barra dello spazio di lavoro', sessionTabBar: 'Schede del telefono' },
-    ja: { customize: 'カスタマイズ…', title: 'ナビゲーション', description: '表示、「その他」、非表示を選択します。ドラッグして並べ替え。このデバイスに保存されます。', pinned: '固定', overflow: 'その他', hidden: '非表示', reset: 'リセット', appRail: '左レール', sessionRail: 'セッションレール', workspaceRail: 'ワークスペースレール', sessionTabBar: 'スマートフォンのタブバー' },
-    pl: { customize: 'Dostosuj…', title: 'Nawigacja', description: 'Wybierz, co jest widoczne, trafia do Więcej lub jest ukryte. Przeciągnij, aby zmienić kolejność. Zapisano na tym urządzeniu.', pinned: 'Przypięte', overflow: 'Więcej', hidden: 'Ukryte', reset: 'Resetuj', appRail: 'Lewy pasek', sessionRail: 'Pasek sesji', workspaceRail: 'Pasek obszaru roboczego', sessionTabBar: 'Karty telefonu' },
-    pt: { customize: 'Personalizar…', title: 'Navegação', description: 'Escolha o que fica visível, vai para Mais ou fica oculto. Arraste para reordenar. Salvo neste dispositivo.', pinned: 'Fixado', overflow: 'Mais', hidden: 'Oculto', reset: 'Redefinir', appRail: 'Barra esquerda', sessionRail: 'Barra da sessão', workspaceRail: 'Barra do espaço de trabalho', sessionTabBar: 'Abas do telefone' },
-    ru: { customize: 'Настроить…', title: 'Навигация', description: 'Выберите видимые, скрытые пункты и пункты в «Ещё». Перетащите для изменения порядка. Сохраняется на этом устройстве.', pinned: 'Закреплено', overflow: 'Ещё', hidden: 'Скрыто', reset: 'Сбросить', appRail: 'Левая панель', sessionRail: 'Панель сессии', workspaceRail: 'Панель рабочего пространства', sessionTabBar: 'Вкладки телефона' },
-    'zh-Hans': { customize: '自定义…', title: '导航', description: '选择保持显示、放入“更多”或隐藏的项目。拖动以排序。保存在此设备上。', pinned: '固定', overflow: '更多', hidden: '隐藏', reset: '重置', appRail: '左侧栏', sessionRail: '会话侧栏', workspaceRail: '工作区侧栏', sessionTabBar: '手机标签栏' },
-    'zh-Hant': { customize: '自訂…', title: '導覽', description: '選擇保持顯示、放入「更多」或隱藏的項目。拖曳以排序。儲存在此裝置上。', pinned: '固定', overflow: '更多', hidden: '隱藏', reset: '重設', appRail: '左側欄', sessionRail: '工作階段側欄', workspaceRail: '工作區側欄', sessionTabBar: '手機分頁列' },
-} satisfies Record<string, NavigationPlacementTranslation>;
+    ...en.navigationPlacementTranslations,
+    ...ca.navigationPlacementTranslations,
+    ...de.navigationPlacementTranslations,
+    ...es.navigationPlacementTranslations,
+    ...fr.navigationPlacementTranslations,
+    ...it.navigationPlacementTranslations,
+    ...ja.navigationPlacementTranslations,
+    ...pl.navigationPlacementTranslations,
+    ...pt.navigationPlacementTranslations,
+    ...ru.navigationPlacementTranslations,
+    ...zh_Hans.navigationPlacementTranslations,
+    ...zh_Hant.navigationPlacementTranslations,
+};

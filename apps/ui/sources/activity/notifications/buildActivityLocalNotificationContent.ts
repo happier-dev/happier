@@ -1,12 +1,8 @@
-import {
-    PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS,
-    PUSH_NOTIFICATION_CATEGORY_IDS,
-    buildReadyNotificationContent,
-    resolveActivityRemoteAlertEventForPersonalEventV2,
-    restrictAttentionPreviewBehavior,
-    summarizeToolInputForNotification,
-    type AgentRequestKind,
-} from '@happier-dev/protocol';
+import { PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS, PUSH_NOTIFICATION_CATEGORY_IDS } from '@happier-dev/protocol/push/pushNotificationActions';
+import { buildReadyNotificationContent } from '@happier-dev/protocol/push/readyNotificationContent';
+import { resolveActivityRemoteAlertEventForPersonalEventV2 } from '@happier-dev/protocol/push/activityRemoteAlert';
+import { restrictAttentionPreviewBehavior } from '@happier-dev/protocol/account/settings/accountRemoteAlertPolicy';
+import { summarizeToolInputForNotification, type AgentRequestKind } from '@happier-dev/protocol/activity/agentRequestSummary';
 import { buildActivityPreviewText, normalizeActivityPreviewText } from '@/activity/attention/buildActivityPreviewText';
 import type { Message } from "@happier-dev/session-core/messages";
 import type { Session } from '@/sync/domains/state/storageTypes';

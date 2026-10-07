@@ -1,10 +1,8 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import {
-    validateServerConfigText,
-    type ServerConfigEntryInput,
-} from '@happier-dev/protocol';
+import { validateServerConfigText } from '@happier-dev/protocol/serverConfig/serverConfigCodec';
+import type { ServerConfigEntryInput } from '@happier-dev/protocol/serverConfig/serverConfigEntry';
 import type {
     HomeSettingEntryV1,
     HomeSettingSecretWriteV1,

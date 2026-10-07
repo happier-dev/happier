@@ -1,12 +1,6 @@
-import {
-    KeyChallengeV2IssueResponseSchema,
-    NATIVE_AUTH_EMAIL_PROVISION_PATH_V1,
-    NativeEmailPasswordProvisionResponseV1Schema,
-    canonicalizeKeyChallengeV2AudienceOrigin,
-    encodePasswordCredentialFieldV1,
-    type NativeAccountAdmissionV1,
-    type NativeEmailPasswordProvisionResponseV1,
-} from '@happier-dev/protocol';
+import { KeyChallengeV2IssueResponseSchema, canonicalizeKeyChallengeV2AudienceOrigin } from '@happier-dev/protocol/auth/keyChallenge';
+import { NATIVE_AUTH_EMAIL_PROVISION_PATH_V1, NativeEmailPasswordProvisionResponseV1Schema, type NativeAccountAdmissionV1, type NativeEmailPasswordProvisionResponseV1 } from '@happier-dev/protocol/auth/nativeAuthEmailRoutes';
+import { encodePasswordCredentialFieldV1 } from '@happier-dev/protocol/auth/accountPasswordCredential';
 import { z } from 'zod';
 
 import { authChallengeV2 } from '@/auth/flows/challenge';

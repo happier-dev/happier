@@ -3,6 +3,7 @@ import { t } from '@/text';
 
 import type { WidgetFramePlacement, WidgetFrameStyle } from './WidgetFrame';
 import { resolveWidgetFrameStyleToggle } from './widgetFrameStyle';
+import type { WidgetSizeControl } from './WidgetSizeControl';
 
 function styleLabel(style: WidgetFrameStyle): string {
     return style === 'card' ? t('widgetFrame.styleCard') : t('widgetFrame.stylePlain');
@@ -62,13 +63,13 @@ export function buildWidgetFrameStyleActions(input: Readonly<{
 
 /**
  * A widget's ⋯ in the lab's order (`dashboards` dbind E), the same on every surface: Edit inputs…
- * and Rename (this copy), then how it sits (width, frame, movement), then About, then the surface's
+ * and Rename (this copy), then how it sits (size, frame, movement), then About, then the surface's
  * own entries, and Remove last. Each group exists only when its surface supplied it, so a control
  * never appears without a producer behind it.
  */
 export function orderWidgetMenu(groups: Readonly<{
     instance?: readonly ItemAction[];
-    width?: readonly ItemAction[];
+    size?: readonly ItemAction[];
     frame?: readonly ItemAction[];
     move?: readonly ItemAction[];
     /** About this widget (and, on a Session Board card, Save as your widget and Post a snapshot). */
@@ -79,7 +80,7 @@ export function orderWidgetMenu(groups: Readonly<{
 }>): ItemAction[] {
     return [
         ...(groups.instance ?? []),
-        ...(groups.width ?? []),
+        ...(groups.size ?? []),
         ...(groups.frame ?? []),
         ...(groups.move ?? []),
         ...(groups.definition ?? []),
@@ -132,21 +133,19 @@ export function buildWidgetInstanceActions(input: Readonly<{
 }
 
 /**
- * A widget's width where its surface has the one width step (lab `dashboards` dlayout Q8: Home and
- * plugin areas, half | full): half sits two to a row, full takes the row. The current width is checked.
+ * The resolved declared∩supported size choices. An open menu renders this group with the shared
+ * picker; its fallback action rows carry the same choices, selection and mutation callback.
  */
-export function buildWidgetWidthActions(input: Readonly<{
-    width: 'half' | 'full';
-    onSet: (width: 'half' | 'full') => void;
-}>): ItemAction[] {
-    return (['half', 'full'] as const).map((width) => ({
-        id: `width-${width}`,
-        title: width === 'half' ? t('widgetAdd.widthHalf') : t('widgetAdd.widthFull'),
-        icon: width === 'half' ? 'square-split-horizontal' as const : 'square' as const,
-        selected: input.width === width,
-        group: { id: 'width', title: t('widgetAdd.width') },
-        onPress: () => { if (input.width !== width) input.onSet(width); },
-    }));
+export function buildWidgetSizeActions(input: WidgetSizeControl | undefined): ItemAction[] {
+    return input?.sizes.map((size) => ({
+        id: `size-${size}`,
+        title: t(`widgetAdd.sizes.${size}`),
+        icon: 'square' as const,
+        selected: input.size === size,
+        disabled: input.disabled,
+        group: { id: 'size', title: t('widgetAdd.size') },
+        onPress: () => { if (input.size !== size) input.onSet(size); },
+    })) ?? [];
 }
 
 /**

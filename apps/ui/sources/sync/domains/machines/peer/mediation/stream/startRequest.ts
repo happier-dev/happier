@@ -1,11 +1,5 @@
-import {
-    MachineLiveStreamCapsV1Schema,
-    MachineLiveStreamStartRequestV1Schema,
-    type MachineLiveStreamCapsV1,
-    type MachineLiveStreamCodecIdV1,
-    type MachineLiveStreamRelayAuthorizationV1,
-    type MachineLiveStreamStartRequestV1,
-} from '@happier-dev/protocol';
+import { MachineLiveStreamCapsV1Schema, MachineLiveStreamStartRequestV1Schema, type MachineLiveStreamCapsV1, type MachineLiveStreamRelayAuthorizationV1, type MachineLiveStreamStartRequestV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import type { MachineLiveStreamCodecIdV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/codecsV1';
 
 export type MachineLiveStreamUnsignedStartRequest = Readonly<{
     v: 1;

@@ -10,7 +10,7 @@ import { t, tLoose } from '@/text';
 import { useVoiceSessionSnapshot } from '@/voice/session/voiceSession';
 import { isVoiceMachineErrorKind } from '@/voice/runtime/machine/voiceMachineError';
 import { resolveVoiceMachineErrorTranslationKey } from '@/voice/runtime/machine/voiceMachineErrorCopy';
-import { isHiddenSystemSession } from '@happier-dev/protocol';
+import { isHiddenSystemSession } from '@happier-dev/protocol/sessions/control/contract';
 import {
     useVoiceAttemptControl,
     VOICE_ATTEMPT_IDLE_TARGET_GLOBAL,

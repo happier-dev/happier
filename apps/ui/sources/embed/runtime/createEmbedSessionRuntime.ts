@@ -133,7 +133,7 @@ export function createEmbedSessionRuntime(input: Readonly<{
             if (target.sessionId === null) {
                 const binding = self.grant.create;
                 if (!binding || self.embedConfig?.newChat?.enabled !== true) throw new Error('create_not_granted');
-                const { parseBackendTargetKeyV2 } = await import('@happier-dev/protocol');
+                const { parseBackendTargetKeyV2 } = await import('@happier-dev/protocol/backends/targets/backendTargetRefV2');
                 const agentTarget = parseBackendTargetKeyV2(binding.agentTargetKey);
                 if (!agentTarget || agentTarget.kind !== 'agent') throw new Error('create_not_granted');
                 const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
@@ -146,7 +146,7 @@ export function createEmbedSessionRuntime(input: Readonly<{
                 if (!resolved.ok) throw new Error('credential_unavailable');
                 // The owning Action supplies the catalog; the grant narrows it but cannot create
                 // a model row or turn a Provider-bound reference into a native one.
-                const { PUBLIC_ACTION_OUTPUT_SCHEMAS } = await import('@happier-dev/protocol');
+                const { PUBLIC_ACTION_OUTPUT_SCHEMAS } = await import('@happier-dev/protocol/actions/actionSpecs');
                 const catalog = PUBLIC_ACTION_OUTPUT_SCHEMAS['action.options.resolve'].parse(resolved.result);
                 const nativeModels = catalog.modelCatalog?.nativeModels ?? catalog.options.flatMap((option) =>
                     typeof option.value === 'string' && !option.disabled ? [{

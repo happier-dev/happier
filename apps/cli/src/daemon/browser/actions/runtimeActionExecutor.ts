@@ -2,6 +2,7 @@ import { ACTION_ID_FAMILIES_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { createUnavailableRuntimeActionExecutor, resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol/actions/executor/dispatch';
 import { BrowserCommandV1Schema } from '@happier-dev/protocol/browser/control/v1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionRequiredServerFeatureId } from '@happier-dev/protocol/actions/actionRequiredServerFeature';
 import type { ActionExecuteResult, RuntimeActionExecute, RuntimeActionExecuteArgs, RuntimeActionIdV1 } from '@happier-dev/protocol';
 
 import type { BrowserDaemonControlRoutes } from '../control/routes';
@@ -242,10 +243,12 @@ export function createBrowserDaemonRuntimeActionExecutor(
       return await executeManagedChromiumSandboxInstall(args);
     }
 
+    const requiredFeatureId = getActionRequiredServerFeatureId(args.actionId);
+    if (requiredFeatureId === 'browser.automation' && !featureGate.isEnabled(requiredFeatureId)) {
+      return browserRuntimeActionDisabledResult('browser_automation_route_unavailable');
+    }
+
     if (BROWSER_AUTOMATION_ACTION_IDS.has(args.actionId)) {
-      if (!featureGate.isEnabled('browser.automation')) {
-        return browserRuntimeActionDisabledResult('browser_automation_route_unavailable');
-      }
       const parsed = parseRuntimeActionInput(args);
       if (!parsed.ok) return parsed.result;
       const view = parsed.input as Readonly<{ browserSessionId: string; viewId: string }>;

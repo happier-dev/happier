@@ -1,10 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import {
-    BACKED_SIMULATOR_SIDEBAND_KINDS_V1,
-    type SimulatorSidebandKindV1,
-    type SimulatorSidebandMessageV1,
-} from '@happier-dev/protocol';
+import { BACKED_SIMULATOR_SIDEBAND_KINDS_V1 } from '@happier-dev/protocol/devices/simulator/actionBuilders';
+import type { SimulatorSidebandKindV1, SimulatorSidebandMessageV1 } from '@happier-dev/protocol/devices/simulator/sidebandV1';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Text } from '@/components/ui/text/Text';

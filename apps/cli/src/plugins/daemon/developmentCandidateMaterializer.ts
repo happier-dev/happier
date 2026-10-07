@@ -1,5 +1,6 @@
 import { lstat, realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { runPluginAuthorPhase } from '@/plugins/authoring/phaseLog';
 
 import {
   normalizePluginSdkRegistryOrigin,
@@ -50,21 +51,23 @@ export async function preparePluginDevelopmentRoot(
 ): Promise<PreparedPluginDevelopmentRoot> {
   const sourceRootPath = await realpath(resolve(params.sourceRootPath));
   if (params.prepareDependencies) {
-    const hasAuthorLockfile = await hasAuthorProvidedPnpmLockfile(sourceRootPath);
-    const managedPnpm = await (dependencies.runManagedPluginPnpm ?? runManagedPluginPnpm)({
-      projectRoot: sourceRootPath,
-      args: [
-        'install',
-        '--ignore-scripts',
-        ...(hasAuthorLockfile ? ['--frozen-lockfile'] : []),
-      ],
-      sdkRegistryOrigin: normalizePluginSdkRegistryOrigin(params.sdkRegistryOrigin),
+    await runPluginAuthorPhase({ phase: 'dependency prep', projectRoot: sourceRootPath }, async () => {
+      const hasAuthorLockfile = await hasAuthorProvidedPnpmLockfile(sourceRootPath);
+      const managedPnpm = await (dependencies.runManagedPluginPnpm ?? runManagedPluginPnpm)({
+        projectRoot: sourceRootPath,
+        args: [
+          'install',
+          '--ignore-scripts',
+          ...(hasAuthorLockfile ? ['--frozen-lockfile'] : []),
+        ],
+        sdkRegistryOrigin: normalizePluginSdkRegistryOrigin(params.sdkRegistryOrigin),
+      });
+      if (!managedPnpm.ok) throw new Error(managedPnpm.message);
+      if (managedPnpm.result.exitCode !== 0 || managedPnpm.result.signal !== null) {
+        const detail = `${managedPnpm.result.stderr}\n${managedPnpm.result.stdout}`.trim();
+        throw new Error(`Plugin development dependency preparation failed${detail ? `: ${detail}` : ''}`);
+      }
     });
-    if (!managedPnpm.ok) throw new Error(managedPnpm.message);
-    if (managedPnpm.result.exitCode !== 0 || managedPnpm.result.signal !== null) {
-      const detail = `${managedPnpm.result.stderr}\n${managedPnpm.result.stdout}`.trim();
-      throw new Error(`Plugin development dependency preparation failed${detail ? `: ${detail}` : ''}`);
-    }
   }
   return Object.freeze({
     rootPath: sourceRootPath,

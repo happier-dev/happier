@@ -1,12 +1,8 @@
-import {
-    createPlainSessionOwnerMetadataEnvelopeV1,
-    createAccountScopedCryptoMaterialSnapshotV1,
-    convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
-    sealSessionOwnerMetadataEnvelopeV1,
-    type AccountEncryptionCurrentnessResponse,
-    type SessionOwnerMetadataEnvelopeV1,
-    type SessionOwnerMetadataV1,
-} from '@happier-dev/protocol';
+import { createPlainSessionOwnerMetadataEnvelopeV1, type SessionOwnerMetadataEnvelopeV1, type SessionOwnerMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
+import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
 import type { ComposerOptionsInputV1 } from '@happier-dev/protocol/embed';
 import type {
     SessionMetadataOwnerMigrationCurrentnessV1,

@@ -7,7 +7,7 @@ import type {
     ScmStatusSnapshotTransportResponse as ScmStatusSnapshotResponse,
     ScmWorkingSnapshotInput as ProtocolScmWorkingSnapshot,
 } from '@happier-dev/protocol/scm';
-import { SCM_WORKTREES_ENRICHMENT_MAX_PATHS } from '@happier-dev/protocol';
+import { SCM_WORKTREES_ENRICHMENT_MAX_PATHS } from '@happier-dev/protocol/scm';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import type { ScmCapabilities, ScmStatus, ScmWorkingSnapshot as UiScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';

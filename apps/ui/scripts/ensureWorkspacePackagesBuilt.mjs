@@ -76,7 +76,7 @@ export async function ensureUiWorkspacePackagesBuilt({
   }
   env = { ...env, [WORKSPACE_BUILD_MODE_ENV]: resolveWorkspaceBuildMode({
     env,
-    buildMode: publicationMode === 'artifact' ? 'strict' : env[WORKSPACE_BUILD_MODE_ENV] ?? 'qa-runtime',
+    buildMode: publicationMode === 'artifact' ? 'strict' : env[WORKSPACE_BUILD_MODE_ENV] ?? 'source-dev',
   }) };
   verifyPatchedDependencies({ uiPackageDir });
   const result = await ensureWorkspacePackagesBuiltForComponent(uiPackageDir, {

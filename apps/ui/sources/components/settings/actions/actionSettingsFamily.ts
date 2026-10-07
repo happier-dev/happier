@@ -1,11 +1,6 @@
-import {
-    ACTION_ID_FAMILIES_V1,
-    parseQualifiedPluginActionId,
-    type ActionId,
-    type ActionIdFamilyV1,
-    type ActionSettingsActionId,
-    type QualifiedPluginActionId,
-} from '@happier-dev/protocol';
+import { ACTION_ID_FAMILIES_V1, type ActionId, type ActionIdFamilyV1 } from '@happier-dev/protocol/actions/actionIds';
+import { parseQualifiedPluginActionId, type QualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import type { ActionSettingsActionId } from '@happier-dev/protocol/actions/actionSettings';
 
 import type { TranslationKey } from '@/text';
 

@@ -1,6 +1,7 @@
 import * as React from 'react';
 
-import { readRpcErrorCode, type MemorySearchHitV1 } from '@happier-dev/protocol';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import type { MemorySearchHitV1 } from '@happier-dev/protocol/memory/memorySearch';
 
 import {
     captureMemorySearchSessionReadAuthority,

@@ -1,9 +1,6 @@
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
-import {
-  VoiceProviderSettingsJsonValueV1Schema,
-  type VoiceProviderSettingsJsonValueV1,
-  type VoiceReadinessRole,
-} from '@happier-dev/protocol';
+import { VoiceProviderSettingsJsonValueV1Schema, type VoiceProviderSettingsJsonValueV1 } from '@happier-dev/protocol/voice/realtime/providerSettings';
+import type { VoiceReadinessRole } from '@happier-dev/protocol/voice/realtime/capabilities';
 
 import {
   isVoiceProviderSettingsProjectionCurrent,

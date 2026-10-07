@@ -1,8 +1,6 @@
-import {
-    normalizePluginAccountCollectionContractV1,
-    PluginAccountCollectionContributionV1Schema,
-    type PluginCollectionContractRefV1,
-} from '@happier-dev/protocol';
+import { normalizePluginAccountCollectionContractV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
+import { PluginAccountCollectionContributionV1Schema } from '@happier-dev/protocol/plugins/data/collectionContributionV1';
+import type { PluginCollectionContractRefV1 } from '@happier-dev/protocol/plugins/data/collectionContractRefV1';
 import {
     PluginError,
     type JsonValue,

@@ -42,7 +42,11 @@ import {
     type QualifiedConnectedAccountUiGroup,
     type QualifiedConnectedAccountUiGroupMember,
 } from '@/sync/domains/connectedServices/qualifiedConnectedAccountUiSource';
-import { ConnectedServiceAuthGroupStrategyV1Schema, compareConnectedServicePoolMemberOrderV1, resolveAnchoredListMoveV1, resolveConnectedServiceQuotaMeterLabel, sameQualifiedConnectedAccountGroupRef } from '@happier-dev/protocol';
+import { ConnectedServiceAuthGroupStrategyV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { compareConnectedServicePoolMemberOrderV1 } from '@happier-dev/protocol/connect/configurationActionsV1';
+import { resolveAnchoredListMoveV1 } from '@happier-dev/protocol/actions/anchoredListOrderV1';
+import { resolveConnectedServiceQuotaMeterLabel } from '@happier-dev/protocol/connect/connectedServiceQuotaMeterLabel';
+import { sameQualifiedConnectedAccountGroupRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import {
     presentQualifiedConnectedAccountTarget,
     type QualifiedConnectedAccountPresentationAccount,
@@ -50,13 +54,10 @@ import {
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { formatResetAtTime } from '@/utils/time/formatResetAtTime';
-import {
-    resolveConnectedServiceQuotaMeterLimitIdentity,
-    type ConnectedServiceAuthGroupPolicyV1,
-    type ConnectedServiceQuotaSnapshotV1,
-    type QualifiedConnectedAccountQuotaSnapshotV4,
-    type QualifiedConnectedAccountRef,
-} from '@happier-dev/protocol';
+import { resolveConnectedServiceQuotaMeterLimitIdentity } from '@happier-dev/protocol/connect/connectedServiceQuotaLimitSelection';
+import type { ConnectedServiceAuthGroupPolicyV1, ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
+import type { QualifiedConnectedAccountQuotaSnapshotV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 
 import { ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER } from '../account/accountBlockFormatters';
 import { AgentDefaultMenuButton } from '../defaults/AgentDefaultMenuButton';

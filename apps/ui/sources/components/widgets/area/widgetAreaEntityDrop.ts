@@ -1,4 +1,5 @@
-import { AnchoredListPositionV1Schema, resolveAnchoredListMoveV1, sameStrictJsonValue } from '@happier-dev/protocol';
+import { AnchoredListPositionV1Schema, resolveAnchoredListMoveV1 } from '@happier-dev/protocol/actions/anchoredListOrderV1';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { entityDragScopesEqualV1, type EntityDragItemV1, type EntityDropAdmissionV1, type EntityDropPreviewV1 } from '@happier-dev/protocol/plugins/ui';
 import type { WidgetAreaLayoutV1, WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import { widgetEntitySourceRef, widgetMovementRefused } from '@/sync/ops/actions/widgetEntityMovement';

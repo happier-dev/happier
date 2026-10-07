@@ -1,13 +1,6 @@
 import { machineCapabilitiesInvoke } from './capabilities';
-import {
-    PreflightSessionCatalogsV1Schema,
-    type PreflightSessionCatalogsV1,
-    type BackendTargetRefV2,
-    SessionSkillCatalogListResponseV1Schema,
-    SessionVendorPluginCatalogListResponseV1Schema,
-    type SessionSkillCatalogListResponseV1,
-    type SessionVendorPluginCatalogListResponseV1,
-} from '@happier-dev/protocol';
+import { PreflightSessionCatalogsV1Schema, type PreflightSessionCatalogsV1, SessionSkillCatalogListResponseV1Schema, SessionVendorPluginCatalogListResponseV1Schema, type SessionSkillCatalogListResponseV1, type SessionVendorPluginCatalogListResponseV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
+import type { BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { storage } from '@/sync/domains/state/storage';

@@ -1,10 +1,6 @@
-import {
-    isScmCommitPlanApplicationLocked,
-    type ScmCommitPlanAcceptance,
-    type ScmCommitPlanApplication,
-    type ScmComparison,
-    type ScmDiffSummaryCommitPlan,
-} from '@happier-dev/protocol';
+import { isScmCommitPlanApplicationLocked, type ScmCommitPlanAcceptance, type ScmCommitPlanApplication } from '@happier-dev/protocol/scm/diffSummaryCommitPlan';
+import type { ScmComparison } from '@happier-dev/protocol/scm/comparison';
+import type { ScmDiffSummaryCommitPlan } from '@happier-dev/protocol/scm/diffSummary';
 
 /** Bind explicit acceptance to captured mutation authority and the verified remaining suffix. */
 export function buildCommitPlanAcceptance(input: Readonly<{

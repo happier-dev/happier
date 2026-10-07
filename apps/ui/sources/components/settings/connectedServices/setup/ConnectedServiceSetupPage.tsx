@@ -13,7 +13,7 @@ import { getStorage } from '@/sync/domains/state/storageStore';
 import { captureActiveServerAccountScopeLifetime, getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { readConnectedAccountPurposeSetupRequest, readConnectedAccountPurposeSetupDeclaration,
     isConnectedAccountPurposeSetupTargetCurrent } from '@/sync/domains/connectedServices/connectedAccountPurposeSetup';
-import { qualifiedPurposeKey, type QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol';
+import { qualifiedPurposeKey, type QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Modal } from '@/modal';
 import { t } from '@/text';

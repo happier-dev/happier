@@ -1,11 +1,5 @@
-import {
-    BrowserAutomationErrorCodeV1Schema,
-    BrowserInjectedRuntimeCommandMessageV1Schema,
-    BrowserInjectedRuntimeResultMessageV1Schema,
-    type BrowserAutomationErrorCodeV1,
-    type BrowserInjectedRuntimeCommandMessageV1,
-    type BrowserInjectedRuntimeResultMessageV1,
-} from '@happier-dev/protocol';
+import { BrowserAutomationErrorCodeV1Schema, type BrowserAutomationErrorCodeV1 } from '@happier-dev/protocol/browser/automation/errors';
+import { BrowserInjectedRuntimeCommandMessageV1Schema, BrowserInjectedRuntimeResultMessageV1Schema, type BrowserInjectedRuntimeCommandMessageV1, type BrowserInjectedRuntimeResultMessageV1 } from '@happier-dev/protocol/browser/automation/v1';
 
 import type {
     BrowserAutomationAuthority,

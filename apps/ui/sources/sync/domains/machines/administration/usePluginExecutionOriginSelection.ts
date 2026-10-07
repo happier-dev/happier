@@ -1,11 +1,6 @@
 import * as React from 'react';
-import {
-    arePluginMachineMaterializationRefsEqual,
-    arePluginMachineExecutionOriginsEqual,
-    isPluginMachineMaterializationOnServerIdentityV1,
-    type PluginMachineExecutionOriginV1,
-    type PluginMachineMaterializationV1,
-} from '@happier-dev/protocol';
+import { arePluginMachineMaterializationRefsEqual, arePluginMachineExecutionOriginsEqual, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { isPluginMachineMaterializationOnServerIdentityV1, type PluginMachineMaterializationV1 } from '@happier-dev/protocol/plugins/availability/v1';
 
 import { useAllProfileMachineInventorySnapshots } from '@/sync/domains/machines/useMachineInventorySnapshots';
 import { useActivePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';

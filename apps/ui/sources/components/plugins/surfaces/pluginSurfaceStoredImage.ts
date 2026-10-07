@@ -1,5 +1,5 @@
 import { DaemonPluginStoredImageReadRequestSchema, DaemonPluginStoredImageReadResponseSchema,
-    type DaemonPluginStoredImageReadRequest, type DaemonPluginStoredImageReadResponse } from '@happier-dev/protocol';
+    type DaemonPluginStoredImageReadRequest, type DaemonPluginStoredImageReadResponse } from '@happier-dev/protocol/daemon/pluginStoredImage';
 import { PluginUiReadStoredImageRequestV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';

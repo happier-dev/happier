@@ -1,5 +1,7 @@
 import type * as React from 'react';
-import { resolveEffectiveApiTokenModelRefV1, serializeModelVisibilityRefV1, type ComposerInputLockSnapshotV1, type ProviderBoundModelRef } from '@happier-dev/protocol';
+import { resolveEffectiveApiTokenModelRefV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { serializeModelVisibilityRefV1, type ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
+import type { ComposerInputLockSnapshotV1 } from '@happier-dev/protocol/plugins/ui/composer';
 
 import type { PermissionMode } from '@/constants/PermissionModes';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';

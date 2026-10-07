@@ -8,7 +8,7 @@ import {
     isPlainMachineDataKeyMarker,
     resolvePublishedMachineDataEncryptionKeyV1,
     type ExpectedRunnerMachineContentKeyBindingV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/machineStoredContent';
 
 import { getOrCreateScopedCacheTokenKey, resetScopedCacheTokenKeysForTests } from './scopedCacheTokenKey';
 import { createScopedResolutionSingleFlight } from './scopedResolutionSingleFlight';

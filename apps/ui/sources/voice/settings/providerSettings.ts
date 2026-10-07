@@ -3,11 +3,8 @@ import type {
   VoiceProviderSettingsEnvelopeV1,
   VoiceProviderSettingsJsonValueV1,
 } from '@happier-dev/protocol';
-import {
-  VoiceProviderContributionSchema,
-  buildQualifiedPluginContributionKey,
-  createPluginContributionIdentity,
-} from '@happier-dev/protocol';
+import { VoiceProviderContributionSchema } from '@happier-dev/protocol/plugins/contributions/voice';
+import { buildQualifiedPluginContributionKey, createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import {
   VoiceLocalDirectSchema,

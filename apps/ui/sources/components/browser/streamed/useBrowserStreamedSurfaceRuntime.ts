@@ -5,7 +5,7 @@ import type {
     MachineLiveStreamControlSidebandV1,
     BrowserEventV1,
 } from '@happier-dev/protocol';
-import { BrowserEventBatchV1Schema } from '@happier-dev/protocol';
+import { BrowserEventBatchV1Schema } from '@happier-dev/protocol/browser/events/v1';
 import { decodeBase64 } from '@/encryption/base64';
 
 import { useSimulatorRelayIngestion, type SimulatorRelayTransport } from '@/components/devices/simulator/relay/useSimulatorRelayIngestion';

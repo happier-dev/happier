@@ -3,7 +3,7 @@ import type { ManagedConnectionTransport } from '@happier-dev/connection-supervi
 import {
     CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
     buildAccountStoredContentCompatibilitySocketAuthV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 
 import { resolveSocketIoTransportsForCarrier } from '@/sync/runtime/socketIoTransports';
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';

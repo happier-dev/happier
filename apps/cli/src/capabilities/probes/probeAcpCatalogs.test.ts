@@ -1,6 +1,6 @@
 import { writeCommittedLocalPathPluginFixture } from '@/plugins/store/state.testkit';
 import { createLocalPathPluginDistributionIdentity, createPluginTrustRecord } from '@/plugins/store/install/trustIdentity';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
@@ -18,6 +18,7 @@ import { resolveInstallablesRegistry, type InstallableDependencyDescriptor } fro
 import { createStablePluginManagedDependenciesHost } from '@/plugins/runtime/invocation/services/managedDependencies';
 import { CURSOR_PLUGIN } from '@happier-dev/plugins-cursor';
 import { OH_MY_PI_PLUGIN } from '@happier-dev/plugins-ohmypi';
+import { GEMINI_PLUGIN } from '@happier-dev/plugins-gemini';
 
 import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
 import { projectManifestAgentAcpCatalogPreflight } from '@/plugins/projection/registry/projectManifestAgentContribution';
@@ -336,6 +337,92 @@ describe('admitted declarative ACP catalog producer', () => {
         expect(readFileSync(fixture.evidencePath, 'utf8')).toContain('"method":"session/new"');
         expect(readFileSync(fixture.evidencePath, 'utf8')).not.toContain('"method":"session/prompt"');
       } finally { await registry.dispose(); }
+    });
+  });
+});
+
+
+describe('Gemini preflight authentication through native execution', () => {
+  function fixture(dir: string, authentication: 'cached' | 'missing') {
+    const browserPath = join(dir, 'browser-opened');
+    const pidPath = join(dir, 'native-pid');
+    const script = writeAcpTestAgentScript({ dir, fileName: 'gemini-catalog.mjs', source: `
+      import { writeFileSync } from 'node:fs';
+      if (process.argv.includes('--help')) { process.stdout.write('Usage: gemini --acp'); process.exit(0); }
+      writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));
+      const send = (message) => process.stdout.write(JSON.stringify({jsonrpc:'2.0',...message})+'\\n');
+      const refuseAuthentication = (id) => {
+        // Gemini v0.38.2 and v0.63.0 suppress browser authentication when CI is nonempty.
+        if (!process.env.CI) writeFileSync(${JSON.stringify(browserPath)}, 'opened');
+        send({id,error:{code:-32000,message:'Authentication required'}});
+      };
+      let buffer='';
+      process.stdin.on('data',chunk=>{
+        buffer+=chunk;const lines=buffer.split('\\n');buffer=lines.pop()||'';
+        for(const line of lines){
+          if(!line.trim())continue;const request=JSON.parse(line);
+          if(request.method==='initialize')send({id:request.id,result:{protocolVersion:1,
+            agentCapabilities:{sessionCapabilities:{close:{}}},authMethods:[{id:'oauth-personal',name:'Native login'}]}});
+          else if(request.method==='authenticate')refuseAuthentication(request.id);
+          else if(request.method==='session/new'){
+            if(${JSON.stringify(authentication)}==='missing'){refuseAuthentication(request.id);continue;}
+            send({method:'session/update',params:{sessionId:'native-session',update:{
+              sessionUpdate:'available_commands_update',availableCommands:${JSON.stringify(commands)}}}});
+            send({id:request.id,result:{sessionId:'native-session'}});
+          }else if(request.id!==undefined)send({id:request.id,result:{}});
+        }
+      });
+    ` });
+    const quote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
+    const executable = writeExecutableShimSync({
+      dir, fileName: process.platform === 'win32' ? 'gemini.cmd' : 'gemini',
+      contents: process.platform === 'win32'
+        ? `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`
+        : `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(script)} "$@"\n`,
+    });
+    return { browserPath, pidPath, script, executable };
+  }
+
+  it.each(['cached', 'missing'] as const)('does not open a browser during catalog discovery with %s authentication', async (authentication) => {
+    const plugin = await createPluginTestkit({ manifest: GEMINI_PLUGIN.manifest, module: { activate: GEMINI_PLUGIN.activate } });
+    try {
+      const preflight = plugin.registration('agents', 'gemini')?.preflightSessionControls;
+      expect(preflight).toBeDefined();
+      await withTempDir('gemini-catalog-auth-', async (dir) => {
+        const f = fixture(dir, authentication);
+        const projected = projectAgentPreflightSessionControlsCatalogEntry({
+          agentId: 'gemini', preflightSessionControls: preflight!,
+          systemTools: [{ id: 'gemini-cli', title: 'Gemini', executableNames: [f.executable] }],
+          retirementSignal: new AbortController().signal, isCurrent: () => true,
+        });
+        const adapter = (await projected.getPreflightSessionControlsProbeAdapter!())!;
+        const discovery = adapter.probeCatalogsRaw!({ cwd: dir, timeoutMs: 10_000, env: { ...process.env, CI: '' } });
+        if (authentication === 'cached') await expect(discovery).resolves.toEqual({ commands, skills: null });
+        else await expect(discovery).rejects.toThrow();
+        expect(existsSync(f.browserPath)).toBe(false);
+        expect(() => process.kill(Number(readFileSync(f.pidPath, 'utf8')), 0)).toThrow();
+      });
+    } finally { await plugin.dispose(); }
+  });
+
+  it('keeps browser authentication available for an ordinary native ACP launch', async () => {
+    await withTempDir('gemini-ordinary-auth-', async (dir) => {
+      const f = fixture(dir, 'missing');
+      const executable = { kind: 'systemTool' as const, id: 'gemini-cli' };
+      const service = createStablePluginExecService({
+        allowedExecutables: [executable], allowedEnvKeys: ['CI'], environment: { CI: '' },
+        signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+        resolveExecutable: async () => ({ command: process.execPath, args: [f.script, '--acp'] }),
+        resolvePath: async () => dir,
+      });
+      const handle = await service.clients.spawn({ kind: 'jsonRpc', launch: { executable },
+        framing: 'jsonLines', maxFrameBytes: 65_536, requestTimeoutMs: 10_000 });
+      try {
+        await handle.client.request('initialize', { protocolVersion: 1 });
+        await expect(handle.client.request('authenticate', { methodId: 'oauth-personal' })).rejects.toThrow();
+        expect(existsSync(f.browserPath)).toBe(true);
+      } finally { await handle.dispose(); }
+      expect(() => process.kill(Number(readFileSync(f.pidPath, 'utf8')), 0)).toThrow();
     });
   });
 });

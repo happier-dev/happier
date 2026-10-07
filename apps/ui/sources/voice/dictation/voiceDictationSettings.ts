@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { VoiceDictationLanguageSchema } from '@happier-dev/protocol';
+import { VoiceDictationLanguageSchema } from '@happier-dev/protocol/voice/recognitionLanguage';
 
 import {
   VoiceLocalSttSchema,

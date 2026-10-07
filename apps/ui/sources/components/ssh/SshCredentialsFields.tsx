@@ -2,7 +2,7 @@ import React from 'react';
 import { ScrollView, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { parseSshTarget } from '@happier-dev/protocol';
+import { parseSshTarget } from '@happier-dev/protocol/ssh/sshTarget';
 import { t, tLoose } from '@/text';
 import { lightTheme } from '@/theme';
 import { Item } from '@/components/ui/lists/Item';

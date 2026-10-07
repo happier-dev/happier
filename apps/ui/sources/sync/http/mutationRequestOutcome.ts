@@ -1,4 +1,4 @@
-import { classifyHomeDomainHttpMutationFailureV1 } from '@happier-dev/protocol';
+import { classifyHomeDomainHttpMutationFailureV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 
 /**
  * Classify a failed HTTP mutation from this carrier's transport witness.

@@ -40,17 +40,12 @@ import {
 import { runnerArtifactTargetPlatform } from '@happier-dev/protocol/ephemeralRunner/runnerArtifact';
 import { verifyRunnerConsentV1 } from '@happier-dev/protocol/ephemeralRunner/consent';
 import { verifyRunnerReadinessV1 } from '@happier-dev/protocol/ephemeralRunner/readiness';
-import {
-    createPlainSessionOwnerMetadataEnvelopeV1,
-    createSessionOwnerMetadataV1,
-    encodePlainMachineStoredContent,
-    MACHINE_PLAIN_DATA_KEY_MARKER,
-    projectSessionSharedMetadataV1,
-    sealSessionOwnerMetadataEnvelopeV1,
-    sealEncryptedDataKeyEnvelopeV1,
-    sealBoxBundle,
-    UserRecipientEnvelopeResponseSchema,
-} from '@happier-dev/protocol';
+import { createPlainSessionOwnerMetadataEnvelopeV1, createSessionOwnerMetadataV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
+import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { sealBoxBundle } from '@happier-dev/protocol/crypto/boxBundle';
+import { UserRecipientEnvelopeResponseSchema } from '@happier-dev/protocol/social/friends';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { decryptBox } from '@/encryption/libsodium';
 import { getRandomBytes } from '@/platform/cryptoRandom';

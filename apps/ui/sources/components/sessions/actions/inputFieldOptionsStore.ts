@@ -1,4 +1,5 @@
-import { getActionSpec, type ActionExecutorContext, type PublicActionResultById } from '@happier-dev/protocol';
+import { getActionSpec, type PublicActionResultById } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction';
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import type { ActionFieldOption } from './ActionInputFields';

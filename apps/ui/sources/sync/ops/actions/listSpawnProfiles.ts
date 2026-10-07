@@ -1,11 +1,7 @@
 import { AGENT_IDS } from '@happier-dev/agents';
-import {
-    BackendTargetKeyV2Schema,
-    buildQualifiedPluginContributionKey,
-    parseBackendTargetKeyV2,
-    projectLaunchProfileListV1,
-    type LaunchProfileListProjectionV1,
-} from '@happier-dev/protocol';
+import { BackendTargetKeyV2Schema, parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { projectLaunchProfileListV1, type LaunchProfileListProjectionV1 } from '@happier-dev/protocol/profiles/listProjection';
 
 import { readUiAiLaunchProfileSnapshot, type UiAiLaunchProfileSnapshot } from '@/sync/domains/profiles/aiLaunchProfileCollection';
 import { storage } from '@/sync/domains/state/storage';

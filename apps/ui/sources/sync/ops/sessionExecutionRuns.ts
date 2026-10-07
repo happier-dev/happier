@@ -17,7 +17,7 @@ import {
     ExecutionRunGetResponseSchema,
     ExecutionRunListResponseSchema,
     withExecutionRunStartFailureDetails,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { RPC_ERROR_CODES, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 

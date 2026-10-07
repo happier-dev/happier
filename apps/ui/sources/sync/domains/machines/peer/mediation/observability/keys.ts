@@ -1,9 +1,5 @@
-import {
-    peerMediationObservabilityScopeKey,
-    peerMediationObservabilityScopesEqual,
-    type PeerMediationObservabilityFlowRefV1,
-    type PeerMediationObservabilityScopeV1,
-} from '@happier-dev/protocol';
+import { peerMediationObservabilityScopeKey, peerMediationObservabilityScopesEqual } from '@happier-dev/protocol/machines/peer/mediation/observability/scopeIdentity';
+import type { PeerMediationObservabilityFlowRefV1, PeerMediationObservabilityScopeV1 } from '@happier-dev/protocol/machines/peer/mediation/observability/v1';
 
 /**
  * Scope identity is owned by protocol (`scopeIdentity.ts`) so the UI, the daemon store and the

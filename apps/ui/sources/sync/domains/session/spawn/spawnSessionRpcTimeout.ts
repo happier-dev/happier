@@ -1,4 +1,4 @@
-import { DEFAULT_SESSION_SPAWN_OPERATION_TIMEOUT_MS } from '@happier-dev/protocol';
+import { DEFAULT_SESSION_SPAWN_OPERATION_TIMEOUT_MS } from '@happier-dev/protocol/sessions/creation/sessionSpawnBudget';
 import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 
 const DEFAULT_SPAWN_SESSION_RPC_TIMEOUT_MS =

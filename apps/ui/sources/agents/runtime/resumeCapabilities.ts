@@ -14,19 +14,17 @@ import {
     resolveAgentIdFromSessionMetadata,
     resolveVendorResumeIdFromSessionMetadata,
 } from '@happier-dev/agents';
-import {
-    readAcpConfiguredBackendV1FromMetadata,
-    readLegacyConfiguredAcpBackendId,
-    readRuntimeDescriptorV1FromMetadata,
-    resolveLinkedExternalSessionMetadataV1,
-    type PluginContributionIdentityV1,
-} from '@happier-dev/protocol';
+import { readAcpConfiguredBackendV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/acpConfiguredBackendV1';
+import { readLegacyConfiguredAcpBackendId } from '@happier-dev/protocol/backends/targets/compat/customAcp';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
+import { resolveLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import {
     supportsCurrentProjectedAgentSessionOpen,
     type CurrentProjectedAgentCapabilities,
 } from '@/agents/backendCatalog/currentAgentCapabilities';
-import { normalizeAcpCatalogSettingsV1 } from '@happier-dev/protocol';
+import { normalizeAcpCatalogSettingsV1 } from '@happier-dev/protocol/acp/catalog/catalogMutationsV1';
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 
 export type ResumeCapabilityOptions = {

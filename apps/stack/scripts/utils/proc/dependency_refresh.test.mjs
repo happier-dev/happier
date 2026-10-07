@@ -7,6 +7,54 @@ import test from 'node:test';
 
 import { inspectDependencyRefresh, withDependencyRefresh } from './dependency_refresh.mjs';
 
+test('dependency readiness is published only after postinstall completion and remains stale on failure', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-dependency-postinstall-publication-'));
+  t.after(async () => await rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, 'node_modules'), { recursive: true });
+  await writeFile(join(root, 'package.json'), '{"name":"fixture","private":true}\n');
+  await writeFile(join(root, 'yarn.lock'), '# fixture\n');
+  const patchedPath = join(root, 'node_modules', 'streamingReveal.js');
+  let failPostinstall = true;
+  const refresh = () => withDependencyRefresh({
+    installDir: root,
+    onDependenciesReady: async () => {
+      assert.equal((await inspectDependencyRefresh({ installDir: root })).required, true,
+        'a concurrent reader must not admit unpatched dependencies while postinstall is pending');
+      if (failPostinstall) throw new Error('postinstall failed');
+      await writeFile(patchedPath, 'export const patched = true;\n');
+    },
+  }, async () => {});
+  await assert.rejects(refresh(), /postinstall failed/);
+  assert.equal((await inspectDependencyRefresh({ installDir: root })).required, true);
+  failPostinstall = false;
+  assert.equal((await refresh()).refreshed, true);
+  assert.equal((await inspectDependencyRefresh({ installDir: root })).required, false);
+  assert.match(await readFile(patchedPath, 'utf8'), /patched/);
+  failPostinstall = true;
+  await assert.rejects(refresh(), /postinstall failed/);
+  assert.equal((await inspectDependencyRefresh({ installDir: root })).required, true,
+    'failed warm prerequisite repair must also withdraw the previous ready marker');
+  let skippedInstalls = 0;
+  const readyOnly = await withDependencyRefresh({ installDir: root, refreshExisting: false,
+    onDependenciesReady: async () => await writeFile(patchedPath, 'export const patched = true;\n') },
+  async () => { skippedInstalls += 1; });
+  assert.equal(skippedInstalls, 0, 'ready-only repair must preserve an explicit no-install request');
+  assert.equal(readyOnly.refreshed, false);
+  assert.equal((await inspectDependencyRefresh({ installDir: root })).required, true,
+    'repairing outputs without installing stale dependency inputs cannot certify the tree');
+  await withDependencyRefresh({ installDir: root }, async () => {});
+  const admittedPath = join(root, 'node_modules', '.happier-stack-dependencies-ready');
+  const admittedState = JSON.parse(await readFile(admittedPath, 'utf8'));
+  await writeFile(join(root, 'yarn.lock'), '# changed source, prior installed tree remains coherent\n');
+  await withDependencyRefresh({ installDir: root, refreshExisting: false,
+    onDependenciesReady: async () => await writeFile(patchedPath, 'export const patched = true;\n') },
+  async () => assert.fail('last-green repair must not install changed source inputs'));
+  assert.deepEqual(JSON.parse(await readFile(admittedPath, 'utf8')), admittedState,
+    'successful ready-only repair preserves prior admission, never certifies changed source inputs');
+  assert.equal((await inspectDependencyRefresh({ installDir: root })).required, true,
+    'the normal installer must still refresh changed inputs after last-green repair');
+});
+
 test('UI password codec source changes invalidate remote install readiness', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-password-source-freshness-'));
   t.after(async () => await rm(root, { recursive: true, force: true }));

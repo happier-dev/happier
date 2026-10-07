@@ -1,5 +1,5 @@
 import { getAgentCore, getAgentModelConfig, getAgentStaticModels } from '@happier-dev/agents';
-import { buildBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { SettingsMutationServices } from '@/components/settings/catalog/settingDeclarations';
 import { getEnabledAgentIds } from '@/agents/catalog/enabled';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';

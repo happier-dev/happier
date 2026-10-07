@@ -1,7 +1,7 @@
 import type {
   ConnectedServiceQuotaMeterV1,
 } from '@happier-dev/protocol';
-import { resolveConnectedServiceQuotaMeterLabel } from '@happier-dev/protocol';
+import { resolveConnectedServiceQuotaMeterLabel } from '@happier-dev/protocol/connect/connectedServiceQuotaMeterLabel';
 
 import { isConnectedServiceQuotaMeterVisible } from './connectedServiceQuotaMeterVisibility';
 

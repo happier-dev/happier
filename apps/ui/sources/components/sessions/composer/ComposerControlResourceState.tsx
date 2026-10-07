@@ -5,7 +5,7 @@ import {
     isComposerControlStateContentTypeV1,
     MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1,
     type ComposerControlStateV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/ui/composer';
 import type {
     PluginUiResourceReference,
     PluginUiResourceSnapshot,

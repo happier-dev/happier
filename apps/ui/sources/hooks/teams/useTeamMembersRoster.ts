@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol';
+import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import type { TeamMembersListFilterV1, TeamMembershipV1 } from '@happier-dev/protocol/teams';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';

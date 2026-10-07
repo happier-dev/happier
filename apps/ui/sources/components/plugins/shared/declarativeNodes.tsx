@@ -26,6 +26,7 @@ import {
 } from '@happier-dev/plugin-ui/presentation';
 import { Spinner } from '@happier-dev/plugin-ui/components';
 import type { HappierUiAccessibility, HappierUiTheme } from '@happier-dev/plugin-ui/environment';
+import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 
 import type {
     PluginDeclarativeActionVariantV2,
@@ -33,8 +34,9 @@ import type {
     PluginDeclarativeStateV2,
     PluginDeclarativeToneV2,
 } from '@happier-dev/protocol';
-import { PluginContributionIdentityV1Schema, PluginDeclarativeNodeV2Schema, readPluginDeclarativeDataFieldV1, readPluginDeclarativeDataRowsV1,
-    buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol';
+import { PluginContributionIdentityV1Schema, buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { PluginDeclarativeNodeV2Schema } from '@happier-dev/protocol/plugins/contributions/ui/v2';
+import { readPluginDeclarativeDataFieldV1, readPluginDeclarativeDataRowsV1 } from '@happier-dev/protocol/plugins/contributions/ui/declarativeDataV1';
 
 import type { Theme } from '@/theme';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
@@ -276,6 +278,7 @@ export type DeclarativeActionAffordance = Readonly<{
 export type DeclarativeNodeRenderContext = Readonly<{
     colors: ThemeColors;
     presentationTheme: HappierUiTheme;
+    widgetPresentation?: RenderContext['widgetPresentation'];
     /** The containing surface's prose density; rendering stays with the shared Markdown owner. */
     markdownProfile?: MarkdownRenderingProfile;
     /**
@@ -462,6 +465,7 @@ const renderDeclarativeData: DeclarativeNodeRenderer = (value, context) => {
         const rows = readPluginDeclarativeDataRowsV1(data, node.rows);
         if (node.kind === 'chart') {
             return <HappierDataChart key={key} testID={testID} theme={theme} label={context.localize(node.label)} style={node.style}
+                viewportHeight={context.widgetPresentation?.geometry?.height}
                 points={rows.map((row) => {
                     const x = readPluginDeclarativeDataFieldV1(row, node.x);
                     return { x: typeof x === 'boolean' ? String(x) : x, y: Number(readPluginDeclarativeDataFieldV1(row, node.y)) };

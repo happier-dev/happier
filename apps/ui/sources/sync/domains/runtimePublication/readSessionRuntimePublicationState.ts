@@ -1,10 +1,6 @@
-import {
-    readRuntimeDescriptorV1FromMetadata,
-    readAgentRuntimeFacetsV1,
-    type AgentRuntimeFacetsV1,
-    type RuntimeDescriptorMetadataCarrier,
-    type RuntimeDescriptorV1,
-} from "@happier-dev/protocol";
+import { readRuntimeDescriptorV1FromMetadata, type RuntimeDescriptorMetadataCarrier } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
+import { readAgentRuntimeFacetsV1, type AgentRuntimeFacetsV1 } from '@happier-dev/protocol/sessions/metadata/agentRuntimeFacetsV1';
+import type { RuntimeDescriptorV1 } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 
 type RuntimePublicationMetadata = RuntimeDescriptorMetadataCarrier & Readonly<{
     agentRuntimeCapabilitiesV1?: unknown;

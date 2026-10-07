@@ -1,4 +1,5 @@
-import { canonicalizeKeyChallengeV2AudienceOrigin, normalizeVerifiedEmail } from '@happier-dev/protocol';
+import { canonicalizeKeyChallengeV2AudienceOrigin } from '@happier-dev/protocol/auth/keyChallenge';
+import { normalizeVerifiedEmail } from '@happier-dev/protocol/auth/verifiedEmail';
 import { useRouter } from 'expo-router';
 import * as React from 'react';
 import { View } from 'react-native';

@@ -1,4 +1,4 @@
-import { WORKSPACE_ACTION_INPUT_SCHEMAS, type WorkspaceActionId, type WorkspaceTabsListOutput, type WorkspaceClosedTabsListOutput } from '@happier-dev/protocol';
+import { WORKSPACE_ACTION_INPUT_SCHEMAS, type WorkspaceActionId, type WorkspaceTabsListOutput, type WorkspaceClosedTabsListOutput } from '@happier-dev/protocol/actions/workspaceActionFamily';
 import type { z } from 'zod';
 import type { SplitCanvasHostControls } from '../splitCanvas/components/SplitCanvasHost';
 import { createWorkspaceEmptyTab, type WorkspaceState } from './workspaceState';

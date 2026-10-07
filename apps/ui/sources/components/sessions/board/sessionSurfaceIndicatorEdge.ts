@@ -1,4 +1,4 @@
-import { sameStrictJsonValue } from '@happier-dev/protocol';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { EntityDropEffectV1 } from '@happier-dev/protocol/plugins/ui';
 import { SessionBoardLayoutUpdateInputV1Schema } from '@happier-dev/protocol/sessions/board';
 import { CurrentSessionPresentationActionInputV1Schema, type SessionCompanionPresentationItemRefV1 } from '@happier-dev/protocol/sessions';

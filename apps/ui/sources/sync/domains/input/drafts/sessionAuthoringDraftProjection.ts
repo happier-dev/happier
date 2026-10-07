@@ -1,12 +1,6 @@
-import {
-    buildBackendTargetKeyV2,
-    readBackendTargetRefV2,
-    SYNCED_SESSION_AUTHORING_FIELD_IDS_V2,
-    SyncedSessionAuthoringValueV1Schema,
-    SyncedSessionAuthoringValueV2Schema,
-    type SyncedSessionAuthoringFieldIdV2,
-    type SyncedSessionAuthoringValueV2,
-} from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { SYNCED_SESSION_AUTHORING_FIELD_IDS_V2, SyncedSessionAuthoringValueV2Schema, type SyncedSessionAuthoringFieldIdV2, type SyncedSessionAuthoringValueV2 } from '@happier-dev/protocol/sessions/authoring/index';
+import { SyncedSessionAuthoringValueV1Schema } from '@happier-dev/protocol/sessions/authoring/syncedSessionAuthoringV1';
 
 import { resolveAgentExecutionTargetForPersistedSelection } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';
 import type { NewSessionDraft } from '@/sync/domains/state/persistence';

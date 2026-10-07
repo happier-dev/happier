@@ -3,7 +3,7 @@ import { View } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { isMachineReplaced } from '@happier-dev/protocol';
+import { isMachineReplaced } from '@happier-dev/protocol/machines/identity/canonicalMachineId';
 
 import { useMachineAgentsByMachine } from '@/agents/machineAgents/useMachineAgents';
 import type { MachineAgent } from '@/agents/machineAgents/machineAgentTypes';

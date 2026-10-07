@@ -1,5 +1,5 @@
 import type { FeaturesResponse as ServerFeatures } from '@happier-dev/protocol';
-import { AsyncTtlCache } from '@happier-dev/protocol';
+import { AsyncTtlCache } from '@happier-dev/protocol/common/asyncTtlCache';
 import { armDeadlineTimer } from '@happier-dev/protocol/common/deadlineTimer';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';

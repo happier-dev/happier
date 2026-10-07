@@ -1,7 +1,7 @@
 import {
     resolveMachineLiveStreamAvccChunkTypeV1,
     type MachineLiveStreamAvccChunkTypeV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/peer/mediation/stream/codecsV1';
 
 export type MachineLiveStreamAvccChunk = Readonly<{
     type: MachineLiveStreamAvccChunkTypeV1;

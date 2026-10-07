@@ -1,4 +1,4 @@
-import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 
 export function buildDynamicModelProbeCacheKey(params: Readonly<{
     machineId: string | null;

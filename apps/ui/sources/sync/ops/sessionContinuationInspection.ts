@@ -5,7 +5,7 @@ import {
     SessionContinuationInspectionV1Schema,
     type SessionAgentTransitionSelectionV1,
     type SessionContinuationInspectionV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/agentTransition';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';

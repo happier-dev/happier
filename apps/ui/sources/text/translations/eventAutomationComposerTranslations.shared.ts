@@ -1,0 +1,60 @@
+
+
+export const english = {
+    eventAutomationComposer: {
+        available: 'Available',
+        payloadFields: 'PAYLOAD FIELDS',
+        payloadSample: 'Sample payload',
+        noFilterableFields: 'This Event does not declare filterable payload fields.',
+        addFilterClause: 'Add condition',
+        filterField: 'Filter field',
+        filterOperator: 'Filter operator',
+        filterEquals: 'Equals',
+        filterOneOf: 'Is one of',
+        filterValue: 'Filter value',
+        filterValuePlaceholder: '"value" or ["value"]',
+        storedContentUnavailableTitle: 'Stored automation content unavailable',
+        storedContentUnavailableBody: 'This Event automation cannot be saved because its stored content is unavailable.',
+        historyGapRecoveryTitle: 'History gap needs attention',
+        historyGapRecoverySubtitle: 'Reset the source baseline to resume observing new Events.',
+        historyGapRecoveryUnavailable: 'The source recovery action is not available on its current watcher.',
+        historyGapRecoveryFailureTitle: 'Source recovery needs another try',
+        historyGapRecoveryFailureBody: 'The recovery was not confirmed. The source still needs attention.',
+        sourceStatusTitle: 'Observation source',
+        sourceStatusState: {
+            uninitialized: 'Not started',
+            baselined: 'Baseline ready',
+            observing: 'Observing',
+            backingOff: 'Waiting to retry',
+            attention: 'Needs attention',
+        },
+        sourceStatusCode: {
+            credentialMissing: 'Credential required',
+            credentialRevoked: 'Credential revoked',
+            rateLimited: 'Rate limited',
+            historyGap: 'History gap',
+            capacityBlocked: 'Capacity blocked',
+            definitionStale: 'Definition changed',
+            sourceContractIncompatible: 'Source needs updating',
+            admissionUnavailable: 'Admission unavailable',
+        },
+        sourceStatusNextRetry: ({ time }: { time: string }) => `Next retry: ${time}`,
+        sourceStatusObservedCount: ({ count }: { count: number }) => `Events observed: ${count}`,
+        sourceStatusAdmittedCount: ({ count }: { count: number }) => `Events admitted: ${count}`,
+        sourceStatusSkippedCount: ({ count }: { count: number }) => `Events skipped: ${count}`,
+        sourceStatusLastObserved: ({ time }: { time: string }) => `Last observed: ${time}`,
+        sourceCatalogStatusTitle: 'Catalog reconciliation',
+        sourceCatalogStatusState: {
+            current: 'Current',
+            reconciling: 'Reconciling',
+            reconciliationLate: 'Reconciliation delayed',
+        },
+        sourceCatalogStatusObservedRevision: ({ revision }: { revision: string }) => `Observed revision: ${revision}`,
+        sourceCatalogStatusAdoptedRevision: ({ revision }: { revision: string }) => `Adopted revision: ${revision}`,
+        sourceCatalogStatusNoAdoptedRevision: 'No revision adopted yet',
+        sourceCatalogStatusScanStarted: ({ time }: { time: string }) => `Scan started: ${time}`,
+    },
+} as const;
+
+
+export const eventAutomationComposerTranslationsEnglish = { en: english } as const;

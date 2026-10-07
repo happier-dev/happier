@@ -1,14 +1,8 @@
-import {
-    arePluginMachineExecutionOriginsEqual,
-    buildQualifiedPluginContributionKey,
-    createPluginContributionIdentity,
-    DaemonPluginUiArtifactByteIdentityV1Schema,
-    type PluginContributionClientPlatform,
-    type PluginMachineExecutionOriginV1,
-    type VoiceProviderContribution,
-    type PluginProjectedDragSourceEntryV1,
-    type PluginProjectedDropTargetEntryV1,
-} from '@happier-dev/protocol';
+import { arePluginMachineExecutionOriginsEqual, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { buildQualifiedPluginContributionKey, createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
+import { DaemonPluginUiArtifactByteIdentityV1Schema, type PluginProjectedDragSourceEntryV1, type PluginProjectedDropTargetEntryV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { PluginContributionClientPlatform } from '@happier-dev/protocol/plugins/contributions/catalog';
+import type { VoiceProviderContribution } from '@happier-dev/protocol/plugins/contributions/voice';
 import {
     PluginUiArtifactsManifestEntryV2Schema,
     type PluginUiArtifactsManifestEntryV2,

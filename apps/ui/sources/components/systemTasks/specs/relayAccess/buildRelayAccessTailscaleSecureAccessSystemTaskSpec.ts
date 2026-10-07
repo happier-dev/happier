@@ -1,4 +1,5 @@
-import { SYSTEM_TASK_PROTOCOL_VERSION, createTailscaleSecureAccessTaskSpec, type SystemTaskSpec } from '@happier-dev/protocol';
+import { SYSTEM_TASK_PROTOCOL_VERSION, type SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
+import { createTailscaleSecureAccessTaskSpec } from '@happier-dev/protocol/system/tasks/tailscaleSecureAccessTaskContract';
 import type { TailscaleSecureAccessProviderId } from '@happier-dev/protocol';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 

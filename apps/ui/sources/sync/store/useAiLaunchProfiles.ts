@@ -3,7 +3,8 @@ import { useShallow } from 'zustand/react/shallow';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { projectAiLaunchProfileForLegacyUi, readUiAiLaunchProfiles } from '@/sync/domains/profiles/aiLaunchProfileCollection';
 import { areAccountSettingsScopesEqual, type AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
-import { LaunchProfileArtifactReferenceV1Schema, type AiLaunchProfile } from '@happier-dev/protocol';
+import { LaunchProfileArtifactReferenceV1Schema } from '@happier-dev/protocol/launchProfiles/launchProfileArtifactV1';
+import type { AiLaunchProfile } from '@happier-dev/protocol/profiles/read';
 
 /** Profile consumers subscribe only to the existing Artifact store's profile documents. */
 export function useLaunchProfileArtifacts() {

@@ -1,5 +1,6 @@
 import { requireNativeModule } from 'expo-modules-core';
-import { decodeBase64, encodeBase64, parseSerializedJsonValue } from '@happier-dev/protocol';
+import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { parseSerializedJsonValue } from '@happier-dev/protocol/crypto/serializedJsonValue';
 
 import {
     NATIVE_CRYPTO_WORKER_OPERATION,

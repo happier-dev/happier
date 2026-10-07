@@ -1,4 +1,4 @@
-import { readBackendTargetRefV2, type BackendTargetRefV2Input, type BackendTargetRefV2 } from '@happier-dev/protocol';
+import { readBackendTargetRefV2, type BackendTargetRefV2Input, type BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 import type { AgentId } from '@/agents/catalog/catalog';
 import { isBundledAgentId } from '@/agents/catalog/catalog';

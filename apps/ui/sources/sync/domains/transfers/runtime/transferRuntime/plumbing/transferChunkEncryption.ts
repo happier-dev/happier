@@ -1,9 +1,5 @@
-import {
-    BOX_BUNDLE_PUBLIC_KEY_BYTES,
-    deriveBoxPublicKeyFromSeed,
-    openEncryptedDataKeyEnvelopeV1,
-    sealEncryptedDataKeyEnvelopeV1,
-} from '@happier-dev/protocol';
+import { BOX_BUNDLE_PUBLIC_KEY_BYTES, deriveBoxPublicKeyFromSeed } from '@happier-dev/protocol/crypto/boxBundle';
+import { openEncryptedDataKeyEnvelopeV1, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { openAes256GcmBytes, sealAes256GcmBytes } from '@/encryption/aes256GcmBytes';

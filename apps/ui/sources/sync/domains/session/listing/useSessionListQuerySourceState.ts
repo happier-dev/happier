@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { featureRequiresServerSnapshot, type FeatureId, type SessionListQueryV1 } from '@happier-dev/protocol';
+import { featureRequiresServerSnapshot, type FeatureId } from '@happier-dev/protocol/features/catalog';
+import type { SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
 
 import {
     useMachineListByServerId,

@@ -3,7 +3,7 @@ import type { SessionWorkerPublishInputV1 } from '../../sessions/relations/worke
 import type { AgentStartContextV1, AgentStartSessionCallerV1 } from '../../account/settings/admitAgentStartV1.js';
 import type { HomeHubLayoutActionId } from '../specs/homeHub.js';
 import type { HomeHubArtifactPortV1 } from '../../home/homeHubArtifactV1.js';
-import type { WidgetActionSurfacePortV1, WidgetActionInputResolverV1, WidgetCatalogEntryV1, WidgetInstanceActionIdV1 } from '../../widgets/actionsV1.js';
+import type { WidgetActionSurfacePortV1, WidgetActionInputResolverV1, WidgetCatalogSourceEntryV1, WidgetInstanceActionIdV1 } from '../../widgets/actionsV1.js';
 import type { WidgetInstanceRefV1, WidgetSurfaceRefV1 } from '../../widgets/widgetInstanceV1.js';
 import type { WidgetDefinitionActionDepsV1 } from '../../widgets/definitionActionsV1.js';
 import type { MachinesAgentsSignInStartInput, MachinesAgentsSignInStatusInput, MachinesAgentsSignInStartOutput, AgentSignInStatusResponse, MachinesAgentsSignInCancelInput, MachinesAgentsSignInCancelOutput } from '../../daemon/agentSignIn.js';
@@ -888,7 +888,7 @@ export type ActionExecutorDeps = Readonly<{
   widgetAccountScope?: () => Readonly<{ serverId: string; accountId: string }> | null;
   widgetSurfaceActions?: Partial<Readonly<Record<WidgetSurfaceRefV1['owner']['kind'], WidgetActionSurfacePortV1>>>;
   widgetInputs?: WidgetActionInputResolverV1;
-  widgetCatalog?: Readonly<{ list(surface: WidgetSurfaceRefV1, context: ActionExecutorContext, signal?: AbortSignal, boundSession?: Readonly<{ serverId: string; sessionId: string }>): Promise<readonly WidgetCatalogEntryV1[] | ActionExecuteFailure> }>;
+  widgetCatalog?: Readonly<{ list(surface: WidgetSurfaceRefV1, context: ActionExecutorContext, signal?: AbortSignal, boundSession?: Readonly<{ serverId: string; sessionId: string }>): Promise<readonly WidgetCatalogSourceEntryV1[] | ActionExecuteFailure> }>;
   /** Host-captured viewer Account inventory for an already-admitted widget field. */
   widgetConnectedAccountOptions?: (args: Readonly<{ consumer: Extract<import('../../inputs/inputOptionsConsumer.js').InputOptionsConsumerV1, { kind: 'widget' }>;
     fieldPath: string; context: ActionExecutorContext }>) => Promise<readonly import('../../inputs/inputFields.js').InputOption[] | ActionExecuteFailure>;

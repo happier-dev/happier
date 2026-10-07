@@ -1,1 +1,1 @@
-export { isHardTerminatorDot } from '@happier-dev/protocol';
+export { isHardTerminatorDot } from '@happier-dev/protocol/voice/speechText';

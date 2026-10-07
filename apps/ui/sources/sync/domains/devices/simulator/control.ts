@@ -1,11 +1,5 @@
-import {
-    MachineLiveStreamControlSidebandV1Schema,
-    mapSimulatorPreviewPointToDeviceV1,
-    type MachineLiveStreamControlLeaseV1,
-    type MachineLiveStreamControlSidebandV1,
-    type SimulatorOrientationV1,
-    type SimulatorPreviewRectV1,
-} from '@happier-dev/protocol';
+import { MachineLiveStreamControlSidebandV1Schema, type MachineLiveStreamControlLeaseV1, type MachineLiveStreamControlSidebandV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/controlV1';
+import { mapSimulatorPreviewPointToDeviceV1, type SimulatorOrientationV1, type SimulatorPreviewRectV1 } from '@happier-dev/protocol/devices/simulator/inputV1';
 
 import type {
     LiveStreamGestureGeometry,

@@ -4,7 +4,7 @@ import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
 
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { WidgetSurface } from '@/components/widgets/surface/WidgetSurface';
-import type { WidgetInstanceV1, WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
+import { getWidgetSizeFootprintV1, type WidgetSizeV1, type WidgetInstanceV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import {
@@ -18,7 +18,6 @@ import { t } from '@/text';
 import { useActivateAppDestination, useCompactAppDestinations, type CompactAppPluginDestination } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { WidgetFrame, type WidgetFrameFooter, type WidgetFrameStyle } from '@/components/widgets/frame/WidgetFrame';
 import { useWidgetInstanceBindingLabel } from '@/components/widgets/surface/useWidgetInstanceBindingLabel';
-import { useWidgetInstanceDescriptor } from '@/components/widgets/surface/useWidgetInstanceDescriptor';
 import { useSessionSurfaceEntityDrag, SessionSurfaceEntityDragHandle, type SessionSurfaceEntityBinding } from '@/components/sessions/board/SessionSurfaceEntityDrag';
 
 
@@ -36,6 +35,7 @@ import { useSessionSurfaceEntityDrag, SessionSurfaceEntityDragHandle, type Sessi
 export const HubWidgetSection = React.memo(function HubWidgetSection(props: Readonly<{
     widget?: WidgetCandidate;
     instance: WidgetInstanceV1;
+    size?: WidgetSizeV1;
     menu: React.ReactNode;
     /** Card or plain: this section's override, else Home's Appearance default (resolved by the slot). */
     frameStyle: WidgetFrameStyle;
@@ -56,8 +56,9 @@ export const HubWidgetSection = React.memo(function HubWidgetSection(props: Read
     const near = useIsNearViewport(props.tracker, span);
     const [bodyHeight, setBodyHeight] = React.useState(0);
     const active = focused && near;
-    const accountScope = useActiveServerAccountScope();
-    const descriptor = useWidgetInstanceDescriptor(accountScope, props.instance, props.widget);
+    const descriptor = props.widget ?? null;
+    const size = props.size ?? 'medium';
+    const widgetPresentation = React.useMemo(() => ({ size, footprint: getWidgetSizeFootprintV1('home', size)! }), [size]);
 
     const measure = React.useCallback(() => {
         const node = sectionRef.current;
@@ -108,13 +109,13 @@ export const HubWidgetSection = React.memo(function HubWidgetSection(props: Read
         kind: 'content' as const,
         children: active ? (
             <View testID={`${props.testID}.body`} onLayout={onBodyLayout}>
-                <HubWidgetBody widget={descriptor ?? undefined} instance={props.instance} onRepairInputs={props.onRepairInputs} testID={`${props.testID}.widget`} />
+                <HubWidgetBody widget={descriptor ?? undefined} instance={props.instance} size={size} onRepairInputs={props.onRepairInputs} testID={`${props.testID}.widget`} />
             </View>
         ) : (
             // The body's last height, so leaving and returning never moves the page.
             <View testID={`${props.testID}.deferred`} style={{ minHeight: bodyHeight }} />
         ),
-    }), [active, bodyHeight, onBodyLayout, props.testID, descriptor, props.instance, props.onRepairInputs]);
+    }), [active, bodyHeight, onBodyLayout, props.testID, descriptor, props.instance, props.onRepairInputs, size]);
 
     return (
         <View ref={node => { sectionRef.current = node; drag.ref(node); }} collapsable={false} testID={props.testID} onLayout={() => { measure(); drag.onLayout(); }} style={styles.cell} {...props.hoverProps}>
@@ -122,7 +123,7 @@ export const HubWidgetSection = React.memo(function HubWidgetSection(props: Read
                 testID={`${props.testID}.frame`}
                 frameStyle={props.frameStyle}
                 placement="home"
-                fill
+                widgetPresentation={widgetPresentation}
                 mark={descriptor?.icon ?? 'squares-four'}
                 title={props.titleEditor ?? props.instance.displayName ?? descriptor?.title ?? t('boards.widgets.kind')}
                 source={bindingLabel ?? pluginName}
@@ -135,7 +136,7 @@ export const HubWidgetSection = React.memo(function HubWidgetSection(props: Read
 });
 
 /** The mounted body: the one installed-widget arm, against the app shell's plugin projection. */
-function HubWidgetBody(props: Readonly<{ widget?: WidgetCandidate; instance: WidgetInstanceV1; onRepairInputs?: (() => void) | undefined; testID: string }>) {
+function HubWidgetBody(props: Readonly<{ widget?: WidgetCandidate; instance: WidgetInstanceV1; size: WidgetSizeV1; onRepairInputs?: (() => void) | undefined; testID: string }>) {
     const runtime = useAppShellPluginUiProjection();
     const accountScope = useActiveServerAccountScope();
     const scope = React.useMemo<WidgetSurfaceRefV1 | null>(() => accountScope
@@ -149,6 +150,7 @@ function HubWidgetBody(props: Readonly<{ widget?: WidgetCandidate; instance: Wid
             providedContext={EMPTY_CONTEXT}
             recordRevision={stableJsonStringify(props.instance)}
             presentation="content"
+            size={props.size}
             appRuntime={runtime}
             {...(props.onRepairInputs ? { onRepairInputs: props.onRepairInputs } : {})}
             testID={props.testID}

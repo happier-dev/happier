@@ -1,8 +1,5 @@
-import {
-    resolveBuiltinWorkflowDefinitionV1,
-    type SessionTriggerAddRequestV1,
-    type WorkflowTriggerSetV1,
-} from '@happier-dev/protocol';
+import { resolveBuiltinWorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/builtins/catalog';
+import type { SessionTriggerAddRequestV1, WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 
 /**
  * The Goal control's continuation owner (FIN 04 §5.5, 08 §3.4): one per session, decided by the

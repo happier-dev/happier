@@ -13,18 +13,11 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import type { FeatureDecisionScopeParams } from '@/hooks/server/useFeatureDecision';
 import { useProfile } from '@/sync/store/hooks';
 import type { AgentCore } from '@happier-dev/agents';
-import {
-  buildQualifiedPluginContributionKey,
-  parseQualifiedPluginContributionKey,
-  projectAgentConnectedAccountPurposeDefaultsToSessionBindings,
-  resolveAgentConnectedAccountPurposeDefaults,
-  type ConnectedAccountServiceKey,
-  type ConnectedServiceBindingsV2,
-  type ConnectedServicesDefaultAuthByAgentIdV1,
-  type PluginContributionIdentityV1,
-  type PluginProjectedAgentConnectedAccountPurposeV2,
-  type QualifiedConnectedAccountPurposeBindingsV1,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { projectAgentConnectedAccountPurposeDefaultsToSessionBindings, resolveAgentConnectedAccountPurposeDefaults, type ConnectedServicesDefaultAuthByAgentIdV1 } from '@happier-dev/protocol/account/settings/connected-services';
+import type { ConnectedAccountServiceKey, ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { PluginProjectedAgentConnectedAccountPurposeV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
 
 import { NewSessionConnectedServicesSelectionContent } from '@/components/sessions/new/components/NewSessionConnectedServicesSelectionContent';

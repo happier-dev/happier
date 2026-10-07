@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { TodoItemV1Schema, TodoSessionLinkInputV1Schema } from '@happier-dev/protocol';
+import { TodoItemV1Schema, TodoSessionLinkInputV1Schema } from '@happier-dev/protocol/todos/todoSessionLinkV1';
 
 import {
     AccountStoredJsonContentEncryptionMaterialUnavailableError,

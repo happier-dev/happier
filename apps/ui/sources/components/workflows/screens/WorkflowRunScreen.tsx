@@ -12,7 +12,8 @@ import type {
     WorkflowRunSummaryV1,
     WorkflowReplayAgentOverrideV1,
 } from '@happier-dev/protocol';
-import { ArtifactAccessGrantsListResponseV1Schema, WorkflowResultContractSchema } from '@happier-dev/protocol';
+import { ArtifactAccessGrantsListResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { WorkflowResultContractSchema } from '@happier-dev/protocol/workflows/workflowV1';
 import { parseWorkflowDefinitionRefV1, resolveBuiltinWorkflowDefinitionV1 } from '@happier-dev/protocol/workflows';
 import { readWorkflowPlanResult } from '@/sync/domains/workflows/workflowPlanReview';
 

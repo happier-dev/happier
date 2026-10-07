@@ -30,10 +30,47 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 describe('runAppBootSequence', () => {
+    it.each(['app', 'embed'] as const)('waits for the selected locale and English fallback before painting: %s', async (context) => {
+        const translations = createDeferred<void>();
+        const events: string[] = [];
+        const run = runAppBootSequence({
+            context,
+            loadFonts: async () => {},
+            sodiumReady: Promise.resolve(),
+            resolveCredentials: async () => CREDENTIALS,
+            prepareWarmCache: async () => {},
+            prepareSessionDrafts: async () => {},
+            restoreSync: async () => { events.push('restore-local-settings'); },
+            prepareTranslations: async () => { events.push('selected-locale'); await translations.promise; },
+            onReady: () => { events.push('paint'); },
+        });
+        await flushMicrotasks();
+        expect(events).toEqual(context === 'embed' ? ['selected-locale'] : ['restore-local-settings', 'selected-locale']);
+        translations.resolve();
+        await run;
+        expect(events.at(-1)).toBe('paint');
+    });
+
+    it('leaves translation preparation failures with the boot recovery owner', async () => {
+        const failure = new Error('Locale chunk unavailable');
+        const ready: AppBootReadyState[] = [];
+        await expect(runAppBootSequence({
+            loadFonts: async () => {},
+            sodiumReady: Promise.resolve(),
+            resolveCredentials: async () => null,
+            prepareWarmCache: async () => {},
+            prepareSessionDrafts: async () => {},
+            restoreSync: null,
+            prepareTranslations: async () => { throw failure; },
+            onReady: (state) => ready.push(state),
+        })).rejects.toBe(failure);
+        expect(ready).toEqual([]);
+    });
     it('boots an embed without opening credential, cache or draft storage or restoring the account', async () => {
         const events: string[] = [];
         const ready: AppBootReadyState[] = [];
         await runAppBootSequence({
+            prepareTranslations: async () => {},
             context: 'embed',
             loadFonts: async () => { events.push('fonts'); },
             sodiumReady: Promise.resolve(),
@@ -51,6 +88,7 @@ describe('runAppBootSequence', () => {
         const credentials = createDeferred<AuthCredentials | null>();
         const events: string[] = [];
         const run = runAppBootSequence({
+            prepareTranslations: async () => {},
             loadFonts: async () => {},
             sodiumReady: Promise.resolve(),
             resolveCredentials: () => mode === 'deferred' ? credentials.promise : Promise.resolve(mode === 'authenticated' ? CREDENTIALS : null),
@@ -72,6 +110,7 @@ describe('runAppBootSequence', () => {
         const failure = new Error('IndexedDB unavailable');
         const events: string[] = [];
         await expect(runAppBootSequence({
+            prepareTranslations: async () => {},
             loadFonts: async () => {},
             sodiumReady: Promise.resolve(),
             resolveCredentials: async () => CREDENTIALS,
@@ -99,6 +138,7 @@ describe('runAppBootSequence', () => {
         const started: string[] = [];
 
         const run = runAppBootSequence({
+            prepareTranslations: async () => {},
             loadFonts: () => {
                 started.push('fonts');
                 return fonts.promise;
@@ -133,6 +173,7 @@ describe('runAppBootSequence', () => {
         const ready: AppBootReadyState[] = [];
 
         const run = runAppBootSequence({
+            prepareTranslations: async () => {},
             loadFonts: () => fonts.promise,
             sodiumReady: Promise.resolve(),
             resolveCredentials: async () => CREDENTIALS,
@@ -159,6 +200,7 @@ describe('runAppBootSequence', () => {
         const restored: AuthCredentials[] = [];
 
         const run = runAppBootSequence({
+            prepareTranslations: async () => {},
             loadFonts: async () => {},
             sodiumReady: Promise.resolve(),
             resolveCredentials: () => credentials.promise,
@@ -190,6 +232,7 @@ describe('runAppBootSequence', () => {
         const ready: AppBootReadyState[] = [];
 
         const run = runAppBootSequence({
+            prepareTranslations: async () => {},
             loadFonts: async () => {},
             sodiumReady: Promise.resolve(),
             resolveCredentials: async () => CREDENTIALS,
@@ -219,6 +262,7 @@ describe('runAppBootSequence', () => {
         const ready: AppBootReadyState[] = [];
 
         await runAppBootSequence({
+            prepareTranslations: async () => {},
             loadFonts: async () => {},
             sodiumReady: Promise.resolve(),
             resolveCredentials: async () => CREDENTIALS,
@@ -241,6 +285,7 @@ describe('runAppBootSequence', () => {
         const ready: AppBootReadyState[] = [];
 
         await runAppBootSequence({
+            prepareTranslations: async () => {},
             loadFonts: async () => {
                 throw new Error('font registry unavailable');
             },
@@ -260,6 +305,7 @@ describe('runAppBootSequence', () => {
         const ready: AppBootReadyState[] = [];
         const restored: AuthCredentials[] = [];
         const run = runAppBootSequence({
+            prepareTranslations: async () => {},
             loadFonts: async () => {},
             sodiumReady: Promise.resolve(),
             resolveCredentials: async () => CREDENTIALS,
@@ -285,6 +331,7 @@ describe('runAppBootSequence', () => {
         const ready: AppBootReadyState[] = [];
 
         await runAppBootSequence({
+            prepareTranslations: async () => {},
             loadFonts: async () => {},
             sodiumReady: Promise.resolve(),
             resolveCredentials: async () => CREDENTIALS,
@@ -304,6 +351,7 @@ describe('runAppBootSequence', () => {
         const ready: AppBootReadyState[] = [];
 
         const run = runAppBootSequence({
+            prepareTranslations: async () => {},
             loadFonts: async () => {},
             sodiumReady: Promise.resolve(),
             resolveCredentials: () => credentials.promise,
@@ -325,6 +373,7 @@ describe('runAppBootSequence', () => {
         const ready: AppBootReadyState[] = [];
 
         await runAppBootSequence({
+            prepareTranslations: async () => {},
             loadFonts: async () => {},
             sodiumReady: Promise.resolve(),
             resolveCredentials: async () => CREDENTIALS,

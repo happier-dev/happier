@@ -890,7 +890,7 @@ describe('usePluginUiProjectionCurrentness', () => {
         expect(rendered.getCurrent().interactionEnabled).toBe(true);
     });
 
-    it('re-describes on explicit refresh even when daemon version and projection revision are unchanged', async () => {
+    it('keeps a successful projection through idle rerenders and re-describes only on explicit refresh', async () => {
         projectionRuntime.describe
             .mockResolvedValueOnce(supportedProjection('Before refresh'))
             .mockResolvedValueOnce(supportedProjection('After refresh'));
@@ -902,6 +902,22 @@ describe('usePluginUiProjectionCurrentness', () => {
         }));
         await flushHookEffects();
         expect(projectionRuntime.describe).toHaveBeenCalledTimes(1);
+
+        // Cross both the old full-projection poll cadence and the shared
+        // cache's freshness window. Neither elapsed time nor a fresh options
+        // object is a change to the projection authority.
+        vi.useFakeTimers();
+        try {
+            await flushHookEffects({ advanceTimersMs: 90_000, cycles: 1, turns: 2 });
+            await rendered.rerender();
+            await flushHookEffects();
+            expect(projectionRuntime.describe).toHaveBeenCalledTimes(1);
+            expect(rendered.getCurrent().phase).toBe('current');
+            expect(rendered.getCurrent().pluginUiProjection?.translationsByPluginId['acme.preview']?.bundles)
+                .toEqual({ en: { title: 'Before refresh' } });
+        } finally {
+            vi.useRealTimers();
+        }
 
         reloadRevision = 1;
         await rendered.rerender();

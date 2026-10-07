@@ -1,4 +1,4 @@
-import { PET_ATLAS_V1 } from '@happier-dev/protocol';
+import { PET_ATLAS_V1 } from '@happier-dev/protocol/pets/constants';
 
 import {
     PET_COMPANION_OVERLAY_PADDING_PX,

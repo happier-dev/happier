@@ -32,6 +32,7 @@ import {
   useHappierItemGroupItemBehavior,
 } from '../collection/ItemGroup.js';
 import { HappierPressable } from '../interaction/Pressable.js';
+import { settleHappierRaisedEdge } from '../layout/raisedEdge.js';
 import type {
   HappierAccessibilityLiveRegion,
   HappierStyleProp,
@@ -536,6 +537,7 @@ export function HappierTextField(props: HappierTextFieldProps) {
       colors={{
         backgroundColor: palette?.fieldBackground ?? props.theme.colors.surface,
         borderColor: palette?.sheetBorder ?? props.theme.colors.border,
+        edge: palette?.searchFieldEdge,
       }}
       onFocusInput={() => searchInputRef.current?.focus()}
       leading={props.leading}
@@ -550,6 +552,7 @@ export function HappierTextField(props: HappierTextFieldProps) {
         colors={{
           borderColor: props.error ? fieldAppearance.errorColor : fieldAppearance.borderColor,
           backgroundColor: fieldAppearance.backgroundColor,
+          edge: settleHappierRaisedEdge(fieldAppearance.edge, { invalid: Boolean(props.error) }),
         }}
         error={props.error ? (
           <HappierText

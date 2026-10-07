@@ -17,9 +17,13 @@ import { useScrollEdgeFades, type ScrollEdgeVisibility } from '@/components/ui/s
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
 import { shadowLevelStyle } from '@/shadowElevation';
 import {
+    resolveThemeSurfaceBorderStyle,
     resolveThemeSurfaceChromeStyle,
     type ThemeSurfaceChromeStyle,
 } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
+import { resolveThemeRaisedEdge } from '@/components/ui/surfaces/themeRaisedEdge';
+import { SurfaceRim } from '@/components/ui/surfaces/SurfaceRim';
+import { surfaceUsesRim } from '@/components/ui/surfaces/surfaceEdgeTreatment';
 
 import { FLOATING_OVERLAY_METRICS } from './floatingOverlayMetrics';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
@@ -38,14 +42,20 @@ function extractSurfaceStyle(chromeStyle: ThemeSurfaceChromeStyle) {
         borderWidth: chromeStyle.borderWidth,
         borderTopColor: chromeStyle.borderTopColor,
         borderTopWidth: chromeStyle.borderTopWidth,
+        borderBottomColor: chromeStyle.borderBottomColor,
+        borderBottomWidth: chromeStyle.borderBottomWidth,
     };
 }
 
 const stylesheet = StyleSheet.create((theme) => {
+    // Every floating surface stands on the floating hairline (`border.modal`) and its raised edge; the
+    // shadow only grounds it (menus at the menu step, popovers at the popover step). In-flow sheets
+    // keep `border.surface`, which a light theme leaves transparent.
     const themedSurfaceChromeStyle = resolveThemeSurfaceChromeStyle({
-        borderColor: theme.colors.border.surface,
-        highlightColor: theme.colors.effect.surfaceHighlight,
-        shadowStyle: shadowLevelStyle(theme.colors.shadowLevels[4]),
+        borderColor: theme.colors.border.modal,
+        edge: resolveThemeRaisedEdge(theme, 'modal'),
+        rim: surfaceUsesRim('floating', theme.dark),
+        shadowStyle: shadowLevelStyle(theme.colors.shadowLevels[2]),
     });
 
     return {
@@ -57,8 +67,11 @@ const stylesheet = StyleSheet.create((theme) => {
         modalClipSurface: {
             borderRadius: OVERLAY_BORDER_RADIUS,
             overflow: 'hidden',
-            borderWidth: Platform.OS === 'web' ? 0 : 0.5,
-            borderColor: theme.colors.border.modal,
+            ...resolveThemeSurfaceBorderStyle({
+                borderColor: theme.colors.border.modal,
+                edge: resolveThemeRaisedEdge(theme, 'modal'),
+                rim: surfaceUsesRim('floating', theme.dark),
+            }),
         },
         themedSurfaceShadowFrame: {
             borderRadius: OVERLAY_BORDER_RADIUS,
@@ -279,6 +292,7 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
                 { maxHeight },
             ]}>
                 {surfaceContent}
+                <SurfaceRim role="floating" radius={OVERLAY_BORDER_RADIUS} border="modal" />
             </GlassSurface>
         </Animated.View>
     );
@@ -295,27 +309,14 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
         transform: [{ rotate: '45deg' as const }],
     };
 
-    if (surfaceChrome === 'theme') {
-        Object.assign(arrowBoxStyle, resolveThemeSurfaceChromeStyle({
-            borderColor: theme.colors.border.surface,
-            highlightColor: theme.colors.effect.surfaceHighlight,
-            shadowStyle: Platform.OS === 'web'
-                ? { boxShadow: theme.colors.shadowPopoverArrowBoxShadow }
-                : shadowLevelStyle(theme.colors.shadowLevels[4]),
-        }));
-    } else {
-        Object.assign(arrowBoxStyle, {
-            borderWidth: Platform.OS === 'web' ? 0 : 0.5,
-            borderColor: theme.colors.border.modal,
-        });
-        if (Platform.OS === 'web') {
-            // RN-web can be inconsistent with shadow props on transformed views.
-            // Use CSS box-shadow to ensure the arrow is visible, even on light backdrops.
-            arrowBoxStyle.boxShadow = theme.colors.shadowPopoverArrowBoxShadow;
-        } else {
-            Object.assign(arrowBoxStyle, shadowLevelStyle(theme.colors.shadowLevels[4]));
-        }
-    }
+    // The arrow wears its surface's hairline. Its sides are diagonals, so it stays flat (no raised
+    // edge). RN-web is inconsistent with shadow props on transformed views, so web uses CSS box-shadow.
+    Object.assign(arrowBoxStyle, resolveThemeSurfaceChromeStyle({
+        borderColor: theme.colors.border.modal,
+        shadowStyle: Platform.OS === 'web'
+            ? { boxShadow: theme.colors.shadowPopoverArrowBoxShadow }
+            : shadowLevelStyle(theme.colors.shadowLevels[4]),
+    }));
 
     const arrowWrapperStyle: ViewStyle = {
         position: 'absolute',

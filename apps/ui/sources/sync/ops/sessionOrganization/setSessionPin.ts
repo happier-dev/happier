@@ -1,4 +1,4 @@
-import { SESSION_ORGANIZATION_MAX_PINNED_SESSIONS } from '@happier-dev/protocol';
+import { SESSION_ORGANIZATION_MAX_PINNED_SESSIONS } from '@happier-dev/protocol/sessions/organization/constants';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { setSessionPin as setSessionPinApi } from '@/sync/api/session/sessionOrganizationApi';

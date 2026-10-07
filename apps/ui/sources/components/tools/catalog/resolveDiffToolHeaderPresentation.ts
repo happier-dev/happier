@@ -1,4 +1,4 @@
-import { readTurnChangeToolMetadataFromToolCall } from '@happier-dev/protocol';
+import { readTurnChangeToolMetadataFromToolCall } from '@happier-dev/protocol/sessions/messages/canonicalTurnDiffTool';
 
 import type { ToolCall } from "@happier-dev/session-core/messages";
 import { t } from '@/text';

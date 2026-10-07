@@ -1,4 +1,4 @@
-import { redactPeerMediationObservabilityMetadata } from '@happier-dev/protocol';
+import { redactPeerMediationObservabilityMetadata } from '@happier-dev/protocol/machines/peer/mediation/observability/metadataRedaction';
 
 import { peerMediationObservabilityFlowKey, peerMediationObservabilityScopeKey } from './keys';
 import type {

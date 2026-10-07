@@ -1,4 +1,4 @@
-import { SessionReportsToOptionsV1Schema, type SessionReportsToOptionsV1 } from '@happier-dev/protocol';
+import { SessionReportsToOptionsV1Schema, type SessionReportsToOptionsV1 } from '@happier-dev/protocol/sessions/relations/sessionReportsToV1';
 
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 

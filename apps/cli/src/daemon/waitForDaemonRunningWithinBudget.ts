@@ -1,12 +1,20 @@
 import type { ChildProcess } from 'node:child_process';
+import { isPidPresent, isPidProvablyAbsent } from '@happier-dev/cli-common/process';
+
+type DaemonStartProcessObservation = Pick<ChildProcess, 'exitCode' | 'signalCode'>
+  & Partial<Pick<ChildProcess, 'pid'>>
+  & { detachedDaemonPid?: number };
 
 export function hasObservableDaemonStartProcessExited(
-  child: Pick<ChildProcess, 'exitCode' | 'signalCode'>,
+  child: DaemonStartProcessObservation,
   platform: NodeJS.Platform = process.platform,
 ): boolean {
-  // Windows returns the short-lived PowerShell launcher rather than the
-  // detached daemon process, so its exit cannot establish daemon failure.
-  if (platform === 'win32') return false;
+  if (platform === 'win32') {
+    // Windows returns the short-lived PowerShell launcher. Only the detached
+    // daemon PID reported by that launcher can establish startup failure.
+    return typeof child.detachedDaemonPid === 'number'
+      && isPidProvablyAbsent(child.detachedDaemonPid);
+  }
   return (
     child.exitCode !== null && child.exitCode !== undefined
   ) || (
@@ -14,9 +22,21 @@ export function hasObservableDaemonStartProcessExited(
   );
 }
 
+export function hasObservableDaemonStartProcessRunning(
+  child: DaemonStartProcessObservation,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  if (platform === 'win32') {
+    return typeof child.detachedDaemonPid === 'number' && isPidPresent(child.detachedDaemonPid);
+  }
+  return typeof child.pid === 'number' && !hasObservableDaemonStartProcessExited(child, platform);
+}
+
 export async function waitForDaemonRunningWithinBudget(params: {
   isRunning: () => Promise<boolean>;
   shouldAbort?: () => boolean;
+  isStillStarting?: () => boolean | Promise<boolean>;
+  onStillStarting?: () => void;
   timeoutMs: number;
   pollMs: number;
   sleep?: (ms: number) => Promise<void>;
@@ -31,7 +51,15 @@ export async function waitForDaemonRunningWithinBudget(params: {
 
   let remainingMs = params.timeoutMs;
   let nextPollMs = params.pollMs;
-  while (remainingMs > 0) {
+  for (;;) {
+    if (remainingMs <= 0) {
+      // The startup budget is a reporting checkpoint while the owning process
+      // or daemon control state still proves startup is live. Elapsed time alone
+      // cannot turn that evidence into a failed start.
+      if (!await params.isStillStarting?.()) return false;
+      params.onStillStarting?.();
+      remainingMs = params.timeoutMs;
+    }
     const sleepMs = Math.min(nextPollMs, remainingMs);
     await sleep(sleepMs);
     remainingMs -= sleepMs;
@@ -41,6 +69,4 @@ export async function waitForDaemonRunningWithinBudget(params: {
     // match the stack's one-second lifecycle observation cadence on misses.
     nextPollMs = Math.min(nextPollMs * 2, 1_000);
   }
-
-  return false;
 }

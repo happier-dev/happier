@@ -1,10 +1,7 @@
-import {
-    resolveSessionReadStateActionRequest,
-    projectSessionReadStateActionTransportFailure,
-    type ActionExecutorDeps,
-    type SessionReadStateActionIdV1,
-    type SessionViewerProjectionV1,
-} from '@happier-dev/protocol';
+import { resolveSessionReadStateActionRequest, projectSessionReadStateActionTransportFailure } from '@happier-dev/protocol/sessions/readState/actionTransport';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import type { SessionReadStateActionIdV1 } from '@happier-dev/protocol/sessions/readState/actionIds';
+import type { SessionViewerProjectionV1 } from '@happier-dev/protocol/sessions/personal/viewer';
 
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';

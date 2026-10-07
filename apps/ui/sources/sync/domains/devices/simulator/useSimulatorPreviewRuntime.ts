@@ -6,7 +6,7 @@ import type {
 } from '@happier-dev/protocol';
 import {
     DEFAULT_DEVICE_SIMULATOR_PREVIEW_CAPABILITIES,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/features/payload/capabilities/deviceCapabilities';
 
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { useFeatureDetails } from '@/hooks/server/useFeatureDetails';

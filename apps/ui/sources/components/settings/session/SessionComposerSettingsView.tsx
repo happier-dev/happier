@@ -15,7 +15,7 @@ import type { NewSessionPresentationModeV1 } from '@/sync/domains/settings/regis
 import {
     SESSION_INACTIVE_RESUME_POLICY_VALUES,
     type SessionInactiveResumePolicy,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/settings/accountSettings';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { SettingAnchor, SettingRow } from '@/components/settings/shell/SettingRow';
 import { settingRendersOnHost } from '@/components/settings/catalog/settingDeclarations';

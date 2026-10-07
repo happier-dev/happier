@@ -1,4 +1,14 @@
-import { HAPPIER_EMPTY_STATE_FRAME, HAPPIER_STATE_LINE_METRICS, HAPPIER_STATE_SIZE_METRICS, HappierInfoState, type HappierStateSize } from '@happier-dev/plugin-ui/presentation';
+import {
+    HAPPIER_EMPTY_STATE_FRAME,
+    HAPPIER_SCENE_ART_METRICS,
+    HAPPIER_STATE_LINE_METRICS,
+    HAPPIER_STATE_SIZE_METRICS,
+    HappierInfoState,
+    resolveHappierScene,
+    resolveHappierSceneArtSize,
+    type HappierSceneInput,
+    type HappierStateSize,
+} from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -9,6 +19,7 @@ import { CenteredInfoTile } from '@/components/ui/lists/CenteredInfoTile';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { Item } from '@/components/ui/lists/Item';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
+import { SceneArt } from '@/components/ui/surfaces/SceneArt';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
@@ -31,6 +42,14 @@ type EmptyStateProps = Readonly<{
     iconName?: IconName;
     /** A caller-drawn glyph (a spinner, a group of brand marks) when `iconName` cannot express it. */
     icon?: React.ReactNode;
+    /**
+     * The Daybreak scene drawn in the glyph's place on a `page` or `centered` state (plugin-ui scene
+     * registry): a built-in scene id or a defined scene, constant across renders. `line` and `inline`
+     * states keep their glyph.
+     */
+    scene?: HappierSceneInput;
+    /** Whether the scene may play its one-shot rise (false for a surface the viewer is not looking at). */
+    animationEnabled?: boolean;
     /** Already-translated title string. */
     title: string;
     /** Optional glyph decoration; the original title remains available as semantic copy. */
@@ -153,7 +172,15 @@ export const EmptyState = React.memo((props: EmptyStateProps) => {
     }
 
     const sizeMetrics = props.size ? HAPPIER_STATE_SIZE_METRICS[props.size] : null;
-    const glyph = props.icon ?? (props.iconName
+    const sceneSize = props.scene ? resolveHappierSceneArtSize({ size: props.size, layout: props.layout ?? 'centered' }) : null;
+    const glyph = sceneSize && props.scene ? (
+        <EmptyStateScene
+            scene={props.scene}
+            size={sceneSize}
+            still={props.animationEnabled === false}
+            testID={props.testID ? `${props.testID}-scene` : undefined}
+        />
+    ) : props.icon ?? (props.iconName
         ? <Icon name={props.iconName} size={sizeMetrics?.glyphPx ?? ICON_SIZE.xl} color={theme.colors.text.secondary} />
         : null);
     const primaryButton = props.primaryAction ? (
@@ -211,6 +238,7 @@ export const EmptyState = React.memo((props: EmptyStateProps) => {
             <CenteredInfoTile
                 size={page ? undefined : props.size}
                 icon={glyph}
+                iconGap={sceneSize ? HAPPIER_SCENE_ART_METRICS[sceneSize].gapPx : undefined}
                 title={props.title}
                 titleContent={props.titleContent}
                 description={props.subtitle ?? null}
@@ -232,6 +260,17 @@ export const EmptyState = React.memo((props: EmptyStateProps) => {
 });
 
 EmptyState.displayName = 'EmptyState';
+
+/** The scene in the state's mark slot; resolved once per scene, drawn by the app's scene renderer. */
+const EmptyStateScene = React.memo(function EmptyStateScene(props: Readonly<{
+    scene: HappierSceneInput;
+    size: HappierStateSize;
+    still: boolean;
+    testID?: string;
+}>) {
+    const scene = React.useMemo(() => resolveHappierScene(props.scene, props.size), [props.scene, props.size]);
+    return <SceneArt scene={scene} size={props.size} still={props.still} testID={props.testID} />;
+});
 
 const stylesheet = StyleSheet.create((theme) => ({
     // The frames are the shared empty-state owner's (the plugin `EmptyState` draws the same).

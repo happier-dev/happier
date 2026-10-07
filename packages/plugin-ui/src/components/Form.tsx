@@ -187,6 +187,7 @@ function TextFieldControl(props: Omit<TextFieldProps, 'dictation'>): ReactElemen
     const fieldColors = {
       borderColor: palette.controlBorder,
       backgroundColor: palette.fieldBackground,
+      edge: palette.controlEdge,
       valueColor: theme.colors.text,
       placeholderColor: palette.placeholder,
       errorColor: theme.colors.danger,
@@ -431,6 +432,7 @@ function SelectSegmented(props: SelectProps): ReactElement {
       colors={{
         track: palette.segmentTrack,
         thumb: palette.segmentThumb,
+        thumbLift: palette.segmentThumbLift,
         label: theme.colors.secondaryText,
         activeLabel: theme.colors.text,
         focusRing: theme.colors.focus,

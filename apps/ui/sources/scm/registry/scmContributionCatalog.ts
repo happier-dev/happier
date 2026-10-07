@@ -1,8 +1,5 @@
-import {
-    buildQualifiedPluginContributionKey,
-    type PluginContributionIdentityV1,
-    type PluginProjectionV2,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 export type ScmProjectedBackend = Readonly<{
     id: string;

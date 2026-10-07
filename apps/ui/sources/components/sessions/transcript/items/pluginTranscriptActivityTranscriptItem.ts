@@ -1,4 +1,4 @@
-import { MAX_PLUGIN_TRANSCRIPT_ACTIVITIES_PER_SESSION_TAIL_V1 } from '@happier-dev/protocol';
+import { MAX_PLUGIN_TRANSCRIPT_ACTIVITIES_PER_SESSION_TAIL_V1 } from '@happier-dev/protocol/plugins/contributions/ui/transcriptActivities';
 
 import type { ChatTranscriptListItem } from '@/components/sessions/transcript/chatListTypes';
 

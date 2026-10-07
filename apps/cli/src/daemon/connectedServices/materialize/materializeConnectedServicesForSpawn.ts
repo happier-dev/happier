@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 
 import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import { resolveConnectedServicesProviderStateSharingPolicyV1 } from '@happier-dev/protocol/account/settings/connected-services';
@@ -194,7 +194,11 @@ function rewritePathRoot(
       : value;
 }
 
+type MaterializationArtifactWrite = <T>(write: () => Promise<T>) => Promise<T>;
+
 async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readonly<{
+  signal?: AbortSignal;
+  retainCleanup?: (cleanup: () => Promise<void>) => Promise<() => void>;
   agentId: CatalogAgentId;
   materializationKey: string;
   rootDir: string;
@@ -208,23 +212,35 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
   recordsByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceCredentialRecordV1>;
   exactPurposeBindingSubjectId?: string;
   purposeBindingSessionId?: string;
+  writeArtifacts?: MaterializationArtifactWrite;
+  waitForArtifactWrite?: () => Promise<void>;
 }>): Promise<ConnectedServicesMaterialization> {
   const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
   const signalController = new AbortController();
+  const abort = () => signalController.abort(params.signal?.reason);
+  params.signal?.addEventListener('abort', abort, { once: true });
+  if (params.signal?.aborted) abort();
+  const writeArtifacts: MaterializationArtifactWrite = params.writeArtifacts ?? (async write => await write());
   const retainedCredentialFileCleanups: Array<() => void | Promise<void>> = [];
-  let cleanupStarted = false;
-  const cleanup = async (): Promise<void> => {
-    if (cleanupStarted) return;
-    cleanupStarted = true;
+  let cleanupPromise: Promise<void> | undefined;
+  const cleanup = (): Promise<void> => cleanupPromise ??= (async () => {
     signalController.abort();
-    await Promise.allSettled(
-      retainedCredentialFileCleanups.splice(0).map(async (dispose) => {
-        await dispose();
-      }),
-    );
-  };
+    params.signal?.removeEventListener('abort', abort);
+    // File leases must outlive an already-started host write, which may still
+    // be creating their protected parent. Never wait for credential transport.
+    const failures: unknown[] = [];
+    try { await params.waitForArtifactWrite?.(); } catch (error) { failures.push(error); }
+    const results = await Promise.allSettled(retainedCredentialFileCleanups.splice(0).map(async dispose => await dispose()));
+    failures.push(...results.flatMap(result => result.status === 'rejected' ? [result.reason] : []));
+    // A cancelled credential transport may never settle to reach finally.
+    // Release this same idempotent lease after its known host resources close.
+    try { await lease.release(); } catch (error) { failures.push(error); }
+    if (failures.length > 0) throw new AggregateError(failures, 'Connected Account materialization cleanup failed');
+  })();
 
   try {
+    if (params.retainCleanup) await params.retainCleanup(cleanup);
+    signalController.signal.throwIfAborted();
     const snapshot = params.snapshot ?? (params.legacyV021
       ? resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
           agentId: params.agentId,
@@ -294,6 +310,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
           ? { sessionId: params.purposeBindingSessionId }
           : {}),
         signal: signalController.signal,
+        writeArtifacts,
         expectedAccountsByPurposeKey,
         ...(identity && currentRuntime
           ? {
@@ -316,6 +333,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
       })
       : Object.freeze({});
 
+    signalController.signal.throwIfAborted();
     const env: Record<string, string> = { ...launchEnvironment };
     if (params.requestAuthRequired) {
       env[CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV] =
@@ -338,7 +356,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
           ?.connectedServicesProviderStateSharingSettingsV1,
         params.agentId,
       );
-      const stateSharing = await applyConnectedServiceStateSharingDescriptor({
+      const stateSharing = await writeArtifacts(() => applyConnectedServiceStateSharingDescriptor({
         descriptor: stateSharingDescriptor,
         nativeSourceContext: {
           sourceRoot: resolveConnectedServiceNativeHomeRoot({
@@ -358,7 +376,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
         effectiveStateMode: policy.stateMode,
         cwd: params.sessionDirectory ?? process.cwd(),
         providerLabel: params.agentId,
-      });
+      }));
       Object.assign(env, stateSharing.envOverrides, {
         [stateSharingDescriptor.nativeHome.environmentKey]: params.rootDir,
       });
@@ -382,6 +400,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
             : {}),
           signal: signalController.signal,
         });
+        signalController.signal.throwIfAborted();
         if (!binding) {
           throw new Error('Connected Account native-home binding is unavailable');
         }
@@ -405,10 +424,15 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
           }),
           signal: signalController.signal,
         });
+        signalController.signal.throwIfAborted();
         if (materialization.kind !== 'files') {
           throw new Error(
             'Connected Account native-home credential returned the wrong materialization kind',
           );
+        }
+        if (!Object.entries(materialization.files).some(([fileId, contents]) =>
+          stateSharingDescriptor.authIsolation.secretEntries.includes(fileId) && contents.byteLength > 0)) {
+          throw new Error('Connected Account native-home credential file is unavailable');
         }
         for (const [fileId, contents] of Object.entries(materialization.files)) {
           if (Object.prototype.hasOwnProperty.call(nativeHomeFiles, fileId)) {
@@ -419,12 +443,12 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
           nativeHomeFiles[fileId] = contents;
         }
       }
-      await materializeConnectedServiceNativeHomeCredentials({
+      await writeArtifacts(() => materializeConnectedServiceNativeHomeCredentials({
         targetRoot: params.rootDir,
         declaredSecretEntries:
           stateSharingDescriptor.authIsolation.secretEntries,
         files: Object.freeze(nativeHomeFiles),
-      });
+      }));
     }
 
     if (params.legacyV021) {
@@ -458,6 +482,8 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
 }
 
 export async function materializeConnectedServicesForSpawn(params: Readonly<{
+  signal?: AbortSignal;
+  retainCleanup?: (cleanup: () => Promise<void>) => Promise<() => void>;
   agentId: CatalogAgentId;
   materializationKey: string;
   activeServerDir: string;
@@ -483,6 +509,8 @@ export async function materializeConnectedServicesForSpawn(params: Readonly<{
 }
 
 async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
+  signal?: AbortSignal;
+  retainCleanup?: (cleanup: () => Promise<void>) => Promise<() => void>;
   agentId: CatalogAgentId;
   materializationKey: string;
   activeServerDir: string;
@@ -497,11 +525,48 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
   accountSettings?: AccountSettings | Readonly<Record<string, unknown>> | null;
   processEnv?: NodeJS.ProcessEnv;
 }>, rootDir: string): Promise<ConnectedServicesMaterialization | null> {
-  const materializationSegment = basename(dirname(rootDir));
-  const attemptRoot = join(params.baseDir, '.attempts', `${materializationSegment}-${params.agentId}-${randomUUID()}`);
+  // Qualified Agent ids contain '/'; staging has one owned root per attempt.
+  const attemptRoot = join(params.baseDir, '.attempts', randomUUID());
   const attemptId = attemptRoot;
   activeMaterializationAttemptByRootDir.set(rootDir, attemptId);
-  const cleanupAttemptRoot = createBestEffortCleanupDirectory(attemptRoot);
+  const cleanupAttemptRoot = createBestEffortCleanupDirectory(attemptRoot, undefined,
+    params.retainCleanup ? { failureMode: 'reject' } : undefined);
+  let artifactWrite: Promise<unknown> | undefined;
+  let disposed = false;
+  let promoted = false;
+  const assertOpen = () => {
+    params.signal?.throwIfAborted();
+    if (disposed) throw new Error('Connected Account materialization cleanup has closed');
+  };
+  const writeArtifacts: MaterializationArtifactWrite = async write => {
+    assertOpen();
+    const pending = write();
+    artifactWrite = pending;
+    try {
+      const result = await pending;
+      assertOpen();
+      return result;
+    } finally {
+      if (artifactWrite === pending) artifactWrite = undefined;
+    }
+  };
+  if (params.retainCleanup) {
+    await params.retainCleanup(async () => {
+      disposed = true;
+      const failures: unknown[] = [];
+      // Only a known host filesystem write is awaited. Credential transport may never settle.
+      try { await artifactWrite; } catch (error) { failures.push(error); }
+      try { await cleanupAttemptRoot(); } catch (error) { failures.push(error); }
+      if (promoted) {
+        try {
+          await createBestEffortCleanupDirectory(rootDir, undefined, { failureMode: 'reject' })();
+        } catch (error) { failures.push(error); }
+      }
+      forgetActiveAttemptIfCurrent(rootDir, attemptId);
+      if (failures.length > 0) throw new AggregateError(failures, 'Connected Account materialization artifact cleanup failed');
+    });
+  }
+  assertOpen();
   // Attempt roots are pre-promotion staging: removal here is observed
   // best-effort and any residue is bounded by the attempt orphan sweep. The
   // promoted-root cleanup below is the custody surface that publishes an
@@ -538,6 +603,8 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
     ? async () => await materializeQualifiedConnectedAccountLaunchForSpawn({
         ...params,
         rootDir: attemptRoot,
+        writeArtifacts,
+        waitForArtifactWrite: async () => { await artifactWrite; },
         previousMaterializedRoot: rootDir,
         snapshot: qualifiedPurposeBindingSnapshot,
         recordsByServiceId: params.recordsByServiceId,
@@ -554,6 +621,8 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
       ? async () => await materializeQualifiedConnectedAccountLaunchForSpawn({
           ...params,
           rootDir: attemptRoot,
+          writeArtifacts,
+          waitForArtifactWrite: async () => { await artifactWrite; },
           previousMaterializedRoot: rootDir,
           snapshot: qualifiedPurposeBindingSnapshot,
           recordsByServiceId: params.recordsByServiceId,
@@ -568,7 +637,7 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
 
   let materialized: ConnectedServicesMaterialization | null;
   try {
-    await ensurePrivateConnectedServiceMaterializedRoot(attemptRoot);
+    await writeArtifacts(() => ensurePrivateConnectedServiceMaterializedRoot(attemptRoot));
     materialized = await materializer();
   } catch (error) {
     dropAttemptRoot();
@@ -615,12 +684,12 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
     })
     ?? (materialized.cleanupOnFailure ? rootDir : null);
   try {
-    await ensurePrivateConnectedServiceMaterializedRoot(attemptRoot);
+    await writeArtifacts(() => ensurePrivateConnectedServiceMaterializedRoot(attemptRoot));
     if (
       targetMaterializedRoot
       && resolve(targetMaterializedRoot) !== resolve(rootDir)
     ) {
-      await ensurePrivateConnectedServiceMaterializedRoot(targetMaterializedRoot);
+      await writeArtifacts(() => ensurePrivateConnectedServiceMaterializedRoot(targetMaterializedRoot));
     }
   } catch (error) {
     await cleanupMaterialized();
@@ -630,17 +699,19 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
   }
 
   try {
-    await runSerializedMaterializationPromotion(rootDir, async () => {
+    await writeArtifacts(() => runSerializedMaterializationPromotion(rootDir, async () => {
+      assertOpen();
       assertActiveAttempt({ rootDir, attemptId, cleanupRoot: dropAttemptRoot });
       await replaceDirectoryAtomically({
         stagedDir: attemptRoot,
         targetDir: rootDir,
         afterPromote: () => {
+          promoted = true;
           assertActiveAttempt({ rootDir, attemptId, cleanupRoot: dropAttemptRoot });
         },
       });
       assertActiveAttempt({ rootDir, attemptId, cleanupRoot: dropAttemptRoot });
-    });
+    }));
     assertActiveAttempt({ rootDir, attemptId, cleanupRoot: dropAttemptRoot });
 
     const cleanupFinalRoot = createBestEffortCleanupDirectory(

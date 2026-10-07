@@ -1,5 +1,9 @@
 import * as React from 'react';
-import { BUILTIN_WORKFLOW_CATALOG_V1, type JsonValue, type RoleOverrideV1, type WorkflowPluginSourceV1, type WorkflowRunStartRequestV1 } from '@happier-dev/protocol';
+import { BUILTIN_WORKFLOW_CATALOG_V1 } from '@happier-dev/protocol/workflows/builtins/catalog';
+import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { RoleOverrideV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
+import type { WorkflowPluginSourceV1 } from '@happier-dev/protocol/workflows/workflowPluginSourceContractV1';
+import type { WorkflowRunStartRequestV1 } from '@happier-dev/protocol/workflows/actionsV1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';

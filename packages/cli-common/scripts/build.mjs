@@ -1,9 +1,11 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { withWorkspaceBundleLock } from '../../../scripts/workspaces/workspaceBundleLock.mjs';
+import { copyDirectoryContents } from '../../../scripts/workspaces/copyDirectoryContents.mjs';
 import { resolveWorkspacePackageBuildLockPath } from '../../../scripts/workspaces/workspacePackageBuildLock.mjs';
 import { createPackageDistBuildPlan } from './packageDistBuildPlan.mjs';
 import {
@@ -140,13 +142,7 @@ export async function buildPackageDistAtomically(options = {}) {
     now: options.now ?? Date.now(),
   });
   const workspaceOutputDir = String(commandEnv.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR ?? '').trim();
-  const publicationPlan = workspaceOutputDir
-    ? Object.freeze({
-        ...buildPlan,
-        distDir: resolve(workspaceOutputDir),
-        backupDir: `${resolve(workspaceOutputDir)}.hstack-backup.${options.pid ?? process.pid}.${options.now ?? Date.now()}`,
-      })
-    : buildPlan;
+  const outputDir = workspaceOutputDir ? resolve(workspaceOutputDir) : buildPlan.distDir;
   const lockPath = options.lockPath ?? buildPlan.lockPath;
   const lockTimeoutMs = options.lockTimeoutMs
     ?? parsePositiveInteger(commandEnv.HAPPIER_PACKAGE_DIST_BUILD_LOCK_TIMEOUT_MS, 240_000);
@@ -178,33 +174,36 @@ export async function buildPackageDistAtomically(options = {}) {
         packageJson,
       });
 
-      try {
-        const swapResult = await swapStagedPackageDistIntoPlace({
-          buildPlan: publicationPlan,
-          stageDistDir: stagedBuild.stageDistDir,
-        });
-        distMovedToBackup = Boolean(swapResult?.distMovedToBackup);
-        if (!workspaceOutputDir) {
+      if (workspaceOutputDir) {
+        await copyDirectoryContents(stagedBuild.stageDistDir, outputDir);
+      } else {
+        try {
+          const swapResult = await swapStagedPackageDistIntoPlace({
+            buildPlan,
+            stageDistDir: stagedBuild.stageDistDir,
+          });
+          distMovedToBackup = Boolean(swapResult?.distMovedToBackup);
           verifyPackageExportTargets({ packageDir, packageJson });
+        } catch (error) {
+          distMovedToBackup = distMovedToBackup || existsSync(buildPlan.backupDir);
+          await restorePackageDistFromBackup({
+            buildPlan,
+            distMovedToBackup,
+          });
+          throw error;
         }
-      } catch (error) {
-        distMovedToBackup = distMovedToBackup || existsSync(publicationPlan.backupDir);
-        await restorePackageDistFromBackup({
-          buildPlan: publicationPlan,
-          distMovedToBackup,
-        });
-        throw error;
       }
     } finally {
       if (stageRoot) {
-        await cleanupPackageDistBuildArtifacts({
-          buildPlan: publicationPlan,
-          stageRoot,
-        }).catch(() => {});
+        if (workspaceOutputDir) {
+          await rm(stageRoot, { recursive: true, force: true }).catch(() => {});
+        } else {
+          await cleanupPackageDistBuildArtifacts({ buildPlan, stageRoot }).catch(() => {});
+        }
       }
     }
 
-    const indexPath = join(publicationPlan.distDir, 'index.js');
+    const indexPath = join(outputDir, 'index.js');
     const marker = readFileSync(indexPath, 'utf8');
     if (!marker.trim()) {
       throw new Error(`cli-common build produced an empty dist entrypoint: ${relative(packageDir, indexPath)}`);
@@ -215,7 +214,7 @@ export async function buildPackageDistAtomically(options = {}) {
   // this package's workspace build lock and passes only the global bundle lease through
   // HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD; reacquiring the same package lock here would
   // self-deadlock the nested build. Mirror scripts/workspaces/buildTypeScriptPackageDist.mjs:
-  // build directly into the staged output when an outer publisher supplies it, and keep the
+  // copy verified compiler output into the supplied stage without swapping it, and keep the
   // ordinary workspace package lock for standalone builds.
   if (workspaceOutputDir) {
     return await runStagedBuild({

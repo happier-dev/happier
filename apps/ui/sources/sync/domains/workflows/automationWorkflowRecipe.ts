@@ -2,7 +2,7 @@ import {
     AutomationStoredWorkflowDefinitionRecipeV2ReadSchema,
     AutomationStoredWorkflowDefinitionV2Schema,
     AutomationStoredWorkflowDefinitionV2ReadSchema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 
 import { openAutomationRecipePayloadForAuthoring } from '@/sync/domains/automations/automationRecipeAuthoring';
 

@@ -1,1 +1,1 @@
-export { segmentSentencesForSynthesis } from '@happier-dev/protocol';
+export { segmentSentencesForSynthesis } from '@happier-dev/protocol/voice/speechText';

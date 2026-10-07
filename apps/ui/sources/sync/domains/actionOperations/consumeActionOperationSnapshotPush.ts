@@ -1,7 +1,7 @@
 import {
     ActionOperationSnapshotV1Schema,
     type ActionOperationSnapshotEphemeralV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/actions/operations/v1';
 
 import { actionOperationStore, type ActionOperationStore } from './actionOperationStore';
 import {

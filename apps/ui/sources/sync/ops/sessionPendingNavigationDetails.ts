@@ -1,6 +1,7 @@
 import type { Message } from '@happier-dev/session-core/messages';
 import { createReducer, reducer } from '@happier-dev/session-core/reducer';
-import { buildSessionMessagesPath, isSessionActionConfirmationRequest } from '@happier-dev/protocol';
+import { buildSessionMessagesPath } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
+import { isSessionActionConfirmationRequest } from '@happier-dev/protocol/sessions/metadata/sessionActionConfirmationsV1';
 import { resolvePermissionToolCallLocations } from '@/utils/sessions/permissions/resolvePermissionToolCallLocations';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';

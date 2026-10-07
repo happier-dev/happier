@@ -1,11 +1,9 @@
-import {
-    ComposerAttachmentDraftV1Schema,
-    StrictJsonValueSchema,
-    type ComposerCapabilitiesV1,
-    type ComposerRefV1,
-    type SessionDraftAddressV2,
-    type StrictJsonValue,
-} from '@happier-dev/protocol';
+import { ComposerAttachmentDraftV1Schema } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import type { ComposerCapabilitiesV1 } from '@happier-dev/protocol/plugins/ui/composer';
+import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef';
+import type { SessionDraftAddressV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
+import type { StrictJsonValue } from '@happier-dev/protocol/drafts/sessionDrafts';
 
 import {
     readComposerDraftDocumentChanges,

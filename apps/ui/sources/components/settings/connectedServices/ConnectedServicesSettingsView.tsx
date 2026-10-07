@@ -5,11 +5,9 @@ import { View } from 'react-native';
 import { useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet } from 'react-native-unistyles';
 import { useHappierCollectionLayout } from '@happier-dev/plugin-ui/presentation';
-import {
-  normalizeConnectedServiceCredentialHealthStatus,
-  type QualifiedConnectedAccountPurposeBindingTargetV1,
-  type QualifiedConnectedAccountRef,
-} from '@happier-dev/protocol';
+import { normalizeConnectedServiceCredentialHealthStatus } from '@happier-dev/protocol/connect/connected-service-schemas';
+import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
@@ -195,6 +193,7 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
               testID="connected-services-empty"
               kind="unavailable"
               size="page"
+              scene="connectAccount"
               title={t('connectedServicesSettings.emptyTitle')}
               reason={onlineMachineName
                 ? t('connectedServicesSettings.emptyNoServiceOnMachine', { machine: onlineMachineName })

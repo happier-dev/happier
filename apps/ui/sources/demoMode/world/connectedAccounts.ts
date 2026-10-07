@@ -1,5 +1,6 @@
 import type { ConnectedServicesDefaultAuthByAgentIdV1 } from '@happier-dev/protocol';
-import { buildQualifiedPluginContributionKey, ConnectedServiceAuthGroupPolicyV1Schema } from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { ConnectedServiceAuthGroupPolicyV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { CANONICAL_AGENTS_CORE } from '@happier-dev/agents';
 
 import { connectedServiceProfileKey } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';

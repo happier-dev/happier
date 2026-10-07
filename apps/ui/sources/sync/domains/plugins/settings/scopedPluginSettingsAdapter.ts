@@ -1,8 +1,5 @@
-import {
-    isBoundedPluginPerActiveServerValueV1,
-    type DaemonPluginSettingsMutation,
-    type DaemonPluginSettingsSnapshot,
-} from '@happier-dev/protocol';
+import { isBoundedPluginPerActiveServerValueV1 } from '@happier-dev/protocol/plugins/contributions/settings';
+import type { DaemonPluginSettingsMutation, DaemonPluginSettingsSnapshot } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import type {
     MachinePluginSecretDeleteResult,

@@ -7,7 +7,7 @@ import {
     type SessionListRenderableSession,
 } from '@/sync/domains/session/listing/sessionListRenderable';
 import { areSessionListRenderableExternalSessionIdentitiesEqual } from '@/sync/domains/session/listing/sessionListRenderableMetadataComparison';
-import { parseSessionRuntimeActivityProjectionFields } from '@happier-dev/protocol';
+import { parseSessionRuntimeActivityProjectionFields } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import { normalizeSessionAccessProjection } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 

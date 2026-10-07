@@ -39,7 +39,7 @@ import {
 import { FindHighlightedText } from '@/components/ui/text/FindHighlightedText';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { findExternalSessionContentMatchRange } from '@happier-dev/protocol';
+import { findExternalSessionContentMatchRange } from '@happier-dev/protocol/sessions/external/contentSearchMatch';
 import type { Theme } from '@/theme';
 import { t } from '@/text';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';

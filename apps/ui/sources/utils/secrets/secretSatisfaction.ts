@@ -4,5 +4,4 @@ export {
     type SecretSatisfactionParams,
     type SecretSatisfactionResult,
     type SecretSatisfactionSource,
-} from '@happier-dev/protocol';
-
+} from '@happier-dev/protocol/profiles/secretSatisfaction';

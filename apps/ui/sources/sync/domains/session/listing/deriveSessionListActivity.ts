@@ -1,8 +1,5 @@
-import {
-    SessionAwarenessOperationalPrimaryV1Schema,
-    type SessionAwarenessOperationalPrimaryV1,
-    type SessionPersonalAttentionReasonV1,
-} from '@happier-dev/protocol';
+import { SessionAwarenessOperationalPrimaryV1Schema, type SessionAwarenessOperationalPrimaryV1 } from '@happier-dev/protocol/sessions/awareness/projectionV1';
+import type { SessionPersonalAttentionReasonV1 } from '@happier-dev/protocol/sessions/personal/attention';
 
 export type SessionListSecondaryLineMode = 'status' | 'path';
 export type SessionListAttentionState =

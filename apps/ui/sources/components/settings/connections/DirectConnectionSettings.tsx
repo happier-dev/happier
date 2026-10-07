@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { PeerMediationPreferencesV1Schema, type FeatureId, type PeerMediationPreferencesV1 } from '@happier-dev/protocol';
+import { PeerMediationPreferencesV1Schema, type PeerMediationPreferencesV1 } from '@happier-dev/protocol/account/settings/peerMediationPreferencesV1';
+import type { FeatureId } from '@happier-dev/protocol/features/catalog';
 
 import { ACCOUNT_SETTINGS } from '@/components/settings/account/accountSettings';
 import { SettingRow } from '@/components/settings/shell/SettingRow';

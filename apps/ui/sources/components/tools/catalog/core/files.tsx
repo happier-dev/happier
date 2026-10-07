@@ -11,7 +11,7 @@ import {
     ReadInputV2Schema,
     ReadResultV2Schema,
     WriteInputV2Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/tools/v2/schemas';
 
 export const coreFileTools = {
     'Read': {

@@ -5,7 +5,7 @@ import {
     DaemonLocalServicePreviewRevokeResponseV1Schema,
     DaemonLocalServicePreviewSnapshotRequestV1Schema,
     DaemonLocalServicePreviewSnapshotResponseV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/local/services/preview/v1';
 import { isRpcMethodNotFoundResult, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
     isRpcMethodNotAvailableError,

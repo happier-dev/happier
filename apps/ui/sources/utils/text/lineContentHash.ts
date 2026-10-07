@@ -3,7 +3,7 @@ import {
     isLineContentHashV1,
     normalizeLineContentForHashV1,
     type LineContentHashV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/workspace/anchors/v1';
 
 export type LineContentHash = LineContentHashV1;
 

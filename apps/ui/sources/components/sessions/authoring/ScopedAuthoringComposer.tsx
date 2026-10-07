@@ -1,4 +1,4 @@
-import { pluginJsonValuesEqual } from '@happier-dev/protocol';
+import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import type {
     ComposerAttachmentDraftV1,
     ComposerSnapshotV1,

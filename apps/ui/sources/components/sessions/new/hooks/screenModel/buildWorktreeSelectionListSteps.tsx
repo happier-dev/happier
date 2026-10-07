@@ -9,7 +9,9 @@ import type {
 } from '@/components/ui/selectionList';
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import { repoScmBranchService } from '@/scm/repository/repoScmBranchService';
-import { buildWorktreeRelativePath, type ScmBranchListEntry, type ScmWorktree } from '@happier-dev/protocol';
+import { buildWorktreeRelativePath } from '@happier-dev/protocol/scm/worktreeName';
+import type { ScmBranchListEntry } from '@happier-dev/protocol/scm/branches';
+import type { ScmWorktree } from '@happier-dev/protocol/scm/workingSnapshot';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { normalizeFileSystemPath } from '@/sync/domains/fileSystem/normalizeFileSystemPath';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';

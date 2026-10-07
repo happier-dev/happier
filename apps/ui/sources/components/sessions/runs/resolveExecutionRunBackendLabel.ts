@@ -1,7 +1,8 @@
-import { readBackendTargetRefV2, type AcpCatalogSettingsV1, type BackendTargetRefV2, type BackendTargetRefV2Input } from '@happier-dev/protocol';
+import { readBackendTargetRefV2, type BackendTargetRefV2, type BackendTargetRefV2Input } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { AcpCatalogSettingsV1 } from '@happier-dev/protocol/acp/catalog/settingsV1';
 
 import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
-import { normalizeAcpCatalogSettingsV1 } from '@happier-dev/protocol';
+import { normalizeAcpCatalogSettingsV1 } from '@happier-dev/protocol/acp/catalog/catalogMutationsV1';
 import { storage } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 

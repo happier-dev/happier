@@ -1,33 +1,20 @@
-import {
-    PluginInvocableActionIdSchema,
-    PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE,
-    PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE,
-    buildQualifiedPluginContributionKey,
-    createPluginActionInvocation,
-    createPluginActionPresentUserGate,
-    formatQualifiedPluginActionId,
-    pluginActionRequiresPresentUserIntent,
-    pluginJsonValuesEqual,
-    pluginSourceCustodyV1Equal,
-    projectPluginActionUnavailableOutcomeCode,
-    readPluginActionFailureAuthorPayload,
-    type ActionExecuteResult,
-    type ActionExecutorContext,
-    type ActionId,
-    type ActionOperationDeclarationV1,
-    type DaemonPluginStructuredMessageActionInvocationV1,
-    type DaemonPluginStructuredMessageActionMountedBinding,
-    type InteractionTransientRequesterV1,
-    type MessageActionReferenceV1,
-    PluginMachineMaterializationRefV1Schema,
-    type PluginJsonValueV2,
-    type PluginContributionIdentityV1,
-    type PluginProjectedActionV2,
-    type PluginSourceCustodyV1,
-    type PluginActionCurrentIntentRequest,
-    type PluginActionCurrentIntentResult,
-    type PluginDiagnosticRemediationV1,
-} from '@happier-dev/protocol';
+import { PluginInvocableActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
+import { PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE, PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE, createPluginActionInvocation, createPluginActionPresentUserGate, pluginActionRequiresPresentUserIntent, projectPluginActionUnavailableOutcomeCode, readPluginActionFailureAuthorPayload, type PluginActionCurrentIntentRequest, type PluginActionCurrentIntentResult } from '@happier-dev/protocol/plugins/actions/invocation';
+import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
+import { pluginSourceCustodyV1Equal, type PluginSourceCustodyV1 } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import type { ActionOperationDeclarationV1 } from '@happier-dev/protocol/actions/operations/v1';
+import type { DaemonPluginStructuredMessageActionInvocationV1, DaemonPluginStructuredMessageActionMountedBinding } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
+import type { InteractionTransientRequesterV1 } from '@happier-dev/protocol/plugins/interactions/transientV1';
+import type { MessageActionReferenceV1 } from '@happier-dev/protocol/sessions/messages/messageActionReferenceV1';
+import { PluginMachineMaterializationRefV1Schema } from '@happier-dev/protocol/plugins/availability/materializationRefV1';
+import type { PluginJsonValueV2 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
+import type { PluginProjectedActionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { PluginDiagnosticRemediationV1 } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginReference } from '@happier-dev/plugin-sdk';
 import { qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';

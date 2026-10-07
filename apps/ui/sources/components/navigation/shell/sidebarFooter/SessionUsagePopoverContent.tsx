@@ -12,11 +12,9 @@ import { resolveQuotaTone } from '@/sync/domains/connectedServices/resolveQuotaT
 import { resolveSessionUsageAccount } from '@/sync/domains/connectedServices/resolveSessionUsageAccount';
 import { useProfile } from '@/sync/store/hooks';
 import { t } from '@/text';
-import {
-    buildQualifiedPluginContributionKey,
-    type AccountProfile,
-    type ConnectedServiceAuthGroupPolicyV1,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { AccountProfile } from '@happier-dev/protocol/account/profile';
+import type { ConnectedServiceAuthGroupPolicyV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 
 import {
     SidebarUsagePopoverView,

@@ -1,5 +1,5 @@
 import Fuse from 'fuse.js';
-import { WORKSPACE_FILE_LIST_MAX_RESULTS, type DaemonWorkspaceFileListErrorCode } from '@happier-dev/protocol';
+import { WORKSPACE_FILE_LIST_MAX_RESULTS, type DaemonWorkspaceFileListErrorCode } from '@happier-dev/protocol/machines/workspaceFiles';
 
 import type { FileSearchItem } from '@/sync/domains/fileSystem/fileSearchItem';
 import {

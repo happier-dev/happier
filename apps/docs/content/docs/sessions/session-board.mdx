@@ -59,11 +59,18 @@ as plaintext.
 ## Configured widgets in development
 
 The 0.3 development Gallery supports independently configured copies. **Set
-up** appears when inputs are missing or ambiguous, with inputs before the
-preview; a fully bound choice can be added directly. **Edit inputs** changes
+up** appears when inputs are missing or ambiguous, or the widget offers more
+than one size, with inputs before the preview. A fully bound choice with zero
+or one size can be added directly. **Edit inputs** changes
 that copy. A widget can follow context or pin a different Session, whose own
 access and machine serve the read. An unavailable or revoked pin asks for
 repair rather than switching to the Session you are viewing.
+
+Each widget offers the sizes its definition declares for the Board. Choosing a
+size sets width and height intent through the Board's existing layout; a narrow
+window reflows the item while retaining that choice. The Companion stays
+linear. Plugin authors can define these choices in their
+[widget size declaration](/plugins/ui#declare-useful-widget-sizes).
 
 Reusable Account definitions appear under **Your widgets**. Editing a
 definition affects its references; **Duplicate** makes independent content.

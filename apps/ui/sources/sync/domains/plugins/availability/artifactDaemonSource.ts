@@ -2,7 +2,7 @@ import {
     DaemonPluginUiArtifactBytesReadRequestSchema,
     DaemonPluginUiArtifactBytesReadResponseSchema,
     type DaemonPluginUiArtifactBytesReadResponse,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginUiArtifactDigestV1 } from '@happier-dev/protocol/plugins/ui';
 import { isRpcMethodNotFoundResult, RPC_METHODS } from '@happier-dev/protocol/rpc';
 

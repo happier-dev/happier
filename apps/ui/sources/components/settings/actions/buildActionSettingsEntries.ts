@@ -1,16 +1,9 @@
-import {
-    ActionSurfaceSchema,
-    ActionUiPlacementSchema,
-    formatQualifiedPluginActionId,
-    listActionSpecs,
-    parseQualifiedPluginActionId,
-    type ActionId,
-    type ActionSettingsActionId,
-    type ActionSurfaces,
-    type ActionUiPlacement,
-    type ActionsSettingsV1,
-    type QualifiedPluginActionId,
-} from '@happier-dev/protocol';
+import { ActionSurfaceSchema, type ActionSurfaces } from '@happier-dev/protocol/actions/metadata';
+import { ActionUiPlacementSchema, type ActionUiPlacement } from '@happier-dev/protocol/actions/actionUiPlacements';
+import { formatQualifiedPluginActionId, parseQualifiedPluginActionId, type QualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import type { ActionSettingsActionId, ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 
 import {
     getActionSettingsTargetContext,

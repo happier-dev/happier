@@ -6,14 +6,8 @@ import {
 import { HappyError } from '@/utils/errors/errors';
 import { backoff } from '@/utils/timing/time';
 
-import {
-    ProviderAccountUsageRecordIdSchema,
-    ProviderAccountUsageSnapshotV1Schema,
-    QualifiedProviderAccountUsageReadErrorV4Schema,
-    QualifiedProviderAccountUsageRecordResponseV4Schema,
-    type ProviderAccountUsageRecordId,
-    type ProviderAccountUsageSnapshotV1,
-} from '@happier-dev/protocol';
+import { ProviderAccountUsageRecordIdSchema, ProviderAccountUsageSnapshotV1Schema, type ProviderAccountUsageRecordId, type ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
+import { QualifiedProviderAccountUsageReadErrorV4Schema, QualifiedProviderAccountUsageRecordResponseV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { z } from 'zod';
 
 function extractErrorCode(json: unknown): string | null {

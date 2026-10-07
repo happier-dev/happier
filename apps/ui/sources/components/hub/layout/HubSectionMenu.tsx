@@ -12,13 +12,15 @@ import {
     buildWidgetFrameStyleActions,
     buildWidgetInstanceActions,
     buildWidgetMoveActions,
-    buildWidgetWidthActions,
+    buildWidgetSizeActions,
     orderWidgetMenu,
 } from '@/components/widgets/frame/widgetFrameMenu';
 
 import { homeHubSectionTitle, isHomeHubCardSection } from '../homeHubSections';
 import type { HomeHubSection } from './homeHubLayout';
 import type { HomeHubLayout } from './useHomeHubLayout';
+import { normalizeWidgetSizeForSurfaceV1, resolveWidgetSizeChoicesV1 } from '@happier-dev/protocol/widgets';
+import { renderWidgetSizeMenuSection, stepWidgetSizeControl, type WidgetSizeControl } from '@/components/widgets/frame/WidgetSizeControl';
 
 /** Every action sits in the overflow menu: the header shows one quiet "⋯". */
 const ALWAYS_OVERFLOW = Number.POSITIVE_INFINITY;
@@ -62,10 +64,13 @@ export function HubSectionMenu(props: Readonly<{
         })
         : [];
 
-    // A widget's width on Home: half (two to a row) or the whole row (lab dlayout H2).
-    const widthActions = section.kind === 'widget'
-        ? buildWidgetWidthActions({ width: section.width, onSet: (width) => { void layout.setWidth(section.instance.id, width).catch(() => {}); } })
-        : [];
+    // The candidate's useful variants intersected with Home's one presentation policy.
+    const sizes = section.kind === 'widget' ? resolveWidgetSizeChoicesV1('home', section.widget?.sizeDeclaration) : null;
+    const sizeControl: WidgetSizeControl | undefined = section.kind === 'widget' && section.widget && sizes?.defaultSize ? {
+        surface: 'home', sizes: sizes.sizes,
+        size: normalizeWidgetSizeForSurfaceV1('home', section.size, section.widget?.sizeDeclaration)!,
+        onSet: size => { void layout.setSize(section.instance.id, size).catch(() => {}); },
+    } : undefined;
 
     return (
         <View
@@ -82,9 +87,11 @@ export function HubSectionMenu(props: Readonly<{
                 compactActionIds={[]}
                 overflowTriggerTestID={`home-hub.${section.id}.menuTrigger`}
                 overflowTriggerAccessibilityLabel={`${section.kind === 'widget' ? t('widgetAdd.widgetOptions') : t('settingsOverview.homeSectionOptions')}: ${title}`}
+                onOverflowTriggerKeyDown={key => stepWidgetSizeControl(sizeControl, key)}
+                renderOverflowSection={({ id }) => renderWidgetSizeMenuSection(sizeControl, id, `home-hub.${section.id}.size`)}
                 actions={orderWidgetMenu({
                     instance: buildWidgetInstanceActions({ editInputs: props.editInputs, onRename: props.onRename }),
-                    width: widthActions,
+                    size: buildWidgetSizeActions(sizeControl),
                     frame: frameActions,
                     move: buildWidgetMoveActions({
                         index: props.index,

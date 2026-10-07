@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { uriToFilePath } from '@/platform/fileUri';
-import { getKokoroVoiceCatalog, resolveKokoroModelConfig } from '@happier-dev/protocol';
+import { getKokoroVoiceCatalog, resolveKokoroModelConfig } from '@happier-dev/protocol/voice/modelPacks/kokoro';
 import { getOptionalHappierSherpaNativeModule } from '@happier-dev/sherpa-native';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 

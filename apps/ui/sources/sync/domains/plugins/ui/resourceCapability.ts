@@ -1,7 +1,7 @@
 import {
     PluginUiResourceBindingCapabilityV1Schema,
     type PluginUiResourceBindingCapabilityV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import type { PluginUiPhysicalSurfacePlacementProjection } from './projection';
 

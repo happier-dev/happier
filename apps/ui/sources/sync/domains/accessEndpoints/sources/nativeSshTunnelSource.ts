@@ -1,5 +1,5 @@
 import type { NativeSshTunnelSnapshot, NativeSshTunnelStatus } from '@/sync/runtime/nativeSshTunnels/types';
-import { isLoopbackHostname } from '@happier-dev/protocol';
+import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
 
 import type { AccessEndpoint, AccessEndpointDiagnostic, AccessEndpointStatus } from '../model';
 import { createScopedAccessEndpointRemediationAction } from '../remediation';

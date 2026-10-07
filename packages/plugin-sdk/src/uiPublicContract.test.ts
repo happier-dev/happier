@@ -432,8 +432,8 @@ describe('UI/testing public type contract', () => {
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
 // The declaration projection preserves the complete canonical layout, including
-// its closed mode, source-section and widget-width vocabularies.
+// its closed mode, source-section and widget-size vocabularies.
 expectTypeOf<WorkBoardPreviewLayoutV1>().toEqualTypeOf<CanonicalWorkBoardPreviewLayoutV1>();
 expectTypeOf<'unknown'>().not.toMatchTypeOf<WorkBoardPreviewLayoutV1['mode']>();
 expectTypeOf<'finished'>().not.toMatchTypeOf<WorkBoardPreviewLayoutV1['source']['sections'][number]>();
-expectTypeOf<3>().not.toMatchTypeOf<WorkBoardPreviewLayoutV1['widgets'][number]['width']>();
+expectTypeOf<'unknown'>().not.toMatchTypeOf<WorkBoardPreviewLayoutV1['widgets'][number]['size']>();

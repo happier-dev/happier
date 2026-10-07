@@ -291,16 +291,16 @@ test('buildTypeScriptPackageDist emits incremental QA output while strict and pu
   assert.ok(existsSync(join(cacheRoot, qaCache, '.tsbuildinfo')), 'dev emit stays incremental without requiring package config changes');
 });
 
-test('buildTypeScriptPackageDist produces consumable native QA emit and refreshes it incrementally', async (t) => {
+test('buildTypeScriptPackageDist produces consumable native QA and source-dev emit and refreshes it incrementally', async (t) => {
   const packageDir = await createPackageFixture(t, 'build-ts-package-native-qa-emit');
   const sourcePath = join(packageDir, 'src', 'index.ts');
   const options = {
     packageDir, args: ['-p', 'tsconfig.json'], stdio: 'ignore',
     env: { HAPPIER_WORKSPACE_BUILD_MODE: 'qa-runtime', npm_lifecycle_event: 'build' },
   };
-  for (const value of [1, 2]) {
+  for (const [value, mode] of [[1, 'qa-runtime'], [2, 'qa-runtime'], [3, 'source-dev']]) {
     await writeFile(sourcePath, `export const built: string = ${value};\n`);
-    await buildTypeScriptPackageDist(options);
+    await buildTypeScriptPackageDist({ ...options, env: { ...options.env, HAPPIER_WORKSPACE_BUILD_MODE: mode } });
     const emitted = await import(`${pathToFileURL(join(packageDir, 'dist', 'index.js')).href}?value=${value}`);
     assert.equal(emitted.built, value);
     assert.match(await readFile(join(packageDir, 'dist', 'index.d.ts'), 'utf-8'), /built: string/);
@@ -309,6 +309,10 @@ test('buildTypeScriptPackageDist produces consumable native QA emit and refreshe
   const caches = await readdir(cacheRoot);
   assert.equal(caches.length, 1);
   assert.ok(existsSync(join(cacheRoot, caches[0], '.tsbuildinfo')));
+  const retained = await hashFixtureDist(join(packageDir, 'dist'));
+  await assert.rejects(buildTypeScriptPackageDist({ ...options,
+    env: { HAPPIER_WORKSPACE_BUILD_MODE: 'source-dev', npm_lifecycle_event: 'prepack' } }), /TypeScript package build failed/);
+  assert.equal(await hashFixtureDist(join(packageDir, 'dist')), retained);
 });
 
 test('buildTypeScriptPackageDist removes stale outputs whose source no longer exists', async (t) => {

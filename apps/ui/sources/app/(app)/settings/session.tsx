@@ -10,7 +10,7 @@ import {
     DEFAULT_CODING_PROMPT_BEHAVIOR_V1,
     type CodingPromptBehaviorV1,
     type CodingPromptSessionTitleUpdatesModeV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/prompts/codingPromptBehaviorV1';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';

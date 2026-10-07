@@ -7,7 +7,7 @@ import {
     buildAccountStoredContentCompatibilityHttpHeadersV1,
     type AccountStoredContentCompatibilityDeclarationV1,
     type AccountStoredContentCompatibilityServerRequirementsV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 
 const serverRequirementsByUrl = new Map<
     string,

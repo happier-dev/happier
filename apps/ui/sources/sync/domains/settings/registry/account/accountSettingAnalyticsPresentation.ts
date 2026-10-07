@@ -1,8 +1,5 @@
-import {
-    ACCOUNT_SETTING_DEFINITIONS,
-    type AccountSettingKey,
-    type SettingAnalyticsMetadata,
-} from '@happier-dev/protocol';
+import { ACCOUNT_SETTING_DEFINITIONS, type AccountSettingKey } from '@happier-dev/protocol/account/settings/accountSettings';
+import type { SettingAnalyticsMetadata } from '@happier-dev/protocol/settings/registry/settingDefinition';
 
 /**
  * UI-only analytics and presentation metadata for the Protocol-owned Account Settings catalog.

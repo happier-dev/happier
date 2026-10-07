@@ -1,4 +1,4 @@
-import { readSessionDirectoryKind } from '@happier-dev/protocol';
+import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';

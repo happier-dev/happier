@@ -1,4 +1,4 @@
-import { SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '@happier-dev/protocol';
+import { SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 
 import type { Session } from '../state/storageTypes';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';

@@ -1,8 +1,5 @@
-import {
-    openSealedProviderAccountUsageSnapshot,
-    type ProviderAccountUsageSnapshotV1,
-    type SealedProviderAccountUsageSnapshotV1,
-} from '@happier-dev/protocol';
+import { openSealedProviderAccountUsageSnapshot, type SealedProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/accountUsage';
+import type { ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '../resolveAccountScopedCryptoMaterialFromCredentials';

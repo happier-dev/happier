@@ -1,55 +1,15 @@
 import { DEFAULT_LANGUAGE, SUPPORTED_LANGUAGE_CODES, SUPPORTED_LANGUAGES, getLanguageEnglishName, getLanguageNativeName, type SupportedLanguage } from './_all';
 import type { Translations } from './_types';
 import { getDeviceLocales } from './deviceLocales';
-import { ca } from './translations/ca';
-import { de } from './translations/de';
-import { en } from './translations/en';
-import { es } from './translations/es';
-import { fr } from './translations/fr';
-import { it } from './translations/it';
-import { ja } from './translations/ja';
-import { pl } from './translations/pl';
-import { pt } from './translations/pt';
-import { ru } from './translations/ru';
-import { zhHans } from './translations/zh-Hans';
-import { zhHant } from './translations/zh-Hant';
-import {
-    BUNDLED_PLUGIN_TRANSLATIONS,
-    type BundledPluginTranslationKey,
-} from './bundledPluginTranslations.generated';
+import { preloadLocaleBundle, readLocaleBundle } from './localeBundlesSync';
+import type { BundledPluginTranslationKey } from './bundledPluginTranslations.generated';
+import { BUNDLED_PLUGIN_TRANSLATIONS } from './bundledPluginTranslations.generated';
 
 export { DEFAULT_LANGUAGE, SUPPORTED_LANGUAGE_CODES, SUPPORTED_LANGUAGES, getLanguageEnglishName, getLanguageNativeName, type SupportedLanguage };
 
 type TranslationFunction = (...args: any[]) => string;
 type TranslationLeaf = string | TranslationFunction;
 type TranslationNode = Record<string, unknown>;
-
-/**
- * Locale trees are held behind thunks, not as a module-scope object of the imported bindings.
- *
- * `metro.config.js` enables `inlineRequires`, which defers an imported binding's `require` to its
- * reference site — but a module-scope object literal *is* that reference, so the previous shape
- * evaluated every locale module (megabytes of source) as soon as anything imported `t()`, i.e.
- * before the app could paint. With thunks each locale's `require` is deferred to the first lookup
- * for that language: in practice the active language plus the English fallback.
- *
- * Where inline requires are not applied (vitest) the thunks are ordinary closures and behaviour is
- * identical, so this degrades gracefully if that Metro flag is ever turned off.
- */
-const TRANSLATIONS_BY_LANGUAGE = {
-    en: () => en,
-    ru: () => ru,
-    pl: () => pl,
-    es: () => es,
-    fr: () => fr,
-    it: () => it,
-    pt: () => pt,
-    ca: () => ca,
-    de: () => de,
-    'zh-Hans': () => zhHans,
-    'zh-Hant': () => zhHant,
-    ja: () => ja,
-} as const satisfies Record<SupportedLanguage, () => TranslationNode>;
 
 type JoinPath<Prefix extends string, Key extends string> = Prefix extends '' ? Key : `${Prefix}.${Key}`;
 
@@ -90,6 +50,7 @@ export type TranslationKeyNoParams = {
 }[TranslationKey];
 
 let preferredLanguageOverride: SupportedLanguage | null = null;
+let requestedLanguageOverride: SupportedLanguage | null = null;
 let cachedDeviceLanguage: SupportedLanguage | null = null;
 
 function isTranslationFunction(value: unknown): value is TranslationFunction {
@@ -152,8 +113,7 @@ function resolveActiveLanguage(): SupportedLanguage {
 }
 
 function getTranslationTree(language: SupportedLanguage): TranslationNode {
-    const resolve = TRANSLATIONS_BY_LANGUAGE[language];
-    return (resolve ? resolve() : en) as TranslationNode;
+    return readLocaleBundle(language)?.host ?? {};
 }
 
 function getValueAtPath(root: TranslationNode, key: string): unknown {
@@ -173,14 +133,14 @@ function resolveRawTranslationValue(key: string): unknown {
     const activeValue = getValueAtPath(getTranslationTree(activeLanguage) as TranslationNode, key);
     if (activeValue !== undefined) return activeValue;
 
-    const englishValue = getValueAtPath(en as TranslationNode, key);
+    const englishValue = getValueAtPath(getTranslationTree(DEFAULT_LANGUAGE), key);
     if (englishValue !== undefined) return englishValue;
 
-    const activePluginBundle = BUNDLED_PLUGIN_TRANSLATIONS[activeLanguage as keyof typeof BUNDLED_PLUGIN_TRANSLATIONS];
+    const activePluginBundle = readLocaleBundle(activeLanguage)?.plugins;
     const activePluginValue = (activePluginBundle as Readonly<Record<string, string>> | undefined)?.[key];
     if (activePluginValue !== undefined) return activePluginValue;
 
-    return (BUNDLED_PLUGIN_TRANSLATIONS.en as Readonly<Record<string, string>> | undefined)?.[key];
+    return readLocaleBundle(DEFAULT_LANGUAGE)?.plugins[key];
 }
 
 function resolveStringValue(key: string): string {
@@ -218,7 +178,7 @@ let allTranslationKeysCache: TranslationKey[] | null = null;
 function readAllTranslationKeys(): TranslationKey[] {
     if (!allTranslationKeysCache) {
         allTranslationKeysCache = [
-            ...collectTranslationKeys(en as TranslationNode),
+            ...collectTranslationKeys(getTranslationTree(DEFAULT_LANGUAGE)),
             ...Object.values(BUNDLED_PLUGIN_TRANSLATIONS).flatMap((bundle) => Object.keys(bundle)),
         ] as TranslationKey[];
     }
@@ -240,14 +200,45 @@ export function getAllTranslationKeys(): TranslationKey[] {
 }
 
 export function setPreferredLanguageFromSettings(value: unknown): void {
+    requestedLanguageOverride = normalizePreferredLanguage(value);
+    const language = requestedLanguageOverride ?? resolveLanguageFromDeviceLocales();
+    // An unloaded web chunk must never replace the current translated UI with fallback copy.
+    if (readLocaleBundle(language)) preferredLanguageOverride = requestedLanguageOverride;
+}
+
+function normalizePreferredLanguage(value: unknown): SupportedLanguage | null {
     if (typeof value === 'string') {
         const trimmed = value.trim();
         if (trimmed && isSupportedLanguage(trimmed)) {
-            preferredLanguageOverride = trimmed;
-            return;
+            return trimmed;
         }
     }
-    preferredLanguageOverride = null;
+    return null;
+}
+
+/** Explicit requests (such as a voice language) load copy without changing the UI locale. */
+export async function preloadTranslations(language?: SupportedLanguage): Promise<void> {
+    if (language) {
+        await preloadLocaleBundle(language);
+        return;
+    }
+    // Settings can change while a chunk is in flight. Boot exposes only the latest selected locale.
+    for (;;) {
+        const requested = requestedLanguageOverride;
+        const selected = requested ?? resolveLanguageFromDeviceLocales();
+        await preloadLocaleBundle(selected);
+        if (requestedLanguageOverride !== requested) continue;
+        preferredLanguageOverride = requested;
+        return;
+    }
+}
+
+export async function preloadTranslationsForSettings(value: unknown): Promise<void> {
+    await preloadLocaleBundle(normalizePreferredLanguage(value) ?? resolveLanguageFromDeviceLocales());
+}
+
+export function areTranslationsReadyForSettings(value: unknown): boolean {
+    return readLocaleBundle(normalizePreferredLanguage(value) ?? resolveLanguageFromDeviceLocales()) !== undefined;
 }
 
 export function getPreferredLanguage(): SupportedLanguage {

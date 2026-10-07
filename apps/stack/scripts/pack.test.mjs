@@ -9,7 +9,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as packModule from './pack.mjs';
 import {
   assertPhysicalPathWithinApprovedRoot,
-} from '@happier-dev/cli-common/workspaceRuntimeDependencies';
+  copyDirDereferenceContainedSync,
+  vendorRuntimeDependencyTree,
+} from '../../../packages/cli-common/workspaceRuntimeDependencies.mjs';
+import { mountCapturedWorkspaceDependencies } from '../../../scripts/workspaces/buildInputConvergence.mjs';
 import {
   analyzeBundledWorkspaceTarList,
   analyzeTarList,
@@ -2097,6 +2100,78 @@ test('createPackSandbox copies every internal workspace required by the packed p
   } finally {
     process.env.PATH = originalPath;
     if (sandboxRoot) await rm(sandboxRoot, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('captured workspace runtime vendoring approves its mounted source install but rejects foreign paths', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pack-test-capture-runtime-'));
+  const sourceDir = join(root, 'source');
+  const captureDir = join(root, 'capture');
+  const sourceAlias = join(root, 'source-alias');
+  const captureAlias = join(root, 'capture-alias');
+  const previousRepoDir = process.env.HAPPIER_STACK_REPO_DIR;
+  const previousIdentityDir = process.env.HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR;
+  const previousCaptureSourceDir = process.env.HAPPIER_WORKSPACE_CAPTURE_SOURCE_REPO_DIR;
+  try {
+    await mkdir(join(sourceDir, 'node_modules', 'tr46'), { recursive: true });
+    await mkdir(captureDir);
+    await writeFile(join(sourceDir, 'node_modules', 'tr46', 'package.json'), JSON.stringify({ name: 'tr46', version: '1.0.0' }));
+    await writeFile(join(sourceDir, 'node_modules', 'tr46', 'index.js'), 'module.exports = 46;\n');
+    await writeFile(join(captureDir, 'package.json'), JSON.stringify({ dependencies: { tr46: '^1.0.0' } }));
+    await symlink(sourceDir, sourceAlias, process.platform === 'win32' ? 'junction' : 'dir');
+    await symlink(captureDir, captureAlias, process.platform === 'win32' ? 'junction' : 'dir');
+    await mountCapturedWorkspaceDependencies({ sourceDir, captureDir, workspaceDirs: [] });
+    process.env.HAPPIER_STACK_REPO_DIR = captureAlias;
+    process.env.HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR = sourceAlias;
+    const destination = join(root, 'vendor');
+    const vendor = () => vendorRuntimeDependencyTree({
+      packageJsonPath: join(captureDir, 'package.json'),
+      destNodeModulesDir: destination,
+      dereferenceRootDir: captureDir,
+      copyResolvedPackage: ({ sourcePackageDir, destPackageDir, dereferenceRootDir }) => copyDirDereferenceContainedSync({
+        sourceDir: sourcePackageDir, destDir: destPackageDir, dereferenceRootDir,
+      }),
+    });
+    vendor();
+    assert.equal(await readFile(join(destination, 'tr46', 'index.js'), 'utf8'), 'module.exports = 46;\n');
+    assert.equal((await lstat(join(destination, 'tr46'))).isSymbolicLink(), false);
+    const { copyDirSafeSync } = await import('../../../packages/cli-common/src/workspaces/index.ts');
+    const alternativeDestination = join(root, 'non-replacing-copy');
+    const copyWithoutReplacing = () => copyDirSafeSync(join(captureDir, 'node_modules', 'tr46'), alternativeDestination, {
+      dereference: true, dereferenceRootDir: captureDir, force: false,
+    });
+    copyWithoutReplacing();
+    assert.equal(await readFile(join(alternativeDestination, 'index.js'), 'utf8'), 'module.exports = 46;\n');
+    // A worker/outer capture can retain the producer's identity while installing
+    // dependencies physically in its own tree. Admission must approve the tree
+    // actually mounted by the package-capture owner, not just its origin label.
+    process.env.HAPPIER_WORKSPACE_CAPTURE_SOURCE_REPO_DIR = sourceAlias;
+    process.env.HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR = join(root, 'unavailable-producer-identity');
+    vendor();
+    copyWithoutReplacing();
+    const foreignDir = join(root, 'source-neighbor');
+    await mkdir(foreignDir);
+    await writeFile(join(foreignDir, 'secret'), 'foreign');
+    await symlink(join(foreignDir, 'secret'), join(sourceDir, 'node_modules', 'tr46', 'escape'));
+    assert.throws(vendor, /escapes copy source root/);
+    assert.throws(copyWithoutReplacing, /escapes copy source root/);
+    assert.throws(() => assertPhysicalPathWithinApprovedRoot({
+      approvedRootDir: captureDir, sourcePath: foreignDir, dependencyName: 'foreign',
+    }), /outside the caller-approved root/);
+    // Inherited capture identity cannot widen a caller's narrower copy boundary.
+    assert.throws(() => assertPhysicalPathWithinApprovedRoot({
+      approvedRootDir: join(captureDir, 'node_modules'), sourcePath: sourceDir, dependencyName: 'foreign',
+    }), /outside the caller-approved root/);
+    delete process.env.HAPPIER_STACK_REPO_DIR;
+    assert.throws(vendor, /outside the caller-approved root/);
+  } finally {
+    if (previousRepoDir === undefined) delete process.env.HAPPIER_STACK_REPO_DIR;
+    else process.env.HAPPIER_STACK_REPO_DIR = previousRepoDir;
+    if (previousIdentityDir === undefined) delete process.env.HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR;
+    else process.env.HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR = previousIdentityDir;
+    if (previousCaptureSourceDir === undefined) delete process.env.HAPPIER_WORKSPACE_CAPTURE_SOURCE_REPO_DIR;
+    else process.env.HAPPIER_WORKSPACE_CAPTURE_SOURCE_REPO_DIR = previousCaptureSourceDir;
     await rm(root, { recursive: true, force: true });
   }
 });

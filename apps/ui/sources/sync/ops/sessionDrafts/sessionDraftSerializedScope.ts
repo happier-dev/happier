@@ -1,4 +1,4 @@
-import { pluginJsonValuesEqual } from '@happier-dev/protocol';
+import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { getSessionDraftDocumentField } from './sessionDraftDocumentFields';
 
 type SerializedSessionDraftScope = Readonly<Record<string, unknown> & { v: 1 | 2; replicas: Record<string, unknown> }>;

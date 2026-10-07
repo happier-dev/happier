@@ -1,4 +1,4 @@
-import { PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE } from '@happier-dev/protocol';
+import { PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
 import type {
     InteractionTransientRequesterV1,
     PluginActionCurrentIntentRequest,

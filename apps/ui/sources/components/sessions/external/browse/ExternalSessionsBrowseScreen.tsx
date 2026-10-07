@@ -1,13 +1,8 @@
 import * as React from 'react';
 import { openChatWithFindSeed } from '@/components/appShell/panes/fileFindSeedHandoff';
 import { View } from 'react-native';
-import {
-    readExternalSessionsSettingsV1,
-    removeExternalSessionsAutoLinkSourcePolicyV1,
-    upsertExternalSessionsAutoLinkSourcePolicyV1,
-    type ExternalSessionsAgentId,
-    type ExternalSessionsSource,
-} from '@happier-dev/protocol';
+import { readExternalSessionsSettingsV1, removeExternalSessionsAutoLinkSourcePolicyV1, upsertExternalSessionsAutoLinkSourcePolicyV1 } from '@happier-dev/protocol/sessions/external/followLifecycleV1';
+import type { ExternalSessionsAgentId, ExternalSessionsSource } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useOptionalAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
 import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';

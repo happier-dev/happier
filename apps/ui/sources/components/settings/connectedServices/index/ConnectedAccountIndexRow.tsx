@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { readBuiltInLegacyConnectedServiceIdForQualifiedService } from '@happier-dev/protocol';
+import { readBuiltInLegacyConnectedServiceIdForQualifiedService } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { useSetting } from '@/sync/domains/state/storage';
 import { connectedServiceProfileKey, resolveQualifiedConnectedAccountProfilePreference } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
 import { isConnectedServiceQuotaMeterVisible } from '@/sync/domains/connectedServices/connectedServiceQuotaMeterVisibility';

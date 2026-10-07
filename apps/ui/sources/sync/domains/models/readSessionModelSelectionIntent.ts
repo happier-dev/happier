@@ -2,7 +2,7 @@ import { resolveModelSelectionIntentFromSessionMetadata } from '@happier-dev/age
 import {
     SessionModelSelectionResolutionError,
     type SessionModelSelectionIntentV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/providers/model-selection';
 
 import { log } from '@/log';
 

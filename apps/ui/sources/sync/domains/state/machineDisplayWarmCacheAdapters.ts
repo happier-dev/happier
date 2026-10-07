@@ -1,5 +1,5 @@
 import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
-import { MachineKindFromLegacyProjectionSchema } from '@happier-dev/protocol';
+import { MachineKindFromLegacyProjectionSchema } from '@happier-dev/protocol/machines/machineKind';
 
 import type { MachineDisplayCacheEntryV1 } from './warmCachePersistence';
 

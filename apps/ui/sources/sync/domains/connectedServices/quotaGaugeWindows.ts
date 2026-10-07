@@ -1,4 +1,4 @@
-import { SESSION_PROVIDER_USAGE_GAUGE_WINDOW_MODES } from '@happier-dev/protocol';
+import { SESSION_PROVIDER_USAGE_GAUGE_WINDOW_MODES } from '@happier-dev/protocol/account/settings/accountSettings';
 
 export const QUOTA_GAUGE_WINDOW_MODES = SESSION_PROVIDER_USAGE_GAUGE_WINDOW_MODES;
 export type ConnectedServiceQuotaGaugeWindowMode = typeof QUOTA_GAUGE_WINDOW_MODES[number];

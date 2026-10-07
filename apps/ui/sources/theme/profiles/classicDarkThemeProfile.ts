@@ -18,7 +18,6 @@ export const classicDarkProfile = createBuiltInProfile('classicDark', 'Classic D
         'border.surface': 'transparent',
         'border.strong': '#3a3a3a',
         'border.modal': 'rgba(255, 255, 255, 0.1)',
-        'effect.surfaceHighlight': 'transparent',
         'chrome.header.background': '#202020',
         'chrome.header.foreground': '#ffffff',
         'text.primary': '#ffffff',

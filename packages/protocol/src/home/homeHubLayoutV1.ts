@@ -6,9 +6,10 @@ import { WidgetInstanceV1Schema as InstanceSchema, WidgetInputBindingsV1Schema a
 const WidgetInstanceV1Schema = z.lazy(() => InstanceSchema);
 const WidgetInputBindingsV1Schema = z.lazy(() => BindingsSchema);
 import { isSameWidgetDefinitionV1, widgetCandidateDefinitionV1, type WidgetCandidateIdentityV1 } from '../widgets/builtinWidgetDescriptorV1.js';
+import { WidgetGridSizeV1Schema, WIDGET_SIZE_POLICY_V1, normalizeWidgetSizeForSurfaceV1, type WidgetSizeDeclarationV1, type WidgetSizeV1 } from '../widgets/widgetPresentationV1.js';
 
 const id = z.string().min(1);
-const sectionSchema = z.object({ frameStyle: z.enum(['card', 'plain']).optional(), width: z.enum(['half', 'full']).optional() });
+const sectionSchema = z.object({ frameStyle: z.enum(['card', 'plain']).optional(), size: WidgetGridSizeV1Schema.optional() });
 const layoutShape = {
     v: z.literal(1), order: z.array(id), hidden: z.array(id), instances: z.array(WidgetInstanceV1Schema),
     sections: z.record(id, sectionSchema.strict()).optional(),
@@ -39,13 +40,13 @@ export const HomeHubLayoutIntentSchema = z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('setup_visibility'), stepId: z.string().trim().min(1), hidden: z.boolean() }).strict(),
     z.object({ kind: z.literal('restore_setup') }).strict(), z.object({ kind: z.literal('reset') }).strict(),
     z.object({ kind: z.literal('widget_add'), instance: WidgetInstanceV1Schema, position: positionSchema.optional(),
-        width: z.enum(['half', 'full']).optional(), frameStyle: z.enum(['card', 'plain']).optional() }).strict(),
+        size: WidgetGridSizeV1Schema.optional(), frameStyle: z.enum(['card', 'plain']).optional() }).strict(),
     z.object({ kind: z.literal('widget_remove'), instanceId: id, expectedInstance: WidgetInstanceV1Schema.optional(),
-        expectedPresentation: z.object({ width: z.enum(['half', 'full']).optional(), frameStyle: z.enum(['card', 'plain']).nullable(),
+        expectedPresentation: z.object({ size: WidgetGridSizeV1Schema.optional(), frameStyle: z.enum(['card', 'plain']).nullable(),
             nativeIndex: z.number().int().nonnegative(), hidden: z.boolean().optional() }).strict().optional() }).strict(),
     z.object({ kind: z.literal('widget_rename'), instanceId: id, displayName: z.string().trim().min(1).optional() }).strict(),
     z.object({ kind: z.literal('widget_inputs'), instanceId: id, bindings: WidgetInputBindingsV1Schema }).strict(),
-    z.object({ kind: z.literal('widget_width'), instanceId: id, width: z.enum(['half', 'full']) }).strict(),
+    z.object({ kind: z.literal('widget_size'), instanceId: id, size: WidgetGridSizeV1Schema }).strict(),
 ]);
 export type HomeHubLayoutIntent = z.infer<typeof HomeHubLayoutIntentSchema>;
 export type HomeHubBuiltinDefinition = Readonly<{ id: string; hideable: boolean; defaultHidden?: boolean; afterWidgets?: boolean; card?: boolean }>;
@@ -56,10 +57,12 @@ export const HOME_HUB_BUILTIN_DEFINITIONS: readonly HomeHubBuiltinDefinition[] =
     { id: 'machines', hideable: true, afterWidgets: true, defaultHidden: true },
     { id: 'usage', hideable: true, afterWidgets: true },
 ]);
-export type HomeHubWidgetInput = WidgetCandidateIdentityV1 & Readonly<{ key: string; homeDefault: 'shown' | 'available' }>;
+export type HomeHubWidgetInput = WidgetCandidateIdentityV1 & Readonly<{
+    key: string; homeDefault: 'shown' | 'available'; sizeDeclaration?: WidgetSizeDeclarationV1;
+}>;
 export type HomeHubSection<W extends HomeHubWidgetInput = HomeHubWidgetInput> =
     | Readonly<{ kind: 'builtin'; id: string; hidden: boolean; hideable: boolean; frameStyle?: 'card' | 'plain' }>
-    | Readonly<{ kind: 'widget'; id: string; instance: WidgetInstanceV1; widget?: W; hidden: false; hideable: true; width: 'half' | 'full'; frameStyle?: 'card' | 'plain' }>;
+    | Readonly<{ kind: 'widget'; id: string; instance: WidgetInstanceV1; widget?: W; hidden: false; hideable: true; size: WidgetSizeV1; frameStyle?: 'card' | 'plain' }>;
 export type ResolvedHomeHubLayout<W extends HomeHubWidgetInput = HomeHubWidgetInput> = Readonly<{ sections: readonly HomeHubSection<W>[]; available: readonly W[] }>;
 export function isHomeHubCardSection(section: HomeHubSection): boolean {
     return section.kind === 'widget' || HOME_HUB_BUILTIN_DEFINITIONS.find(builtin => builtin.id === section.id)?.card === true;
@@ -92,6 +95,12 @@ function placedIds(layout: HomeHubLayoutValue, builtins: readonly HomeHubBuiltin
     if (end < 0) placed.push(...added); else placed.splice(end, 0, ...added);
     return [...placed, ...builtins.filter(section => section.afterWidgets && missing(section)).map(section => section.id)];
 }
+/** Loaded descriptor metadata refines presentation only; the saved personal intent remains unchanged. */
+export function resolveHomeHubWidgetSizeV1(instance: WidgetInstanceV1, size: WidgetSizeV1 | undefined,
+    declaration?: WidgetSizeDeclarationV1): WidgetSizeV1 {
+    const declared = declaration ?? (instance.definition.kind === 'inline' ? instance.definition.definition.sizeDeclaration : undefined);
+    return normalizeWidgetSizeForSurfaceV1('home', size, declared)!;
+}
 export function resolveHomeHubLayout<W extends HomeHubWidgetInput>(layout: HomeHubLayoutValue, builtins: readonly HomeHubBuiltinDefinition[], widgets: readonly W[]): ResolvedHomeHubLayout<W> {
     const projected = instances(layout, widgets);
     const sectionById = new Map(builtins.map(section => [section.id, section]));
@@ -110,7 +119,8 @@ export function resolveHomeHubLayout<W extends HomeHubWidgetInput>(layout: HomeH
         if (!instance || layout.hidden.includes(sectionId)) continue;
         const definition = instance.definition;
         const widget = widgets.find(candidate => isSameWidgetDefinitionV1(widgetCandidateDefinitionV1(candidate), definition));
-        sections.push({ kind: 'widget', id: sectionId, instance, ...(widget ? { widget } : {}), hidden: false, hideable: true, width: layout.sections?.[sectionId]?.width ?? 'half', ...frame });
+        sections.push({ kind: 'widget', id: sectionId, instance, ...(widget ? { widget } : {}), hidden: false, hideable: true,
+            size: resolveHomeHubWidgetSizeV1(instance, layout.sections?.[sectionId]?.size, widget?.sizeDeclaration), ...frame });
     }
     return { sections, available: widgets };
 }
@@ -120,12 +130,12 @@ function materialize(layout: HomeHubLayoutValue, builtins: readonly HomeHubBuilt
     return { ...layout, instances: projected, order: placedIds(layout, builtins, projected), hidden: [...layout.hidden, ...stillOff] };
 }
 export type HomeHubWidgetPresentationV1 = Readonly<{
-    width: 'half' | 'full'; frameStyle: 'card' | 'plain' | null; nativeIndex: number; hidden: boolean;
+    size: WidgetSizeV1; frameStyle: 'card' | 'plain' | null; nativeIndex: number; hidden: boolean;
 }>;
 function captureMaterializedWidgetPresentation(layout: HomeHubLayoutValue, instanceId: string): HomeHubWidgetPresentationV1 {
     if (!layout.instances.some(instance => instance.id === instanceId)) throw new HomeHubMutationErrorV1('widget_instance_not_found');
     const presentation = layout.sections?.[instanceId];
-    return { width: presentation?.width ?? 'half', frameStyle: presentation?.frameStyle ?? null,
+    return { size: presentation?.size ?? WIDGET_SIZE_POLICY_V1.home.defaultSize, frameStyle: presentation?.frameStyle ?? null,
         nativeIndex: layout.order.indexOf(instanceId), hidden: layout.hidden.includes(instanceId) };
 }
 /** Captures native placement without persisting projected defaults or dropping unresolved order slots. */
@@ -214,7 +224,7 @@ export function applyHomeHubLayoutIntent(layout: HomeHubLayoutValue, builtins: r
             const base = materialize(layout, builtins, widgets);
             if (builtins.some(section => section.id === intent.instance.id) || base.instances.some(instance => instance.id === intent.instance.id)) throw new HomeHubMutationErrorV1('widget_instance_exists');
             const presentation = {
-                ...(intent.width ? { width: intent.width } : {}),
+                ...(intent.size ? { size: intent.size } : {}),
                 ...(intent.frameStyle ? { frameStyle: intent.frameStyle } : {}),
             };
             const next = { ...base, instances: [...base.instances, intent.instance], order: [...base.order.filter(id => id !== intent.instance.id), intent.instance.id], hidden: base.hidden.filter(id => id !== intent.instance.id),
@@ -232,7 +242,7 @@ export function applyHomeHubLayoutIntent(layout: HomeHubLayoutValue, builtins: r
                 const expected = intent.expectedPresentation;
                 const presentation = captureMaterializedWidgetPresentation(base, instance.id);
                 if (expected && (
-                    (expected.width !== undefined && expected.width !== presentation.width)
+                    (expected.size !== undefined && expected.size !== presentation.size)
                     || expected.frameStyle !== presentation.frameStyle
                     || expected.nativeIndex !== presentation.nativeIndex
                     || (expected.hidden !== undefined && expected.hidden !== presentation.hidden)
@@ -243,9 +253,9 @@ export function applyHomeHubLayoutIntent(layout: HomeHubLayoutValue, builtins: r
                 return { ...rest, instances: base.instances.filter(other => other.id !== instance.id), order: base.order.filter(id => id !== instance.id),
                     hidden: [...base.hidden.filter(id => id !== instance.id), ...(instance.id.startsWith('default:') ? [instance.id] : [])], ...(Object.keys(sections).length ? { sections } : {}) };
             }
-            if (intent.kind === 'widget_width') {
-                if ((layout.sections?.[instance.id]?.width ?? 'half') === intent.width) return layout;
-                return { ...base, sections: { ...base.sections, [instance.id]: { ...base.sections?.[instance.id], width: intent.width } } };
+            if (intent.kind === 'widget_size') {
+                if ((layout.sections?.[instance.id]?.size ?? WIDGET_SIZE_POLICY_V1.home.defaultSize) === intent.size) return layout;
+                return { ...base, sections: { ...base.sections, [instance.id]: { ...base.sections?.[instance.id], size: intent.size } } };
             }
             let next: WidgetInstanceV1;
             if (intent.kind === 'widget_inputs') next = { ...instance, bindings: intent.bindings };

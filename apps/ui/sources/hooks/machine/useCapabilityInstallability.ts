@@ -3,7 +3,7 @@ import * as React from 'react';
 import { machineCapabilitiesInvoke } from '@/sync/ops';
 import type { CapabilitiesInvokeRequest } from '@/sync/ops';
 import type { CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
-import { AsyncTtlCache } from '@happier-dev/protocol';
+import { AsyncTtlCache } from '@happier-dev/protocol/common/asyncTtlCache';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 export type CapabilityInstallability =

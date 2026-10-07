@@ -1,4 +1,4 @@
-import { SERVER_CONFIG } from '@happier-dev/protocol';
+import { SERVER_CONFIG } from '@happier-dev/protocol/serverConfig/registry';
 
 import { defineSettingsPage } from '@/components/settings/catalog/settingDeclarations';
 import { identitySettingHomeId } from '@/components/settings/identity/identitySettingsRoutes';

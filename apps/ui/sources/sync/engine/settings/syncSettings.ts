@@ -1,4 +1,4 @@
-import { deriveAccountRemoteAlertPolicyV1 } from '@happier-dev/protocol';
+import { deriveAccountRemoteAlertPolicyV1 } from '@happier-dev/protocol/account/settings/accountRemoteAlertPolicy';
 import { fetchPushTokensRemoteAlertProjection } from '@/sync/api/session/apiPush';
 import { tracking } from '@/track';
 import { applySettings, settingsParse, type Settings } from '@/sync/domains/settings/settings';
@@ -52,15 +52,12 @@ import {
 import { createServerFetchAtEndpoint, type ServerFetch } from '@/sync/http/client';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import { getRandomBytes } from '@/platform/cryptoRandom';
-import {
-    applyAccountSettingMutationV1,
-    assertAccountWorkspaceSettingsTransition,
-    AccountSettingsV2UpdateResponseSchema,
-    LEGACY_AUTHORING_MEMORY_SETTINGS_KEYS,
-    sealAccountScopedBlobCiphertext,
-    type AccountSettingMutationV1,
-    type AccountSettingsStoredContentEnvelope,
-} from '@happier-dev/protocol';
+import { applyAccountSettingMutationV1, type AccountSettingMutationV1 } from '@happier-dev/protocol/account/settings/accountSettingMutationV1';
+import { assertAccountWorkspaceSettingsTransition } from '@happier-dev/protocol/account/settings/accountSettings';
+import { AccountSettingsV2UpdateResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { LEGACY_AUTHORING_MEMORY_SETTINGS_KEYS } from '@happier-dev/protocol/account/settings/legacyAuthoringMemorySettingsV1';
+import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import type { AccountSettingsStoredContentEnvelope } from '@happier-dev/protocol/account/settings/accountSettingsStoredContentEnvelope';
 import {
     readAccountSettingsBaseline,
     type AccountSettingsBaselineContent,

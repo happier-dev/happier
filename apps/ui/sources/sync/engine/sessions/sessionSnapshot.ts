@@ -4,14 +4,11 @@ import {
     captureSessionListRetirementFence,
     wasSessionRetiredSinceFence,
 } from '@/sync/store/domains/sessions';
-import {
-    parseSessionRuntimeActivityProjectionFields,
-    SessionSharedMetadataV1Schema,
-    isSessionEncryptionModeAllowedByClientRequirement,
-    type AccountEncryptionCurrentnessResponse,
-    type V2SessionListResponse,
-    type ClientEncryptionRequirement,
-} from '@happier-dev/protocol';
+import { parseSessionRuntimeActivityProjectionFields } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
+import { SessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { isSessionEncryptionModeAllowedByClientRequirement, type ClientEncryptionRequirement } from '@happier-dev/protocol/encryption/clientEncryptionRequirement';
+import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
+import type { V2SessionListResponse } from '@happier-dev/protocol/sessions/control/contract';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { serverFetch } from '@/sync/http/client';

@@ -5,4 +5,4 @@ export {
     type AccountPetAssetRefV1 as AccountPetAssetRef,
     type AccountPetLibraryEntryV1 as AccountPetMetadata,
     type AccountPetListResponseV1 as AccountPetsListResponse,
-} from "@happier-dev/protocol";
+} from "@happier-dev/protocol/pets/accountLibrary";

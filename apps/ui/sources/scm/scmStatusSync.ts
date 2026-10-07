@@ -6,7 +6,7 @@
 import { storage } from '@/sync/domains/state/storage';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { InvalidateSync } from '@/utils/sessions/sync';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 import { RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc';
 
 import { scmRepositoryService, snapshotToScmStatus } from './scmRepositoryService';

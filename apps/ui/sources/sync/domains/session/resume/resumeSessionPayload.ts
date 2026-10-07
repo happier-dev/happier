@@ -1,26 +1,13 @@
 import { z } from 'zod';
 import { SpawnSessionTerminalSchema } from '@happier-dev/protocol/spawnSession';
-import {
-    AgentExecutionTargetV1Schema,
-    BackendTargetRefV2Schema,
-    buildBackendTargetKeyV2,
-    normalizeBackendTargetRefV2InputToV2,
-    readBackendTargetRefV2,
-    RuntimeDescriptorV1Schema,
-    SessionModelSelectionV1Schema,
-    SessionAttachMetadataIdentityPolicySchema,
-    SessionAuthoringValueV1Schema,
-    SessionInitialGoalRequestV1Schema,
-    SpawnSessionExecutionAuthorizationSchema,
-    type SessionAttachMetadataIdentityPolicy,
-    type BackendTargetRefV2,
-    type BackendTargetRefV2Input,
-    type AgentExecutionTargetV1,
-    type RuntimeDescriptorV1,
-    type SessionAuthoringValueV1,
-    type SessionInitialGoalRequestV1,
-    type SessionModelSelectionV1,
-} from '@happier-dev/protocol';
+import { AgentExecutionTargetV1Schema, type AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { BackendTargetRefV2Schema, buildBackendTargetKeyV2, normalizeBackendTargetRefV2InputToV2, readBackendTargetRefV2, type BackendTargetRefV2, type BackendTargetRefV2Input } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { RuntimeDescriptorV1Schema, type RuntimeDescriptorV1 } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
+import { SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import { SessionAttachMetadataIdentityPolicySchema, type SessionAttachMetadataIdentityPolicy } from '@happier-dev/protocol/sessions/attach/metadataIdentityPolicy';
+import { SessionAuthoringValueV1Schema, type SessionAuthoringValueV1 } from '@happier-dev/protocol/sessions/authoring/index';
+import { SessionInitialGoalRequestV1Schema, type SessionInitialGoalRequestV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
+import { SpawnSessionExecutionAuthorizationSchema } from '@happier-dev/protocol/spawnSession';
 import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/resolveBundledAgentIdFromContributionIdentity';
 import { isPermissionMode, type PermissionMode } from '../../permissions/permissionTypes';
 

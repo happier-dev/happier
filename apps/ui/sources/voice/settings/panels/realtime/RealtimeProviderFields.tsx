@@ -35,7 +35,7 @@ import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { useVoiceContributedSettingRefs } from '@/voice/settings/useVoiceContributedSettingRefs';
 import { VOICE_CONVERSATIONS_SETTINGS } from '@/voice/settings/voiceSettingsDeclarations';
 import { confirmRealtimeProviderSettingChange } from './confirmRealtimeProviderSettingChange';
-import { resolveVoiceWelcomeText } from '@/voice/agent/voiceWelcomeText';
+import { isVoiceWelcomeLanguageSupported } from '@/voice/agent/voiceWelcomeText';
 
 const REALTIME_CATALOG_PREVIEW_TARGET_SIZE = resolveMinimumInteractiveTargetSize(Platform.OS);
 
@@ -310,7 +310,7 @@ export function RealtimeProviderFields(props: Readonly<{
         const selection: VoiceWelcomeSelection = props.welcomeSelection === 'immediate' || props.welcomeSelection === 'on_first_turn' ? props.welcomeSelection : 'off';
         const greetingUnavailable = selection === 'immediate'
           && field.immediateRequiresLiteral === true
-          && !resolveVoiceWelcomeText(props.assistantLanguage);
+          && !isVoiceWelcomeLanguageSupported(props.assistantLanguage);
         return <VoiceGreetingItem
           key={key}
           value={selection}

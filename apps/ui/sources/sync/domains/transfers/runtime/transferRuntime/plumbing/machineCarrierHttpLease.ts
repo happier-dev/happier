@@ -1,9 +1,7 @@
-import {
-    DIRECT_ROUTE_GRANT_TTL_MS,
-    DirectRouteGrantRequestV2Schema,
-    IrohMachineHandshakeV1Schema,
-    createEphemeralPeerRouteProofHandleV2,
-} from '@happier-dev/protocol';
+import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
+import { DirectRouteGrantRequestV2Schema } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
+import { IrohMachineHandshakeV1Schema } from '@happier-dev/protocol/connectivity/iroh/machineHandshakeV1';
+import { createEphemeralPeerRouteProofHandleV2 } from '@happier-dev/protocol/machines/peer/mediation/ephemeralPeerRouteProofV2';
 
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { getRandomBytes } from '@/platform/cryptoRandom';

@@ -6,7 +6,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemGroupTitleWithAction } from '@/components/ui/lists/ItemGroupTitleWithAction';
 import { Item } from '@/components/ui/lists/Item';
-import { CenteredInfoTile } from '@/components/ui/lists/CenteredInfoTile';
+import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 
 import { ProjectsListItemMenu } from './ProjectsListItemMenu';
@@ -26,17 +26,11 @@ export const ProjectsListView = React.memo(() => {
             containerStyle={{ paddingTop: 12 }}
         >
             {!hasAnyProjects ? (
-                <CenteredInfoTile
-                    icon={(
-                        <Icon
-                            name="folder-open"
-                            size={48}
-                            color={theme.colors.text.secondary}
-                            style={{ marginBottom: 12 }}
-                        />
-                    )}
+                <EmptyState
+                    testID="projects-list-empty"
+                    scene="noProjects"
                     title={t('projects.emptyTitle')}
-                    description={t('projects.emptyDescription')}
+                    subtitle={t('projects.emptyDescription')}
                 />
             ) : null}
 

@@ -604,7 +604,7 @@ describe('createOpenCodeServerClient', () => {
     if (operation === 'prompt') await client.sessionPromptAsync({ sessionId: 'ses-1', text: 'Review this',
       parts: [{ type: 'text', text: 'Review this' }, skill] });
     else await client.sessionCommand({ sessionId: 'ses-1', command: 'review', arguments: 'Review this', parts: [skill] });
-    expect(requests.at(0)?.pathAndQuery).toBe('/api/skill?location%5Bdirectory%5D=%2Frepo');
+    expect(requests.find((request) => request.pathAndQuery.startsWith('/api/skill?'))?.pathAndQuery).toBe('/api/skill?location%5Bdirectory%5D=%2Frepo');
     expect(readJsonRequestBody(requests.at(-1))).toEqual({
       ...(operation === 'command' ? { name: 'review' } : {}), text: 'Review this', skills: [{ id: 'exact-id' }],
     });
@@ -624,17 +624,23 @@ describe('createOpenCodeServerClient', () => {
     expect(requests.filter((request) => request.method === 'POST')).toEqual([]);
   });
 
-  it.each(['v1', 'v2'] as const)('discovers directory-scoped native commands through the %s server', async (dialect) => {
+  it.each(['v1', 'v2'] as const)('discovers directory-scoped native commands after %s activation', async (dialect) => {
     const requests: ManagedServiceRequest[] = [];
     const commands = [{ name: 'review', description: 'Review the current change' }];
+    let ready = false;
     const request = vi.fn<ManagedServiceHandle['request']>(async (input) => {
       requests.push(input);
-      return createJsonResponse(dialect === 'v2' ? { location: { directory: '/other' }, data: commands } : commands);
+      if (input.pathAndQuery.startsWith('/api/integration?')) {
+        expect(input.pathAndQuery).toBe('/api/integration?location%5Bdirectory%5D=%2Fother');
+        ready = true;
+        return createJsonResponse({ data: [] });
+      }
+      return createJsonResponse(dialect === 'v2' ? { data: ready ? commands : [] } : commands);
     });
     const client = createClient({ request, directory: '/repo', dialect });
 
     await expect(client.appCommands({ directory: '  /other  ' })).resolves.toEqual(commands);
-    expect(requests.at(0)).toMatchObject({
+    expect(requests.find((request) => request.pathAndQuery.startsWith(dialect === 'v2' ? '/api/command?' : '/command?'))).toMatchObject({
       method: 'GET',
       pathAndQuery: dialect === 'v2' ? '/api/command?location%5Bdirectory%5D=%2Fother' : '/command?directory=%2Fother',
     });
@@ -1589,21 +1595,40 @@ describe('createOpenCodeServerClient (OpenCode V2 beta dialect)', () => {
     expect(readJsonRequestBody(requests.at(1))).toEqual({ answer: { ship: 'opaque yes' } });
   });
 
-  it('reads V2 skills out of the location envelope', async () => {
+  it('reads V2 skills after native activation, including an empty catalog after reload', async () => {
     const requests: ManagedServiceRequest[] = [];
+    let ready = false;
+    let skills = [{ name: 'review', location: '/repo/.opencode/skills/review', content: '' }];
     const request = vi.fn<ManagedServiceHandle['request']>(async (input) => {
       requests.push(input);
-      return createJsonResponse({
-        location: { directory: '/repo' },
-        data: [{ name: 'review', location: '/repo/.opencode/skills/review', content: '' }],
-      });
+      if (input.pathAndQuery.startsWith('/api/integration?')) {
+        expect(input.pathAndQuery).toBe('/api/integration?location%5Bdirectory%5D=%2Frepo');
+        ready = true;
+        return createJsonResponse({ data: [] });
+      }
+      return createJsonResponse({ location: { directory: '/repo' }, data: ready ? skills : [] });
     });
     const client = createClient({ request, directory: '/repo', dialect: 'v2' });
 
     await expect(client.appSkills({ directory: '/repo' })).resolves.toEqual([
       { name: 'review', location: '/repo/.opencode/skills/review', content: '' },
     ]);
-    expect(requests.at(0)?.pathAndQuery).toBe('/api/skill?location%5Bdirectory%5D=%2Frepo');
+    ready = false;
+    skills = [];
+    await expect(client.appSkills({ directory: '/repo' })).resolves.toEqual([]);
+    expect(ready).toBe(true);
+    expect(requests.every((request) => request.method === 'GET')).toBe(true);
+  });
+
+  it('propagates V2 readiness failure before reading a catalog', async () => {
+    const requests: ManagedServiceRequest[] = [];
+    const client = createClient({ directory: '/repo', dialect: 'v2', request: async (input) => {
+      requests.push(input);
+      return input.pathAndQuery.startsWith('/api/integration?')
+        ? createErrorResponse(503, 'Service Unavailable') : createJsonResponse({ data: [] });
+    } });
+    await expect(client.appSkills({ directory: '/repo' })).rejects.toMatchObject({ status: 503 });
+    expect(requests.some((request) => request.pathAndQuery.startsWith('/api/skill?'))).toBe(false);
   });
 
   it('combines the separate V2 provider and model inventories into one provider list', async () => {

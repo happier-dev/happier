@@ -1,12 +1,7 @@
 import Constants from 'expo-constants';
-import {
-    DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS,
-    accountSettingsParse,
-    resolveLiveActivityRemoteUpdateMode,
-    type LiveActivityRemoteTransportMode,
-    type LiveActivityRemoteUpdateCapabilityDiagnostics,
-    type LiveActivityRemoteUpdateMode,
-} from '@happier-dev/protocol';
+import { DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS, resolveLiveActivityRemoteUpdateMode, type LiveActivityRemoteUpdateCapabilityDiagnostics, type LiveActivityRemoteUpdateMode } from '@happier-dev/protocol/activity/live/remoteUpdateCapabilities';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import type { LiveActivityRemoteTransportMode } from '@happier-dev/protocol/activity/live/remoteUpdates';
 
 import type { ExactHomeAccountSettings } from '@/activity/delivery/useExactHomeAccountSettings';
 import { markLiveActivityTargetEnded, registerLiveActivityTarget } from '@/sync/api/session/apiLiveActivityTargets';

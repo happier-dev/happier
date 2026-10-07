@@ -1,7 +1,7 @@
-import { getReviewCommentDraftAnchorPrimaryLine } from '@happier-dev/protocol';
+import { getReviewCommentDraftAnchorPrimaryLine } from '@happier-dev/protocol/messages/structured/reviewCommentsInput';
 import type { ReviewCommentAnchor } from '../reviewCommentTypes';
 
-export { getReviewCommentDraftAnchorPrimaryLine, formatReviewCommentDraftAnchorLabel } from '@happier-dev/protocol';
+export { getReviewCommentDraftAnchorPrimaryLine, formatReviewCommentDraftAnchorLabel } from '@happier-dev/protocol/messages/structured/reviewCommentsInput';
 
 export type ReviewCommentDraftDurableAnchorTarget =
     | Readonly<{ kind: 'line'; filePath: string; line: number; side?: 'before' | 'after' }>

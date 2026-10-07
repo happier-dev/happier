@@ -1,4 +1,4 @@
-import { parseSshTarget } from '@happier-dev/protocol';
+import { parseSshTarget } from '@happier-dev/protocol/ssh/sshTarget';
 
 import type { RemoteHost } from '@/sync/domains/remoteHosts/remoteHostModel';
 

@@ -1,4 +1,4 @@
-import { getDefaultModelPackId } from '@happier-dev/protocol';
+import { getDefaultModelPackId } from '@happier-dev/protocol/voice/modelPacks/catalog';
 import { t } from '@/text';
 import { z } from 'zod';
 

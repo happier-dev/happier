@@ -9,7 +9,7 @@ type PlanetHorizon = Readonly<{
 }>;
 type PlanetPalette = Readonly<{
   background: PlanetRgb; body: readonly (readonly [number, PlanetRgb])[];
-  rose: PlanetRgb; rim: PlanetRgb; halo: readonly (readonly [number, PlanetRgb])[];
+  rose: PlanetRgb; attention: PlanetRgb; rim: PlanetRgb; halo: readonly (readonly [number, PlanetRgb])[];
   horizon: PlanetHorizon; websiteScrim: string; voiceField: string;
 }>;
 type Orb = Readonly<{ core: string; gold: string; amber: string; ember: string; plum: string; azure: string }>;
@@ -21,6 +21,7 @@ export const PLANET_LIGHT_RAMP: Readonly<{ warm: string; blush: string; violet: 
 export const PLANET_ARTWORK_BREATH: Readonly<{ durationMs: 20000; scalePeak: 1.012; bloomOpacityDelta: 0.1 }>;
 export const PLANET_GRAIN: Readonly<{ opacity: 0.02; tileSize: 16 }>;
 export const PLANET_ACCENT_HEX: string;
+export const PLANET_ATTENTION_HEX: Readonly<{ light: string; dark: string }>;
 export const PLANET_BREATH_SECONDS: number;
 export const PLANET_FRAME_INTERVAL_MS: number;
 export const PLANET_BREATH_FRAME_INTERVAL_MS: number;
@@ -31,7 +32,15 @@ export function createPlanetFrame(options?: PlanetFrameOptions): PlanetFrame;
 export type PlanetDot = Readonly<{ id: number; x: number; y: number; radius: number; rgb: PlanetRgb; opacity: number }>;
 export type PlanetMarkOptions = Readonly<{ size?: number; theme?: PlanetTheme }>;
 export type PlanetDotPose = 'ready' | 'shadow' | 'eclipse' | 'shade';
-export type PlanetDotOptions = PlanetMarkOptions & Readonly<{ pose?: PlanetDotPose; energy?: number; light?: readonly [number, number, number]; bleed?: number }>;
+export type PlanetDotOptions = PlanetMarkOptions & Readonly<{
+  pose?: PlanetDotPose; energy?: number; light?: readonly [number, number, number]; bleed?: number;
+  /** Lattice rows across the box (scene art keeps a finer lattice than a mark); default by size. */
+  rows?: number;
+  /** Atmosphere strength, 1 = the mark's resting halo. */
+  halo?: number;
+  /** 0…1 warmth towards the rim colour (golden hour). */
+  warmth?: number;
+}>;
 export type PlanetMarkTier = Readonly<{ columns: number; rows: number; pitch: number; micDots: number }>;
 export type PlanetDotPair = Readonly<{ id: number; mic: PlanetDot; planet: PlanetDot }>;
 export type PlanetStatusCellKind = 'thinking' | 'working' | 'needs_you' | 'done' | 'idle' | 'off';

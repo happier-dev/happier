@@ -9,7 +9,7 @@ import {
   isPublishedModelPackCatalogEntry,
   listModelPackCatalogEntries,
   resolveCanonicalModelPackId,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/voice/modelPacks/catalog';
 
 /**
  * Derived presentation state for a single model-pack row. Combines the daemon

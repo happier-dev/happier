@@ -1,10 +1,5 @@
-import {
-    ActionApprovalRequestCreatedResultSchema,
-    WorkspaceSyncRelationshipCreateActionInputV1Schema,
-    WorkspaceSyncRelationshipCreateResultV1Schema,
-    type WorkspaceSyncRelationshipCreateActionInputV1,
-    type WorkspaceSyncRelationshipCreateResultV1,
-} from '@happier-dev/protocol';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { WorkspaceSyncRelationshipCreateActionInputV1Schema, WorkspaceSyncRelationshipCreateResultV1Schema, type WorkspaceSyncRelationshipCreateActionInputV1, type WorkspaceSyncRelationshipCreateResultV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 

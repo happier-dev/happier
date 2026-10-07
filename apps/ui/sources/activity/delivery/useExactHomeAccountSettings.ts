@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { accountSettingsParse, type AccountSettings } from '@happier-dev/protocol';
+import { accountSettingsParse, type AccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
 
 import {
     areServerAccountScopesEqual,

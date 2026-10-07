@@ -1,5 +1,9 @@
-import { ComposerOperationV1Schema, buildQualifiedPluginContributionKey, validatePluginDragSourceReferenceV1, readComposerReferenceMentionV1,
-    type PluginContributionClientPlatform, type ComposerRefV1, type ComposerSnapshotV1 } from '@happier-dev/protocol';
+import { ComposerOperationV1Schema, type ComposerSnapshotV1 } from '@happier-dev/protocol/plugins/ui/composer';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { validatePluginDragSourceReferenceV1 } from '@happier-dev/protocol/plugins/contributions/entityDragDrop';
+import { readComposerReferenceMentionV1 } from '@happier-dev/protocol/runtime/input/composerReferenceProviderV1';
+import type { PluginContributionClientPlatform } from '@happier-dev/protocol/plugins/contributions/catalog';
+import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef';
 import type { EntityDragItemV1, EntityDragScopeV1, EntityDropAdmissionV1, EntityDropPreviewV1 } from '@happier-dev/protocol/plugins/ui';
 import { entityDragScopesEqualV1 } from '@happier-dev/protocol/plugins/ui';
 import { composerRefsV1Equal } from '@happier-dev/protocol/plugins/ui/composerRef';

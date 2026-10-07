@@ -2,7 +2,7 @@ import type {
   DaemonVoiceInferenceModelStatus,
   ModelPackVoiceCatalogEntry,
 } from '@happier-dev/protocol';
-import { resolveCanonicalModelPackId } from '@happier-dev/protocol';
+import { resolveCanonicalModelPackId } from '@happier-dev/protocol/voice/modelPacks/catalog';
 
 export type DaemonTtsVoiceSelection = Readonly<{
   voices: readonly ModelPackVoiceCatalogEntry[];

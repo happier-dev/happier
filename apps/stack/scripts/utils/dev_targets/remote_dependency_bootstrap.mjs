@@ -7,6 +7,7 @@ import { execYarn } from '../../../../../scripts/workspaces/execYarnCommand.mjs'
 import { SCRIPTLESS_DEPENDENCY_INSTALL_MODE, withDependencyRefresh } from '../proc/dependency_refresh.mjs';
 import { ensureUiPostinstallOutputs } from '../proc/ui_postinstall.mjs';
 import { resolveWorkspaceBuildMode, WORKSPACE_BUILD_MODE_ENV } from '../../../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
+import { resolvePackageManagerCachePaths } from '../proc/package_manager_cache.mjs';
 
 export const REMOTE_INITIAL_DEPENDENCY_INSTALL_ARGS = [
   'install',
@@ -27,10 +28,7 @@ function resolveInitialInstallEnv(env) {
   };
   const cacheBaseDir = String(resolved.HAPPIER_STACK_PM_CACHE_BASE_DIR ?? '').trim();
   if (cacheBaseDir) {
-    resolved.XDG_CACHE_HOME ||= join(cacheBaseDir, 'xdg');
-    resolved.YARN_CACHE_FOLDER ||= join(cacheBaseDir, 'yarn');
-    resolved.npm_config_cache ||= join(cacheBaseDir, 'npm');
-    resolved.COREPACK_HOME ||= join(cacheBaseDir, 'corepack');
+    for (const [key, path] of Object.entries(resolvePackageManagerCachePaths(cacheBaseDir))) resolved[key] ||= path;
   }
   return resolved;
 }

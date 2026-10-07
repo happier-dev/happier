@@ -32,7 +32,7 @@ import {
     type PluginSurfaceHostApiRequestOptions,
 } from './createPluginSurfaceHostApi';
 import type { PluginSurfaceContributedActionDescriptorResolver } from './pluginSurfaceActionDispatch';
-import { ReviewStartInputSchema } from '@happier-dev/protocol';
+import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
 
 /**
  * The controller lifetime consumes the same exact daemon facts as target-scoped

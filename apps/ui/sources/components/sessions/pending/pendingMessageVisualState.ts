@@ -1,10 +1,7 @@
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 import type { TranslationKeyNoParams } from '@/text';
-import {
-    isPendingDeliveryProviderEffectPossibleV1,
-    type PendingDeliveryStatusV1,
-    type SessionInputAdmissionRejectionCodeV1,
-} from '@happier-dev/protocol';
+import { isPendingDeliveryProviderEffectPossibleV1, type PendingDeliveryStatusV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
+import type { SessionInputAdmissionRejectionCodeV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
 
 export type PendingMessageVisualStateKind =
     | 'saving'

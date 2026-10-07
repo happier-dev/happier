@@ -1,7 +1,5 @@
-import {
-    readProviderSettingsFromAccountSettingsV1,
-    type ProviderSettingsV1,
-} from '@happier-dev/protocol';
+import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
+import type { ProviderSettingsV1 } from '@happier-dev/protocol/providers/settings/v1';
 
 export type AgentModelsSettingsAccess = Readonly<{
     writable: boolean;

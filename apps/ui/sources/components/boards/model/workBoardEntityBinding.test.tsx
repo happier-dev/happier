@@ -16,6 +16,7 @@ import { useWorkBoardEntityBinding } from './workBoardEntityBinding';
 import { useAcknowledgedWorkBoard, useDispatchWorkBoardIntent, useWorkBoard, useWorkBoardSaveQueue, useWorkBoardSaveState } from './useWorkBoards';
 import { projectBoardMembership } from './boardMembership';
 import type { Artifact, ArtifactCreateRequest, ArtifactUpdateRequest } from '@/sync/domains/artifacts/artifactTypes';
+import { readPresentationNotice, retirePresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 
 // HTTP, device credential storage and native theme are system boundaries.
 const runtimeFetch = vi.hoisted(() => vi.fn());
@@ -25,7 +26,7 @@ vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createT
 const previousState = storage.getState();
 const previousAppliedSnapshot = getAppliedActiveServerSnapshot();
 const previousRuntimeAvailable = isAppliedActiveServerRuntimeAvailable();
-afterEach(async () => { await standardCleanup(); storage.setState(previousState); runtimeFetch.mockReset(); vi.restoreAllMocks();
+afterEach(async () => { await standardCleanup(); retirePresentationNotice(); storage.setState(previousState); runtimeFetch.mockReset(); vi.restoreAllMocks();
     publishAppliedActiveServerSnapshot(previousAppliedSnapshot, previousRuntimeAvailable); });
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
 
@@ -83,6 +84,42 @@ async function mountAccount(name: string, boards: readonly WorkBoardV1[], enable
 }
 
 describe('mounted WorkBoard Action settlement', () => {
+    it.each([true, false])('keeps truthful acknowledged size and reports pending approval without a failed save (approval: %s)', async approval => {
+        const board = createWorkBoardV1({ id: 'board-size-pending', name: 'Size' });
+        const b = await mountAccount('size-pending', [board]);
+        const ref = { surface: { serverId: b.home.id, accountId: 'board-account', owner: { kind: 'workBoard' as const, boardId: board.id } }, instanceId: 'copy' };
+        const instance = { v: 1 as const, id: 'copy', definition: { kind: 'inline' as const, definition: {
+            v: 1 as const, id: 'checks', name: 'Checks', provenance: { source: { kind: 'authored' as const } },
+            sizeDeclaration: { sizes: ['medium', 'wide'] as ('medium' | 'wide')[], defaultSize: 'medium' as const },
+            inputs: { fields: [] }, inputSchema: { type: 'object' as const, properties: {}, additionalProperties: false },
+            body: { kind: 'declarative' as const, document: { version: 1 as const, root: { kind: 'text' as const, text: 'Checks' } } },
+        } }, bindings: {} };
+        const hook = await renderHook(() => ({ dispatch: useDispatchWorkBoardIntent(), board: useWorkBoard(board.id), save: useWorkBoardSaveState() }), { wrapper: b.wrapper });
+        await act(async () => { expect(await hook.getCurrent().dispatch({ kind: 'widget_add', boardId: board.id, ref, instance })).toMatchObject({ status: 'applied' }); });
+        storage.setState({ settings: { ...storage.getState().settings, actionsSettingsV1: normalizeActionsSettingsV1({ v: 1,
+            actions: { 'widgets.instance.size.set': { approvalRequiredSurfaces: approval ? ['ui'] : [] } } }) } });
+        const before = b.rows.get(board.id);
+        await act(async () => { expect(await hook.getCurrent().dispatch({ kind: 'widget_size', boardId: board.id, ref, size: 'wide' }))
+            .toMatchObject({ status: approval ? 'pending' : 'applied' }); });
+        if (approval) expect(b.rows.get(board.id)).toBe(before);
+        else expect(b.rows.get(board.id)).not.toBe(before);
+        expect(hook.getCurrent().board?.widgets?.[0]?.size).toBe(approval ? 'medium' : 'wide');
+        expect(hook.getCurrent().save).toMatchObject({ pending: [], failure: null });
+        if (approval) expect(readPresentationNotice()).toMatchObject({ severity: 'info' });
+    });
+    it('admits mounted size edits through the universal widget Action rather than bypassing its disabled policy', async () => {
+        const board = createWorkBoardV1({ id: 'board-size', name: 'Size' });
+        const b = await mountAccount('size-policy', [board]);
+        storage.setState({ settings: { ...storage.getState().settings, actionsSettingsV1: normalizeActionsSettingsV1({ v: 1,
+            actions: { 'boards.apply': { enabled: true }, 'widgets.instance.size.set': { enabled: false } } }) } });
+        const hook = await renderHook(() => ({ dispatch: useDispatchWorkBoardIntent(), save: useWorkBoardSaveState() }), { wrapper: b.wrapper });
+        const before = b.rows.get(board.id);
+        await act(async () => { expect(await hook.getCurrent().dispatch({ kind: 'widget_size', boardId: board.id,
+            ref: { surface: { serverId: b.home.id, accountId: 'board-account', owner: { kind: 'workBoard', boardId: board.id } }, instanceId: 'copy' },
+            size: 'wide' })).toMatchObject({ status: 'refused', code: 'action_disabled' }); });
+        expect(b.rows.get(board.id)).toBe(before);
+        expect(hook.getCurrent().save.failure?.intent.kind).toBe('widget_size');
+    });
     it('creates through the shared ingress and refuses an invalid widget configuration before persistence', async () => {
         const b = await mountAccount('create-widget', []);
         const hook = await renderHook(() => ({ dispatch: useDispatchWorkBoardIntent(), board: useWorkBoard('new-board'), save: useWorkBoardSaveState() }), { wrapper: b.wrapper });

@@ -81,7 +81,8 @@ describe('CLI Board Actions through the Artifact owner', () => {
         expect(await executor.execute('boards.apply', { intent: { kind: 'create', board: { id: 'new-board', name: 'Board title' } } }, context))
             .toMatchObject({ ok: true, result: { board: { id: 'new-board', name: 'Board title' } } });
         expect(rows.get('new-board')?.dataEncryptionKey === ARTIFACT_PLAIN_DATA_KEY_MARKER).toBe(mode === 'plain');
-        expect(await executor.execute('boards.apply', { intent: { kind: 'update', boardId: 'new-board', patch: { pinnedInSessions: true, mode: 'by_status' } } }, context))
+        const updated = await executor.execute('boards.apply', { intent: { kind: 'update', boardId: 'new-board', patch: { pinnedInSessions: true, mode: 'by_status' } } }, context);
+        expect(updated, JSON.stringify(updated))
             .toMatchObject({ ok: true, result: { board: { pinnedInSessions: true, mode: 'by_status' } } });
         expect(await executor.execute('boards.list', {}, context)).toMatchObject({ ok: true, result: { boards: [{ id: 'new-board', name: 'Board title', pinnedInSessions: true }] } });
         const surface = { serverId: 'board-home', accountId: 'owner', owner: { kind: 'workBoard', boardId: 'new-board' } } as const;
@@ -91,7 +92,7 @@ describe('CLI Board Actions through the Artifact owner', () => {
             ['removed-definition', { kind: 'installed', surface: { pluginId: 'com.acme.removed', localId: 'checks' } }],
         ] as const) {
             expect(await executor.execute('widgets.definition.create', { account: { serverId: 'board-home', accountId: 'owner' }, artifactId,
-                definition: { name: artifactId, inputs: authoredInputs, inputSchema: { type: 'object', properties: { repo: { type: 'string' } } }, body } }, context))
+                definition: { name: artifactId, sizeDeclaration: { sizes: ['medium', 'full'], defaultSize: 'medium' }, inputs: authoredInputs, inputSchema: { type: 'object', properties: { repo: { type: 'string' } } }, body } }, context))
                 .toMatchObject({ ok: true });
         }
         const beforeCatalog = get.mock.calls.length;
@@ -103,15 +104,15 @@ describe('CLI Board Actions through the Artifact owner', () => {
             expect.objectContaining({ definition: { kind: 'artifact', artifactId: 'removed-definition' }, fields: authoredInputs.fields, availability: 'unavailable' }),
         ]) });
         expect(get.mock.calls.slice(beforeCatalog).some(call => ['/v1/artifacts/checks-definition', '/v1/artifacts/removed-definition'].includes(new URL(call[0]).pathname))).toBe(false);
-        const instance = { v: 1, id: 'widget-copy', definition: { kind: 'builtin', id: 'summary' }, bindings: {} } as const;
+        const instance = { v: 1, id: 'widget-copy', definition: { kind: 'artifact', artifactId: 'checks-definition' }, bindings: {} } as const;
         const ref = { surface, instanceId: instance.id };
         expect(await executor.execute('boards.apply', { intent: { kind: 'widget_add', boardId: 'new-board', ref, instance } }, context))
-            .toMatchObject({ ok: true, result: { board: { mode: 'by_status', widgets: [{ instance, width: 1 }] } } });
+            .toMatchObject({ ok: true, result: { board: { mode: 'by_status', widgets: [{ instance, size: 'medium' }] } } });
         expect(await executor.execute('widgets.instance.list', { surface }, context))
-            .toMatchObject({ ok: true, result: { instances: [{ instance, width: 'half' }] } });
-        expect(await executor.execute('widgets.instance.width.set', { ref, width: 'full' }, context)).toMatchObject({ ok: true });
+            .toMatchObject({ ok: true, result: { instances: [{ instance, size: 'medium' }] } });
+        expect(await executor.execute('widgets.instance.size.set', { ref, size: 'full' }, context)).toMatchObject({ ok: true });
         expect(await executor.execute('widgets.instance.list', { surface }, context))
-            .toMatchObject({ ok: true, result: { instances: [{ instance, width: 'full' }] } });
+            .toMatchObject({ ok: true, result: { instances: [{ instance, size: 'full' }] } });
         const home = { ...surface, owner: { kind: 'home' } } as const;
         const homeInstance = { v: 1, id: 'home-copy', displayName: 'Named Home copy',
             definition: { kind: 'artifact', artifactId: 'checks-definition' }, bindings: { repo: { kind: 'value', value: 'my/repo' } } } as const;
@@ -131,16 +132,16 @@ describe('CLI Board Actions through the Artifact owner', () => {
             instances: expect.arrayContaining([expect.objectContaining({ instance: homeInstance })]),
         } });
         expect(homeCreates).toBe(1);
-        expect(await executor.execute('widgets.instance.width.set', { ref: homeRef, width: 'full' }, context)).toMatchObject({ ok: true });
+        expect(await executor.execute('widgets.instance.size.set', { ref: homeRef, size: 'full' }, context)).toMatchObject({ ok: true });
         expect(await executor.execute('widgets.instance.frame.set', { ref: homeRef, frameStyle: 'plain' }, context)).toMatchObject({ ok: true });
         const movedHome = await executor.execute('widgets.instance.move', { ref: homeRef, to: { surface, index: 0 } }, context);
         expect(movedHome, JSON.stringify(movedHome))
             .toMatchObject({ ok: true, result: { status: 'moved' } });
         expect(await executor.execute('widgets.instance.list', { surface }, context)).toMatchObject({ ok: true, result: { instances: [
-            { instance: homeInstance, width: 'full', frameStyle: 'plain' }, { instance, width: 'full' },
+            { instance: homeInstance, size: 'full', frameStyle: 'plain' }, { instance, size: 'full' },
         ] } });
         expect(await executor.execute('widgets.catalog.list', { surface }, context)).toMatchObject({ ok: true, result: { entries: expect.arrayContaining([
-            expect.objectContaining({ definition: homeInstance.definition, instanceCount: 1 }),
+            expect.objectContaining({ definition: homeInstance.definition, instanceCount: 2 }),
             expect.objectContaining({ definition: { kind: 'artifact', artifactId: 'removed-definition' }, instanceCount: 0 }),
         ]) } });
         const areaInstance = { ...homeInstance, id: 'area-copy' };
@@ -154,7 +155,7 @@ describe('CLI Board Actions through the Artifact owner', () => {
         expect(addedArea, JSON.stringify(addedArea)).toMatchObject({ ok: true });
         expect(areaCreates).toBe(1);
         expect(await executor.execute('widgets.instance.list', { surface: area }, context)).toMatchObject({ ok: true, result: {
-            instances: [{ instance: areaInstance, width: 'half' }],
+            instances: [{ instance: areaInstance, size: 'medium' }],
         } });
         const homeState = await executor.execute('widgets.instance.list', { surface: home }, context);
         expect(homeState).toMatchObject({ ok: true, result: { instances: expect.not.arrayContaining([expect.objectContaining({ instance: homeInstance })]) } });

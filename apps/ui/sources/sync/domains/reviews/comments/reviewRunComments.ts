@@ -1,11 +1,7 @@
-import {
-    buildReviewTriageTransitionRequestV1,
-    type ReviewCommentListResponseV1,
-    type ReviewCommentGetResponseV1,
-    type ReviewCommentTransitionResponseV1,
-    type ReviewCommentV1,
-    type ReviewTriageStatus,
-} from '@happier-dev/protocol';
+import { buildReviewTriageTransitionRequestV1 } from '@happier-dev/protocol/reviews/comments/triageTransition';
+import type { ReviewCommentListResponseV1, ReviewCommentGetResponseV1, ReviewCommentTransitionResponseV1 } from '@happier-dev/protocol/reviews/comments/actions';
+import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
+import type { ReviewTriageStatus } from '@happier-dev/protocol/reviews/reviewTriageStatus';
 
 import { randomUUID } from '@/platform/randomUUID';
 import { areServerAccountScopesEqual, serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';

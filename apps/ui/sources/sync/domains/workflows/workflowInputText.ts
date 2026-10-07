@@ -1,5 +1,5 @@
 import type { JsonValue } from '@happier-dev/protocol';
-import { StrictJsonValueSchema } from '@happier-dev/protocol';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import type { WorkflowInputDefinition } from '@happier-dev/protocol/workflows/workflowV1';
 
 /**

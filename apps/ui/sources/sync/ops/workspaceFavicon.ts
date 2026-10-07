@@ -2,7 +2,7 @@ import {
     WorkspaceFaviconResolveRequestV1Schema,
     WorkspaceFaviconResolveResponseV1Schema,
     type WorkspaceFaviconResolveRequestV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/workspace/favicon/v1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';

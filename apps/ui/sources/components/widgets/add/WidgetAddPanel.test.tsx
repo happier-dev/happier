@@ -7,6 +7,8 @@ import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 
 import { buildWidgetCandidateSetup, type WidgetSurfaceContext } from '@/components/widgets/surface/widgetSurfaceSetup';
 import { selectBuiltinWidgetCandidates, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
+import { buildHomeWidgetAddSections } from './HomeWidgetAddPopover';
+import { buildBoardWidgetAddContent, buildCompanionWidgetAddSections } from './widgetAddSections';
 
 import type { WidgetAddAsk, WidgetAddSection, WidgetAddView } from './widgetAddModel';
 import { WidgetAddPanel } from './WidgetAddPanel';
@@ -111,6 +113,37 @@ async function renderPanel(props: Readonly<{
 }
 
 describe('WidgetAddPanel', () => {
+    it.each(['home', 'board', 'companion'] as const)('shows an inputless %s add refusal and then pending approval in the gallery', async surface => {
+        const candidate: WidgetCandidate = {
+            surface: { pluginId: 'acme.widgets', localId: 'counter' }, key: 'acme.widgets/counter',
+            title: 'Counter', pluginName: 'Widgets', sharedPluginName: false, icon: 'chart-bar',
+            homeDefault: 'available', target: 'app',
+        };
+        let pending = false;
+        const result = () => pending ? { ok: true as const, approvalPending: true as const } : { ok: false as const, message: 'permission_denied' };
+        const sections = surface === 'home'
+            ? buildHomeWidgetAddSections({ candidates: [candidate], instances: [], scope: null, addInstance: async () => result() })
+            : surface === 'board'
+                ? buildBoardWidgetAddContent({ candidates: [candidate], intents: ['fromPlugins'], snapshot: null,
+                    run: async () => pending ? { kind: 'approvalPending', artifactId: 'approval', actionId: 'widgets.instance.add' }
+                        : { kind: 'failed', error: 'permission_denied' }, openPlugins: () => {} }).sections
+                : buildCompanionWidgetAddSections({ glanceCandidates: [candidate], refs: [], snapshot: null, pluginProjection: null,
+                    addItem: async () => result() });
+        const close = vi.fn();
+        const screen = await renderPanel({ view: 'gallery', sections: [...sections], onRequestClose: close });
+        await act(async () => { screen.pressByTestId('add.entry.plugin-acme.widgets/counter'); });
+        await flushHookEffects({ cycles: 3 });
+        expect(screen.findAllByTestId('add.setup')).toHaveLength(0);
+        expect(screen.findAllByTestId('add.entry.plugin-acme.widgets/counter.failed').length).toBeGreaterThan(0);
+        expect(screen.getTextContent()).not.toContain('widgetAdd.justAdded');
+        expect(close).not.toHaveBeenCalled();
+        pending = true;
+        await act(async () => { screen.pressByTestId('add.entry.plugin-acme.widgets/counter'); });
+        await flushHookEffects({ cycles: 3 });
+        expect(screen.findAllByTestId('add.entry.plugin-acme.widgets/counter.pending').length).toBeGreaterThan(0);
+        expect(screen.getTextContent()).toContain('widgetAdd.areaApprovalPending');
+        expect(screen.findAllByTestId('add.entry.plugin-acme.widgets/counter.added')).toHaveLength(0);
+    });
     it('shows the gallery with live previews, keeps an added widget in place marked Added, and keeps open after a pick', async () => {
         const pick = vi.fn();
         const preview = vi.fn();

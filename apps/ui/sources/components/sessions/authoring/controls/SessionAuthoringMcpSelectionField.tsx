@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
-import { SessionMcpSelectionV1Schema, type SessionMcpSelectionV1 } from '@happier-dev/protocol';
+import { SessionMcpSelectionV1Schema, type SessionMcpSelectionV1 } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
 
 import type { AgentInputExtraActionChipRenderContext } from '@/components/sessions/agentInput/agentInputContracts';
 import { AgentInputContentPopover } from '@/components/sessions/agentInput/components/AgentInputContentPopover';

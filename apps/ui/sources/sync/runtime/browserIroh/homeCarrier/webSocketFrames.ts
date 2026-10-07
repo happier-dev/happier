@@ -1,4 +1,4 @@
-import { EXTERNAL_ACTION_RELAY_REQUEST_SOCKET_MIN_BUFFER_BYTES } from '@happier-dev/protocol';
+import { EXTERNAL_ACTION_RELAY_REQUEST_SOCKET_MIN_BUFFER_BYTES } from '@happier-dev/protocol/actions/externalActionApi';
 
 /**
  * RFC 6455 framing for the browser Iroh Home carrier (Lane 06 amendment A7.3).

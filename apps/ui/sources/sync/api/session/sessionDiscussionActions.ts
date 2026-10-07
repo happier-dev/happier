@@ -1,48 +1,15 @@
-import {
-    ActionApprovalRequestCreatedResultSchema,
-    buildSessionDiscussionMutationRequestBodyV1,
-    bindSessionDiscussionActionHttpRequestV1,
-    SessionDiscussionCreateInputV1Schema,
-    SessionDiscussionCreateResponseV1Schema,
-    SessionDiscussionCreateResultV1Schema,
-    SessionDiscussionDetailsResponseV1Schema,
-    SessionDiscussionDetailsResultV1Schema,
-    SessionDiscussionErrorResponseV1Schema,
-    SessionDiscussionListInputV1Schema,
-    SessionDiscussionListResponseV1Schema,
-    SessionDiscussionListResultV1Schema,
-    SessionDiscussionMessageContentV1Schema,
-    SessionDiscussionMessagesResponseV1Schema,
-    SessionDiscussionOpenedMessageV1Schema,
-    SessionDiscussionOpenedSummaryV1Schema,
-    SessionDiscussionPostInputV1Schema,
-    SessionDiscussionPostResponseV1Schema,
-    SessionDiscussionPostResultV1Schema,
-    SessionDiscussionReadInputV1Schema,
-    SessionDiscussionReadResponseV1Schema,
-    SessionDiscussionReadResultV1Schema,
-    SessionDiscussionReadStateResultV1Schema,
-    SessionDiscussionRenameInputV1Schema,
-    SessionDiscussionTitleV1Schema,
-    StrictJsonValueSchema,
-    serializeSessionDiscussionMutationEqualityIntentV1,
-    type ActionExecutorDeps,
-    type SessionDiscussionActionIdV1,
-    type SessionDiscussionCreateResultV1,
-    type SessionDiscussionDetailsResultV1,
-    type SessionDiscussionListInputV1,
-    type SessionDiscussionListResultV1,
-    type SessionDiscussionMessageContentV1,
-    type SessionDiscussionMessageV1,
-    type SessionDiscussionOpenedMessageV1,
-    type SessionDiscussionOpenedSummaryV1,
-    type SessionDiscussionPostResultV1,
-    type SessionDiscussionReadResultV1,
-    type SessionDiscussionReadStateResultV1,
-    type SessionDiscussionSummaryV1,
-    type SessionMutationEqualityEvidenceV1,
-    type SessionResponsibilityCandidatesResponse,
-} from '@happier-dev/protocol';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { buildSessionDiscussionMutationRequestBodyV1, SessionDiscussionCreateResponseV1Schema, SessionDiscussionDetailsResponseV1Schema, SessionDiscussionErrorResponseV1Schema, SessionDiscussionListResponseV1Schema, SessionDiscussionMessagesResponseV1Schema, SessionDiscussionPostResponseV1Schema, SessionDiscussionReadResponseV1Schema } from '@happier-dev/protocol/sessions/discussions/api';
+import { bindSessionDiscussionActionHttpRequestV1 } from '@happier-dev/protocol/actions/sessionDiscussionActionFamily';
+import { SessionDiscussionCreateInputV1Schema, SessionDiscussionCreateResultV1Schema, SessionDiscussionDetailsResultV1Schema, SessionDiscussionListInputV1Schema, SessionDiscussionListResultV1Schema, SessionDiscussionOpenedMessageV1Schema, SessionDiscussionOpenedSummaryV1Schema, SessionDiscussionPostInputV1Schema, SessionDiscussionPostResultV1Schema, SessionDiscussionReadInputV1Schema, SessionDiscussionReadResultV1Schema, SessionDiscussionReadStateResultV1Schema, SessionDiscussionRenameInputV1Schema, type SessionDiscussionCreateResultV1, type SessionDiscussionDetailsResultV1, type SessionDiscussionListInputV1, type SessionDiscussionListResultV1, type SessionDiscussionOpenedMessageV1, type SessionDiscussionOpenedSummaryV1, type SessionDiscussionPostResultV1, type SessionDiscussionReadResultV1, type SessionDiscussionReadStateResultV1 } from '@happier-dev/protocol/sessions/discussions/actions';
+import { SessionDiscussionMessageContentV1Schema, SessionDiscussionTitleV1Schema, type SessionDiscussionMessageContentV1 } from '@happier-dev/protocol/sessions/discussions/content';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { serializeSessionDiscussionMutationEqualityIntentV1 } from '@happier-dev/protocol/sessions/discussions/equality';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import type { SessionDiscussionActionIdV1 } from '@happier-dev/protocol/sessions/discussions/actionIds';
+import type { SessionDiscussionMessageV1, SessionDiscussionSummaryV1 } from '@happier-dev/protocol/sessions/discussions/models';
+import type { SessionMutationEqualityEvidenceV1 } from '@happier-dev/protocol/sessions/mutations/sessionMutationEqualityV1';
+import type { SessionResponsibilityCandidatesResponse } from '@happier-dev/protocol/sessions/access/sessionResponsibilityV1';
 import type { SessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
 import { randomUUID } from '@/platform/randomUUID';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';

@@ -301,6 +301,7 @@ test('source-test classification follows the configured resolver contract rather
     ['corepack', 'yarn', '-s', 'vitest', 'run', 'arbitrary.test.ts'],
     ['corepack', 'yarn', '-s', 'vitest', 'run', 'src/plugins/authoring/bundleDaemonRuntime.test.ts'],
     ['vitest', 'run', '--config=vitest.config.ts', 'artifact-named.test.ts'],
+    ['corepack', 'yarn', '-s', 'vitest:local', 'run', '--config=vitest.source.integration.config.ts', 'src/api/apiMachine.preflightCatalogs.runtimeCatalog.integration.test.ts'],
   ]) {
     assert.equal(resolveRemoteValidationKind(args, { cwd: 'apps/cli' }), 'source-test');
   }
@@ -315,6 +316,7 @@ test('source-test classification follows the configured resolver contract rather
     ['corepack', 'yarn', '-s', 'vitest:artifact'],
   ]) assert.equal(resolveRemoteValidationKind(args, { cwd: 'apps/cli' }), 'runtime');
   assert.equal(resolveRemoteValidationKind(['vitest', 'run'], { cwd: 'apps/ui' }), 'source-test');
+  assert.equal(resolveRemoteValidationKind(['vitest', 'run', '--config=vitest.source.integration.config.ts'], { cwd: 'apps/ui' }), 'runtime');
   assert.equal(resolveRemoteValidationKind(
     ['node', '../../../node_modules/vitest/vitest.mjs', 'run', '--config=vitest.config.ts'],
     { cwd: 'packages/plugins/triage' },

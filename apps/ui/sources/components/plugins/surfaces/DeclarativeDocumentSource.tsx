@@ -2,12 +2,9 @@ import * as React from 'react';
 import { isPluginUiResourceReadAuthorityLost } from '@happier-dev/plugin-ui/advanced';
 import { useWidgetFrameResourceActivity } from '@/components/widgets/frame/widgetFrameResourceActivity';
 
-import {
-    normalizePluginDeclarativeDocumentV1,
-    parsePluginDeclarativeDocumentResourceBytesV1,
-    PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1,
-    type PluginDeclarativePreparedTargetedSurfaceInventoryEntryV1,
-} from '@happier-dev/protocol';
+import { normalizePluginDeclarativeDocumentV1, type PluginDeclarativePreparedTargetedSurfaceInventoryEntryV1 } from '@happier-dev/protocol/plugins/contributions/ui/declarativeDocument';
+import { parsePluginDeclarativeDocumentResourceBytesV1 } from '@happier-dev/protocol/plugins/contributions/ui/declarativeDocumentPreflightV1';
+import { PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1 } from '@happier-dev/protocol/plugins/contributions/ui/declarativeDocumentContentTypeV1';
 import {
     useLivePluginResource,
     usePluginHostApi,

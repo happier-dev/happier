@@ -1,8 +1,9 @@
 import { z } from 'zod';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { SessionBoardTabIdSchema, SessionSurfaceItemIdSchema } from './ids.js';
+import { WidgetSessionBoardWidthV1Schema } from '../../widgets/widgetPresentationV1.js';
 
-export const SessionBoardItemWidthSchema = z.enum(['compact', 'medium', 'wide', 'full']);
+export const SessionBoardItemWidthSchema = WidgetSessionBoardWidthV1Schema;
 export const SessionBoardItemFrameStyleSchema = z.enum(['card', 'plain']);
 export const SessionBoardLayoutV1Schema = z.object({
   v: z.literal(1),

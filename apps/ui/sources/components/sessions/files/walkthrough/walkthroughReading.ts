@@ -1,14 +1,7 @@
-import {
-    isScmSelectionReviewed,
-    type ScmComparison,
-    type ScmComparisonFile,
-    type ScmChangeOccurrence,
-    type ScmDiffSummaryAnalysisCoverage,
-    type ScmDiffSummaryOutputState,
-    type ScmDiffSummaryWalkthrough,
-    type ScmReviewedMarksRecord,
-    type ScmDiffSummaryResult,
-} from '@happier-dev/protocol';
+import { isScmSelectionReviewed, type ScmReviewedMarksRecord } from '@happier-dev/protocol/scm/reviewedMarks';
+import type { ScmComparison, ScmComparisonFile, ScmChangeOccurrence } from '@happier-dev/protocol/scm/comparison';
+import type { ScmDiffSummaryAnalysisCoverage, ScmDiffSummaryOutputState, ScmDiffSummaryWalkthrough } from '@happier-dev/protocol/scm/diffSummary';
+import type { ScmDiffSummaryResult } from '@happier-dev/protocol/scm/diffSummaryResult';
 import { parsePatch } from 'diff';
 
 import { countHunkLines, isMetadataOccurrence, locateComparisonOccurrences, type LocatedOccurrence } from '@/components/sessions/files/comparison/comparisonOccurrences';

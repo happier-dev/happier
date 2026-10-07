@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { HomeSearchCapabilitiesSchema } from '@happier-dev/protocol';
+import { HomeSearchCapabilitiesSchema } from '@happier-dev/protocol/features/payload/capabilities/homeSearchCapabilities';
 
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';

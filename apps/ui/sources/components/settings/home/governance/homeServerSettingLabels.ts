@@ -1,7 +1,7 @@
 import type { HomeSettingIgnoredReasonV1 } from '@happier-dev/protocol/home/governance';
 
 import { t, type TranslationKeyNoParams } from '@/text';
-import { homeSettingsTranslations } from '@/text/translations/homeSettingsTranslations';
+import { en } from '@/text/translations/en';
 
 import { humanizeIdentifier } from './homeFeatureLabels';
 
@@ -11,14 +11,10 @@ import { humanizeIdentifier } from './homeFeatureLabels';
  * every locale matches, then translated through `t`. A per-route rate limit is named from its route
  * through one template; a key newer than this app reads as its humanised name, never as nothing.
  */
-const KEY_LABELS: Readonly<Record<string, string>> = homeSettingsTranslations.en.keys;
-const GROUP_LABELS: Readonly<Record<string, string>> = homeSettingsTranslations.en.groups;
-const CHOICE_LABELS: Readonly<Record<string, string>> = homeSettingsTranslations.en.choices;
-
 const RATE_LIMIT_ROUTE_KEY = /^(?:HAPPIER_)?(.+)_RATE_LIMIT_(MAX|WINDOW)$/;
 
 export function homeServerSettingTitleKey(key: string): TranslationKeyNoParams | null {
-    return Object.hasOwn(KEY_LABELS, key)
+    return Object.hasOwn(en.homeSettings.keys, key)
         // Checked against the English tree above, which every locale must match.
         ? (`homeSettings.keys.${key}` as TranslationKeyNoParams)
         : null;
@@ -44,7 +40,7 @@ export function homeServerSettingTitle(key: string): string {
 }
 
 export function homeServerSettingGroupTitleKey(group: string): TranslationKeyNoParams | null {
-    return Object.hasOwn(GROUP_LABELS, group) ? (`homeSettings.groups.${group}` as TranslationKeyNoParams) : null;
+    return Object.hasOwn(en.homeSettings.groups, group) ? (`homeSettings.groups.${group}` as TranslationKeyNoParams) : null;
 }
 
 export function homeServerSettingGroupTitle(group: string): string {
@@ -54,12 +50,12 @@ export function homeServerSettingGroupTitle(group: string): string {
 
 /** A value the console has words for (`homeSettings.choices.<value>`), or `null`. */
 export function homeSettingKnownChoiceLabel(value: string): string | null {
-    return Object.hasOwn(CHOICE_LABELS, value) ? t(`homeSettings.choices.${value}` as TranslationKeyNoParams) : null;
+    return Object.hasOwn(en.homeSettings.choices, value) ? t(`homeSettings.choices.${value}` as TranslationKeyNoParams) : null;
 }
 
 /** A registry enum value in words (`homeSettings.choices.<value>`), else its humanised form. */
 export function homeSettingChoiceLabel(value: string): string {
-    return Object.hasOwn(CHOICE_LABELS, value)
+    return Object.hasOwn(en.homeSettings.choices, value)
         ? t(`homeSettings.choices.${value}` as TranslationKeyNoParams)
         : humanizeIdentifier(value);
 }

@@ -3,7 +3,7 @@ import * as React from 'react';
 import {
     SimulatorDeviceResourceV1Schema,
     type SimulatorDeviceResourceV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/devices/simulator/v1';
 
 import type { DetailsTabState } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
 import { readComputerScreenSessionSurfaceResource } from '@/components/computer/computerScreenDetailsTab';

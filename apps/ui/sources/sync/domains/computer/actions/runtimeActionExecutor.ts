@@ -1,4 +1,5 @@
-import { COMPUTER_PRESENT_USER_ACTION_IDS, type RuntimeActionExecute } from '@happier-dev/protocol';
+import { COMPUTER_PRESENT_USER_ACTION_IDS } from '@happier-dev/protocol/computer/v1';
+import type { RuntimeActionExecute } from '@happier-dev/protocol/actions/executor/types';
 
 import { executeComputerActionViaMachineRpc } from './machineRpc';
 import { publishComputerActionAnswer } from '../computerControlClient';

@@ -1,4 +1,7 @@
-import { ACTION_TOOL_EXPOSURE_SURFACES, ActionToolExposureModeSchema, DEFAULT_ACTIONS_SETTINGS_V1, DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, SessionAgentSpawnPolicyV1Schema, type ActionToolExposureMode, type ActionToolExposureSurface, type SessionAgentSpawnPolicyV1 } from '@happier-dev/protocol';
+import { ACTION_TOOL_EXPOSURE_SURFACES } from '@happier-dev/protocol/actions/actionToolExposure';
+import { ActionToolExposureModeSchema, type ActionToolExposureMode, type ActionToolExposureSurface } from '@happier-dev/protocol/actions/metadata';
+import { DEFAULT_ACTIONS_SETTINGS_V1 } from '@happier-dev/protocol/account/settings/accountSettings';
+import { DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, SessionAgentSpawnPolicyV1Schema, type SessionAgentSpawnPolicyV1 } from '@happier-dev/protocol/account/settings/sessionAgentSpawnPolicyV1';
 import { defineAccountSettingAnalytics } from './accountSettingAnalyticsPresentation';
 
 type ActionSettingsOverrideLike = Readonly<{

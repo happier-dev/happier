@@ -20,7 +20,7 @@ import { updateVoiceConversationLanguagePreference } from '@/voice/settings/voic
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import type { VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import { useVoiceProviderRegistryRevision } from '@/voice/registry/useVoiceProviderRegistryRevision';
-import { resolveVoiceProviderLanguagePreference } from '@happier-dev/protocol';
+import { resolveVoiceProviderLanguagePreference } from '@happier-dev/protocol/plugins/contributions/voice';
 
 function languageName(code: string): string {
   return LANGUAGES.find((language) => language.code === code)?.name ?? code;

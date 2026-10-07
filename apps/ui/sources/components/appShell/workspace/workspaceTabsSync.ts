@@ -1,4 +1,4 @@
-import { WorkspaceTabsV1StoredSchema } from '@happier-dev/protocol';
+import { WorkspaceTabsV1StoredSchema } from '@happier-dev/protocol/workspace/workspaceTabsV1';
 import { applyWorkspaceTabIntents, emptyWorkspaceTabs, type SharedWorkspaceTabs, type WorkspaceTabIntent } from './workspaceSyncedTabs';
 
 export type WorkspaceTabsTransport = Readonly<{

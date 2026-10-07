@@ -88,11 +88,16 @@ export function resolveCatalogAgentConnectedServiceIds(
   return readDeclaredCatalogConnectedServiceIds(findCatalogEntry(agentId));
 }
 
+export function readDeclaredCatalogConnectedAccountServiceIds(
+  entry: Pick<AgentCatalogEntry, 'connectedAccountServiceIds'> | null | undefined,
+): readonly ConnectedAccountServiceKey[] {
+  return entry?.connectedAccountServiceIds ?? NO_DECLARED_CONNECTED_ACCOUNT_SERVICE_KEYS;
+}
+
 export function resolveCatalogAgentConnectedAccountServiceIds(
   agentId: string,
 ): readonly ConnectedAccountServiceKey[] {
-  return findCatalogEntry(agentId)?.connectedAccountServiceIds
-    ?? NO_DECLARED_CONNECTED_ACCOUNT_SERVICE_KEYS;
+  return readDeclaredCatalogConnectedAccountServiceIds(findCatalogEntry(agentId));
 }
 
 /**

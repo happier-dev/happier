@@ -6,10 +6,8 @@ import type {
   BundledRetiringDirectMediaTranscriptDrain,
   BundledVoiceProviderMediaPort,
 } from './bundledConversationRuntimeContract';
-import {
-  readVoiceProviderCredentialRemediationCode,
-  type VoiceRealtimeJsonValue,
-} from '@happier-dev/protocol';
+import { readVoiceProviderCredentialRemediationCode } from '@happier-dev/protocol/voice/providerOperations';
+import type { VoiceRealtimeJsonValue } from '@happier-dev/protocol/voice/realtime/events';
 import type {
   PluginVoiceAgentSessionRealtimeService,
   VoiceProviderExecutionAuthority,

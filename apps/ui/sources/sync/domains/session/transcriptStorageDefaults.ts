@@ -1,4 +1,4 @@
-import { BackendTargetKeyV2Schema, type BackendTargetRefV2Input } from '@happier-dev/protocol';
+import { BackendTargetKeyV2Schema, type BackendTargetRefV2Input } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 
 export const SESSION_TRANSCRIPT_STORAGE_MODES = ['persisted', 'direct'] as const;

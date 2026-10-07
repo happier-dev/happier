@@ -7,7 +7,8 @@ import { getDefaultSystemTaskRunner, useSystemTaskSnapshot } from '@/components/
 import type { SystemTaskRunState } from '@/components/systemTasks/types';
 import { isSystemTaskBridgeUnavailableError, readSystemTaskStartErrorMessage } from '@/components/systemTasks/systemTaskStartError';
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
-import { SYSTEM_TASK_PROTOCOL_VERSION, createTailscaleEnsureReadyTaskSpec } from '@happier-dev/protocol';
+import { SYSTEM_TASK_PROTOCOL_VERSION } from '@happier-dev/protocol/system/tasks/spec';
+import { createTailscaleEnsureReadyTaskSpec } from '@happier-dev/protocol/system/tasks/tailscaleEnsureReadyTaskContract';
 
 import type {
     EndpointReachabilityRemediation,

@@ -6,7 +6,7 @@ import {
     type BackendTargetRefV2,
     type BackendTargetRefV2Input,
     type PersistedBackendTargetRefV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 import { isBundledAgentId } from '@/agents/catalog/catalog';
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';

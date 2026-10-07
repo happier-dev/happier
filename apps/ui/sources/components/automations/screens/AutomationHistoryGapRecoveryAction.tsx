@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { HappierBanner } from '@happier-dev/plugin-ui/presentation';
-import { arePluginMachineMaterializationRefsEqual } from '@happier-dev/protocol';
+import { arePluginMachineMaterializationRefsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { composePluginMachineExecutionOriginV1 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';

@@ -1,18 +1,7 @@
-import {
-    PLUGIN_DATA_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
-    PluginCollectionUiQueryErrorV1Schema,
-    PluginCollectionUiQueryRequestV1Schema,
-    PluginCollectionUiQueryResultV1Schema,
-    PluginCollectionUiQueryTransportResultV1Schema,
-    compilePluginJsonSchema,
-    validatePluginCollectionUiQueryParametersV1,
-    validatePluginCollectionUiQueryResultV1,
-    type NormalizedPluginAccountCollectionContractV1,
-    type NormalizedPluginCollectionUiQueryDescriptorV1,
-    type PluginCollectionUiQueryErrorV1,
-    type PluginCollectionUiQueryRequestV1,
-    type PluginCollectionUiQueryResultV1,
-} from '@happier-dev/protocol';
+import { PLUGIN_DATA_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import { PluginCollectionUiQueryErrorV1Schema, PluginCollectionUiQueryRequestV1Schema, PluginCollectionUiQueryResultV1Schema, validatePluginCollectionUiQueryParametersV1, type NormalizedPluginCollectionUiQueryDescriptorV1, type PluginCollectionUiQueryErrorV1, type PluginCollectionUiQueryRequestV1, type PluginCollectionUiQueryResultV1 } from '@happier-dev/protocol/plugins/data/collectionUiQueryWireV1';
+import { PluginCollectionUiQueryTransportResultV1Schema, validatePluginCollectionUiQueryResultV1, type NormalizedPluginAccountCollectionContractV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
+import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import type {
     PluginAccountCollectionDefinition,
     PluginAccountCollectionValue,

@@ -7,7 +7,7 @@ import {
 import { readVoiceAgentRunMetadataFromSession } from '@/voice/persistence/voiceAgentRunMetadata';
 import { readLocalConversationSettingsFromAccountSettings } from '@/voice/local/localVoiceSettings';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
-import { resolveVoiceWelcomeText } from '@/voice/agent/voiceWelcomeText';
+import { preloadVoiceWelcomeText, resolveVoiceWelcomeText } from '@/voice/agent/voiceWelcomeText';
 
 function readPersistedWelcomedEpoch(metadataSessionId: string | null, serverId: string): number | undefined {
     if (!metadataSessionId) return undefined;
@@ -48,6 +48,8 @@ export function createVoiceWelcomePolicy(args: Readonly<{
             }
 
             try {
+                await preloadVoiceWelcomeText(policy.assistantLanguage);
+                if (!handle.accountLifetime.isCurrent()) return null;
                 const welcomeText = resolveVoiceWelcomeText(policy.assistantLanguage);
                 const res = await handle.client.welcome({
                     sessionId: handle.rpcSessionId,

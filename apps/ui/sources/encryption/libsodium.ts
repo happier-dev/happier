@@ -1,12 +1,7 @@
 import sodium from '@/encryption/libsodium.lib';
 import { getRandomBytes } from '@/platform/cryptoRandom';
-import {
-    deriveBoxPublicKeyFromSeed,
-    openBoxBundle,
-    parseSerializedJsonValue,
-    sealBoxBundle,
-    stringifySerializedJsonValue,
-} from '@happier-dev/protocol';
+import { deriveBoxPublicKeyFromSeed, openBoxBundle, sealBoxBundle } from '@happier-dev/protocol/crypto/boxBundle';
+import { parseSerializedJsonValue, stringifySerializedJsonValue } from '@happier-dev/protocol/crypto/serializedJsonValue';
 
 export function getPublicKeyForBox(secretKey: Uint8Array): Uint8Array {
     return deriveBoxPublicKeyFromSeed(secretKey);

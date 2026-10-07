@@ -3,18 +3,12 @@ import { deriveSettingsSecretsKeySet, unsealSecretsDeepWithKeysForPlainStorage }
 import { stripLocalOnlyAccountSettings } from '@/sync/domains/settings/localOnlyAccountSettings';
 import type { Settings } from '@/sync/domains/settings/settings';
 import { normalizeVoiceSettingsServerDelta } from '@/sync/domains/settings/voiceSettingsPersistence';
-import {
-  ConnectedServiceCredentialRecordV1Schema,
-  assertConnectedServiceCredentialRecordBinding,
-  openConnectedServiceCredentialCiphertext,
-  type ConnectedServiceCredentialRecordV1,
-  type ConnectedServiceCredentialRevisionBoundaryV1,
-  type ConnectedServiceId,
-  type QualifiedConnectedAccountConfigurationSnapshotV4,
-  type QualifiedConnectedAccountCredentialSnapshotV4,
-  type QualifiedConnectedAccountProfileV4,
-  type QualifiedConnectedAccountRef,
-} from '@happier-dev/protocol';
+import { ConnectedServiceCredentialRecordV1Schema, type ConnectedServiceCredentialRecordV1, type ConnectedServiceCredentialRevisionBoundaryV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { assertConnectedServiceCredentialRecordBinding } from '@happier-dev/protocol/connect/connectedServiceCredentialBinding';
+import { openConnectedServiceCredentialCiphertext } from '@happier-dev/protocol/connect/connectedServiceCipher';
+import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { QualifiedConnectedAccountConfigurationSnapshotV4, QualifiedConnectedAccountCredentialSnapshotV4, QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { getRandomBytes } from '@/platform/cryptoRandom';

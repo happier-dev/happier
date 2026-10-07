@@ -73,6 +73,10 @@ export type HomeHubLayoutActionInputById = {
                             };
                             authorAccountId?: string | undefined;
                         };
+                        sizeDeclaration: {
+                            sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                            defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+                        };
                         name: string;
                         body: {
                             kind: 'declarative';
@@ -150,7 +154,7 @@ export type HomeHubLayoutActionInputById = {
             } | {
                 nativeIndex: number;
             } | undefined;
-            width?: 'half' | 'full' | undefined;
+            size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
             frameStyle?: 'card' | 'plain' | undefined;
         } | {
             kind: 'widget_remove';
@@ -183,6 +187,10 @@ export type HomeHubLayoutActionInputById = {
                                 itemId: string;
                             };
                             authorAccountId?: string | undefined;
+                        };
+                        sizeDeclaration: {
+                            sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                            defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
                         };
                         name: string;
                         body: {
@@ -258,7 +266,7 @@ export type HomeHubLayoutActionInputById = {
             expectedPresentation?: {
                 frameStyle: 'card' | 'plain' | null;
                 nativeIndex: number;
-                width?: 'half' | 'full' | undefined;
+                size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
                 hidden?: boolean | undefined;
             } | undefined;
         } | {
@@ -279,9 +287,9 @@ export type HomeHubLayoutActionInputById = {
                 purpose: string;
             }>;
         } | {
-            kind: 'widget_width';
+            kind: 'widget_size';
             instanceId: string;
-            width: 'half' | 'full';
+            size: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
         };
     };
 };
@@ -324,6 +332,10 @@ export type HomeHubLayoutActionResultById = {
                             };
                             authorAccountId?: string | undefined;
                         };
+                        sizeDeclaration: {
+                            sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                            defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+                        };
                         name: string;
                         body: {
                             kind: 'declarative';
@@ -402,7 +414,7 @@ export type HomeHubLayoutActionResultById = {
             }[];
             sections?: Record<string, {
                 frameStyle?: 'card' | 'plain' | undefined;
-                width?: 'half' | 'full' | undefined;
+                size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
             }> | undefined;
         };
         sections: {
@@ -439,6 +451,10 @@ export type HomeHubLayoutActionResultById = {
                                 itemId: string;
                             };
                             authorAccountId?: string | undefined;
+                        };
+                        sizeDeclaration: {
+                            sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                            defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
                         };
                         name: string;
                         body: {
@@ -516,7 +532,7 @@ export type HomeHubLayoutActionResultById = {
                 }>;
                 displayName?: string | undefined;
             } | undefined;
-            width?: 'half' | 'full' | undefined;
+            size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
         }[];
         availableWidgetIds: string[];
         hiddenSetupStepIds: string[];
@@ -555,6 +571,10 @@ export type HomeHubLayoutActionResultById = {
                             };
                             authorAccountId?: string | undefined;
                         };
+                        sizeDeclaration: {
+                            sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                            defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+                        };
                         name: string;
                         body: {
                             kind: 'declarative';
@@ -633,7 +653,7 @@ export type HomeHubLayoutActionResultById = {
             }[];
             sections?: Record<string, {
                 frameStyle?: 'card' | 'plain' | undefined;
-                width?: 'half' | 'full' | undefined;
+                size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
             }> | undefined;
         };
         sections: {
@@ -670,6 +690,10 @@ export type HomeHubLayoutActionResultById = {
                                 itemId: string;
                             };
                             authorAccountId?: string | undefined;
+                        };
+                        sizeDeclaration: {
+                            sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                            defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
                         };
                         name: string;
                         body: {
@@ -747,7 +771,7 @@ export type HomeHubLayoutActionResultById = {
                 }>;
                 displayName?: string | undefined;
             } | undefined;
-            width?: 'half' | 'full' | undefined;
+            size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
         }[];
         availableWidgetIds: string[];
         hiddenSetupStepIds: string[];

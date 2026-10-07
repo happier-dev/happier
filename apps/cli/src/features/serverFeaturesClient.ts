@@ -1,4 +1,5 @@
-import { AsyncTtlCache, type FeaturesResponse as ServerFeatures } from '@happier-dev/protocol';
+import type { FeaturesResponse as ServerFeatures } from '@happier-dev/protocol';
+import { AsyncTtlCache } from '@happier-dev/protocol/common/asyncTtlCache';
 import { armDeadlineTimer } from '@happier-dev/protocol/common/deadlineTimer';
 
 import { normalizeBaseUrl, withAbortTimeout } from '../diagnostics/httpClient';

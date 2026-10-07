@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
-import { machineAgentSignInTerminalKey } from '@happier-dev/protocol';
+import { machineAgentSignInTerminalKey } from '@happier-dev/protocol/daemon/agentSignIn';
 
 import { useAgentSignIn } from '@/agents/machineAgents/signIn/useAgentSignIn';
 import { EmbeddedTerminalPane } from '@/components/terminal/embedded/EmbeddedTerminalPane';

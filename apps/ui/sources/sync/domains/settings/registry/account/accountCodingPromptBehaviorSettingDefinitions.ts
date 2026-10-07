@@ -1,4 +1,4 @@
-import { CodingPromptBehaviorV1Schema } from '@happier-dev/protocol';
+import { CodingPromptBehaviorV1Schema } from '@happier-dev/protocol/prompts/codingPromptBehaviorV1';
 import { defineAccountSettingAnalytics } from './accountSettingAnalyticsPresentation';
 
 export const ACCOUNT_CODING_PROMPT_BEHAVIOR_SETTING_ANALYTICS = defineAccountSettingAnalytics({

@@ -3,12 +3,8 @@ import {
     serverAccountScopedStorageKey,
     type ServerAccountScope,
 } from '@/sync/domains/scope/serverAccountScope';
-import {
-    SessionCreationKeyV1Schema,
-    buildSpawnedFirstTurnLocalId,
-    deriveSessionCreationTagV1,
-    buildSessionSpawnInitialInputLocalIdV1,
-} from '@happier-dev/protocol';
+import { SessionCreationKeyV1Schema, deriveSessionCreationTagV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
+import { buildSpawnedFirstTurnLocalId, buildSessionSpawnInitialInputLocalIdV1 } from '@happier-dev/protocol/sessions/messages/spawnedFirstTurn';
 
 import { createUiSessionSpawnNonce, normalizeSpawnSessionNonce } from './spawnSessionNonce';
 

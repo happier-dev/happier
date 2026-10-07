@@ -77,33 +77,38 @@ export async function buildIntoTempThenReplace(
       });
     } finally {
       await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
-      await rm(backupDir, { recursive: true, force: true }).catch(() => {});
+      // The mounted publisher owns rollback cleanup, including retained
+      // recovery backups when restoration fails.
     }
     return;
   }
 
-  let hadExisting = false;
   try {
-    await renameForPublication(outDir, backupDir, { platform, renameImpl, waitImpl });
-    hadExisting = true;
-  } catch (err) {
-    if (err?.code !== 'ENOENT') throw err;
-  }
-
-  try {
-    await renameForPublication(tmpDir, outDir, { platform, renameImpl, waitImpl });
-  } catch (err) {
-    if (hadExisting) {
-      await renameForPublication(backupDir, outDir, { platform, renameImpl, waitImpl }).catch((restoreErr) => {
-        if (err && typeof err === 'object') {
-          err.restoreError = restoreErr;
-        }
-      });
+    let hadExisting = false;
+    try {
+      await renameForPublication(outDir, backupDir, { platform, renameImpl, waitImpl });
+      hadExisting = true;
+    } catch (err) {
+      if (err?.code !== 'ENOENT') throw err;
     }
-    throw err;
-  }
 
-  if (hadExisting) {
-    await rm(backupDir, { recursive: true, force: true }).catch(() => {});
+    try {
+      await renameForPublication(tmpDir, outDir, { platform, renameImpl, waitImpl });
+    } catch (err) {
+      if (hadExisting) {
+        await renameForPublication(backupDir, outDir, { platform, renameImpl, waitImpl }).catch((restoreErr) => {
+          if (err && typeof err === 'object') {
+            err.restoreError = restoreErr;
+          }
+        });
+      }
+      throw err;
+    }
+
+    if (hadExisting) {
+      await rm(backupDir, { recursive: true, force: true }).catch(() => {});
+    }
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }
 }

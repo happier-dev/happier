@@ -1,7 +1,7 @@
 import {
     ConnectedServiceCredentialHealthStatusV1Schema,
     type ConnectedServiceCredentialHealthStatusV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/connected-service-schemas';
 
 /**
  * DISPLAY parse for a connected-service credential status. Returns the status

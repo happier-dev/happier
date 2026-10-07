@@ -1,7 +1,5 @@
-import {
-  redactBugReportSensitiveText,
-  type VoiceAgentOutputEventV1,
-} from '@happier-dev/protocol';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
+import type { VoiceAgentOutputEventV1 } from '@happier-dev/protocol/voice/outputEvents';
 
 import { redactVoicePathLikeString } from '@/voice/shared/redactVoicePathLikeData';
 

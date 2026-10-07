@@ -262,6 +262,9 @@ export function createSessionBoardActionDeps(options: Readonly<{
       const currentLayout = await readLayout();
       const document = currentLayout?.document ?? { v: 1 as const, tabs: [] };
       expectedLayoutRevision = currentLayout?.revision ?? null;
+      if (args.expectedLayoutRevision !== undefined && args.expectedLayoutRevision !== expectedLayoutRevision) {
+        return projectSessionBoardActionFailureV1({ error: 'session_board_revision_conflict', currentLayoutRevision: expectedLayoutRevision });
+      }
       const edited = applySessionBoardItemPlacementV1(document, { itemId: args.itemId, placement: args.placement });
       if (!edited.ok) return createSessionBoardFailureV1(edited.error);
       layout = edited.layout;

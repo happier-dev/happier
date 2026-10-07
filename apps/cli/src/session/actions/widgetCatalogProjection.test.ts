@@ -14,8 +14,8 @@ describe('headless widget catalog projection', () => {
         const parsed = ingestCanonicalPluginManifest(JSON.stringify({ schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Widgets',
             engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
             contributes: { ui: { views: [
-                { id: 'app', container: 'widget', target: { kind: 'app' }, renderer: 'content', title: { key: 'widget.app', fallback: 'App widget' } },
-                { id: 'session', container: 'widget', target: { kind: 'session' }, renderer: 'content', title: 'Session widget', sessionInputPath: 'session',
+                { sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' }, id: 'app', container: 'widget', target: { kind: 'app' }, renderer: 'content', title: { key: 'widget.app', fallback: 'App widget' } },
+                { sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' }, id: 'session', container: 'widget', target: { kind: 'session' }, renderer: 'content', title: 'Session widget', sessionInputPath: 'session',
                   inputs: { fields: [{ path: 'session', title: 'Session', widget: 'select', optionsSourceId: 'sessions.list' }] }, inputSchema: { type: 'object', properties: { session: { type: 'object' } } } },
             ], renderers: [{ id: 'content', kind: 'declarative', root: { kind: 'text', text: 'Widget' } }] } },
         }), { sourceProvenance: 'registryCustodied' });

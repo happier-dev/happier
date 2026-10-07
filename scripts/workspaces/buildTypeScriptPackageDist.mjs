@@ -24,6 +24,7 @@ import { exitWithCommandResult, runCommand } from '../../apps/stack/scripts/util
 import { resolveRemoteCommandPolicy } from '../../apps/stack/scripts/utils/dev_targets/remote_commands.mjs';
 
 import { assertNoMissingLocalImports } from './distLocalImports.mjs';
+import { copyDirectoryContents } from './copyDirectoryContents.mjs';
 import {
   collectPackageBuildOutputTargets,
   isLocalPackageBuildOutputTarget,
@@ -439,15 +440,6 @@ async function preparePersistentCompilerWorkTree(compilerWorkTree, { packageDir,
   await mkdir(compilerWorkTree.outputDir, { recursive: true });
 }
 
-async function copyDirectoryContents(sourceDir, destinationDir) {
-  for (const entry of await readdir(sourceDir, { withFileTypes: true })) {
-    await cp(join(sourceDir, entry.name), join(destinationDir, entry.name), {
-      recursive: entry.isDirectory(),
-      force: true,
-    });
-  }
-}
-
 async function rewritePromotedTypeScriptSourceMap({
   compilerMapPath,
   promotedMapPath,
@@ -630,7 +622,7 @@ export async function buildTypeScriptPackageDist({
   // emit-only compilations never share incremental state.
   const effectiveCompilerArgs = [
     ...parsedArgs.compilerArgs,
-    ...(buildMode === 'qa-runtime' ? ['--noCheck', '--incremental'] : []),
+    ...(buildMode !== 'strict' ? ['--noCheck', '--incremental'] : []),
   ];
   const persistentCompilerWorkTree = resolvePersistentCompilerWorkTree({
     packageDir: resolvedPackageDir,

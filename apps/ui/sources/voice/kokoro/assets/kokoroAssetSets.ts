@@ -4,7 +4,7 @@ import {
   isPublishedModelPackCatalogEntry,
   listModelPackCatalogEntries,
   resolveCanonicalModelPackId,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/voice/modelPacks/catalog';
 import { t } from '@/text';
 import { z } from 'zod';
 

@@ -3,7 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
 
-import { PromptDocBodyV1Schema } from '@happier-dev/protocol';
+import { PromptDocBodyV1Schema } from '@happier-dev/protocol/prompts/library/promptDocV2';
 
 import { t } from '@/text';
 import { sync } from '@/sync/sync';

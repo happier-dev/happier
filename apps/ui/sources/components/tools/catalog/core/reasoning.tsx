@@ -3,7 +3,7 @@ import type { ToolCall } from "@happier-dev/session-core/messages";
 import { t } from '@/text';
 import { ICON_REASONING } from '../icons';
 import type { KnownToolDefinition } from '../_types';
-import { ReasoningInputV2Schema, ReasoningResultV2Schema } from '@happier-dev/protocol';
+import { ReasoningInputV2Schema, ReasoningResultV2Schema } from '@happier-dev/protocol/tools/v2/schemas';
 
 export const coreReasoningTools = {
     Reasoning: {

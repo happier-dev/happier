@@ -1,5 +1,5 @@
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
-import { openAesGcmPayloadWebCrypto, sealAesGcmPayloadWebCrypto } from '@happier-dev/protocol';
+import { openAesGcmPayloadWebCrypto, sealAesGcmPayloadWebCrypto } from '@happier-dev/protocol/crypto/sessionDataKeyBundleWebCrypto';
 
 import { decodeUTF8, encodeUTF8 } from './text';
 

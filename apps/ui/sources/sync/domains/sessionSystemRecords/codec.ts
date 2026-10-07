@@ -1,4 +1,4 @@
-import { SessionSystemRecordStoredSchema, type SessionSystemRecordStored } from '@happier-dev/protocol';
+import { SessionSystemRecordStoredSchema, type SessionSystemRecordStored } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
 import { openSessionStoredContent, type SessionStoredContentContext } from '@happier-dev/sync-client';
 import type { HostSessionSystemRecordAddress } from './transport';
 

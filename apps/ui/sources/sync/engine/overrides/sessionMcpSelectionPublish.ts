@@ -4,7 +4,7 @@ import {
     readSessionMcpSelectionV1FromMetadata,
     SessionMcpSelectionV1Schema,
     type SessionMcpSelectionV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
 
 import type { Metadata } from '@happier-dev/session-core/state';
 

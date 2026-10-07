@@ -1,19 +1,11 @@
 import { z } from 'zod';
 
-import {
-    ComposerAgentContinuationIntentV1Schema,
-    ComposerAttachmentDraftV1Schema,
-    MAX_COMPOSER_ATTACHMENT_INSTANCES_V1,
-    SessionAgentTransitionInputV1Schema,
-    SessionDiscussionSelectionSourceV1Schema,
-    type SessionDiscussionSelectionSourceV1,
-    type ComposerAttachmentDraftV1,
-    type ComposerReferenceMentionPayloadV1,
-    ParticipantRecipientV1Schema,
-    PendingRequestedActionV1Schema,
-    type PendingRequestedActionV1,
-    type ParticipantRecipientV1,
-} from '@happier-dev/protocol';
+import { ComposerAgentContinuationIntentV1Schema, SessionAgentTransitionInputV1Schema } from '@happier-dev/protocol/sessions/agentTransition';
+import { ComposerAttachmentDraftV1Schema, MAX_COMPOSER_ATTACHMENT_INSTANCES_V1, type ComposerAttachmentDraftV1 } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import { SessionDiscussionSelectionSourceV1Schema, type SessionDiscussionSelectionSourceV1 } from '@happier-dev/protocol/sessions/discussions/content';
+import type { ComposerReferenceMentionPayloadV1 } from '@happier-dev/protocol/runtime/input/composerReferenceProviderV1';
+import { ParticipantRecipientV1Schema, type ParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
+import { PendingRequestedActionV1Schema, type PendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 
 type DeepReadonly<T> = T extends string | number | boolean | bigint | symbol | null | undefined
     ? T

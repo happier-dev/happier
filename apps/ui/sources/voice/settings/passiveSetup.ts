@@ -3,15 +3,10 @@ import {
   buildConnectedServiceProfileOptionsByServiceId,
   resolveConnectedServiceSessionSelection,
 } from '@happier-dev/agents';
-import {
-  CodexPassiveRealtimeSetupResultV1Schema,
-  ConnectedServiceBindingsV1Schema,
-  readBuiltInLegacyConnectedAccountServiceKeyIngress,
-  type CodexPassiveRealtimeSetupResultV1,
-  type CapabilityId,
-  type ConnectedServiceBindingsV1,
-  type VoiceProviderContribution,
-} from '@happier-dev/protocol';
+import { CodexPassiveRealtimeSetupResultV1Schema, type CodexPassiveRealtimeSetupResultV1 } from '@happier-dev/protocol/capabilities/codexPassiveRealtimeSetup';
+import { ConnectedServiceBindingsV1Schema, readBuiltInLegacyConnectedAccountServiceKeyIngress, type ConnectedServiceBindingsV1 } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { CapabilityId } from '@happier-dev/protocol/capabilities';
+import type { VoiceProviderContribution } from '@happier-dev/protocol/plugins/contributions/voice';
 
 import type { VoiceReadinessFact } from '@/voice/registry/readiness';
 import type { ExternalVoiceProviderSettingsDescriptor } from '@/voice/settings/externalProviderSettings';

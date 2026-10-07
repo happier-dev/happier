@@ -1,4 +1,4 @@
-import { buildSshTarget } from '@happier-dev/protocol';
+import { buildSshTarget } from '@happier-dev/protocol/ssh/sshTarget';
 
 import type { SshCredentialsDraft } from '@/components/ssh/SshCredentialsFields';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';

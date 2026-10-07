@@ -4,7 +4,7 @@ import { resolvePath } from '@/utils/path/pathUtils';
 import { t } from '@/text';
 import { ICON_SEARCH, ICON_READ } from '../icons';
 import type { KnownToolDefinition } from '../_types';
-import { CodeSearchInputV2Schema, GlobInputV2Schema, GrepInputV2Schema, LSInputV2Schema } from '@happier-dev/protocol';
+import { CodeSearchInputV2Schema, GlobInputV2Schema, GrepInputV2Schema, LSInputV2Schema } from '@happier-dev/protocol/tools/v2/schemas';
 
 export const coreSearchTools = {
     'Glob': {

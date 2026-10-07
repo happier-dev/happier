@@ -1,16 +1,8 @@
-import {
-  buildQualifiedPluginContributionKey,
-  createPluginContributionIdentity,
-  createRecipientContractDigestV1,
-  normalizeRecipientContractV1,
-  VoiceProviderContributionSchema,
-  VoiceProviderSettingsJsonValueV1Schema,
-  type RecipientContractV1,
-  type VoiceProviderContribution,
-  type VoiceReadinessRequirement,
-  type VoiceReadinessRole,
-  type VoiceRuntimePlatform,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey, createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
+import { createRecipientContractDigestV1, normalizeRecipientContractV1, type RecipientContractV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
+import { VoiceProviderContributionSchema, type VoiceProviderContribution } from '@happier-dev/protocol/plugins/contributions/voice';
+import { VoiceProviderSettingsJsonValueV1Schema } from '@happier-dev/protocol/voice/realtime/providerSettings';
+import type { VoiceReadinessRequirement, VoiceReadinessRole, VoiceRuntimePlatform } from '@happier-dev/protocol/voice/realtime/capabilities';
 import type { VoiceServiceMark } from '@happier-dev/plugin-sdk/voice';
 import { z } from 'zod';
 

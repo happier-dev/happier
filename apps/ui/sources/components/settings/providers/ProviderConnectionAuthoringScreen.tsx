@@ -3,15 +3,12 @@ import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
 import type { TextInput } from 'react-native';
 import { useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useUnistyles } from 'react-native-unistyles';
-import {
-    areProviderContributionKeysEqualV1,
-    createProviderErrorV1,
-    createProviderSavedSecretRecordFingerprintV1,
-    parseProviderIpAddress,
-    parseProviderManualModelInput,
-    type ProviderEndpointOverrideV1,
-    type ProviderErrorV1,
-} from '@happier-dev/protocol';
+import { areProviderContributionKeysEqualV1 } from '@happier-dev/protocol/providers/contribution-identity';
+import { createProviderErrorV1, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { createProviderSavedSecretRecordFingerprintV1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
+import { parseProviderIpAddress } from '@happier-dev/protocol/providers/safety/locality';
+import { parseProviderManualModelInput } from '@happier-dev/protocol/providers/manualModelInput';
+import type { ProviderEndpointOverrideV1 } from '@happier-dev/protocol/providers/connections/v1';
 import type { DaemonProviderContributionAuthoringPreviewV1 } from '@happier-dev/protocol/rpc';
 
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';

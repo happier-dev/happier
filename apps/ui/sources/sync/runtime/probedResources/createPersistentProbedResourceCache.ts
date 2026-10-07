@@ -1,4 +1,4 @@
-import { ProbedResourceCache, type ProbedResourceSnapshot } from '@happier-dev/protocol';
+import { ProbedResourceCache, type ProbedResourceSnapshot } from '@happier-dev/protocol/common/probedResourceCache';
 import { MMKV } from 'react-native-mmkv';
 
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';

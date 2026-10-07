@@ -1,4 +1,5 @@
-import { readBackendTargetRefV2, type ExecutionRunPublicState } from '@happier-dev/protocol';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { ExecutionRunPublicState } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { parsePermissionIntentAlias } from '@happier-dev/agents/permissions';
 import * as React from 'react';
 import { View } from 'react-native';

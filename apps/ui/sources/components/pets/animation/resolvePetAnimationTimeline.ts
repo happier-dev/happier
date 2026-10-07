@@ -2,7 +2,7 @@ import {
     PET_ANIMATION_ROWS_V1,
     PET_ATLAS_V1,
     type PetAnimationStateV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/pets/constants';
 
 import {
     PET_ACTION_LOOP_COUNT,

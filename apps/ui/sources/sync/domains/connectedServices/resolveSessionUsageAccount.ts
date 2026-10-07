@@ -1,7 +1,7 @@
 import {
     parseQualifiedPluginContributionKey,
     type PluginContributionIdentityV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/contribution-identity';
 
 import { readSessionConnectedServiceBindings } from './readSessionConnectedServiceBindings';
 

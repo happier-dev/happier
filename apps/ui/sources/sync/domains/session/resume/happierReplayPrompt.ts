@@ -1,7 +1,7 @@
 import {
   HappierReplayRecentMessagesCountSchema,
   HappierReplayWritableMaxSeedCharsSchema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/replay-seed-budget';
 
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
 

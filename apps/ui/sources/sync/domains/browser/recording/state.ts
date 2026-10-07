@@ -1,10 +1,5 @@
-import {
-    BrowserRecordingSessionV1Schema,
-    resolveBrowserRecordingProfileUnavailableReason,
-    type BrowserRecordingOutcomeReasonV1,
-    type BrowserRecordingPolicyStateV1,
-    type BrowserRecordingSessionV1,
-} from '@happier-dev/protocol';
+import { BrowserRecordingSessionV1Schema, type BrowserRecordingOutcomeReasonV1, type BrowserRecordingPolicyStateV1, type BrowserRecordingSessionV1 } from '@happier-dev/protocol/browser/recording/v1';
+import { resolveBrowserRecordingProfileUnavailableReason } from '@happier-dev/protocol/browser/recording/captureProfiles';
 
 import type {
     BrowserRecordingAttachResult,

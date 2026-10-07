@@ -10,7 +10,7 @@ import {
     type SessionMetadataInactiveModelIntentExpectationV1,
     type SessionMetadataInactiveModelIntentOwnerPatchV1,
     type SessionMetadataTuplePatchV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import type { UpdateMetadataAck } from '@/sync/domains/session/metadata/updateSessionMetadataWithRetry';
 

@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { buildAcpConfigOptionOverridesV1, buildBackendTargetKeyV2, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol';
+import { buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
+import { buildBackendTargetKeyV2, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { WorkflowSessionAuthoringSelection } from '@happier-dev/protocol/workflows/workflowV1';
 import { buildSessionAgentPickerDetailContent, type SessionAgentPickerSelection } from '@/components/sessions/agentPicker/buildSessionAgentPickerDetailContent';
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';

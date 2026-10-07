@@ -1,9 +1,8 @@
-import {
-    ExternalActionRequestEnvelopeV1Schema,
-    PUBLIC_ACTION_INPUT_SCHEMAS, PUBLIC_ACTION_OUTPUT_SCHEMAS, PublicActionIdSchema,
-    parseExternalActionResponseEnvelopeV1, projectSessionSpawnNewApiRequest,
-    type ActionExecuteResult, type ActionExecutorContext, type ActionId, type ExternalActionTargetV1,
-} from '@happier-dev/protocol';
+import { ExternalActionRequestEnvelopeV1Schema, parseExternalActionResponseEnvelopeV1, type ExternalActionTargetV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { PUBLIC_ACTION_INPUT_SCHEMAS, PUBLIC_ACTION_OUTPUT_SCHEMAS, PublicActionIdSchema, projectSessionSpawnNewApiRequest } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ServerFetch } from '@/sync/http/client';
 import type { z } from 'zod';
 export type ApiTokenActionTransport = Readonly<{ request: ServerFetch; target?: ExternalActionTargetV1 }>;

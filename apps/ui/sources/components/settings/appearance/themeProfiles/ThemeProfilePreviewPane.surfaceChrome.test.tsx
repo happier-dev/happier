@@ -70,7 +70,7 @@ describe('ThemeProfilePreviewPane surface chrome', () => {
 
         const style = flattenTestStyle(findPreviewCard(screen).props.style);
         expect(style.borderWidth).toBe(0);
-        expect(style.borderTopWidth).toBe(0);
+        expect(style.borderBottomWidth).toBe(0);
         expect(hasShadow(style)).toBe(false);
     });
 
@@ -88,8 +88,10 @@ describe('ThemeProfilePreviewPane surface chrome', () => {
         const style = flattenTestStyle(findPreviewCard(screen).props.style);
         expect(style.borderColor).toBe('rgba(0,0,0,0.08)');
         expect(Number(style.borderWidth)).toBeGreaterThan(0);
-        expect(style.borderTopColor).toBe('rgba(0,0,0,0.08)');
-        expect(Number(style.borderTopWidth)).toBeGreaterThan(0);
+        // The draft's own ink lands on the draft's own border, on the light theme's lip side.
+        const { compositeRaisedEdgeColor } = await import('@/theme/raisedEdge');
+        expect(style.borderBottomColor).toBe(compositeRaisedEdgeColor('rgba(0,0,0,0.08)', 'rgba(255,255,255,0.04)'));
+        expect(Number(style.borderBottomWidth)).toBeGreaterThan(0);
         expect(hasShadow(style)).toBe(true);
     });
 

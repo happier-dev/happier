@@ -1,15 +1,8 @@
-import {
-    MENTION_KIND_V1,
-    admitMentionRefsV1ForText,
-    buildMentionRefForKindV1,
-    readComposerReferenceMentionV1,
-    resolveSkillCatalogItemIdentityV1,
-    resolveSkillCatalogOriginV1,
-    sanitizeMentionRefsV1,
-    type ComposerAttachmentDraftV1,
-    type MentionRefV1,
-    type RawIngressStructuredInputV1,
-} from '@happier-dev/protocol';
+import { MENTION_KIND_V1, admitMentionRefsV1ForText, buildMentionRefForKindV1, sanitizeMentionRefsV1, type MentionRefV1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
+import { readComposerReferenceMentionV1 } from '@happier-dev/protocol/runtime/input/composerReferenceProviderV1';
+import { resolveSkillCatalogItemIdentityV1, resolveSkillCatalogOriginV1 } from '@happier-dev/protocol/runtime/catalog/skills';
+import type { ComposerAttachmentDraftV1 } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import type { RawIngressStructuredInputV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 
 import type { AutocompleteSuggestion } from '@/components/autocomplete/autocompleteTypes';
 

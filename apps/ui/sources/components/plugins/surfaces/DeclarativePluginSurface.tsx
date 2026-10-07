@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import { Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -25,20 +26,14 @@ import {
     type HappierUiAccessibility,
     type HappierUiEnvironment,
 } from '@happier-dev/plugin-ui/environment';
-import {
-    ActionIdSchema,
-    buildQualifiedPluginContributionKey,
-    PluginDeclarativeComposerApplyEffectV1Schema,
-    PluginContributionIdentityV1Schema,
-    PluginJsonValueV2Schema,
-    PluginSettingFieldSchemaV2Schema,
-    normalizeStrictJsonValue,
-    sameStrictJsonValue,
-    type PluginContributionIdentityV1,
-    type ComposerRefV1,
-    type ComposerTransactionV1,
-    type PluginJsonValueV2,
-} from '@happier-dev/protocol';
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { buildQualifiedPluginContributionKey, PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { PluginDeclarativeComposerApplyEffectV1Schema } from '@happier-dev/protocol/plugins/contributions/ui/v2';
+import { PluginJsonValueV2Schema, type PluginJsonValueV2 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
+import { PluginSettingFieldSchemaV2Schema } from '@happier-dev/protocol/plugins/contributions/settings';
+import { normalizeStrictJsonValue, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef';
+import type { ComposerTransactionV1 } from '@happier-dev/protocol/plugins/ui/composer';
 import { composerRefV1Key } from '@happier-dev/protocol/plugins/ui/composerRef';
 import {
     PluginUiJsonValueV1Schema,
@@ -643,6 +638,7 @@ export function DeclarativePluginSurface(props: Readonly<{
 }>) {
     const { theme } = useUnistyles();
     const hostActivelyViewed = useHostActivelyViewed();
+    const widgetPresentation = useWidgetPresentation();
     const activeServer = useActiveServerSnapshot();
     const projectedPresentationTheme = React.useMemo(() => projectPluginUiTheme(theme), [theme]);
     const presentationTheme = React.useMemo(
@@ -1380,6 +1376,7 @@ export function DeclarativePluginSurface(props: Readonly<{
     renderContext = {
         colors: theme.colors,
         presentationTheme,
+        widgetPresentation,
         localize: localized,
         direction: props.environment?.localization.direction,
         contrast: props.contrast,

@@ -17,6 +17,8 @@ export type AppBootSequence = Readonly<{
     prepareWarmCache: () => Promise<unknown>;
     /** Authoritative user input must be loaded before any synchronous reader can mount. */
     prepareSessionDrafts: () => Promise<void>;
+    /** Loads the selected locale and English fallback after local Account settings are restored. */
+    prepareTranslations: () => Promise<void>;
     /**
      * `null` when this host must not restore sync (the desktop activity overlay window renders
      * against the already-running main window's sync).
@@ -76,6 +78,7 @@ export async function runAppBootSequence(sequence: AppBootSequence): Promise<voi
         // The bridge is the credential authority in this realm. No persisted app state belongs
         // to the frame, including drafts or a warm cache from another signed-in Account.
         await Promise.resolve(sequence.sodiumReady);
+        await start(sequence.prepareTranslations);
         sequence.onReady({ credentials: null });
         return;
     }
@@ -111,5 +114,6 @@ export async function runAppBootSequence(sequence: AppBootSequence): Promise<voi
     if (initialCredentials) {
         startSyncRestore(sequence, initialCredentials);
     }
+    await start(sequence.prepareTranslations);
     sequence.onReady({ credentials: initialCredentials });
 }

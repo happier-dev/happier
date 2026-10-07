@@ -1,4 +1,4 @@
-import { pluginPermissionSubjectsEqualV1 } from '@happier-dev/protocol';
+import { pluginPermissionSubjectsEqualV1 } from '@happier-dev/protocol/plugins/permissions/grants';
 
 import type {
     PluginPermissionGrant,

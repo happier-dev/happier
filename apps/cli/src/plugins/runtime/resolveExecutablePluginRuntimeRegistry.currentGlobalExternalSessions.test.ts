@@ -16,6 +16,7 @@ import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { readCurrentCommittedPluginGenerations } from '@/plugins/store/registry/generationStore';
 import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/currentState.testkit';
 import { createExternalSessionHostOperationOwner } from '@/session/external/hostOperationOwner';
+import { logger } from '@/ui/logger';
 import type { ExternalSessionFollowHostOperation } from '@/session/external/followHostOperation';
 import {
     resetActiveAccountSettingsSnapshotForTests,
@@ -476,6 +477,75 @@ async function resolveCurrentnessInputs(input: Readonly<{
 }
 
 describe('current global External Sessions publication', () => {
+    it('reports a construction failure once per state change while allowing source recovery on demand', async () => {
+        resetActiveAccountSettingsSnapshotForTests();
+        setActiveAccountSettingsSnapshot({
+            source: 'network', settings: accountSettingsParse({}), settingsVersion: 1,
+            loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: 'current-global-account',
+        });
+        // File logging and the Account HTTP client are system boundaries; the
+        // registry, source materializer and admitted plugin remain real.
+        const warning = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+        boundaries.fetchAccountProfile.mockImplementation(async () => {
+            throw new Error('Account profile transport unavailable');
+        });
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-external-warning-home-'));
+        const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-external-warning-plugin-'));
+        let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let reloadController: ReturnType<typeof createPluginReloadController> | null = null;
+        const publicationWarnings = () => warning.mock.calls.filter(([message]) => (
+            message === '[PLUGIN RUNTIME] Current-global External Sessions service is unavailable'
+        ));
+        try {
+            await writeExternalSessionsPlugin({ pluginRoot, version: 'H' });
+            await seedCurrentLocalPathPluginFixture({ happyHomeDir, pluginRoot, pluginId: PLUGIN_ID, manifestVersion: '1.0.0' });
+            const inputs = await resolveCurrentnessInputs({ happyHomeDir, pluginRoot });
+            reloadController = createPluginReloadController({ resolveRuntimeRegistry: async () => registry! });
+            registry = await resolveExecutablePluginRuntimeRegistry({
+                happyHomeDir, contributes: inputs.contributes, generation: 1,
+                generationAuthority: inputs.generationAuthority,
+                currentGlobalExternalSessionsRouter: reloadController.currentGlobalExternalSessions,
+                resolveExternalSessionCurrentMachineId: () => 'machine-current-global',
+            });
+            await reloadController.adoptPreparedRuntimeRegistry({
+                registry, changedPluginIds: [PLUGIN_ID], durableRevision: 1,
+                runningSessionDisposition: 'retainRunningSessions',
+            });
+            const demand = [{ pluginId: PLUGIN_ID, family: 'agents' as const, localId: AGENT_ID }];
+            await registry.activateContributionsOnDemand(demand);
+            await registry.activateContributionsOnDemand(demand);
+            expect(publicationWarnings()).toHaveLength(1);
+
+            boundaries.fetchAccountProfile.mockImplementation(async () => {
+                throw new Error('Account profile transport failed differently');
+            });
+            await registry.activateContributionsOnDemand(demand);
+            await registry.activateContributionsOnDemand(demand);
+            expect(publicationWarnings()).toHaveLength(2);
+
+            boundaries.fetchAccountProfile.mockImplementation(async () => accountProfile());
+            await registry.activateContributionsOnDemand(demand);
+            const binding = registry.agentRuntimesByAgentId.get(ROUTING_AGENT_ID)?.sessionRunnerFactoryBinding;
+            const createCurrent = registry.createRetainedRunnerAgentCurrentGlobalExternalSessionsService;
+            if (!binding || !createCurrent) throw new Error('missing current External Sessions binding');
+            const current = await createCurrent({
+                binding, sessionId: SESSION_ID, correlationId: 'warning-recovery',
+                signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+            });
+            await expect(current.list({ agentId: ROUTING_AGENT_ID, limit: 1 })).resolves.toMatchObject({
+                items: [expect.objectContaining({ ref: expect.objectContaining({ remoteSessionId: 'current-H' }) })],
+            });
+            expect(publicationWarnings()).toHaveLength(2);
+        } finally {
+            await reloadController?.shutdown();
+            if (!reloadController) await registry?.dispose();
+            resetActiveAccountSettingsSnapshotForTests();
+            boundaries.fetchAccountProfile.mockImplementation(async () => accountProfile());
+            warning.mockRestore();
+            await Promise.all([rm(happyHomeDir, { recursive: true, force: true }), rm(pluginRoot, { recursive: true, force: true })]);
+        }
+    });
+
     it('retains default sources beside a refused profile without rereading Account data until its revision changes', async () => {
         resetActiveAccountSettingsSnapshotForTests();
         const snapshot = {

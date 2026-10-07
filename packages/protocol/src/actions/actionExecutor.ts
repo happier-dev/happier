@@ -28,7 +28,9 @@ import { isWorkBoardActionIdV1 } from '../boards/actionIdsV1.js';
 import { WorkBoardActionInputSchemasV1 } from '../boards/actionsV1.js';
 import { HOME_HUB_LAYOUT_ACTION_IDS, HomeHubLayoutUpdateInputSchema } from './specs/homeHub.js';
 import { WidgetInstanceActionIdV1Schema, WidgetSurfaceReadV1Schema, readWidgetActionSurfaceV1, readWidgetActionDestinationV1, readWidgetCatalogBoundSessionV1 } from '../widgets/actionsV1.js';
-import { executeWidgetInstanceActionV1, admitWidgetInstanceConfigurationV1, readWidgetActionSurfacePortV1 } from '../widgets/executeWidgetInstanceActionV1.js';
+import { executeWidgetInstanceActionV1, admitWidgetInstanceConfigurationV1, admitWidgetInstanceSizeV1, readWidgetActionSurfacePortV1 } from '../widgets/executeWidgetInstanceActionV1.js';
+import { getWidgetSizeFootprintV1, WIDGET_SIZE_ORDER_V1 } from '../widgets/widgetPresentationV1.js';
+import { SessionBoardItemWidthSchema } from '../sessions/board/layout.js';
 import { clientActionUnavailable } from './clientDispatchV1.js';
 import { WidgetDefinitionActionIdV1Schema } from '../widgets/definitionActionIdsV1.js';
 import { readWidgetDefinitionActionAccountV1, readWidgetDefinitionActionSessionV1 } from '../widgets/definitionActionsV1.js';
@@ -208,6 +210,7 @@ import { SessionDiscussionActionIdV1Schema } from '../sessions/discussions/actio
 import { SESSION_DISCUSSION_ACTION_INPUT_SCHEMAS_V1 } from '../sessions/discussions/actions.js';
 import {
   SESSION_BOARD_ACTION_INPUT_SCHEMAS_V1,
+  SessionBoardItemUpsertInputV1Schema,
   parseSessionBoardActionPortResultV1,
 } from '../sessions/board/actions.js';
 import { CurrentSessionPresentationActionInputV1Schema } from '../sessions/presentation/currentSessionPresentationV1.js';
@@ -3846,9 +3849,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (intent.kind.startsWith('widget_') && 'ref' in intent && 'surface' in intent.ref) {
             const refusal = admitWidgetActionSurfaceV1(deps, intent.ref.surface, ctx);
             if (refusal) return refusal;
-            if (intent.kind === 'widget_add' || intent.kind === 'widget_inputs') {
+            if (intent.kind === 'widget_add' || intent.kind === 'widget_inputs' || intent.kind === 'widget_size') {
               let instance = intent.kind === 'widget_add' ? intent.instance : undefined;
-              if (intent.kind === 'widget_inputs') {
+              if (intent.kind === 'widget_inputs' || intent.kind === 'widget_size') {
                 const port = readWidgetActionSurfacePortV1(deps, intent.ref.surface);
                 const read = port ? await port.read(intent.ref.surface, ctx, ctx.signal) : null;
                 const failed = readActionFailureEnvelope(read);
@@ -3857,10 +3860,18 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                 if (!state.success) return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
                 const existing = state.data.instances.find(entry => entry.instance.id === intent.ref.instanceId)?.instance;
                 if (!existing) return { ok: false, errorCode: 'widget_instance_not_found', error: 'widget_instance_not_found' };
-                instance = { ...existing, bindings: intent.bindings };
+                instance = intent.kind === 'widget_inputs' ? { ...existing, bindings: intent.bindings } : existing;
               }
-              const admission = await admitWidgetInstanceConfigurationV1(deps, intent.ref, instance!, ctx);
-              if (admission) return admission;
+              if (intent.kind === 'widget_add' || intent.kind === 'widget_inputs') {
+                const admission = await admitWidgetInstanceConfigurationV1(deps, intent.ref, instance!, ctx);
+                if (admission) return admission;
+              }
+              if (intent.kind === 'widget_add' || intent.kind === 'widget_size') {
+                const admission = await admitWidgetInstanceSizeV1(deps, intent.ref, instance!, intent.size, ctx);
+                if ('ok' in admission) return admission;
+                return await executeWorkBoardActionV1(deps.workBoardArtifacts, actionId,
+                  { intent: { ...intent, ...(admission.size ? { size: admission.size } : {}) } }, ctx.signal, ctx);
+              }
             }
           }
         }
@@ -4055,6 +4066,28 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (actionId !== 'home.reachNudge.dismiss') {
           if (!deps.homeHubArtifacts) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           try {
+            if (actionId === 'home.hub.layout.update') {
+              const { intent } = HomeHubLayoutUpdateInputSchema.parse(parsed.data);
+              if (intent.kind === 'widget_add' || intent.kind === 'widget_size') {
+                const scope = deps.widgetAccountScope?.();
+                if (!scope) return { ok: false, errorCode: 'widget_scope_unavailable', error: 'widget_scope_unavailable' };
+                const surface = { ...scope, owner: { kind: 'home' as const } };
+                const section = intent.kind === 'widget_size'
+                  ? (await deps.homeHubArtifacts.describe(await deps.homeHubArtifacts.read(ctx.signal), ctx.signal)).sections
+                    .find(value => value.kind === 'widget' && value.instance.id === intent.instanceId) : undefined;
+                const instance = intent.kind === 'widget_add' ? intent.instance : section?.kind === 'widget' ? section.instance : undefined;
+                if (!instance) return { ok: false, errorCode: 'widget_instance_not_found', error: 'widget_instance_not_found' };
+                const ref = { surface, instanceId: instance.id };
+                if (intent.kind === 'widget_add') {
+                  const refusal = await admitWidgetInstanceConfigurationV1(deps, ref, instance, ctx);
+                  if (refusal) return refusal;
+                }
+                const admission = await admitWidgetInstanceSizeV1(deps, ref, instance, intent.size, ctx);
+                if ('ok' in admission) return admission;
+                return { ok: true, result: await deps.homeHubArtifacts.apply({ ...intent,
+                  ...(admission.size ? { size: admission.size } : {}) }, ctx.signal) };
+              }
+            }
             const result = actionId === 'home.hub.layout.get'
               ? await deps.homeHubArtifacts.describe(await deps.homeHubArtifacts.read(ctx.signal), ctx.signal)
               : await deps.homeHubArtifacts.apply(HomeHubLayoutUpdateInputSchema.parse(parsed.data).intent, ctx.signal);
@@ -4107,7 +4140,38 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (!deps.sessionBoardAction) {
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
-        const boardInput = SESSION_BOARD_ACTION_INPUT_SCHEMAS_V1[sessionBoardActionId.data].parse(parsed.data);
+        let boardInput = SESSION_BOARD_ACTION_INPUT_SCHEMAS_V1[sessionBoardActionId.data].parse(parsed.data);
+        if (sessionBoardActionId.data === 'session.board.item.upsert') {
+          const upsert = SessionBoardItemUpsertInputV1Schema.parse(boardInput);
+          // Creation supplies the whole configured widget rectangle. Existing
+          // native item edits retain their independent width/height contract.
+          if (upsert.expectedItemRevision === null && upsert.item.source.kind === 'widget') {
+            const scope = deps.widgetAccountScope?.();
+            const sessionId = upsert.sessionId ?? ctx.defaultSessionId;
+            if (!scope || !sessionId) return { ok: false, errorCode: 'widget_scope_unavailable', error: 'widget_scope_unavailable' };
+            const surface = { ...scope, owner: { kind: 'sessionBoard' as const, sessionId } };
+            const scopeRefusal = admitWidgetActionSurfaceV1(deps, surface, ctx);
+            if (scopeRefusal) return scopeRefusal;
+            const instance = upsert.item.source.instance;
+            const ref = { surface, instanceId: instance.id };
+            const configurationRefusal = await admitWidgetInstanceConfigurationV1(deps, ref, instance, ctx);
+            if (configurationRefusal) return configurationRefusal;
+            const placement = upsert.placement;
+            if (!placement) return { ok: false, errorCode: 'widget_placement_required', error: 'widget_placement_required' };
+            const height = upsert.item.height.mode === 'fixed' ? upsert.item.height.size : upsert.item.height.fallback;
+            const requested = placement.width === undefined ? undefined : WIDGET_SIZE_ORDER_V1.find(size => {
+              const footprint = getWidgetSizeFootprintV1('sessionBoard', size);
+              return footprint !== undefined && footprint.width === placement.width && footprint.height === height;
+            });
+            if (placement.width !== undefined && !requested) return { ok: false, errorCode: 'widget_size_unsupported', error: 'widget_size_unsupported' };
+            const admission = await admitWidgetInstanceSizeV1(deps, ref, instance, requested, ctx);
+            if ('ok' in admission) return admission;
+            const footprint = admission.size && getWidgetSizeFootprintV1('sessionBoard', admission.size);
+            if (!footprint) return { ok: false, errorCode: 'widget_size_unsupported', error: 'widget_size_unsupported' };
+            boardInput = { ...upsert, placement: { ...placement, width: SessionBoardItemWidthSchema.parse(footprint.width) },
+              item: { ...upsert.item, height: placement.width === undefined ? { mode: 'fixed', size: footprint.height } : upsert.item.height } };
+          }
+        }
         const result = await deps.sessionBoardAction({
           actionId: sessionBoardActionId.data,
           input: boardInput,

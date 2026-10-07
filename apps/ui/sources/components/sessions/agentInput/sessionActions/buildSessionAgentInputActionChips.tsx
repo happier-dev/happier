@@ -1,6 +1,7 @@
 import React from 'react';
 
-import { getActionSpec, type BackendTargetRefV2Input } from '@happier-dev/protocol';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { BackendTargetRefV2Input } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 import { storage } from '@/sync/domains/state/storage';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';

@@ -59,7 +59,8 @@ import { resolveSessionHandoffSourceMachineId } from '@/sync/domains/sessionHand
 import {
     resolveSessionHandoffUiAvailability,
 } from '@/sync/domains/sessionHandoff/resolveSessionHandoffUiAvailability';
-import { getActionSpec, readSessionDirectoryKind } from '@happier-dev/protocol';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { SessionRetentionNotice } from '@/components/sessions/info/SessionRetentionNotice';
 import { buildScopedSessionRouteHref, createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';

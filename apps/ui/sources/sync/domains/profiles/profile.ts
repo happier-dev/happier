@@ -1,4 +1,4 @@
-import { AccountProfileSchema, type AccountProfile } from '@happier-dev/protocol';
+import { AccountProfileSchema, type AccountProfile } from '@happier-dev/protocol/account/profile';
 
 //
 // Types

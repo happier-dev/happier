@@ -1,9 +1,5 @@
-import {
-    buildAgentRequestSemanticSummary,
-    isSessionAwarenessContentReadableV1,
-    classifyPermissionRequestRisk,
-    formatPermissionRequestSummary,
-} from '@happier-dev/protocol';
+import { buildAgentRequestSemanticSummary, classifyPermissionRequestRisk, formatPermissionRequestSummary } from '@happier-dev/protocol/activity/agentRequestSummary';
+import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessions/awareness/availability';
 import type { SessionActivityAttention } from '@/activity/attention/activityAttentionTypes';
 import type { ActivitySurfaceCandidatePrivacyModeResolver } from '@/activity/presentation/buildActivitySurfaceViewModel';
 import { createActivitySurfaceSessionTarget } from '@/activity/actions/activitySurfaceTargets';

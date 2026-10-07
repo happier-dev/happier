@@ -1,5 +1,7 @@
 import * as React from 'react';
-import { renderSessionRoleBlockV1, sameStrictJsonValue, type ResolvedRoleV1 } from '@happier-dev/protocol';
+import { renderSessionRoleBlockV1 } from '@happier-dev/protocol/prompts/roles/renderSessionRoleBlockV1';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { ResolvedRoleV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
 
 import { useActiveServerAccountScope, useSetting } from '@/sync/domains/state/storage';
 import { areServerAccountScopesEqual, serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';

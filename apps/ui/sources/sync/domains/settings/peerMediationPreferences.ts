@@ -3,7 +3,7 @@ import {
     type PeerDirectPreferenceV1,
     type PeerMediationFlowKindV1,
     type PeerMediationPreferencesV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/settings/peerMediationPreferencesV1';
 
 import { readAccountSettingsForScope } from '@/sync/domains/state/accountSettingsPersistence';
 import { storage } from '@/sync/domains/state/storage';

@@ -12,6 +12,7 @@ import type { HappierCollectionMotionDriver } from '../presentation/collection/c
 import type { CollectionVirtualizer } from '../presentation/collection/collectionVirtualizer.js';
 import type { HappierDisclosureMotionDriver } from '../presentation/collection/Disclosure.js';
 import type { HappierStateSize } from '../presentation/state/InfoState.js';
+import type { HappierSceneRenderRequest } from '../presentation/state/scenes.js';
 import type { HappierCapsuleHost } from '../presentation/status/capsuleHost.js';
 import type { HappierAgentCursorMotionDriver } from '../presentation/copresence/AgentCursor.js';
 import type { HappierLiveStreamProps } from '../presentation/media/LiveStream.js';
@@ -165,6 +166,11 @@ export type PluginUiPresentationHost = Readonly<{
   /** The incumbent host viewport policy, carried by a same-realm physical scroller. */
   createScrollActivityTracker?(scrollRef: RefObject<unknown>, horizontal: boolean): PluginUiScrollActivityTracker;
   renderVoiceMarkArt?(input: Omit<VoiceMarkArtProps, 'fallback'>): ReactNode;
+  /**
+   * Draw one Daybreak empty-state scene through the host's scene renderer, which owns the ink, line
+   * widths, the planet, motion and theme. Absent, a state keeps its glyph.
+   */
+  renderScene?(input: HappierSceneRenderRequest): ReactNode;
   renderStatusCell?(input: Omit<StatusCellProps, 'label' | 'fallback'> & Readonly<{ presented: boolean }>): ReactNode;
   renderSetupBlockTile?(input: Omit<SetupBlockTileProps, 'fallback'>): ReactNode;
   renderSetupBlockGrid?(input: Omit<SetupBlockGridProps, 'fallback'>): ReactNode;

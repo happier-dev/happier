@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ScmPullRequestListResponseSchema, type ScmPullRequestSummary } from '@happier-dev/protocol';
+import { ScmPullRequestListResponseSchema, type ScmPullRequestSummary } from '@happier-dev/protocol/scm/pullRequests';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';

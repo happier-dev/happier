@@ -539,6 +539,58 @@ describe('createSessionProviderInputConsumer', () => {
     expect(ordinaryDispatch).toHaveBeenCalledTimes(1);
   });
 
+  it.each(['ordinary', 'transferred'] as const)('keeps %s dispatch custody across a replacement without waiting for itself', async (kind) => {
+    const consumer = createSessionProviderInputConsumer({
+      messageQueue: new MessageQueue2<TestMode>(() => 'hash'),
+      session: { waitForMetadataUpdate: () => new Promise<boolean>(() => {}) },
+    });
+    const transition = generationEpoch('transition');
+    const replacement = generationEpoch('replacement');
+    if (kind === 'transferred') await consumer.enforceProviderInputAdmission(transition);
+    const dispatch = async () => {
+      await consumer.enforceProviderInputAdmission(replacement);
+      expect(consumer.readProviderInputAdmission()).toEqual(replacement);
+      await consumer.clearProviderInputAdmission({
+        serviceId: replacement.serviceId, groupId: replacement.groupId, epochId: replacement.epochId,
+      });
+      return 'reply delivered';
+    };
+    const options = { abortSignal: new AbortController().signal, dispatch };
+    const result = kind === 'transferred'
+      ? consumer.runProviderInputDispatchFromAdmission({ ...options, admission: transition })
+      : consumer.runProviderInputDispatch(options);
+    await expect(result).resolves.toEqual({ status: 'dispatched', value: 'reply delivered' });
+    expect(consumer.readProviderInputAdmission()).toEqual({ kind: 'admitted' });
+  });
+
+  it('waits for another dispatch while replacing under its own dispatch custody', async () => {
+    const consumer = createSessionProviderInputConsumer({
+      messageQueue: new MessageQueue2<TestMode>(() => 'hash'),
+      session: { waitForMetadataUpdate: () => new Promise<boolean>(() => {}) },
+    });
+    const otherRelease = createDeferred<void>();
+    const replacementEntered = createDeferred<void>();
+    const events: string[] = [];
+    const other = consumer.runProviderInputDispatch({
+      abortSignal: new AbortController().signal,
+      dispatch: async () => { await otherRelease.promise; events.push('other accepted'); },
+    });
+    const replacing = consumer.runProviderInputDispatch({
+      abortSignal: new AbortController().signal,
+      dispatch: async () => {
+        const enforced = consumer.enforceProviderInputAdmission(generationEpoch('replacement'));
+        replacementEntered.resolve();
+        await enforced;
+        events.push('replacement admitted');
+      },
+    });
+    await replacementEntered.promise;
+    expect(events).toEqual([]);
+    otherRelease.resolve();
+    await Promise.all([other, replacing]);
+    expect(events).toEqual(['other accepted', 'replacement admitted']);
+  });
+
   it('releases the exact transition admission when atomic transfer is cancelled or provider dispatch throws', async () => {
     const consumer = createSessionProviderInputConsumer({
       messageQueue: new MessageQueue2<TestMode>(() => 'hash'),

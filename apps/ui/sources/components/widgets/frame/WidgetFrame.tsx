@@ -1,9 +1,11 @@
 import * as React from 'react';
 import { Platform, StyleSheet as RNStyleSheet, View } from 'react-native';
+import { WidgetPresentationProvider, useWidgetPresentation, type WidgetPresentation as WidgetBodyPresentation } from '@happier-dev/plugin-ui';
 import Animated, { useAnimatedStyle, useSharedValue, withDelay, withTiming } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
     HappierPressable,
+    HappierScrollArea,
     HappierWidgetFrame,
     HAPPIER_WIDGET_FRAME_METRICS,
     happierPageTextMetrics,
@@ -11,9 +13,11 @@ import {
     type HappierWidgetFramePlacement,
     type HappierWidgetFrameStyle,
     type HappierWidgetFrameTextRender,
+    type HappierLayoutChangeEvent,
 } from '@happier-dev/plugin-ui/presentation';
 
-import { resolveThemeSurfaceBorderStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
+import { resolveThemeSurfaceChromeStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
+import { resolveThemeRaisedEdge } from '@/components/ui/surfaces/themeRaisedEdge';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
@@ -90,6 +94,10 @@ export type WidgetFrameProps = Readonly<{
     footer?: WidgetFrameFooter | null;
     /** Reserved body rows. Home keeps {@link HOME_WIDGET_BODY_ROWS}; other placements reserve none. */
     rows?: number;
+    /** Resolved presentation facts. Persisted size and native height remain with the placement owner. */
+    widgetPresentation?: Pick<WidgetBodyPresentation, 'size' | 'footprint'>;
+    /** Existing native Board height, including its Auto lifecycle; not a second saved height. */
+    viewportHeight?: number;
     /** Body box (a measured height, full-bleed insets) for a placement that sizes its body. */
     bodyStyle?: React.ComponentProps<typeof HappierWidgetFrame>['bodyStyle'];
     /**
@@ -117,7 +125,19 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const phone = useDeviceType() === 'phone';
-    const rows = props.rows ?? (props.placement === 'home' ? HOME_WIDGET_BODY_ROWS : 0);
+    const rows = props.widgetPresentation ? props.widgetPresentation.footprint.rowSpan * 2
+        : props.rows ?? (props.placement === 'home' ? HOME_WIDGET_BODY_ROWS : 0);
+    const rowHeight = useWidgetBodyRowHeight();
+    const inheritedPresentation = useWidgetPresentation();
+    const [geometry, setGeometry] = React.useState<WidgetBodyPresentation['geometry']>();
+    const onViewportLayout = React.useCallback((event: HappierLayoutChangeEvent) => {
+        const { width, height } = event.nativeEvent.layout;
+        if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
+        setGeometry(previous => previous?.width === width && previous.height === height ? previous : { width, height });
+    }, []);
+    const widgetPresentation = React.useMemo(() => props.widgetPresentation
+        ? { ...props.widgetPresentation, ...(geometry ? { geometry } : {}) } : inheritedPresentation,
+        [props.widgetPresentation, geometry, inheritedPresentation]);
     const inset = resolveHappierWidgetFrameInsetPx(props.frameStyle, props.placement);
     const footer = props.footer ?? null;
     const [refreshingResources, setRefreshingResources] = React.useState<ReadonlySet<symbol>>(() => new Set());
@@ -227,20 +247,28 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
             accessory={props.menu}
             renderText={renderText}
             footer={footerNode}
-            fill={props.fill}
+            fill={props.widgetPresentation ? false : props.fill}
             bodyStyle={props.bodyStyle}
             accessibilityLabel={props.accessibilityLabel
                 ?? (typeof props.source === 'string' && typeof props.title === 'string' ? `${props.title}, ${props.source}` : undefined)}
             overlay={props.fresh ? <WidgetFrameArrivalRing key={String(props.fresh)} frameStyle={props.frameStyle} /> : null}
         >
             <SurfaceStateSizeProvider size={stateSize}>
-                {rows > 0 ? (
-                    <WidgetFrameReservedRows rows={rows}>
+                <WidgetPresentationProvider value={widgetPresentation}>
+                {props.widgetPresentation ? (
+                    <HappierScrollArea testID={`${props.testID}.viewport`} onLayout={onViewportLayout}
+                        style={{ height: props.viewportHeight ?? rows * rowHeight, minWidth: 0 }}
+                        contentContainerStyle={{ minHeight: '100%' }}>
+                        <WidgetFrameBodyView testID={props.testID} body={props.body} rows={rows} />
+                    </HappierScrollArea>
+                ) : rows > 0 ? (
+                    <WidgetFrameReservedRows rows={rows} rowHeight={rowHeight}>
                         <WidgetFrameBodyView testID={props.testID} body={props.body} rows={rows} />
                     </WidgetFrameReservedRows>
                 ) : (
                     <WidgetFrameBodyView testID={props.testID} body={props.body} rows={rows} />
                 )}
+                </WidgetPresentationProvider>
             </SurfaceStateSizeProvider>
         </HappierWidgetFrame>
         </WidgetFrameResourceActivityContext.Provider>
@@ -252,16 +280,19 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
  * below moves when data arrives. Rows are two-line rows of a compact list at the reader's density
  * (widget rows are list rows), so the reserve matches the real rows' box.
  */
-function WidgetFrameReservedRows(props: Readonly<{ rows: number; children: React.ReactNode }>) {
+function useWidgetBodyRowHeight(): number {
     const rowMetrics = usePageRowMetrics('list');
-    const rowHeight = Math.max(
+    return Math.max(
         rowMetrics.minHeightPx,
         2 * rowMetrics.paddingVerticalPx
             + rowMetrics.title.lineHeight
             + rowMetrics.subtitle.marginTop
             + rowMetrics.subtitle.lineHeight,
     );
-    return <View style={{ flexGrow: 1, minHeight: props.rows * rowHeight, justifyContent: 'center' }}>{props.children}</View>;
+}
+
+function WidgetFrameReservedRows(props: Readonly<{ rows: number; rowHeight: number; children: React.ReactNode }>) {
+    return <View style={{ flexGrow: 1, minHeight: props.rows * props.rowHeight, justifyContent: 'center' }}>{props.children}</View>;
 }
 
 /**
@@ -332,17 +363,16 @@ function WidgetFrameBodyView(props: Readonly<{ testID: string; body: WidgetFrame
 }
 
 const stylesheet = StyleSheet.create((theme) => {
-    const surfaceBorderStyle = resolveThemeSurfaceBorderStyle({
-        borderColor: theme.colors.border.default,
-        highlightColor: theme.colors.effect.surfaceHighlight,
-    });
-    const hasVisibleSurfaceChrome = surfaceBorderStyle.borderWidth > 0 || surfaceBorderStyle.borderTopWidth > 0;
     return {
-        // The card is the app's surface card: base surface, hairline edge and the first elevation step.
+        // The card is the app's surface card: base surface, hairline with its raised edge and the first
+        // elevation step.
         card: {
             backgroundColor: theme.colors.surface.base,
-            ...surfaceBorderStyle,
-            ...(hasVisibleSurfaceChrome ? shadowLevelStyle(theme.colors.shadowLevels[1]) : {}),
+            ...resolveThemeSurfaceChromeStyle({
+                borderColor: theme.colors.border.default,
+                edge: resolveThemeRaisedEdge(theme, 'default'),
+                shadowStyle: shadowLevelStyle(theme.colors.shadowLevels[1]),
+            }),
         },
         title: {
             ...Typography.default('semiBold'),

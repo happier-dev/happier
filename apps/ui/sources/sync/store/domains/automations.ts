@@ -9,7 +9,8 @@ import {
 } from '@/sync/domains/automations/automationDefinitionProjection';
 import { getAutomationDefinitionRunCauseAt } from '@/sync/domains/automations/automationRunCause';
 import { loadSyncTuning } from '@/sync/runtime/syncTuning';
-import { sameStrictJsonValue, type WorkflowTriggerSetV1 } from '@happier-dev/protocol';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 
 import type { StoreGet, StoreSet } from './_shared';
 import {

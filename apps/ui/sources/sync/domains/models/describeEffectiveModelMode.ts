@@ -8,7 +8,7 @@ import { readSessionModelsState, readSessionModesState } from '@/sync/domains/se
 import {
     SessionAppliedModelV1Schema,
     type ProviderBoundModelRef,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/providers/model-selection';
 
 export type ModelApplyScope = 'live' | 'next_prompt' | 'spawn_only';
 

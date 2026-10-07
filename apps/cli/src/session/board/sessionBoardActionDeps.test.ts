@@ -75,6 +75,26 @@ describe('CLI Board Action family', () => {
     });
   });
   afterEach(async () => { restore(); vi.restoreAllMocks(); await app.close(); });
+  it('refuses a captured layout mismatch before sealing a size upsert to an old view', async () => {
+    const movedLayoutRevision = 'ssr1.AAAACHN5c3JlY18xAAAAAg';
+    const layout = { v: 1, tabs: [{ id: 'old', title: 'Old', items: [] },
+      { id: 'new', title: 'New', items: [{ itemId: 'status', width: 'full', frameStyle: 'plain' }] }] };
+    let writes = 0;
+    app.get('/v2/sessions/session-one/system-records/record', async request => {
+      const kind = (request.query as Record<string, string>).kind;
+      return { record: { id: kind === 'layout.v1' ? 'layout-row' : 'item-row',
+        address: { owner: 'host', namespace: 'surface', kind, localId: kind === 'layout.v1' ? 'layout' : 'status' },
+        content: { t: 'plain', v: kind === 'layout.v1' ? layout : installed }, revision: kind === 'layout.v1' ? movedLayoutRevision : revision,
+        createdAt: '2026-09-05T00:00:00.000Z', updatedAt: '2026-09-05T00:00:00.000Z' } };
+    });
+    app.put('/v2/sessions/session-one/board', async () => { writes++; throw new Error('Stale size must not be written'); });
+    const deps = createSessionBoardActionDeps({ credentials: { token: 'daemon-token', encryption: null }, serverHttpBaseUrl: 'http://board.test', serverId: 'home-a' });
+    await expect(deps.sessionBoardAction!({ actionId: 'session.board.item.upsert', context: {}, input: { sessionId: 'session-one',
+      itemId: 'status', expectedItemRevision: revision, expectedLayoutRevision: revision,
+      item: { ...installed, height: { mode: 'fixed', size: 'tall' } }, placement: { tabId: 'old', width: 'medium' } } }))
+      .resolves.toMatchObject({ errorCode: 'session_board_revision_conflict' });
+    expect(writes).toBe(0);
+  });
   it('reads additive stored fields and keeps canonical writes and strict Action admission', async () => {
     const canonicalLayout = { v: 1, tabs: [{ id: 'overview', title: 'Overview', items: [{ itemId: 'status', width: 'wide' }] }] };
     const storedItem = { ...installed, extra: true, source: { ...installed.source, extra: true,

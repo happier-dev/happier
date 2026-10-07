@@ -2,10 +2,8 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import {
-    parseQualifiedPluginContributionKey,
-    type ConnectedAccountServiceKey,
-} from '@happier-dev/protocol';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { ConnectedAccountServiceKey } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
 
 import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';

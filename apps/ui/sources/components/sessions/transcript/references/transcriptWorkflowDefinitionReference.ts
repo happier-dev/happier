@@ -1,6 +1,6 @@
 import type { ToolCall } from '@happier-dev/session-core/messages';
 import type { WorkflowAgentRevision } from '@/sync/domains/workflows/workflowAgentRevision';
-import { maybeParseJson } from '@happier-dev/protocol';
+import { maybeParseJson } from '@happier-dev/protocol/activity/parseJson';
 import { WorkflowDefinitionGetResultV1Schema, WorkflowDefinitionEditRequestV1Schema, WorkflowDefinitionEditResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { createHappierActionToolNameIndex, isRecord, readHappierActionExecuteActionId, readHappierActionId, readHappierActionToolResultCandidates } from './happierActionToolResult';
 

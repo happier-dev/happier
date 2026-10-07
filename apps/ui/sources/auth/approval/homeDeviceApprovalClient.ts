@@ -6,7 +6,7 @@ import {
     buildHomeLoginApprovalDecisionHttpPathV1,
     type HomeDeviceApprovalDecisionRequestV1,
     type HomeDeviceApprovalRequestV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/auth/accountDirectory';
 
 import type { HomeEnrollmentTransport } from '@/auth/enrollment/homeEnrollmentTransport';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';

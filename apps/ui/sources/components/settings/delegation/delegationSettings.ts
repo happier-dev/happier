@@ -1,5 +1,5 @@
 import { defineSettingsPage } from '@/components/settings/catalog/settingDeclarations';
-import { DELEGATION_SETTING_DECLARATIONS_V1 } from '@happier-dev/protocol';
+import { DELEGATION_SETTING_DECLARATIONS_V1 } from '@happier-dev/protocol/actions/accountSettingDeclarations';
 
 /** The searchable settings of the `delegation` page. Rows render their labels from these declarations. */
 export const DELEGATION_SETTINGS = defineSettingsPage({

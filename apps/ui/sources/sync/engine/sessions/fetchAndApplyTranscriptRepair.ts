@@ -1,4 +1,4 @@
-import { buildSessionMessagesPath } from '@happier-dev/protocol';
+import { buildSessionMessagesPath } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import { repairSessionMessagesTargets } from '@happier-dev/sync-client';
 import { runSessionMessagesPagePipeline } from './sessionMessagesPagePipeline';
 

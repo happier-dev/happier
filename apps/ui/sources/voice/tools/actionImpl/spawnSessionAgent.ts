@@ -1,17 +1,8 @@
 import { DEFAULT_AGENT_ID } from '@happier-dev/agents';
 import type { AgentId } from '@/agents/catalog/catalog';
-import {
-    BackendTargetKeyV2Schema,
-    agentRoutingIdAddressesContributionIdentityV1,
-    buildQualifiedPluginContributionKey,
-    parseBackendTargetKeyV2,
-    readBackendTargetRefV2,
-    readLegacyConfiguredAcpBackendId,
-    type BackendTargetRefV2,
-    type BackendTargetRefV2Input,
-    type PersistedBackendTargetRefV2,
-    type PluginContributionIdentityV1,
-} from '@happier-dev/protocol';
+import { BackendTargetKeyV2Schema, parseBackendTargetKeyV2, readBackendTargetRefV2, type BackendTargetRefV2, type BackendTargetRefV2Input, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { agentRoutingIdAddressesContributionIdentityV1, buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { readLegacyConfiguredAcpBackendId } from '@happier-dev/protocol/backends/targets/compat/customAcp';
 
 import { isBundledAgentId } from '@/agents/registry/registryCore';
 import { isLegacyCompatAgentType } from '@/agents/backendCatalog/legacyCompatAgents';

@@ -1,8 +1,5 @@
-import {
-    isTerminalAgentActivityStatus,
-    type AgentActivityStatusV1,
-    type SessionAgentActivityHeadlineV1,
-} from '@happier-dev/protocol';
+import { isTerminalAgentActivityStatus, type AgentActivityStatusV1 } from '@happier-dev/protocol/sessions/work/agentActivity/agentActivityStatusV1';
+import type { SessionAgentActivityHeadlineV1 } from '@happier-dev/protocol/sessions/work/agentActivity/agentActivityHeadlineV1';
 
 import {
     buildAgentActivityEvidenceIndex,

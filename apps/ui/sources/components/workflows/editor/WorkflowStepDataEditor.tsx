@@ -22,7 +22,7 @@ import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEdito
 import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 import { findWorkflowBlock } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { t } from '@/text';
-import { workflowFieldTranslations } from '@/text/translations/workflowFieldTranslations';
+import { en } from '@/text/translations/en';
 
 import { workflowEditorStyles } from './workflowEditorStyles';
 
@@ -35,8 +35,8 @@ const ITERATION_REFERENCE_FIELDS: readonly IterationReferenceField[] = ['index',
 
 /** The same human field name reads an Action row, a child input and a reference. */
 export function formatWorkflowFieldLabel(name: string, title?: string): string {
-    if (Object.hasOwn(workflowFieldTranslations.en, name)) {
-        return t(`workflows.page.fields.${name as keyof typeof workflowFieldTranslations.en}`);
+    if (Object.hasOwn(en.workflows.page.fields, name)) {
+        return t(`workflows.page.fields.${name as keyof typeof en.workflows.page.fields}`);
     }
     // An extension's declared title is presentation metadata; preserve it.
     // Undeclared bindings still need a readable label while staying repairable.
@@ -256,10 +256,7 @@ function ReferenceSelect(props: Readonly<{
                             detailColor: theme.colors.text.primary,
                             chevronColor: theme.colors.text.secondary,
                             detailDensity: 'compact',
-                            field: {
-                                ...resolveFieldBoxColors(theme),
-                                ...focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
-                            },
+                            field: resolveFieldBoxColors(theme, state.focused ? 'focused' : 'idle'),
                         })}
                     </HappierPressable>
                 )}

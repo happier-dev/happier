@@ -7761,7 +7761,7 @@ describe('Channels Session destination', () => {
     }
   });
 
-  it('renders the same read-only Session conversations through the public widget role', async () => {
+  it('bounds the retained virtualized Session conversations to the measured widget body', async () => {
     const surface = createSessionConversationsWidgetContext('session-under-test');
     const baseHostApi = createHostApiStub(surface);
     const hostApi = createHostApiStub(surface, {
@@ -7778,12 +7778,29 @@ describe('Channels Session destination', () => {
       surface,
       hostApi,
       signal: new AbortController().signal,
+      widgetPresentation: { size: 'medium',
+        footprint: { columns: 12, columnSpan: 6, rowSpan: 2, width: 'medium', height: 'regular' },
+        geometry: { width: 350, height: 160 } },
     } satisfies RenderContext);
     const entry = renderSurface(context) as ReactElement<{ dataClient?: PluginUiDataClient }>;
     const mount = await mountThroughReactNativeWebAsync(cloneElement(entry, { dataClient: emptyDataClient }));
     try {
       await vi.waitFor(() => expect(mount.container.textContent).toContain('Example conversation'));
-      expect(mount.container.querySelector('[data-testid="channels-session-conversations"]')).not.toBeNull();
+      const screen = mount.container.querySelector<HTMLElement>('[data-testid="channels-session-conversations"]');
+      const list = mount.container.querySelector('[data-testid="channels-session-conversations-list"]');
+      expect(screen).not.toBeNull();
+      expect(list).not.toBeNull();
+      expect(getComputedStyle(screen!).height).toBe('160px');
+      const row = mount.container.querySelector<HTMLElement>('[data-testid="channels-session-conversation:binding-session-1"]');
+      await act(async () => { row?.click(); });
+      await vi.waitFor(() => expect(mount.container.textContent).toContain('Direct mentions only'));
+      const resized = renderSurface({ ...context, widgetPresentation: { ...context.widgetPresentation,
+        geometry: { width: 620, height: 384 } } }) as ReactElement<{ dataClient?: PluginUiDataClient }>;
+      await mount.render(cloneElement(resized, { dataClient: emptyDataClient }));
+      expect(mount.container.querySelector('[data-testid="channels-session-conversations"]')).toBe(screen);
+      expect(mount.container.querySelector('[data-testid="channels-session-conversations-list"]')).toBe(list);
+      expect(getComputedStyle(screen!).height).toBe('384px');
+      expect(mount.container.textContent).toContain('Direct mentions only');
       expect(mount.container.textContent).not.toContain('Conversation connections');
     } finally {
       mount.unmount();

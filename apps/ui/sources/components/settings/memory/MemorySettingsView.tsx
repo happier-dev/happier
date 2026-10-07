@@ -27,11 +27,8 @@ import {
 import { isMachineAdministrationExecutionTargetCurrent } from '@/sync/domains/machines/administration/operationCurrentness';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 
-import {
-    DEFAULT_MEMORY_SETTINGS,
-    type MemorySettingsV1,
-    type MemoryStatusV1,
-} from '@happier-dev/protocol';
+import { DEFAULT_MEMORY_SETTINGS, type MemorySettingsV1 } from '@happier-dev/protocol/memory/memorySettings';
+import type { MemoryStatusV1 } from '@happier-dev/protocol/memory/memoryStatus';
 import { MemorySettingsArchivedRow } from './MemorySettingsArchivedSection';
 import type { ArchivedMemoryStatusRequestState } from '@/sync/domains/memory/resolveArchivedMemoryEligibilityControl';
 import { MemorySettingsBudgetsSection } from './MemorySettingsBudgetsSection';

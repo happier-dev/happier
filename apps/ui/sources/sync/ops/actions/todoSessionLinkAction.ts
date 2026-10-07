@@ -1,4 +1,4 @@
-import { TodoSessionLinkInputV1Schema, projectTodoSessionLinkFailureV1, type TodoSessionLinkOutputV1 } from '@happier-dev/protocol';
+import { TodoSessionLinkInputV1Schema, projectTodoSessionLinkFailureV1, type TodoSessionLinkOutputV1 } from '@happier-dev/protocol/todos/todoSessionLinkV1';
 import { applyTodoSessionLinkIntent } from '@/sync/domains/todos/todoOps';
 import { sync } from '@/sync/sync';
 

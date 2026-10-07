@@ -1,4 +1,4 @@
-import { readSessionDirectoryKind } from '@happier-dev/protocol';
+import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import { formatHappierAsOfTime } from '@happier-dev/plugin-ui/presentation';
 import { useSessionFilePaneNavigation } from '@/components/sessions/panes/useSessionFileDetailsOpener';
 import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
@@ -58,7 +58,7 @@ import { resolveAgentIdFromSessionMetadata, getAgentCore } from '@/agents/catalo
 import { useSessionTerminalAction } from '@/components/sessions/terminal/useSessionTerminalAction';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 import { GitPaneLayout, resolveGitPaneActiveSubTab } from '@/components/workspaces/scm/GitPaneLayout';
 import { SessionRightPanelGitCommitTabContent } from './SessionRightPanelGitCommitTabContent';
 import { useWorkspaceScmTabState } from '@/components/workspaces/scm/useWorkspaceScmTabState';

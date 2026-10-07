@@ -3,7 +3,7 @@ import { Platform } from 'react-native';
 import {
     DaemonReactNativeHostRuntimeIdentityV1Schema,
     type DaemonReactNativeHostRuntimeIdentityV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { readCurrentAppRuntimeInfo } from '@/sync/runtime/readCurrentAppRuntimeInfo';
 

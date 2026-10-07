@@ -1,9 +1,7 @@
 import * as React from 'react';
 
-import {
-    listModelPackCatalogEntries,
-    type DaemonVoiceInferenceModelStatus,
-} from '@happier-dev/protocol';
+import { listModelPackCatalogEntries } from '@happier-dev/protocol/voice/modelPacks/catalog';
+import type { DaemonVoiceInferenceModelStatus } from '@happier-dev/protocol/daemon/voiceInference';
 
 import { VOICE_RUNTIME_CONFIG_DEFAULTS } from '@/voice/runtime/voiceRuntimeConfigDefaults';
 import { buildModelCatalogRows } from './buildModelCatalogRows';

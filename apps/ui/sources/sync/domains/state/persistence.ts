@@ -37,39 +37,22 @@ import {
 import {
     type ServerAccountScope,
 } from '@/sync/domains/scope/serverAccountScope';
-import {
-    AcpConfigOptionOverridesV1Schema,
-    SessionInitialTriggerV1Schema,
-    AgentExecutionTargetV1Schema,
-    ComposerAttachmentDraftV1Schema,
-    type ComposerAttachmentAuthorValueV1,
-    ExternalSessionRefreshCursorV1Schema,
-    MAX_COMPOSER_ATTACHMENT_INSTANCES_V1,
-    SessionModelSelectionV1Schema,
-    SessionMcpSelectionV1Schema,
-    SessionExecutionTargetV1Schema,
-    SessionAuthoringExecutionTargetV2Schema,
-    TemporaryComputerActivationRefV1Schema,
-    MachinePoolSelectionOriginV1Schema,
-    SessionOrganizationPlacementV1Schema,
-    SavedSecretSchema,
-    WindowsRemoteSessionLaunchModeSchema,
-    readBackendTargetRefV2,
-    readPersistedAgentContributionIdentityV1,
-    writePersistedBackendTargetRefV2,
-    normalizeCodexBackendMode,
-    readRuntimeDescriptorV1,
-    type ComposerAttachmentDraftV1,
-    type AcpConfigOptionOverridesV1,
-    type AgentExecutionTargetV1,
-    type BackendTargetRefV2,
-    type SessionMcpSelectionV1,
-    type SessionModelSelectionV1,
-    type RuntimeDescriptorV1,
-    type SessionOrganizationPlacementV1,
-    type SessionInitialTriggerV1,
-    type WindowsRemoteSessionLaunchMode,
-} from '@happier-dev/protocol';
+import { AcpConfigOptionOverridesV1Schema, normalizeCodexBackendMode, type AcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
+import { SessionInitialTriggerV1Schema, type SessionInitialTriggerV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { AgentExecutionTargetV1Schema, type AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { ComposerAttachmentDraftV1Schema, type ComposerAttachmentAuthorValueV1, MAX_COMPOSER_ATTACHMENT_INSTANCES_V1, type ComposerAttachmentDraftV1 } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import { ExternalSessionRefreshCursorV1Schema } from '@happier-dev/protocol/sessions/external/secureRefreshV1';
+import { SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import { SessionMcpSelectionV1Schema, type SessionMcpSelectionV1 } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
+import { SessionExecutionTargetV1Schema } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
+import { SessionAuthoringExecutionTargetV2Schema, TemporaryComputerActivationRefV1Schema } from '@happier-dev/protocol/sessions/authoring/fieldCatalog';
+import { MachinePoolSelectionOriginV1Schema } from '@happier-dev/protocol/machines/pools/v1';
+import { SessionOrganizationPlacementV1Schema, type SessionOrganizationPlacementV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { SavedSecretSchema } from '@happier-dev/protocol/profiles/backendProfileSchema';
+import { WindowsRemoteSessionLaunchModeSchema, type WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol/sessions/metadata/windowsRemoteSessionLaunchMode';
+import { readBackendTargetRefV2, writePersistedBackendTargetRefV2, type BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { readPersistedAgentContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { readRuntimeDescriptorV1, type RuntimeDescriptorV1 } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/plugins/ui';
 import type { SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol/teams';
 import { getPersistenceStorage } from './persistenceStorage';

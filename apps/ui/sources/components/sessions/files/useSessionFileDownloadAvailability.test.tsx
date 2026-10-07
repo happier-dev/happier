@@ -5,7 +5,9 @@ import { recordCachedMachineRpcDirectRouteViable } from '@/sync/domains/transfer
 import { installTransferProjection, resetTransferFixture, transferMachine } from './sessionFileTransferTestkit';
 
 vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit');
+    // The mock factory, not the testkit index: the index's graph imports react-native, so loading it here
+    // waits on this very factory and module collection never finishes.
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock();
 });
 

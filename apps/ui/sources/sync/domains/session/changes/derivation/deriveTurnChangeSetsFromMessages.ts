@@ -1,10 +1,5 @@
-import {
-    extractCanonicalDiffFiles,
-    readTurnChangeToolMetadataFromToolCall,
-    type FileChangeEvidence,
-    type TurnChangeSet,
-    type TurnChangeToolMetadata,
-} from '@happier-dev/protocol';
+import { extractCanonicalDiffFiles, readTurnChangeToolMetadataFromToolCall, type TurnChangeToolMetadata } from '@happier-dev/protocol/sessions/messages/canonicalTurnDiffTool';
+import type { FileChangeEvidence, TurnChangeSet } from '@happier-dev/protocol/sessions/changes/types';
 import { deriveCanonicalPatchFileDiffs } from '@happier-dev/protocol/tools/v2';
 
 import type { Message } from '@happier-dev/session-core/messages';

@@ -1,17 +1,28 @@
-type Parts = Readonly<{ completed: number; total: number; admitted: number }>;
+// Tooling aggregate. Product locale roots import only their locale payload.
+import { walkthroughProgressTranslations as en } from './features/en';
+import { walkthroughProgressTranslations as ca } from './features/ca';
+import { walkthroughProgressTranslations as de } from './features/de';
+import { walkthroughProgressTranslations as es } from './features/es';
+import { walkthroughProgressTranslations as fr } from './features/fr';
+import { walkthroughProgressTranslations as it } from './features/it';
+import { walkthroughProgressTranslations as ja } from './features/ja';
+import { walkthroughProgressTranslations as pl } from './features/pl';
+import { walkthroughProgressTranslations as pt } from './features/pt';
+import { walkthroughProgressTranslations as ru } from './features/ru';
+import { walkthroughProgressTranslations as zh_Hans } from './features/zh-Hans';
+import { walkthroughProgressTranslations as zh_Hant } from './features/zh-Hant';
 
-/** Owner-reported multipart and revision facts; never inferred from file counts or client history. */
 export const walkthroughProgressTranslations = {
-    'en': { parts: ({ completed, total, admitted }: Parts) => `${completed}/${total} parts complete · ${admitted} admitted`, merge: 'Putting the walkthrough together…', titleEdited: 'Edited title', changed: 'Changed', moved: 'Moved', filesReadUnavailable: 'Files-read progress unavailable' },
-    'ca': { parts: ({ completed, total, admitted }: Parts) => `${completed}/${total} parts completades · ${admitted} admeses`, merge: 'S’està integrant el recorregut…', titleEdited: 'Títol editat', changed: 'Canviat', moved: 'Mogut', filesReadUnavailable: 'Progrés de lectura de fitxers no disponible' },
-    'de': { parts: ({ completed, total, admitted }: Parts) => `${completed}/${total} Teile abgeschlossen · ${admitted} angenommen`, merge: 'Der Durchgang wird zusammengefügt…', titleEdited: 'Titel bearbeitet', changed: 'Geändert', moved: 'Verschoben', filesReadUnavailable: 'Fortschritt gelesener Dateien nicht verfügbar' },
-    'es': { parts: ({ completed, total, admitted }: Parts) => `${completed}/${total} partes completas · ${admitted} admitidas`, merge: 'Integrando el recorrido…', titleEdited: 'Título editado', changed: 'Cambiado', moved: 'Movido', filesReadUnavailable: 'Progreso de lectura de archivos no disponible' },
-    'fr': { parts: ({ completed, total, admitted }: Parts) => `${completed}/${total} parties terminées · ${admitted} admises`, merge: 'Assemblage du parcours…', titleEdited: 'Titre modifié', changed: 'Modifié', moved: 'Déplacé', filesReadUnavailable: 'Progression de lecture des fichiers indisponible' },
-    'it': { parts: ({ completed, total, admitted }: Parts) => `${completed}/${total} parti completate · ${admitted} ammesse`, merge: 'Composizione del percorso…', titleEdited: 'Titolo modificato', changed: 'Modificato', moved: 'Spostato', filesReadUnavailable: 'Avanzamento della lettura dei file non disponibile' },
-    'ja': { parts: ({ completed, total, admitted }: Parts) => `${completed}/${total} パート完了 · ${admitted} 受付済み`, merge: 'ガイドをまとめています…', titleEdited: '編集済みのタイトル', changed: '変更済み', moved: '移動済み', filesReadUnavailable: 'ファイル読み取りの進捗は不明です' },
-    'pl': { parts: ({ completed, total, admitted }: Parts) => `${completed}/${total} części ukończone · ${admitted} przyjęte`, merge: 'Łączenie przewodnika…', titleEdited: 'Edytowany tytuł', changed: 'Zmieniono', moved: 'Przeniesiono', filesReadUnavailable: 'Postęp odczytu plików niedostępny' },
-    'pt': { parts: ({ completed, total, admitted }: Parts) => `${completed}/${total} partes concluídas · ${admitted} admitidas`, merge: 'Integrando o percurso…', titleEdited: 'Título editado', changed: 'Alterado', moved: 'Movido', filesReadUnavailable: 'Progresso de leitura de arquivos indisponível' },
-    'ru': { parts: ({ completed, total, admitted }: Parts) => `${completed}/${total} частей завершено · ${admitted} принято`, merge: 'Обзор объединяется…', titleEdited: 'Название изменено', changed: 'Изменено', moved: 'Перемещено', filesReadUnavailable: 'Прогресс чтения файлов недоступен' },
-    'zh-Hans': { parts: ({ completed, total, admitted }: Parts) => `${completed}/${total} 部分已完成 · ${admitted} 已接收`, merge: '正在整合导览…', titleEdited: '标题已编辑', changed: '已更改', moved: '已移动', filesReadUnavailable: '文件读取进度不可用' },
-    'zh-Hant': { parts: ({ completed, total, admitted }: Parts) => `${completed}/${total} 部分已完成 · ${admitted} 已接收`, merge: '正在整合導覽…', titleEdited: '標題已編輯', changed: '已變更', moved: '已移動', filesReadUnavailable: '檔案讀取進度無法取得' },
+    ...en.walkthroughProgressTranslations,
+    ...ca.walkthroughProgressTranslations,
+    ...de.walkthroughProgressTranslations,
+    ...es.walkthroughProgressTranslations,
+    ...fr.walkthroughProgressTranslations,
+    ...it.walkthroughProgressTranslations,
+    ...ja.walkthroughProgressTranslations,
+    ...pl.walkthroughProgressTranslations,
+    ...pt.walkthroughProgressTranslations,
+    ...ru.walkthroughProgressTranslations,
+    ...zh_Hans.walkthroughProgressTranslations,
+    ...zh_Hant.walkthroughProgressTranslations,
 };

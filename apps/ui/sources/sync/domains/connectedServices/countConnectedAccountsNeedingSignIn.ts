@@ -1,4 +1,4 @@
-import { normalizeConnectedServiceCredentialHealthStatus } from '@happier-dev/protocol';
+import { normalizeConnectedServiceCredentialHealthStatus } from '@happier-dev/protocol/connect/connected-service-schemas';
 
 type AccountsProjection = Readonly<{
     connectedAccountsV4?: ReadonlyArray<Readonly<{ status?: unknown }>> | null;

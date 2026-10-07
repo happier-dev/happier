@@ -1,4 +1,4 @@
-import { readAcpConfiguredBackendV1FromMetadata } from '@happier-dev/protocol';
+import { readAcpConfiguredBackendV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/acpConfiguredBackendV1';
 
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';

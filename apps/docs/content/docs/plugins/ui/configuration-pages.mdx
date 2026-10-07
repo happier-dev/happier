@@ -234,6 +234,72 @@ page. Never pass two primaries.
 `variant="add"` frames the state with a dashed outline; use it only for an
 invitation to add the first item.
 
+### Scenes (development)
+
+In 0.3 development source, a centred or page `EmptyState` can draw a small
+line-art scene in place of its glyph: a horizon, the Happier planet at a moment
+of the day, a few props and some sky. Pass `scene` with a built-in scene id,
+such as `noMatch`, `inboxZero`, `noProjects`, `firstRun`, `searchWaiting` or
+`homeOffline`. `HAPPIER_SCENE_IDS` lists all of them.
+
+```tsx
+<EmptyState scene="noMatch" title="Nothing matches" description="Try fewer words." />
+```
+
+A scene appears only where the state has room for it. A `line` state stays text
+only, and a host without a scene renderer keeps your `icon`. Happier draws every
+scene: it sets the line colour and width, the planet, the size and the one-time
+rise of the planet. A rising planet stays still when the viewer has asked for
+reduced motion. The title and description still carry the meaning; the scene is
+hidden from screen readers.
+
+For your own state, define a scene once at module scope. A scene is a set of
+choices, all optional:
+
+- `horizon`: `sea`, `land`, `ridge`, `dock`, `desk`, `orbit`, `dunes`,
+  `shore`, `field`, `city` or `none`.
+- `moment`: where the planet stands and how it is lit: `predawn`, `rising`,
+  `noon`, `golden`, `dusk`, `night` or `eclipse`.
+- `planet`: the planet's state, `resting`, `rising`, `pulsing`, `waiting`,
+  `paired`, `homes` or `failed`, or `false` for no planet. `planetAt` moves it.
+- `props`: up to three props, placed with `x`, plus optional `ground`, `scale`
+  and `flip`.
+- `sky`: `stars`, `haze`, `comet`, `rain`, `birds` or `clouds`.
+- `accent`: the one prop whose accent detail keeps its colour.
+
+Start from a built-in scene with `base` and your props are added to it. A prop
+is a built-in catalog prop (`HAPPIER_SCENE_PROP_IDS`) or your own, made with
+`defineHappierSceneProp`. Its marks (paths, circles, rectangles and ellipses, in
+the scene's `ink` or quieter `faint` line) are drawn around its anchor: the
+bottom centre, standing on the ground. Coordinates are in one 160 × 64 scene
+box. A mark with `accent: true` is the prop's one accent detail.
+
+```tsx
+import { defineHappierScene, defineHappierSceneProp, EmptyState } from '@happier-dev/plugin-ui';
+
+const crate = defineHappierSceneProp({
+  name: 'acme.crate',
+  marks: [
+    { shape: 'rect', x: -8, y: -12, width: 16, height: 12, radius: 2 },
+    { shape: 'path', d: 'M-5 -8h10', tone: 'faint' },
+  ],
+});
+
+const NO_DEPLOYS = defineHappierScene({
+  name: 'acme.no-deploys',
+  horizon: 'land',
+  moment: 'noon',
+  props: [{ prop: crate, x: 56 }, { prop: 'flag', x: 80 }],
+});
+
+<EmptyState scene={NO_DEPLOYS} title="No deploys yet" description="Deploys you start show up here." />;
+```
+
+Scenes shrink with their container. A page shows up to three props and two sky
+marks, a pane two props and one sky mark, and a thumbnail one prop and no sky.
+List the most important prop first. Your props are drawn in the scene's line;
+they cannot set their own colour, width or motion.
+
 ## Stale content
 
 When a surface still shows rows it read earlier but can no longer confirm them,

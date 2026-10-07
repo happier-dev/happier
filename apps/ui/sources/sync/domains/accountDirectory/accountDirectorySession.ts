@@ -1,7 +1,7 @@
 import {
     AccountDirectoryCapabilitiesSchema,
     type AccountDirectoryCapabilities,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/features/payload/capabilities/accountDirectoryCapabilities';
 import {
     createAccountDirectoryClient,
     type AccountDirectoryClient,

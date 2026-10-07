@@ -1,4 +1,5 @@
 export type { HostedWebBridgeEnvelopeV1 } from '../ui.js';
+export type { WidgetSizeV1, WidgetSizeFootprintV1 } from './hostApi.js';
 export type { PluginUiWidgetAreaDeclarationV1 } from '../ui.js';
 export type { PluginUiWidgetAreaRequestV1, PluginUiWidgetAreaResultV1, PluginUiWidgetAreaOperationV1 } from './hostApi.js';
 export type { PluginUiEntityDropDestinationV1 } from './hostApi.js';

@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import { PLANET_ATTENTION_HEX } from '@happier-dev/brand/planet';
 import {
     buildDarkShadowLevels,
     buildGlassBorderColor,
@@ -8,6 +9,7 @@ import {
     buildSeamCastShadow,
     buildShadowPopoverArrowBoxShadow,
 } from '../shadowElevation';
+import { withRaisedEdgeColors } from './raisedEdge';
 import { DEFAULT_THEME_STYLE_SCALES } from './themeStyleScales';
 import { createVerticalGradient } from './verticalGradient';
 
@@ -32,7 +34,9 @@ const sharedSpacing = {
     },
 } as const;
 
-export const lightTheme = {
+// `effect.surfaceHighlight` (the edge ink) and `edge.*` (each border role's raised colour) are derived
+// from these colours by `withRaisedEdgeColors` below; see `raisedEdge.ts`.
+const lightThemeBase = {
     dark: false,
     colors: {
 
@@ -73,7 +77,7 @@ export const lightTheme = {
             // Go fill. A deep amber, not the system warning orange, so its label stays AA on its own 12% tint
             // (the warning orange measured ~2:1 there). Contrast is asserted in `themeContrast.test.ts`.
             attention: {
-                foreground: '#945200',
+                foreground: PLANET_ATTENTION_HEX.light,
             },
             danger: {
                 foreground: '#FF3B30',
@@ -135,9 +139,6 @@ export const lightTheme = {
             // section's rows (a pause inside the section), so it never competes with the section's
             // own full-width hairline (`subtle`) above it.
             faint: 'rgba(0, 0, 0, 0.034)',
-        },
-        effect: {
-            surfaceHighlight: 'transparent',
         },
         chrome: {
             header: {
@@ -390,7 +391,9 @@ export const lightTheme = {
     ...sharedSpacing,
 };
 
-export const darkTheme = {
+export const lightTheme = withRaisedEdgeColors(lightThemeBase);
+
+const darkThemeBase = {
     dark: true,
     colors: {
 
@@ -427,9 +430,10 @@ export const darkTheme = {
                 background: 'rgba(224, 182, 90, 0.15)',
                 border: '#E0B65A',
             },
-            // "Needs you" (Next): dark mode's warning amber already clears AA on its own tint.
+            // "Needs you" (Next): dark mode's warning amber already clears AA on its own tint. Brand owns the
+            // value so the status cell and scene beacons paint the same amber.
             attention: {
-                foreground: '#E0B65A',
+                foreground: PLANET_ATTENTION_HEX.dark,
             },
             danger: {
                 foreground: '#EE6E6C',
@@ -474,9 +478,6 @@ export const darkTheme = {
             modal: 'rgba(255,255,255,0.064)',
             subtle: 'rgba(255,255,255,0.040)',
             faint: 'rgba(255,255,255,0.024)',
-        },
-        effect: {
-            surfaceHighlight: 'transparent',
         },
         chrome: {
             header: {
@@ -725,6 +726,8 @@ export const darkTheme = {
     },
 
     ...sharedSpacing,
-} satisfies typeof lightTheme;
+} satisfies typeof lightThemeBase;
+
+export const darkTheme = withRaisedEdgeColors(darkThemeBase);
 
 export type Theme = typeof lightTheme;

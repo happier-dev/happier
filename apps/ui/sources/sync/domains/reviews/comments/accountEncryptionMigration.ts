@@ -1,20 +1,7 @@
-import {
-    BoundReviewCommentEventSensitiveEnvelopeV1Schema,
-    ReviewCommentAccountEncryptionMigrationInventoryResponseV1Schema,
-    ReviewCommentEventV1Schema,
-    openReviewCommentEventSensitiveEnvelopeV1,
-    openReviewCommentSensitiveMigrationSourceV1,
-    bindReviewCommentEventSensitiveEnvelopeV1,
-    reviewCommentEventSensitiveBindingMatchesV1,
-    sealReviewCommentEventSensitiveEnvelopeV1,
-    sealReviewCommentSensitiveEnvelopeV1,
-    splitReviewCommentV1,
-    type AccountScopedCryptoMaterial,
-    type BoundReviewCommentEventSensitiveEnvelopeV1,
-    type ReviewCommentAccountEncryptionMigrationInventoryResponseV1,
-    type ReviewCommentSensitiveMigrationSourceV1,
-    type StoredJsonContentEnvelope,
-} from '@happier-dev/protocol';
+import { BoundReviewCommentEventSensitiveEnvelopeV1Schema, ReviewCommentAccountEncryptionMigrationInventoryResponseV1Schema, openReviewCommentEventSensitiveEnvelopeV1, openReviewCommentSensitiveMigrationSourceV1, bindReviewCommentEventSensitiveEnvelopeV1, reviewCommentEventSensitiveBindingMatchesV1, sealReviewCommentEventSensitiveEnvelopeV1, sealReviewCommentSensitiveEnvelopeV1, splitReviewCommentV1, type BoundReviewCommentEventSensitiveEnvelopeV1, type ReviewCommentAccountEncryptionMigrationInventoryResponseV1, type ReviewCommentSensitiveMigrationSourceV1 } from '@happier-dev/protocol/reviews/comments/content';
+import { ReviewCommentEventV1Schema } from '@happier-dev/protocol/reviews/comments/v1';
+import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import type { StoredJsonContentEnvelope } from '@happier-dev/protocol/storage/storedJsonContentEnvelope';
 
 export type ReviewCommentAccountEncryptionMigrationDirectiveInputV1 =
     | Readonly<{ action: 'assert_empty' }>

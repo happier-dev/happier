@@ -49,15 +49,15 @@ describe('instrument InstrumentCard', () => {
     });
 
     it('tile variant (default) adopts the canonical flat grouped-surface chrome — no competing drop shadow or bespoke radius (D-R4-1)', () => {
-        // Light theme (test stub): border.surface + effect.surfaceHighlight are
-        // transparent, so the canonical grouped surface (ItemGroup) is flat —
-        // NO hairline, NO cast shadow. InstrumentCard's tile must match exactly
-        // so it does not read as a different tile than every other in the app.
+        // Light theme: border.surface is transparent, so the canonical grouped surface (ItemGroup)
+        // has no hairline — only its raised bottom lip and the level-1 lift. InstrumentCard's tile
+        // must match exactly so it does not read as a different tile than every other in the app.
         const tree = render(<InstrumentCard testID="card"><React.Fragment>content</React.Fragment></InstrumentCard>);
         const surface = surfaceStyleOf(tree);
         expect(surface.backgroundColor).toBe('#ffffff');
         expect(surface.borderWidth).toBe(0);
-        expect(hasCastShadow(surface)).toBe(false);
+        expect(Number(surface.borderBottomWidth)).toBeGreaterThan(0);
+        expect(hasCastShadow(surface)).toBe(true);
         // Canonical grouped-surface radius (ItemGroup: 10 on iOS, 16 elsewhere) —
         // never a bespoke 12/20/24.
         expect([10, 16]).toContain(surface.borderRadius);

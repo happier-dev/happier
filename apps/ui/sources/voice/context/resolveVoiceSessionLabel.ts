@@ -1,4 +1,4 @@
-import { readSessionDirectoryKind } from '@happier-dev/protocol';
+import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import { storage } from '@/sync/domains/state/storage';
 import {
   resolveSessionListPreferredSessionMetadataFromState,

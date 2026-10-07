@@ -2,7 +2,7 @@ import {
     DoctorSnapshotSchema,
     sanitizeDoctorSnapshotUrls,
     type DoctorSnapshot,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/diagnostics/doctorSnapshot';
 
 import { machineCollectBugReportDiagnostics } from '@/sync/ops/machines';
 import { t } from '@/text';

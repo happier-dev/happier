@@ -4,6 +4,9 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { shadowLevelStyle } from '@/shadowElevation';
 import { resolveThemeSurfaceBorderStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
+import { resolveThemeRaisedEdge } from '@/components/ui/surfaces/themeRaisedEdge';
+import { SurfaceRim } from '@/components/ui/surfaces/SurfaceRim';
+import { surfaceUsesRim } from '@/components/ui/surfaces/surfaceEdgeTreatment';
 import { RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 import { ModalCardBody } from './ModalCardBody';
@@ -51,8 +54,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     clipSurface: {
         borderRadius: MODAL_CARD_BORDER_RADIUS,
         ...resolveThemeSurfaceBorderStyle({
-            borderColor: theme.colors.border.surface,
-            highlightColor: theme.colors.effect.surfaceHighlight,
+            borderColor: theme.colors.border.modal,
+            edge: resolveThemeRaisedEdge(theme, 'modal'),
+            rim: surfaceUsesRim('floating', theme.dark),
         }),
         overflow: 'hidden',
         flexDirection: 'column',
@@ -161,6 +165,7 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
                         <RoundButtonSizeScope size="small">{props.footer}</RoundButtonSizeScope>
                     </View>
                 ) : null}
+                <SurfaceRim role="floating" radius={MODAL_CARD_BORDER_RADIUS} border="modal" />
             </GlassSurface>
         </View>
     );

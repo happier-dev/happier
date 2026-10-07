@@ -1,8 +1,6 @@
-import {
-    findWorkflowPhaseForAgent,
-    SessionWorkflowActivityHeadlineV1Schema,
-    sortActiveWorkflowRunHeadlines,
-} from '@happier-dev/protocol';
+import { findWorkflowPhaseForAgent } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowPhases';
+import { SessionWorkflowActivityHeadlineV1Schema } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowActivityHeadlineV1';
+import { sortActiveWorkflowRunHeadlines } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowActivityHeadlineBuild';
 
 import type {
     WorkflowRunDetailState,

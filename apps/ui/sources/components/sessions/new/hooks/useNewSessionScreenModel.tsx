@@ -1,4 +1,4 @@
-import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol';
+import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import { createPreflightComposerSuggestionCatalogSource, type ComposerSuggestionCatalogs } from '@/components/autocomplete/composerSuggestionCatalogs';
 import { buildSpawnEnvironmentVariablesFromUiState, buildSpawnSessionExtrasFromUiState } from '@/agents/catalog/catalog';
 import { resolveNewSessionBehaviorAgentId } from '@/components/sessions/new/modules/newSessionBehaviorAgent';
@@ -111,18 +111,14 @@ import { useMachinePoolGroups } from '@/components/sessions/new/hooks/machines/u
 import { invalidateMachinePoolProjection } from '@/sync/engine/machines/machinePoolProjection';
 import { useServerScopedMachineOptions } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import { useNewSessionRepoScmSnapshot } from '@/components/sessions/new/hooks/screenModel/useNewSessionRepoScmSnapshot';
-import {
-    buildAcpConfigOptionOverridesV1,
-    MachinePoolSelectionOriginV1Schema,
-    readBackendTargetRefV2,
-    SessionAuthoringValueV1Schema,
-    type AgentExecutionTargetV1,
-    type AcpConfigOptionOverridesV1,
-    type BackendTargetRefV2,
-    type SessionModelSelectionV1,
-    sessionModelSelectionV2TeamBindingIntent,
-    type WindowsRemoteSessionLaunchMode,
-} from '@happier-dev/protocol';
+import { buildAcpConfigOptionOverridesV1, type AcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
+import { MachinePoolSelectionOriginV1Schema } from '@happier-dev/protocol/machines/pools/v1';
+import { readBackendTargetRefV2, type BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { SessionAuthoringValueV1Schema } from '@happier-dev/protocol/sessions/authoring/index';
+import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import type { SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import { sessionModelSelectionV2TeamBindingIntent } from '@happier-dev/protocol/providers/selection/v2';
+import type { WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol/sessions/metadata/windowsRemoteSessionLaunchMode';
 import type {
     SessionTeamCredentialBindingIntentListV1,
     TeamCredentialProviderModelSelectionV1,
@@ -212,7 +208,9 @@ import { prepareRunnerMcpMaterial } from '@/sync/domains/ephemeralRunner/prepare
 import { createRunnerCreatorSecretReader } from '@/sync/domains/ephemeralRunner/runnerCreatorSecretReader';
 import { readProfileEnabledById } from '@/sync/domains/profiles/profileEnablement';
 import { resolveVisibleBuiltInLaunchProfiles } from '@/sync/domains/profiles/visibleBuiltInLaunchProfiles';
-import { normalizeActionsSettingsV1, readProviderSettingsFromAccountSettingsV1, type SessionDirectoryIntentV1 } from '@happier-dev/protocol';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
+import type { SessionDirectoryIntentV1 } from '@happier-dev/protocol/sessions/creation/sessionDirectoryIntentV1';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { canAttemptMachineSpawn } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import { resolveNewSessionFolderChipState } from '@/components/sessions/new/modules/newSessionFolderChipState';

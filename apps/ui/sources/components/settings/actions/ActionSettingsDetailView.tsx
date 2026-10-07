@@ -3,12 +3,9 @@ import { View } from 'react-native';
 import { Stack, useLocalSearchParams } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet } from 'react-native-unistyles';
 
-import {
-    formatQualifiedPluginActionId,
-    listActionSpecs,
-    parseQualifiedPluginActionId,
-    type ActionSettingsActionId,
-} from '@happier-dev/protocol';
+import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionSettingsActionId } from '@happier-dev/protocol/actions/actionSettings';
 
 import { SearchHeader } from '@/components/ui/forms/SearchHeader';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';

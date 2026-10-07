@@ -1,13 +1,10 @@
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import {
-    projectReviewFindingsOverlay,
-    type ReviewFinding,
-    type ReviewFindingsOverlayReview,
-    type ScmComparison,
-    type ScmDiffSummaryWalkthrough,
-} from '@happier-dev/protocol';
+import { projectReviewFindingsOverlay, type ReviewFindingsOverlayReview } from '@happier-dev/protocol/reviews/projectReviewFindingsOverlay';
+import type { ReviewFinding } from '@happier-dev/protocol/reviews/ReviewFinding';
+import type { ScmComparison } from '@happier-dev/protocol/scm/comparison';
+import type { ScmDiffSummaryWalkthrough } from '@happier-dev/protocol/scm/diffSummary';
 
 import { ScmComparisonBar, ScmComparisonViewSwitch } from '@/components/sessions/files/comparison/ScmComparisonBar';
 import { ScmComparisonScopePicker } from '@/components/sessions/files/comparison/ScmComparisonScopePicker';

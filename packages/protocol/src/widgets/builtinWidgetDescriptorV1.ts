@@ -2,6 +2,7 @@ import type { InputHints } from '../inputs/inputFields.js';
 import type { WidgetInputDescriptorV1 } from './widgetInputAdmissionV1.js';
 import type { WidgetDefinitionRefV1, WidgetInstanceV1 } from './widgetInstanceV1.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
+import type { WidgetSizeDeclarationV1 } from './widgetPresentationV1.js';
 
 /** Native Session content identities; presentation references and configured copies share this owner. */
 export const SESSION_COMPANION_BUILTIN_ITEM_IDS = ['session_summary', 'agent_plan', 'changes', 'local_services'] as const;
@@ -22,9 +23,11 @@ const sessionInputs: WidgetInputDescriptorV1 = {
         serverId: { type: 'string', minLength: 1 }, sessionId: { type: 'string', minLength: 1 },
     }, required: ['serverId', 'sessionId'], additionalProperties: false } }, required: ['session'], additionalProperties: false },
 };
+const nativeSizeDeclaration = { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' } satisfies WidgetSizeDeclarationV1;
 
 /** Descriptor projection only: execution, data and Actions stay with the existing native domains. */
 type NativeDescriptor = WidgetInputDescriptorV1 & Readonly<{
+    sizeDeclaration: WidgetSizeDeclarationV1;
     definition: Readonly<{ kind: 'builtin'; id: BuiltinWidgetIdV1 }>;
     surface?: never;
     title: string; titleKey: (typeof nativeMetadata)[BuiltinWidgetIdV1]['titleKey'];
@@ -33,6 +36,7 @@ type NativeDescriptor = WidgetInputDescriptorV1 & Readonly<{
 }>;
 export const BUILTIN_WIDGET_DESCRIPTORS_V1 = Object.freeze(SESSION_COMPANION_BUILTIN_ITEM_IDS.map((id): NativeDescriptor => Object.freeze({
     ...sessionInputs, ...nativeMetadata[id], definition: { kind: 'builtin' as const, id },
+    sizeDeclaration: nativeSizeDeclaration,
     key: `builtin:${id}`, target: 'session' as const, homeDefault: 'available' as const, availability: 'available' as const,
 })));
 export type BuiltinWidgetDescriptorV1 = NativeDescriptor;

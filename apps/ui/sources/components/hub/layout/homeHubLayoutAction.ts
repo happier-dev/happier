@@ -1,4 +1,5 @@
-import { HomeReachNudgeDismissInputSchema, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { HomeReachNudgeDismissInputSchema } from '@happier-dev/protocol/actions/specs/homeHub';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { dismissHomeReachNudge } from '@/sync/runtime/connectivity/homeReachFailures';
 

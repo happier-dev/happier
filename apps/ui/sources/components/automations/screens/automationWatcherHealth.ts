@@ -1,7 +1,7 @@
 import {
     pluginSourceCustodyV1Equal,
     type PluginSourceCustodyV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 
 import { t } from '@/text';
 import { resolveMachinePickerPresence } from '@/sync/domains/machines/identity/resolveMachinePickerPresence';

@@ -168,6 +168,7 @@ export const CHANNELS_UI = {
     // this declaration adds no widget-specific data or execution path.
     id: CHANNELS_SESSION_CONVERSATIONS_WIDGET_ID,
     container: 'widget' as const,
+    sizeDeclaration: { sizes: ['small' as const, 'medium' as const, 'wide' as const, 'full' as const, 'tall' as const, 'large' as const], defaultSize: 'medium' as const },
     target: { kind: 'session' as const },
     resources: [
       { pluginId: CHANNELS_PLUGIN_ID, localId: CHANNELS_SESSION_CONVERSATIONS_RESOURCE_ID },
@@ -207,6 +208,7 @@ export const CHANNELS_UI = {
     // everyone who never connects a bot: it is offered in Customize instead.
     id: CHANNELS_HOME_WIDGET_ID,
     container: 'widget' as const,
+    sizeDeclaration: { sizes: ['small' as const, 'medium' as const, 'wide' as const, 'full' as const, 'tall' as const, 'large' as const], defaultSize: 'medium' as const },
     target: { kind: 'app' as const },
     resources: [
       { pluginId: CHANNELS_PLUGIN_ID, localId: 'bindings-v1' },

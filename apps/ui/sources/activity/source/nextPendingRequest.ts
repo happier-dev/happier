@@ -4,7 +4,7 @@ import { areSessionAddressesEqual, normalizeSessionAddress, type SessionAddress 
 import { readPendingNavigationDetails, type PendingNavigationDetailsResult } from '@/sync/ops/sessionPendingNavigationDetails';
 import { resolveSessionPersonalAttentionForViewer } from '@/sync/domains/session/readState/sessionViewerAttention';
 import { isSessionPersonallyTrackedForViewer } from '@/sync/domains/session/readState/sessionViewer';
-import { resolvePendingRequestAttentionReasonV1 } from '@happier-dev/protocol';
+import { resolvePendingRequestAttentionReasonV1 } from '@happier-dev/protocol/sessions/personal/attention';
 
 export type NextPendingRequestResult =
     | Readonly<{ kind: 'target'; unavailableCount: number;

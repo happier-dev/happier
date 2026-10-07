@@ -25,6 +25,8 @@ import { getStorage } from '@/sync/domains/state/storage';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { captureLazyActionAccountContext } from './actionAccountContext';
 import { createDefaultActionExecutor } from './defaultActionExecutor';
+import { buildHomeHubArtifactIdV1, HOME_HUB_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/home';
+import { buildWidgetDefinitionArtifactHeaderV1, type WidgetDefinitionV1 } from '@happier-dev/protocol/widgets';
 
 // Only HTTP, device credentials and native UI modules are substituted. Account,
 // Artifact, Action, kind-policy and cryptographic owners execute their real logic.
@@ -174,6 +176,48 @@ async function fixture(mode: 'plain' | 'e2ee', document?: Readonly<{ header: Rec
 }
 
 describe('UI Artifact sharing Action front door', () => {
+    it('projects authored Home size from the captured Account headers without rewriting saved intent', async () => {
+        const f = await fixture('plain');
+        try {
+            const homeId = buildHomeHubArtifactIdV1('owner');
+            const definition: WidgetDefinitionV1 = { v: 1, id: 'authored', name: 'Authored',
+                sizeDeclaration: { sizes: ['wide'], defaultSize: 'wide' },
+                body: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Hello' } } },
+                inputs: { fields: [] }, inputSchema: { type: 'object', additionalProperties: false },
+                provenance: { source: { kind: 'authored' } } };
+            const instance = { v: 1 as const, id: 'copy', definition: { kind: 'artifact' as const, artifactId: definition.id }, bindings: {} };
+            const layout = { v: 1, order: [instance.id], hidden: [], instances: [instance],
+                sections: { [instance.id]: { size: 'medium', frameStyle: 'plain' } } };
+            const row = (id: string, header: Readonly<Record<string, unknown>>, body?: string) => ({ id,
+                header: encodePlainArtifactStoredContent(header), ...(body ? { body: encodePlainArtifactStoredContent({ body }) } : {}),
+                dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain',
+                headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+            const requests: string[] = [];
+            let mixedInstalledPlacement = false;
+            setRuntimeFetch(async (url, init) => {
+                const target = new URL(String(url));
+                expect(init?.method ?? 'GET').toBe('GET');
+                requests.push(target.pathname);
+                if (target.pathname === '/health' || target.pathname === '/v1/auth/ping') return Response.json({});
+                if (target.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+                if (target.pathname === '/v1/artifacts') return Response.json([row('authored', buildWidgetDefinitionArtifactHeaderV1(definition))]);
+                if (target.pathname === `/v1/artifacts/${homeId}`) return Response.json(row(homeId,
+                    { kind: HOME_HUB_ARTIFACT_KIND_V1, v: 1 }, JSON.stringify(mixedInstalledPlacement ? { ...layout,
+                        instances: [...layout.instances, { v: 1, id: 'installed-copy',
+                            definition: { kind: 'installed', surface: { pluginId: 'acme.tools', localId: 'glance' } }, bindings: {} }],
+                    } : layout)));
+                throw new Error(`unexpected_home_request:${target.pathname}`);
+            });
+            const result = await f.executor.execute('home.hub.layout.get', {}, f.context);
+            expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: {
+                layout, sections: expect.arrayContaining([expect.objectContaining({ id: instance.id, size: 'wide', frameStyle: 'plain' })]),
+            } });
+            expect(requests).not.toContain('/v1/artifacts/authored');
+            mixedInstalledPlacement = true;
+            expect(await f.executor.execute('home.hub.layout.get', {}, f.context))
+                .toEqual({ ok: false, errorCode: 'widget_catalog_unavailable', error: 'widget_catalog_unavailable' });
+        } finally { f.account.dispose(); }
+    });
     it.each(['widget-area-layout.v1', 'home-hub-layout.v1'])('refuses public publication of %s before transport', async kind => {
         const f = await fixture('plain', { header: { kind }, body: '{}' });
         try {

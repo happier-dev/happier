@@ -23,6 +23,7 @@ import {
     type HappierDiffViewerRequest,
     type HappierImageSize,
     type HappierMaterialRole,
+    type HappierSceneRenderRequest,
     type HappierSurfaceProps,
 } from '@happier-dev/plugin-ui/presentation';
 
@@ -37,6 +38,7 @@ import { useInlineDiffVirtualizationThresholds } from '@/components/ui/code/diff
 import { Icon } from '@/components/ui/icons/Icon';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { VoiceMarkArt } from '@/components/voice/presence/VoiceMark';
+import { SceneArt } from '@/components/ui/surfaces/SceneArt';
 import { VoiceStatusCell } from '@/components/voice/presence/VoiceStatusCell';
 import { SetupBlockTile } from '@/components/ui/setupBlocks/SetupBlockTile';
 import { SetupBlockGrid } from '@/components/ui/setupBlocks/SetupBlockGrid';
@@ -316,6 +318,9 @@ function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDire
     renderVoiceMarkArt(input: Omit<VoiceMarkArtProps, 'fallback'>) {
         // Only explicit art props: no live energy acquisition or attempt data.
         return <VoiceMarkArt {...input} still={input.still ?? true} presentationOnly />;
+    },
+    renderScene(input: HappierSceneRenderRequest) {
+        return <SceneArt {...input} />;
     },
     renderStatusCell(input: Omit<StatusCellProps, 'label' | 'fallback'> & Readonly<{ presented: boolean }>) {
         return <VoiceStatusCell {...input} />;

@@ -138,7 +138,8 @@ describe('theme profile import/export', () => {
             expect(result.profile.overrides.dark['surface.base']).toBe('#1F1D2E');
             expect(result.profile.overrides.dark['composer.chipTint']).toBe('#6E6A86');
             expect(result.profile.overrides.dark['control.input.background']).toBe('#393552');
-            expect(result.profile.overrides.dark['effect.surfaceHighlight']).toBe('transparent');
+            // No edge-ink override: an imported theme lights its edges with its own text ink.
+            expect(result.profile.overrides.dark['effect.surfaceHighlight']).toBeUndefined();
             expect(result.profile.overrides.dark['syntax.keyword']).toBe('#C4A7E7');
             expect(result.profile.overrides.dark['syntax.comment']).toBe('#6E6A86');
         }

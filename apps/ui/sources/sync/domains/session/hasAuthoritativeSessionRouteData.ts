@@ -1,4 +1,4 @@
-import { SessionSharedMetadataV1Schema } from '@happier-dev/protocol';
+import { SessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 import { readSessionOwnerMetadataView } from './readSessionOwnerMetadataView';
 import { isSessionAccessOwner, isSessionAccessRecipient, type NormalizedSessionAccessProjection } from '@/sync/engine/sessions/normalizeSessionAccessProjection';

@@ -10,6 +10,7 @@ import { stageIrohNativeReleaseEvidence } from './stageIrohNativeReleaseEvidence
 import { writePersonalHomeServerArtifactCapability } from '../firstPartyRuntime/personalHome/artifactContract.js';
 import { resolveServerRuntimePrismaEngineFileName } from '../firstPartyRuntime/serverRuntimeArtifactLayout.js';
 import {
+  isServerRuntimeSupportPayloadPath,
   resolveRequestedServerDbProviders,
   resolveServerBinarySidecarEntries,
   resolveServerRuntimeSupportBuildDbProviders,
@@ -285,7 +286,7 @@ async function defaultCopyPath({
   let lastError = null;
   for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
-      await cp(sourcePath, destPath, { recursive });
+      await cp(sourcePath, destPath, { recursive, filter: isServerRuntimeSupportPayloadPath });
       return;
     } catch (error) {
       const code = error && typeof error === 'object' && 'code' in error ? String(error.code ?? '') : '';

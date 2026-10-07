@@ -1,6 +1,7 @@
 import { collectWorkflowBlockIds, copyWorkflowBlocks, createWorkflowBlock, createWorkflowLeafBlock, findWorkflowBlockListRef, getWorkflowBlockList, insertWorkflowBlock, resolvePreviousResultInputForInsertion, type WorkflowBlockKind, type WorkflowBlockListRef, type WorkflowLeafBlockSeed, type WorkflowDefinitionDraftV1 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import type { WorkflowBlock, WorkflowStepExecutionSelection } from '@happier-dev/protocol/workflows/workflowV1';
-import { pluginJsonValuesEqual, type WorkflowStarterExampleV1 } from '@happier-dev/protocol';
+import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
+import type { WorkflowStarterExampleV1 } from '@happier-dev/protocol/workflows/builtins/examples';
 
 export type WorkflowEditorDraft = WorkflowDefinitionDraftV1 & Readonly<{ draftId: string }>;
 

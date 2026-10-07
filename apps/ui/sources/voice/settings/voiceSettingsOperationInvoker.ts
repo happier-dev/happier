@@ -1,5 +1,7 @@
 import { Platform } from 'react-native';
-import { StrictJsonValueSchema, VoiceRuntimePlatformSchema, getDefaultModelPackId, listModelPackCatalogEntries, resolveCanonicalModelPackId } from '@happier-dev/protocol';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { VoiceRuntimePlatformSchema } from '@happier-dev/protocol/voice/realtime/capabilities';
+import { getDefaultModelPackId, listModelPackCatalogEntries, resolveCanonicalModelPackId } from '@happier-dev/protocol/voice/modelPacks/catalog';
 import type { SettingOperationContext, SettingOperationResult } from '@/components/settings/catalog/settingDeclarations';
 import { Modal } from '@/modal';
 import type { Settings } from '@/sync/domains/settings/settings';

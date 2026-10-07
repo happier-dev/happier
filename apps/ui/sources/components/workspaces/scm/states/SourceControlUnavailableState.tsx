@@ -4,7 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import { RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc';
-import { SCM_OPERATION_ERROR_CODES, type ScmOperationErrorCode } from '@happier-dev/protocol';
+import { SCM_OPERATION_ERROR_CODES, type ScmOperationErrorCode } from '@happier-dev/protocol/scm/operationError';
 import { Icon } from '@/components/ui/icons/Icon';
 
 function sanitizeDetails(details: string | null): string | null {

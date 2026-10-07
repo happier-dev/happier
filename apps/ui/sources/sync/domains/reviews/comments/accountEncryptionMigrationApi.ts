@@ -1,7 +1,7 @@
 import {
     ReviewCommentAccountEncryptionMigrationInventoryResponseV1Schema,
     type ReviewCommentAccountEncryptionMigrationInventoryResponseV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/reviews/comments/content';
 
 import { serverFetch } from '@/sync/http/client';
 

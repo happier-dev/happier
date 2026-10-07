@@ -2,7 +2,7 @@ import type {
     ExternalSessionOperationProgressV1,
     ExternalSessionOperationSharedPresentationV1,
 } from '@happier-dev/protocol';
-import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 
 import {
     createExternalSessionOperationPresentationIdentity,

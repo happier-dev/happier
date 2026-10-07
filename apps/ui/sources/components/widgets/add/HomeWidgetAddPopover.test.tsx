@@ -4,6 +4,8 @@ import { widgetCandidateDefinitionV1, type WidgetInstanceV1 } from '@happier-dev
 import { describeAuthoredWidgetDefinitionV1, selectBuiltinWidgetCandidates, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
 
 import { buildHomeWidgetAddSections } from './HomeWidgetAddPopover';
+import { buildAccountWidgetAddSections } from './accountWidgetAddSections';
+import { resolveWidgetAddPick } from './widgetAddModel';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -32,6 +34,7 @@ const LATEST: WidgetCandidate = {
     icon: 'git-pull-request',
     homeDefault: 'shown',
     target: 'app',
+    sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' },
 };
 const SUMMARY: WidgetCandidate = {
     surface: { pluginId: 'happier.sessions', localId: 'summary' },
@@ -42,6 +45,7 @@ const SUMMARY: WidgetCandidate = {
     icon: 'chat-circle',
     homeDefault: 'available',
     target: 'session',
+    sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' },
     sessionInputPath: 'session',
     inputs: { fields: [{ path: 'session', title: 'Session', widget: 'json', required: true }] },
 };
@@ -51,6 +55,35 @@ const copy = (id: string, candidate: WidgetCandidate, sessionId?: string): Widge
 });
 
 describe('Add to Home', () => {
+    it('offers size choice for an inputless grid widget while single-size and linear widgets keep fast Add', () => {
+        const addInstance = vi.fn(async () => {});
+        const labels = { submit: 'Add', count: () => '', fromPluginsHint: '' };
+        const grid = { serverId: 'home', accountId: 'me', owner: { kind: 'home' as const } };
+        const entry = (scope: Parameters<typeof buildAccountWidgetAddSections>[0]['scope'], widget = LATEST) =>
+            buildAccountWidgetAddSections({ candidates: [widget], instances: [], addInstance, scope, labels })
+                .find(section => section.id === 'plugins')!.entries[0]!;
+        const choice = resolveWidgetAddPick(entry(grid));
+        expect(choice.kind).toBe('setup');
+        if (choice.kind !== 'setup') throw new Error('Size choice must be available before Add');
+        expect(choice.setup.resolve(choice.setup.initial).status).toBe('ready');
+        expect(choice.setup.initial.size).toBe('medium');
+        expect(addInstance).not.toHaveBeenCalled();
+        expect(resolveWidgetAddPick(entry(grid, { ...LATEST, sizeDeclaration: { sizes: ['small'], defaultSize: 'small' } })).kind).not.toBe('setup');
+        expect(resolveWidgetAddPick(entry({ ...grid, owner: { kind: 'project', projectId: 'p' } })).kind).not.toBe('setup');
+        expect(resolveWidgetAddPick(entry({ ...grid, owner: { kind: 'companion', sessionId: 's' } })).kind).not.toBe('setup');
+    });
+    it('adds selected size atomically through the existing add intent', async () => {
+        const addInstance = vi.fn(async (_instance: WidgetInstanceV1, _size?: string) => {});
+        const entry = buildHomeWidgetAddSections({ candidates: [{ ...SUMMARY,
+            sizeDeclaration: { sizes: ['small', 'medium', 'large'], defaultSize: 'medium' } }], instances: [], addInstance,
+            scope: { serverId: 'home', accountId: 'me', owner: { kind: 'home' } },
+        }).find(section => section.id === 'plugins')!.entries[0]!;
+        const setup = entry.setup!();
+        await setup.submit({ bindings: { session: { kind: 'value', value: { serverId: 'home', sessionId: 'C' } } }, size: 'large' });
+        expect(addInstance).toHaveBeenCalledWith(expect.objectContaining({ bindings: { session: { kind: 'value',
+            value: { serverId: 'home', sessionId: 'C' } } } }), 'large');
+    });
+
     it('counts configured copies, keeps a widget without inputs Added, and asks Home for the Session', async () => {
         const addInstance = vi.fn(async (_instance: WidgetInstanceV1) => {});
         const plugins = buildHomeWidgetAddSections({
@@ -62,7 +95,7 @@ describe('Add to Home', () => {
         const latest = plugins!.entries.find((entry) => entry.id === 'plugin-happier.triage/latest')!;
         const summary = plugins!.entries.find((entry) => entry.id === 'plugin-happier.sessions/summary')!;
         expect(latest.added).toBe(true);
-        expect(latest.setup).toBeUndefined();
+        expect(resolveWidgetAddPick(latest).kind).toBe('added');
         expect(summary.added).toBeUndefined();
         expect(summary.count).toBe('widgetAdd.countOnHome(count=2)');
 
@@ -134,4 +167,3 @@ describe('Add to Home', () => {
         expect(addInstance.mock.calls[0]![0]).toMatchObject({ v: 1, definition: { kind: 'artifact', artifactId: 'signups-artifact' }, bindings: {} });
     });
 });
-

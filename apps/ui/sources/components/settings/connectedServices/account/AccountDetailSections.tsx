@@ -2,13 +2,11 @@ import * as React from 'react';
 import { Pressable, View, type LayoutChangeEvent } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import {
-    buildQualifiedPluginContributionKey,
-    type ConnectedServiceId,
-    type ConnectedServiceQuotaRecoveryCreditsV1,
-    type ProviderAccountSubscriptionV1,
-    type QualifiedConnectedAccountRef,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { ConnectedServiceQuotaRecoveryCreditsV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
+import type { ProviderAccountSubscriptionV1 } from '@happier-dev/protocol/connect/accountSubscription';
+import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { SurfaceAsOfLabel } from '@/components/ui/surfaces/SurfaceAsOfLabel';

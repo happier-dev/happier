@@ -1,5 +1,5 @@
 import type { ApiChangeEntry } from '@/sync/api/types/apiTypes';
-import { ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID } from '@happier-dev/protocol';
+import { ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID } from '@happier-dev/protocol/sessions/follow/changes';
 import {
     ChangeKindSchema,
     HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1,
@@ -8,15 +8,9 @@ import {
     readSessionUpdatedMessageChangeHintV1,
     type ChangeKind,
 } from '@happier-dev/protocol/changes';
-import {
-    AuthoringMemoryChangeHintV1Schema,
-    SessionDraftChangeHintV1Schema,
-    SessionDraftChangeHintV2Schema,
-    canonicalSessionDraftAddressV2,
-    type SessionDraftAddressV2,
-    type SessionDraftChangeHintV1,
-    type SessionDraftChangeHintV2,
-} from '@happier-dev/protocol';
+import { AuthoringMemoryChangeHintV1Schema } from '@happier-dev/protocol/account/authoringMemory';
+import { SessionDraftChangeHintV1Schema, type SessionDraftChangeHintV1 } from '@happier-dev/protocol/drafts/sessionDrafts';
+import { SessionDraftChangeHintV2Schema, canonicalSessionDraftAddressV2, type SessionDraftAddressV2, type SessionDraftChangeHintV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 
 export type PlannedKvAction =
     | { type: 'none' }

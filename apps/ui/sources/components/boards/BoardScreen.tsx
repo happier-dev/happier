@@ -2,14 +2,15 @@ import * as React from 'react';
 import { useIsFocused } from '@react-navigation/native';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { buildWorkBoardItemKeyV1, buildWorkBoardWidgetKeyV1, type BoardItemRefV1, type WorkBoardIntentV1, type WorkBoardV1 } from '@happier-dev/protocol';
-import type { WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
+import { buildWorkBoardItemKeyV1, buildWorkBoardWidgetKeyV1, type BoardItemRefV1, type WorkBoardIntentV1, type WorkBoardV1 } from '@happier-dev/protocol/boards/workBoardV1';
+import { normalizeWidgetSizeForSurfaceV1, type WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
 import { HappierSurfaceStateFrame } from '@happier-dev/plugin-ui/presentation';
 
 import { useCompactAppDestinations } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { readWidgetDescriptor } from '@/components/widgets/widgetCatalog';
+import { useWidgetInstanceDescriptors } from '@/components/widgets/surface/useWidgetInstanceDescriptor';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -210,27 +211,35 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
     const widgetInstances = React.useMemo(() => widgets.map(placement => placement.instance), [widgets]);
     /** Copies this device added: their arrival is no news, and only someone else's arrival offers Undo. */
     const ownAdds = React.useRef(new Set<string>());
-    const addWidgetInstance = React.useCallback(async (instance: WidgetInstanceV1, options: Readonly<{ place: boolean }>) => {
+    const addWidgetInstance = React.useCallback(async (instance: WidgetInstanceV1, options: Readonly<{ place: boolean; size?: import('@happier-dev/protocol/widgets').WidgetSizeV1 }>) => {
         if (!widgetSurface) throw new Error('board_scope_unavailable');
         const ref = { surface: widgetSurface, instanceId: instance.id };
         ownAdds.current.add(instance.id);
-        const outcome = await dispatchIntent({ kind: 'widget_add', boardId: board.id, ref, instance });
+        const outcome = await dispatchIntent({ kind: 'widget_add', boardId: board.id, ref, instance, ...(options.size ? { size: options.size } : {}) });
         if (outcome.status !== 'applied') throw new Error(outcome.code);
         if (options.place && mode === 'canvas') setPlacingKey(buildWorkBoardWidgetKeyV1(ref));
     }, [board.id, dispatchIntent, mode, widgetSurface]);
     const addWidgets = React.useMemo(() => ({ scope: widgetSurface, instances: widgetInstances, addInstance: addWidgetInstance }),
         [addWidgetInstance, widgetInstances, widgetSurface]);
     const pluginUi = useAppShellPluginUiProjection().pluginUiProjection;
-    const canvasWidgets = React.useMemo((): readonly BoardCanvasWidget[] => widgets.map(placement => ({
+    const installedCandidates = React.useMemo(() => widgetInstances.flatMap(instance => {
+        const descriptor = readWidgetDescriptor(pluginUi, instance.definition);
+        return descriptor ? [descriptor] : [];
+    }), [pluginUi, widgetInstances]);
+    const widgetDescriptors = useWidgetInstanceDescriptors(widgetSurface, widgetInstances, installedCandidates);
+    const canvasWidgets = React.useMemo((): readonly BoardCanvasWidget[] => widgets.map((placement, index) => ({
         key: buildWorkBoardWidgetKeyV1(placement.ref),
-        title: describeBoardWidgetTitle(placement, readWidgetDescriptor(pluginUi, placement.instance.definition)),
+        title: describeBoardWidgetTitle(placement, widgetDescriptors[index]),
+        size: normalizeWidgetSizeForSurfaceV1('workBoard', placement.size, widgetDescriptors[index]?.sizeDeclaration),
         placement,
-    })), [pluginUi, widgets]);
+    })), [widgetDescriptors, widgets]);
     const arrivals = useBoardWidgetArrivals(board.id, ownAdds.current, dispatchIntent);
     const renderWidget = React.useCallback<BoardCanvasWidgetRender>((widget, state) => (
         <BoardWidgetCard
             boardId={board.id}
             placement={widget.placement}
+            descriptor={widgetDescriptors[widgets.indexOf(widget.placement)] ?? null}
+            size={widget.size!}
             index={widgets.indexOf(widget.placement)}
             count={widgets.length}
             dispatch={dispatchIntent}
@@ -239,7 +248,7 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
             fresh={arrivals.arrived.has(widget.placement.instance.id)}
             testID={`board-widget:${widget.placement.instance.id}`}
         />
-    ), [arrivals.arrived, board.id, dispatchIntent, routeFocused, widgets]);
+    ), [arrivals.arrived, board.id, dispatchIntent, routeFocused, widgetDescriptors, widgets]);
 
     const onRemoveItem = React.useCallback((ref: BoardItemRefV1) => {
         dispatch({
@@ -334,7 +343,7 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
                         testID="board-empty"
                         layout="centered"
                         size={phone ? 'phone' : 'page'}
-                        iconName="squares-four"
+                        scene="emptyBoard"
                         title={t('boards.empty.title')}
                         subtitle={t('boards.empty.body')}
                         action={<RoundButton size="normal" title={t('boards.empty.action')}

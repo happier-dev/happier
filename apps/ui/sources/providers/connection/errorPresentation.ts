@@ -5,7 +5,7 @@ import {
     type ProviderErrorCodeV1,
     type ProviderErrorV1,
     type ProviderRecoveryActionV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/providers/errors';
 
 import type { TranslationKeyNoParams } from '@/text';
 import { canDispatchProviderRecoveryAction, type ProviderRecoveryAvailability } from './recovery';

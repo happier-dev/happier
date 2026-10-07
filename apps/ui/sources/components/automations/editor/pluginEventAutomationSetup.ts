@@ -1,9 +1,7 @@
-import {
-    arePluginMachineMaterializationRefsEqual,
-    type AutomationEventFilterV1,
-    type DaemonContributionRegistryProjectionAutomationEligibleEventV1,
-    type PluginDiagnosticRemediationV1,
-} from '@happier-dev/protocol';
+import { arePluginMachineMaterializationRefsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import type { AutomationEventFilterV1 } from '@happier-dev/protocol/automations/automationEventFilterV1';
+import type { DaemonContributionRegistryProjectionAutomationEligibleEventV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { PluginDiagnosticRemediationV1 } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
 import { reconstructPluginUiSelectedActionInput } from '@happier-dev/protocol/plugins/ui';
 import type { MutableRefObject } from 'react';
 

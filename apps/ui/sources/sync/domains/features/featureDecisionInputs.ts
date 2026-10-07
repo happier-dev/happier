@@ -1,9 +1,5 @@
-import {
-    createFeatureDecision,
-    type FeatureDecision,
-    type FeatureDecisionScope,
-    type FeatureId,
-} from '@happier-dev/protocol';
+import { createFeatureDecision, type FeatureDecision, type FeatureDecisionScope } from '@happier-dev/protocol/features/decision';
+import type { FeatureId } from '@happier-dev/protocol/features/catalog';
 
 import { storage } from '@/sync/domains/state/storage';
 import {

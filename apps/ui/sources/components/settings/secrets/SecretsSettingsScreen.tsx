@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useFocusEffect } from '@/components/appShell/workspace/destinationRoute';
-import { parseSavedSecretCatalogReferenceV1, type SavedSecretCatalogCorruptEntryV1, type SavedSecretCatalogEntryV1 } from '@happier-dev/protocol';
+import { parseSavedSecretCatalogReferenceV1, type SavedSecretCatalogCorruptEntryV1, type SavedSecretCatalogEntryV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 
 import { SavedSecretAccessEditor } from '@/components/secrets/SavedSecretAccessEditor';
 import { SavedSecretCreateEditor } from '@/components/secrets/SavedSecretCreateEditor';

@@ -1,7 +1,7 @@
 import {
     SessionHandoffPrepareTargetResumeResponseSchema,
     SessionHandoffStatusSchema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/control/handoff/handoffSchemas';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { randomUUID } from '@/platform/randomUUID';

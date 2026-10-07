@@ -2,11 +2,9 @@ import { readMessageDisplayText } from "@happier-dev/session-core/messages";
 import type { Message } from "@happier-dev/session-core/messages";
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
-import {
-    readSessionRollbackRangesV1FromMetadata,
-    type SessionRollbackTarget,
-    type TurnChangeSet,
-} from '@happier-dev/protocol';
+import { readSessionRollbackRangesV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/sessionRollbackRangesV1';
+import type { SessionRollbackTarget } from '@happier-dev/protocol/sessions/rollback';
+import type { TurnChangeSet } from '@happier-dev/protocol/sessions/changes/types';
 import {
     supportsAgentLifecycleCapability,
     type CurrentProjectedAgentCapabilities,

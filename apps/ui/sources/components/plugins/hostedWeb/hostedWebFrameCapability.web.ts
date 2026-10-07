@@ -3,7 +3,7 @@ import { Platform } from 'react-native';
 import {
     DaemonHostedWebFrameCapabilityV1Schema,
     type DaemonHostedWebFrameCapabilityV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { invokeDesktopHost, isDesktopHost } from '@/utils/platform/desktopHost';
 

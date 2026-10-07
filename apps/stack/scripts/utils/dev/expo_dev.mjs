@@ -10,6 +10,7 @@ import {
   writePidState,
 } from '../expo/expo.mjs';
 import { selectExpoDevMetroPort } from '../expo/metro_ports.mjs';
+import { EXPO_DEPENDENCY_BARRIER_VERSION } from '../expo/dependency_barrier.mjs';
 import { ensureEnvFileUpdated } from '../env/env_file.mjs';
 import {
   getStackRuntimeProcessInstanceFingerprint,
@@ -18,6 +19,7 @@ import {
   recordStackRuntimeUpdate,
 } from '../stack/runtime_state.mjs';
 import { killProcessGroupOwnedByStack, listPidsWithEnvNeedle } from '../proc/ownership.mjs';
+import { isDependencyRefreshLockActive, resolveDependencyInstallRoot } from '../proc/dependency_refresh.mjs';
 import {
   ensureExpoWorkspacePrepared,
   expoSpawn,
@@ -603,7 +605,7 @@ export async function ensureDevExpoServer({
     process.stderr.write(`[expo] ${line}\n`);
   };
 
-  const writeExpoState = async (proc) => {
+  const writeExpoState = async (proc, { dependencyReady } = {}) => {
     await publishRuntime({
       pid: proc.pid,
       port: metroPort,
@@ -612,26 +614,29 @@ export async function ensureDevExpoServer({
       tailscaleEnabled,
     });
 
-    try {
-      await writePidState(paths.statePath, {
-        pid: proc.pid,
-        port: metroPort,
-        uiDir,
-        projectDir,
-        startedAt: new Date().toISOString(),
-        webEnabled: wantWeb,
-        devClientEnabled: wantDevClient,
-        host,
-        apiServerUrl: desiredApiServerUrl || null,
-        metroConfigFingerprint: metroConfigInspection?.currentFingerprint ?? null,
-        scheme: wantDevClient ? scheme : null,
-        tailscaleEnabled,
-        tailscaleForwarderPid: tailscaleResult?.pid ?? null,
-        tailscaleIp: tailscaleResult?.tailscaleIp ?? null,
-      });
-    } catch {
-      // ignore
-    }
+    await writePidState(paths.statePath, {
+      pid: proc.pid,
+      port: metroPort,
+      uiDir,
+      projectDir,
+      startedAt: new Date().toISOString(),
+      webEnabled: wantWeb,
+      devClientEnabled: wantDevClient,
+      host,
+      apiServerUrl: desiredApiServerUrl || null,
+      metroConfigFingerprint: metroConfigInspection?.currentFingerprint ?? null,
+      scheme: wantDevClient ? scheme : null,
+      tailscaleEnabled,
+      tailscaleForwarderPid: tailscaleResult?.pid ?? null,
+      tailscaleIp: tailscaleResult?.tailscaleIp ?? null,
+      stackName,
+      envPath,
+      cliHomeDir,
+      // Only this guarded, supervising lifecycle can stop for an install
+      // and restart after the shared admission lock becomes available.
+      dependencyInstallBarrierVersion: dependencyReady && restartPolicy.enabled && restartPolicy.maxAttempts > 0
+        ? EXPO_DEPENDENCY_BARRIER_VERSION : null,
+    });
   };
 
   const clearRuntimeIfCurrent = async (pid) => {
@@ -702,6 +707,57 @@ export async function ensureDevExpoServer({
 
   const spawnTrackedExpo = async ({ restartAttempt = 0 } = {}) => {
     const outputTracker = createExpoCrashOutputTracker();
+    let admissionPublished = false;
+    const attachSupervision = (proc) => {
+      const runStartedAtMs = Date.now();
+      proc.once('exit', (code, signal) => {
+        const runEndedAtMs = Date.now();
+        // Capture before clearing runtime metadata: a quick repair may release
+        // its lock during that asynchronous write. Windows tree termination
+        // need not report a POSIX signal on the child-process exit event.
+        // Before PID publication, this is still our own spawn admission lock;
+        // an early child failure must consume the ordinary crash budget.
+        const dependencyTransition = admissionPublished
+          && (signal === 'SIGTERM' || signal === 'SIGKILL' || process.platform === 'win32')
+          && isDependencyRefreshLockActive({ installDir: resolveDependencyInstallRoot(uiDir), env });
+        void (async () => {
+          await clearRuntimeIfCurrent(proc.pid);
+          if (isShuttingDown?.() === true) {
+            return;
+          }
+          if (!restartPolicy.enabled || restartPolicy.maxAttempts <= 0) {
+            return;
+          }
+          // A replacement that survives the same bounded stability window used by the session-runner
+          // supervisor starts a fresh crash cycle. Rapid crash loops still consume one shared budget.
+          const attemptBeforeExit =
+            runEndedAtMs - runStartedAtMs >= restartPolicy.stabilityWindowMs
+              ? 0
+              : restartAttempt;
+          // An installer-requested replacement is not a crash attempt. Its
+          // startup still consumes the existing failure budget if admission
+          // fails, and user shutdown remains authoritative above.
+          const nextAttempt = dependencyTransition ? 0 : attemptBeforeExit + 1;
+          if (nextAttempt > restartPolicy.maxAttempts) {
+            writeSupervisorLine(
+              `Expo exited unexpectedly (${describeExpoTermination({ code, signal, outputTracker })}); restart suppressed after ${restartPolicy.maxAttempts} attempts.`
+            );
+            return;
+          }
+
+          const delayMs = computeExpoRestartDelayMs({ attempt: nextAttempt, policy: restartPolicy });
+          writeSupervisorLine(
+            dependencyTransition
+              ? `Expo stopped for dependency refresh; restarting after dependency admission in ${Math.ceil(delayMs / 1000)}s.`
+              : `Expo exited unexpectedly (${describeExpoTermination({ code, signal, outputTracker })}); restarting in ${Math.ceil(delayMs / 1000)}s (attempt ${nextAttempt}/${restartPolicy.maxAttempts}).`
+          );
+          const timer = setTimeout(() => {
+            runScheduledRestart({ restartAttempt: nextAttempt });
+          }, delayMs);
+          timer.unref?.();
+        })();
+      });
+    };
     const proc = await expoSpawn({
       label: 'expo',
       dir: uiDir,
@@ -709,6 +765,13 @@ export async function ensureDevExpoServer({
       args,
       env,
       workspacePrepared: true,
+      onSpawned: async (proc, readiness) => {
+        await requireSpawnedProcess(proc);
+        attachSupervision(proc);
+        children.push(proc);
+        await writeExpoState(proc, readiness);
+        admissionPublished = true;
+      },
       options: {
         ...normalizedSpawnOptions,
         onLine: (event) => {
@@ -719,45 +782,6 @@ export async function ensureDevExpoServer({
       quiet,
     });
     await requireSpawnedProcess(proc);
-    const runStartedAtMs = Date.now();
-    children.push(proc);
-    await writeExpoState(proc);
-
-    proc.once('exit', (code, signal) => {
-      const runEndedAtMs = Date.now();
-      void (async () => {
-        await clearRuntimeIfCurrent(proc.pid);
-        if (isShuttingDown?.() === true) {
-          return;
-        }
-        if (!restartPolicy.enabled || restartPolicy.maxAttempts <= 0) {
-          return;
-        }
-        // A replacement that survives the same bounded stability window used by the session-runner
-        // supervisor starts a fresh crash cycle. Rapid crash loops still consume one shared budget.
-        const attemptBeforeExit =
-          runEndedAtMs - runStartedAtMs >= restartPolicy.stabilityWindowMs
-            ? 0
-            : restartAttempt;
-        const nextAttempt = attemptBeforeExit + 1;
-        if (nextAttempt > restartPolicy.maxAttempts) {
-          writeSupervisorLine(
-            `Expo exited unexpectedly (${describeExpoTermination({ code, signal, outputTracker })}); restart suppressed after ${restartPolicy.maxAttempts} attempts.`
-          );
-          return;
-        }
-
-        const delayMs = computeExpoRestartDelayMs({ attempt: nextAttempt, policy: restartPolicy });
-        writeSupervisorLine(
-          `Expo exited unexpectedly (${describeExpoTermination({ code, signal, outputTracker })}); restarting in ${Math.ceil(delayMs / 1000)}s (attempt ${nextAttempt}/${restartPolicy.maxAttempts}).`
-        );
-        const timer = setTimeout(() => {
-          runScheduledRestart({ restartAttempt: nextAttempt });
-        }, delayMs);
-        timer.unref?.();
-      })();
-    });
-
     return proc;
   };
 

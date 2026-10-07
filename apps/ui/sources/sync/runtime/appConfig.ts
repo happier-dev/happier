@@ -1,7 +1,7 @@
 import Constants from 'expo-constants';
 import { requireOptionalNativeModule } from 'expo-modules-core';
 
-import { parseOptionalBooleanEnv } from '@happier-dev/protocol';
+import { parseOptionalBooleanEnv } from '@happier-dev/protocol/env/parseBooleanEnv';
 import { readConfiguredServerUrlEnv } from '@/sync/domains/server/readConfiguredServerUrlEnv';
 
 export interface AppConfig {

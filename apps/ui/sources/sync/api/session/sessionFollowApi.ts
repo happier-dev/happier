@@ -1,17 +1,9 @@
-import {
-    parseSessionFollowActionResponse,
-    SessionFollowErrorCodeV1Schema,
-    SessionFollowSourcesErrorCodeV1Schema,
-    resolveSessionFollowActionRequest,
-    type ActionExecutorDeps,
-    type SessionAutoFollowPreferencesV1,
-    type SessionFollowActionIdV1,
-    type SessionFollowActionOutputV1,
-    type SessionFollowSourcesErrorCodeV1,
-    type SetSessionFollowRequest,
-    ReplaceSessionVoiceInclusionsResponseSchema,
-    SESSION_FOLLOW_HTTP_PATHS_V1,
-} from '@happier-dev/protocol';
+import { parseSessionFollowActionResponse, resolveSessionFollowActionRequest } from '@happier-dev/protocol/sessions/follow/actionTransport';
+import { SessionFollowErrorCodeV1Schema, type SetSessionFollowRequest, ReplaceSessionVoiceInclusionsResponseSchema, SESSION_FOLLOW_HTTP_PATHS_V1 } from '@happier-dev/protocol/sessions/follow/api';
+import { SessionFollowSourcesErrorCodeV1Schema, type SessionFollowSourcesErrorCodeV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourcesApi';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import type { SessionAutoFollowPreferencesV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
+import type { SessionFollowActionIdV1, SessionFollowActionOutputV1 } from '@happier-dev/protocol/sessions/follow/actions';
 
 import { subscribeHomeCredentialMutations } from '@/auth/storage/tokenStorage';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';

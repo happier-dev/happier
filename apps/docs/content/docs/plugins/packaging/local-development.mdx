@@ -29,9 +29,9 @@ Keep both entrypoint values relative to the plugin root and use portable `/`
 separators. Absolute paths, paths that escape the root, unsupported extensions,
 and missing development files are rejected before dependency materialization.
 `plugins dev` is the automatic flow: the daemon observes the trusted author
-source, prepares each affected candidate, materializes dependencies, builds
-declared UI artifacts, evaluates the candidate, and validates its canonical
-manifest projection before adoption. The CLI is a command and status client;
+source, prepares each affected candidate, materializes dependencies, evaluates
+the candidate and validates its canonical manifest projection, then builds
+declared UI artifacts before adoption. The CLI is a command and status client;
 it does not own a second watcher or replacement decision. The daemon owns
 runtime module import, named activation, registration validation, and
 replacement of the serving plugin.
@@ -91,6 +91,12 @@ JSON output: `observing`, `preparing_dependencies`, `compiling`, `validating`,
 current process-local occurrence; it does not claim that a client mounted and
 rendered a surface. `retained_incumbent` means the newest candidate failed or
 became stale while the prior in-process occurrence remains usable.
+
+In 0.3 development, the daemon log records elapsed seconds for dependency
+preparation, UI builds, evaluation and adoption when those operations run,
+including failed phases. Use `hdev daemon logs` to find the current daemon log.
+Source-only updates omit dependency preparation, and single-file plugins omit
+UI builds. These durations measure daemon work, not the first client render.
 
 For an intentional watcher-free update, install the same package root as a
 development source and reload from that package root:

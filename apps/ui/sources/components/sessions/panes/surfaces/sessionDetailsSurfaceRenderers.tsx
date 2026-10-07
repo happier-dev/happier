@@ -51,11 +51,8 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import type { LocalServicePreviewState } from '@/sync/domains/local/services/preview/store';
 import { resolveLocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/platform';
 import type { PeerMediationObservabilityUiStore } from '@/sync/domains/machines/peer/mediation/observability';
-import {
-    SessionDiscussionSelectionSourceV1Schema,
-    type PeerMediationObservabilityScopeV1,
-    type SessionDiscussionSelectionSourceV1,
-} from '@happier-dev/protocol';
+import { SessionDiscussionSelectionSourceV1Schema, type SessionDiscussionSelectionSourceV1 } from '@happier-dev/protocol/sessions/discussions/content';
+import type { PeerMediationObservabilityScopeV1 } from '@happier-dev/protocol/machines/peer/mediation/observability/v1';
 import type { PluginUiDestinationRuntimeFormFactorV1 } from '@happier-dev/protocol/plugins/ui';
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
 import type { SimulatorPreviewSurfaceRuntime } from '@/sync/domains/devices/simulator/useSimulatorPreviewRuntime';

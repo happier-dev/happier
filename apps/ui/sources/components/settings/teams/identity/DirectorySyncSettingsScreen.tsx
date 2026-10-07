@@ -15,7 +15,7 @@ import { t } from '@/text';
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
 import { serverAccountScopedTeamKey } from '@/sync/domains/teams/teamAddress';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
-import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol';
+import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 
 import { TeamSection } from '../TeamSection';

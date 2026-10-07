@@ -32,7 +32,7 @@ import { AgentTeamView, projectAgentTeamDisplayText } from '../workflow/AgentTea
 import { WorkflowActivityView, projectWorkflowActivityDisplayText } from '../workflow/WorkflowActivityView';
 import { TaskOutputView, projectTaskOutputDisplayText } from '../system/TaskOutputView';
 import { TaskStopView, projectTaskStopDisplayText } from '../system/TaskStopView';
-import { KnownCanonicalToolNameV2Schema, type KnownCanonicalToolNameV2 } from '@happier-dev/protocol';
+import { KnownCanonicalToolNameV2Schema, type KnownCanonicalToolNameV2 } from '@happier-dev/protocol/tools/v2/names';
 import { normalizeToolNameForView } from '@/components/tools/normalization/policy/normalizeToolNameForView';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 import type { ExecutionRunPromptResponseTarget } from '@/components/tools/shell/permissions/executionRunPromptResponseTarget';

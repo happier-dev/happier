@@ -1,43 +1,19 @@
-import {
-    ARTIFACT_PLAIN_DATA_KEY_MARKER,
-    MACHINE_PLAIN_DATA_KEY_MARKER,
-    computeContentPublicKeyFingerprint,
-    decodePlainArtifactStoredContent,
-    decodePlainMachineStoredContent,
-    createPlainSessionOwnerMetadataEnvelopeV1,
-    encodeSessionOwnerMetadataEnvelopeV1,
-    encodePlainArtifactStoredContent,
-    encodePlainMachineStoredContent,
-    isPlainArtifactDataKeyMarker,
-    isPlainMachineDataKeyMarker,
-    prepareArtifactRecipientKeyEnvelopesV1,
-    retargetWorkflowDefinitionArtifactHeaderV1,
-    workflowDefinitionArtifactSharingAdapterV1,
-    openSessionOwnerMetadataEnvelopeV1,
-    sealSessionOwnerMetadataEnvelopeV1,
-    AccountEncryptionMigrateReviewCommentsDirectiveSchema,
-    type AccountEncryptionMigrateArtifactsDirective,
-    type AccountEncryptionMigrateMachinesDirective,
-    type AccountEncryptionMigrateReviewCommentsDirective,
-    type AccountEncryptionMigrateSessionsDirective,
-    type AccountEncryptionMigrateSessionOrganizationDirective,
-    type AccountEncryptionMigrateTodosDirective,
-    type AccountEncryptionMigrateWorkspaceDirective,
-    WorkspaceTabsV1StoredSchema,
-    classifyAccountJsonKvKey,
-    type ReviewCommentAccountEncryptionMigrationInventoryResponseV1,
-    type SessionOrganizationAccountEncryptionMigrationInventory,
-    type AccountEncryptionMigrateAutomationsDirective,
-    type AccountEncryptionMigrateAutomationsInventoryResponse,
-    type ArtifactAccessRecipientCensusResponseV1,
-    ArtifactBodyEnvelopeV1StoredSchema,
-    type ArtifactBlobReadResponseV1,
-    type ArtifactBlobStoredContentV1,
-    ArtifactBlobAccountEncryptionStageV1Schema,
-    type ArtifactBlobAccountEncryptionStageV1,
-    type ArtifactAccountEncryptionMigrationOwnershipV1,
-    type ArtifactRevisionProvenanceV1,
-} from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, isPlainArtifactDataKeyMarker } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { MACHINE_PLAIN_DATA_KEY_MARKER, decodePlainMachineStoredContent, encodePlainMachineStoredContent, isPlainMachineDataKeyMarker } from '@happier-dev/protocol/machines/machineStoredContent';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import { createPlainSessionOwnerMetadataEnvelopeV1, encodeSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { prepareArtifactRecipientKeyEnvelopesV1 } from '@happier-dev/protocol/artifacts/artifactRecipientKeyPreparationV1';
+import { retargetWorkflowDefinitionArtifactHeaderV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
+import { workflowDefinitionArtifactSharingAdapterV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
+import { openSessionOwnerMetadataEnvelopeV1, sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
+import { AccountEncryptionMigrateReviewCommentsDirectiveSchema, type AccountEncryptionMigrateArtifactsDirective, type AccountEncryptionMigrateMachinesDirective, type AccountEncryptionMigrateReviewCommentsDirective, type AccountEncryptionMigrateSessionsDirective, type AccountEncryptionMigrateSessionOrganizationDirective, type AccountEncryptionMigrateTodosDirective, type AccountEncryptionMigrateWorkspaceDirective, type AccountEncryptionMigrateAutomationsDirective, type AccountEncryptionMigrateAutomationsInventoryResponse } from '@happier-dev/protocol/account/encryptionMigrate';
+import { WorkspaceTabsV1StoredSchema } from '@happier-dev/protocol/workspace/workspaceTabsV1';
+import { classifyAccountJsonKvKey } from '@happier-dev/protocol/account/accountJsonKv';
+import type { ReviewCommentAccountEncryptionMigrationInventoryResponseV1 } from '@happier-dev/protocol/reviews/comments/content';
+import type { SessionOrganizationAccountEncryptionMigrationInventory } from '@happier-dev/protocol/sessions/organization/accountEncryptionMigrationInventory';
+import type { ArtifactAccessRecipientCensusResponseV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { ArtifactBodyEnvelopeV1StoredSchema, type ArtifactBlobReadResponseV1, type ArtifactBlobStoredContentV1, ArtifactBlobAccountEncryptionStageV1Schema, type ArtifactBlobAccountEncryptionStageV1, type ArtifactRevisionProvenanceV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
+import type { ArtifactAccountEncryptionMigrationOwnershipV1 } from '@happier-dev/protocol/artifacts/artifactAccountEncryptionMigrationV1';
 import { decodePackageAssetArchiveBodyV1, openPackageAssetArchiveV1 } from '@happier-dev/protocol/plugins/availability';
 import { decodePluginUiArtifactArchiveBodyV1, openPluginUiArtifactArchiveV1 } from '@happier-dev/protocol/plugins/ui';
 

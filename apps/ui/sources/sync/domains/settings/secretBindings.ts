@@ -1,11 +1,7 @@
-import {
-    readAiLaunchProfileCollection,
-    readProviderSettingsFromAccountSettingsV1,
-    shouldPreserveLegacyAiLaunchProfileBindingV1,
-    parseSavedSecretRefV1,
-    type AccountSettingsDefaults,
-    type AiLaunchProfile,
-} from '@happier-dev/protocol';
+import { readAiLaunchProfileCollection, shouldPreserveLegacyAiLaunchProfileBindingV1, type AiLaunchProfile } from '@happier-dev/protocol/profiles/read';
+import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
+import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import type { AccountSettingsDefaults } from '@happier-dev/protocol/account/settings/accountSettings';
 
 type EnvVarRequirementLike = Readonly<{
     name: string;

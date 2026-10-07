@@ -3,7 +3,7 @@ import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import {
     normalizeSessionUsageLimitRecoveryOperationResultV1,
     type SessionUsageLimitRecoveryOperationResultV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/control/sessionUsageLimitRecoveryOperationResultV1';
 
 import { storage } from '@/sync/domains/state/storage';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';

@@ -19,7 +19,7 @@ export {
     findMachineInCollection,
     type MachineCollection,
     type MachineIdentityRecord,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/identity/canonicalMachineId';
 
 import type { MachineCollection, MachineIdentityRecord } from '@happier-dev/protocol';
 

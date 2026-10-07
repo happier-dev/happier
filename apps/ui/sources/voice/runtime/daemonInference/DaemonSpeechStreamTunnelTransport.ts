@@ -7,18 +7,9 @@ import type {
   PeerApplicationEncryptionAuthorityBindingV1,
 } from '@happier-dev/protocol';
 import type { PeerTcpTunnelFrame } from '@happier-dev/peer-transport/duplexFrames';
-import {
-  DaemonVoiceInferenceSttStreamChunkResponseSchema as SttStreamChunkResponseSchema,
-  DaemonVoiceInferenceSttStreamFinishResponseSchema as SttStreamFinishResponseSchema,
-  PEER_APPLICATION_ENCRYPTION_DATA_KEY_BYTES_V1,
-  PEER_APPLICATION_ENCRYPTION_INSTALL_CONFIRMATION_V1,
-  PEER_APPLICATION_ENCRYPTION_INSTALL_PROOF_V1,
-  createPeerApplicationEncryptionAadV1,
-  createPeerApplicationEncryptionNonceV1,
-  decodePeerApplicationEncryptedFrameV1,
-  encodePeerApplicationEncryptedFrameV1,
-  sealEncryptedDataKeyEnvelopeV1,
-} from '@happier-dev/protocol';
+import { DaemonVoiceInferenceSttStreamChunkResponseSchema as SttStreamChunkResponseSchema, DaemonVoiceInferenceSttStreamFinishResponseSchema as SttStreamFinishResponseSchema } from '@happier-dev/protocol/daemon/voiceInference';
+import { PEER_APPLICATION_ENCRYPTION_DATA_KEY_BYTES_V1, PEER_APPLICATION_ENCRYPTION_INSTALL_CONFIRMATION_V1, PEER_APPLICATION_ENCRYPTION_INSTALL_PROOF_V1, createPeerApplicationEncryptionAadV1, createPeerApplicationEncryptionNonceV1, decodePeerApplicationEncryptedFrameV1, encodePeerApplicationEncryptedFrameV1 } from '@happier-dev/protocol/machines/peer/mediation/peerApplicationEncryptionV1';
+import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { openAes256GcmBytes, sealAes256GcmBytes } from '@/encryption/aes256GcmBytes';

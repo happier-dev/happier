@@ -4,7 +4,7 @@ import {
     AccountErasureErrorV1Schema,
     AccountErasureResponseV1Schema,
     type AccountErasureResponseV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/auth/accountErasure';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { serverFetch } from '@/sync/http/client';
 import { HappyError } from '@/utils/errors/errors';

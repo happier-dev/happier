@@ -3,7 +3,7 @@ import type {
     PluginContributionIdentityV1,
     PluginProjectionV2,
 } from '@happier-dev/protocol';
-import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
 import {
     evaluateAgentSessionCapabilitySupport,
     type AgentSessionCapabilityKey,

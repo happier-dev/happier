@@ -19,6 +19,25 @@ round; use it before inventing a variant, and extend the owner when a case does 
 - Validation errors come from the owning writer's typed codes and render inline under the field. The
   writer refuses a create over an existing id rather than silently replacing it.
 
+
+## Adding a widget to a surface
+
+- One add surface everywhere (Home, WorkBoard, Session Board, Companion, plugin areas): a grouped,
+  searchable list on the left (Built in · each plugin by name · Your widgets); a row is the icon and
+  one line of purpose, with "On Home" when already placed.
+- The selected widget on the right: a quiet provenance line, then its **inputs first**, then the real
+  body at its real size, then the size picker. One primary Add (⌘↵). Only the selected widget mounts
+  a live body. A fully bound widget adds with one action.
+- Outcomes (added, waiting for approval, refused) render in place without moving the layout. Phones:
+  the list, then a setup sheet with a compact preview.
+
+## Widget sizes
+
+- A widget declares the sizes it is useful at and its default; a surface offers only those, as named
+  sizes, never pixels or free resizing. One size picker serves Add, setup, Customize and the ⋯ menu;
+  `[` and `]` step through the same order.
+- The body receives its resolved size and measured geometry and adapts its content; it never draws a
+  scaled-down copy of a larger layout. Linear surfaces (Companion, Project aside) stay one column.
 ## Forms inside pages
 
 - A field is a row: label (and description) left, field right on wide screens, stacked beneath on

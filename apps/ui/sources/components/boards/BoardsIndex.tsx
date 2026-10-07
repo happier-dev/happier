@@ -26,7 +26,7 @@ export const BoardsIndex = React.memo(function BoardsIndex() {
         <EmptyState
             testID="boards-index-empty"
             layout="page"
-            iconName="squares-four"
+            scene="emptyBoard"
             title={t('boards.index.title')}
             subtitle={t('boards.index.body')}
             primaryAction={{ label: t('boards.newBoard'), onPress: createBoard }}

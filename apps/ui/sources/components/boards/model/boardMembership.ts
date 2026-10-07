@@ -6,7 +6,7 @@ import {
     type WorkBoardMembershipV1,
     type WorkBoardSectionV1,
     type WorkBoardV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/boards/workBoardV1';
 
 /** One item on a board, once, whatever brought it in. */
 export type BoardMember = Readonly<{

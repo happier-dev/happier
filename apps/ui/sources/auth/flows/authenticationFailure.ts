@@ -1,4 +1,5 @@
-import { AccountDirectoryRouteErrorResponseV1Schema, AuthErrorCodeSchema } from '@happier-dev/protocol';
+import { AccountDirectoryRouteErrorResponseV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
+import { AuthErrorCodeSchema } from '@happier-dev/protocol/auth/errors';
 import { HappyError } from '@/utils/errors/errors';
 
 /**

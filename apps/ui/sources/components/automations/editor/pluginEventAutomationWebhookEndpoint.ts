@@ -1,14 +1,6 @@
-import {
-    PluginWebhookEndpointEnsureInputV1Schema,
-    PluginWebhookEndpointEnsureResultV1Schema,
-    PluginWebhookEndpointReadInputV1Schema,
-    PluginWebhookEndpointReadResultV1Schema,
-    computeCanonicalDomainSeparatedDigest,
-    type DaemonContributionRegistryProjectionAutomationEligibleEventV1,
-    type PluginWebhookEndpointEnsureResultV1,
-    type PluginWebhookEndpointReadResultV1,
-    type PluginWebhookEndpointSetupV1,
-} from '@happier-dev/protocol';
+import { PluginWebhookEndpointEnsureInputV1Schema, PluginWebhookEndpointEnsureResultV1Schema, PluginWebhookEndpointReadInputV1Schema, PluginWebhookEndpointReadResultV1Schema, type PluginWebhookEndpointEnsureResultV1, type PluginWebhookEndpointReadResultV1, type PluginWebhookEndpointSetupV1 } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
+import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
+import type { DaemonContributionRegistryProjectionAutomationEligibleEventV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import {
     type PluginWebhookEndpointUiActionExecutor,

@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { normalizeConnectedServiceCredentialHealthStatus, type QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol';
+import { normalizeConnectedServiceCredentialHealthStatus } from '@happier-dev/protocol/connect/connected-service-schemas';
+import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 
 import { CardGrid } from '@/components/ui/cardGrid/CardGrid';
 import { Icon } from '@/components/ui/icons/Icon';

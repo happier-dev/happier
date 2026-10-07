@@ -1,8 +1,5 @@
-import {
-    SecretReferenceOverlayV1Schema,
-    type AIBackendProfile,
-    type SecretReferenceOverlayV1,
-} from '@happier-dev/protocol';
+import { SecretReferenceOverlayV1Schema, type SecretReferenceOverlayV1 } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
+import type { AIBackendProfile } from '@happier-dev/protocol/profiles/backendProfileSchema';
 import type { SavedSecretReferenceResolution } from '@/sync/store/settings/savedSecretCatalogSnapshot';
 
 export type StrictV2ProfileSecretReadiness =

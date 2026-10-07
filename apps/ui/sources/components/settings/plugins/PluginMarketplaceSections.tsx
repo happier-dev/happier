@@ -177,7 +177,7 @@ export function InstalledPluginsSection(props: Readonly<{
                     <View style={[styles.stateFrame, maxWidthStyle]}>
                         <EmptyState
                             testID="settings.plugins.marketplace.installed.empty"
-                            icon={<Icon name="puzzle-piece" size={28} color={theme.colors.text.secondary} />}
+                            scene="noPlugins"
                             title={t('settingsPlugins.surfaces.emptyTitle')}
                             subtitle={t('settingsPlugins.surfaces.emptyBody')}
                             action={(

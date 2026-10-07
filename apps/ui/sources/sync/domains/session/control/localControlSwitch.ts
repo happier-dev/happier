@@ -2,7 +2,7 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import type { CliAuthStatusData } from '@/sync/api/capabilities/capabilitiesProtocol';
 import { getSessionLocalControlState, isSessionExclusiveLocalControl } from '@/sync/domains/session/control/sessionLocalControl';
 import { getAgentCore, resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
-import { ConnectedServiceBindingsV2IngressSchema, readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol';
+import { ConnectedServiceBindingsV2IngressSchema, readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { ResolvedAgentCatalogEntry } from '@/agents/backendCatalog/agentCatalogProjection';
 import { resolveProjectedConnectedAccountServiceKeys } from '@/sync/domains/connectedServices/qualifiedConnectedAccountServiceOptions';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';

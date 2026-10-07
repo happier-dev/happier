@@ -1,15 +1,10 @@
-import {
-    normalizeWorkflowIngress,
-    SessionInitialTriggerDefinitionV1Schema,
-    type AutomationSessionLifecycleEvent,
-    type AutomationTriggerDefinitionInput,
-    type JsonValue,
-    type TriggerTargetV1,
-    type WorkflowBlock,
-    type WorkflowDefinitionV1,
-    type WorkflowTriggerSetV1,
-    type SessionInitialTriggerDefinitionV1,
-} from '@happier-dev/protocol';
+import { normalizeWorkflowIngress } from '@happier-dev/protocol/workflows/workflowValidationV1';
+import { SessionInitialTriggerDefinitionV1Schema, type WorkflowTriggerSetV1, type SessionInitialTriggerDefinitionV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import type { AutomationSessionLifecycleEvent } from '@happier-dev/protocol/automations/automationSessionLifecycle';
+import type { AutomationTriggerDefinitionInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
+import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { TriggerTargetV1 } from '@happier-dev/protocol/workflows/triggers/triggerTargetV1';
+import type { WorkflowBlock, WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 
 import { readSessionLifecycleKind } from './formatTriggerSummary';
 import { buildSimpleScheduleCron, parseSimpleSchedule, type SimpleSchedule } from './triggerSchedule';

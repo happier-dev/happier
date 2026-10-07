@@ -1,4 +1,5 @@
-import { ACTION_ID_FAMILIES_V1, listVoiceToolActionSpecs, type ActionId } from '@happier-dev/protocol';
+import { ACTION_ID_FAMILIES_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { listVoiceToolActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 
 /**
  * Canonical "is this a device-inventory tool" classification, gated by the voice

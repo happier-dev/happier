@@ -1,4 +1,6 @@
-import { getActionSpec, isHomeDomainActionIdV1, type ActionId } from '@happier-dev/protocol';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { isHomeDomainActionIdV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 
 import {
     createHomeActionApprovalContinuation,

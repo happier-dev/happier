@@ -1,4 +1,4 @@
-import { PENDING_INPUT_PROTOCOL_VERSION_V2 } from '@happier-dev/protocol';
+import { PENDING_INPUT_PROTOCOL_VERSION_V2 } from '@happier-dev/protocol/clientCompatibility/primitives';
 
 import type { ServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';

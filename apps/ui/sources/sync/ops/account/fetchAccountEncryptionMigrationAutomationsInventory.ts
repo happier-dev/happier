@@ -1,5 +1,5 @@
 import { AccountEncryptionMigrateAutomationsInventoryResponseSchema,
-    type AccountEncryptionMigrateAutomationsInventoryResponse } from '@happier-dev/protocol';
+    type AccountEncryptionMigrateAutomationsInventoryResponse } from '@happier-dev/protocol/account/encryptionMigrate';
 import { serverFetch } from '@/sync/http/client';
 
 export const ACCOUNT_ENCRYPTION_MIGRATION_AUTOMATIONS_INVENTORY_PATH = '/v1/account/encryption/migrate/automations/inventory';

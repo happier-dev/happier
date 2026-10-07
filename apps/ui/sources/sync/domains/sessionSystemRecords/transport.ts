@@ -1,14 +1,5 @@
-import {
-    SESSION_SYSTEM_RECORDS_PROTOCOL_HTTP_HEADER,
-    SESSION_SYSTEM_RECORDS_PROTOCOL_V1_HTTP_HEADER_VALUE,
-    readSessionSystemRecordErrorCodeV1,
-    SessionSystemRecordStoredPageResponseSchema,
-    SessionSystemRecordStoredReadResponseSchema,
-    type SessionSystemRecordAddress,
-    type SessionSystemRecordListQuery,
-    type SessionSystemRecordStored,
-    type SessionSystemRecordStoredPageResponse,
-} from '@happier-dev/protocol';
+import { SESSION_SYSTEM_RECORDS_PROTOCOL_HTTP_HEADER, SESSION_SYSTEM_RECORDS_PROTOCOL_V1_HTTP_HEADER_VALUE, readSessionSystemRecordErrorCodeV1, SessionSystemRecordStoredPageResponseSchema, SessionSystemRecordStoredReadResponseSchema, type SessionSystemRecordListQuery, type SessionSystemRecordStored, type SessionSystemRecordStoredPageResponse } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
+import type { SessionSystemRecordAddress } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordAddress';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';

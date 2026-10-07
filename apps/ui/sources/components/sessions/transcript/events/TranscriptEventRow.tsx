@@ -2,7 +2,8 @@ import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { readSessionAgentTransitionDividerV1, SESSION_FOLLOW_WAKE_EVENT_MESSAGE } from '@happier-dev/protocol';
+import { readSessionAgentTransitionDividerV1 } from '@happier-dev/protocol/sessions/agentTransitionDivider';
+import { SESSION_FOLLOW_WAKE_EVENT_MESSAGE } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
 
 import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
 import { AgentTransitionDividerRow } from '@/components/sessions/transcript/agentTransition/AgentTransitionDividerRow';

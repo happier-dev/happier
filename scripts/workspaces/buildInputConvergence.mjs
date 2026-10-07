@@ -38,7 +38,8 @@ export async function captureBuildInputFiles({ sourceDir, captureDir, readPaths 
       await rm(target, { force: true });
       try { await cp(source, target, { verbatimSymlinks: true }); }
       catch (error) {
-        if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') throw error;
+        if (typeof error !== 'object' || error === null || !('code' in error)
+          || (error.code !== 'ENOENT' && error.code !== 'ENOTDIR')) throw error;
         copied.delete(path);
         return;
       }

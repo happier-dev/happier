@@ -1,16 +1,9 @@
-import {
-    BackendTargetKeyV2Schema,
-    ClientEncryptionRequirementSchema,
-    MachineAdministrationTargetsV1Schema,
-    BackendTargetRefV2InputSchema,
-    PersistedAgentTargetRefV1Schema,
-    PersistedBackendTargetRefV2Schema,
-    SessionDraftAddressV1Schema,
-    buildSettingArtifacts,
-    defineSettingDefinitions,
-    readBackendTargetRefV2,
-    writePersistedBackendTargetRefV2,
-} from '@happier-dev/protocol';
+import { BackendTargetKeyV2Schema, BackendTargetRefV2InputSchema, PersistedAgentTargetRefV1Schema, PersistedBackendTargetRefV2Schema, readBackendTargetRefV2, writePersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { ClientEncryptionRequirementSchema } from '@happier-dev/protocol/encryption/clientEncryptionRequirement';
+import { MachineAdministrationTargetsV1Schema } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
+import { SessionDraftAddressV1Schema } from '@happier-dev/protocol/drafts/sessionDrafts';
+import { buildSettingArtifacts } from '@happier-dev/protocol/settings/registry/buildSettingArtifacts';
+import { defineSettingDefinitions } from '@happier-dev/protocol/settings/registry/settingDefinition';
 import { z } from 'zod';
 
 import { normalizeAccountSettingsServerSelection } from '@/sync/domains/settings/parse/accountSettingsServerSelectionNormalization';

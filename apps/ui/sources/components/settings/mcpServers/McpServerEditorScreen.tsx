@@ -8,7 +8,7 @@ import {
     McpServerCatalogEntryV1Schema,
     type McpServerBindingV1,
     type McpServerCatalogEntryV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/mcp/servers/settingsV1';
 
 import { McpServerConfigureForm } from '@/components/settings/mcpServers/McpServerConfigureForm';
 import { McpServerImportJsonTab } from '@/components/settings/mcpServers/McpServerImportJsonTab';

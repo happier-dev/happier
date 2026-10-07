@@ -1,4 +1,4 @@
-import { resolveSshHostTrust } from '@happier-dev/protocol';
+import { resolveSshHostTrust } from '@happier-dev/protocol/ssh/hostTrust';
 import type { NativeSshHostKeyVerification } from '@happier-dev/ssh-native';
 
 import type { RemoteHostTrustedHostKeyRecord } from './model';

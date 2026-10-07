@@ -1,7 +1,7 @@
 import {
     resolveTeamCredentialExternalApiAvailability,
     type TeamCredentialExternalApiAvailabilityV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/features/payload/capabilities/teamCredentialCapabilities';
 
 import { useFeatureDetails } from '@/hooks/server/useFeatureDetails';
 

@@ -1,4 +1,6 @@
-import { UiFindInputSchema, type ActionExecuteResult, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { UiFindInputSchema } from '@happier-dev/protocol/actions/findActionSpecs';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { FindSurfaceRegistry } from './findSurfaceRegistry';
 
 type FindActionRequest = Parameters<NonNullable<ActionExecutorDeps['uiFindAction']>>[0];

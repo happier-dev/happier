@@ -1,4 +1,4 @@
-import { ExecutionRunStatusSchema, type ExecutionRunStatus } from '@happier-dev/protocol';
+import { ExecutionRunStatusSchema, type ExecutionRunStatus } from '@happier-dev/protocol/execution/runs/responseSchemas';
 
 import type { ToolCall } from "@happier-dev/session-core/messages";
 

@@ -1,25 +1,7 @@
 import type { z } from 'zod';
-import {
-    homeDomainActionInputSchemaV1,
-    homeDomainActionOutputSchemaV1,
-    type ManagedIdentityProviderActionIdV1,
-    type ActionExecuteFailure,
-    ManagedIdentityProviderCreateInputV1Schema,
-    ManagedIdentityProviderLifecycleInputV1Schema,
-    ManagedIdentityProviderRemovePreflightInputV1Schema,
-    ManagedIdentityProviderRemovePreflightResultV1Schema,
-    ManagedIdentityProviderRemoveResultV1Schema,
-    ManagedIdentityProviderSecretReplaceInputV1Schema,
-    ManagedIdentityProviderTestConsumeInputV1Schema,
-    ManagedIdentityProviderTestConsumeResultV1Schema,
-    ManagedIdentityProviderTestStartInputV1Schema,
-    ManagedIdentityProviderTestStartResultV1Schema,
-    ManagedIdentityProvidersListInputV1Schema,
-    ManagedIdentityProvidersListResultV1Schema,
-    ManagedIdentityProviderUpdateInputV1Schema,
-    ManagedIdentityProviderV1Schema,
-    ManagedOidcIdentityProviderV1Schema,
-} from '@happier-dev/protocol';
+import { homeDomainActionInputSchemaV1, homeDomainActionOutputSchemaV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
+import { type ManagedIdentityProviderActionIdV1, ManagedIdentityProviderCreateInputV1Schema, ManagedIdentityProviderLifecycleInputV1Schema, ManagedIdentityProviderRemovePreflightInputV1Schema, ManagedIdentityProviderRemovePreflightResultV1Schema, ManagedIdentityProviderRemoveResultV1Schema, ManagedIdentityProviderSecretReplaceInputV1Schema, ManagedIdentityProviderTestConsumeInputV1Schema, ManagedIdentityProviderTestConsumeResultV1Schema, ManagedIdentityProviderTestStartInputV1Schema, ManagedIdentityProviderTestStartResultV1Schema, ManagedIdentityProvidersListInputV1Schema, ManagedIdentityProvidersListResultV1Schema, ManagedIdentityProviderUpdateInputV1Schema, ManagedIdentityProviderV1Schema, ManagedOidcIdentityProviderV1Schema } from '@happier-dev/protocol/identity/providers';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';

@@ -1,30 +1,19 @@
-import {
-    AcpConfigOptionOverridesV1Schema,
-    AgentExecutionTargetV1Schema,
-    SessionAuthoringValueV1Schema,
-    SessionCreationKeyV1Schema,
-    SessionServerStartSpawnDraftV1Schema,
-    SessionSpawnNewInputV2Schema,
-    RawIngressStructuredInputV1Schema,
-    buildSessionConfigOptionOverridesFromServerStart,
-    type SecretReferenceOverlayV1,
-    SessionModelSelectionV1Schema,
-    buildBackendTargetKeyV2,
-    readNonBlankOpaqueIdentifier,
-    readBackendTargetRefV2,
-    readRuntimeDescriptorV1,
-    type AgentExecutionTargetV1,
-    type BackendTargetRefV2,
-    type SessionModelSelectionV1,
-    type SessionCreationKeyV1,
-    type SessionServerStartSpawnDraftV1,
-    type SessionSpawnNewInputV2,
-    type RawIngressStructuredInputV1,
-    type SessionSpawnSourceContextV1,
-    type SessionExecutionTargetV1,
-    type MachinePoolSelectionOriginV1,
-    type SessionDirectoryIntentV1,
-} from '@happier-dev/protocol';
+import { AcpConfigOptionOverridesV1Schema } from '@happier-dev/protocol/sessions/metadata/overrides';
+import { AgentExecutionTargetV1Schema, type AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { SessionAuthoringValueV1Schema } from '@happier-dev/protocol/sessions/authoring/index';
+import { SessionCreationKeyV1Schema, type SessionCreationKeyV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
+import { SessionServerStartSpawnDraftV1Schema, SessionSpawnNewInputV2Schema, type SessionServerStartSpawnDraftV1, type SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { RawIngressStructuredInputV1Schema, type RawIngressStructuredInputV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import { buildSessionConfigOptionOverridesFromServerStart } from '@happier-dev/protocol/workflows/workflowSessionAuthoringV1';
+import type { SecretReferenceOverlayV1 } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
+import { SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import { buildBackendTargetKeyV2, readBackendTargetRefV2, type BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import { readRuntimeDescriptorV1 } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
+import type { SessionSpawnSourceContextV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnSourceContextV1';
+import type { SessionExecutionTargetV1 } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
+import type { MachinePoolSelectionOriginV1 } from '@happier-dev/protocol/machines/pools/v1';
+import type { SessionDirectoryIntentV1 } from '@happier-dev/protocol/sessions/creation/sessionDirectoryIntentV1';
 import type { SessionSpawnNewInitialInputV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/plugins/ui';
 import {

@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { useDestinationPaneScopeId } from '@/components/appShell/workspace/DestinationInstanceHost';
@@ -54,6 +55,7 @@ export const ChangesGlanceView = React.memo(function ChangesGlanceView(props: Re
 }>) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
+    const widgetPresentation = useWidgetPresentation();
     const state = props.state;
     let body: WidgetFrameBody;
     if (state.kind === 'loading') {
@@ -64,7 +66,10 @@ export const ChangesGlanceView = React.memo(function ChangesGlanceView(props: Re
         body = { kind: 'content', children: <Text style={styles.quiet}>{t('widgetGlances.noChanges')}</Text> };
     } else {
         const summary = state.summary;
-        const files = resolveChangesGlanceFiles(summary);
+        // A compact glance names the first change; a tall viewport can retain every file.
+        // The source total and the remainder remain truthful, and Review always opens the full set.
+        const files = resolveChangesGlanceFiles(summary, widgetPresentation?.footprint.height === 'compact' ? 1
+            : widgetPresentation?.footprint.height === 'tall' ? summary.files.length : undefined);
         body = {
             kind: 'content',
             children: (

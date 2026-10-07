@@ -1,7 +1,9 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { builtinModules, createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { build } from 'vite';
 
 import { describe, expect, it, vi } from 'vitest';
 import { definePlugin } from '@happier-dev/plugin-sdk';
@@ -55,6 +57,72 @@ function locator(overrides: Partial<BundledPluginLocator> = {}): BundledPluginLo
 }
 
 describe('bundled plugin locators', () => {
+    it('admits distribution failures for compiled modules in a source checkout', async () => {
+        const root = mkdtempSync(join(tmpdir(), 'happier-compiled-source-catalog-'));
+        const projectRoot = join(root, 'apps', 'cli');
+        const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../../../..');
+        try {
+            mkdirSync(join(projectRoot, 'src'), { recursive: true });
+            writeFileSync(join(projectRoot, 'package.json'), '{}');
+            // Installed third-party packages are the Node execution boundary;
+            // compile and execute the real current owner and its internal graph.
+            symlinkSync(join(repoRoot, 'node_modules'), join(root, 'node_modules'),
+                process.platform === 'win32' ? 'junction' : 'dir');
+            const failurePath = join(projectRoot, '.project', 'tmp', 'bundled-plugin-publication', 'failures.json');
+            mkdirSync(dirname(failurePath), { recursive: true });
+            writeFileSync(failurePath, JSON.stringify([{
+                packageName: '@happier-dev/plugins-inspector', pluginId: 'happier.inspector',
+                diagnostic: { code: 'plugin_package_build_failed', message: 'Current distribution preparation failed' },
+            }]));
+            await build({
+                configFile: join(repoRoot, 'apps', 'cli', 'vitest.config.ts'),
+                logLevel: 'silent',
+                build: {
+                    outDir: join(projectRoot, 'dist'),
+                    emptyOutDir: true, minify: false, sourcemap: false,
+                    lib: { entry: fileURLToPath(new URL('./locators.ts', import.meta.url)),
+                        formats: ['es'], fileName: () => 'locators.mjs' },
+                    rollupOptions: {
+                        external: (id) => id.startsWith('node:') || builtinModules.includes(id)
+                            || (!id.startsWith('.') && !isAbsolute(id) && !id.startsWith('@/')
+                                && !id.startsWith('@happier-dev/') && !id.startsWith('#')
+                                && !id.startsWith('\0')),
+                    },
+                },
+            });
+            // The emitted module namespace is an actual external loader boundary.
+            const compiled = await import(/* @vite-ignore */ pathToFileURL(join(projectRoot, 'dist', 'locators.mjs')).href) as {
+                loadCurrentBundledPluginLocatorResult: () => ReturnType<typeof loadBundledPluginLocatorResult>;
+            };
+            const loaded = compiled.loadCurrentBundledPluginLocatorResult();
+            expect(loaded.pluginFailures).toEqual([expect.objectContaining({ pluginId: 'happier.inspector' })]);
+            expect(loaded.loadedPlugins.some((plugin) => plugin.pluginId === 'happier.inspector')).toBe(false);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it('loads current source declarations without a distribution publication inventory', async () => {
+        vi.resetModules();
+        const { loadCurrentBundledPluginLocatorResult } = await import('./locators');
+        const root = mkdtempSync(join(tmpdir(), 'happier-cold-source-catalog-'));
+        const execPathDescriptor = Object.getOwnPropertyDescriptor(process, 'execPath')!;
+        try {
+            // The filesystem/process identity is the boundary. The executing
+            // module remains source, and semantic ingestion stays real.
+            Object.defineProperty(process, 'execPath', { ...execPathDescriptor, value: join(root, 'happier') });
+            writeFileSync(join(root, 'package.json'), '{}');
+            const loaded = loadCurrentBundledPluginLocatorResult();
+            expect(loaded.loadedPlugins.some((plugin) => plugin.pluginId === 'happier.agent.codex')).toBe(true);
+            expect(loaded.loadedPlugins.some((plugin) => plugin.pluginId === 'happier.agent.ohmypi')).toBe(true);
+            expect(() => readFileSync(join(root, '.project', 'tmp', 'bundled-plugin-publication', 'failures.json'))).toThrow();
+        } finally {
+            Object.defineProperty(process, 'execPath', execPathDescriptor);
+            rmSync(root, { recursive: true, force: true });
+            vi.resetModules();
+        }
+    });
+
     it('retains the process-admitted bundled catalog when publication files change', async () => {
         // This test admits its own process catalog; do not change the admission state
         // used by the existing publication-failure owner tests in this module.

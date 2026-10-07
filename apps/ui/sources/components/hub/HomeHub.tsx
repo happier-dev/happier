@@ -139,6 +139,7 @@ function HubWidgetSlot(props: SlotProps & Readonly<{
                 testID={testID}
                 widget={props.section.widget}
                 instance={props.section.instance}
+                size={props.section.size}
                 menu={menu}
                 frameStyle={frameStyle}
                 tracker={props.tracker}

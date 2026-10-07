@@ -25,7 +25,7 @@ import {
     deriveHomeQrRendezvousSecretV2,
     deriveHomeQrRendezvousVerifierV2,
     type HomeQrInviteV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/crypto/qrProvisioningV2';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import type { HomeQrEnrollmentTarget } from '@/auth/flows/qrStart';
 import { resolveHomeEnrollmentTransport } from '@/auth/enrollment/homeEnrollmentTransport';

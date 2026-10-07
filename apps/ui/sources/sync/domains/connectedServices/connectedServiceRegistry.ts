@@ -1,14 +1,8 @@
-import {
-  BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
-  buildQualifiedPluginContributionKey,
-  ConnectedServiceIdSchema,
-  parseQualifiedPluginContributionKey,
-  type PluginConnectedAccountAuthenticationModeV2,
-  type PluginConnectedAccountAuthenticationV2,
-  type ConnectedServiceId,
-  type ConnectedAccountUiProjectionEntryV1,
-  type PluginContributionIdentityV1,
-} from '@happier-dev/protocol';
+import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
+import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { ConnectedServiceIdSchema, type ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { PluginConnectedAccountAuthenticationModeV2, PluginConnectedAccountAuthenticationV2 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import type { ConnectedAccountUiProjectionEntryV1 } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
 import type {
   ConnectedAccountDescriptorProjectionConflict,
   ConnectedAccountDescriptorProjectionState,

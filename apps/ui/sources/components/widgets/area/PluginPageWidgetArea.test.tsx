@@ -6,7 +6,8 @@ import { createPluginWidgetAreaHostPortV1, PluginUiWidgetAreaRequestV1Schema, Pl
 import {
     createWidgetActionInputResolverV1, createWidgetAreaActionPortV1, createWidgetSurfaceArtifactPortV1,
     buildWidgetSurfaceArtifactIdV1, WidgetAreaLayoutV1Schema, WIDGET_SURFACE_ARTIFACT_KIND_V1,
-    type WidgetAreaLayoutV1, type WidgetInstanceV1, type WidgetSurfaceRefV1,
+    buildWidgetDefinitionArtifactHeaderV1, WidgetDefinitionV1Schema,
+    type WidgetAreaLayoutV1, type WidgetInstanceV1, type WidgetSurfaceRefV1, type WidgetSizeDeclarationV1,
 } from '@happier-dev/protocol/widgets';
 import { createPluginUiResourceStore, PluginHostApiProvider, PluginUiHostPresentationScope } from '@happier-dev/plugin-ui/advanced';
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
@@ -105,7 +106,8 @@ const declarations = [{ name: 'pinned', contextSchema: { type: 'object', propert
 const checks = { pluginId: 'acme.ci', localId: 'checks' };
 const fields = [{ path: 'repository', title: 'Repository', widget: 'text' as const, required: true }];
 const inputSchema = { type: 'object', properties: { repository: { type: 'string' } }, required: ['repository'], additionalProperties: false } satisfies PluginJsonSchemaV2;
-const projection = widgetProjectionOf([{ ...checks, target: 'app', title: 'Checks', inputs: { fields }, inputSchema }], { 'acme.ci': widgetInstalledPackage('acme.ci', 'CI') });
+const sizeDeclaration: WidgetSizeDeclarationV1 = { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' };
+const projection = widgetProjectionOf([{ ...checks, target: 'app', title: 'Checks', inputs: { fields }, inputSchema, sizeDeclaration }], { 'acme.ci': widgetInstalledPackage('acme.ci', 'CI') });
 const follow: WidgetInstanceV1 = { v: 1, id: 'follow', definition: { kind: 'installed', surface: checks }, bindings: { repository: { kind: 'context', slot: 'repository' } } };
 const pin: WidgetInstanceV1 = { v: 1, id: 'pin', definition: { kind: 'installed', surface: checks }, bindings: { repository: { kind: 'value', value: 'website' } } };
 
@@ -120,7 +122,7 @@ function createArea() {
     const store = createWidgetSurfaceArtifactPortV1(transport, { surface, isCurrent: () => true });
     const area = createWidgetAreaActionPortV1(ref => createWidgetSurfaceArtifactPortV1(transport, { surface: ref, isCurrent: () => true }));
     const widgetInputs = createWidgetActionInputResolverV1({
-        readDescriptor: async () => ({ inputs: { fields }, inputSchema }),
+        readDescriptor: async () => ({ inputs: { fields }, inputSchema, sizeDeclaration }),
         readContext: async request => request.context.widgetAreaContext?.values ?? {}, readViewerValues: async () => ({ values: {} }),
         validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [],
     });
@@ -168,6 +170,12 @@ async function runAction(screen: Awaited<ReturnType<typeof renderScreen>>, id: s
     await flushHookEffects({ cycles: 4 });
 }
 
+async function submitAreaAdd(screen: Awaited<ReturnType<typeof renderScreen>>) {
+    const step = screen.root.findByType(WidgetSetupStep);
+    await screen.pressByTestIdAsync(`${step.props.testID}.submit`);
+    await flushHookEffects({ cycles: 4 });
+}
+
 afterEach(() => { standardCleanup(); storage.setState({ artifacts: {} }); });
 
 /**
@@ -189,7 +197,7 @@ function projectMovementFixture() {
     };
     const area = createWidgetAreaActionPortV1(ref => createWidgetSurfaceArtifactPortV1(transport, { surface: ref, isCurrent: () => true }));
     const widgetInputs = createWidgetActionInputResolverV1({
-        readDescriptor: async () => ({ inputs: { fields }, inputSchema }), readContext: async () => ({}), readViewerValues: async () => ({ values: {} }),
+        readDescriptor: async () => ({ inputs: { fields }, inputSchema, sizeDeclaration }), readContext: async () => ({}), readViewerValues: async () => ({ values: {} }),
         validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [],
     });
     const deps = createActionExecutorBoundaryFixture({ widgetAccountScope: () => scope, widgetSurfaceActions: { project: area }, widgetInputs });
@@ -216,6 +224,64 @@ function projectMovementFixture() {
 }
 
 describe('a plugin page widget area', () => {
+    it('uses the referenced header size before grid layout without changing saved intent', async () => {
+        const area = createArea();
+        const definition = WidgetDefinitionV1Schema.parse({ v: 1, id: 'wide-checks', name: 'Wide checks',
+            provenance: { authorAccountId: scope.accountId, source: { kind: 'authored' } },
+            sizeDeclaration: { sizes: ['wide'], defaultSize: 'wide' },
+            inputs: { fields: [] }, inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+            body: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Checks' } } } });
+        const instance: WidgetInstanceV1 = { v: 1, id: 'wide-copy', definition: { kind: 'artifact', artifactId: definition.id }, bindings: {} };
+        await area.store.apply({ kind: 'add', instance, size: 'medium' });
+        storage.setState({ artifacts: { ...storage.getState().artifacts, [definition.id]: {
+            id: definition.id, ownerAccountId: scope.accountId, isDecrypted: true, title: definition.name,
+            rawHeader: buildWidgetDefinitionArtifactHeaderV1(definition), headerVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+        } } });
+        const saved = await area.store.read();
+        const screen = await renderScreen(page(area.hostApi, 'happier'));
+        await flushHookEffects({ cycles: 4 });
+        expect(screen.root.findAllByType(CardGridCell).filter(cell => cell.props.span === 'row')).toHaveLength(1);
+        expect(screen.findByTestId('prs.pinned.widget.wide-copy.frame.viewport')).not.toBeNull();
+        expect(await area.store.read()).toEqual(saved);
+    });
+    it.each(['approvalPending', 'refused'] as const)('shows an inputless area add %s in the mounted Add flow', async kind => {
+        const area = createArea();
+        const inputlessProjection = widgetProjectionOf([{ ...checks, target: 'app', title: 'Checks' }],
+            { 'acme.ci': widgetInstalledPackage('acme.ci', 'CI') });
+        const hostApi: PluginUiHostApi = { ...area.hostApi, widgetArea: async (raw, options) => {
+            const request = PluginUiWidgetAreaRequestV1Schema.parse(raw);
+            if (request.operation.actionId === 'widgets.instance.add') return PluginUiWidgetAreaResultV1Schema.parse(kind === 'approvalPending'
+                ? { ok: true, result: { kind: 'approval_request_created', artifactId: 'approval-area', actionId: 'widgets.instance.add' } }
+                : { ok: false, errorCode: 'permission_denied', error: 'permission_denied' });
+            return area.hostApi.widgetArea(raw, options);
+        } };
+        const screen = await renderScreen(
+            <AppShellPluginUiProjectionValueProvider value={{ pluginUiProjection: inputlessProjection, pluginBrowserProjection: null, phase: 'current',
+                interactionEnabled: true, machineId: 'machine-1', serverId: scope.serverId, platform: 'web',
+                clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {} }}>
+                <PluginHostApiProvider hostApi={hostApi}>
+                    <PluginUiHostPresentationScope environment={environment} presentationHost={presentationHost}>
+                        <WidgetSurface area="pinned" context={{ repository: 'happier' }} testID="prs.pinned" />
+                    </PluginUiHostPresentationScope>
+                </PluginHostApiProvider>
+            </AppShellPluginUiProjectionValueProvider>,
+        );
+        await flushHookEffects({ cycles: 4 });
+        await act(async () => { screen.pressByTestId('prs.pinned.add'); });
+        await flushHookEffects({ cycles: 3 });
+        await act(async () => { screen.pressByTestId('prs.pinned.addPopover.entry.plugin-acme.ci/checks'); });
+        await flushHookEffects({ cycles: 4 });
+        await submitAreaAdd(screen);
+        if (kind === 'approvalPending') {
+            expect(screen.findAllByTestId('prs.pinned.addPopover.entry.plugin-acme.ci/checks.pending').length).toBeGreaterThan(0);
+        } else {
+            const step = screen.root.findByType(WidgetSetupStep);
+            expect(screen.findByTestId(`${step.props.testID}.why`)).not.toBeNull();
+        }
+        expect(screen.getTextContent()).toContain(kind === 'approvalPending' ? 'widgetAdd.areaApprovalPending' : 'widgetAdd.addFailed');
+        expect(screen.getTextContent()).not.toContain('widgetAdd.justAdded');
+        expect((await area.store.read()).instances).toEqual([]);
+    });
     it.each(['approvalPending', 'refused'] as const)('keeps the real area %s acknowledgement truthful through add and input editing', async kind => {
         const area = createArea();
         await area.store.apply({ kind: 'add', instance: pin });
@@ -236,9 +302,14 @@ describe('a plugin page widget area', () => {
         await flushHookEffects({ cycles: 3 });
         await act(async () => { screen.pressByTestId('prs.pinned.addPopover.entry.plugin-acme.ci/checks'); });
         await flushHookEffects({ cycles: 4 });
+        await submitAreaAdd(screen);
         expect(screen.getTextContent()).not.toContain('widgetAdd.justAdded');
         expect(screen.getTextContent()).toContain(kind === 'approvalPending' ? 'widgetAdd.areaApprovalPending' : 'widgetAdd.addFailed');
         expect((await area.store.read()).instances.map(entry => entry.instance)).toEqual([pin]);
+        if (kind === 'refused') {
+            const step = screen.root.findByType(WidgetSetupStep);
+            await act(async () => { screen.pressByTestId(`${step.props.testID}.cancel`); });
+        }
         await runAction(screen, 'pin', 'editInputs');
         const setup: WidgetSetup = screen.root.findByType(WidgetSetupStep).props.setup;
         let result: WidgetSetupSubmitResult | undefined;
@@ -515,13 +586,13 @@ describe('a plugin page widget area', () => {
         expect((await area.store.read()).instances.map(entry => entry.instance)).toEqual([follow, pin]);
     });
 
-    it('persists width and order through the area owner, and a fresh mount draws the saved layout', async () => {
+    it('persists size and order through the area owner, and a fresh mount draws the saved layout', async () => {
         const area = createArea();
         await area.store.apply({ kind: 'add', instance: follow });
         await area.store.apply({ kind: 'add', instance: pin });
         const screen = await renderScreen(page(area.hostApi, 'happier'));
         await flushHookEffects({ cycles: 4 });
-        await runAction(screen, 'pin', 'width-full');
+        await runAction(screen, 'pin', 'size-full');
         // Movement from the ⋯ is one Move… (the Organize chooser; its carry through real default
         // admission is the cross-area case above) and no step that does nothing.
         const menuIds = menuOf(screen, 'pin').props.actions.map((entry: { id: string }) => entry.id);
@@ -531,7 +602,7 @@ describe('a plugin page widget area', () => {
         expect(menuIds.at(-1)).toBe('remove');
         await act(async () => { await area.store.apply({ kind: 'move', instanceId: 'pin', toIndex: 0 }); });
         await flushHookEffects({ cycles: 4 });
-        expect((await area.store.read()).instances).toEqual([{ instance: pin, width: 'full' }, { instance: follow, width: 'half' }]);
+        expect((await area.store.read()).instances).toEqual([{ instance: pin, size: 'full' }, { instance: follow, size: 'medium' }]);
         standardCleanup();
 
         const reloaded = await renderScreen(page(area.hostApi, 'happier'));
@@ -541,8 +612,8 @@ describe('a plugin page widget area', () => {
         expect([...new Set(ids)]).toEqual(['prs.pinned.widget.pin', 'prs.pinned.widget.follow']);
         expect(reloaded.root.findAllByType(CardGridCell).some(cell => cell.props.span === 'row'
             && cell.findAll(node => node.props.testID === 'prs.pinned.widget.pin').length > 0)).toBe(true);
-        // Width is one of the area's own steps; the follower keeps half.
-        expect(menuOf(reloaded, 'follow').props.actions.find((entry: { id: string }) => entry.id === 'width-half')?.selected).toBe(true);
+        // Size is one of the area's own steps; the follower keeps its medium intent.
+        expect(menuOf(reloaded, 'follow').props.actions.find((entry: { id: string }) => entry.id === 'size-medium')?.selected).toBe(true);
     });
 
     it('adds a contributed widget from the shared gallery that follows the page without a Set up step', async () => {
@@ -554,9 +625,10 @@ describe('a plugin page widget area', () => {
         await flushHookEffects({ cycles: 3 });
         await act(async () => { screen.pressByTestId('prs.pinned.addPopover.entry.plugin-acme.ci/checks'); });
         await flushHookEffects({ cycles: 4 });
+        await submitAreaAdd(screen);
         const saved = (await area.store.read()).instances;
         expect(saved).toHaveLength(1);
-        expect(saved[0]).toMatchObject({ instance: { definition: { kind: 'installed', surface: checks }, bindings: { repository: { kind: 'context', slot: 'repository' } } }, width: 'half' });
+        expect(saved[0]).toMatchObject({ instance: { definition: { kind: 'installed', surface: checks }, bindings: { repository: { kind: 'context', slot: 'repository' } } }, size: 'medium' });
         expect(screen.getTextContent()).toContain('widget:checks repository:happier;');
     });
 

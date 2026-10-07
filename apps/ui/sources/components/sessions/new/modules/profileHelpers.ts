@@ -1,5 +1,6 @@
 import React from 'react';
-import { getSecretSatisfaction, type SavedSecret } from '@happier-dev/protocol';
+import { getSecretSatisfaction } from '@happier-dev/protocol/profiles/secretSatisfaction';
+import type { SavedSecret } from '@happier-dev/protocol/profiles/backendProfileSchema';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { getProfileEnvironmentVariables, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { isRunnerProviderOwnedEnvironmentKey } from '@/sync/domains/ephemeralRunner/runnerAuthoringCompatibility';

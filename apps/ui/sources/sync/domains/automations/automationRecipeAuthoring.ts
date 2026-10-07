@@ -1,14 +1,5 @@
-import {
-    AutomationRunExecutionTargetV1Schema,
-    AutomationRunTemplateV1Schema,
-    AutomationRunTemplateV1ReadSchema,
-    AutomationStoredDefinitionExecutionRecipeV1Schema,
-    AutomationStoredDefinitionExecutionRecipeV1ReadSchema,
-    type AutomationRunExecutionTargetV1,
-    type AutomationStoredDefinitionExecutionRecipeV1,
-    type AutomationRunTemplateV1,
-    type MentionRefV1,
-} from '@happier-dev/protocol';
+import { AutomationRunExecutionTargetV1Schema, AutomationRunTemplateV1Schema, AutomationRunTemplateV1ReadSchema, AutomationStoredDefinitionExecutionRecipeV1Schema, AutomationStoredDefinitionExecutionRecipeV1ReadSchema, type AutomationRunExecutionTargetV1, type AutomationStoredDefinitionExecutionRecipeV1, type AutomationRunTemplateV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
+import type { MentionRefV1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
 import type { z } from 'zod';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';

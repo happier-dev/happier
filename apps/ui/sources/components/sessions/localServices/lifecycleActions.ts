@@ -1,12 +1,7 @@
 import * as React from 'react';
 
-import {
-    createLocalServiceActionConfirmationNonceV1,
-    LocalServiceActionResultV1Schema,
-    type LocalServiceActionKindV1,
-    type LocalServiceActionRequestV1,
-    type RuntimeActionExecute,
-} from '@happier-dev/protocol';
+import { createLocalServiceActionConfirmationNonceV1, LocalServiceActionResultV1Schema, type LocalServiceActionKindV1, type LocalServiceActionRequestV1 } from '@happier-dev/protocol/local/services/actions/v1';
+import type { RuntimeActionExecute } from '@happier-dev/protocol/actions/executor/types';
 
 import type { LocalServiceLaunchTarget } from '@/sync/domains/local/services/launch';
 import { randomUUID } from '@/platform/randomUUID';

@@ -1,4 +1,5 @@
-import { AppUpdateActionInputSchemas, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { AppUpdateActionInputSchemas } from '@happier-dev/protocol/actions/appUpdateActionFamily';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { AppUpdateStatus } from './useAppUpdateStatus';
 
 // The shell summary and the open Updates page consume the same platform owners. Retiring one

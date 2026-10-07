@@ -19,13 +19,11 @@ import {
     invalidateConnectedServiceGroupsRefreshSignal,
     useConnectedServiceGroupsRefreshSignal,
 } from '@/sync/domains/connectedServices/connectedServiceGroupsRefreshSignal';
-import {
-    sameQualifiedConnectedAccountGroupRef,
-    removeAgentConnectedAccountDefaultsForDeletedTarget,
-    type ConnectedServiceAuthGroupPolicyV1,
-    type PluginContributionIdentityV1,
-    type QualifiedConnectedAccountRef,
-} from '@happier-dev/protocol';
+import { sameQualifiedConnectedAccountGroupRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { removeAgentConnectedAccountDefaultsForDeletedTarget } from '@happier-dev/protocol/account/settings/connected-services';
+import type { ConnectedServiceAuthGroupPolicyV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 
 export type QualifiedConnectedAccountPeerTransportState = Readonly<{
     status: 'loading' | 'ready' | 'error';

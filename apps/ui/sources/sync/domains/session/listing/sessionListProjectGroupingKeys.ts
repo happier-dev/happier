@@ -1,4 +1,4 @@
-import { readSessionDirectoryKind } from '@happier-dev/protocol';
+import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 
 import { resolveAbsolutePath } from '@/utils/path/pathUtils';
 import { normalizeNonEmptyString } from '@/utils/strings/normalizeNonEmptyString';

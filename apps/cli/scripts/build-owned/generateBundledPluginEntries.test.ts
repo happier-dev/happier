@@ -1,6 +1,8 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync, spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
+import { runInNewContext } from 'node:vm';
+import { ModuleKind, transpileModule } from 'typescript';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { INTERNAL_CLAUDE_EVENT_TYPES } from '../../../../packages/plugins/claude/src/agent/transcripts/internalEventTypes';
@@ -159,7 +161,45 @@ function sourceBetween(startMarker: string, endMarker: string, source = generato
 }
 
 describe('generated output ownership', () => {
-  it('refreshes early Agent facts from authored metadata without evaluating unrelated projections', async () => {
+  it('publishes core and session-mode facts for every catalog Agent despite an unavailable executable manifest', async () => {
+    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happier-complete-agent-facts-');
+    const locators = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.filter((entry) => entry.manifest.contributes.agents?.length);
+    writeCliBundledHostPackage({ happyCliDir, bundledDependencies: locators.map((entry) => entry.sourceSpec.locator) });
+    const projectionPath = join(happyCliDir, 'src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts');
+    mkdirSync(dirname(projectionPath), { recursive: true });
+    writeFileSync(projectionPath, `export const BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS = ${JSON.stringify(locators)};`);
+    for (const locator of locators) {
+      const packageId = locator.sourceSpec.locator.replace('@happier-dev/plugins-', '');
+      const packageRoot = writeBundledPluginSourceInputs({ repoRoot, pluginId: packageId });
+      const agentId = AGENT_IDS.find((id) => BUNDLED_AGENT_CONTRIBUTION_IDENTITIES[id].pluginId === locator.pluginId);
+      if (!agentId) throw new Error(`Missing catalog identity for ${locator.pluginId}`);
+      mkdirSync(join(packageRoot, 'src/agent'), { recursive: true });
+      writeFileSync(join(packageRoot, 'src/agent/definition.ts'), `export const AGENT_DEFINITION = ${JSON.stringify(BUNDLED_AGENT_DEFINITIONS_BY_ID[agentId])};`);
+      writeFileSync(join(packageRoot, 'src/manifest.ts'), agentId === 'opencode'
+        ? 'throw new Error("OpenCode executable manifest unavailable");'
+        : `export const PLUGIN_MANIFEST = ${JSON.stringify(locator.manifest)};`);
+    }
+    try {
+      await withWorkspaceBundleLock(async (lease) => {
+        await runRuntimeConsumedAgentFactsPrivatePhase(repoRoot, lease);
+      }, { lockPath: join(repoRoot, 'publication.lock') });
+      const outPath = join(repoRoot, 'packages/agents/src/generated/bundledAgentDefinitions.ts');
+      const exports: Record<string, unknown> = {};
+      runInNewContext(transpileModule(readFileSync(outPath, 'utf8'), { compilerOptions: { module: ModuleKind.CommonJS } }).outputText, { exports });
+      const definitions = exports.BUNDLED_AGENT_DEFINITIONS_BY_ID as typeof BUNDLED_AGENT_DEFINITIONS_BY_ID;
+      for (const agentId of AGENT_IDS) {
+        expect(definitions[agentId]?.core?.id, agentId).toBe(agentId);
+        expect(definitions[agentId]?.sessionModeDescriptor, agentId).toEqual(BUNDLED_AGENT_DEFINITIONS_BY_ID[agentId]?.sessionModeDescriptor);
+      }
+      const published = readFileSync(outPath, 'utf8');
+      rmSync(join(repoRoot, 'packages/plugins/opencode/src/agent/definition.ts'));
+      await expect(withWorkspaceBundleLock(async (lease) => {
+        await runRuntimeConsumedAgentFactsPrivatePhase(repoRoot, lease);
+      }, { lockPath: join(repoRoot, 'publication.lock') })).rejects.toThrow(/Missing required agent definition/u);
+      expect(readFileSync(outPath, 'utf8')).toBe(published);
+    } finally { cleanup(); }
+  }, 30_000);
+  it('refreshes early Agent facts from source and tracked declarations without evaluating executable manifests', async () => {
     const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happier-bounded-agent-facts-');
     const packageRoot = writeBundledPluginSourceInputs({ repoRoot, pluginId: 'claude' });
     const unrelatedRoot = writeBundledPluginSourceInputs({ repoRoot, pluginId: 'unrelated' });
@@ -173,6 +213,9 @@ describe('generated output ownership', () => {
     const manifest = { ...ingestion.manifest, contributes: { ...ingestion.manifest.contributes,
       agents: [{ ...agent, cli: { ...agent.cli, displayName: 'Current authored Agent' } }],
     } };
+    const projectionPath = join(happyCliDir, 'src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts');
+    mkdirSync(dirname(projectionPath), { recursive: true });
+    writeFileSync(projectionPath, `export const BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS = ${JSON.stringify([{ ...locator, manifest }])};`);
     writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({ name: '@happier-dev/plugins-claude', version: '0.0.0' }));
     writeFileSync(join(packageRoot, 'src/manifest.ts'), `export const PLUGIN_MANIFEST = ${JSON.stringify(manifest)};`);
     mkdirSync(join(packageRoot, 'src/agent'), { recursive: true });
@@ -188,17 +231,16 @@ describe('generated output ownership', () => {
       const first = readFileSync(outPath, 'utf8');
       expect(first).toContain('Current authored Agent');
       expect(first).toContain('CLAUDE_CONFIG_DIR');
-      manifest.contributes.agents[0].cli.displayName = 'Updated authored Agent';
-      writeFileSync(join(packageRoot, 'src/manifest.ts'), `export const PLUGIN_MANIFEST = ${JSON.stringify(manifest)};`);
+      writeFileSync(join(packageRoot, 'src/agent/definition.ts'), `export const AGENT_DEFINITION = ${JSON.stringify({ ...claudeDefinition.AGENT_DEFINITION, core: { ...claudeDefinition.AGENT_DEFINITION.core, cliSubcommand: 'updated-claude' } })}; export const AGENT_STATE_SHARING_DESCRIPTOR = ${JSON.stringify(claudeDefinition.AGENT_STATE_SHARING_DESCRIPTOR)};`);
       await withWorkspaceBundleLock(async (lease) => {
         await runRuntimeConsumedAgentFactsPrivatePhase(repoRoot, lease);
       }, { lockPath: join(repoRoot, 'publication.lock') });
-      expect(readFileSync(outPath, 'utf8')).toContain('Updated authored Agent');
+      expect(readFileSync(outPath, 'utf8')).toContain('updated-claude');
       const published = readFileSync(outPath, 'utf8');
       writeFileSync(join(packageRoot, 'src/agent/definition.ts'), 'throw new Error("Required Agent definition failed");');
       await expect(withWorkspaceBundleLock(async (lease) => {
         await runRuntimeConsumedAgentFactsPrivatePhase(repoRoot, lease);
-      }, { lockPath: join(repoRoot, 'publication.lock') })).rejects.toThrow(/required by host code/u);
+      }, { lockPath: join(repoRoot, 'publication.lock') })).rejects.toThrow(/Required Agent definition failed/u);
       expect(readFileSync(outPath, 'utf8')).toBe(published);
     } finally { cleanup(); }
   }, 30_000);
@@ -500,7 +542,7 @@ describe('generator workspace lock policy', () => {
     expect(generatorSource).not.toContain('beforeRuntimeStaging');
     expect(privatePhase).not.toContain('await collectBundledPluginSourcePackages({');
     expect(privatePhase).not.toContain("await loadPluginAuthorRuntimeForScope('full')");
-    expect(privatePhase.indexOf('collectBundledAgentDefinitionProjection('))
+    expect(privatePhase.indexOf('await readBundledSourceAgentDefinitionProjection(options.rootDir)'))
       .toBeLessThan(privatePhase.indexOf('publishCoherentProjectionOutputs('));
     expect(mainSource).toContain('await publishGeneratedCompilerInputs(options, publicationLease);');
     expect(mainSource).not.toContain('await runCanonicalPluginSdkGeneratedCompilerInputs({');
@@ -948,6 +990,17 @@ describe('bundled plugin installed runtime publication', () => {
 });
 
 describe('bundled plugin UI translation aggregation', () => {
+  it('publishes a locale runtime payload without delivering other locale copy', () => {
+    const translations = {
+      en: { 'plugins.example.shared': 'English fallback', 'plugins.example.englishOnly': 'English only' },
+      es: { 'plugins.example.shared': 'Español' },
+      fr: { 'plugins.example.shared': 'Français' },
+    };
+    const emitted = renderBundledPluginTranslationsTs(translations, 'es');
+    const exports: Record<string, unknown> = {};
+    runInNewContext(transpileModule(emitted, { compilerOptions: { module: ModuleKind.CommonJS } }).outputText, { exports });
+    expect(exports.BUNDLED_PLUGIN_TRANSLATIONS).toEqual(translations.es);
+  });
   it('emits large translation declarations without serializing values or widening translation keys', () => {
     const root = mkdtempSync(join(tmpdir(), 'bundled-translations-declarations-'));
     const messages = Object.fromEntries(Array.from({ length: 600 }, (_, index) => [

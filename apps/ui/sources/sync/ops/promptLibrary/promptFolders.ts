@@ -1,5 +1,5 @@
 import type { PromptFolderEntryV1, PromptFoldersV1 } from '@happier-dev/protocol';
-import { normalizePromptTags as normalizeLibraryTags } from '@happier-dev/protocol';
+import { normalizePromptTags as normalizeLibraryTags } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 
 import { randomUUID } from '@/platform/randomUUID';
 

@@ -3,7 +3,9 @@ import { Platform, Pressable, ScrollView, View, type LayoutChangeEvent } from 'r
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import { StyleSheet } from 'react-native-unistyles';
-import { WorkBoardActionInputSchemasV1, type WorkBoardWidgetPlacementV1 } from '@happier-dev/protocol';
+import { WorkBoardActionInputSchemasV1 } from '@happier-dev/protocol/boards/actionsV1';
+import type { WorkBoardWidgetPlacementV1 } from '@happier-dev/protocol/boards/workBoardV1';
+import { getWidgetSizeFootprintV1, type WidgetSizeV1 } from '@happier-dev/protocol/widgets';
 import { describeHappierDropAnnouncement, resolveHappierDropChooserSections, resolveHappierStagedMoveKey } from '@happier-dev/plugin-ui/presentation';
 
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
@@ -33,7 +35,7 @@ const MOVE_ACTIONS = [{ name: 'moveUp', direction: 'up' }, { name: 'moveDown', d
 type Rect = Readonly<{ x: number; y: number; height: number }>;
 
 /** A configured widget on the Canvas: its qualified placement key, and its title for the grip and announcements. */
-export type BoardCanvasWidget = Readonly<{ key: string; title: string; placement: WorkBoardWidgetPlacementV1 }>;
+export type BoardCanvasWidget = Readonly<{ key: string; title: string; placement: WorkBoardWidgetPlacementV1; size?: WidgetSizeV1 }>;
 
 /** What the widget host draws: the shared frame, with the Canvas grip in its header. */
 export type BoardCanvasWidgetRender = (widget: BoardCanvasWidget, state: Readonly<{ grip: React.ReactNode; lifted: boolean; active: boolean }>) => React.ReactNode;
@@ -105,7 +107,8 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
     const members = React.useMemo(() => {
         const next: CanvasMember[] = [
             ...props.cards.map((card): CanvasMember => ({ kind: 'work', key: card.key, title: card.title, span: 1, card })),
-            ...widgets.map((widget): CanvasMember => ({ kind: 'widget', key: widget.key, title: widget.title, span: widget.placement.width, widget })),
+            ...widgets.map((widget): CanvasMember => ({ kind: 'widget', key: widget.key, title: widget.title,
+                span: getWidgetSizeFootprintV1('workBoard', widget.size ?? widget.placement.size)?.columnSpan === 2 ? 2 : 1, widget })),
         ];
         if (!props.order?.length) return next;
         // The Board's manual order first (picked work and widgets, mixed); live section cards keep theirs after it.

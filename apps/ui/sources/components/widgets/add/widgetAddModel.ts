@@ -2,7 +2,7 @@ import type * as React from 'react';
 
 import type { IconName } from '@/components/ui/icons/Icon';
 
-import { widgetSetupNeedsStep, type WidgetSetup } from './widgetSetupModel';
+import { widgetSetupNeedsStep, type WidgetSetup, type WidgetSetupSubmitResult } from './widgetSetupModel';
 
 /**
  * The one Add popover's content model (lab `cwidgets` G1, round 2). Every placement — the Board, the
@@ -30,8 +30,8 @@ export type WidgetAddEntry = Readonly<{
      */
     count?: string;
     /**
-     * A configurable widget's Set up step, built when picked. The panel shows it only when an input
-     * is missing or ambiguous; a fully bound choice is submitted at once with scoped feedback.
+     * The existing Set up step. The panel shows it when an input is missing or ambiguous or when
+     * several admitted sizes need a choice; a ready single-size choice submits with scoped feedback.
      */
     setup?: () => WidgetSetup;
     /**
@@ -44,8 +44,12 @@ export type WidgetAddEntry = Readonly<{
      * closes. Otherwise it stays open so another widget can be added.
      */
     closesOnPick?: boolean;
-    onPick: () => void;
+    /** Actual Adds acknowledge their result; navigation/Make choices return nothing. */
+    onPick: () => void | Promise<WidgetSetupSubmitResult>;
 }>;
+
+/** A quick picker can hand its completed Add to the same gallery without submitting it again. */
+export type WidgetAddOutcome = Readonly<{ entryId: string; title: string; result: WidgetSetupSubmitResult }>;
 
 export type WidgetAddSection = Readonly<{
     id: string;
@@ -102,8 +106,8 @@ export function widgetAddViewToSetting(view: WidgetAddView): 'grid' | 'list' {
 /**
  * What picking an entry does, decided once for the Gallery and for any list that offers widgets (a
  * Board's Add to board): nothing for an Added widget; the Set up step only when an input is missing
- * or ambiguous; a fully bound configurable widget submits its proposed inputs at once; anything else
- * is the entry's own pick.
+ * or ambiguous or there are several admitted sizes; a fully bound single-size widget submits its
+ * proposed inputs at once; anything else is the entry's own pick.
  */
 export type WidgetAddPick =
     | Readonly<{ kind: 'added' }>
@@ -115,5 +119,6 @@ export function resolveWidgetAddPick(entry: WidgetAddEntry): WidgetAddPick {
     if (entry.added) return { kind: 'added' };
     if (!entry.setup) return { kind: 'pick' };
     const setup = entry.setup();
-    return widgetSetupNeedsStep(setup.fields, setup.resolve(setup.initial)) ? { kind: 'setup', setup } : { kind: 'submit', setup };
+    return (setup.sizeChoices?.sizes.length ?? 0) > 1 || widgetSetupNeedsStep(setup.fields, setup.resolve(setup.initial))
+        ? { kind: 'setup', setup } : { kind: 'submit', setup };
 }

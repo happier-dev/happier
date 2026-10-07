@@ -3,7 +3,7 @@ import type { ToolCall } from "@happier-dev/session-core/messages";
 import { t } from '@/text';
 import { ICON_EDIT } from '../icons';
 import type { KnownToolDefinition } from '../_types';
-import { PatchInputV2Schema } from '@happier-dev/protocol';
+import { PatchInputV2Schema } from '@happier-dev/protocol/tools/v2/schemas';
 
 export const corePatchTools = {
     Patch: {

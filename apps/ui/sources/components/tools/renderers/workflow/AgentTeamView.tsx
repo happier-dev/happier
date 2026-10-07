@@ -6,7 +6,7 @@ import {
     AgentTeamDeleteResultV2Schema,
     AgentTeamSendMessageInputV2Schema,
     AgentTeamSendMessageResultV2Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/tools/v2/schemas';
 
 import { StructuredToolCard, projectStructuredToolCardDisplayText } from '@/components/tools/renderers/core/StructuredToolCard';
 import type { ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';

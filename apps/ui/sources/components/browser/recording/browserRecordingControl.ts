@@ -6,7 +6,7 @@ import type {
     BrowserRecordingRetentionClassV1,
     BrowserRecordingSessionV1,
 } from '@happier-dev/protocol';
-import { resolveBrowserRecordingCaptureProfile } from '@happier-dev/protocol';
+import { resolveBrowserRecordingCaptureProfile } from '@happier-dev/protocol/browser/recording/captureProfiles';
 
 import type { BrowserControlViewState } from '@/sync/domains/browser/control';
 import {

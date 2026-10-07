@@ -1,7 +1,7 @@
 import { SessionCompanionPresentationItemRefV1Schema, SessionCompanionPresentationItemRefV1StoredSchema, SESSION_COMPANION_BUILTIN_ITEM_IDS, type SessionCompanionPresentationItemRefV1 } from '@happier-dev/protocol/sessions';
 import { z } from 'zod';
 import type { WidgetExpectedPresentationV1, WidgetInputBindingsV1, WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
-import { sameStrictJsonValue } from '@happier-dev/protocol';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 /**
  * Session Companion is a viewer/device-local presentation preference: which
@@ -257,7 +257,7 @@ export function removeSessionCompanionItem(
         const presentation = guard.expectedPresentation;
         if (item.kind !== 'instance' || current?.kind !== 'instance'
             || !sameStrictJsonValue(current.instance, guard.expectedInstance)
-            || (presentation && (presentation.width !== undefined || presentation.tabId !== undefined || presentation.hidden !== undefined
+            || (presentation && (presentation.size !== undefined || presentation.tabId !== undefined || presentation.hidden !== undefined
                 || presentation.nativeIndex !== nativeIndex
                 || presentation.frameStyle !== (current.frameStyle ?? null)))) return preference;
     }

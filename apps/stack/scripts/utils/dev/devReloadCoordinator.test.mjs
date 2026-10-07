@@ -1385,6 +1385,65 @@ test('a changed signature fences a stale generation before destructive restart a
   assert.deepEqual(activations, [2]);
 });
 
+test('unrelated service edits preserve completed builds and coalesce only the affected trailing reload', async () => {
+  const calls = [];
+  const server = descriptor({ id: 'server:app', target: 'server' });
+  const daemon = descriptor({ id: 'daemon:cli', target: 'daemon' });
+  let observe;
+  const builds = [];
+  const activations = [];
+  const onChange = startCoordinator({
+    descriptors: [server, daemon],
+    executors: ['server', 'daemon'].map((target) => executor(target, calls, {
+      async build(context) {
+        builds.push(`${target}:${context.generation}`);
+        if (target === 'server' && context.generation === 1) {
+          for (let edit = 2; edit <= 4; edit += 1) {
+            daemon.set(String(edit));
+            observe({ eventType: 'change', filename: 'index.ts', watchPath: daemon.paths[0] });
+          }
+        }
+      },
+      async restart(context) {
+        if (await context.revalidateGeneration()) activations.push(`${target}:${context.generation}`);
+      },
+    })),
+    calls,
+  });
+  observe = onChange.observe;
+  server.set('1');
+  daemon.set('1');
+  await onChange({ eventType: 'change', filename: 'server.ts', watchPath: server.paths[0] });
+  assert.deepEqual(builds, ['server:1', 'daemon:1', 'daemon:2']);
+  assert.deepEqual(activations, ['server:1', 'daemon:2']);
+});
+
+test('shared input edits still revoke every affected service activation', async () => {
+  const calls = [];
+  const shared = descriptor({ id: 'shared:protocol', target: 'shared' });
+  let observe;
+  const activations = [];
+  const onChange = startCoordinator({
+    descriptors: [shared],
+    executors: ['server', 'daemon'].map((target) => executor(target, calls, {
+      async build(context) {
+        if (target === 'server' && context.generation === 1) {
+          shared.set('2');
+          observe({ eventType: 'change', filename: 'protocol.ts', watchPath: shared.paths[0] });
+        }
+      },
+      async restart(context) {
+        if (await context.revalidateGeneration()) activations.push(`${target}:${context.generation}`);
+      },
+    })),
+    calls,
+  });
+  observe = onChange.observe;
+  shared.set('1');
+  await onChange({ eventType: 'change', filename: 'protocol.ts', watchPath: shared.paths[0] });
+  assert.deepEqual(activations, ['server:2', 'daemon:2']);
+});
+
 test('an executor-owned publication update does not supersede the source generation that produced it', async () => {
   const calls = [];
   const source = descriptor({ id: 'daemon:cli', target: 'daemon' });

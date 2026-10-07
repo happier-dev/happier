@@ -3,7 +3,7 @@ import {
     readSystemSessionMetadataFromMetadata,
     VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_KEY,
     VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/control/contract';
 
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 

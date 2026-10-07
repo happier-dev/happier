@@ -23,7 +23,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { isRunningOnMac } from '@/utils/platform/platform';
 import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristics';
 import { canUseCurrentDeviceQrScanner } from '@/utils/platform/qrScannerSupport';
-import { ACCOUNT_ERASURE_CONFIRMATION_V1 } from '@happier-dev/protocol';
+import { ACCOUNT_ERASURE_CONFIRMATION_V1 } from '@happier-dev/protocol/auth/accountErasure';
 import { Icon } from '@/components/ui/icons/Icon';
 import { presentFirstKeyCredentialLifecycle } from '@/components/account/presentFirstKeyCredentialLifecycle';
 import { deleteCurrentAccount } from '@/sync/api/account/deleteCurrentAccount';

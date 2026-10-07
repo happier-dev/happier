@@ -23,7 +23,6 @@ const sunsetDarkSeed = {
     'surface.pressed': '#302727',
     'border.surface': 'rgba(255,255,255,0.056)',
     'border.strong': 'rgba(255,255,255,0.090)',
-    'effect.surfaceHighlight': 'transparent',
     'text.primary': '#EFEFEF',
     'text.secondary': '#8A817C',
     'text.tertiary': '#6C625D',
@@ -113,7 +112,6 @@ const tokyoNightSeed = {
     'surface.pressed': '#292E42',
     'border.surface': 'rgba(122,162,247,0.14)',
     'border.strong': 'rgba(122,162,247,0.20)',
-    'effect.surfaceHighlight': 'transparent',
     'text.primary': '#A9B1D6',
     'text.secondary': '#787C99',
     'text.tertiary': '#545C7E',
@@ -135,7 +133,6 @@ const paperLightSeed = {
     'surface.elevated': '#FBFBF7',
     'surface.selected': '#E6E6DF',
     'surface.pressed': '#D8D8D0',
-    'effect.surfaceHighlight': 'transparent',
     'text.primary': '#1C1C1C',
     'text.secondary': '#444444',
     'text.tertiary': '#666666',
@@ -199,7 +196,6 @@ const graphiteDarkSeed = {
     'surface.elevated': '#222222',
     'surface.selected': '#2A2A2A',
     'surface.pressed': '#333333',
-    'effect.surfaceHighlight': 'transparent',
     'text.primary': '#EAEAEA',
     'text.secondary': '#ACACAC',
     'text.tertiary': '#8E8E8E',
@@ -265,7 +261,6 @@ const premiumDarkSeed = {
     'surface.pressed': '#2D2D35',
     'border.surface': 'rgba(255,255,255,0.075)',
     'border.strong': 'rgba(255,255,255,0.13)',
-    'effect.surfaceHighlight': 'transparent',
     'text.primary': '#ECECEF',
     'text.secondary': '#9A9AA3',
     'text.tertiary': '#6F6F78',
@@ -291,7 +286,6 @@ const premiumLightSeed = {
     'surface.elevated': '#FCFCFC',
     'border.surface': 'rgba(0,0,0,0.08)',
     'border.strong': 'rgba(0,0,0,0.14)',
-    'effect.surfaceHighlight': 'transparent',
     'text.primary': '#111114',
     'text.secondary': '#5A5A5F',
     'text.tertiary': '#7A7A80',
@@ -337,7 +331,6 @@ const pitchDarkSeed = {
     'surface.ripple': 'rgba(255,255,255,0.055)',
     'border.surface': 'rgba(255,255,255,0.05)',
     'border.strong': 'rgba(255,255,255,0.075)',
-    'effect.surfaceHighlight': 'transparent',
     'chrome.header.background': '#131313',
     'chrome.header.foreground': '#E8E8E8',
     'text.primary': '#E8E8E8',
@@ -444,7 +437,8 @@ describe('built-in theme profiles', () => {
         expect(Object.keys(getBuiltInThemeProfileDefinition('nightDark')?.profile.overrides.dark ?? {}).length).toBeGreaterThan(80);
         expect(getBuiltInThemeProfileDefinition('nightDark')?.profile.overrides.dark['effect.surfaceHighlight']).toBe('rgba(255,255,255,0.028)');
         for (const presetId of importedDarkThemePresetIds) {
-            expect(getBuiltInThemeProfileDefinition(presetId)?.profile.overrides.dark['effect.surfaceHighlight']).toBe('transparent');
+            // No edge-ink override: the raised edge follows each palette's own text ink.
+            expect(getBuiltInThemeProfileDefinition(presetId)?.profile.overrides.dark['effect.surfaceHighlight']).toBeUndefined();
         }
         expect(getBuiltInThemeProfileDefinition('catppuccinMocha')?.profile.overrides.dark).toMatchObject({
             'background.canvas': '#11111B',

@@ -2,7 +2,7 @@ import {
     SYSTEM_TASK_PROTOCOL_VERSION,
     type SystemTaskResult,
     type SystemTaskSpec,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/system/tasks/spec';
 import type {
     RelayAccessConfig,
     RelayAccessProviderId,

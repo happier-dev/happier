@@ -12,7 +12,7 @@ import { presentAccountSubscription } from '@/sync/domains/connectedServices/pre
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { formatResetAtTime } from '@/utils/time/formatResetAtTime';
-import { ConnectedServiceIdSchema } from '@happier-dev/protocol';
+import { ConnectedServiceIdSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type {
     ConnectedServiceId,
     ConnectedServiceQuotaRecoveryCreditsV1,

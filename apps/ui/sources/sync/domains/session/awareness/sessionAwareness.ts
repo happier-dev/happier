@@ -1,14 +1,11 @@
-import { readSessionDirectoryKind } from '@happier-dev/protocol';
-import {
-    projectSessionAwarenessV1,
-    readSessionTerminalControlServiceabilityStateV1,
-    readSessionWorkStateV1FromMetadata,
-    resolveAwarenessCurrentnessV1,
-    SessionWorkflowActivityHeadlineV1Schema,
-    type ProjectSessionAwarenessV1Input,
-    type SessionContentAvailabilityInputV1,
-    type SessionAwarenessProjectionV1,
-} from '@happier-dev/protocol';
+import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
+import { projectSessionAwarenessV1 } from '@happier-dev/protocol/sessions/awareness/projectV1';
+import { readSessionTerminalControlServiceabilityStateV1 } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
+import { readSessionWorkStateV1FromMetadata } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
+import { resolveAwarenessCurrentnessV1 } from '@happier-dev/protocol/sessions/awareness/runtime';
+import { SessionWorkflowActivityHeadlineV1Schema } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowActivityHeadlineV1';
+import type { ProjectSessionAwarenessV1Input, SessionContentAvailabilityInputV1 } from '@happier-dev/protocol/sessions/awareness/inputV1';
+import type { SessionAwarenessProjectionV1 } from '@happier-dev/protocol/sessions/awareness/projectionV1';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { readSessionDisplayTitleField } from '@/sync/state/selectors';
 import { readSessionListRenderableSourceMetadata, type SessionListRenderableSession } from '../listing/sessionListRenderable';

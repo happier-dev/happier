@@ -1,11 +1,6 @@
 import * as React from 'react';
-import {
-    ArtifactAccessGrantMutationResponseV1Schema,
-    ArtifactAccessGrantsListResponseV1Schema,
-    type ArtifactAccessGrantRowV1,
-    type ArtifactAccessGrantsListResponseV1,
-    type PrincipalRefV1,
-} from '@happier-dev/protocol';
+import { ArtifactAccessGrantMutationResponseV1Schema, ArtifactAccessGrantsListResponseV1Schema, type ArtifactAccessGrantRowV1, type ArtifactAccessGrantsListResponseV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 
 import { sessionAccessSubjectKey } from '@/components/sessions/access/projectSessionAccessEditorSnapshot';
 import { useSessionAccessDirectory } from '@/components/sessions/access/useSessionAccessDirectory';

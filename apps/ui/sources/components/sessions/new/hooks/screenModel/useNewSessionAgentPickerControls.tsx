@@ -1,7 +1,9 @@
 import * as React from 'react';
 
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
-import { buildAcpConfigOptionOverridesV1, type PersistedBackendTargetRefV2, type SessionModelSelectionV1 } from '@happier-dev/protocol';
+import { buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
+import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type { NewSessionProfileAvailabilityReason } from '@/components/sessions/new/modules/newSessionAgentSelection';

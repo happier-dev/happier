@@ -1,4 +1,4 @@
-import { encodeBase64 } from '@happier-dev/protocol';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import {
     TEAM_LOGO_ACCEPTED_MIME_TYPES_V1,
     TEAM_LOGO_MAX_SOURCE_BYTES_V1,

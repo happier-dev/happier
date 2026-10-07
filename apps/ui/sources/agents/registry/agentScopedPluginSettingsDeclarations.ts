@@ -1,8 +1,6 @@
-import {
-    parseQualifiedPluginContributionKey,
-    type AgentUiSettingReferenceV1,
-    type PluginLocalizedStringV2,
-} from '@happier-dev/protocol';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { AgentUiSettingReferenceV1 } from '@happier-dev/protocol/plugins/contributions/agentUiGrammar';
+import type { PluginLocalizedStringV2 } from '@happier-dev/protocol/plugins/contributions/public-types';
 
 import type { DaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import {

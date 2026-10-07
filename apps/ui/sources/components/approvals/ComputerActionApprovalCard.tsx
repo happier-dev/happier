@@ -7,7 +7,7 @@ import {
     ComputerTargetRequestV1Schema,
     ComputerTargetSelectRequestV1Schema,
     type ComputerApprovalDisplayV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/computer/v1';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';

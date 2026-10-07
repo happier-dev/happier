@@ -588,7 +588,7 @@ function createTriagePlugin() {
         icon: 'action',
         placement: { kind: 'rail' },
         column: { renderer: 'views-column' },
-      }, {
+      }, { sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' },
         id: 'latest',
         container: 'widget',
         target: { kind: 'app' },

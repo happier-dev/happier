@@ -1,4 +1,4 @@
-import { buildAgentRequestSemanticSummary } from '@happier-dev/protocol';
+import { buildAgentRequestSemanticSummary } from '@happier-dev/protocol/activity/agentRequestSummary';
 
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 

@@ -1153,6 +1153,9 @@ function projectGeneratedUiViews(
             renderer: effectiveCandidate.projectedRenderer.rendererRef,
             display,
             ...(selectedBinding.kind === 'inline' && selectedBinding.role === 'widget'
+                && 'sizeDeclaration' in view.definition
+                ? { sizeDeclaration: view.definition.sizeDeclaration } : {}),
+            ...(selectedBinding.kind === 'inline' && selectedBinding.role === 'widget'
                 && 'resources' in view.definition && view.definition.resources !== undefined
                 ? { resources: view.definition.resources } : {}),
             ...(selectedBinding.kind === 'inline'

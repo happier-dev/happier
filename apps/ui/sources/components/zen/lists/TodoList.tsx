@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View, type ScrollView } from 'react-native';
 import type { SharedValue } from 'react-native-reanimated';
-import { resolveAnchoredListMoveV1 } from '@happier-dev/protocol';
+import { resolveAnchoredListMoveV1 } from '@happier-dev/protocol/actions/anchoredListOrderV1';
 import { entityDragScopesEqualV1, type EntityDragScopeV1 } from '@happier-dev/protocol/plugins/ui';
 import { t } from '@/text';
 

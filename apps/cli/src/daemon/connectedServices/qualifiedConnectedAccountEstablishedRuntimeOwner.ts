@@ -1,6 +1,6 @@
 import { randomBytes as nodeRandomBytes } from 'node:crypto';
 
-import { QualifiedConnectedAccountCredentialMetadataV4Schema } from '@happier-dev/protocol';
+import { QualifiedConnectedAccountCredentialMetadataV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 
 import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
 import { QualifiedConnectedAccountCredentialPayloadV1Schema, openQualifiedConnectedAccountContentEnvelope, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';

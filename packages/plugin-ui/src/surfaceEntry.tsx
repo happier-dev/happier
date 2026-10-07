@@ -5,6 +5,7 @@ import {
   type RenderSurface,
 } from '@happier-dev/plugin-sdk/ui';
 import { PluginUiProviderInternal } from './components/PluginUiProvider.js';
+import { WidgetPresentationProvider } from './components/WidgetPresentation.js';
 import {
   createHostedWebPluginUiDataClient,
 } from './data/hostedWebAccountDataBridge.js';
@@ -70,6 +71,7 @@ function createAuthorRenderContext(context: RenderContext): RenderContext {
     signal: context.signal,
     ...(context.activity === undefined ? {} : { activity: context.activity }),
     ...(context.launchInput === undefined ? {} : { launchInput: context.launchInput }),
+    ...(context.widgetPresentation === undefined ? {} : { widgetPresentation: context.widgetPresentation }),
     ...(context.subPath === undefined ? {} : { subPath: context.subPath }),
   });
 }
@@ -97,7 +99,7 @@ export function defineUiSurface(Surface: UiSurfaceComponent): RenderSurface {
         ...(context.activity === undefined ? {} : { surfaceActivity: context.activity }),
         ...(dataClient === undefined ? {} : { dataClient }),
       },
-      createElement(Surface, authorContext),
+      createElement(WidgetPresentationProvider, { value: context.widgetPresentation }, createElement(Surface, authorContext)),
     );
   };
 }

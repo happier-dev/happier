@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { createProviderErrorV1, type ProviderErrorV1 } from '@happier-dev/protocol';
+import { createProviderErrorV1, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { DaemonProviderConnectionMutationRequestV1Schema } from '@happier-dev/protocol/rpc';
 import type { z } from 'zod';
 

@@ -1,4 +1,4 @@
-import { WorkflowInvocationRecordIdSchema, WorkflowRunIdV1Schema } from '@happier-dev/protocol';
+import { WorkflowInvocationRecordIdSchema, WorkflowRunIdV1Schema } from '@happier-dev/protocol/workflows/workflowIdsV1';
 
 /** The Workflows collection, whose Saved/Runs views are route-selected. */
 export const WORKFLOWS_ROUTE = '/workflows';

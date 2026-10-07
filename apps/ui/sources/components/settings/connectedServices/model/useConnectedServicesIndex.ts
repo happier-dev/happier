@@ -16,10 +16,8 @@ import { resolveConnectedAccountUiNegotiation } from '@/sync/domains/connectedSe
 import { useServerFeaturesRuntimeSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
 import { useProfile, useSettingsSelector } from '@/sync/store/hooks';
 import { getPreferredLanguage, t } from '@/text';
-import {
-    buildQualifiedPluginContributionKey,
-    resolveAgentConnectedAccountPurposeDefaults,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { resolveAgentConnectedAccountPurposeDefaults } from '@happier-dev/protocol/account/settings/connected-services';
 
 import {
     buildConnectedServicesIndexModel,

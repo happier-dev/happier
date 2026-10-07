@@ -1,4 +1,4 @@
-import { readSessionDirectoryKind } from '@happier-dev/protocol';
+import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import React from 'react';
 import { View } from 'react-native';
 import { Typography } from '@/constants/Typography';

@@ -3,15 +3,10 @@ import { serverFetch, type ServerFetch } from '@/sync/http/client';
 import { HappyError } from '@/utils/errors/errors';
 import { backoff } from '@/utils/timing/time';
 
-import {
-  assertConnectedServiceCredentialRecordBinding,
-  ConnectedServiceCredentialRecordV1Schema,
-  StoredJsonContentEnvelopeSchema,
-  readConnectedServiceCredentialRevisionBoundaryV1,
-  type ConnectedServiceCredentialRevisionBoundaryV1,
-  type ConnectedServiceCredentialRecordV1,
-  type ConnectedServiceId,
-} from '@happier-dev/protocol';
+import { assertConnectedServiceCredentialRecordBinding } from '@happier-dev/protocol/connect/connectedServiceCredentialBinding';
+import { ConnectedServiceCredentialRecordV1Schema, readConnectedServiceCredentialRevisionBoundaryV1, type ConnectedServiceCredentialRevisionBoundaryV1, type ConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { StoredJsonContentEnvelopeSchema } from '@happier-dev/protocol/storage/storedJsonContentEnvelope';
+import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
 
 function extractErrorCode(json: unknown): string | null {
   if (!json || typeof json !== 'object') return null;

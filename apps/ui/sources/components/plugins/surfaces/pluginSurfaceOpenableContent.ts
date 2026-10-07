@@ -10,7 +10,7 @@ import {
     type OpenableContentReadResultV1,
     type OpenableContentRefV1,
     type OpenableContentStatResultV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/openableContent';
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex } from '@noble/hashes/utils';
 import type {

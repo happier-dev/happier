@@ -26,7 +26,7 @@ const ProjectsNoneOpen = React.memo(function ProjectsNoneOpen() {
         <View testID="projects-none-open" style={{ flex: 1, justifyContent: 'center' }}>
             <EmptyState
                 layout="page"
-                iconName="folder"
+                scene="noProjects"
                 title={model.hasAnyProjects ? t('projects.noneOpenTitle') : t('projects.emptyTitle')}
                 subtitle={model.hasAnyProjects ? t('projects.noneOpenDescription') : t('projects.emptyDescription')}
                 action={(

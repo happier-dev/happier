@@ -1,16 +1,11 @@
-import {
-    AcpConfigOptionOverridesV1Schema,
-    ExecutionRunTeamCredentialSessionBindingConsentV1Schema,
-    SecretReferenceOverlayV1Schema,
-    TeamCredentialProviderModelSelectionV1Schema,
-    PluginSourceCustodyV1Schema,
-    findSpawnConfigOptionAliasConflicts,
-    mergeSpawnConfigOptionAliases,
-    normalizeConnectedServiceSelectionInput,
-    type ExecutionRunStartRequest,
-    type PluginSourceCustodyV1,
-    type SpawnConfigOptionValue,
-} from '@happier-dev/protocol';
+import { AcpConfigOptionOverridesV1Schema } from '@happier-dev/protocol/sessions/metadata/overrides';
+import { ExecutionRunTeamCredentialSessionBindingConsentV1Schema } from '@happier-dev/protocol/execution/runs/startRequest';
+import { SecretReferenceOverlayV1Schema } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
+import { TeamCredentialProviderModelSelectionV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import { PluginSourceCustodyV1Schema, type PluginSourceCustodyV1 } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import { findSpawnConfigOptionAliasConflicts, mergeSpawnConfigOptionAliases, type SpawnConfigOptionValue } from '@happier-dev/protocol/actions/sessionSpawnConfigOptions';
+import { normalizeConnectedServiceSelectionInput } from '@happier-dev/protocol/connect/normalizeConnectedServiceSelectionInput';
+import type { ExecutionRunStartRequest } from '@happier-dev/protocol/execution/runs/index';
 
 import type { ExecutionRunLauncherBackendChoice } from './resolveExecutionRunLauncherBackendChoices';
 

@@ -1,9 +1,5 @@
-import {
-    MACHINE_LIVE_STREAM_SOCKET_EVENT,
-    type MachineLiveStreamRelayEnvelopeV1,
-    type MachineLiveStreamContentV1,
-    MachineLiveStreamPayloadErrorV1,
-} from '@happier-dev/protocol';
+import { MACHINE_LIVE_STREAM_SOCKET_EVENT, type MachineLiveStreamRelayEnvelopeV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import { type MachineLiveStreamContentV1, MachineLiveStreamPayloadErrorV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/payloadV1';
 
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { createMachineLiveStreamSocketTransport } from '@/sync/domains/machines/peer/mediation/stream/socketTransport';

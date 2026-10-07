@@ -1,10 +1,6 @@
 import * as React from 'react';
-import {
-    ActionApprovalRequestCreatedResultSchema,
-    ArtifactActionOutputSchemasV1,
-    type ArtifactActionResultV1,
-    type ArtifactStorageUsageV1,
-} from '@happier-dev/protocol';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ArtifactActionOutputSchemasV1, type ArtifactActionResultV1, type ArtifactStorageUsageV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { getStorage, useActiveServerAccountScope } from '@/sync/domains/state/storage';

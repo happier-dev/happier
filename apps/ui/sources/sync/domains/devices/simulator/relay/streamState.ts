@@ -1,10 +1,6 @@
-import {
-    MachineLiveStreamReceiptV1Schema,
-    isMachineLiveStreamTerminalReceiptV1,
-    type MachineLiveStreamCodecIdV1,
-    type MachineLiveStreamFrameV1,
-    type MachineLiveStreamRelayEnvelopeV1,
-} from '@happier-dev/protocol';
+import { MachineLiveStreamReceiptV1Schema, isMachineLiveStreamTerminalReceiptV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/receipts';
+import type { MachineLiveStreamCodecIdV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/codecsV1';
+import type { MachineLiveStreamFrameV1, MachineLiveStreamRelayEnvelopeV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 
 import {
     initialLiveStreamPlayerState,

@@ -1,4 +1,4 @@
-import { VoiceConversationActionInputSchemas, type VoiceConversationActionId, type VoiceConversationStatus } from '@happier-dev/protocol';
+import { VoiceConversationActionInputSchemas, type VoiceConversationActionId, type VoiceConversationStatus } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 import { Platform } from 'react-native';
 import { storage } from '@/sync/domains/state/storage';
 import { voiceSettingsParse, readVoiceProviderSettingsConfig } from '@/sync/domains/settings/voiceSettings';

@@ -1,7 +1,7 @@
 import {
   ConnectedAccountUiProjectionEntryV1Schema,
   type ConnectedAccountUiProjectionEntryV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
 import type { DaemonContributionRegistryProjection } from '@/sync/api/daemon/daemonContributionRegistryProjectionProtocol';
 
 export type ConnectedAccountDescriptorProjectionErrorReason =

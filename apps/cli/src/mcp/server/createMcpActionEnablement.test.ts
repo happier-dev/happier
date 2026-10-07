@@ -38,6 +38,17 @@ function createEnablement(snapshot: CliServerFeaturesSnapshot | undefined) {
 }
 
 describe('Lane 10 Action feature availability', () => {
+  it('uses automation availability for native browser navigation even when sidecar is enabled', () => {
+    const snapshot = (enabled: boolean) => readySnapshot({ browser: {
+      enabled: true, viewTargets: { enabled: true }, internal: { enabled: true }, sidecar: { enabled: true }, automation: { enabled },
+    } });
+    for (const id of ['browser.navigate', 'browser.goBack', 'browser.goForward', 'browser.reload', 'browser.stop'] as const) {
+      expect(createEnablement(snapshot(false))(id)).toBe(false);
+      expect(createEnablement(snapshot(true))(id)).toBe(true);
+      expect(createEnablement(undefined)(id)).toBe(false);
+    }
+    expect(createEnablement(snapshot(false))('browser.control.handBack')).toBe(true);
+  });
   it('advertises Account Actions for authenticated session agents without bypassing feature gates', () => {
     const snapshot = readySnapshot({
       sessions: { enabled: true, board: { enabled: true }, conversations: { enabled: true } },

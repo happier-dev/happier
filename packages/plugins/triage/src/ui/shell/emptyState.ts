@@ -1,3 +1,4 @@
+import type { HappierSceneId } from '@happier-dev/plugin-ui';
 import type { TriageLensNarrowingV1 } from '../state/narrowing.js';
 import {
     readTriageListFailureNotice,
@@ -92,6 +93,20 @@ const NO_SEARCH_MATCH_YET: TriageListEmptyStateV1 = Object.freeze({
     title: 'No search match yet',
     description: 'Nothing matches what you typed in the part of your sources read so far. Keep reading, or clear the search to widen it.',
 });
+
+/**
+ * The Daybreak scene of an empty list that settled: nothing for you, or nothing matching the lens.
+ * A list still reading, or one that cannot prove it is complete, keeps its text alone.
+ */
+const EMPTY_SCENES_V1: Readonly<Partial<Record<TriageListEmptyStateV1['kind'], HappierSceneId>>> = Object.freeze({
+    healthy: 'inboxZero',
+    noMatch: 'noMatch',
+    noSearchMatch: 'noMatch',
+});
+
+export function readTriageListEmptyScene(kind: TriageListEmptyStateV1['kind']): HappierSceneId | undefined {
+    return EMPTY_SCENES_V1[kind];
+}
 
 const EMPTY_TRANSLATION_KEYS_V1: Readonly<Record<TriageListEmptyStateV1['kind'], Readonly<{
     title: string;

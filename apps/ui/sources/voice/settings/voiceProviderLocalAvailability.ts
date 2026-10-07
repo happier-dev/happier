@@ -1,17 +1,11 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
 
-import {
-    MachineLiveStreamRelayDisabledReasonSchema,
-    RPC_METHODS,
-    getDefaultModelPackId,
-    getModelPackCatalogEntry,
-    readMachineLiveStreamRelayCaps,
-    readServerEnabledBit,
-    resolveCanonicalModelPackId,
-    resolveMachineRpcRelayFallbackDecision,
-    resolveMachineRpcRoutePolicy,
-} from '@happier-dev/protocol';
+import { MachineLiveStreamRelayDisabledReasonSchema, readMachineLiveStreamRelayCaps } from '@happier-dev/protocol/features/payload/capabilities/machineLiveStreamCapabilities';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { getDefaultModelPackId, getModelPackCatalogEntry, resolveCanonicalModelPackId } from '@happier-dev/protocol/voice/modelPacks/catalog';
+import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
+import { resolveMachineRpcRelayFallbackDecision, resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import type {
     DaemonVoiceInferenceModelStatus,
     FeaturesResponse,

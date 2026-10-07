@@ -3,16 +3,11 @@ import * as React from 'react';
 import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
 import { resolveInitialNewSessionModelMode } from '@/components/sessions/new/hooks/newSessionModelModePolicy';
 import type { ModelMode } from '@/sync/domains/permissions/permissionTypes';
-import {
-    buildAcpConfigOptionOverridesV1,
-    SessionMcpSelectionV1Schema,
-    SessionModelSelectionV1Schema,
-    type SessionMcpSelectionV1,
-    type SessionModelSelectionV1,
-    type AcpConfigOptionOverridesV1,
-    type AgentExecutionTargetV1,
-    type RuntimeDescriptorV1,
-} from '@happier-dev/protocol';
+import { buildAcpConfigOptionOverridesV1, type AcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
+import { SessionMcpSelectionV1Schema, type SessionMcpSelectionV1 } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
+import { SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import type { RuntimeDescriptorV1 } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import type { RememberedEngineSelectionV1 } from '@/sync/domains/session/authoring/rememberedEngineSelections';
 import { backendTargetKeysMatch, resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { resolveAgentExecutionTargetForBackendTarget } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';

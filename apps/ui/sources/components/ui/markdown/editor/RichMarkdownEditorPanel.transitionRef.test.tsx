@@ -59,18 +59,9 @@ vi.mock('react-native-webview', async () => {
 
 const animation = vi.hoisted(() => ({ complete: null as ((finished?: boolean) => void) | null }));
 vi.mock('react-native-reanimated', async () => {
-    const ReactModule = await import('react');
-    const Animated = { View: 'Animated.View', createAnimatedComponent: (component: unknown) => component };
+    const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
     return {
-        default: Animated,
-        ...Animated,
-        ReduceMotion: { System: 'system', Always: 'always', Never: 'never' },
-        Easing: { bezier: () => (value: number) => value, linear: (value: number) => value },
-        useSharedValue: <T,>(value: T) => ReactModule.useRef({ value }).current,
-        useAnimatedStyle: <T,>(factory: () => T) => factory(),
-        useAnimatedProps: <T,>(factory: () => T) => factory(),
-        cancelAnimation: () => {},
-        runOnJS: <T,>(callback: T) => callback,
+        ...createReanimatedModuleMock(),
         withSpring: <T,>(value: T, _config: unknown, callback?: (finished?: boolean) => void) => {
             animation.complete = callback ?? null;
             return value;

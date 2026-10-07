@@ -1,9 +1,5 @@
-import {
-    SYSTEM_TASK_PROTOCOL_VERSION,
-    SystemTaskJsonValueSchema,
-    type SshTunnelEnsureRequest,
-    type SystemTaskSpec,
-} from '@happier-dev/protocol';
+import { SYSTEM_TASK_PROTOCOL_VERSION, SystemTaskJsonValueSchema, type SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
+import type { SshTunnelEnsureRequest } from '@happier-dev/protocol/ssh/tunnels';
 
 export const REMOTE_HOST_SSH_TUNNEL_REMOTE_HOST = '127.0.0.1';
 export const REMOTE_HOST_SSH_TUNNEL_REMOTE_PORT = 3005;

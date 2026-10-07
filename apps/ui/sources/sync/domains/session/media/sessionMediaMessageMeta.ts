@@ -1,4 +1,5 @@
-import { SessionMediaFailureV1Schema, SessionMediaItemV1Schema, type SessionAttachmentHandleV1 } from '@happier-dev/protocol';
+import { SessionMediaFailureV1Schema, SessionMediaItemV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
+import type { SessionAttachmentHandleV1 } from '@happier-dev/protocol/transfers/sessions/sessionAttachmentHandleV1';
 
 export type SessionMediaInlineImageAvailableSummary = Readonly<{
     id: string;

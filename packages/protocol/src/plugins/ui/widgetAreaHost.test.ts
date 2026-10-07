@@ -35,7 +35,7 @@ describe('mounted area operations through the canonical Action/Artifact/binder o
         const transport = { ...b.transport, read: async (id: string) => { const row = await b.transport.read(id); return row ? { ...row, ownerAccountId: scope.accountId } : null; } };
         const area = createWidgetAreaActionPortV1(surface => createWidgetSurfaceArtifactPortV1(transport, { surface, isCurrent: () => true }));
         const widgetInputs = createWidgetActionInputResolverV1({
-            readDescriptor: async () => ({ inputs: { fields: [{ path: 'count', title: 'Count', widget: 'integer', required: true }] },
+            readDescriptor: async () => ({ sizeDeclaration: { sizes: ['medium', 'full', 'tall'], defaultSize: 'medium' }, inputs: { fields: [{ path: 'count', title: 'Count', widget: 'integer', required: true }] },
                 inputSchema: { type: 'object', properties: { count: { type: 'integer' } }, required: ['count'], additionalProperties: false } }),
             readContext: async request => request.context.widgetAreaContext?.values ?? {}, readViewerValues: async () => ({ values: {} }),
             validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [],
@@ -51,14 +51,14 @@ describe('mounted area operations through the canonical Action/Artifact/binder o
         expect(await port.execute({ area: 'pinned', context: { count: 5 }, operation: { actionId: 'widgets.instance.inputs.validate', instanceId: 'follow', bindings: instance.bindings } })).toEqual({ ok: true, result: { status: 'ready', input: { count: 5 } } });
         expect(await port.execute({ area: 'pinned', context: { count: 5 }, operation: { actionId: 'widgets.instance.inputs.validate', instanceId: 'pin', bindings: pin.bindings } })).toEqual({ ok: true, result: { status: 'ready', input: { count: 8 } } });
         for (const operation of [
-            { actionId: 'widgets.instance.width.set', instanceId: 'pin', width: 'full' },
+            { actionId: 'widgets.instance.size.set', instanceId: 'pin', size: 'full' },
             { actionId: 'widgets.instance.frame.set', instanceId: 'pin', frameStyle: 'card' },
             { actionId: 'widgets.instance.move', instanceId: 'pin', toIndex: 0 },
             { actionId: 'widgets.instance.inputs.set', instanceId: 'follow', bindings: { count: { kind: 'value', value: 9 } } },
         ]) expect(await port.execute({ area: 'pinned', context: { count: 5 }, operation })).toMatchObject({ ok: true });
         const reloaded = await page('overview').execute({ area: 'pinned', context: { count: 5 }, operation: { actionId: 'widgets.instance.list' } });
         expect(reloaded).toMatchObject({ ok: true, result: { surface: { ...scope, owner: { kind: 'pluginArea', pluginId: 'example', pageId: 'overview', area: 'pinned' } }, instances: [
-            { instance: pin, width: 'full', frameStyle: 'card' }, { instance: { ...instance, bindings: { count: { kind: 'value', value: 9 } } } },
+            { instance: pin, size: 'full', frameStyle: 'card' }, { instance: { ...instance, bindings: { count: { kind: 'value', value: 9 } } } },
         ] } });
         expect(await page('another').execute({ area: 'pinned', context: { count: 1 }, operation: { actionId: 'widgets.instance.list' } })).toMatchObject({ ok: true, result: { instances: [] } });
         const surface = { ...scope, owner: { kind: 'pluginArea', pluginId: 'example', pageId: 'overview', area: 'pinned' } };

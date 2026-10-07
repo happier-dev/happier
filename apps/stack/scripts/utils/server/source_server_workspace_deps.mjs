@@ -17,7 +17,7 @@ export async function ensureSourceServerWorkspacePackagesBuilt(
   const result = await ensureWorkspacePackagesBuiltForComponentImpl(serverDir, {
     quiet,
     env,
-    buildMode: env[WORKSPACE_BUILD_MODE_ENV] ?? 'qa-runtime',
+    buildMode: env[WORKSPACE_BUILD_MODE_ENV] ?? 'source-dev',
   });
   return { ran: true, reason: 'source-server', result };
 }

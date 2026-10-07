@@ -1,30 +1,14 @@
-import {
-    ActionApprovalRequestCreatedResultSchema,
-    bindSessionAccessActionHttpRequestV1,
-    getActionSpec,
-    isSessionAccessActionIdV1,
-    SessionGrantMutationV1Schema,
-    UserRecipientEnvelopeResponseSchema,
-    SessionAccessGrantsListResponseV1Schema,
-    SetSessionAccessGrantResponseV1Schema,
-    RemoveSessionAccessGrantResponseV1Schema,
-    SetSessionAccessContextResponseV1Schema,
-    SessionPublicLinkGetActionResultV1Schema,
-    SessionPublicLinkRemoveActionResultV1Schema,
-    SessionPublicLinkCreateActionResultV1Schema,
-    projectSessionPublicLinkActionResultV1,
-    projectSessionPublicLinkCreateActionResultV1,
-    type ActionId,
-    type PrincipalRefV1,
-    type SessionGrantIntentV1,
-    type SessionGrantMutationV1,
-    type SessionAccessAccountSummaryV1,
-    ResolveSessionAccessPrincipalsRequestV1Schema,
-    ResolveSessionAccessPrincipalsResponseV1Schema,
-    type SessionAccessPrincipalSummaryV1,
-    type SessionAccessCreationDecisionV1,
-    generateStoredContentPublicShareMaterialV1,
-} from '@happier-dev/protocol';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { bindSessionAccessActionHttpRequestV1, isSessionAccessActionIdV1 } from '@happier-dev/protocol/actions/sessionAccessActionFamily';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { SessionGrantMutationV1Schema, type SessionGrantIntentV1, type SessionGrantMutationV1 } from '@happier-dev/protocol/sessions/access/sessionAccessGrantV1';
+import { UserRecipientEnvelopeResponseSchema } from '@happier-dev/protocol/social/friends';
+import { SessionAccessGrantsListResponseV1Schema, SetSessionAccessGrantResponseV1Schema, RemoveSessionAccessGrantResponseV1Schema, SetSessionAccessContextResponseV1Schema, ResolveSessionAccessPrincipalsRequestV1Schema, ResolveSessionAccessPrincipalsResponseV1Schema, type SessionAccessPrincipalSummaryV1, type SessionAccessCreationDecisionV1 } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
+import { SessionPublicLinkGetActionResultV1Schema, SessionPublicLinkRemoveActionResultV1Schema, SessionPublicLinkCreateActionResultV1Schema, projectSessionPublicLinkActionResultV1, projectSessionPublicLinkCreateActionResultV1 } from '@happier-dev/protocol/sessions/access/sessionAccessActionsV1';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
+import type { SessionAccessAccountSummaryV1 } from '@happier-dev/protocol/sessions/access/sessionAccessPrincipalV1';
+import { generateStoredContentPublicShareMaterialV1 } from '@happier-dev/protocol/sharing/storedContentPublicShareV1';
 import { randomUUID } from '@/platform/randomUUID';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { SessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';

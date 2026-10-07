@@ -1,5 +1,5 @@
 import type { Machine } from '@/sync/domains/state/storageTypes';
-import { isPersistentMachine } from '@happier-dev/protocol';
+import { isPersistentMachine } from '@happier-dev/protocol/machines/machineKind';
 
 import { isMachineReplaced } from './machineIdentityTypes';
 

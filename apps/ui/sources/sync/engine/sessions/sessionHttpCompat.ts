@@ -1,14 +1,9 @@
-import {
-    PendingActivationAuthorizationV1Schema,
-    SessionAccessAccountSummaryV1Schema,
-    SessionListQueryResponseV1Schema,
-    V2SessionListResponseSchema,
-    V2SessionRecordSchema,
-    V2SessionByIdNotFoundSchema,
-    parseSessionRuntimeActivityProjectionFields,
-    type SessionListQueryV1,
-    type V2SessionListResponse,
-} from '@happier-dev/protocol';
+import { PendingActivationAuthorizationV1Schema } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
+import { SessionAccessAccountSummaryV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessPrincipalV1';
+import { SessionListQueryResponseV1Schema } from '@happier-dev/protocol/sessions/listing/response';
+import { V2SessionListResponseSchema, V2SessionRecordSchema, V2SessionByIdNotFoundSchema, type V2SessionListResponse } from '@happier-dev/protocol/sessions/control/contract';
+import { parseSessionRuntimeActivityProjectionFields } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
+import type { SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
 
 import { createNotAuthenticatedError } from '@/sync/runtime/connectivity/authErrors';
 import {

@@ -2,16 +2,18 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createResolvedAgentCatalogEntryFixture } from '@/dev/testkit/fixtures/agentCatalogFixtures';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
-import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { getResolvedBackendCatalogEntries, type ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import {
     readSessionDraftValue,
     resetSessionDraftValueCachesForTests,
     writeSessionDraftValue,
 } from '@/dev/testkit/sessionDraftRepositoryTestkit';
-import type { SessionArmedAgentContinuation } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
+import {
+    SessionArmedAgentContinuationSubmissionSchema,
+    type SessionArmedAgentContinuation,
+} from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
 
 import {
     useInSessionAgentPickerControls,
@@ -24,6 +26,21 @@ import type {
 
 const announceAccessibilityMessage = vi.hoisted(() => vi.fn());
 const machineRpcWithServerScope = vi.hoisted(() => vi.fn());
+
+// These contracts observe draft custody and row identity, not translated copy.
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
+vi.mock('@/text/i18n', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return {
+        ...createTextModuleMock(),
+        setPreferredLanguageFromSettings: () => {},
+        areTranslationsReadyForSettings: () => true,
+        preloadTranslationsForSettings: async () => {},
+    };
+});
 
 vi.mock('@/components/ui/accessibility/announceAccessibilityMessage', () => ({
     announceAccessibilityMessage,
@@ -53,19 +70,13 @@ function entry(
     backendId: string,
     overrides: Partial<ResolvedBackendCatalogEntry> = {},
 ): ResolvedBackendCatalogEntry {
+    const resolved = getResolvedBackendCatalogEntries({
+        enabledAgentIds: [backendId],
+        acpCatalogSettingsV1: { v: 2, backends: [] },
+    }).find((candidate) => candidate.agentId === backendId);
+    if (!resolved) throw new Error(`Missing Agent catalog fixture for ${backendId}`);
     return {
-        agentCatalogEntry: createResolvedAgentCatalogEntryFixture({ agentId: backendId }),
-        backendTarget: { kind: 'backend', backendId },
-        backendTargetKey: `backend:${backendId}`,
-        kind: 'builtInAgent',
-        backendId,
-        agentId: backendId,
-        catalogAgentId: backendId as ResolvedBackendCatalogEntry['catalogAgentId'],
-        builtInAgentId: backendId as ResolvedBackendCatalogEntry['builtInAgentId'],
-        iconAgentId: backendId as ResolvedBackendCatalogEntry['iconAgentId'],
-        title: backendId === 'claude' ? 'Claude Code' : backendId,
-        subtitle: null,
-        cliAuthBackgroundCheckSafe: false,
+        ...resolved,
         ...overrides,
     };
 }
@@ -139,11 +150,19 @@ async function armTarget(
     await act(async () => { await Promise.resolve(); });
     await act(async () => { await Promise.resolve(); });
     await act(async () => {
-        hook.getCurrent()
+        const option = hook.getCurrent()
             .composeAgentPickerOptions([CURRENT_AGENT_ROW])
-            .find((option) => option.id === optionId)
-            ?.onSelectImmediate?.();
+            .find((candidate) => candidate.id === optionId);
+        if (!option?.onSelectImmediate) throw new Error(`Missing armable Agent row ${optionId}`);
+        option.onSelectImmediate();
     });
+}
+
+function readTargetOptionIds(hook: Awaited<ReturnType<typeof renderControls>>): string[] {
+    return hook.getCurrent()
+        .composeAgentPickerOptions([CURRENT_AGENT_ROW])
+        .map((option) => option.id)
+        .filter((id) => id !== CURRENT_AGENT_ROW.id);
 }
 
 const CURRENT_AGENT_ROW = { id: 'engine:claude', label: 'Claude Code', renderDetailContent: () => null };
@@ -393,6 +412,82 @@ describe('useInSessionAgentPickerControls arm draft', () => {
             input: { text: 'switch and send this' },
         });
         expect(readPersistedArm()?.submission?.localId).toBe(submittedLocalId);
+    });
+
+    it('offers the other Agents again once canonical custody consumes the submitted switch', async () => {
+        const hook = await renderControls();
+        await armTarget(hook, 'agent:happier.agent.codex/codex');
+        const submittedLocalId = hook.getCurrent().armedContinuationLocalId;
+        const submission = SessionArmedAgentContinuationSubmissionSchema.parse({
+            localId: submittedLocalId,
+            input: {
+                text: 'switch and send this',
+                localId: submittedLocalId,
+                meta: {},
+            },
+            currentness: {
+                text: 'switch and send this',
+                mentions: [],
+                composerAttachments: [],
+                attachmentDraftIds: [],
+            },
+        });
+        await act(async () => {
+            expect(hook.getCurrent().recordArmedContinuationSubmission(submission)).toBe(true);
+        });
+
+        // The admitted switch makes the prior arm ineligible; its exact submission
+        // keeps the Agent rail hidden until the custody owner consumes it.
+        await hook.rerender({
+            currentAgentId: 'codex',
+            source: { ...supportedSource, currentBackendTargetKey: 'agent:happier.agent.codex/codex' },
+        });
+        await act(async () => { await Promise.resolve(); });
+        await act(async () => { await Promise.resolve(); });
+        expect(readTargetOptionIds(hook)).toEqual([]);
+
+        await act(async () => {
+            expect(hook.getCurrent().clearArmedContinuationSubmissionIfCurrent(submission)).toBe(true);
+        });
+        await hook.rerender({
+            currentAgentId: 'codex',
+            source: { ...supportedSource, currentBackendTargetKey: 'agent:happier.agent.codex/codex' },
+        });
+
+        expect(readPersistedArm()).toBeNull();
+        expect(hook.getCurrent().armedContinuationSubmission).toBeNull();
+        expect(readTargetOptionIds(hook)).toEqual(['agent:happier.agent.claude/claude']);
+    });
+
+    it('leaves a newer arm alone when custody consumes the submission it replaced', async () => {
+        const hook = await renderControls({ entries: [entry('claude'), entry('codex'), entry('gemini')] });
+        await armTarget(hook, 'agent:happier.agent.codex/codex');
+        const submittedLocalId = hook.getCurrent().armedContinuationLocalId;
+        const submission = SessionArmedAgentContinuationSubmissionSchema.parse({
+            localId: submittedLocalId,
+            input: {
+                text: 'switch and send this',
+                localId: submittedLocalId,
+                meta: {},
+            },
+            currentness: {
+                text: 'switch and send this',
+                mentions: [],
+                composerAttachments: [],
+                attachmentDraftIds: [],
+            },
+        });
+        await act(async () => {
+            expect(hook.getCurrent().recordArmedContinuationSubmission(submission)).toBe(true);
+        });
+        await armTarget(hook, 'agent:happier.agent.gemini/gemini');
+
+        await act(async () => {
+            expect(hook.getCurrent().clearArmedContinuationSubmissionIfCurrent(submission)).toBe(false);
+        });
+
+        expect(hook.getCurrent().armedContinuation).toEqual(armedIntentFor('gemini'));
+        expect(readPersistedArm()?.backendTargetKey).toBe('agent:happier.agent.gemini/gemini');
     });
 
     it('leaves a persisted arm alone while its feature decision is unresolved', async () => {

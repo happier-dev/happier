@@ -15,7 +15,7 @@ import {
     ConnectedServicesProviderStateSharingSettingsV1Schema,
     type ConnectedServicesProviderConfigSharingModeV1,
     type ConnectedServicesProviderStateSharingSettingsV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/settings/connected-services';
 
 import { buildProviderConfigModeChoices, ProviderStateSharingRows } from './ProviderStateSharingRow';
 import { CONNECTED_SERVICES_SETTINGS, CONNECTED_SERVICES_SHARING_SETTINGS } from './connectedServicesSettings';

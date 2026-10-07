@@ -1,5 +1,6 @@
 import type { AccountDirectoryMeResponseV1 } from '@happier-dev/protocol';
-import { createHomeCredentialDestinationDigestV1, type AccountDirectoryHomeEntryV1, type AuthEntryProjectionV1 } from '@happier-dev/protocol';
+import { createHomeCredentialDestinationDigestV1, type AccountDirectoryHomeEntryV1 } from '@happier-dev/protocol/auth/accountDirectory';
+import type { AuthEntryProjectionV1 } from '@happier-dev/protocol/auth/entry';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { encryptBox } from '@/encryption/libsodium';

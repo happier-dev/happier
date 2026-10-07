@@ -5,7 +5,7 @@ import { projectUiSessionAwareness } from '@/sync/domains/session/awareness/sess
 import { resolveSessionPersonalAttentionForViewer } from '@/sync/domains/session/readState/sessionViewerAttention';
 import { isUnreadContentAttentionReason } from '@/sync/domains/session/readState/sessionViewer';
 import { getSessionName, getSessionSubtitle } from '@/utils/sessions/sessionUtils';
-import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol';
+import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessions/awareness/availability';
 import { t } from '@/text';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import {

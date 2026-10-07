@@ -1,7 +1,7 @@
 import {
     DaemonPluginUiCaptureSourceReadResponseSchema,
     type DaemonPluginUiCaptureSourceDescriptorV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/pluginCaptureSources';
 import {
     PluginUiWatchLiveStreamRequestV1Schema,
     PluginUiDisposeHostResourceRequestV1Schema,

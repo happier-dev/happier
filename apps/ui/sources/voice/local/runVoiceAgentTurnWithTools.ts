@@ -14,11 +14,8 @@ import {
   getRetainedLocalVoiceEffectOutcomes,
   type LocalVoiceAgentToolResultEntry,
 } from '@/voice/tools/localVoiceEffectOutcomeCustody';
-import {
-  formatVoiceToolResultsFollowUp,
-  getActionSpec,
-  VOICE_TOOL_RESULT_INSTRUCTIONS_PREFIX,
-} from '@happier-dev/protocol';
+import { formatVoiceToolResultsFollowUp, VOICE_TOOL_RESULT_INSTRUCTIONS_PREFIX } from '@happier-dev/protocol/voice/toolResultsChannel';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { resolveVoiceToolResultHumanSummary } from '@/voice/context/resolveVoiceToolResultHumanSummary';
 import { isBundledAgentId } from '@/agents/catalog/catalog';
 import { storage } from '@/sync/domains/state/storage';

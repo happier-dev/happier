@@ -1,4 +1,4 @@
-import { isLoopbackHostname, normalizeHostnameForLoopbackCheck } from '@happier-dev/protocol';
+import { isLoopbackHostname, normalizeHostnameForLoopbackCheck } from '@happier-dev/protocol/server/urls/loopbackHostname';
 
 /**
  * The platform a local-service preview / browser surface is presented on.

@@ -1,8 +1,5 @@
-import {
-    AccountSettingsStoredContentEnvelopeSchema,
-    openAccountScopedBlobCiphertext,
-    type AccountScopedCiphertextFormat,
-} from '@happier-dev/protocol';
+import { AccountSettingsStoredContentEnvelopeSchema } from '@happier-dev/protocol/account/settings/accountSettingsStoredContentEnvelope';
+import { openAccountScopedBlobCiphertext, type AccountScopedCiphertextFormat } from '@happier-dev/protocol/crypto/accountScopedCipher';
 
 import type { Encryption } from '@/sync/encryption/encryption';
 import {

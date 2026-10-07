@@ -1,4 +1,5 @@
-import { isSubAgentTranscriptToolName, type ParticipantRecipientV1 } from '@happier-dev/protocol';
+import { isSubAgentTranscriptToolName } from '@happier-dev/protocol/tools/v2/subAgentFamilies';
+import type { ParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
 import * as React from 'react';
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { View } from 'react-native';

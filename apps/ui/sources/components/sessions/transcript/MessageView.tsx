@@ -47,7 +47,7 @@ import { AttachmentsInlineImages } from '@/components/sessions/attachments/messa
 import { parseSessionMediaMessageMeta } from '@/sync/domains/session/media/sessionMediaMessageMeta';
 import { SessionMediaInlineImages } from '@/components/sessions/media/SessionMediaInlineImages';
 import { resolveSessionMediaInlineRenderableImageMimeType } from '@/components/sessions/media/presentation';
-import { readSessionMessageProvenance } from '@happier-dev/protocol';
+import { readSessionMessageProvenance } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import type { TranscriptRollbackAction } from '@/sync/domains/sessionRollback/rollbackUiSupport';
 import { CommittedMessageActions } from '@/components/sessions/transcript/messageActions/CommittedMessageActions';
 import { RowActionRevealSlot } from '@/components/sessions/transcript/messageActions/RowActionRevealSlot';

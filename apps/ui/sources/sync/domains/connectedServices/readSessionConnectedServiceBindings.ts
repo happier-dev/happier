@@ -5,7 +5,7 @@ import {
     BuiltInLegacyConnectedServiceBindingsV1IngressSchema,
     ConnectedServiceBindingsV2IngressSchema,
     type ConnectedServiceBindingsV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/connected-service-bindings';
 
 import { resolveQualifiedConnectedAccountServiceKey } from './connectedServiceRegistry';
 

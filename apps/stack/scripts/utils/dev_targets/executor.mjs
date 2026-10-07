@@ -135,10 +135,7 @@ async function flushDevTarget(
   const result = await runCaptureResultImpl({
     command: launch.command,
     args: launch.args,
-    env: {
-      ...runtime.env,
-      HAPPIER_DEV_TARGET_CONTROL_STATE_DIR: `${stackBaseDir}/dev-target-command-load-native/sync-control`,
-    },
+    env: runtime.env,
     streamLabel: `sync:${target.name}`,
     ...(Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
   });

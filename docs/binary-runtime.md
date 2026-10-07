@@ -87,7 +87,7 @@ Their `prepack` scripts run `scripts/bundleWorkspaceDeps.mjs`, which delegates t
 
 Current source bundling preserves package-local `imports` declarations and their conditional order, alongside `exports`. The existing workspace copier and bootstrap sync include exact relative import targets outside `dist`; external package targets still use the package's declared dependency closure. Live bundle health checks compare the retained import map and target files, and Stack bundle freshness observes package-root targets so changing only an imported runtime helper requires a refresh.
 
-Publication has two explicit modes. Live source-dev refreshes keep each package directory mounted, publish complete files with `package.json` last, retain prior targets for in-flight module resolvers, and roll back already-published files if a later replacement fails. Artifact publication is selected by npm `prepack` or `--artifact` and prunes retained targets so obsolete generations cannot enter a tarball. Both modes use the package build owner's content record to admit current `dist` outputs, including source additions and deletions, build inputs, compiler identity, and declared output bytes. Health checks require every current source runtime file to match but deliberately allow extra retained targets in live trees.
+Publication has two explicit modes. Live source-dev refreshes keep each physical consumer package directory mounted, publish complete files with `package.json` last, retain prior targets for in-flight module resolvers, and roll back already-published files if a later replacement fails. A consumer workspace symlink or junction is replaced with a private directory rather than publishing through it into producer inputs; failed publication restores the link. Artifact publication is selected by npm `prepack` or `--artifact` and prunes retained targets so obsolete generations cannot enter a tarball. Both modes use the package build owner's content record to admit current `dist` outputs, including source additions and deletions, build inputs, compiler identity, and declared output bytes. Health checks require every current source runtime file to match but deliberately allow extra retained targets in live trees.
 
 In 0.3 development, the same package admission owner distinguishes compilation
 from runtime materialization. A dependency's declarations (`.d.ts`, `.d.mts`,
@@ -102,12 +102,27 @@ adapter and source-dev synchronization publish refreshed plugin outputs through 
 existing projection owner, just as they do newly compiled outputs.
 
 Workspace preparation and bundled-plugin generation share one bounded convergence
-owner. In `qa-runtime`, package compilation and runtime-output refresh use a physical
+owner. Development-only source server admission, CLI/daemon shared-dependency
+publication and UI preflight default to `source-dev`: compile in place, with the
+existing staged output promotion, input-drift fence and last-green fallback.
+Like QA emit, source-dev records unchecked output as `qa-runtime`; strict and
+publication lifecycle builds still require checking. Explicit QA/runtime publication
+continues to select `qa-runtime`, where compilation and runtime-output refresh use a physical
 capture of the package inputs and consumed dependency outputs. Capture copies each
 member once, then rereads only members changed during that pass, at most once.
 There is no quiet-checkout requirement after those trailing reads. Successful output
 records the captured fingerprint; later producer edits leave that output stale for
 the next preparation request rather than rejecting completed compilation.
+Captured workspace builds reuse the source checkout's installed dependencies.
+The shared runtime-dependency containment owner accepts that source repository
+only for the active capture's repository-wide copy boundary, using physical paths
+for both roots. Package-local boundaries and foreign symlink targets remain rejected.
+The capture owner also records its immediate physical source repository separately
+from origin identity, so worker or nested captures can consume their actual installed
+dependencies without reinterpreting the origin-normalized build fingerprint.
+Source-dev CLI publication can consume captured non-plugin dist certified by the
+package admission owner even after later source edits, but does not stamp it current.
+Plugin projections retain their authored-manifest coherence fence.
 Strict builds retain their moving-input fence. When their inputs move during a successful package build, preparation retains the
 last coherent output and takes one trailing pass through declaration-level package
 admission. Completed unchanged packages are reused; only stale compilation or
@@ -118,10 +133,10 @@ also changes; exhausted workspace failures and command failures retain their
 classification across the generator's private child IPC and cannot trigger another
 generator retry. The previous output is never certified as current after rejection.
 
-In 0.3 development, runtime artifact publication, source-server dependency
-preflight, CLI source-dev dependency publication and live UI workspace prebuild
-select `qa-runtime` at the same workspace package-build owner. TypeScript package
-dist refreshes in that mode use incremental `--noCheck` emission instead of
+In 0.3 development, runtime artifact publication selects `qa-runtime`, while
+source-server dependency preflight, CLI source-dev dependency publication and
+live UI workspace prebuild select `source-dev` at the same workspace package-build
+owner. TypeScript package dist refreshes in both modes use incremental `--noCheck` emission instead of
 repeating the full semantic checker. Checked and emit-only compiler options have
 separate existing cache identities; the existing output record carries build mode,
 and strict requests recheck QA-mode outputs rather than treating them as checked.
@@ -149,6 +164,14 @@ A source correction invalidates admission and the next refresh compiles and
 publishes fresh output, clearing the existing failure record. Explicit strict
 requests cannot reuse a source-dev materialization stamp to skip a failed compile;
 UI artifact prebuilds remain strict even with an inherited QA environment.
+
+Bundled-plugin authoring preparation admits a dependency publication through
+the same package build records and exact source-to-installed output checks.
+A coherent QA capture published after newer source arrives remains usable even
+when the source-dev owner deliberately withholds a current-source readiness
+stamp. That admission does not stamp newer source current or replace the
+generator's subsequent dependency-currentness fence; missing, damaged or
+uncertified package outputs still fail admission.
 
 The repository background snapshot publisher explicitly selects `qa-runtime`
 before component resolution and child-process bootstrap, matching manual QA
@@ -284,7 +307,7 @@ artifact storage and source labels bound to the producer.
 Build placement is resolved against the producer's target registry only. Controlled-runtime
 consumer projections omit it; a consumer build entry is ignored with a warning naming the
 producer config, even when its target is absent from the consumer registry.
-It captures the flight's source after worker admission, reuses the install-freshness owner, and keeps worker
+It captures and uploads source before worker admission, reuses the install-freshness owner, and keeps worker
 dependencies/dist separate from the moving mirror and live outputs. Source identity labels retain
 the producer checkout origin so relocation alone does not change an input fingerprint. Component
 and workspace-package identity readers share those origin labels. Runtime capture uses
@@ -293,7 +316,12 @@ fingerprints are derived from captured bytes, not from a before/after quiet-chec
 comparison. Producer edits after capture do not invalidate the build; existing demand
 coalescing serves them in the next flight. Worker capture, requests, source trees,
 and transfer archives live in the existing producer workspace partitioned by platform/architecture, so
-concurrent targets cannot overwrite each other's prepared source or results. The shared workspace input-path
+concurrent targets cannot overwrite each other's prepared source or results. The worker source-transfer
+owner reconciles captured authored inputs into the retained target checkout without rewriting unchanged
+bytes; package outputs, compiler build info and receipts remain subject to their existing currentness
+checks. The producer's request-local incoming archive does not replace target staging until actual
+admission READY and the existing publication flight are acquired. Source-transfer PREPARE/ACK is not
+admission READY and holds no runtime-build reservation. The shared workspace input-path
 owner includes relative extended tsconfigs even when the referenced config is excluded as a
 test-only root, so capture and package admission consume one complete config closure. Capture
 and runtime-support fingerprints apply that owner's source-test exclusions during recursive
@@ -340,8 +368,8 @@ Other daemon cross-target pairs still require a matching native worker. The shar
 admission owner reports missing cross prerequisites before dispatch.
 Finished payloads return through the shared runtime artifact closure
 transfer, existing manifest validation and producer retention, then ordinary snapshot publication.
-Transfer archives are staging files, not retained runtime artifacts. The producer releases its
-captured `source.tar` after upload and before compilation; the worker removes its source archive
+Transfer archives are staging files, not retained runtime artifacts. The producer retains its
+captured `source.tar` until all selected transfer channels finish, then releases it; the worker removes its source archive
 after extraction, including failed extraction. Downloaded artifact archives are released after
 extraction, and the transfer owner cleans its local staging directory and remote archives on
 success or failure. Remote cleanup failures remain visible without replacing the build failure.
@@ -349,6 +377,16 @@ Controlled snapshot uploads use the same transfer cleanup owner, including parti
 failures before the remote import entry starts.
 Worker dependencies, extracted source/build outputs and the producer's admitted artifact store
 retain their existing lifecycle and retention owners.
+In current 0.3 development, target-specific incremental worker checkouts share the worker CLI
+home's package-manager cache and Iroh Cargo target directory. Separate target checkouts remain
+necessary for concurrent target builds and their generated outputs. Linux runtime requests reuse
+the custody scanner to reclaim other staging targets and historical temporary roots only after
+24 hours without modification and with no live cwd, descriptor or mapping holder. Unknown process
+visibility retains them. After export, the worker store uses canonical artifact count/reference
+retention with the same additional live-holder protection. Yarn Classic v6 cache entries are
+eligible for removal only when their remote resolution is absent from every protected mirror and
+retained staging lockfile; this includes a configured 0.2 command mirror sharing the CLI home.
+Unavailable lockfiles, unknown cache metadata and unknown process visibility preserve the cache.
 Snapshot admission/publication remains producer-owned; no worker scheduler or second publication flight exists.
 Unavailable or incompatible workers are excluded visibly before compilation dispatch. A busy worker's
 actual host-global request stays queued, including service RSS and live class reservations, while
@@ -373,6 +411,8 @@ build, not relabeling bytes. Targetless predecessor snapshots remain host-local 
 than proof of foreign-target compatibility.
 
 Managed runtime support is component-owned, not a generic dependency-layer registry, and its references are a development/QA snapshot concern only. A server manifest may reference an immutable server-support artifact containing its generated Prisma/native closure; a daemon manifest may reference its immutable daemon-support artifact containing the CLI runtime dependencies, tools, and sidecars. The component builder computes and validates its own support identity. Snapshot validation follows those references, and retention follows the graph from retained snapshots through component artifacts to referenced support artifacts before deleting anything. Existing self-contained release/runtime artifacts remain readable until ordinary retention removes them. Release/self-host builders discover and embed their own complete target support closure directly.
+
+Server support hashing and staging share the server-sidecar owner's membership rule. Workspace `dist/.happier-build-inputs.json` records are preparation evidence and are excluded from both: refreshing their timestamps or dependency fingerprints cannot invalidate unchanged runtime bytes. The workspace output owner defines the record filename; actual emitted code and native support still participate in support identity.
 
 The managed server code artifact is independent of static web UI. Runtime launch supplies the selected web artifact through the existing `HAPPIER_SERVER_UI_DIR`/Stack UI-path owner. Borrowed Expo is a controlled-live development/QA UI provider; strict snapshot UI requires an explicit web artifact. Release and self-host builders may combine web and server into their own self-contained target payload, but managed server publication does not embed or regenerate web UI and release builders do not consume a managed snapshot.
 

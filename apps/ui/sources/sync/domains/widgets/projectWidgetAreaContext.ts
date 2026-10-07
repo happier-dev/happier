@@ -1,4 +1,4 @@
-import { WorkspaceRefV1Schema } from '@happier-dev/protocol';
+import { WorkspaceRefV1Schema } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { WidgetBindingResolutionInputV1 } from '@happier-dev/protocol/widgets';
 
 /** Lane 12 owns portable Source identity. Existing exact Workspace refs cannot stand in for it. */

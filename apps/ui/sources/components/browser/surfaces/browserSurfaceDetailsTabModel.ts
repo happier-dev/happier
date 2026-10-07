@@ -1,4 +1,4 @@
-import { BrowserViewTargetV1Schema, type BrowserViewTargetV1 } from '@happier-dev/protocol';
+import { BrowserViewTargetV1Schema, type BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
 
 import type { DetailsTab, DetailsTabState } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
 import type { DetailsTabPresentation } from '@/components/appShell/panes/details/workspace/DetailsTabStrip';

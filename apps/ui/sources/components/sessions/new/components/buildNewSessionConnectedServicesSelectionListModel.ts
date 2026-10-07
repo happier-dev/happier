@@ -1,8 +1,6 @@
 import type * as React from 'react';
-import {
-    buildQualifiedPluginContributionKey,
-    type TeamResourceConnectedServiceSelectionV2,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { TeamResourceConnectedServiceSelectionV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
 
 import {

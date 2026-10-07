@@ -1,30 +1,10 @@
 import { z } from 'zod';
-import {
-    canonicalSessionDraftAddressV2,
-    NewSessionDraftDocumentV2Schema,
-    pluginJsonValuesEqual as areJsonValuesEqual,
-    SessionDraftAddressV2Schema,
-    SessionDraftDocumentV1Schema,
-    isMeaningfulSessionDraftRecipientValueV1,
-    type SessionDraftAddressV2,
-    type SessionDraftDocumentV1,
-    type SessionDraftDocumentV2,
-    type SessionDraftExpectedRevisionV1,
-    type SessionDraftListResponseV2,
-    type SessionDraftListRequestV2,
-    type SessionDraftMutateRequestV2,
-    type SessionDraftMutateResponseV2,
-    type SessionDraftReadResponseV2,
-    type SessionDraftRecordV2,
-    type SessionDraftStoredContentEnvelopeV2,
-    SessionDiscussionSelectionSourceV1Schema,
-    type SessionDiscussionSelectionSourceV1,
-    SYNCED_SESSION_AUTHORING_FIELD_IDS_V2,
-    StrictJsonValueSchema,
-    type StrictJsonValue,
-    SyncedSessionAuthoringValueV2Schema,
-    type SyncedSessionAuthoringValueV2,
-} from '@happier-dev/protocol';
+import { canonicalSessionDraftAddressV2, NewSessionDraftDocumentV2Schema, SessionDraftAddressV2Schema, type SessionDraftAddressV2, type SessionDraftDocumentV2, type SessionDraftListResponseV2, type SessionDraftListRequestV2, type SessionDraftMutateRequestV2, type SessionDraftMutateResponseV2, type SessionDraftReadResponseV2, type SessionDraftRecordV2, type SessionDraftStoredContentEnvelopeV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
+import { pluginJsonValuesEqual as areJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
+import { SessionDraftDocumentV1Schema, isMeaningfulSessionDraftRecipientValueV1, type SessionDraftDocumentV1, type SessionDraftExpectedRevisionV1, type StrictJsonValue } from '@happier-dev/protocol/drafts/sessionDrafts';
+import { SessionDiscussionSelectionSourceV1Schema, type SessionDiscussionSelectionSourceV1 } from '@happier-dev/protocol/sessions/discussions/content';
+import { SYNCED_SESSION_AUTHORING_FIELD_IDS_V2, SyncedSessionAuthoringValueV2Schema, type SyncedSessionAuthoringValueV2 } from '@happier-dev/protocol/sessions/authoring/index';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 
 import { randomUUID as platformRandomUUID } from '@/platform/randomUUID';
 import { log } from '@/log';

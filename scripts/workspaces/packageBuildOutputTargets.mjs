@@ -1,4 +1,5 @@
 export {
+  WORKSPACE_PACKAGE_BUILD_INPUT_RECORD,
   collectPackageBuildOutputTargets,
   isLocalPackageBuildOutputTarget,
   isPackageBuildDistOutputTarget,

@@ -2,7 +2,7 @@ import {
     DEFAULT_PLUGIN_SCAFFOLD_UI_MODE,
     PluginScaffoldUiModeSchema,
     type PluginScaffoldUiMode,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/actions/actionSpecs';
 
 import { t } from '@/text';
 

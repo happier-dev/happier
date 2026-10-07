@@ -292,10 +292,130 @@ that field to an exact Home-qualified Session. Copies can follow the host
 context or pin a different Session independently. Existing Companion references
 to Board items still read shared Board content; a direct instance keeps its
 own personal inputs. A definition is the reusable content/input declaration;
-an instance is one configured copy, with order, width and frame belonging to
+an instance is one configured copy, with order, size and frame belonging to
 its host layout. Account-library definition edits affect their references;
 Duplicate creates independent content. Setup/edit UI and loaded-platform validation are still
 being completed in the widgets program.
+
+### Start with one read, widget and page
+
+The development [widget-area example](https://github.com/happier-dev/happier/tree/dev/packages/plugin-sdk/examples/widget-areas)
+counts files or folders in a directory on the machine serving the plugin. Its
+`directory` and `filter` inputs change the read itself, so two copies can show
+different results. Use this example with the current 0.3 development checkout
+and its [local authoring toolchain](/plugins/packaging/local-development);
+these source contracts do not imply a published SDK or verified support on
+every client.
+
+The `count` Resource declares `scope: 'surface'`. Its producer receives the
+host-resolved `context.launchInput`, reads the directory with `readdir`, and
+returns `{ directory, filter, count }`. Its `observe` callback uses the
+filesystem's watch notification to invalidate the same Resource. A filesystem
+error remains a read failure; it is never reported as an empty directory.
+There is no polling clock. Use an absolute directory path on the serving
+machine; `.` means that process's working directory, rather than the browser's
+or phone's filesystem. The example counts immediate regular files or folders,
+without traversing subdirectories or following symbolic links.
+
+The `counter` widget declares those two inputs, its `inputSchema`, and the
+qualified `count` Resource dependency. The native body uses
+`useLivePluginResource('count')`, renders the returned number through `Metric`,
+and offers `Action.Refresh` through that hook's `refresh`. Happier supplies the
+widget frame and retains the Resource's ordinary loading, refresh and failure
+lifetime. The body does not fetch data or arrange its own placements.
+
+The `overview` app page declares a `pinned` area with the same readable context:
+
+```tsx
+<WidgetSurface area="pinned" context={{ directory, filter }} title="Pinned" />
+```
+
+Open **Widget areas**, enter a directory on the serving machine, choose **Use
+directory**, and add
+**Directory count** from its Gallery. Bind both inputs to **This page**, then
+switch **Files** to **Folders** to see the count change. Add another copy with
+its own pinned directory or filter; changing the page follows only the first
+copy. Add a file in that directory and the live Resource invalidates; **Refresh
+count** also re-reads it explicitly.
+
+Buttons and agents use the same widget Actions. From the mounted native page,
+the existing `widgetArea` host method supplies the page's identity and routes
+this operation to `widgets.instance.add`:
+
+```ts
+await host.widgetArea({
+  area: 'pinned', context: { directory, filter },
+  operation: {
+    actionId: 'widgets.instance.add',
+    size: 'medium',
+    instance: {
+      v: 1, id: 'directory-count',
+      definition: { kind: 'installed', surface: {
+        pluginId: 'examples.widget-areas', localId: 'counter',
+      } },
+      bindings: {
+        directory: { kind: 'context', slot: 'directory' },
+        filter: { kind: 'context', slot: 'filter' },
+      },
+    },
+  },
+});
+```
+
+Inspect the acknowledged result before starting dependent operations: refusal
+and approval-pending are different from a completed add. Outside that page,
+ordinary `widgets.*` Actions take qualified host surface references; they do
+not need a plugin-owned layout writer. Continue with the generated
+[widget Action reference](/plugins/api/host-actions#widgetsinstanceadd),
+[Resource API](/plugins/api/sdk-entrypoints#one-resources-path-three-resource-workflows),
+[native widget areas](/plugins/ui/react-native#personal-widget-areas-in-development)
+and the advanced [presentation and environment tiers](/plugins/ui/react-native#host-api).
+
+### Declare useful widget sizes
+
+In the **0.3 development contract**, each widget View declares the sizes its
+body supports and one default:
+
+```ts
+sizeDeclaration: {
+  sizes: ['small', 'medium', 'wide'],
+  defaultSize: 'medium',
+},
+```
+
+Put this field on the `container: 'widget'` View in `definePlugin(...)`.
+The declared set must be nonempty and contain no duplicates, and the default
+must be one of those sizes. Account-library definitions declare the same
+field. Size names express width and height intent rather than pixels; the host
+maps that intent into the current surface's layout. Declare compositions that
+your body can use meaningfully, such as a compact count and a richer summary.
+
+Happier intersects the declaration with the current surface's supported sizes
+and uses one canonical order for setup, Customize, menus and `[` / `]`
+stepping. The declared default is used when admitted; otherwise the first
+admitted size becomes the default. Discover the actual choices on each entry
+returned by `widgets.catalog.list` as `presentation.sizes` and
+`presentation.defaultSize`. Home, personal Work Boards, Session Board and
+plugin areas support size intent; Project aside and Companion remain linear.
+Phone reflow keeps the saved choice.
+
+When more than one size is available, the existing setup step lets the person
+choose and preview it even if all inputs are already bound. A fully bound
+widget with zero or one size choice keeps the direct Add path. Missing or
+ambiguous inputs use that same setup step.
+
+Submit `size` with `widgets.instance.add`, as in the example above, so placement
+and presentation are one operation. Change an existing copy through
+`widgets.instance.size.set` with `{ ref, size }`; see the generated
+[widget Action reference](/plugins/api/host-actions). Native renderers receive
+`RenderContext.widgetPresentation` with the actual `footprint`, a `size` when
+that native rectangle matches a named intent, and optional measured `geometry`.
+Existing custom Board width/height combinations retain their rectangle without
+inventing a size name. Geometry arrives after the host measures the body.
+Adapt content to that space while keeping the Resource's normal lifetime and
+authority. The host retains the framed full view when a compact renderer is
+absent. These are source authoring contracts, not published-SDK or
+loaded-platform certification.
 
 While the selected Session's detail is loading, a configured widget shows its
 loading state without asking the person to select the Session again. After the
@@ -313,6 +433,7 @@ not offer that action.
   id: 'review-status-widget',
   container: 'widget',
   target: { kind: 'session' },
+  sizeDeclaration: { sizes: ['small', 'medium', 'wide'], defaultSize: 'medium' },
   sessionInputPath: 'session',
   inputs: { fields: [{ path: 'session', title: 'Session', widget: 'json', required: true, optionsSourceId: 'sessions' }] },
   inputSchema: {

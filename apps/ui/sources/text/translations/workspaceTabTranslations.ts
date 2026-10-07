@@ -1,30 +1,29 @@
-const en = {
-    workspaceTabs: {
-        sectionTitle: 'Open tabs',
-        syncTitle: 'Sync open tabs across devices',
-        syncDescription: 'Keep open tabs, their order and pins together. Pane sizes and your active tab stay on this device.',
-        syncUnavailable: 'Tab sync is unavailable. Your tabs are kept on this device.',
-        recentlyClosed: 'Recently closed',
-        reopenTab: 'Reopen closed tab',
-    },
-};
+// Tooling aggregate. Product locale roots import only their locale payload.
+import { workspaceTabTranslations as en } from './features/en';
+import { workspaceTabTranslations as ca } from './features/ca';
+import { workspaceTabTranslations as de } from './features/de';
+import { workspaceTabTranslations as es } from './features/es';
+import { workspaceTabTranslations as fr } from './features/fr';
+import { workspaceTabTranslations as it } from './features/it';
+import { workspaceTabTranslations as ja } from './features/ja';
+import { workspaceTabTranslations as pl } from './features/pl';
+import { workspaceTabTranslations as pt } from './features/pt';
+import { workspaceTabTranslations as ru } from './features/ru';
+import { workspaceTabTranslations as zh_Hans } from './features/zh-Hans';
+import { workspaceTabTranslations as zh_Hant } from './features/zh-Hant';
+export { workspaceTabKeyboardTranslations } from './workspaceTabTranslations.shared';
 
-export const workspaceTabKeyboardTranslations = {
-    workspaceTabNew: 'New workspace tab',
-    workspaceTabClose: 'Close workspace tab',
-    workspaceTabReopen: 'Reopen closed workspace tab',
-    workspaceTabSelect1: 'Select workspace tab 1',
-    workspaceTabSelect2: 'Select workspace tab 2',
-    workspaceTabSelect3: 'Select workspace tab 3',
-    workspaceTabSelect4: 'Select workspace tab 4',
-    workspaceTabSelect5: 'Select workspace tab 5',
-    workspaceTabSelect6: 'Select workspace tab 6',
-    workspaceTabSelect7: 'Select workspace tab 7',
-    workspaceTabSelect8: 'Select workspace tab 8',
-    workspaceTabSelect9: 'Select last workspace tab',
-};
-
-// English fallback follows the shared translation namespace convention until translated.
 export const workspaceTabTranslations = {
-    en, ca: en, de: en, es: en, fr: en, it: en, ja: en, pl: en, pt: en, ru: en, 'zh-Hans': en, 'zh-Hant': en,
+    ...en.workspaceTabTranslations,
+    ...ca.workspaceTabTranslations,
+    ...de.workspaceTabTranslations,
+    ...es.workspaceTabTranslations,
+    ...fr.workspaceTabTranslations,
+    ...it.workspaceTabTranslations,
+    ...ja.workspaceTabTranslations,
+    ...pl.workspaceTabTranslations,
+    ...pt.workspaceTabTranslations,
+    ...ru.workspaceTabTranslations,
+    ...zh_Hans.workspaceTabTranslations,
+    ...zh_Hant.workspaceTabTranslations,
 };

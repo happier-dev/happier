@@ -1,9 +1,6 @@
 import * as React from 'react';
-import {
-    patchExternalSessionsSettingsV1,
-    readExternalSessionFollowStatusV1,
-    readExternalSessionsSettingsV1,
-} from '@happier-dev/protocol';
+import { patchExternalSessionsSettingsV1, readExternalSessionsSettingsV1 } from '@happier-dev/protocol/sessions/external/followLifecycleV1';
+import { readExternalSessionFollowStatusV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 
 import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';

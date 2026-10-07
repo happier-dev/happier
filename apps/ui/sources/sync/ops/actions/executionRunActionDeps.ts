@@ -1,4 +1,5 @@
-import { ExecutionRunGetRequestSchema, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { ExecutionRunGetRequestSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 

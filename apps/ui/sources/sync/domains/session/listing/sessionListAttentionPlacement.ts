@@ -11,11 +11,9 @@ import {
 
 import { normalizeSessionListKeyParts } from './sessionListKeyNormalization';
 import type { SessionListRenderableSession } from './sessionListRenderable';
-import {
-    hasActivityClearlyAfterTerminalProjectionV1,
-    readSessionAwarenessOperationalPrimaryRankV1,
-    type SessionPersonalAttentionReasonV1,
-} from '@happier-dev/protocol';
+import { hasActivityClearlyAfterTerminalProjectionV1 } from '@happier-dev/protocol/sessions/awareness/runtime';
+import { readSessionAwarenessOperationalPrimaryRankV1 } from '@happier-dev/protocol/sessions/awareness/projectionV1';
+import type { SessionPersonalAttentionReasonV1 } from '@happier-dev/protocol/sessions/personal/attention';
 import {
     normalizeSessionListAttentionPlacementMode,
     normalizeSessionListWorkingPlacementMode,

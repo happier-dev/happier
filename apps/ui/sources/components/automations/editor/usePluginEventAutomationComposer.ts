@@ -1,13 +1,9 @@
 import * as React from 'react';
 
-import {
-    type AutomationEventFilterV1,
-    type DaemonContributionRegistryProjectionAutomationEligibleEventV1,
-    type PluginMachineExecutionOriginV1,
-    type PluginProjectionInstalledPackageV2,
-    arePluginMachineMaterializationRefsEqual,
-    validateAutomationEventFilterAgainstPayloadSchemaV1,
-} from '@happier-dev/protocol';
+import type { AutomationEventFilterV1 } from '@happier-dev/protocol/automations/automationEventFilterV1';
+import type { DaemonContributionRegistryProjectionAutomationEligibleEventV1, PluginProjectionInstalledPackageV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { type PluginMachineExecutionOriginV1, arePluginMachineMaterializationRefsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { validateAutomationEventFilterAgainstPayloadSchemaV1 } from '@happier-dev/protocol/automations/event';
 
 import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import type { DaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';

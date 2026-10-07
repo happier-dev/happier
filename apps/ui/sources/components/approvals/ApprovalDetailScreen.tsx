@@ -3,19 +3,12 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter, type Href } from 'expo-router';
 
-import {
-  approvalArtifactBodyMatchesHeaderV1,
-  ExecutionRunHostActionApprovalRequestV1Schema,
-  TargetActionApprovalRequestV1Schema,
-  buildExecutionRunHostActionApprovalArtifactHeaderV1,
-  buildTargetActionApprovalArtifactHeaderV1,
-  getActionSpec,
-  WorkspaceSyncConflictResolutionResultV1Schema,
-  WorkspaceSyncConflictResolutionV1Schema,
-  type ActionId,
-  type ExecutionRunHostActionApprovalRequestV1,
-  type TargetActionApprovalRequestV1,
-} from '@happier-dev/protocol';
+import { approvalArtifactBodyMatchesHeaderV1, buildExecutionRunHostActionApprovalArtifactHeaderV1, buildTargetActionApprovalArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { ExecutionRunHostActionApprovalRequestV1Schema, type ExecutionRunHostActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/executionRunHostActionApprovalRequestV1';
+import { TargetActionApprovalRequestV1Schema, type TargetActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { WorkspaceSyncConflictResolutionResultV1Schema, WorkspaceSyncConflictResolutionV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 
 import { Text } from '@/components/ui/text/Text';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';

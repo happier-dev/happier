@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Icon } from '@/components/ui/icons/Icon';
@@ -96,6 +97,16 @@ export const SessionAgentPlanCard = React.memo(function SessionAgentPlanCard(pro
     testID: string;
 }>) {
     const { plan } = props;
+    const widgetPresentation = useWidgetPresentation();
+    // A short viewport leads with what the agent is doing, retaining the complete plan below.
+    // Richer bodies keep the transcript's source order; reflow changes neither data nor identity.
+    const steps = React.useMemo(() => {
+        if (!plan || widgetPresentation?.footprint.height !== 'compact') return plan?.steps ?? [];
+        const current = plan.currentStep ?? plan.nextStep;
+        if (current === null) return plan.steps;
+        const lead = plan.steps[current - 1];
+        return lead ? [lead, ...plan.steps.filter(step => step !== lead)] : plan.steps;
+    }, [plan, widgetPresentation?.footprint.height]);
     const agent = props.agentLabel ?? t('sessionCompanion.status.agentFallback');
     return (
         <WidgetFrame
@@ -134,7 +145,7 @@ export const SessionAgentPlanCard = React.memo(function SessionAgentPlanCard(pro
                                 />
                             ))}
                         </View>
-                        {plan.steps.map((step) => (
+                        {steps.map((step) => (
                             <PlanStepRow
                                 key={step.id}
                                 step={step}

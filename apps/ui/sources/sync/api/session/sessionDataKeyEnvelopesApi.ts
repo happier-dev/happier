@@ -1,11 +1,5 @@
-import {
-    PatchSessionDataKeyEnvelopesResultV1Schema,
-    SessionDataKeyEnvelopeErrorCodeV1Schema,
-    SessionDataKeyEnvelopePageV1Schema,
-    type SessionDataKeyEnvelopeItemV1,
-    type SessionDataKeyEnvelopeSummaryV1,
-    runSessionDataKeyPreparationDetached,
-} from '@happier-dev/protocol';
+import { PatchSessionDataKeyEnvelopesResultV1Schema, SessionDataKeyEnvelopeErrorCodeV1Schema, SessionDataKeyEnvelopePageV1Schema, type SessionDataKeyEnvelopeItemV1, type SessionDataKeyEnvelopeSummaryV1 } from '@happier-dev/protocol/sessions/encryption/sessionDataKeyEnvelopes';
+import { runSessionDataKeyPreparationDetached } from '@happier-dev/protocol/sessions/encryption/sessionDataKeyPreparationPass';
 
 import { serverAccountScopedResourceKey } from '@/sync/domains/scope/serverAccountScope';
 import {

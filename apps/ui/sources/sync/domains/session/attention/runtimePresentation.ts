@@ -1,17 +1,8 @@
-import {
-    SESSION_AWARENESS_OPTIMISTIC_PENDING_INPUT_MS,
-    SESSION_AWARENESS_RUNTIME_STALE_SIGNAL_MS,
-    hasProjectedActiveTurnV1,
-    hasTerminalPrimaryTurnStatusV1,
-    isFreshAwarenessTimestampV1,
-    isLiveSessionRuntimeV1,
-    normalizeAwarenessTimestampV1,
-    projectSessionAwarenessRuntimeV1,
-    projectSessionAwarenessOperationalV1,
-    type PrimaryTurnStatusV1,
-    type SessionRuntimeActivityState,
-    type SessionRuntimeIssueV1,
-} from '@happier-dev/protocol';
+import { SESSION_AWARENESS_OPTIMISTIC_PENDING_INPUT_MS, SESSION_AWARENESS_RUNTIME_STALE_SIGNAL_MS, hasProjectedActiveTurnV1, hasTerminalPrimaryTurnStatusV1, isFreshAwarenessTimestampV1, isLiveSessionRuntimeV1, projectSessionAwarenessRuntimeV1 } from '@happier-dev/protocol/sessions/awareness/runtime';
+import { normalizeAwarenessTimestampV1 } from '@happier-dev/protocol/sessions/awareness/inputV1';
+import { projectSessionAwarenessOperationalV1 } from '@happier-dev/protocol/sessions/awareness/projectV1';
+import type { PrimaryTurnStatusV1, SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import type { SessionRuntimeActivityState } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 
 /**
  * The UI adapter over the canonical Session-awareness runtime owner.

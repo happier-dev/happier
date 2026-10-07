@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { entityDragScopesEqualV1, type EntityDragScopeV1, type EntityDropEffectV1, type EntityDropOutcomeV1 } from '@happier-dev/protocol/plugins/ui';
-import { isSessionCanvasActionId, SESSION_CANVAS_ACTION_OUTPUT_SCHEMAS, type SessionCanvasActionId } from '@happier-dev/protocol';
+import { isSessionCanvasActionId, SESSION_CANVAS_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/sessionCanvasActionFamily';
+import type { SessionCanvasActionId } from '@happier-dev/protocol/actions/sessionCanvasActionIds';
 
 import { SplitCanvasHost, type SplitCanvasHostControls } from '@/components/appShell/splitCanvas/components/SplitCanvasHost';
 import type { SplitCanvasLeafNode } from '@/components/appShell/splitCanvas/model/splitCanvasTypes';

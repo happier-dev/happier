@@ -5,68 +5,48 @@ import { createWidgetDefinitionActionDepsV1 } from './widgetDefinitionActionDeps
 import { executeComposerIngressAction } from './composerIngressActionRuntime';
 import { createWidgetCompanionActionDepsV1 } from './widgetCompanionActionDeps';
 import { readWidgetEntityMovementAdmission } from './widgetEntityMovement';
-import type { WidgetInstanceRefV1, WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
+import { isSameWidgetDefinitionV1, widgetCandidateDefinitionV1, type WidgetInstanceRefV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import { createHomeHubArtifactPortV1 } from '@happier-dev/protocol/home';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import { getCurrentAuth } from '@/auth/context/currentAuth';
 import { forgetHistoricalEncryptionKey } from '@/sync/ops/account/forgetHistoricalEncryptionKey';
 import { recoverHistoricalAutomationTemplates } from '@/sync/ops/account/recoverHistoricalAutomationTemplates';
 import { startAgentSignInRpc, checkAgentSignInRpc } from '@/agents/machineAgents/signIn/api';
-import {
-  buildSessionPermissionRespondRpcParamsV1,
-  buildMachineAgentsDetectRequest,
-  projectMachineAgentsDetectResponse,
-  MachineAgentInventoryUnavailableError,
-  approvalArtifactBodyMatchesHeaderV1,
-  buildApprovalRequestArtifactHeaderV1,
-  StoredApprovalRequestSchema,
-  normalizeActionsSettingsV1,
-  buildBackendTargetKeyV2,
-  createActionExecutor,
-  createPromptDocInLibrary,
-  setPromptDocFavorite,
-  listPromptLibrary,
-  readPromptDocInLibrary,
-  updatePromptDocInLibrary,
-  listPromptInvocationsInLibrary,
-  resolvePromptInvocationInLibrary,
-  getActionSpec,
-  createLaunchProfilePublisherV1,
-  createWorkBoardArtifactPortV1,
-  createArtifactAccessActionsV1,
-  createAccountRoleActionExecutorV1,
-  isRoleActionIdV1,
-  RoleActionInputSchemasV1,
-  RoleActionOutputSchemasV1,
-  PluginRoleDeclarationV1Schema,
-  resolveInvocationAuthority,
-  getSharedBlockingApprovalCoordinator,
-  isActionEnabledByActionsSettings,
-  isApprovalRequiredByActionsSettings,
-  PluginWebhookActionHttpPathsV1,
-  type PluginWebhookPresentUserActionIdV1,
-  projectPluginFailureText,
-  requiresExactDaemonApprovalReplay,
-  SessionModelTransitionRequestV1Schema,
-  SessionModelTransitionResultV1Schema,
-  type ActionExecutorContext,
-  type ActionExecutorDeps,
-  type ActionExecuteResult,
-  type ActionId,
-  type AutomationV3Settings,
-  type ArtifactPublicLinkIssuedV1,
-  type ApprovalRequest,
-  type SessionModelTransitionRequestV1,
-  type SessionModelTransitionResultV1,
-  type SessionInputAdmissionResultV1,
-  MemorySearchResultV1Schema,
-  supportsMachineOperationProtocolCapabilityV1,
-  supportsMachineSessionSpawnProtocolVersionV1,
-  readServerEnabledBit,
-  projectSessionFollowSourceKeyPreparationAfterSetV1,
-  type SessionFollowActionOutputV1,
-  type SessionFollowSourceKeyPreparationResultV1,
-} from '@happier-dev/protocol';
+import { buildSessionPermissionRespondRpcParamsV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
+import { buildMachineAgentsDetectRequest, projectMachineAgentsDetectResponse, MachineAgentInventoryUnavailableError } from '@happier-dev/protocol/capabilities/machineAgentInventory';
+import { approvalArtifactBodyMatchesHeaderV1, buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { StoredApprovalRequestSchema, requiresExactDaemonApprovalReplay, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { normalizeActionsSettingsV1, isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createPromptDocInLibrary, setPromptDocFavorite, listPromptLibrary, readPromptDocInLibrary, updatePromptDocInLibrary } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
+import { listPromptInvocationsInLibrary, resolvePromptInvocationInLibrary } from '@happier-dev/protocol/prompts/library/promptInvocationActionOperations';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { createLaunchProfilePublisherV1 } from '@happier-dev/protocol/launchProfiles/publishLaunchProfile';
+import { createWorkBoardArtifactPortV1 } from '@happier-dev/protocol/boards/workBoardArtifactV1';
+import { createArtifactAccessActionsV1 } from '@happier-dev/protocol/actions/executor/artifactAccessActions';
+import { createAccountRoleActionExecutorV1 } from '@happier-dev/protocol/prompts/roles/accountRoleActions';
+import { isRoleActionIdV1 } from '@happier-dev/protocol/prompts/roles/roleActionIdsV1';
+import { RoleActionInputSchemasV1, RoleActionOutputSchemasV1 } from '@happier-dev/protocol/prompts/roles/roleActionsV1';
+import { PluginRoleDeclarationV1Schema } from '@happier-dev/protocol/plugins/contributions/roles';
+import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
+import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
+import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { PluginWebhookActionHttpPathsV1, type PluginWebhookPresentUserActionIdV1 } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
+import { projectPluginFailureText } from '@happier-dev/protocol/plugins/failureProjection';
+import { SessionModelTransitionRequestV1Schema, SessionModelTransitionResultV1Schema, type SessionModelTransitionRequestV1, type SessionModelTransitionResultV1 } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
+import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import type { AutomationV3Settings } from '@happier-dev/protocol/automations/automationApiV3';
+import type { ArtifactPublicLinkIssuedV1 } from '@happier-dev/protocol/actions/executor/artifactPublicLinkActions';
+import type { SessionInputAdmissionResultV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { MemorySearchResultV1Schema } from '@happier-dev/protocol/memory/memorySearch';
+import { supportsMachineOperationProtocolCapabilityV1, supportsMachineSessionSpawnProtocolVersionV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
+import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
+import { getActionRequiredServerFeatureId } from '@happier-dev/protocol/actions/actionRequiredServerFeature';
+import { projectSessionFollowSourceKeyPreparationAfterSetV1, type SessionFollowSourceKeyPreparationResultV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceKeyPreparationV1';
+import type { SessionFollowActionOutputV1 } from '@happier-dev/protocol/sessions/follow/actions';
 import { loadDaemonMergedProjectionInputs, loadDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { machineWorkspaceFileSearch } from '@/sync/ops/machineWorkspaceFileSearch';
 import { randomUUID } from '@/platform/randomUUID';
@@ -494,6 +474,7 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
     readWidgetMovementAdmission(ref: WidgetInstanceRefV1, surface: WidgetSurfaceRefV1, context: ActionExecutorContext): ReturnType<typeof readWidgetEntityMovementAdmission>;
   }> {
   const promptLibraryStore = accountContext ? createUiPromptLibraryArtifactStore(accountContext.workflowArtifacts) : uiPromptLibraryArtifactStore;
+  const runtimeActionExecute = createDefaultRuntimeActionExecutor(opts?.runtimeActions);
     type AgentsBackendsListArgs = Readonly<{ includeDisabled?: boolean; limit?: number; machineId?: string }>;
     type AgentsModelsListArgs = Readonly<{ agentId?: string; machineId?: string; serverId?: string; limit?: number; backendTargetKey?: string }>;
 
@@ -727,15 +708,24 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
     ...(accountContext ? { homeHubArtifacts: createHomeHubArtifactPortV1(accountContext.homeHubArtifactTransport, {
       accountId: accountContext.accountId,
       shouldContinue: accountContext.accountLifetime.isCurrent,
-      readWidgets: async signal => {
+      readWidgets: async (signal, layout) => {
         accountContext.assertCurrent();
-        const { readWidgetActionCandidatesV1 } = await import('./widgetCatalogActionDeps');
-        const candidates = await readWidgetActionCandidatesV1({
+        const { readWidgetActionCandidatesV1, canReadActiveWidgetCatalogV1 } = await import('./widgetCatalogActionDeps');
+        const needsInstalledCatalog = canReadActiveWidgetCatalogV1(accountContext)
+          || layout?.instances.some(instance => instance.definition.kind === 'installed') === true;
+        const candidates = needsInstalledCatalog ? await readWidgetActionCandidatesV1({
           serverId: accountContext.serverId, accountId: accountContext.accountId, owner: { kind: 'home' },
-        }, accountContext, signal);
+        }, accountContext, signal) : [];
         accountContext.assertCurrent();
         if ('ok' in candidates) throw Object.assign(new Error(candidates.error), { code: candidates.errorCode });
-        return candidates;
+        const referenced = new Set(layout?.instances.flatMap(instance => instance.definition.kind === 'artifact' ? [instance.definition.artifactId] : []) ?? []);
+        if (referenced.size === 0) return candidates;
+        const definitions = await widgetDefinitionDeps.widgetDefinitionArtifacts?.list(signal) ?? [];
+        accountContext.assertCurrent();
+        const { describeWidgetDefinitionSummaryV1 } = await import('@/components/widgets/widgetCatalog');
+        return [...candidates, ...definitions.filter(summary => referenced.has(summary.artifactId)).map(summary => describeWidgetDefinitionSummaryV1(summary,
+          summary.sourceDefinition ? candidates.find(candidate => isSameWidgetDefinitionV1(
+            widgetCandidateDefinitionV1(candidate), summary.sourceDefinition!)) : null))];
       },
     }), homeHubLayoutAction: async (params: Parameters<NonNullable<ActionExecutorDeps['homeHubLayoutAction']>>[0]) => {
       // Home renderers/projection are needed only by this client-local family,
@@ -833,7 +823,21 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
     },
     ...createUiExecutionRunActionDeps(),
     resolveSessionSpawnAgentInventorySelection: resolveSessionSpawnAgentInventorySelectionForActions,
-    runtimeActionExecute: createDefaultRuntimeActionExecutor(opts?.runtimeActions),
+    runtimeActionExecute: async (args) => {
+      const featureId = getActionRequiredServerFeatureId(args.actionId);
+      if (featureId === 'browser.automation') {
+        const snapshot = await getServerFeaturesSnapshot({ serverId: accountContext?.serverId ?? args.context.serverId });
+        accountContext?.assertCurrent();
+        throwIfAborted(args.context.signal);
+        const settings = accountContext
+          ? (accountContext.readLiveSettings() ?? accountContext.settings)
+          : storage.getState().settings;
+        if (resolveRuntimeFeatureDecisionFromSnapshot({ featureId, settings, snapshot })?.state !== 'enabled') {
+          return { ok: false, errorCode: 'runtime_action_disabled', error: 'runtime_action_disabled:browser:browser_automation_unavailable' };
+        }
+      }
+      return await runtimeActionExecute(args);
+    },
     uiCommandPaletteAction: executeCommandPaletteAction,
     voiceConversationAction: async ({ actionId, input, context }) => {
       throwIfAborted(context.signal);

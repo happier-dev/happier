@@ -6,7 +6,8 @@ import {
 } from '../sessions/board/actions.js';
 import { SessionSurfaceItemV1Schema, isSessionSurfaceItemIdentityCorrespondingV1, type SessionSurfaceItemV1 } from '../sessions/board/item.js';
 import { SessionBoardItemWidthSchema } from '../sessions/board/layout.js';
-import { SESSION_BOARD_DEFAULT_ITEM_WIDTH_V1, type SessionBoardLayoutOperationV1 } from '../sessions/board/layoutOperations.js';
+import { type SessionBoardLayoutOperationV1 } from '../sessions/board/layoutOperations.js';
+import { getWidgetSizeFootprintV1, normalizeWidgetSizeForSurfaceV1, resolveSessionBoardWidgetSizeV1, WidgetSizeV1Schema } from './widgetPresentationV1.js';
 import type { WidgetActionSurfacePortV1, WidgetMoveCaptureV1 } from './actionsV1.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import type { WidgetInputBindingsV1, WidgetSurfaceRefV1 } from './widgetInstanceV1.js';
@@ -85,8 +86,9 @@ export function createSessionBoardWidgetActionPortV1(
     if (!board.layout || placements.length === 0) return fail('widget_placement_required');
     if (placements.length !== 1) return fail('widget_placement_ambiguous');
     const placed = placements[0]!;
+    const size = resolveSessionBoardWidgetSizeV1(placed.placement.width, entry.item.height);
     return { expectedInstance: entry.item.source.instance,
-      expectedPresentation: { width: placed.placement.width, frameStyle: placed.placement.frameStyle ?? null, nativeIndex: placed.nativeIndex, tabId: placed.tabId },
+      expectedPresentation: { ...(size ? { size } : {}), frameStyle: placed.placement.frameStyle ?? null, nativeIndex: placed.nativeIndex, tabId: placed.tabId },
       boardRevisions: { itemRevision: entry.revision, layoutRevision: board.layout.revision } };
   };
 
@@ -103,7 +105,8 @@ export function createSessionBoardWidgetActionPortV1(
         if (source?.kind !== 'widget') return [];
         const placements = board.layout?.document.tabs.flatMap(tab => tab.items).filter(item => item.itemId === entry.itemId) ?? [];
         const placement = placements.length === 1 ? placements[0] : undefined;
-        return [{ instance: source.instance, ...(placement ? { width: placement.width, ...(placement.frameStyle ? { frameStyle: placement.frameStyle } : {}) } : {}) }];
+        const size = placement && entry.item ? resolveSessionBoardWidgetSizeV1(placement.width, entry.item.height) : undefined;
+        return [{ instance: source.instance, ...(size ? { size } : {}), ...(placement?.frameStyle ? { frameStyle: placement.frameStyle } : {}) }];
       }) };
     },
     async apply(surface, intent, context, signal) {
@@ -131,21 +134,24 @@ export function createSessionBoardWidgetActionPortV1(
       };
       if (intent.kind === 'add') {
         if (intent.toIndex !== undefined) return fail('widget_index_placement_unsupported');
+        const size = normalizeWidgetSizeForSurfaceV1('sessionBoard', intent.presentation?.size)!;
+        const footprint = getWidgetSizeFootprintV1('sessionBoard', size)!;
+        const nativeWidth = SessionBoardItemWidthSchema.parse(footprint.width);
         let placement = intent.placement;
         if (intent.position) {
           if (!intent.position.tabId) return fail('widget_placement_required');
           const tab = board.layout?.document.tabs.find(tab => tab.id === intent.position!.tabId);
           if (!tab) return fail('widget_view_not_found');
           const before = tab.items[intent.position.index]; const last = tab.items.at(-1);
-          const width = SessionBoardItemWidthSchema.safeParse(intent.presentation?.width);
-          placement = { tabId: tab.id, width: width.success ? width.data : SESSION_BOARD_DEFAULT_ITEM_WIDTH_V1,
+          placement = { tabId: tab.id, width: nativeWidth,
             ...(intent.presentation?.frameStyle ? { frameStyle: intent.presentation.frameStyle } : {}),
             ...(before || last ? { anchor: { side: before ? 'before' : 'after', itemId: (before ?? last)!.itemId } } : {}) };
         }
         if (!placement) return fail('widget_placement_required');
+        if (intent.presentation?.size) placement = { ...placement, width: nativeWidth };
         const item = SessionSurfaceItemV1Schema.safeParse({
           v: 1, title: intent.instance.displayName ?? (intent.instance.definition.kind === 'builtin' ? intent.instance.definition.id : intent.instance.definition.kind === 'installed' ? intent.instance.definition.surface.localId : intent.instance.definition.kind === 'inline' ? intent.instance.definition.definition.name : intent.instance.definition.artifactId),
-          frame: 'card', height: { mode: 'auto', fallback: 'regular' }, source: { kind: 'widget', instance: intent.instance },
+          frame: 'card', height: intent.presentation?.size ? { mode: 'fixed', size: footprint.height } : { mode: 'auto', fallback: 'regular' }, source: { kind: 'widget', instance: intent.instance },
         });
         if (!item.success) return fail('invalid_widget_shared_content');
         return await call('session.board.item.upsert', { sessionId, itemId: instanceId, expectedItemRevision: null, item: item.data, placement }, intent.instance);
@@ -176,10 +182,15 @@ export function createSessionBoardWidgetActionPortV1(
       if (placements.length !== 1) return fail('widget_placement_ambiguous');
       const tab = placements[0]!;
       let operation: SessionBoardLayoutOperationV1;
-      if (intent.kind === 'width') {
-        const width = SessionBoardItemWidthSchema.safeParse(intent.width);
-        if (!width.success) return fail('widget_width_unsupported');
-        operation = { op: 'item.resize', itemId: existing!.itemId, tabId: tab.id, width: width.data };
+      if (intent.kind === 'size') {
+        const size = WidgetSizeV1Schema.safeParse(intent.size);
+        if (!size.success) return fail('widget_size_unsupported');
+        const footprint = getWidgetSizeFootprintV1('sessionBoard', size.data)!;
+        const width = SessionBoardItemWidthSchema.parse(footprint.width);
+        // Item upsert already commits content and placement in one sealed mutation.
+        return await call('session.board.item.upsert', { sessionId, itemId: existing!.itemId, expectedItemRevision: existing!.revision,
+          expectedLayoutRevision: board.layout.revision,
+          item: { ...item, height: { mode: 'fixed', size: footprint.height } }, placement: { tabId: tab.id, width } }, instance);
       }
       else if (intent.kind === 'frame') operation = { op: 'item.frameStyle', itemId: existing!.itemId, tabId: tab.id, frameStyle: intent.frameStyle };
       else {

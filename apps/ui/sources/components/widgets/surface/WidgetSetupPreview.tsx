@@ -39,6 +39,7 @@ export function WidgetSetupPreview(props: Readonly<{
             instance={instance}
             appRuntime={appRuntime}
             presentation="content"
+            size={draft.size}
             recordRevision={`setup-preview:${stableJsonStringify(draft.bindings)}`}
             testID={props.testID}
         />

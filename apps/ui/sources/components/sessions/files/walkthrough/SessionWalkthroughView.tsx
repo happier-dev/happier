@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StrictJsonValueSchema, isScmCommitPlanApplicationLocked } from '@happier-dev/protocol';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { isScmCommitPlanApplicationLocked } from '@happier-dev/protocol/scm/diffSummaryCommitPlan';
 import { useRouter } from 'expo-router';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';

@@ -1,4 +1,4 @@
-import { resolveVoiceSourceDisclosureV1 } from '@happier-dev/protocol';
+import { resolveVoiceSourceDisclosureV1 } from '@happier-dev/protocol/voice/sourceDisclosureV1';
 
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import type { ResolvedVoiceContextFormatterPrefs } from '@/voice/context/contextFormatters';

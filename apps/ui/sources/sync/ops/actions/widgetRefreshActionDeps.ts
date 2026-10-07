@@ -1,4 +1,9 @@
-import { VoiceTrackedSessionAddressV1Schema, isPluginDeclarativeDataNodeV1, sameStrictJsonValue, type PluginDeclarativeNodeV2, type ActionExecutorDeps, type ActionExecuteFailure } from '@happier-dev/protocol';
+import { VoiceTrackedSessionAddressV1Schema } from '@happier-dev/protocol/sessions/follow/voiceTrackedTargetsCompatibilityV1';
+import { isPluginDeclarativeDataNodeV1 } from '@happier-dev/protocol/plugins/contributions/ui/declarativeDataV1';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { PluginDeclarativeNodeV2 } from '@happier-dev/protocol/plugins/contributions/ui/v2';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isSameWidgetDefinitionV1, widgetCandidateDefinitionV1 } from '@happier-dev/protocol/widgets';
 import { readInputPath } from '@happier-dev/protocol/inputs';
 import type { PluginUiResourceEntry } from '@happier-dev/plugin-ui/advanced';

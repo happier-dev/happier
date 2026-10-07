@@ -1,4 +1,4 @@
-import { type ReactElement, type ReactNode } from 'react';
+import { useMemo, type ReactElement, type ReactNode } from 'react';
 import { View } from 'react-native';
 
 import { useOptionalPluginUiPresentationHost } from '../presentationHost/context.js';
@@ -21,7 +21,13 @@ import {
   type HappierStateSize,
 } from '../presentation/state/InfoState.js';
 import { useHappierPageChrome } from '../presentation/layout/pageChrome.js';
-import { useOptionalHappierUiPalette } from '../environment/context.js';
+import { useHappierUiAnimationActivityInternal, useOptionalHappierUiPalette } from '../environment/context.js';
+import {
+  HAPPIER_SCENE_ART_METRICS,
+  resolveHappierScene,
+  resolveHappierSceneArtSize,
+  type HappierSceneInput,
+} from '../presentation/state/scenes.js';
 import { HappierPressable } from '../presentation/interaction/Pressable.js';
 import { HappierText } from '../presentation/text/Text.js';
 import { PluginUiIconGlyph, type IconName } from './Icon.js';
@@ -104,6 +110,12 @@ export type EmptyStateProps = StateCopyProps & Readonly<{
   layout?: 'centered' | 'page' | 'line';
   /** The state's glyph (`page` and `centered`), drawn alone — never in a tile or ring. */
   icon?: IconName;
+  /**
+   * The Daybreak scene drawn in place of the glyph on a `page` or `centered` state: a built-in scene
+   * id (`'noSearchResults'`) or the plugin's own `defineHappierScene(...)`, defined once at module
+   * scope. A `line` state stays text only; a host without a scene renderer keeps `icon`.
+   */
+  scene?: HappierSceneInput;
   /**
    * `add` frames the state with a dashed outline: an invitation to add the
    * first item to a collection. Use it only for adding.
@@ -199,6 +211,7 @@ export function EmptyState(props: EmptyStateProps): ReactElement {
   const palette = useOptionalHappierUiPalette(theme);
   const chrome = useHappierPageChrome();
   const stateSize = useStateSize(props.size);
+  const scene = useStateScene(props.scene, props.layout ?? 'centered', stateSize, props.testID);
   const unavailableReason = resolveAuthorText(
     translate,
     props.actionUnavailableReason,
@@ -238,11 +251,11 @@ export function EmptyState(props: EmptyStateProps): ReactElement {
   const state = (
     <HappierInfoState testID={add || page ? undefined : props.testID} action={action} size={size}>
       <HappierInfoTile
-        icon={props.icon ? (
+        icon={scene ?? (props.icon ? (
           <View style={size ? { marginBottom: HAPPIER_STATE_SIZE_METRICS[size].glyphGapPx } : undefined}>
             <PluginUiIconGlyph name={props.icon} size={size ? HAPPIER_STATE_SIZE_METRICS[size].glyphPx : 24} tone="secondary" />
           </View>
-        ) : undefined}
+        ) : undefined)}
         title={title}
         description={description}
         paddingVertical={page ? HAPPIER_EMPTY_STATE_FRAME.pageTilePaddingVertical : undefined}
@@ -279,6 +292,28 @@ export function EmptyState(props: EmptyStateProps): ReactElement {
   return addFrame
     ? <View testID={props.testID} style={[HAPPIER_EMPTY_STATE_FRAME.centeredAdd, addFrame]}>{framedState}</View>
     : framedState;
+}
+
+/**
+ * The scene a state draws in its glyph's place, through the host's scene renderer — or `null` when
+ * the state is too small for one, or the host has no renderer (the glyph stays).
+ */
+function useStateScene(
+  input: HappierSceneInput | undefined,
+  layout: 'centered' | 'page' | 'line',
+  stateSize: HappierStateSize | undefined,
+  testID: string | undefined,
+): ReactNode {
+  const host = useOptionalPluginUiPresentationHost();
+  const presented = useHappierUiAnimationActivityInternal();
+  const artSize = input ? resolveHappierSceneArtSize({ size: stateSize, layout }) : null;
+  const scene = useMemo(() => (input && artSize && host?.renderScene ? resolveHappierScene(input, artSize) : null), [artSize, host, input]);
+  if (!scene || !artSize || !host?.renderScene) return null;
+  return (
+    <View style={{ marginBottom: HAPPIER_SCENE_ART_METRICS[artSize].gapPx }}>
+      {host.renderScene({ scene, size: artSize, still: !presented, testID: testID ? `${testID}-scene` : undefined })}
+    </View>
+  );
 }
 
 /**

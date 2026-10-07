@@ -1,4 +1,5 @@
-import { isLoopbackHostname, type PluginHostedWebSecurityPolicyV1 } from '@happier-dev/protocol';
+import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
+import type { PluginHostedWebSecurityPolicyV1 } from '@happier-dev/protocol/plugins/contributions/ui/hostedWebSecurity';
 
 import type { PluginHostedWebSandboxPolicy } from '@/components/plugins/hostedWeb/sandbox';
 

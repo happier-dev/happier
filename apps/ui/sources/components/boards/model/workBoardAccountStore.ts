@@ -1,6 +1,5 @@
-import { createWorkBoardArtifactPortV1, buildWorkBoardArtifactHeaderV1, readWorkBoardArtifactSummaryV1,
-    DEFAULT_WORK_BOARDS_V1, type WorkBoardArtifactTransportV1, type WorkBoardArtifactSummaryV1,
-    type WorkBoardArtifactRevisionV1, type WorkBoardIntentV1, type WorkBoardV1 } from '@happier-dev/protocol';
+import { createWorkBoardArtifactPortV1, buildWorkBoardArtifactHeaderV1, readWorkBoardArtifactSummaryV1, type WorkBoardArtifactTransportV1, type WorkBoardArtifactSummaryV1, type WorkBoardArtifactRevisionV1 } from '@happier-dev/protocol/boards/workBoardArtifactV1';
+import { DEFAULT_WORK_BOARDS_V1, type WorkBoardIntentV1, type WorkBoardV1 } from '@happier-dev/protocol/boards/workBoardV1';
 import { createWorkBoardSaveQueue, projectDisplayedWorkBoards } from './workBoardSaveQueue';
 
 export type WorkBoardReadState = Readonly<{ status: 'loading' | 'ready' | 'error'; hasSnapshot: boolean; errorCode?: string }>;

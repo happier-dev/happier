@@ -6,17 +6,11 @@ import {
     reconcileAutomationDefinition,
     type AutomationRequestContext,
 } from '@/sync/api/automations/apiAutomations';
-import {
-    AutomationTriggerDefinitionSchema,
-    AutomationTriggerIdSchema,
-    AutomationEncryptedTriggerDefinitionEnvelopeV1Schema,
-    type AutomationDefinitionDetail,
-    type AutomationEventTriggerDefinitionStoredPayloadV1,
-    sealAutomationPluginEventTriggerInputV1,
-    type AutomationEncryptedTriggerDefinitionEnvelopeV1,
-    type AutomationTriggerDefinitionBindingV1,
-    type AutomationTriggerDefinitionInput,
-} from '@happier-dev/protocol';
+import { AutomationTriggerDefinitionSchema, AutomationEncryptedTriggerDefinitionEnvelopeV1Schema, type AutomationEncryptedTriggerDefinitionEnvelopeV1, type AutomationTriggerDefinitionInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
+import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
+import type { AutomationDefinitionDetail } from '@happier-dev/protocol/automations/automationApiV3';
+import type { AutomationEventTriggerDefinitionStoredPayloadV1 } from '@happier-dev/protocol/automations/event';
+import { sealAutomationPluginEventTriggerInputV1, type AutomationTriggerDefinitionBindingV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
 
 import type { AutomationEditorDraft } from './automationEditorDraft';
 import { getAutomationEditorTriggerEnabled, getAutomationEditorTriggerKind } from './automationEditorDraft';

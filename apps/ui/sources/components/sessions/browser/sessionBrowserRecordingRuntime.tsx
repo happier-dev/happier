@@ -5,11 +5,9 @@ import type {
     DaemonBrowserRecordingUnavailableReasonV1,
     BrowserRecordingSessionV1,
 } from '@happier-dev/protocol';
-import {
-    DEFAULT_BROWSER_CAPABILITIES,
-    browserViewKey,
-    simulatorCaptureStreamFamilyV1,
-} from '@happier-dev/protocol';
+import { DEFAULT_BROWSER_CAPABILITIES } from '@happier-dev/protocol/features/payload/capabilities/browserCapabilities';
+import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
+import { simulatorCaptureStreamFamilyV1 } from '@happier-dev/protocol/devices/simulator/v1';
 import * as React from 'react';
 
 import type { BrowserShellRecordingState } from '@/components/browser/BrowserShell';

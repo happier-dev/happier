@@ -191,11 +191,11 @@ describe('FloatingOverlay', () => {
         expect(screen.findByType('ScrollEdgeIndicators')).toBeTruthy();
     });
 
-    it('keeps themed overlay shadow even when optional surface border/highlight colors are transparent', async () => {
+    it('keeps themed overlay shadow even when the floating border and its edge are transparent', async () => {
         shared.themeOverride = {
             colors: {
-                border: { surface: 'transparent' },
-                effect: { surfaceHighlight: 'transparent' },
+                border: { modal: 'transparent' },
+                edge: { modal: 'transparent' },
             },
         };
 
@@ -207,16 +207,15 @@ describe('FloatingOverlay', () => {
         const frameStyle = findOverlayFrameStyle(screen);
         const clipStyle = findOverlayClipStyle(screen);
         expect(clipStyle.borderWidth).toBe(0);
-        expect(clipStyle.borderTopWidth).toBe(0);
         expect(hasShadow(frameStyle)).toBe(true);
         expect(hasShadow(clipStyle)).toBe(false);
     });
 
-    it('adds themed surface border and shadow when surface chrome colors are visible', async () => {
+    it('hands a themed overlay\'s hairline to its floating rim, under a frame shadow', async () => {
         shared.themeOverride = {
             colors: {
-                border: { surface: 'rgba(0,0,0,0.08)' },
-                effect: { surfaceHighlight: 'rgba(255,255,255,0.04)' },
+                border: { modal: 'rgba(0,0,0,0.08)' },
+                edge: { modal: 'rgba(0,0,0,0.117)' },
             },
         };
 
@@ -227,10 +226,12 @@ describe('FloatingOverlay', () => {
 
         const frameStyle = findOverlayFrameStyle(screen);
         const clipStyle = findOverlayClipStyle(screen);
-        expect(clipStyle.borderColor).toBe('rgba(0,0,0,0.08)');
-        expect(clipStyle.borderWidth).toBeGreaterThan(0);
-        expect(clipStyle.borderTopColor).toBe('rgba(0,0,0,0.08)');
-        expect(clipStyle.borderTopWidth).toBeGreaterThan(0);
+        // Floating surfaces stand on the directional rim (SURFACE_EDGE_TREATMENT): the rim draws the
+        // floating hairline, so the clipped surface carries no border or flat edge of its own.
+        expect(clipStyle.borderWidth).toBe(0);
+        expect(clipStyle.borderBottomColor).toBeUndefined();
+        const hairlines = screen.findAll((node) => node.type === 'Rect' && node.props.fill === 'none');
+        expect(hairlines.map((node) => node.props.stroke)).toContain('rgba(0,0,0,0.08)');
         expect(hasShadow(frameStyle)).toBe(true);
         expect(hasShadow(clipStyle)).toBe(false);
     });
@@ -239,8 +240,7 @@ describe('FloatingOverlay', () => {
         shared.platformOS = 'ios';
         shared.themeOverride = {
             colors: {
-                border: { surface: 'rgba(0,0,0,0.08)' },
-                effect: { surfaceHighlight: 'rgba(255,255,255,0.04)' },
+                border: { modal: 'rgba(0,0,0,0.08)' },
             },
         };
 
@@ -263,8 +263,8 @@ describe('FloatingOverlay', () => {
     it('keeps themed surface chrome split between a shadow frame and clipped content surface', async () => {
         shared.themeOverride = {
             colors: {
-                border: { surface: 'rgba(0,0,0,0.08)' },
-                effect: { surfaceHighlight: 'rgba(255,255,255,0.04)' },
+                border: { modal: 'rgba(0,0,0,0.08)' },
+                edge: { modal: 'rgba(0,0,0,0.117)' },
             },
         };
 
@@ -286,8 +286,7 @@ describe('FloatingOverlay', () => {
         expect(flattenStyle(clipRawStyle)).toMatchObject({
             borderRadius: 12,
             overflow: 'hidden',
-            borderColor: 'rgba(0,0,0,0.08)',
-            borderTopColor: 'rgba(0,0,0,0.08)',
+            borderWidth: 0,
             maxHeight: 200,
         });
     });

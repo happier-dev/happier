@@ -1,7 +1,7 @@
 import {
     RETIRED_ACCOUNT_SETTINGS_SESSION_ONLY_KEYS,
     RETIRED_ACCOUNT_SETTINGS_SESSION_ORGANIZATION_KEYS,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/settings/accountSettings';
 
 /**
  * Protocol owns persisted Account-root retirement. UI consumes only the two

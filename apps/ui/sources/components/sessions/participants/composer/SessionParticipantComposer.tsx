@@ -6,7 +6,7 @@ import type {
     ParticipantRecipientV1,
     PendingRequestedActionV1,
 } from '@happier-dev/protocol';
-import { DEFAULT_PENDING_REQUESTED_ACTION_V1 } from '@happier-dev/protocol';
+import { DEFAULT_PENDING_REQUESTED_ACTION_V1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import { composerRefsV1Equal } from '@happier-dev/protocol/plugins/ui/composerRef';
 import * as React from 'react';
 

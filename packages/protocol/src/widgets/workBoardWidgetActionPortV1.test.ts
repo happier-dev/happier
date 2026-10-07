@@ -27,7 +27,7 @@ describe('WorkBoard widget domain adapter', () => {
     const boards = createWorkBoardArtifactPortV1(boundary.transport);
     const port = createWorkBoardWidgetActionPortV1(boards);
     const added = await port.apply(surface, { kind: 'add', instance, position: { index: 0 }, captureForMove: true }, context);
-    expect(added).toMatchObject({ ok: true, result: { ref: { surface, instanceId: 'copy' }, moveCapture: { expectedPresentation: { nativeIndex: 0, width: 'half', frameStyle: null } } } });
+    expect(added).toMatchObject({ ok: true, result: { ref: { surface, instanceId: 'copy' }, moveCapture: { expectedPresentation: { nativeIndex: 0, size: 'medium', frameStyle: null } } } });
     expect((await boards.readBoard('b1'))?.itemOrder?.[1]).toBe(buildWorkBoardItemKeyV1(work));
     const captured = await port.captureMove!(surface, instance.id, context);
     if ('ok' in captured) throw new Error(captured.errorCode);
@@ -35,7 +35,8 @@ describe('WorkBoard widget domain adapter', () => {
     expect(await port.apply(surface, { kind: 'remove', instanceId: instance.id, ...captured }, context)).toMatchObject({ ok: false, errorCode: 'widget_instance_changed' });
     const updated = await port.captureMove!(surface, instance.id, context);
     if ('ok' in updated) throw new Error(updated.errorCode);
-    await port.apply(surface, { kind: 'width', instanceId: instance.id, width: 'full' }, context);
+    await port.apply(surface, { kind: 'size', instanceId: instance.id, size: 'tall' }, context);
+    expect(await port.read(surface, context)).toMatchObject({ instances: [{ size: 'tall' }] });
     expect(await port.apply(surface, { kind: 'remove', instanceId: instance.id, ...updated }, context)).toMatchObject({ ok: false, errorCode: 'widget_placement_changed' });
     expect(await port.apply(surface, { kind: 'move', instanceId: instance.id, nativeIndex: 1 }, context)).toMatchObject({ ok: true });
     expect((await boards.readBoard('b1'))?.itemOrder?.[0]).toBe(buildWorkBoardItemKeyV1(work));

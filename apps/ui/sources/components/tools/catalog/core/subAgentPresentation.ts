@@ -1,7 +1,7 @@
 import {
     readBackendTargetRefV2,
     type BackendTargetRefV2Input,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';

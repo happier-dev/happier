@@ -1,9 +1,7 @@
-import {
-    readExecutionRunStartRunCreation,
-    resolveExecutionRunImplicitRoleIdV1,
-    resolveExecutionRunNotifyParentDefaultV1,
-    type SessionDiscussionSelectionSourceV1,
-} from '@happier-dev/protocol';
+import { readExecutionRunStartRunCreation } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { resolveExecutionRunImplicitRoleIdV1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
+import { resolveExecutionRunNotifyParentDefaultV1 } from '@happier-dev/protocol/execution/runs/executionRunNotifyParentDefaultV1';
+import type { SessionDiscussionSelectionSourceV1 } from '@happier-dev/protocol/sessions/discussions/content';
 import * as React from 'react';
 import { useHomeAiLaunchProfiles } from '@/sync/store/useAiLaunchProfiles';
 import { Platform, Pressable, View } from 'react-native';

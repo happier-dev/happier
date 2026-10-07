@@ -1,15 +1,6 @@
-import {
-    AuthoringMemoryValueV1Schema,
-    AuthoringMemoryEngineSelectionsV1Schema,
-    StoredAuthoringMemoryEngineSelectionsV1Schema,
-    LegacyRecentMachinePathsSchema,
-    LegacyLastUsedProfileSchema,
-    LegacyRememberedEngineSelectionsByScopeV1Schema,
-    importAuthoringMemoryRowAbsent,
-    importLegacyAuthoringMemorySetting,
-    type AuthoringMemoryContentV1,
-    type AuthoringMemoryValueV1,
-} from '@happier-dev/protocol';
+import { AuthoringMemoryValueV1Schema, AuthoringMemoryEngineSelectionsV1Schema, StoredAuthoringMemoryEngineSelectionsV1Schema, type AuthoringMemoryContentV1, type AuthoringMemoryValueV1 } from '@happier-dev/protocol/account/authoringMemory';
+import { LegacyRecentMachinePathsSchema, LegacyLastUsedProfileSchema, LegacyRememberedEngineSelectionsByScopeV1Schema } from '@happier-dev/protocol/account/settings/legacyAuthoringMemorySettingsV1';
+import { importAuthoringMemoryRowAbsent, importLegacyAuthoringMemorySetting } from '@happier-dev/protocol/account/authoringMemoryImport';
 import type { AuthoringMemoryCipher } from '@/sync/encryption/authoringMemoryEncryption';
 import {
     normalizeRememberedEngineSelectionScopeKey,

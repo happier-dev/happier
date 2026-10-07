@@ -1,13 +1,9 @@
 import * as React from 'react';
 
-import {
-    DEFAULT_PENDING_REQUESTED_ACTION_V1,
-    SessionDraftRecipientValueV1Schema,
-    StrictJsonValueSchema,
-    type PendingRequestedActionV1,
-    type ParticipantRecipientV1,
-    type SessionDraftRecipientValueV1,
-} from '@happier-dev/protocol';
+import { DEFAULT_PENDING_REQUESTED_ACTION_V1, type PendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
+import { SessionDraftRecipientValueV1Schema, type SessionDraftRecipientValueV1 } from '@happier-dev/protocol/drafts/sessionDrafts';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import type { ParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
 
 import type { SessionParticipantTarget } from '@/sync/domains/session/participants/participantTargets';
 import {

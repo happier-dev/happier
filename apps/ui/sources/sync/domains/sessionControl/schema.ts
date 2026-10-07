@@ -1,4 +1,5 @@
-import { AgentModelOptionOverrideRuleReadSchema, SessionOwnerModeCatalogV1Schema, SessionOwnerModeCatalogV2Schema } from '@happier-dev/protocol';
+import { AgentModelOptionOverrideRuleReadSchema } from '@happier-dev/protocol/models/descriptor';
+import { SessionOwnerModeCatalogV1Schema, SessionOwnerModeCatalogV2Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { z } from 'zod';
 
 const SessionModesStateSchema = z.union([

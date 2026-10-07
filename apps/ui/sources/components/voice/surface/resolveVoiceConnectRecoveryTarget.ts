@@ -1,8 +1,5 @@
-import {
-    BuiltInLegacyConnectedServiceBindingsV1IngressSchema,
-    readBuiltInLegacyConnectedAccountServiceKeyIngress,
-    type PluginContributionIdentityV1,
-} from '@happier-dev/protocol';
+import { BuiltInLegacyConnectedServiceBindingsV1IngressSchema, readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import type {
     ConnectedServiceRegistryEntry,

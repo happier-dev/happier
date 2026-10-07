@@ -1,8 +1,6 @@
-import {
-    isTerminalLegacyClientFallbackAllowed,
-    terminalInputEventToPtyAction,
-    type TerminalInputEvent as ProtocolTerminalInputEvent,
-} from '@happier-dev/protocol';
+import { isTerminalLegacyClientFallbackAllowed } from '@happier-dev/protocol/terminal/compatibility';
+import { terminalInputEventToPtyAction } from '@happier-dev/protocol/terminal/inputEncoding';
+import type { TerminalInputEvent as ProtocolTerminalInputEvent } from '@happier-dev/protocol/terminal/input';
 import Constants from 'expo-constants';
 import uiPackage from '../../../../../package.json';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';

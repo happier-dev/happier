@@ -1,11 +1,13 @@
-import type {
-    SessionBoardItemWidth,
-    SessionSurfaceItemV1,
+import {
+    SessionBoardItemWidthSchema,
+    type SessionBoardItemWidth,
+    type SessionSurfaceItemV1,
 } from '@happier-dev/protocol/sessions/board';
 
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import type { WidgetFrameStyle } from '@/components/widgets/frame/WidgetFrame';
-import { buildWidgetDefinitionActions, buildWidgetFrameStyleActions } from '@/components/widgets/frame/widgetFrameMenu';
+import { buildWidgetDefinitionActions, buildWidgetFrameStyleActions, buildWidgetSizeActions } from '@/components/widgets/frame/widgetFrameMenu';
+import type { WidgetSizeControl } from '@/components/widgets/frame/WidgetSizeControl';
 import { t } from '@/text';
 
 import type { SessionWidgetDensity } from './SessionWidgetHost';
@@ -47,6 +49,7 @@ export type SessionBoardItemMenuInput = Readonly<{
     moveDestinations?: readonly Readonly<{ id: string; title: string }>[] | undefined;
     onMoveToView?: ((viewId: string) => void) | undefined;
     onResize?: ((width: SessionBoardItemWidth) => void) | undefined;
+    sizeControl?: WidgetSizeControl;
     /** Ephemeral renderer measurement used only to choose an allowed semantic fallback. */
     reportedHeight?: number | null | undefined;
     onSetHeight?: ((height: SessionSurfaceItemV1['height']) => void) | undefined;
@@ -189,8 +192,9 @@ export function buildSessionBoardItemActions(input: SessionBoardItemMenuInput): 
             });
         }
     }
-    if (input.onResize) {
-        for (const width of ['compact', 'medium', 'wide', 'full'] as const) {
+    actions.push(...buildWidgetSizeActions(input.sizeControl));
+    if (!input.sizeControl && input.onResize && item.source.kind !== 'widget') {
+        for (const width of SessionBoardItemWidthSchema.options) {
             actions.push({
                 id: `resize-${width}`,
                 title: t(`sessionBoard.width.${width}`),
@@ -205,8 +209,8 @@ export function buildSessionBoardItemActions(input: SessionBoardItemMenuInput): 
     }
     if (input.onSetHeight) {
         const height = item.height;
-        // Height is one choice with four values: Auto plus the three semantic
-        // sizes. The current value is CHECKED for the same reason.
+        // Auto remains the native measurement mode. Widgets choose fixed variants
+        // through the shared size picker; other Board sources retain their height choices.
         actions.push({
             id: 'height-auto',
             title: t('sessionBoard.height.auto'),
@@ -215,15 +219,17 @@ export function buildSessionBoardItemActions(input: SessionBoardItemMenuInput): 
             selected: height.mode === 'auto',
             onPress: () => input.onSetHeight?.(resolveFitContentHeight(input.reportedHeight)),
         });
-        for (const size of ['compact', 'regular', 'tall'] as const) {
-            actions.push({
-                id: `height-${size}`,
-                title: t(`sessionBoard.height.${size}`),
-                icon: 'arrows-down-up',
-                group: geometryGroup,
-                selected: height.mode === 'fixed' && height.size === size,
-                onPress: () => input.onSetHeight?.({ mode: 'fixed', size }),
-            });
+        if (item.source.kind !== 'widget') {
+            for (const size of ['compact', 'regular', 'tall'] as const) {
+                actions.push({
+                    id: `height-${size}`,
+                    title: t(`sessionBoard.height.${size}`),
+                    icon: 'arrows-down-up',
+                    group: geometryGroup,
+                    selected: height.mode === 'fixed' && height.size === size,
+                    onPress: () => input.onSetHeight?.({ mode: 'fixed', size }),
+                });
+            }
         }
     }
     if (input.frame) {

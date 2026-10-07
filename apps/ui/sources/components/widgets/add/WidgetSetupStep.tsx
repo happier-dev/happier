@@ -14,6 +14,7 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { WidgetPreviewWell, WidgetFlowPanel } from '@/components/widgets/flow/WidgetFlowPanel';
 import { WidgetFrame } from '@/components/widgets/frame/WidgetFrame';
+import { WidgetSizeControl } from '@/components/widgets/frame/WidgetSizeControl';
 
 import { WidgetSetupFieldRow, type WidgetSetupFieldChange } from './WidgetSetupFieldRow';
 import {
@@ -169,7 +170,11 @@ export function WidgetSetupStep(props: Readonly<{
     // drawing someone else's data. It is the real card at its own size (lab Ap): its first rows show
     // and the well's room clips the rest.
     const live = resolution.status === 'ready' && setup.renderPreview ? setup.renderPreview({ input: resolution.input, draft }) : null;
+    const sizePicker = setup.sizeChoices && draft.size ? <WidgetSizeControl
+        testID={`${props.testID}.size`} showLabel surface={setup.sizeChoices.surface} sizes={setup.sizeChoices.sizes}
+        size={draft.size} disabled={busy} onSet={size => { setError(null); setDraft(current => ({ ...current, size })); }} /> : null;
     const preview = setup.renderPreview ? (
+        <View style={{ gap: 12 }}>
         <WidgetPreviewWell
             testID={`${props.testID}.preview`}
             caption={live ? t('widgetAdd.previewLive') : t('widgetAdd.preview')}
@@ -191,7 +196,9 @@ export function WidgetSetupStep(props: Readonly<{
                 }}
             />
         </WidgetPreviewWell>
-    ) : null;
+        {sizePicker}
+        </View>
+    ) : sizePicker;
 
     return (
         <WidgetFlowPanel

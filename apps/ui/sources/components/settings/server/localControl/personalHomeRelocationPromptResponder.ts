@@ -1,7 +1,7 @@
 import {
     HomeConnectionDescriptorV1Schema,
     type HomeConnectionDescriptorV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/auth/accountDirectory';
 
 import type { SystemTaskPromptEnvelope } from '@/components/systemTasks/prompts/readLatestSystemTaskPrompt';
 import type { AccountDirectorySession } from '@/sync/domains/accountDirectory/accountDirectorySession';

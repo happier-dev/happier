@@ -1,9 +1,6 @@
-import {
-  AccountEncryptionMigrateAuthoringMemoryDirectiveSchema,
-  type AccountEncryptionMigrateAuthoringMemoryDirective,
-  type AccountScopedCryptoMaterial,
-  type AuthoringMemoryValueV1,
-} from '@happier-dev/protocol';
+import { AccountEncryptionMigrateAuthoringMemoryDirectiveSchema, type AccountEncryptionMigrateAuthoringMemoryDirective } from '@happier-dev/protocol/account/encryptionMigrate';
+import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import type { AuthoringMemoryValueV1 } from '@happier-dev/protocol/account/authoringMemory';
 import { createAuthoringMemoryCipher } from '@/sync/encryption/authoringMemoryEncryption';
 
 export type AccountEncryptionAuthoringMemoryMigrationCandidate = Readonly<{

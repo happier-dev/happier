@@ -1,14 +1,28 @@
+// Tooling aggregate. Product locale roots import only their locale payload.
+import { walkthroughStartTranslations as en } from './features/en';
+import { walkthroughStartTranslations as ca } from './features/ca';
+import { walkthroughStartTranslations as de } from './features/de';
+import { walkthroughStartTranslations as es } from './features/es';
+import { walkthroughStartTranslations as fr } from './features/fr';
+import { walkthroughStartTranslations as it } from './features/it';
+import { walkthroughStartTranslations as ja } from './features/ja';
+import { walkthroughStartTranslations as pl } from './features/pl';
+import { walkthroughStartTranslations as pt } from './features/pt';
+import { walkthroughStartTranslations as ru } from './features/ru';
+import { walkthroughStartTranslations as zh_Hans } from './features/zh-Hans';
+import { walkthroughStartTranslations as zh_Hant } from './features/zh-Hant';
+
 export const walkthroughStartTranslations = {
-    'zh-Hans': { walkthroughStart: { start: '开始导读', ended: '目前无法在此使用该对话。导读仍然保留。', newConversation: '开始新对话', askSession: '询问会话代理', unavailable: '连接所属机器并选择支持结构化输出的模型。', updated: '导读已更新' } },
-    'zh-Hant': { walkthroughStart: { start: '開始導讀', ended: '目前無法在此使用該對話。導讀仍然保留。', newConversation: '開始新對話', askSession: '詢問工作階段代理', unavailable: '連線至所屬機器並選擇支援結構化輸出的模型。', updated: '導讀已更新' } },
-    en: { walkthroughStart: { start: 'Start walkthrough', ended: 'This conversation is not available here. The walkthrough stays.', newConversation: 'Start a new conversation', askSession: 'Ask the Session agent', unavailable: 'Connect the owning machine and choose a model that can return structured output.', updated: 'Walkthrough updated' } },
-    ca: { walkthroughStart: { start: 'Inicia el recorregut', ended: 'Aquesta conversa no està disponible aquí. El recorregut es conserva.', newConversation: 'Inicia una conversa nova', askSession: 'Pregunta a l’agent de la sessió', unavailable: 'Connecta la màquina i tria un model que retorni una resposta estructurada.', updated: 'Recorregut actualitzat' } },
-    de: { walkthroughStart: { start: 'Rundgang starten', ended: 'Dieses Gespräch ist hier nicht verfügbar. Der Rundgang bleibt erhalten.', newConversation: 'Neues Gespräch starten', askSession: 'Den Sitzungsagenten fragen', unavailable: 'Verbinde den zugehörigen Rechner und wähle ein Modell für strukturierte Ausgabe.', updated: 'Rundgang aktualisiert' } },
-    es: { walkthroughStart: { start: 'Iniciar recorrido', ended: 'Esta conversación no está disponible aquí. El recorrido se conserva.', newConversation: 'Iniciar una conversación nueva', askSession: 'Preguntar al agente de la sesión', unavailable: 'Conecta la máquina y elige un modelo que devuelva salida estructurada.', updated: 'Recorrido actualizado' } },
-    fr: { walkthroughStart: { start: 'Démarrer le parcours', ended: 'Cette conversation n’est pas disponible ici. Le parcours reste disponible.', newConversation: 'Démarrer une nouvelle conversation', askSession: 'Interroger l’agent de la session', unavailable: 'Connectez la machine et choisissez un modèle produisant une sortie structurée.', updated: 'Parcours mis à jour' } },
-    it: { walkthroughStart: { start: 'Avvia il percorso', ended: 'Questa conversazione non è disponibile qui. Il percorso rimane.', newConversation: 'Avvia una nuova conversazione', askSession: 'Chiedi all’agente della sessione', unavailable: 'Collega la macchina e scegli un modello con output strutturato.', updated: 'Percorso aggiornato' } },
-    ja: { walkthroughStart: { start: 'ウォークスルーを開始', ended: 'この会話はここでは利用できません。ウォークスルーは残ります。', newConversation: '新しい会話を開始', askSession: 'セッションのエージェントに質問', unavailable: '対象のマシンに接続し、構造化出力に対応したモデルを選んでください。', updated: 'ウォークスルーを更新しました' } },
-    pl: { walkthroughStart: { start: 'Rozpocznij omówienie', ended: 'Ta rozmowa nie jest tutaj dostępna. Omówienie pozostaje dostępne.', newConversation: 'Rozpocznij nową rozmowę', askSession: 'Zapytaj agenta sesji', unavailable: 'Połącz maszynę i wybierz model obsługujący dane strukturalne.', updated: 'Omówienie zaktualizowane' } },
-    pt: { walkthroughStart: { start: 'Iniciar apresentação', ended: 'Esta conversa não está disponível aqui. A apresentação permanece.', newConversation: 'Iniciar uma nova conversa', askSession: 'Perguntar ao agente da sessão', unavailable: 'Conecte a máquina e escolha um modelo com saída estruturada.', updated: 'Apresentação atualizada' } },
-    ru: { walkthroughStart: { start: 'Начать разбор', ended: 'Этот разговор здесь недоступен. Разбор сохранён.', newConversation: 'Начать новый разговор', askSession: 'Спросить агента сессии', unavailable: 'Подключите машину и выберите модель со структурированным выводом.', updated: 'Разбор обновлён' } },
+    ...en.walkthroughStartTranslations,
+    ...ca.walkthroughStartTranslations,
+    ...de.walkthroughStartTranslations,
+    ...es.walkthroughStartTranslations,
+    ...fr.walkthroughStartTranslations,
+    ...it.walkthroughStartTranslations,
+    ...ja.walkthroughStartTranslations,
+    ...pl.walkthroughStartTranslations,
+    ...pt.walkthroughStartTranslations,
+    ...ru.walkthroughStartTranslations,
+    ...zh_Hans.walkthroughStartTranslations,
+    ...zh_Hant.walkthroughStartTranslations,
 };

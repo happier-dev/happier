@@ -1,14 +1,8 @@
-import {
-    BrowserContextItemV1Schema,
-    resolveBrowserContextPrivacyDenial,
-    stripBrowserDiagnosticUrlValues,
-    type BrowserAnnotationStrokeV1,
-    type BrowserAnnotationStyleIntentV1,
-    type BrowserContextItemV1,
-    type BrowserContextKindV1,
-    type BrowserDiagnosticFidelityV1,
-    type BrowserViewTargetV1,
-} from '@happier-dev/protocol';
+import { BrowserContextItemV1Schema, type BrowserAnnotationStrokeV1, type BrowserAnnotationStyleIntentV1, type BrowserContextItemV1, type BrowserContextKindV1 } from '@happier-dev/protocol/browser/context/v1';
+import { resolveBrowserContextPrivacyDenial } from '@happier-dev/protocol/browser/context/privacy';
+import { stripBrowserDiagnosticUrlValues } from '@happier-dev/protocol/browser/diagnostics/egress/url';
+import type { BrowserDiagnosticFidelityV1 } from '@happier-dev/protocol/browser/diagnostics/v1';
+import type { BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
 
 import type {
     BrowserContextCaptureResult,

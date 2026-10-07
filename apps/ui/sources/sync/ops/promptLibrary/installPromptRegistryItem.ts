@@ -1,12 +1,8 @@
-import {
-  installPromptRegistryItemInLibrary,
-  type PromptAssetMutationResponseV1,
-  type PromptAssetInstallModeV1,
-  type PromptAssetScopeV1,
-  type PromptExternalLinksV1,
-  type PromptRegistryConfiguredSourceV1,
-  type PromptRegistryFetchedItemV1,
-} from '@happier-dev/protocol';
+import { installPromptRegistryItemInLibrary } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
+import type { PromptAssetMutationResponseV1 } from '@happier-dev/protocol/prompts/library/promptAssetsV1';
+import type { PromptAssetInstallModeV1, PromptAssetScopeV1 } from '@happier-dev/protocol/prompts/library/promptAssetDescriptorsV1';
+import type { PromptExternalLinksV1 } from '@happier-dev/protocol/prompts/library/promptExternalLinksV1';
+import type { PromptRegistryConfiguredSourceV1, PromptRegistryFetchedItemV1 } from '@happier-dev/protocol/prompts/library/promptRegistriesV1';
 
 import { randomUUID } from '@/platform/randomUUID';
 import { machinePromptRegistriesDownloadItem, machinePromptRegistriesInstall } from '@/sync/ops/machinePromptRegistries';

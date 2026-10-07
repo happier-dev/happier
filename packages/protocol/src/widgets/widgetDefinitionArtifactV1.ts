@@ -16,7 +16,7 @@ export type WidgetDefinitionArtifactTransportV1 = Pick<WorkBoardArtifactTranspor
     }>>;
 }>;
 export const WidgetDefinitionSummaryV1Schema = WidgetDefinitionDraftV1Schema.pick({ name: true, description: true, inputs: true,
-    inputSchema: true, sessionInputPath: true, connectedAccountPurposeBindings: true }).extend({
+    inputSchema: true, sessionInputPath: true, connectedAccountPurposeBindings: true, sizeDeclaration: true }).extend({
     artifactId: z.string().trim().min(1), bodyKind: z.enum(['installed', 'declarative']),
     resources: z.array(asProtocolZod(PluginContributionIdentityV1Schema)),
     sourceDefinition: WidgetDefinitionBodyV1Schema.options[1].optional(),
@@ -37,6 +37,7 @@ export class WidgetDefinitionErrorV1 extends Error {
 export function buildWidgetDefinitionArtifactHeaderV1(definition: WidgetDefinitionV1): Readonly<Record<string, unknown>> {
     return { kind: WIDGET_DEFINITION_ARTIFACT_KIND_V1, v: 1, title: definition.name,
         summary: { artifactId: definition.id, name: definition.name, inputs: definition.inputs, inputSchema: definition.inputSchema,
+            sizeDeclaration: definition.sizeDeclaration,
             bodyKind: definition.body.kind, resources: readWidgetDefinitionResourcesV1(definition),
             ...(definition.body.kind === 'installed' ? { sourceDefinition: definition.body } : {}),
             ...(definition.description !== undefined ? { description: definition.description } : {}),

@@ -67,3 +67,4 @@ export * from './Text.js';
 export * from './TargetedSurface.js';
 export { WidgetSurface, type WidgetSurfaceProps } from './WidgetSurface.js';
 export { DragSource, DropTarget, type DragSourceProps, type DropTargetProps } from './EntityDragDrop.js';
+export { WidgetPresentationProvider, useWidgetPresentation, type WidgetPresentation } from './WidgetPresentation.js';

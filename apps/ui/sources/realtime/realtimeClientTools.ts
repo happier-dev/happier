@@ -7,7 +7,7 @@ import type { VoiceCurrentUiToolPort } from '@/voice/tools/currentUiContextToolP
 import {
   listVoiceClientToolNames,
   listVoiceSdkSafeToolActionSpecs,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/actions/actionSpecs';
 
 /**
  * Builds the client-tool map for one composed realtime Voice host.

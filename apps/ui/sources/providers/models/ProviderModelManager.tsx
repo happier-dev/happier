@@ -1,10 +1,7 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
-import {
-    ProviderConnectionIdSchema,
-    serializeModelVisibilityRefV1,
-    type ModelVisibilityRefV1,
-} from '@happier-dev/protocol';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
+import { serializeModelVisibilityRefV1, type ModelVisibilityRefV1 } from '@happier-dev/protocol/providers/model-selection';
 import type {
     DaemonProviderModelProjectionGroupV1,
     DaemonProviderModelProjectionRowV1,

@@ -1,10 +1,8 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import {
-    HandoffWorkspaceActionV1Schema,
-    type HandoffTargetReplacementApprovalV1,
-} from '@happier-dev/protocol';
+import { HandoffWorkspaceActionV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import type { HandoffTargetReplacementApprovalV1 } from '@happier-dev/protocol/sessions/control/handoff/handoffTargetReplacementApprovalV1';
 
 import { Text } from '@/components/ui/text/Text';
 import { SessionContextChips } from '@/components/sessions/context/SessionContextChips';

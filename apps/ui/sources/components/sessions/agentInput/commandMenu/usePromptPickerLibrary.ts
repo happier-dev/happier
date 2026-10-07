@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { listPromptLibrary, readPromptDocInLibrary, setPromptDocFavorite, type PromptInvocationEntryV1, type PromptLibraryListItem } from '@happier-dev/protocol';
+import { listPromptLibrary, readPromptDocInLibrary, setPromptDocFavorite, type PromptLibraryListItem } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
+import type { PromptInvocationEntryV1 } from '@happier-dev/protocol/prompts/library/promptInvocationsV1';
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { createUiPromptLibraryArtifactStore } from '@/sync/ops/promptLibrary/promptLibraryArtifactStore';
 

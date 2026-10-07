@@ -4,7 +4,7 @@ import type { SessionActionDraft } from '@/sync/domains/sessionActions/sessionAc
 import { isToolCallMessageGroupableInTranscript } from '@/components/sessions/transcript/toolCalls/isToolCallMessageGroupableInTranscript';
 import { filterVisibleContextCompactionLifecycleMessageIds } from '@/components/sessions/transcript/events/contextCompactionLifecycleProjection';
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
-import { isSessionToolAnswerDeliveryMeta } from '@happier-dev/protocol';
+import { isSessionToolAnswerDeliveryMeta } from '@happier-dev/protocol/sessions/messages/sessionMessageMeta';
 import type {
     ExternalSessionOperationProgressV1,
     ExternalSessionOperationSharedPresentationV1,

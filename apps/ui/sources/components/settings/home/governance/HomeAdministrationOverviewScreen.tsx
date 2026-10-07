@@ -7,7 +7,7 @@ import type {
     HomeReachabilityV1,
     HomeSettingsProjectionV1,
 } from '@happier-dev/protocol/home/governance';
-import { SERVER_CONFIG } from '@happier-dev/protocol';
+import { SERVER_CONFIG } from '@happier-dev/protocol/serverConfig/registry';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Avatar } from '@/components/ui/avatar/Avatar';

@@ -6,7 +6,7 @@ import {
     type SystemTaskEvent,
     type SystemTaskJsonValue,
     type SystemTaskResult,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/system/tasks/spec';
 
 export type NativeSystemTaskEventInput = Readonly<{
     type: string;

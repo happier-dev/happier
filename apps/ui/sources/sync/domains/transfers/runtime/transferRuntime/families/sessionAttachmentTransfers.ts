@@ -1,6 +1,7 @@
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SessionTransferRoutingV1Schema, type SessionTransferRoutingV1 } from '@happier-dev/protocol/socketRpc';
-import { SessionAttachmentHandleV1Schema, type SessionAttachmentHandleV1, type SessionAttachmentUploadInitRequestV1 } from '@happier-dev/protocol';
+import { SessionAttachmentHandleV1Schema, type SessionAttachmentHandleV1 } from '@happier-dev/protocol/transfers/sessions/sessionAttachmentHandleV1';
+import type { SessionAttachmentUploadInitRequestV1 } from '@happier-dev/protocol/transfers/sessions/sessionAttachmentUploadInitRequestV1';
 import type { SessionMachineTargetIdentity } from '@/sync/ops/sessionMachineTarget';
 import { SESSION_MACHINE_TARGET_UNAVAILABLE_ERROR } from '@/sync/runtime/sessionMachineRpcErrorCodes';
 

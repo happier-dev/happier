@@ -1,13 +1,6 @@
-import {
-    AIBackendProfileSchema,
-    isLaunchProfileV2,
-    readAiLaunchProfileCollection,
-    type AIBackendProfile,
-    type AiLaunchProfile,
-    type AiLaunchProfileSourceV1,
-    type AiLaunchProfileCollectionReadResult,
-    type ArtifactSharingResourceV1,
-} from '@happier-dev/protocol';
+import { AIBackendProfileSchema, type AIBackendProfile } from '@happier-dev/protocol/profiles/backendProfileSchema';
+import { isLaunchProfileV2, readAiLaunchProfileCollection, type AiLaunchProfile, type AiLaunchProfileSourceV1, type AiLaunchProfileCollectionReadResult } from '@happier-dev/protocol/profiles/read';
+import type { ArtifactSharingResourceV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 
 export function projectAiLaunchProfileForLegacyUi(profile: AiLaunchProfile): AIBackendProfile & AiLaunchProfileSourceV1 {

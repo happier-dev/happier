@@ -25,9 +25,6 @@ export async function probeOpenCodePreflightCatalogs(context: AgentPreflightSess
     cwd: context.cwd, signal: context.signal, systemToolId: toolId, requireKnownGeneration: true,
     readVersion: () => context.runDeclaredSystemToolCommand({ toolId, args: ['--version'] }),
   });
-  if (resolution.dialect === 'v2') {
-    throw new Error('OpenCode V2 catalog readiness is unavailable: the native API has no read-only plugin activation barrier');
-  }
   const spec = buildOpenCodeManagedServerSpawnSpec({
     id: 'opencode-preflight-catalogs', systemToolId: toolId,
     dialect: resolution.dialect, healthPath: resolution.healthPath,

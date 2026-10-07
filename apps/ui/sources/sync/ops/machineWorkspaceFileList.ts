@@ -3,7 +3,7 @@ import {
     DaemonWorkspaceFileListResponseSchema,
     type DaemonWorkspaceFileListRequest,
     type DaemonWorkspaceFileListResponse,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/workspaceFiles';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';

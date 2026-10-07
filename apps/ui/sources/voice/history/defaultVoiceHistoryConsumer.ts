@@ -1,4 +1,4 @@
-import { SessionLookupByTagsResponseV2Schema } from '@happier-dev/protocol';
+import { SessionLookupByTagsResponseV2Schema } from '@happier-dev/protocol/sessions/control/contract';
 
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import type { Message } from "@happier-dev/session-core/messages";

@@ -1,4 +1,5 @@
-import { PUSH_NOTIFICATION_ACTION_IDS, WorkflowRunUpdateNotificationV1Schema } from '@happier-dev/protocol';
+import { PUSH_NOTIFICATION_ACTION_IDS } from '@happier-dev/protocol/push/pushNotificationActions';
+import { WorkflowRunUpdateNotificationV1Schema } from '@happier-dev/protocol/activity/webhookPayload';
 
 import { normalizeServerUrl } from '@/sync/domains/server/activeServerSwitch';
 import { coerceRelativeRoute } from '@/utils/path/routeUtils';

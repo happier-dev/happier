@@ -7,7 +7,7 @@ import {
     readMetadataAliasValue,
     SESSION_MODE_OVERRIDE_KEY,
 } from '@happier-dev/agents';
-import { resolveRequestedSessionModeId } from '@happier-dev/protocol';
+import { resolveRequestedSessionModeId } from '@happier-dev/protocol/actions/sessionModeIds';
 import { tLoose } from '@/text';
 
 import { parseSessionModeOverrideState } from './schema';

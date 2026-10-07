@@ -1,4 +1,5 @@
-import { buildWorkflowRunSystemRecordLocalId, type SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
+import { buildWorkflowRunSystemRecordLocalId } from '@happier-dev/protocol/sessions/system/records/activity/activitySystemRecordKinds';
+import type { SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowRunSnapshotV1';
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { openWorkflowRunSystemRecord } from '@/sync/domains/sessionActivity/sessionWorkflowActivityRecords';

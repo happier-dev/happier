@@ -1,19 +1,11 @@
-import {
-    PluginContributionIdentityV1Schema,
-    RETIRED_ACCOUNT_SETTINGS_SESSION_ORGANIZATION_KEYS,
-    readProviderSettingsFromAccountSettingsV1,
-    SavedSecretSchema,
-    SecretStringV1Schema,
-    VoiceCredentialBindingV1Schema,
-    VoiceSpeechDiagnosticsSettingsV1Schema,
-    resolvePredecessorVoiceProviderContributionIdentityV1,
-    type AccountSettings,
-    type AccountSettingsDefaults,
-    type SecretStringV1,
-    type VoiceCredentialBindingV1,
-    type VoiceProviderSettingsEnvelopeV1,
-    type VoiceSpeechDiagnosticsSettingsV1,
-} from '@happier-dev/protocol';
+import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
+import { RETIRED_ACCOUNT_SETTINGS_SESSION_ORGANIZATION_KEYS, type AccountSettings, type AccountSettingsDefaults } from '@happier-dev/protocol/account/settings/accountSettings';
+import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
+import { SavedSecretSchema } from '@happier-dev/protocol/profiles/backendProfileSchema';
+import { SecretStringV1Schema, type SecretStringV1 } from '@happier-dev/protocol/crypto/settingsSecretStringSchemasV1';
+import { VoiceCredentialBindingV1Schema, type VoiceCredentialBindingV1, type VoiceProviderSettingsEnvelopeV1 } from '@happier-dev/protocol/voice/realtime/providerSettings';
+import { VoiceSpeechDiagnosticsSettingsV1Schema, type VoiceSpeechDiagnosticsSettingsV1 } from '@happier-dev/protocol/voice/diagnostics';
+import { resolvePredecessorVoiceProviderContributionIdentityV1 } from '@happier-dev/protocol/voice/providerContributionIdentity';
 import { z } from 'zod';
 
 import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';

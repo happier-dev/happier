@@ -1,4 +1,4 @@
-import { browserViewKey } from '@happier-dev/protocol';
+import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
 
 import type { BrowserRecordingAttachAdapter } from './runtimeAttachExecutor';
 

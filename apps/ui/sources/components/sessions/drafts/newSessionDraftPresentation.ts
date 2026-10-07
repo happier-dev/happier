@@ -1,8 +1,6 @@
-import {
-    AgentExecutionTargetV1Schema,
-    SessionAuthoringExecutionTargetV2Schema,
-    buildQualifiedPluginContributionKey,
-} from '@happier-dev/protocol';
+import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
+import { SessionAuthoringExecutionTargetV2Schema } from '@happier-dev/protocol/sessions/authoring/fieldCatalog';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import type { NewSessionDraftProjection } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import {

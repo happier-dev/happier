@@ -1,14 +1,5 @@
-import {
-    ArtifactBodyEnvelopeV1Schema,
-    ArtifactBodyEnvelopeV1StoredSchema,
-    ArtifactPrivateRevisionMetadataV1Schema,
-    ArtifactPrivateRevisionMetadataV1StoredSchema,
-    type ArtifactRevisionProvenanceV1,
-    ARTIFACT_PLAIN_DATA_KEY_MARKER,
-    decodePlainArtifactStoredContent,
-    encodePlainArtifactStoredContent,
-    isPlainArtifactDataKeyMarker,
-} from '@happier-dev/protocol';
+import { ArtifactBodyEnvelopeV1Schema, ArtifactBodyEnvelopeV1StoredSchema, ArtifactPrivateRevisionMetadataV1Schema, ArtifactPrivateRevisionMetadataV1StoredSchema, type ArtifactRevisionProvenanceV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, isPlainArtifactDataKeyMarker } from '@happier-dev/protocol/storage/artifactStoredContent';
 
 import { encodeBase64 } from '@/encryption/base64';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';

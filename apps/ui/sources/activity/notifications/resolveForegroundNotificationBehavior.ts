@@ -1,11 +1,6 @@
-import {
-    ACTIVITY_REMOTE_ALERT_POLICY_EVENT_V1,
-    ActivityRemoteAlertEventV2Schema,
-    PUSH_NOTIFICATION_CATEGORY_IDS,
-    resolveActivityEventIdentityV2,
-    resolveActivityRequestEventIdentityV1,
-    resolveActivityTranscriptLocalIdEventIdentityV1,
-} from '@happier-dev/protocol';
+import { ACTIVITY_REMOTE_ALERT_POLICY_EVENT_V1, ActivityRemoteAlertEventV2Schema, resolveActivityEventIdentityV2 } from '@happier-dev/protocol/push/activityRemoteAlert';
+import { PUSH_NOTIFICATION_CATEGORY_IDS } from '@happier-dev/protocol/push/pushNotificationActions';
+import { resolveActivityRequestEventIdentityV1, resolveActivityTranscriptLocalIdEventIdentityV1 } from '@happier-dev/protocol/activity/eventIdentity';
 
 import { localSettingsParse, type LocalSettings } from '@/sync/domains/settings/localSettings';
 import { resolveServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';

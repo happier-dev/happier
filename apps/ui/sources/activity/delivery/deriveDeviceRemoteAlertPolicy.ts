@@ -1,9 +1,5 @@
-import {
-    accountSettingsParse,
-    DeviceRemoteAlertPolicyV1Schema,
-    type AccountSettings,
-    type DeviceRemoteAlertPolicyV1,
-} from '@happier-dev/protocol';
+import { accountSettingsParse, type AccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
+import { DeviceRemoteAlertPolicyV1Schema, type DeviceRemoteAlertPolicyV1 } from '@happier-dev/protocol/account/settings/accountRemoteAlertPolicy';
 
 import {
     AttentionDeviceOverridesV1Schema,

@@ -1,10 +1,6 @@
-import {
-    WorkspaceRefV1Schema,
-    WorkspaceSyncRelationshipCreateActionInputV1Schema,
-    WorkspaceSyncRelationshipCreateRpcRequestV1Schema,
-    type HandoffTargetReplacementApprovalV1,
-    type WorkspaceSyncRelationshipCreateActionInputV1,
-} from '@happier-dev/protocol';
+import { WorkspaceRefV1Schema } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { WorkspaceSyncRelationshipCreateActionInputV1Schema, WorkspaceSyncRelationshipCreateRpcRequestV1Schema, type WorkspaceSyncRelationshipCreateActionInputV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import type { HandoffTargetReplacementApprovalV1 } from '@happier-dev/protocol/sessions/control/handoff/handoffTargetReplacementApprovalV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { getStorage } from '@/sync/domains/state/storageStore';

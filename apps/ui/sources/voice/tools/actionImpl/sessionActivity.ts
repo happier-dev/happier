@@ -2,7 +2,7 @@ import {
   projectSessionActivityCompatibilityV1,
   type SessionActivityCompatibilityMessageCountsV1,
   type SessionListViewV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/awareness/action';
 import { readStoredSessionMessages } from "@happier-dev/session-core/messages";
 import { findSessionListLookupSession } from '@/sync/domains/session/listing/sessionListLookupState';
 import { listPendingPermissionRequestsFromSession } from '@/sync/domains/session/pending/listPendingSessionRequests';

@@ -3,7 +3,7 @@ import type {
     SessionEffectiveAccessV1,
     SessionViewerProjectionV1,
 } from '@happier-dev/protocol';
-import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol';
+import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessions/awareness/availability';
 import { teamDirectoryQueryKeyV1 } from '@happier-dev/protocol/teams';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { getTeamSnapshot, getTeamsDirectorySnapshot, readTeamGroup } from '@/sync/store/teams/teamsSnapshots';

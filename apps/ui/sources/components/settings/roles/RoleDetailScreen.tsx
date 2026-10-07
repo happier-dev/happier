@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { RoleArtifactV1Schema, renderSessionRoleBlockV1 } from '@happier-dev/protocol';
+import { RoleArtifactV1Schema } from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
+import { renderSessionRoleBlockV1 } from '@happier-dev/protocol/prompts/roles/renderSessionRoleBlockV1';
 import type {
     ExecutionRunIntent,
     ResolvedRoleV1,

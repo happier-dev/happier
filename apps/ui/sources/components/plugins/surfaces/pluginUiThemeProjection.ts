@@ -11,6 +11,8 @@ import type { TextStyle } from 'react-native';
 import { pageTitleTypography } from '@/components/ui/layout/pageTitleTypography';
 import { ITEM_TITLE_TEXT_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { FontWeights, getMonoFont, Typography } from '@/constants/Typography';
+import { resolveThemeControlEdge, resolveThemeGloss } from '@/components/ui/surfaces/themeRaisedEdge';
+import { shadowLevelStyle } from '@/shadowElevation';
 import type { Theme } from '@/theme';
 import type { ThemeColorTokenId } from '@/theme/tokens/themeColorTokenDefinitions';
 
@@ -244,20 +246,24 @@ export function projectPluginUiHostPalette(theme: Theme): HappierUiPalette {
         rowDivider: colors.border.subtle,
         groupDivider: colors.border.faint,
         controlBorder: colors.border.strong,
-        fieldBackground: colors.surface.base,
+        controlEdge: resolveThemeControlEdge(theme, 'strong') ?? undefined,
+        fieldBackground: colors.edge.fill,
         placeholder: colors.input.placeholder,
+        accentGloss: resolveThemeGloss(theme) ?? undefined,
         selection: colors.button.primary.background,
         switchTrackOn: colors.switch.track.active,
         switchTrackOff: colors.switch.track.inactive,
         switchThumb: colors.switch.thumb.active,
         segmentTrack: colors.segmentedControl.trackBackground,
         segmentThumb: colors.segmentedControl.activeBackground,
+        segmentThumbLift: shadowLevelStyle(colors.shadowLevels[1]),
         // A navigation column's rows on the shell plane: the same chip and hover core rows draw
         // (`HAPPIER_COLLECTION_LIST_ROW_STYLE` over `Item`).
         navigationSelected: colors.surface.elevated,
         navigationHover: colors.surface.pressed,
         inset: colors.surface.inset,
         searchFieldRadiusPx: theme.borderRadius.lg,
+        searchFieldEdge: resolveThemeControlEdge(theme, 'default') ?? undefined,
     });
     hostPalettes.set(theme, palette);
     return palette;

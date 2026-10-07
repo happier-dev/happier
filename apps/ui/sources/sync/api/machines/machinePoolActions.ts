@@ -1,8 +1,5 @@
-import {
-    MachinePoolActionInputSchemasV1, MachinePoolActionOutputSchemasV1, MachinePoolErrorV1Schema,
-    machinePoolActionEndpointPathV1, type MachinePoolActionIdV1, type MachinePoolActionInputV1,
-    type MachinePoolActionOutputV1, type MachinePoolErrorV1,
-} from '@happier-dev/protocol';
+import { MachinePoolActionInputSchemasV1, MachinePoolActionOutputSchemasV1, machinePoolActionEndpointPathV1, type MachinePoolActionIdV1, type MachinePoolActionInputV1, type MachinePoolActionOutputV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
+import { MachinePoolErrorV1Schema, type MachinePoolErrorV1 } from '@happier-dev/protocol/machines/pools/v1';
 import type { ServerFetch } from '@/sync/http/client';
 
 export class MachinePoolActionError extends Error {

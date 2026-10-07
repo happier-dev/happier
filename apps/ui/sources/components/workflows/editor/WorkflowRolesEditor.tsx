@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { resolveRoleSelectionV1, type RoleOverrideV1, type WorkflowRoleV1 } from '@happier-dev/protocol';
+import { resolveRoleSelectionV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
+import type { RoleOverrideV1, WorkflowRoleV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
 import { walkWorkflowBlocks } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { useRoleCatalog } from '@/components/roles/catalog/useRoleCatalog';
 import { useRoleEnginePresentation } from '@/components/roles/catalog/useRoleEnginePresentation';

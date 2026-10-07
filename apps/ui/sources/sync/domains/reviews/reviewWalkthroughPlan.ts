@@ -1,4 +1,4 @@
-import { resolveReviewNarratorPolicy } from '@happier-dev/protocol';
+import { resolveReviewNarratorPolicy } from '@happier-dev/protocol/reviews/reviewEngines';
 
 /**
  * A review engine as the Start review dialog shows it, read from the host's `review.engines.list`

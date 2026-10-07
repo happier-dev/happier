@@ -1,4 +1,4 @@
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, happierRaisedEdgeStyle } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import { Platform, View, type NativeSyntheticEvent, type TextInputKeyPressEventData } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -81,6 +81,7 @@ export const PasswordField = React.memo(function PasswordField(props: PasswordFi
                 fieldBoxShapeStyle,
                 styles.pageFrame,
                 { borderColor: pageColors.borderColor, backgroundColor: pageColors.backgroundColor },
+                happierRaisedEdgeStyle(pageColors.edge),
             ] : [
                 styles.frame,
                 { borderColor: props.error ? theme.colors.status.error : theme.colors.border.default },

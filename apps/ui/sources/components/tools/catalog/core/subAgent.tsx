@@ -2,7 +2,7 @@ import type { Metadata } from '@happier-dev/session-core/state';
 import type { ToolCall, Message } from "@happier-dev/session-core/messages";
 import { ICON_TASK } from '../icons';
 import type { KnownToolDefinition } from '../_types';
-import { SubAgentInputV2Schema, TaskInputV2Schema } from '@happier-dev/protocol';
+import { SubAgentInputV2Schema, TaskInputV2Schema } from '@happier-dev/protocol/tools/v2/schemas';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { resolveSubagentToolPresentation } from './subAgentPresentation';
 

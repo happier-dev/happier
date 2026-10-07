@@ -1,9 +1,5 @@
-import {
-    combineChangedFilesAttribution,
-    type ChangedFilesTurnEvidenceScope,
-    type SessionChangeSet,
-    type TurnChangeSet,
-} from '@happier-dev/protocol';
+import { combineChangedFilesAttribution, type ChangedFilesTurnEvidenceScope } from '@happier-dev/protocol/sessions/changes/mergeTurnChangeSets';
+import type { SessionChangeSet, TurnChangeSet } from '@happier-dev/protocol/sessions/changes/types';
 
 /**
  * Scopes the latest turn's evidence through the canonical Changed Files combiner, so evidence

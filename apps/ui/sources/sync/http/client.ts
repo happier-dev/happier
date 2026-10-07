@@ -2,7 +2,8 @@ import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage'
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
 import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
-import { isLoopbackHostname, redactPublicShareCapabilityUrl } from '@happier-dev/protocol';
+import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
+import { redactPublicShareCapabilityUrl } from '@happier-dev/protocol/crypto/publicShareCapabilityUrl';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import { createEndpointSupervisedRequest } from '@/sync/runtime/connectivity/createEndpointSupervisedRequest';
 import { getEndpointSupervisorForServer } from '@/sync/runtime/connectivity/endpointSupervisorPool';

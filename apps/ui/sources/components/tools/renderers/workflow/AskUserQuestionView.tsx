@@ -8,16 +8,14 @@ import { useSessionTranscriptSource } from '@/components/sessions/transcript/sou
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { Text, TextInput } from '@/components/ui/text/Text';
-import { resolveAgentRequestKind } from '@happier-dev/protocol';
+import { resolveAgentRequestKind } from '@happier-dev/protocol/activity/agentRequestSummary';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import {
     useOpenAttachedSessionTerminal,
     resolveAttachedTerminalUnavailableMessage,
 } from '@/components/sessions/terminal/openAttachedSessionTerminal';
-import {
-    compilePluginJsonSchema,
-    isValidPluginJsonSchemaValue,
-} from '@happier-dev/protocol';
+import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { Icon } from '@/components/ui/icons/Icon';
 import { getAgentBehavior } from '@/agents/catalog/catalog';

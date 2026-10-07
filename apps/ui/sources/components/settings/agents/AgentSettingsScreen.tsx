@@ -55,20 +55,15 @@ import { openExternalUrl } from '@/utils/url/openExternalUrl';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { isLegacyCompatAgentType } from '@/agents/backendCatalog/legacyCompatAgents';
-import {
-    PluginContributionIdentityV1Schema,
-    PluginAgentCliSourcePreferenceSchema,
-    readAccountSettingValueForBackendTarget,
-    qualifiedPurposeKey,
-    resolveAgentConnectedAccountPurposeDefaults,
-    writeAgentConnectedAccountPurposeDefault,
-    type AgentConnectedAccountPurposeTeamResourceDefault,
-    type PluginProjectedAgentConnectedAccountPurposeV2,
-    type QualifiedConnectedAccountPurposeBindingTargetV1,
-    type BackendTargetRefV2Input,
-} from '@happier-dev/protocol';
+import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
+import { PluginAgentCliSourcePreferenceSchema } from '@happier-dev/protocol/plugins/contributions/agentCliMetadata';
+import { readAccountSettingValueForBackendTarget } from '@happier-dev/protocol/account/settings/accountSettings';
+import { qualifiedPurposeKey, type QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import { resolveAgentConnectedAccountPurposeDefaults, writeAgentConnectedAccountPurposeDefault, type AgentConnectedAccountPurposeTeamResourceDefault } from '@happier-dev/protocol/account/settings/connected-services';
+import type { PluginProjectedAgentConnectedAccountPurposeV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { BackendTargetRefV2Input } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { ConnectedAccountPurposeTargetChooser } from '@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser';
-import { buildBackendTargetKey } from '@happier-dev/protocol';
+import { buildBackendTargetKey } from '@happier-dev/protocol/backends/targets/backendTargetRef';
 import {
     getAgentBackendCompatibilityTargetKeys,
 } from '@/agents/backendCatalog/backendTargetEnablement';

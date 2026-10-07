@@ -2,7 +2,7 @@ import type { BackgroundNotificationTaskResult, NotificationTaskPayload } from '
 import type * as TaskManager from 'expo-task-manager';
 import { Platform } from 'react-native';
 
-import { parseSessionChangedWakeV1, type SessionChangedWakeV1 } from '@happier-dev/protocol';
+import { parseSessionChangedWakeV1, type SessionChangedWakeV1 } from '@happier-dev/protocol/push/sessionChangedWake';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverProfiles';
 import { withMutedActivityLocalNotifications } from '../runtime/activityLocalNotificationBus';

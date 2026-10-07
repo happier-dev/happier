@@ -1,12 +1,8 @@
 import { randomUUID } from '@/platform/randomUUID';
-import {
-    LEGACY_AI_LAUNCH_RESERVED_ENV_NAMES_V1,
-    buildBackendTargetKeyV2,
-    isLaunchProfileV2,
-    projectHistoricalBuiltInAiLaunchProfileV1,
-    type AiLaunchProfile,
-    type LaunchProfileV2,
-} from '@happier-dev/protocol';
+import { LEGACY_AI_LAUNCH_RESERVED_ENV_NAMES_V1, type LaunchProfileV2 } from '@happier-dev/protocol/profiles/v2/schema';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { isLaunchProfileV2, type AiLaunchProfile } from '@happier-dev/protocol/profiles/read';
+import { projectHistoricalBuiltInAiLaunchProfileV1 } from '@happier-dev/protocol/profiles/historicalCompatibilityV1';
 import { type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 
 export function createEmptyCustomProfile(): LaunchProfileV2 {

@@ -3,7 +3,7 @@ import { t } from '@/text';
 import {
     computeContextPercentUsed,
     type SessionContextUsageSnapshotV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/usage/contextUsage';
 
 export function getContextWarning({
     contextSize,

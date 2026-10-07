@@ -1,11 +1,6 @@
-import {
-    DEFAULT_MEMORY_SETTINGS,
-    MemorySettingsV1Schema,
-    RPC_ERROR_CODES,
-    RPC_METHODS,
-    readRpcErrorCode,
-    type MemorySettingsV1,
-} from '@happier-dev/protocol';
+import { DEFAULT_MEMORY_SETTINGS, MemorySettingsV1Schema, type MemorySettingsV1 } from '@happier-dev/protocol/memory/memorySettings';
+import { RPC_ERROR_CODES, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 

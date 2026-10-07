@@ -1,4 +1,5 @@
-import { WorkflowConversationBindInputV1Schema, type ActionExecutorContext, type WorkflowConversationBindResultV1 } from '@happier-dev/protocol';
+import { WorkflowConversationBindInputV1Schema, type WorkflowConversationBindResultV1 } from '@happier-dev/protocol/actions/workflowAuthoringAction';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { entityDragScopesEqualV1 } from '@happier-dev/protocol/plugins/ui';
 import { bindWorkflowSessionConversation, type WorkflowSessionBindingContext } from '@/sync/domains/workflows/workflowAuthoringSessionBinding';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';

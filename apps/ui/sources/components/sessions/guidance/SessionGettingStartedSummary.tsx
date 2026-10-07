@@ -3,7 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Typography } from '@/constants/Typography';
-import { CenteredInfoTile } from '@/components/ui/lists/CenteredInfoTile';
+import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { Text } from '@/components/ui/text/Text';
 import { useLocalSetting } from '@/sync/domains/state/storage';
@@ -76,25 +76,16 @@ export const SessionGettingStartedSummary = React.memo((props: SessionGettingSta
 
     return (
         <View testID={props.testID} style={containerStyle}>
-            <CenteredInfoTile
+            <EmptyState
                 titleTestID={props.titleTestID}
-                descriptionTestID={props.descriptionTestID}
-                icon={(
-                    <Icon
-                        name={
-                            props.kind === 'create_session'
-                                ? 'terminal'
-                                : props.kind === 'select_session'
-                                    ? 'chats-circle'
-                                    : 'desktop'
-                        }
-                        size={48}
-                        color={theme.colors.text.secondary}
-                        style={{ marginBottom: 12 }}
-                    />
-                )}
+                subtitleTestID={props.descriptionTestID}
+                // First run and a missing machine are Daybreak scenes; "select a session" keeps its glyph.
+                scene={props.kind === 'create_session' ? 'firstRun' : props.kind === 'select_session' ? undefined : 'noMachines'}
+                icon={props.kind === 'select_session' ? (
+                    <Icon name="chats-circle" size={48} color={theme.colors.text.secondary} />
+                ) : undefined}
                 title={getSessionGettingStartedTitle(props.kind)}
-                description={description}
+                subtitle={description}
                 paddingHorizontal={props.surface === 'default' ? 16 : 0}
             />
         </View>
