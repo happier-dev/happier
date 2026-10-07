@@ -27,9 +27,9 @@ import {
 } from '@/components/workflows/run/workflowInvocationStructure';
 
 /**
- * The managed Workflow Runs this Session started.
+ * The managed Workflow Runs this Session started or that write into it.
  *
- * `originSessionId` is the canonical Run-list filter for that provenance, and
+ * `originSessionId` selects provenance, `targetSessionId` selects destinations, and
  * `attention: 'required'` is the canonical server predicate for "this needs the
  * person". Both are asked of the same Action front door, so this hook adds no
  * second run store and invents no local attention rule — which matters because
@@ -72,6 +72,7 @@ type SessionManagedWorkflowRunsWindow = Readonly<{
     /** The Account and Session this window was read for; anything else shows nothing. */
     accountScopeKey: string | null;
     sessionId: string | null;
+    relation: 'origin' | 'destination';
     runIds: readonly string[];
     attentionRunIds: ReadonlySet<string>;
     refreshFailed: boolean;
@@ -86,6 +87,7 @@ const EMPTY_WINDOW: SessionManagedWorkflowRunsWindow = {
     phase: 'idle',
     accountScopeKey: null,
     sessionId: null,
+    relation: 'origin',
     runIds: EMPTY_RUN_IDS,
     attentionRunIds: EMPTY_ATTENTION,
     refreshFailed: false,
@@ -112,8 +114,11 @@ export function useSessionManagedWorkflowRuns(params: Readonly<{
     sessionId: string | null;
     serverId: string | null;
     enabled?: boolean;
+    /** "Writes here" uses the same Run-list owner, with its destination relation. */
+    relation?: 'origin' | 'destination';
 }>): SessionManagedWorkflowRunsState {
     const sessionId = params.sessionId !== null && params.sessionId.trim().length > 0 ? params.sessionId : null;
+    const relation = params.relation ?? 'origin';
     // Contextual managed-Run reads answer the same canonical Workflows decision
     // the dedicated routes do, and fail closed while it is unresolved: a
     // Session's ordinary one-shot Automations stay untouched, but this surface
@@ -125,9 +130,10 @@ export function useSessionManagedWorkflowRuns(params: Readonly<{
     const [listWindow, setWindow] = React.useState<SessionManagedWorkflowRunsWindow>(EMPTY_WINDOW);
     const [invalidationToken, setInvalidationToken] = React.useState(0);
     const retry = React.useCallback(() => setInvalidationToken((token) => token + 1), []);
-    const current = accountScopeKey !== null && listWindow.accountScopeKey === accountScopeKey && listWindow.sessionId === sessionId;
+    const current = accountScopeKey !== null && listWindow.accountScopeKey === accountScopeKey && listWindow.sessionId === sessionId
+        && listWindow.relation === relation;
     // Only this Session's own window, never the Account's whole Run map: an
-    // exact refresh of a Run this Session did not start must not rerender a
+    // exact refresh of a Run outside this relation must not rerender a
     // mounted transcript section.
     const rows = useWorkflowRunRows(current ? listWindow.runIds : EMPTY_RUN_IDS);
     const windowRef = React.useRef(listWindow);
@@ -148,19 +154,20 @@ export function useSessionManagedWorkflowRuns(params: Readonly<{
         let cancelled = false;
         // A re-read keeps last-known-good rows; only a first read is loading.
         setWindow((current) => (
-            current.accountScopeKey === requestScopeKey && current.sessionId === sessionId && current.phase === 'loaded'
+            current.accountScopeKey === requestScopeKey && current.sessionId === sessionId && current.relation === relation && current.phase === 'loaded'
                 ? current
-                : { ...EMPTY_WINDOW, phase: 'loading', accountScopeKey: requestScopeKey, sessionId }
+                : { ...EMPTY_WINDOW, phase: 'loading', accountScopeKey: requestScopeKey, sessionId, relation }
         ));
         void (async () => {
             try {
+                const filter = relation === 'destination' ? { targetSessionId: sessionId } : { originSessionId: sessionId };
                 const [all, attention] = await Promise.all([
                     listWorkflowRuns({
-                        filter: { originSessionId: sessionId },
+                        filter,
                         signal: controller.signal,
                     }),
                     listWorkflowRuns({
-                        filter: { originSessionId: sessionId, attention: 'required' },
+                        filter: { ...filter, attention: 'required' },
                         signal: controller.signal,
                     }),
                 ]);
@@ -177,6 +184,7 @@ export function useSessionManagedWorkflowRuns(params: Readonly<{
                 ]);
                 setWindow({
                     phase: 'loaded',
+                    relation,
                     accountScopeKey: requestScopeKey,
                     sessionId,
                     runIds: unionRunIds(
@@ -194,6 +202,7 @@ export function useSessionManagedWorkflowRuns(params: Readonly<{
                 setWindow((current) => (
                     current.accountScopeKey === requestScopeKey
                         && current.sessionId === sessionId
+                        && current.relation === relation
                         && current.phase === 'loaded'
                         ? { ...current, refreshFailed: true }
                         : {
@@ -202,6 +211,7 @@ export function useSessionManagedWorkflowRuns(params: Readonly<{
                             refreshFailed: true,
                             accountScopeKey: requestScopeKey,
                             sessionId,
+                            relation,
                         }
                 ));
             }
@@ -210,7 +220,7 @@ export function useSessionManagedWorkflowRuns(params: Readonly<{
             cancelled = true;
             controller.abort();
         };
-    }, [accountScopeKey, enabled, invalidationToken, sessionId]);
+    }, [accountScopeKey, enabled, invalidationToken, relation, sessionId]);
 
     React.useEffect(() => {
         if (!enabled || sessionId === null || accountScopeKey === null) return;
@@ -219,10 +229,10 @@ export function useSessionManagedWorkflowRuns(params: Readonly<{
         return subscribeVisibleWorkflowRunListInvalidation({
             lifetime,
             isVisibleWindowLoaded: () => windowRef.current.phase === 'loaded'
-                && windowRef.current.sessionId === sessionId,
+                && windowRef.current.sessionId === sessionId && windowRef.current.relation === relation,
             invalidate: () => setInvalidationToken((token) => token + 1),
         });
-    }, [accountScopeKey, enabled, sessionId]);
+    }, [accountScopeKey, enabled, relation, sessionId]);
 
     const runs = React.useMemo(
         () => (rows.length === 0 ? EMPTY_RUNS : rows.flatMap((row) => (row.summary ? [row.summary] : []))),

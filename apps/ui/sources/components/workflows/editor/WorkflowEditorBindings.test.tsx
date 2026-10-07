@@ -7,6 +7,7 @@ import { createWorkflowDefinitionFixture } from '@/dev/testkit/fixtures/workflow
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { buildWorkflowEditorDraftFromDefinition } from '@/sync/domains/workflows/workflowAuthoring';
 import { useWorkflowEditorHistory } from './useWorkflowEditorHistory';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 
 // Action transport is the system boundary; catalogs, parsers, scope and editor history stay real.
 const execute = vi.hoisted(() => vi.fn());
@@ -46,6 +47,51 @@ beforeEach(() => {
 afterEach(standardCleanup);
 
 describe('workflow editor declared bindings', () => {
+    it('edits command text literally while preserving its environment binding', async () => {
+        const block = { kind: 'action' as const, id: 'command', actionId: 'machines.command.run', input: {
+            command: { kind: 'literal' as const, value: 'printf "%s\\n" "$MESSAGE"' },
+            env: { kind: 'input' as const, name: 'environment' },
+        } };
+        const draft = buildWorkflowEditorDraftFromDefinition({ draftId: 'command', name: 'Command',
+            definition: createWorkflowDefinitionFixture({ blocks: [block], inputs: [
+                { name: 'environment', valueType: 'json', required: true },
+            ] }) });
+        const changed = vi.fn();
+        const screen = await renderScreen(<harness.WorkflowActionBlockEditor block={block} draft={draft}
+            ordinal={1} total={1} actions={[]} onSelect={() => {}}
+            onChangeBlock={changed} testIDPrefix="editor" />);
+        expect(screen.findByTestId('editor-action-command-field-command-input-0-kind')).toBeNull();
+        expect(screen.findByTestId('editor-action-command-field-env-input-0-kind')).not.toBeNull();
+        await act(async () => screen.changeTextByTestId('editor-action-command-field-command-literal', 'echo "$MESSAGE"'));
+        expect(changed.mock.lastCall?.[0]).toEqual({ ...block, input: { ...block.input,
+            command: { kind: 'literal', value: 'echo "$MESSAGE"' },
+        } });
+    });
+
+    it.each([
+        ['webhooks.call', 'body'],
+        ['machines.command.run', 'env'],
+    ] as const)('binds %s %s through the existing workflow input grammar', async (actionId, field) => {
+        const block = { kind: 'action' as const, id: 'bound', actionId, input: {
+            ...(actionId === 'webhooks.call' ? { url: { kind: 'literal' as const, value: 'https://example.com/hook' } }
+                : { command: { kind: 'literal' as const, value: 'echo "$MESSAGE"' } }),
+            [field]: { kind: 'literal' as const, value: {} },
+        } };
+        const draft = buildWorkflowEditorDraftFromDefinition({ draftId: 'bound', name: 'Bound',
+            definition: createWorkflowDefinitionFixture({ blocks: [block], inputs: [
+                { name: 'payload', valueType: 'json', required: true },
+            ] }) });
+        const changed = vi.fn();
+        const screen = await renderScreen(<harness.WorkflowActionBlockEditor block={block} draft={draft}
+            ordinal={1} total={1} actions={[]} onSelect={() => {}}
+            onChangeBlock={changed} testIDPrefix="editor" />);
+        const source = screen.findAllByType(DropdownMenu).find(node => node.props.testID === `editor-action-bound-field-${field}-input-0-kind`)!;
+        await act(async () => source.props.onSelect('input'));
+        expect(changed.mock.lastCall?.[0]).toEqual({ ...block, input: { ...block.input,
+            [field]: { kind: 'input', name: 'payload' },
+        } });
+    });
+
     it('reads an unselected workflow engine honestly in the closed Inspector', async () => {
         const draft = buildWorkflowEditorDraftFromDefinition({ draftId: 'empty-engine', name: 'Workflow',
             definition: createWorkflowDefinitionFixture({ defaults: {} }) });
