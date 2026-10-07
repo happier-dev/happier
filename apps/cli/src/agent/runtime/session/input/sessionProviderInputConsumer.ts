@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 import type { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { readAuthenticationStatus } from '@/api/client/httpStatusError';
 import { logger } from '@/ui/logger';
@@ -194,6 +196,7 @@ export function createSessionProviderInputConsumer<Mode, Message>(
   const readAdmission = (): ProviderInputActionRequiredDisposition | null =>
     admissions.values().next().value ?? null;
   const admissionWaiters = new Set<() => void>();
+  const providerInputDispatchCustody = new AsyncLocalStorage<{ active: boolean }>();
   let activeProviderInputDispatches = 0;
   const activeDispatchDrainWaiters = new Set<() => void>();
   let activePendingMaterializationTurns = 0;
@@ -261,10 +264,31 @@ export function createSessionProviderInputConsumer<Mode, Message>(
   };
 
   const waitForActiveProviderInputDispatches = async (): Promise<void> => {
-    while (activeProviderInputDispatches > 0) {
+    // A replacement reached from provider preparation already holds dispatch
+    // custody. Drain every other dispatch, without waiting for this call's own
+    // finally. External callers and continuations of retired dispatches drain all.
+    const custody = providerInputDispatchCustody.getStore();
+    while (activeProviderInputDispatches > (custody?.active ? 1 : 0)) {
       await new Promise<void>((resolve) => {
         activeDispatchDrainWaiters.add(resolve);
       });
+    }
+  };
+
+  const dispatchWithCustody = async <Value>(dispatch: () => Promise<Value>): Promise<Value> => {
+    const custody = { active: true };
+    activeProviderInputDispatches += 1;
+    try {
+      return await providerInputDispatchCustody.run(custody, dispatch);
+    } finally {
+      custody.active = false;
+      activeProviderInputDispatches -= 1;
+      // A caller holding its own custody can finish draining at one remaining
+      // dispatch; external callers recheck until all dispatches have settled.
+      for (const notify of [...activeDispatchDrainWaiters]) {
+        activeDispatchDrainWaiters.delete(notify);
+        notify();
+      }
     }
   };
 
@@ -293,18 +317,7 @@ export function createSessionProviderInputConsumer<Mode, Message>(
 
       // This increment and enforceProviderInputAdmission's admission write are synchronous,
       // establishing the one event-loop order that owns provider-input dispatch eligibility.
-      activeProviderInputDispatches += 1;
-      try {
-        return { status: 'dispatched', value: await dispatchOpts.dispatch() };
-      } finally {
-        activeProviderInputDispatches -= 1;
-        if (activeProviderInputDispatches === 0) {
-          for (const notify of [...activeDispatchDrainWaiters]) {
-            activeDispatchDrainWaiters.delete(notify);
-            notify();
-          }
-        }
-      }
+      return { status: 'dispatched', value: await dispatchWithCustody(dispatchOpts.dispatch) };
     }
   };
 
@@ -360,21 +373,13 @@ export function createSessionProviderInputConsumer<Mode, Message>(
       // remain closed, while a newer admission waits for this accepted
       // dispatch to settle. The finally block consumes this exact epoch on
       // success, cancellation after acquisition, and Provider failure.
-      activeProviderInputDispatches += 1;
       try {
         return {
           status: 'dispatched',
-          value: await dispatchOpts.dispatch(),
+          value: await dispatchWithCustody(dispatchOpts.dispatch),
         };
       } finally {
-        activeProviderInputDispatches -= 1;
         releaseExactAdmission();
-        if (activeProviderInputDispatches === 0) {
-          for (const notify of [...activeDispatchDrainWaiters]) {
-            activeDispatchDrainWaiters.delete(notify);
-            notify();
-          }
-        }
       }
     }
   };
