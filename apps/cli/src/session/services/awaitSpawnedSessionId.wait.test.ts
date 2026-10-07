@@ -3,7 +3,83 @@ import { awaitSpawnedSessionId } from './awaitSpawnedSessionId';
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 
 describe('awaitSpawnedSessionId terminal observation', () => {
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+  });
+
+  it('lets the daemon startup budget govern default pending spawn observation', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('HAPPIER_SPAWN_SESSION_ID_RESOLVE_TIMEOUT_MS', undefined);
+    vi.stubEnv('HAPPIER_DAEMON_SESSION_WEBHOOK_TIMEOUT_MS', undefined);
+    let resolveStartup!: (result: { status: 'success'; sessionId: string }) => void;
+    const startup = new Promise<{ status: 'success'; sessionId: string }>((resolve) => { resolveStartup = resolve; });
+    let settled = false;
+    const wait = awaitSpawnedSessionId({
+      result: { type: 'success' }, spawnNonce: 'slow-startup',
+      resolveSpawnSessionByNonce: () => startup,
+    }).then((result) => { settled = true; return result; });
+
+    await vi.advanceTimersByTimeAsync(90_001);
+    expect(settled).toBe(false);
+    resolveStartup({ status: 'success', sessionId: 'ready-session' });
+    await expect(wait).resolves.toEqual({ type: 'success', sessionId: 'ready-session' });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('uses the daemon startup override when no caller observation budget was authored', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('HAPPIER_SPAWN_SESSION_ID_RESOLVE_TIMEOUT_MS', undefined);
+    vi.stubEnv('HAPPIER_DAEMON_SESSION_WEBHOOK_TIMEOUT_MS', '180000');
+    const resolve = vi.fn(async () => ({ status: 'pending' as const }));
+    const wait = awaitSpawnedSessionId({
+      result: { type: 'success' }, spawnNonce: 'startup-override', resolveSpawnSessionByNonce: resolve,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(resolve).toHaveBeenCalledWith('startup-override', 180_000);
+    await vi.advanceTimersByTimeAsync(180_000);
+    await expect(wait).resolves.toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT });
+  });
+
+  it('honors an authored observation duration beyond the old phase-local cap', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('HAPPIER_SPAWN_SESSION_ID_RESOLVE_TIMEOUT_MS', '1200000');
+    const resolve = vi.fn(async () => ({ status: 'pending' as const }));
+    let settled = false;
+    const wait = awaitSpawnedSessionId({
+      result: { type: 'success' }, spawnNonce: 'long-observation', resolveSpawnSessionByNonce: resolve,
+    }).then((result) => { settled = true; return result; });
+    await vi.advanceTimersByTimeAsync(600_001);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(599_999);
+    await expect(wait).resolves.toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT });
+    expect(resolve).toHaveBeenCalledWith('long-observation', 1_200_000);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('preserves a long caller deadline across the Node timer boundary and cancellation', async () => {
+    vi.useFakeTimers();
+    const timeoutMs = 30 * 24 * 60 * 60 * 1_000;
+    const resolve = vi.fn(async () => ({ status: 'pending' as const }));
+    let settled = false;
+    const wait = awaitSpawnedSessionId({
+      result: { type: 'success' }, spawnNonce: 'long-caller', resolveSpawnSessionByNonce: resolve, timeoutMs,
+    }).then((result) => { settled = true; return result; });
+    await vi.advanceTimersByTimeAsync(2_147_483_647);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(timeoutMs - 2_147_483_647);
+    await expect(wait).resolves.toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT });
+
+    const controller = new AbortController();
+    const cancelled = awaitSpawnedSessionId({
+      result: { type: 'success' }, spawnNonce: 'cancel-long', resolveSpawnSessionByNonce: resolve,
+      timeoutMs, signal: controller.signal,
+    });
+    await vi.advanceTimersByTimeAsync(2_147_483_647);
+    controller.abort();
+    await expect(cancelled).resolves.toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT });
+    expect(vi.getTimerCount()).toBe(0);
+  });
 
   it('retains daemon-proven Agent identity from a terminal nonce failure', async () => {
     // The daemon nonce transport is the genuine boundary; settlement stays real.
