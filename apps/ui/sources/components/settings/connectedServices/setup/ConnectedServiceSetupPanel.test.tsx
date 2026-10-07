@@ -9,6 +9,8 @@ import { ConnectedServicesConnectMore } from './ConnectedServicesConnectMore';
 import { buildConnectedServicesIndexModel } from '../model/buildConnectedServicesIndexModel';
 import { ConnectedServicesIndexView } from '../index/ConnectedServicesIndexView';
 import { presentConnectedAccountIdentity } from '@/sync/domains/connectedServices/maskAccountEmail';
+import { QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol';
+import { selectNewPoolServices } from '../collection/NewPoolMenu';
 
 const phoneNavigation = vi.hoisted(() => ({ push: vi.fn(), width: 390 }));
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
@@ -48,7 +50,7 @@ const tool: ConnectedServiceSetupCatalogEntry = {
 };
 
 const STALE_DIAGNOSTIC = 'The service catalog could not be refreshed';
-function staleServiceModel() {
+function staleServiceModel(withAccount = false) {
     return buildConnectedServicesIndexModel({
         transport: 'advertised-v4',
         entries: [{ serviceId: 'openai-codex',
@@ -56,13 +58,39 @@ function staleServiceModel() {
             legacyServiceId: 'openai-codex', connectCommand: 'happier connect openai-codex',
             supportsOauth: false, executable: false, projectionStatus: 'stale',
             availability: { state: 'available', reason: 'resolved' }, projectedTitle: 'ChatGPT' }],
-        qualifiedAccounts: [], qualifiedGroups: [], legacyServices: [], defaultAccountByServiceKey: {},
+        qualifiedAccounts: withAccount ? [QualifiedConnectedAccountProfileV4Schema.parse({
+            ref: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'work' },
+            status: 'needs_reauth', kind: 'oauth', authenticationModeId: 'oauth', revisionSemantics: 'revisioned',
+            credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa', configurationReady: true, configurationRevision: null, scopes: [],
+        })] : [], qualifiedGroups: [], legacyServices: [], defaultAccountByServiceKey: {},
         resolveLabel: (candidate) => String(candidate?.projectedTitle ?? ''), resolveFallbackEntry: () => null,
         presentDiagnostics: () => ({ primary: STALE_DIAGNOSTIC, supportDetails: null }), loadingLabel: 'Loading',
     });
 }
 
 describe('ConnectedServiceSetupPanel tools disclosure', () => {
+    it.each(['list', 'grid'] as const)('retains stale credential warnings in %s without admitting Add, reconnect or New pool', async (presentation) => {
+        const model = staleServiceModel(true);
+        const reconnect = vi.fn();
+        const screen = await renderScreen(<ConnectedServicesIndexView
+            model={model} labelsByKey={{}} present={(input) => presentConnectedAccountIdentity({
+                ...input, hidden: false, label: input.label ?? null, email: input.email ?? null, accountId: input.accountId ?? null,
+            })}
+            now={0} presentation={presentation} onPresentationChange={() => {}} compact={false}
+            summary={{ needsYouCount: 1, asOf: null }} connectMore={null} fixProminence="primary" settled={null}
+            renderAccount={({ render }) => render({ usage: { kind: 'none' }, planLabel: null, subscription: null,
+                recoveryCredits: null, fetchedAt: null, staleSince: null, refreshing: false, refresh: null })}
+            renderPool={() => { throw new Error('No pool exists in this diagnostic sheet'); }} renderStar={() => null}
+            onAddAccount={() => {}} onSignInAgain={reconnect} onOpenAccount={() => {}} onOpenPool={() => {}}
+        />);
+        expect(screen.getTextContent()).toContain('connectedServicesSettings.signedOutBy');
+        expect(screen.findHostByTestId('connected-services-service:happier.agent.codex/openai-codex:add-account')).toBeNull();
+        const action = screen.findHostByTestId('connected-services-account:happier.agent.codex/openai-codex:work:sign-in-again');
+        expect(action?.props.disabled).toBe(true);
+        expect(selectNewPoolServices(model)).toEqual([]);
+        expect(reconnect).not.toHaveBeenCalled();
+    });
+
     it('renders the service diagnostic in grid even when a known service has no accounts', async () => {
         const screen = await renderScreen(<ConnectedServicesIndexView
             model={staleServiceModel()} labelsByKey={{}}

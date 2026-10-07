@@ -78,7 +78,7 @@ export type ConnectedAccountIndexEntry = Readonly<{
     identityLabel: string | null;
     roles: readonly ConnectedAccountIndexRole[];
     /** The account needs a new sign-in: the fix sits on the row, the cause under its name. */
-    signedOut: Readonly<{ reason: string; consequence: string; onSignInAgain: () => void }> | null;
+    signedOut: Readonly<{ reason: string; consequence: string; onSignInAgain: (() => void) | null }> | null;
     /** While a set-up panel is open elsewhere on the page, a row's fix steps down to secondary. */
     fixProminence?: 'primary' | 'secondary';
     legacyServiceId: ConnectedServiceId | null;
@@ -290,7 +290,8 @@ export const ConnectedAccountIndexRowView = React.memo(function ConnectedAccount
                 size="small"
                 display={props.fixProminence === 'secondary' ? 'secondary' : 'default'}
                 title={t('connectedServicesSettings.signInAgain')}
-                onPress={props.signedOut.onSignInAgain}
+                disabled={!props.signedOut.onSignInAgain}
+                onPress={props.signedOut.onSignInAgain ?? undefined}
             />
         </View>
     ) : (

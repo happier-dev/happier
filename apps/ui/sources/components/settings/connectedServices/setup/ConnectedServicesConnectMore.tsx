@@ -78,7 +78,7 @@ export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMore
         [props.model.connectable],
     );
     const tools = addable.filter((entry) => entry.section === 'tools');
-    const { offered, browse: hasBrowse } = selectConnectMoreOffer({ layout: props.layout, addable, connectableKeys, hidden });
+    const { offered, browse: hasBrowse } = selectConnectMoreOffer({ layout: props.layout, catalog, connectableKeys, hidden });
 
     const [openId, setOpenId] = React.useState<string | null>(null);
     const [target, setTarget] = React.useState<ConnectedServiceSetupTarget>({ kind: 'catalog' });

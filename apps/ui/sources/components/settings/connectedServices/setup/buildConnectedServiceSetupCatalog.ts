@@ -21,7 +21,9 @@ export function buildConnectedServiceSetupCatalog(
             usedByAgentIds: sheet.usedByAgentIds,
             connectedCount: sheet.connectedCount,
             section: sheet.section,
-            canAdd: sheet.canOpen && sheet.entry?.executable === true,
+            canAdd: sheet.canAdd,
+            statusLine: sheet.statusLine,
+            supportDetails: sheet.supportDetails,
         })),
         ...model.connectable.map((service): ConnectedServiceSetupCatalogEntry => ({
             serviceKey: service.serviceKey,

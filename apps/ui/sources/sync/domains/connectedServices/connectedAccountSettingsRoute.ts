@@ -62,7 +62,7 @@ function resolvePublishedServiceEntry(
 ): ConnectedServiceRegistryEntry | null {
     const projectedEntry = findExactEntry(entries, service);
     if (projectedEntry) {
-        return projectedEntry.executable === false ? null : projectedEntry;
+        return projectedEntry;
     }
     return getGeneratedLegacyConnectedServiceRegistryFallback(service);
 }

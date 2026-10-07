@@ -415,6 +415,30 @@ describe('ConnectedAccountSetupController real ownership', () => {
         expect(screen.findHostByTestId('qualified-account-detail')).toBeNull();
     });
 
+    it('uses the generated legacy identity only to reach fresh revisioned setup, then submits through the daemon owner', async () => {
+        const compatibility = BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID.github;
+        const modeId = compatibility.authenticationModeByCredentialKind.token!;
+        installDescription({ ...described, service: compatibility.service,
+            descriptor: { id: compatibility.service.localId, title: 'GitHub', authentication: {
+                defaultModeId: modeId, modes: [{ ...authentication.modes[0], id: modeId }],
+            } },
+            operationTransport: { kind: 'legacy', peerClass: 'revisioned_v2_v3', serviceId: 'github' },
+        }, 'github');
+        // No machine descriptor is retained: the generated identity cannot supply an authentication mode.
+        installConnectedAccountDescriptorProjection({ scopeKey: getActiveServerSnapshot().serverId,
+            status: 'ready', conflicts: [], errorReason: null, descriptors: [] });
+        handleAuthentication = (command) => command.operation === 'submitManual'
+            ? { status: 'connected', attemptId: 'attempt-1', account: { service: compatibility.service, accountId: 'new-account' } }
+            : { status: 'awaitingManual', attemptId: 'attempt-1' };
+        const screen = await renderScreen(element(selection, compatibility.service));
+        await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-manual:token')).not.toBeNull());
+        expect(controlCommands).toContainEqual({ operation: 'describeService', service: compatibility.service, requiredOperation: 'account_list' });
+        expect(authenticationCommands).toContainEqual({ operation: 'beginConnect', service: compatibility.service, modeId });
+        await act(async () => screen.changeTextByTestId('connected-account-manual:token', 'github-token'));
+        await screen.pressByTestIdAsync('connected-account-manual:submit');
+        await vi.waitFor(() => expect(onConnected).toHaveBeenCalledWith({ service: compatibility.service, accountId: 'new-account' }));
+    });
+
     it('cancels locally without waiting and cancels a live reply to the abandoned submission', async () => {
         const submitted = deferredReply();
         const cancelled = deferredReply();

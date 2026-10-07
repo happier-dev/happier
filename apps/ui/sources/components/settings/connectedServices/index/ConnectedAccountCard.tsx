@@ -69,7 +69,8 @@ export const ConnectedAccountCardView = React.memo(function ConnectedAccountCard
                         size="small"
                         display="secondary"
                         title={t('connectedServicesSettings.signInAgain')}
-                        onPress={props.signedOut.onSignInAgain}
+                        disabled={!props.signedOut.onSignInAgain}
+                        onPress={props.signedOut.onSignInAgain ?? undefined}
                     />
                 </View>
             ) : (

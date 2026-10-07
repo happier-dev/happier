@@ -9,7 +9,7 @@ import type { ConnectedServicesIndexModel, ConnectedServicesIndexSheet } from '.
 export function selectNewPoolServices(model: ConnectedServicesIndexModel): readonly ConnectedServicesIndexSheet[] {
     return model.sheets.filter((sheet) => (
         sheet.section === 'agents'
-        && sheet.canOpen
+        && sheet.canAdd
         && sheet.accounts.some((account) => account.kind === 'qualified')
     ));
 }
