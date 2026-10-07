@@ -33,7 +33,7 @@ it('keeps the interactive renderer and protocol root barrel unloaded through dae
         if (!/\/(?:apps|packages)\//u.test(url) || /(?:\.test\.|vitest\.config|daemon-schema-memory\.config)/u.test(url)) continue;
         const source = await new Promise<string>((resolve, reject) => session.post('Debugger.getScriptSource', { scriptId },
           (error, result) => error ? reject(error) : resolve(result.scriptSource)));
-        const imports = source.split('\n').filter(line => /__vite_ssr_import__\(["']@happier-dev\/protocol["']/u.test(line));
+        const imports = source.split('\n').filter(line => /(?:__vite_ssr_import__|\bimport\b).*?(?:["']@happier-dev\/protocol["']|protocol\/(?:src|dist)\/index\.(?:ts|js))/u.test(line));
         if (imports.length) rootImporters.push({ url, imports });
       }
       console.info('daemon-protocol-root-importers', JSON.stringify(rootImporters));

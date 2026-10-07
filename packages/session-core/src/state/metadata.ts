@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { z } from "zod";
 import { applyRuntimeDescriptorSessionMetadata, normalizeLegacyAgentVocabularySessionMetadata } from "@happier-dev/agents/session/state/metadataWriters";
 import { AgentModelOptionOverrideRuleReadSchema } from '@happier-dev/protocol/models/descriptor';
@@ -26,13 +27,13 @@ import { SessionDirectoryV1ReadSchema } from '@happier-dev/protocol/sessions/met
  * survive one carrier and be silently stripped by another. `MetadataSchema`'s top-level
  * `.passthrough()` does NOT reach nested objects, so every carried field must be declared here.
  */
-const StoredOptionChoiceSchema = z.object({
+const StoredOptionChoiceSchema = lazyZodSchema(() => z.object({
     value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
     name: z.string(),
     description: z.string().optional(),
-});
+}));
 
-const StoredModelOptionSchema = z.object({
+const StoredModelOptionSchema = lazyZodSchema(() => z.object({
     id: z.string(),
     name: z.string(),
     description: z.string().optional(),
@@ -40,17 +41,17 @@ const StoredModelOptionSchema = z.object({
     currentValue: z.union([z.string(), z.number(), z.boolean(), z.null()]),
     options: z.array(StoredOptionChoiceSchema).optional(),
     overridesWhenOn: AgentModelOptionOverrideRuleReadSchema.optional(),
-});
+}));
 
-const StoredConfigOptionSchema = StoredModelOptionSchema.extend({
+const StoredConfigOptionSchema = lazyZodSchema(() => StoredModelOptionSchema.extend({
     groups: z.array(z.object({
         id: z.string(),
         name: z.string(),
         options: z.array(StoredOptionChoiceSchema),
     })).optional(),
-});
+}));
 
-const MetadataObjectSchema = z.object({
+const MetadataObjectSchema = lazyZodSchema(() => z.object({
     // Cloud/system sessions may omit these fields; treat missing/null as empty.
     path: z.string().nullish().transform((value) => (typeof value === 'string' ? value : '')),
     host: z.string().nullish().transform((value) => (typeof value === 'string' ? value : '')),
@@ -300,9 +301,9 @@ const MetadataObjectSchema = z.object({
         sourceSessionId: z.string().optional(),
         source: SessionDiscussionSelectionSourceV1Schema.omit({ draftCorrelationId: true }).optional(),
     }).optional().catch(undefined),
-}).passthrough();
+}).passthrough());
 
-export const MetadataSchema = z.preprocess((value) => {
+export const MetadataSchema = lazyZodSchema(() => z.preprocess((value) => {
     const parsedValue = (() => {
         if (typeof value !== 'string') return value;
         const trimmed = value.trim();
@@ -358,6 +359,6 @@ export const MetadataSchema = z.preprocess((value) => {
         return rest;
     }
     return applyRuntimeDescriptorSessionMetadata(metadata, runtimeDescriptorV1);
-}, MetadataObjectSchema);
+}, MetadataObjectSchema));
 
 export type Metadata = z.infer<typeof MetadataSchema>;

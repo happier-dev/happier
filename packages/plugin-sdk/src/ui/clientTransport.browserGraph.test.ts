@@ -8,10 +8,6 @@ const protocolUiClientEntry = normalizePath(resolve(
     import.meta.dirname,
     '../../../protocol/src/plugins/ui/client.ts',
 ));
-const protocolUiEntry = normalizePath(resolve(
-    import.meta.dirname,
-    '../../../protocol/src/plugins/ui/index.ts',
-));
 
 async function bundleHostedWebGuestClient(): Promise<Readonly<{
     moduleIds: readonly string[];
@@ -21,20 +17,8 @@ async function bundleHostedWebGuestClient(): Promise<Readonly<{
     const virtualEntry = 'virtual:hosted-web-guest-client';
     const resolvedVirtualEntry = `\0${virtualEntry}`;
     const result = await build({
-        configFile: false,
+        configFile: resolve(import.meta.dirname, '../../vitest.source.config.ts'),
         logLevel: 'silent',
-        resolve: {
-            alias: [
-                {
-                    find: '@happier-dev/protocol/plugins/ui/client',
-                    replacement: protocolUiClientEntry,
-                },
-                {
-                    find: '@happier-dev/protocol/plugins/ui',
-                    replacement: protocolUiEntry,
-                },
-            ],
-        },
         plugins: [{
             name: 'hosted-web-guest-client-browser-entry',
             resolveId(id) {

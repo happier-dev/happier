@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { z } from 'zod';
 
 import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 } from '@happier-dev/protocol/runtime/agentSessionLimitsV1';
@@ -36,14 +37,14 @@ import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapte
 export const HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY =
   'HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE';
 
-const BoundedIdSchema = z.string().trim().min(1).max(256);
-const BoundedPathSchema = z.string().min(1).max(32_768);
-const BoundedFeatureIdsSchema = z.array(BoundedIdSchema).max(256);
-const HostPluginContributionIdentityV1Schema = asHostProtocolZod(
+const BoundedIdSchema = lazyZodSchema(() => z.string().trim().min(1).max(256));
+const BoundedPathSchema = lazyZodSchema(() => z.string().min(1).max(32_768));
+const BoundedFeatureIdsSchema = lazyZodSchema(() => z.array(BoundedIdSchema).max(256));
+const HostPluginContributionIdentityV1Schema = lazyZodSchema(() => asHostProtocolZod(
   PluginContributionIdentityV1Schema,
-);
+));
 
-const ComposerStagedMediaReleaseIntentV1Schema = z.object({
+const ComposerStagedMediaReleaseIntentV1Schema = lazyZodSchema(() => z.object({
   handle: ComposerContentHandleV1Schema,
   executionTarget: SessionExecutionTargetV1Schema,
   owner: HostPluginContributionIdentityV1Schema,
@@ -51,13 +52,13 @@ const ComposerStagedMediaReleaseIntentV1Schema = z.object({
     composer: asHostProtocolZod(ComposerRefV1Schema),
     attachmentInstanceId: ComposerInstanceIdSchema,
   }).strict(),
-}).strict();
+}).strict());
 
 /**
  * Private runner↔daemon carrier for work that must stay request-local until
  * Session admission reports a known result. It is never transcript metadata.
  */
-export const ComposerStagedMediaAdmissionSettlementV1Schema = z.object({
+export const ComposerStagedMediaAdmissionSettlementV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   releaseIntents: z.array(ComposerStagedMediaReleaseIntentV1Schema).max(64),
   createdWorkspaceRelativePaths: z.array(BoundedPathSchema).max(64),
@@ -68,7 +69,7 @@ export const ComposerStagedMediaAdmissionSettlementV1Schema = z.object({
    * the media this Message created, and by then no live Session can name its directory.
    */
   workingDirectory: BoundedPathSchema,
-}).strict();
+}).strict());
 export type ComposerStagedMediaAdmissionSettlementV1 = z.infer<
   typeof ComposerStagedMediaAdmissionSettlementV1Schema
 >;
@@ -99,13 +100,13 @@ export function extractComposerStagedMediaAdmissionSettlement(
   };
 }
 
-export const AgentRuntimeDaemonTurnPayloadV1Schema = z.record(
+export const AgentRuntimeDaemonTurnPayloadV1Schema = lazyZodSchema(() => z.record(
   z.string(),
   AgentRuntimeJsonValueV1Schema,
-);
+));
 
 export const AgentRuntimeDaemonTurnContributionRequestV1Schema =
-  z.discriminatedUnion('kind', [
+  lazyZodSchema(() => z.discriminatedUnion('kind', [
     z.object({
       kind: z.literal('prompt'),
       selectedAsset: z.object({
@@ -154,9 +155,9 @@ export const AgentRuntimeDaemonTurnContributionRequestV1Schema =
       kind: z.literal('transformAgentRequest'),
       payload: AgentRuntimeDaemonTurnPayloadV1Schema,
     }).strict(),
-  ]);
+  ]));
 
-const AgentRuntimeDaemonPromptBlockV1Schema = z.object({
+const AgentRuntimeDaemonPromptBlockV1Schema = lazyZodSchema(() => z.object({
   id: BoundedIdSchema,
   scope: z.enum([
     'session',
@@ -169,21 +170,21 @@ const AgentRuntimeDaemonPromptBlockV1Schema = z.object({
   ]),
   text: z.string().min(1).max(262_144),
   enabled: z.boolean().optional(),
-}).strict();
+}).strict());
 
-const AgentRuntimeDaemonToolPromptContributionV1Schema = z.object({
+const AgentRuntimeDaemonToolPromptContributionV1Schema = lazyZodSchema(() => z.object({
   id: BoundedIdSchema,
   name: z.string().max(4_096).nullable().optional(),
   title: z.string().max(4_096).nullable().optional(),
   promptSnippet: z.string().max(262_144).nullable().optional(),
   promptGuidelines:
     z.array(z.string().max(262_144)).max(256).nullable().optional(),
-}).strict();
+}).strict());
 
 const AgentRuntimeDaemonCompositionToolPromptContributionV1Schema =
-  AgentRuntimeDaemonToolPromptContributionV1Schema.extend({
+  lazyZodSchema(() => AgentRuntimeDaemonToolPromptContributionV1Schema.extend({
     pluginId: BoundedIdSchema,
-  }).strict();
+  }).strict());
 
 /**
  * An immutable executable descriptor selected by the daemon for one Agent
@@ -191,7 +192,7 @@ const AgentRuntimeDaemonCompositionToolPromptContributionV1Schema =
  * it carries only the selected tool plus the canonical generation fence that
  * the daemon action owner will revalidate on execution.
  */
-const AgentRuntimeDaemonCompositionToolBindingV1Schema = z.object({
+const AgentRuntimeDaemonCompositionToolBindingV1Schema = lazyZodSchema(() => z.object({
   tool: z.object({
     toolId: z.string().trim().min(1).max(1_024),
     actionId: z.string().trim().min(1).max(1_024),
@@ -209,9 +210,9 @@ const AgentRuntimeDaemonCompositionToolBindingV1Schema = z.object({
     surfaces: z.array(z.enum(['agent', 'mcp', 'cli'])).min(1).max(3),
   }).strict(),
   expectedContributorOccurrenceId: z.string().trim().min(1).max(512),
-}).strict();
+}).strict());
 
-const AgentRuntimeDaemonCompositionInstructionV1Schema = z.object({
+const AgentRuntimeDaemonCompositionInstructionV1Schema = lazyZodSchema(() => z.object({
   pluginId: BoundedIdSchema,
   text: z.string().trim().min(1)
     .superRefine((value, context) => {
@@ -222,9 +223,9 @@ const AgentRuntimeDaemonCompositionInstructionV1Schema = z.object({
         });
       }
     }),
-}).strict();
+}).strict());
 
-const AgentRuntimeDaemonCompositionInstructionsV1Schema = z.array(
+const AgentRuntimeDaemonCompositionInstructionsV1Schema = lazyZodSchema(() => z.array(
   AgentRuntimeDaemonCompositionInstructionV1Schema,
 ).max(128).superRefine((instructions, context) => {
   const bytesByPluginId = new Map<string, number>();
@@ -247,9 +248,9 @@ const AgentRuntimeDaemonCompositionInstructionsV1Schema = z.array(
       message: 'Agent composition instructions exceed the aggregate 32 KiB UTF-8 bound',
     });
   }
-});
+}));
 
-export const AgentRuntimeDaemonTurnContributionsResultV1Schema = z.union([
+export const AgentRuntimeDaemonTurnContributionsResultV1Schema = lazyZodSchema(() => z.union([
   z.object({
     kind: z.literal('prompt'),
     promptAssetBlocks:
@@ -368,12 +369,12 @@ export const AgentRuntimeDaemonTurnContributionsResultV1Schema = z.union([
         'Agent turn contribution result exceeds the aggregate byte bound',
     });
   }
-});
+}));
 
 export type AgentRuntimeDaemonTurnContributionsResultV1 =
   z.infer<typeof AgentRuntimeDaemonTurnContributionsResultV1Schema>;
 
-export const AgentRuntimeDaemonSessionDescriptorV1Schema = z.object({
+export const AgentRuntimeDaemonSessionDescriptorV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   pluginId: BoundedIdSchema,
   pluginVersion: z.string().trim().min(1).max(256),
@@ -403,52 +404,52 @@ export const AgentRuntimeDaemonSessionDescriptorV1Schema = z.object({
       z.array(PluginRuntimeCapabilityFamilyV1Schema).max(256)
         .refine((values) => new Set(values).size === values.length),
   }).strict().optional(),
-}).strict();
+}).strict());
 
 export type AgentRuntimeDaemonSessionDescriptorV1 =
   z.infer<typeof AgentRuntimeDaemonSessionDescriptorV1Schema>;
 
 /** Non-authoritative launch intent, separate from the admitted Agent identity. */
-export const AgentRuntimeRunnerBootstrapV1Schema = z.object({
+export const AgentRuntimeRunnerBootstrapV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   descriptor: AgentRuntimeDaemonSessionDescriptorV1Schema,
   launch: z.object({ runtimeDescriptorV1: RuntimeDescriptorV1Schema }).strict().optional(),
-}).strict();
+}).strict());
 
 export type AgentRuntimeRunnerBootstrapLaunchV1 =
   NonNullable<z.infer<typeof AgentRuntimeRunnerBootstrapV1Schema>['launch']>;
 
 export const AgentRuntimeDaemonProviderConnectionModelRefV1Schema =
-  z.object({
+  lazyZodSchema(() => z.object({
     agentTargetKey: ProviderAgentTargetKeySchema,
     providerConnectionId: ProviderConnectionIdSchema,
     modelId: ProviderModelIdSchema,
-  }).strict();
+  }).strict());
 
 export const AgentRuntimeDaemonModelTransitionAuthorizationResultV1Schema =
-  z.object({
+  lazyZodSchema(() => z.object({
     selection: AgentRuntimeDaemonProviderConnectionModelRefV1Schema,
     policy: ModelSelectionApplyPolicySchema,
     model: ProviderModelDescriptorV1Schema,
     sessionBindingMetadata: SessionProviderBindingMetadataV1Schema,
     runtimeBindingBasis: ProviderRuntimeBindingBasisV1Schema,
-  }).strict();
+  }).strict());
 
 export type AgentRuntimeDaemonModelTransitionAuthorizationResultV1 =
   z.infer<
     typeof AgentRuntimeDaemonModelTransitionAuthorizationResultV1Schema
   >;
 
-const McpLaunchConfigSchema = z.object({
+const McpLaunchConfigSchema = lazyZodSchema(() => z.object({
   command: BoundedPathSchema,
   args: z.array(z.string().max(32_768)).max(1_024).optional(),
   env: z.record(
     z.string().max(256),
     z.string().max(262_144),
   ).optional(),
-}).strict();
+}).strict());
 
-const ConnectedAccountSchema = z.object({
+const ConnectedAccountSchema = lazyZodSchema(() => z.object({
   purpose: z.string().trim().min(1).max(256),
   account: z.object({
     service: z.object({
@@ -457,9 +458,9 @@ const ConnectedAccountSchema = z.object({
     }).strict(),
     accountId: BoundedIdSchema,
   }).strict(),
-}).strict();
+}).strict());
 
-const AgentSessionOpenBaseSchema = z.object({
+const AgentSessionOpenBaseSchema = lazyZodSchema(() => z.object({
   sessionId: asHostProtocolZod(SessionIdSchema),
   cwd: BoundedPathSchema,
   sessionDirectoryKind: z.enum(['path', 'managed']).optional(),
@@ -471,10 +472,10 @@ const AgentSessionOpenBaseSchema = z.object({
     z.record(BoundedIdSchema, McpLaunchConfigSchema).optional(),
   providerBinding: AgentSessionProviderBindingV1Schema.optional(),
   stateSharing: ConnectedServicesProviderStateSharingPolicyV1Schema.optional(),
-});
+}));
 
 export const AgentRuntimeDaemonSessionOpenRequestV1Schema =
-  z.discriminatedUnion('kind', [
+  lazyZodSchema(() => z.discriminatedUnion('kind', [
     AgentSessionOpenBaseSchema.extend({
       kind: z.literal('create'),
       startupInstructions:
@@ -499,7 +500,7 @@ export const AgentRuntimeDaemonSessionOpenRequestV1Schema =
         }).strict().optional(),
       }).strict(),
     }).strict(),
-  ]);
+  ]));
 
 /**
  * Durable runner-open evidence deliberately excludes transient startup text
@@ -507,7 +508,7 @@ export const AgentRuntimeDaemonSessionOpenRequestV1Schema =
  * provider receives those facts only during the one open attempt.
  */
 export const AgentRuntimeDaemonSessionOpenAttestationRequestV1Schema =
-  z.discriminatedUnion('kind', [
+  lazyZodSchema(() => z.discriminatedUnion('kind', [
     AgentSessionOpenBaseSchema.extend({
       kind: z.literal('create'),
     }).strict(),
@@ -527,7 +528,7 @@ export const AgentRuntimeDaemonSessionOpenAttestationRequestV1Schema =
         }).strict().optional(),
       }).strict(),
     }).strict(),
-  ]);
+  ]));
 
 export type AgentRuntimeDaemonSessionOpenAttestationRequestV1 = z.infer<
   typeof AgentRuntimeDaemonSessionOpenAttestationRequestV1Schema
