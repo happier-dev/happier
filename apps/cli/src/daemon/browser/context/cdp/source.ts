@@ -1,4 +1,5 @@
 import { resolveAnnotationCropClip } from '@happier-dev/protocol/browser/context/annotationCropGeometry';
+import { browserContextSensitiveFieldsExpression } from '@happier-dev/protocol';
 
 import type { BrowserContextCaptureScope, BrowserContextSource } from '../capture';
 import type { BrowserContextRegionRect } from '../capture';
@@ -255,7 +256,7 @@ export function createCdpBrowserContextSource(input: CdpBrowserContextSourceInpu
             try {
                 // A boolean presence probe never reads field values or page contents.
                 const present = evaluateValue(await evaluate(handle,
-                    'Boolean(document.querySelector(\'input[type="password"]\'))', view));
+                    browserContextSensitiveFieldsExpression, view));
                 if (typeof present !== 'boolean') return CAPTURE_FAILED;
                 return { ok: true, privacyState: present ? 'sensitiveFieldsPresent' : null };
             } catch {

@@ -62,6 +62,30 @@ function privateLaunchPlan(overrides: Partial<SidecarPrivateLaunchPlan> = {}): S
 }
 
 describe('daemon browser sidecar process lifecycle', () => {
+    it('waits for a healthy process endpoint beyond five seconds and settles on owner cancellation', async () => {
+        vi.useFakeTimers();
+        try {
+            const fake = createFakeProcess();
+            const controller = sidecarProcess.createSidecarProcessController({ nowMs: Date.now, spawnProcess: () => fake.process });
+            controller.launch(privateLaunchPlan());
+            const cancellation = new AbortController();
+            let settled = false;
+            const endpoint = controller.waitForDevToolsEndpointSource({ sidecarId: 'sidecar_1', signal: cancellation.signal });
+            void endpoint.then(() => { settled = true; });
+            await vi.advanceTimersByTimeAsync(6_000);
+            expect(settled).toBe(false);
+            fake.emitStderr('DevTools listening on ws://127.0.0.1:9222/devtools/browser/ready\n');
+            await expect(endpoint).resolves.toMatchObject({ ok: true });
+
+            fake.emitExit(0);
+            controller.launch(privateLaunchPlan({ sidecarId: 'sidecar_2' }));
+            const cancelled = controller.waitForDevToolsEndpointSource({ sidecarId: 'sidecar_2', signal: cancellation.signal });
+            cancellation.abort();
+            await expect(cancelled).resolves.toMatchObject({ ok: false, errorCode: 'cdp_unavailable' });
+        } finally {
+            vi.useRealTimers();
+        }
+    });
     it('launches through the private plan and publishes a public running status without executable paths', async () => {
         const mod = sidecarProcess;
 

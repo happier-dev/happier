@@ -21,6 +21,7 @@ import type {
     BrowserSidecarCdpEventSubscriber,
     BrowserSidecarViewLifecycleSubscriber,
     BrowserSidecarCdpPageHandle,
+    BrowserSidecarCdpCommandScope,
 } from './controlAdapter';
 import {
     createBrowserSidecarLaunchOwnerControlAdapterFactory,
@@ -206,7 +207,7 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
             const handle = !session?.closing ? session?.result?.contextCapture?.resolvePageHandle(view) : null;
             return handle ? handleForSession(view.browserSessionId, handle) : null;
         }
-        async function launchSession(sessionId: string): Promise<BrowserSidecarControlAdapterFactoryResult> {
+        async function launchSession(sessionId: string, scope?: BrowserSidecarCdpCommandScope): Promise<BrowserSidecarControlAdapterFactoryResult> {
             const existing = sessions.get(sessionId);
             if (existing) return existing.promise;
             const profileId = profileIdForSession(sessionId);
@@ -214,17 +215,24 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
                 return unavailable('launch_failed', 'Browser session profile is unusable after a failed purge.');
             }
             let session: SessionLaunch;
+            const cancellation = new AbortController();
+            const cancelLaunch = () => cancellation.abort();
+            if (scope?.signal?.aborted || (scope?.deadlineMs !== undefined && scope.deadlineMs <= Date.now())) cancelLaunch();
+            else scope?.signal?.addEventListener('abort', cancelLaunch, { once: true });
             const profile = profileStore.register({
                 profileId, storageMode: 'ephemeral', owner: { kind: 'session', id: sessionId },
                 cleanupOnSessionClose: true,
                 beforePurge: async () => {
                     session.closing = true;
+                    cancellation.abort();
                     const result = await session.promise;
                     if (result.ok) await result.dispose?.();
                     sessions.delete(sessionId);
                 },
             });
             const promise = Promise.resolve().then(async () => {
+                const remainingDeadlineMs = scope?.deadlineMs === undefined ? undefined : scope.deadlineMs - Date.now();
+                if (remainingDeadlineMs !== undefined && remainingDeadlineMs <= 0) cancelLaunch();
                 const result = await createLaunchOwner({
                     browserSessionId: sessionId,
                     sidecarId: profileId,
@@ -233,6 +241,8 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
                     profile,
                     profileDirectory: profileStore.resolveProfileDirectory(profileId),
                     binaryResolution,
+                    signal: cancellation.signal,
+                    ...(remainingDeadlineMs !== undefined ? { endpointTimeoutMs: remainingDeadlineMs } : {}),
                     // Registered profile lifecycle owns deletion, after dispose has settled CDP
                     // and the process. Never delete these same bytes through a second owner.
                     cleanupProfileDirectory: () => {},
@@ -247,7 +257,7 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
                     result.contextCapture?.subscribeBrowserEvents?.((event) => emit(browserEventListeners, event));
                 }
                 return result;
-            });
+            }).finally(() => scope?.signal?.removeEventListener('abort', cancelLaunch));
             session = { promise, closing: false };
             sessions.set(sessionId, session);
             return promise;
@@ -274,7 +284,7 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
                     let result: BrowserSidecarControlAdapterFactoryResult | undefined;
                     try {
                         result = command.kind === 'openView'
-                            ? await launchSession(command.browserSessionId)
+                            ? await launchSession(command.browserSessionId, scope)
                             : await session?.promise;
                     } catch {
                         await profileStore.purgeForRuntimeStopped({ profileIds: [profileIdForSession(command.browserSessionId)] });
