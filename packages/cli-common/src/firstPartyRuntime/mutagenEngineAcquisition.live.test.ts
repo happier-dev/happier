@@ -86,13 +86,13 @@ const LIVE_ACQUISITION_TIMEOUT_MS = 10 * 60_000;
  * facts validated from the downloaded payload.
  */
 function createDaemonPayloadValidator(): Readonly<{
-  validatePayload(payloadRoot: string): void;
+  validatePayload(payloadRoot: string): Promise<void>;
   validatedManifest(): MutagenEngineArtifactManifest;
 }> {
   let manifest: MutagenEngineArtifactManifest | null = null;
   return {
-    validatePayload(payloadRoot: string): void {
-      manifest = assertMutagenEngineArtifactPayload({
+    async validatePayload(payloadRoot: string): Promise<void> {
+      manifest = await assertMutagenEngineArtifactPayload({
         payloadRoot,
         targetTriple: ENGINE_TARGET_TRIPLE,
         engineVersion: ENGINE_VERSION,
@@ -161,7 +161,7 @@ describe.skipIf(!liveAcquisitionEnabled)(`live Mutagen engine acquisition from a
 
       // Re-validate the installed payload through the existing artifact
       // validator, exactly as the daemon consumer does after acquisition.
-      const installedManifest = assertMutagenEngineArtifactPayload({
+      const installedManifest = await assertMutagenEngineArtifactPayload({
         payloadRoot: expectedVersionPath,
         targetTriple: ENGINE_TARGET_TRIPLE,
         engineVersion: ENGINE_VERSION,

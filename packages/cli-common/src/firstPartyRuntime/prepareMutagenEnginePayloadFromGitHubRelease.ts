@@ -90,7 +90,7 @@ export async function prepareMutagenEnginePayloadFromGitHubRelease(params: Reado
     }).catch((error) => {
       throw artifactError(`failed to extract verified Mutagen engine release ${releaseTag}`, error);
     });
-    assertMutagenEngineArtifactPayload({
+    await assertMutagenEngineArtifactPayload({
       payloadRoot,
       targetTriple: target,
       engineVersion,

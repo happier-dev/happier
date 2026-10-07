@@ -297,21 +297,27 @@ describe('Mutagen engine artifact contract', () => {
     });
   });
 
-  it('requires manager and agent binaries plus the license/checksum closure', () => {
+  it('requires manager and agent binaries plus the license/checksum closure without monopolizing the event loop', async () => {
     const root = mkdtempSync(join(tmpdir(), 'happier-mutagen-artifact-'));
     try {
       const paths = resolveMutagenEngineArtifactPaths(root, 'linux-amd64');
       mkdirSync(join(root, 'bin'), { recursive: true });
       mkdirSync(join(root, 'licenses'), { recursive: true });
-      writeFileSync(paths.managerPath, 'manager');
+      // Span several stream chunks; corruption at the tail must not be missed.
+      const managerBytes = Buffer.from('manager'.repeat(32768));
+      writeFileSync(paths.managerPath, managerBytes);
       writeFileSync(paths.agentPath, 'agent');
       writeFileSync(paths.mutagenLicensePath, MUTAGEN_UMBRELLA_LICENSE);
       writeFileSync(paths.ssplLicensePath, SSPL_V1_LICENSE);
       writeFileSync(paths.thirdPartyNoticesPath, 'notices\n');
-      const manifestText = JSON.stringify(VALID_MANIFEST);
+      const payloadManifest = {
+        ...VALID_MANIFEST,
+        managerSha256: createHash('sha256').update(managerBytes).digest('hex'),
+      };
+      const manifestText = JSON.stringify(payloadManifest);
       writeFileSync(paths.manifestPath, manifestText);
       const validChecksums = [
-        `${VALID_MANIFEST.managerSha256}  bin/happier-mutagen`,
+        `${payloadManifest.managerSha256}  bin/happier-mutagen`,
         `${VALID_MANIFEST.agentSha256}  bin/happier-mutagen-agent`,
         `${createHash('sha256').update(MUTAGEN_UMBRELLA_LICENSE).digest('hex')}  licenses/MUTAGEN-LICENSE`,
         `${createHash('sha256').update(SSPL_V1_LICENSE).digest('hex')}  licenses/SSPL-LICENSE`,
@@ -322,56 +328,71 @@ describe('Mutagen engine artifact contract', () => {
       chmodSync(paths.managerPath, 0o755);
       chmodSync(paths.agentPath, 0o755);
 
-      expect(assertMutagenEngineArtifactPayload({
+      let eventLoopAdvanced = false;
+      const heartbeat = new Promise<void>((resolve) => setImmediate(() => {
+        eventLoopAdvanced = true;
+        resolve();
+      }));
+      expect(await assertMutagenEngineArtifactPayload({
         payloadRoot: root,
         targetTriple: 'linux-amd64',
         trustedForkReleaseCommit: FIXTURE_RELEASE_COMMIT,
       })).toMatchObject({ targetTriple: 'linux-amd64' });
+      expect(eventLoopAdvanced).toBe(true);
+      await heartbeat;
+
+      writeFileSync(paths.managerPath, Buffer.concat([managerBytes.subarray(0, -1), Buffer.from('!')]));
+      await expect(assertMutagenEngineArtifactPayload({
+        payloadRoot: root,
+        targetTriple: 'linux-amd64',
+        trustedForkReleaseCommit: FIXTURE_RELEASE_COMMIT,
+      })).rejects.toMatchObject({ code: 'mutagen_engine_artifact_incomplete' });
+      writeFileSync(paths.managerPath, managerBytes);
 
       rmSync(paths.ssplLicensePath);
-      expect(() => assertMutagenEngineArtifactPayload({
+      await expect(assertMutagenEngineArtifactPayload({
         payloadRoot: root,
         targetTriple: 'linux-amd64',
         trustedForkReleaseCommit: FIXTURE_RELEASE_COMMIT,
-      })).toThrow(/SSPL license.*missing/i);
+      })).rejects.toThrow(/SSPL license.*missing/i);
 
       writeFileSync(paths.ssplLicensePath, '\n');
-      expect(() => assertMutagenEngineArtifactPayload({
+      await expect(assertMutagenEngineArtifactPayload({
         payloadRoot: root,
         targetTriple: 'linux-amd64',
         trustedForkReleaseCommit: FIXTURE_RELEASE_COMMIT,
-      })).toThrow(/SSPL license/i);
+      })).rejects.toThrow(/SSPL license/i);
 
       writeFileSync(paths.ssplLicensePath, SSPL_V1_LICENSE);
-      writeFileSync(paths.checksumsPath, validChecksums.replace(VALID_MANIFEST.managerSha256, '0'.repeat(64)));
-      expect(() => assertMutagenEngineArtifactPayload({
+      writeFileSync(paths.checksumsPath, validChecksums.replace(payloadManifest.managerSha256, '0'.repeat(64)));
+      await expect(assertMutagenEngineArtifactPayload({
         payloadRoot: root,
         targetTriple: 'linux-amd64',
         trustedForkReleaseCommit: FIXTURE_RELEASE_COMMIT,
-      })).toThrow(/checksums/i);
+      })).rejects.toThrow(/checksums/i);
 
       writeFileSync(paths.checksumsPath, validChecksums);
       writeFileSync(paths.ssplLicensePath, 'not an SSPL license\n');
-      expect(() => assertMutagenEngineArtifactPayload({
+      await expect(assertMutagenEngineArtifactPayload({
         payloadRoot: root,
         targetTriple: 'linux-amd64',
         trustedForkReleaseCommit: FIXTURE_RELEASE_COMMIT,
-      })).toThrow(/SSPL license/i);
+      })).rejects.toThrow(/SSPL license/i);
 
       writeFileSync(paths.ssplLicensePath, SSPL_V1_LICENSE);
 
       rmSync(paths.agentPath);
-      expect(() => assertMutagenEngineArtifactPayload({
+      await expect(assertMutagenEngineArtifactPayload({
         payloadRoot: root,
         targetTriple: 'linux-amd64',
         trustedForkReleaseCommit: FIXTURE_RELEASE_COMMIT,
-      })).toThrow(/agent/i);
+      })).rejects.toThrow(/agent/i);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it('requires the exact target-specific executable paths in manifests, payloads, and checksums', () => {
+  it('requires the exact target-specific executable paths in manifests, payloads, and checksums', async () => {
     expect(resolveMutagenEngineArtifactPaths('C:\\engine', 'windows-amd64')).toMatchObject({
       managerPath: join('C:\\engine', 'bin', 'happier-mutagen.exe'),
       agentPath: join('C:\\engine', 'bin', 'happier-mutagen-agent.exe'),
@@ -439,14 +460,14 @@ describe('Mutagen engine artifact contract', () => {
       ].join('\n').concat('\n');
 
       writeFileSync(paths.checksumsPath, checksumClosure('bin/happier-mutagen', 'bin/happier-mutagen-agent'));
-      expect(() => assertMutagenEngineArtifactPayload({
+      await expect(assertMutagenEngineArtifactPayload({
         payloadRoot: root,
         targetTriple: 'windows-amd64',
         trustedForkReleaseCommit: FIXTURE_RELEASE_COMMIT,
-      })).toThrow(/checksums/i);
+      })).rejects.toThrow(/checksums/i);
 
       writeFileSync(paths.checksumsPath, checksumClosure(manifest.managerPath, manifest.agentPath));
-      expect(assertMutagenEngineArtifactPayload({
+      expect(await assertMutagenEngineArtifactPayload({
         payloadRoot: root,
         targetTriple: 'windows-amd64',
         trustedForkReleaseCommit: FIXTURE_RELEASE_COMMIT,
