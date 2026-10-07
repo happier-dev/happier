@@ -178,7 +178,7 @@ describe('Git mutation safety', { timeout: 40_000 }, () => {
         } finally { rmSync(cwd, { recursive: true, force: true }); }
     });
 
-    it.skipIf(process.platform === 'win32')('reports a real reference-transaction veto as hook failure with unchanged HEAD and index', async () => {
+    it.skipIf(process.platform === 'win32').each(['native', 'git-2.55'] as const)('reports a real reference-transaction veto as hook failure with unchanged HEAD and index (%s)', async (diagnostic) => {
         const owner = createWorkspace();
         const native = createWorkspace();
         try {
@@ -191,7 +191,18 @@ describe('Git mutation safety', { timeout: 40_000 }, () => {
             const nativeHead = git(native.cwd, ['rev-parse', 'HEAD']);
             expect(spawnSync('git', ['commit', '-qm', 'selected'], { cwd: native.cwd }).status).not.toBe(0);
             expect(git(native.cwd, ['rev-parse', 'HEAD'])).toBe(nativeHead);
-            const response = await runWithRealGitScmRuntime(() => gitCommitCreate({ context: owner.context, request: { message: 'selected' } }));
+            const commit = () => gitCommitCreate({ context: owner.context, request: { message: 'selected' } });
+            const runtime = createRealGitScmBackendRuntimeServices();
+            const response = diagnostic === 'native'
+                ? await runWithRealGitScmRuntime(commit)
+                : await runWithGitScmCommandRunner(async (input) => {
+                    const result = await runtime.runCommand(input);
+                    // Git's real veto and unchanged repository remain authoritative;
+                    // adapt only the OS diagnostic used by Git 2.55 refs.c.
+                    return input.args[0] === 'update-ref' && !result.success
+                        ? { ...result, stderr: result.stderr.replace('ref updates aborted by hook', "in 'prepared' phase, update aborted by the reference-transaction hook") }
+                        : result;
+                }, commit);
             expect(response).toMatchObject({ success: false, errorCode: 'COMMIT_HOOK_FAILED', outcome: { kind: 'failed', errorCode: 'COMMIT_HOOK_FAILED' }, publication: { state: 'not_published', hookName: 'reference-transaction' } });
             expect(git(owner.cwd, ['rev-parse', 'HEAD'])).toBe(head);
             expect(readFileSync(join(owner.cwd, '.git', 'index'))).toEqual(index);
@@ -753,22 +764,27 @@ describe('Git mutation safety', { timeout: 40_000 }, () => {
     });
 
     it.skipIf(process.platform === 'win32')('honors native hook discovery, message rewrites, identity and ref hooks', async () => {
-        const { cwd, context } = createWorkspace();
+        const owner = createWorkspace();
+        const { cwd, context } = owner;
+        const native = createWorkspace();
         try {
-            const hooks = join(cwd, 'custom-hooks'); mkdirSync(hooks); git(cwd, ['config', 'core.hooksPath', hooks]);
-            writeFileSync(join(hooks, 'pre-commit'), '#!/bin/sh\ntest "$GIT_EDITOR" = : || exit 1\ngit symbolic-ref -q HEAD > hook-branch\necho pre >> hooks-seen\n', { mode: 0o755 });
-            writeFileSync(join(hooks, 'prepare-commit-msg'), '#!/bin/sh\ntest "$2" = message || exit 1\necho prepare >> hooks-seen\n', { mode: 0o755 });
-            writeFileSync(join(hooks, 'commit-msg'), '#!/bin/sh\necho rewritten > "$1"\necho message >> hooks-seen\n', { mode: 0o755 });
-            writeFileSync(join(hooks, 'post-commit'), '#!/bin/sh\necho post >> hooks-seen\n', { mode: 0o755 });
-            writeFileSync(join(hooks, 'reference-transaction'), '#!/bin/sh\necho "ref-$1" >> hooks-seen\ncat >/dev/null\n', { mode: 0o755 });
-            writeFileSync(join(cwd, 'a.txt'), 'selected\n');
+            for (const { cwd } of [owner, native]) {
+                const hooks = join(cwd, 'custom-hooks'); mkdirSync(hooks); git(cwd, ['config', 'core.hooksPath', hooks]);
+                writeFileSync(join(hooks, 'pre-commit'), '#!/bin/sh\ntest "$GIT_EDITOR" = : || exit 1\ngit symbolic-ref -q HEAD > hook-branch\necho pre >> hooks-seen\n', { mode: 0o755 });
+                writeFileSync(join(hooks, 'prepare-commit-msg'), '#!/bin/sh\ntest "$2" = message || exit 1\necho prepare >> hooks-seen\n', { mode: 0o755 });
+                writeFileSync(join(hooks, 'commit-msg'), '#!/bin/sh\necho rewritten > "$1"\necho message >> hooks-seen\n', { mode: 0o755 });
+                writeFileSync(join(hooks, 'post-commit'), '#!/bin/sh\necho post >> hooks-seen\n', { mode: 0o755 });
+                writeFileSync(join(hooks, 'reference-transaction'), '#!/bin/sh\necho "ref-$1" >> hooks-seen\ncat >/dev/null\n', { mode: 0o755 });
+                writeFileSync(join(cwd, 'a.txt'), 'selected\n');
+            }
+            git(native.cwd, ['commit', '-qm', 'original', '--', 'a.txt']);
             const response = await runWithRealGitScmRuntime(() => gitCommitCreate({ context, request: { message: 'original', scope: { kind: 'paths', include: ['a.txt'] } } }));
             expect(response.success, JSON.stringify(response)).toBe(true);
             expect(git(cwd, ['show', '-s', '--format=%B'])).toBe('rewritten');
             expect(response.publication?.actualMessage).toBe('rewritten');
             expect(readFileSync(join(cwd, 'hook-branch'), 'utf8').trim()).toBe(git(cwd, ['symbolic-ref', 'HEAD']));
-            expect(readFileSync(join(cwd, 'hooks-seen'), 'utf8').trim().split('\n')).toEqual(['pre', 'prepare', 'message', 'ref-prepared', 'ref-committed', 'post']);
-        } finally { rmSync(cwd, { recursive: true, force: true }); }
+            expect(readFileSync(join(cwd, 'hooks-seen'), 'utf8')).toBe(readFileSync(join(native.cwd, 'hooks-seen'), 'utf8'));
+        } finally { for (const { cwd } of [owner, native]) rmSync(cwd, { recursive: true, force: true }); }
     });
 
     it('fails configured signing before publishing any ref or index change', async () => {

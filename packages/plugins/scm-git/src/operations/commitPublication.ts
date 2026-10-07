@@ -357,7 +357,8 @@ export async function publishGitCommit(input: { context: ScmBackendContext; requ
             const changed = targetMatches === false || (observed.success && (observed.target.headOid !== target.headOid || observed.target.ref !== target.ref ||
                 observed.target.stateFiles.some((file, position) => file.content !== target.stateFiles[position]!.content)));
             if (changed) return decorate(failure(SCM_OPERATION_ERROR_CODES.COMMIT_HEAD_CHANGED, publication.stderr || 'HEAD or its operation state changed before publication'));
-            if (publication.stderr.includes('ref updates aborted by hook')) {
+            if (publication.stderr.includes('ref updates aborted by hook') ||
+                publication.stderr.includes('update aborted by the reference-transaction hook')) {
                 hookName = 'reference-transaction';
                 return decorate(failure(SCM_OPERATION_ERROR_CODES.COMMIT_HOOK_FAILED, publication.stderr));
             }
