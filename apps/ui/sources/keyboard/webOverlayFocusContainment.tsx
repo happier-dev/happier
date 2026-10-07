@@ -63,6 +63,8 @@ export function useWebOverlayFocusContainment(options: WebOverlayFocusContainmen
         : null;
     const discardPendingCapture = options.focusReturn.kind === 'pre-mutation'
         && options.focusReturn.discardPendingCapture;
+    const discardPendingCaptureRef = React.useRef(discardPendingCapture);
+    discardPendingCaptureRef.current = discardPendingCapture;
 
     React.useEffect(() => {
         if (!discardPendingCapture || !preMutationFocusReturnRef) return;
@@ -80,7 +82,9 @@ export function useWebOverlayFocusContainment(options: WebOverlayFocusContainmen
             : options.focusReturn.kind === 'provided'
                 ? options.focusReturn.ref?.current
                 : takePreMutationFocusReturnTarget(preMutationFocusReturnRef);
-        if (!focusElement(container)) {
+        // A retained editor can become modal without opening new content. Keep its caret;
+        // initial openings from outside the pane still establish focus in the modal shell.
+        if (!container.contains(document.activeElement) && !focusElement(container)) {
             focusFirstElement(container);
         }
 
@@ -94,6 +98,11 @@ export function useWebOverlayFocusContainment(options: WebOverlayFocusContainmen
             if (isWithinInertSubtree(container)) return;
 
             const restoreReleasedFocus = () => {
+                // Becoming docked releases containment, not the still-open editor's focus.
+                // A real close (or an inert hidden pane) still restores its opener/fallback.
+                const focused = document.activeElement;
+                if (discardPendingCaptureRef.current && focused instanceof HTMLElement
+                    && container.contains(focused) && isEligibleFocusTarget(focused)) return;
                 const eligibleReturnTarget = isEligibleFocusTarget(returnTarget)
                     ? returnTarget
                     : null;
