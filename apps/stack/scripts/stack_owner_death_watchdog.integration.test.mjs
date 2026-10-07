@@ -108,6 +108,44 @@ test('stack owner-death watchdog uses the shared bounded log owner', async (t) =
   assert.ok((await stat(`${watchdogLogPath}.1`)).size <= 256);
 });
 
+test('owner watchdog waits for its parent lifetime event without polling runtime state while the parent is live', async (t) => {
+  const fixture = await setupStackStopSweepFixture({
+    importMetaUrl: import.meta.url, t, tmpPrefix: 'hstack-owner-watchdog-idle-',
+  });
+  const runtimeStatePath = join(fixture.baseDir, 'stack.runtime.json');
+  const readsPath = join(fixture.tmp, 'runtime-reads.log');
+  const preloadPath = join(fixture.tmp, 'observe-runtime-reads.mjs');
+  // Genuine filesystem boundary: count actual reads while preserving their data.
+  await writeFile(preloadPath, [
+    "import fs from 'node:fs';",
+    "import { syncBuiltinESMExports } from 'node:module';",
+    'const original = fs.promises.readFile;',
+    'fs.promises.readFile = function(path, ...args) {',
+    `  if (String(path) === ${JSON.stringify(runtimeStatePath)}) fs.appendFileSync(${JSON.stringify(readsPath)}, 'read\\n');`,
+    '  return original.call(this, path, ...args);',
+    '};',
+    'syncBuiltinESMExports();',
+  ].join('\n'));
+  const runtime = await recordStackRuntimeStart(runtimeStatePath, {
+    stackName: fixture.stackName, script: 'watchdog-idle-test', ownerPid: process.pid, ports: {},
+  });
+  const watchdog = fixture.trackChild(spawnStackOwnerDeathWatchdog({
+    rootDir: fixture.rootDir, stackName: fixture.stackName, baseDir: fixture.baseDir,
+    envPath: fixture.envPath, runtimeStatePath, ownerPid: process.pid,
+    ownerStartedAt: runtime.startedAt,
+    env: { ...fixture.baseEnv, NODE_OPTIONS: `--import=${preloadPath}` }, pollMs: 25,
+  }));
+  await waitForLogMatch(readsPath, /^read/m);
+  await new Promise(resolve => setTimeout(resolve, 250));
+  assert.equal(isAlive(watchdog.pid), true);
+  assert.equal((await readFile(readsPath, 'utf8')).trim().split('\n').length, 1,
+    'a live parent already supplies a disconnect event; recurring state-file reads are redundant');
+  watchdog.disconnect();
+  await waitForLogMatch(readsPath, /^read\nread/m);
+  assert.equal(isAlive(watchdog.pid), true, 'disconnect alone does not authorize sweeping a live owner');
+  assert.equal(JSON.parse(await readFile(runtimeStatePath, 'utf8')).ownerPid, process.pid);
+});
+
 test('owner-death sweep no-ops when a successor publishes after the watched owner was observed', async (t) => {
   const fixture = await setupStackStopSweepFixture({
     importMetaUrl: import.meta.url,
