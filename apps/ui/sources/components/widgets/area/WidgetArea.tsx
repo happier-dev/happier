@@ -17,7 +17,7 @@ import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { WidgetAddPopover } from '@/components/widgets/add/WidgetAddPopover';
+import { WidgetAddSurface } from '@/components/widgets/add/WidgetAddSurface';
 import { useAccountWidgetAddSections, type AccountWidgetSurfaceLabels } from '@/components/widgets/add/accountWidgetAddSections';
 import { WidgetFrame, type WidgetFramePlacement } from '@/components/widgets/frame/WidgetFrame';
 import {
@@ -475,10 +475,9 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
 const AREA_LABELS = (surfaceName: string): AccountWidgetSurfaceLabels => ({
     count: (count) => t('widgetAdd.countHere', { count }),
     submit: t('widgetAdd.areaAddTo', { surface: surfaceName }),
-    fromPluginsHint: t('widgetAdd.homeFromPluginsHint'),
 });
 
-/** The shared Gallery | List and Set up, counted "N here"; every add is the area's `widgets.instance.add`. */
+/** The shared Add surface, counted "N here"; every add is the area's `widgets.instance.add`. */
 function WidgetAreaAddPopover(props: Readonly<{
     anchorRef: React.RefObject<View | null>;
     surface: WidgetSurfaceRefV1;
@@ -497,13 +496,14 @@ function WidgetAreaAddPopover(props: Readonly<{
     ), [write]);
     const sections = useAccountWidgetAddSections({ scope: props.surface, instances, addInstance, labels, context: props.context, testID: props.testID });
     return (
-        <WidgetAddPopover
+        <WidgetAddSurface
             open
             anchorRef={props.anchorRef}
             onRequestClose={props.onRequestClose}
             title={labels.submit}
             hint={t('widgetAdd.areaHint')}
             searchPlaceholder={t('widgetAdd.searchWidgets')}
+            addLabel={labels.submit}
             sections={sections}
             serverId={props.surface.serverId}
             testID={props.testID}

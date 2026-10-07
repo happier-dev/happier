@@ -273,12 +273,14 @@ describe('a plugin page widget area', () => {
         await flushHookEffects({ cycles: 4 });
         await submitAreaAdd(screen);
         if (kind === 'approvalPending') {
+            expect(screen.findByTestId('prs.pinned.addPopover.detail.why')!.props.children).toBe('widgetAdd.areaApprovalPending');
+            if (screen.findByTestId('prs.pinned.addPopover.detail.back')) await act(async () => { screen.pressByTestId('prs.pinned.addPopover.detail.back'); });
             expect(screen.findAllByTestId('prs.pinned.addPopover.entry.plugin-acme.ci/checks.pending').length).toBeGreaterThan(0);
         } else {
             const step = screen.root.findByType(WidgetSetupStep);
             expect(screen.findByTestId(`${step.props.testID}.why`)).not.toBeNull();
+            expect(screen.getTextContent()).toContain('widgetAdd.addFailed');
         }
-        expect(screen.getTextContent()).toContain(kind === 'approvalPending' ? 'widgetAdd.areaApprovalPending' : 'widgetAdd.addFailed');
         expect(screen.getTextContent()).not.toContain('widgetAdd.justAdded');
         expect((await area.store.read()).instances).toEqual([]);
     });
@@ -306,10 +308,12 @@ describe('a plugin page widget area', () => {
         expect(screen.getTextContent()).not.toContain('widgetAdd.justAdded');
         expect(screen.getTextContent()).toContain(kind === 'approvalPending' ? 'widgetAdd.areaApprovalPending' : 'widgetAdd.addFailed');
         expect((await area.store.read()).instances.map(entry => entry.instance)).toEqual([pin]);
-        if (kind === 'refused') {
-            const step = screen.root.findByType(WidgetSetupStep);
-            await act(async () => { screen.pressByTestId(`${step.props.testID}.cancel`); });
-        }
+        // The Add surface stays open after an Add for another; close it from wherever its composition puts Close.
+        await act(async () => {
+            if (screen.findByTestId('prs.pinned.addPopover.detail.close')) screen.pressByTestId('prs.pinned.addPopover.detail.close');
+            else screen.pressByTestId('prs.pinned.addPopover.detail.back');
+        });
+        if (screen.findByTestId('prs.pinned.addPopover.close')) await act(async () => { screen.pressByTestId('prs.pinned.addPopover.close'); });
         await runAction(screen, 'pin', 'editInputs');
         const setup: WidgetSetup = screen.root.findByType(WidgetSetupStep).props.setup;
         let result: WidgetSetupSubmitResult | undefined;
@@ -616,7 +620,7 @@ describe('a plugin page widget area', () => {
         expect(menuOf(reloaded, 'follow').props.actions.find((entry: { id: string }) => entry.id === 'size-medium')?.selected).toBe(true);
     });
 
-    it('adds a contributed widget from the shared gallery that follows the page without a Set up step', async () => {
+    it('adds a contributed widget from the shared Add surface that follows the page from its pane', async () => {
         const area = createArea();
         const screen = await renderScreen(page(area.hostApi, 'happier'));
         await flushHookEffects({ cycles: 4 });

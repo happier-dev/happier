@@ -4,7 +4,7 @@ import { readInputPath } from '@happier-dev/protocol/inputs';
 import { projectWidgetBindingInputV1, resolveConfiguredWidgetInputs, widgetCandidateDefinitionV1, isSameWidgetDefinitionV1, countWidgetInstancesV1, type WidgetInstanceV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 
 import type { SessionBoardCommandOutcome } from '@/components/sessions/board/useSessionBoardController';
-import { describeWidgetCandidatePurpose, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
+import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import {
     proposeWidgetSetupDraft,
     isLiteralWidgetSetupField,
@@ -13,7 +13,8 @@ import {
     type WidgetSetupField,
     type WidgetSetupSubmitResult,
 } from '@/components/widgets/add/widgetSetupModel';
-import { t } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
+import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { normalizeWidgetSizeForSurfaceV1, resolveWidgetSizeChoicesV1 } from '@happier-dev/protocol/widgets';
 
 /**
@@ -79,6 +80,65 @@ export function partitionWidgetCandidatesBySource<T extends Pick<WidgetCandidate
     return { builtIn, fromPlugins, yours };
 }
 
+/**
+ * The From plugins candidates grouped by the plugin that offers them, in first-seen order: the Add
+ * surface lists each plugin under its own name (lab `widget-add` wsplit A). Two installed plugins
+ * that share a display name stay apart, each named with its id.
+ */
+export function groupWidgetCandidatesByPlugin<T extends Pick<WidgetCandidate, 'pluginName' | 'sharedPluginName' | 'surface'>>(
+    candidates: readonly T[],
+): readonly Readonly<{ id: string; title: string; candidates: readonly T[] }>[] {
+    const groups = new Map<string, { id: string; title: string; candidates: T[] }>();
+    for (const candidate of candidates) {
+        const id = candidate.surface?.pluginId ?? candidate.pluginName;
+        const group = groups.get(id);
+        if (group) group.candidates.push(candidate);
+        else groups.set(id, { id, title: describeWidgetCandidateSource(candidate), candidates: [candidate] });
+    }
+    return [...groups.values()];
+}
+
+/** A plugin's name as people read it, with its id when another installed plugin shares the name. */
+function describeWidgetCandidateSource(candidate: Pick<WidgetCandidate, 'pluginName' | 'sharedPluginName' | 'surface'>): string {
+    return candidate.sharedPluginName && candidate.surface ? `${candidate.pluginName} (${candidate.surface.pluginId})` : candidate.pluginName;
+}
+
+/**
+ * Who a candidate comes from and what it reads, for the Add pane's provenance line, from the
+ * candidate's own facts only: Built in (and the Session it reads, when it has one), the plugin that
+ * offers it (and that it reads with the viewer's own connection, when it declares one), or Your
+ * widget (and the plugin source its saved read uses). Authorship and dates are not in the
+ * definition summary, so the line never invents them.
+ */
+export function describeWidgetCandidateProvenance(candidate: WidgetCandidate): string {
+    const kind = candidate.definition?.kind;
+    if (kind === 'builtin') {
+        return candidate.sessionInputPath ? `${t('widgetAdd.builtIn')} · ${t('widgetAdd.readsChosenSession')}` : t('widgetAdd.builtIn');
+    }
+    if (kind === 'artifact') {
+        const yours = t('widgetDefinition.yourWidget');
+        const source = candidate.pluginName && candidate.pluginName !== candidate.title && candidate.pluginName !== yours ? candidate.pluginName : null;
+        const read = source ? (candidate.bodyKind === 'declarative' ? t('widgetAdd.savedQueryOn', { source }) : t('widgetAdd.readsFrom', { source })) : null;
+        const made = describeWidgetDefinitionMaker(candidate);
+        const detail = [read, made].filter((part): part is string => part !== null).join(', ');
+        return detail ? `${yours} · ${detail}` : yours;
+    }
+    const plugin = t('widgetAdd.pluginProvenance', { plugin: describeWidgetCandidateSource(candidate) });
+    return (candidate.connectedAccountPurposeBindings?.length ?? 0) > 0 ? `${plugin} · ${t('widgetDefinition.withYourConnection')}` : plugin;
+}
+
+/** "made by your agent on Oct 3", from the definition's own provenance; nothing when it has none. */
+function describeWidgetDefinitionMaker(candidate: WidgetCandidate): string | null {
+    const made = candidate.madeBy;
+    if (!made || made.createdAt === undefined || true) return null; // A4-RED-TEMP
+    const date = formatWithCachedDateTimeFormatter(made.createdAt, getPreferredLanguage(), { month: 'short', day: 'numeric' });
+    switch (made.author.kind) {
+        case 'agent': return t('widgetAdd.madeByAgent', { date });
+        case 'plugin': return t('widgetAdd.madeByPlugin', { date });
+        case 'person': return t('widgetAdd.madeByYou', { date });
+    }
+}
+
 /** Same widget definition: the gallery counts copies by it, never by title. */
 export const isSameWidgetDefinition = isSameWidgetDefinitionV1;
 
@@ -139,8 +199,9 @@ export function buildWidgetCandidateSetup(input: Readonly<{
     const instanceId = mode.kind === 'edit' ? mode.instance.id : 'draft';
     const providedContext = widgetProvidedContext(input.context);
     return {
-        title: mode.kind === 'edit' ? t('widgetAdd.editTitle', { widget: candidate.title }) : t('widgetAdd.setupTitle', { widget: candidate.title }),
-        hint: mode.kind === 'edit' ? t('widgetAdd.editHint') : describeWidgetCandidatePurpose(candidate),
+        title: mode.kind === 'edit' ? t('widgetAdd.editTitle', { widget: candidate.title }) : candidate.title,
+        ...(mode.kind === 'edit' ? { hint: t('widgetAdd.editHint') } : candidate.description ? { hint: candidate.description } : {}),
+        ...(mode.kind === 'add' ? { provenance: describeWidgetCandidateProvenance(candidate) } : {}),
         submitLabel: mode.kind === 'edit' ? t('common.save') : mode.submitLabel,
         widget: { title: (mode.kind === 'edit' ? mode.instance.displayName : undefined) ?? candidate.title, mark: candidate.icon },
         fields,

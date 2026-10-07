@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { WIDGET_SIZE_POLICY_V1 } from '@happier-dev/protocol/widgets';
 import { proposeWidgetSetupDraft } from '@/components/widgets/add/widgetSetupModel';
 import { buildWidgetCandidateSetup, widgetProvidedContext, widgetSetupFieldsForCandidate } from './widgetSurfaceSetup';
 import type { WidgetCandidate } from '../widgetCatalog';
 
 describe('Widget setup schema defaults', () => {
     const candidate: WidgetCandidate = { key: 'acme.checks/checks', title: 'Checks', pluginName: 'Checks', sharedPluginName: false,
+        sizeDeclaration: { sizes: [...WIDGET_SIZE_POLICY_V1.home.sizes], defaultSize: WIDGET_SIZE_POLICY_V1.home.defaultSize },
         icon: 'squares-four', homeDefault: 'available', target: 'app', surface: { pluginId: 'acme.checks', localId: 'checks' },
         inputs: { fields: [{ path: 'filter.limit', title: 'Limit', widget: 'integer', required: true }] },
         inputSchema: { type: 'object', properties: { filter: { type: 'object', properties: { limit: { type: 'integer', minimum: 1, default: 3 } },

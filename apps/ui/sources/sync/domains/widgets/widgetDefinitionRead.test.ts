@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
-import { createWidgetDefinitionArtifactPortV1 } from '@happier-dev/protocol/widgets';
+import { WIDGET_SIZE_POLICY_V1, createWidgetDefinitionArtifactPortV1 } from '@happier-dev/protocol/widgets';
 import { createWorkBoardArtifactBoundary } from '../../../../../../packages/protocol/src/boards/workBoardArtifactV1.testkit';
 import { readWidgetDefinitionForInstanceV1 } from './widgetDefinitionRead';
 
@@ -16,6 +16,7 @@ describe('mounted authored definition read', () => {
         const scope = { serverId: 'home', accountId: 'owner', owner: { kind: 'home' as const } };
         const executor = createActionExecutor(createActionExecutorBoundaryFixture({ widgetAccountScope: () => scope, widgetDefinitionArtifacts: port }));
         const definition = await port.create({ v: 1, id: 'count', name: 'Count', body: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'First' } } },
+            sizeDeclaration: { sizes: [...WIDGET_SIZE_POLICY_V1.home.sizes], defaultSize: WIDGET_SIZE_POLICY_V1.home.defaultSize },
             inputs: { fields: [] }, inputSchema: { type: 'object', additionalProperties: false }, provenance: { source: { kind: 'authored' } } });
         const ref = { kind: 'artifact' as const, artifactId: definition.id };
         expect(await readWidgetDefinitionForInstanceV1(executor, scope, ref)).toMatchObject({ name: 'Count' });

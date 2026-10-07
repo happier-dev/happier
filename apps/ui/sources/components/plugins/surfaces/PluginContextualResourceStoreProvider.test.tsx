@@ -219,7 +219,7 @@ describe('PluginContextualResourceStoreProvider', () => {
     it('measures Canvas read/watch demand before and after viewport deferral through the real Resource transport', async () => {
         const a = await createAccountLifetime({ accountId: 'account-a' });
         const surface = { ...a.lifetime.scope, owner: { kind: 'workBoard', boardId: 'demand' } } as const;
-        const widgets: WorkBoardWidgetPlacementV1[] = ['top', 'bottom', 'right'].map(id => ({ kind: 'widget', width: 1,
+        const widgets: WorkBoardWidgetPlacementV1[] = ['top', 'bottom', 'right'].map(id => ({ kind: 'widget', size: 'medium',
             ref: { surface, instanceId: id }, instance: { v: 1, id, definition: { kind: 'installed', surface: { pluginId: 'acme.composer', localId: 'widget' } }, bindings: {} } }));
         const positions = { [buildWorkBoardWidgetKeyV1(widgets[0]!.ref)]: { x: 0, y: 0 },
             [buildWorkBoardWidgetKeyV1(widgets[1]!.ref)]: { x: 0, y: 4000 },

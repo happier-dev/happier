@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { reanimatedMotionTokens } from '@/components/ui/motion/reanimatedMotionTokens';
@@ -13,13 +13,11 @@ import { ModalCardFrame } from '@/modal/components/card/ModalCardFrame';
 import { useDeviceType } from '@/utils/platform/responsive';
 
 /**
- * The widget flows' widths: the gallery holds two live tiles, the list is a menu's width, a
- * Set up / Edit inputs step holds its inputs column and the preview beside it, and About, Save as
- * your widget and Post a snapshot read as one column.
+ * The widget flows' widths: an Edit inputs / repair step holds its inputs column and the preview
+ * beside it, and About, Save as your widget and Post a snapshot read as one column. The Add surface
+ * has its own fixed composition (`WIDGET_ADD_SURFACE_PX`).
  */
 export const WIDGET_FLOW_WIDTH_PX = Object.freeze({
-    gallery: 560,
-    list: 420,
     setup: 800,
     panel: 560,
 });
@@ -28,14 +26,9 @@ const MAX_HEIGHT_PX = 640;
 const SHEET_MAX_HEIGHT_RATIO = 0.9;
 
 /**
- * The one floating surface every widget flow uses on desktop: Add, Set up, Edit inputs, About,
- * Save as your widget and Post a snapshot, anchored to the control that opened it with its trailing
- * edge on the anchor's (the Customize, Add or ⋯ it came from).
- *
- * When the flow changes width (the gallery becoming a Set up step, Gallery ↔ List) the surface
- * reshapes in place from that trailing edge instead of snapping: the Popover holds the wider of the
- * two widths while the surface animates, then settles on the new one. Reduced motion changes it at
- * once.
+ * The one floating surface every widget flow uses on desktop: Edit inputs, About, Save as your
+ * widget and Post a snapshot, anchored to the control that opened it with its trailing edge on the
+ * anchor's (the ⋯ it came from). Each flow keeps one width for its whole life.
  */
 export function AnchoredWidgetShell(props: Readonly<{
     anchorRef: React.RefObject<View | null>;
@@ -44,26 +37,6 @@ export function AnchoredWidgetShell(props: Readonly<{
     onRequestClose: () => void;
     children: React.ReactNode;
 }>): React.ReactElement {
-    const reducedMotion = useReducedMotionPreference();
-    const width = useSharedValue(props.width);
-    // The Popover's own width: never narrower than the surface while it is still reshaping.
-    const [held, setHeld] = React.useState(props.width);
-    const target = props.width;
-    React.useEffect(() => {
-        if (reducedMotion) {
-            width.value = target;
-            setHeld(target);
-            return;
-        }
-        setHeld((current) => Math.max(current, target));
-        width.value = withTiming(target, {
-            duration: reanimatedMotionTokens.durationMs.base,
-            easing: reanimatedMotionTokens.easing.standard,
-        }, (finished) => {
-            if (finished) runOnJS(setHeld)(target);
-        });
-    }, [reducedMotion, target, width]);
-    const surfaceWidth = useAnimatedStyle(() => ({ width: width.value }));
     return (
         <Popover
             open
@@ -71,16 +44,15 @@ export function AnchoredWidgetShell(props: Readonly<{
             placement={props.placement ?? 'bottom'}
             gap={8}
             maxHeightCap={MAX_HEIGHT_PX}
-            maxWidthCap={held}
+            maxWidthCap={props.width}
             edgePadding={{ vertical: 8, horizontal: 8 }}
             portal={{ web: true, native: true, matchAnchorWidth: false, anchorAlign: 'end' }}
             onRequestClose={props.onRequestClose}
             backdrop={{ effect: 'none', closeOnPan: true }}
         >
             {({ maxHeight, maxWidth }) => (
-                // A definite width, so the gallery's tiles share the row instead of shrinking to their
-                // text; capped by the room the Popover found.
-                <Animated.View style={[{ alignSelf: 'flex-end', maxWidth }, surfaceWidth]}>
+                // A definite width, capped by the room the Popover found.
+                <View style={{ alignSelf: 'flex-end', width: Math.min(props.width, maxWidth) }}>
                     <FloatingOverlay
                         maxHeight={maxHeight}
                         keyboardShouldPersistTaps="always"
@@ -89,7 +61,7 @@ export function AnchoredWidgetShell(props: Readonly<{
                     >
                         {props.children}
                     </FloatingOverlay>
-                </Animated.View>
+                </View>
             )}
         </Popover>
     );
@@ -145,12 +117,12 @@ export function WidgetFlowShell(props: Readonly<{
 }
 
 /**
- * One step of a flow arriving (lab dadd A: "the same popover slides to one Set up step"): it enters
- * from the trailing edge going forward and from the leading edge coming Back, on the routine step
- * timing, while the surface reshapes around it. Only the arriving step is mounted, so a Set up step
- * leaving never keeps its live preview reading. Reduced motion: a short cross-fade.
+ * One step of a flow arriving (the narrow Add surface and phones: the list pushes the selected
+ * widget's pane): it enters from the trailing edge going forward and from the leading edge coming
+ * Back, on the routine step timing. Only the arriving step is mounted, so a pane leaving never keeps
+ * its live preview reading. Reduced motion: a short cross-fade.
  */
-export function WidgetFlowStep(props: Readonly<{ direction: 'forward' | 'backward' | 'none'; children: React.ReactNode }>): React.ReactElement {
+export function WidgetFlowStep(props: Readonly<{ direction: 'forward' | 'backward' | 'none'; fill?: boolean; children: React.ReactNode }>): React.ReactElement {
     const reducedMotion = useReducedMotionPreference();
     const travel = props.direction === 'none' || reducedMotion ? 0
         : props.direction === 'forward' ? STEP_TRAVEL_PX : -STEP_TRAVEL_PX;
@@ -168,8 +140,10 @@ export function WidgetFlowStep(props: Readonly<{ direction: 'forward' | 'backwar
         offset.value = withTiming(0, timing);
     }, [animate, offset, opacity, reducedMotion]);
     const style = useAnimatedStyle(() => ({ opacity: opacity.value, transform: [{ translateX: offset.value }] }));
-    return <Animated.View style={style}>{props.children}</Animated.View>;
+    return <Animated.View style={[props.fill ? FILL : null, style]}>{props.children}</Animated.View>;
 }
+
+const FILL = { flex: 1, minHeight: 0 } as const;
 
 /** The routine step's travel: enough to read as a push, never a slide-show. */
 const STEP_TRAVEL_PX = slideTransitionTokens.routine.timed.translatePx;

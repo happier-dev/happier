@@ -9,6 +9,7 @@ import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import type { SessionCompanionAddBinding } from './picker/SessionCompanionAddControl';
 import type { SessionCompanionInstanceControls } from './SessionCompanionItemFrame';
+import { resolveWidgetSizeChoicesV1, WidgetSizeDeclarationV1Schema } from '@happier-dev/protocol/widgets';
 
 installSettingsViewCommonModuleMocks({ storage: importOriginal => importOriginal() });
 installDisconnectedServerSocketBoundary();
@@ -54,6 +55,7 @@ describe('Companion widget write acknowledgement', () => {
         await flushHookEffects({ cycles: 3 });
         const binding: SessionCompanionAddBinding = screen.root.findByType(SessionCompanionAddControl).props.binding;
         const candidate = { key: 'builtin:agent_plan', definition: { kind: 'builtin' as const, id: 'agent_plan' as const }, title: 'Plan', pluginName: 'Happier', sharedPluginName: false, icon: 'list-checks' as const, homeDefault: 'available' as const, target: 'session' as const,
+            sizeDeclaration: WidgetSizeDeclarationV1Schema.parse(resolveWidgetSizeChoicesV1('sessionBoard')),
             inputs: { fields: [{ path: 'session', title: 'Session', widget: 'json' as const, required: true }] } };
         const setup = buildCompanionWidgetAddSections({ ...binding, glanceCandidates: [candidate] })[0]!.entries[0]!.setup!();
         const draft = { bindings: { session: { kind: 'value' as const, value: { serverId, sessionId: session.id } } } };

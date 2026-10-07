@@ -1,13 +1,14 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import type { WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
+import { WIDGET_SIZE_POLICY_V1, type WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
 
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
+import { ModalCardFrame } from '@/modal/components/card/ModalCardFrame';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { buildHomeWidgetAddSections } from '@/components/widgets/add/HomeWidgetAddPopover';
-import { WidgetAddPanel } from '@/components/widgets/add/WidgetAddPanel';
+import { WIDGET_ADD_SURFACE_PX, WidgetAddPanel } from '@/components/widgets/add/WidgetAddSurface';
 import { WidgetSetupStep } from '@/components/widgets/add/WidgetSetupStep';
 import { WidgetFrame } from '@/components/widgets/frame/WidgetFrame';
 import { buildWidgetCandidateSetup, type WidgetSurfaceContext } from '@/components/widgets/surface/widgetSurfaceSetup';
@@ -17,15 +18,16 @@ import { t } from '@/text';
 import type { WidgetSpecimenFrames } from './widgetSpecimenTypes';
 
 /**
- * Dev-only fixtures for the Set up / Edit inputs step and the instance-aware Add to Home gallery
- * (lab `dashboards` dadd A/Ab, dbind G/E): the real step and panel at static props. Inputs come first;
- * the preview is a fixed stand-in body in the real frame, since a live body needs a running runtime.
+ * Dev-only fixtures for the Edit inputs step and the Add to Home surface (lab `dashboards` dbind E,
+ * `widget-add` wsplit A): the real step and surface at static props. Inputs come first; the preview
+ * is a fixed stand-in body in the real frame, since a live body needs a running runtime.
  */
 
 const NOOP = (): void => {};
 const ACCEPT = async () => ({ ok: true as const });
 
 const SUMMARY: WidgetCandidate = {
+    sizeDeclaration: { sizes: [...WIDGET_SIZE_POLICY_V1.home.sizes], defaultSize: WIDGET_SIZE_POLICY_V1.home.defaultSize },
     surface: { pluginId: 'happier.channels', localId: 'session-conversations-widget' },
     key: 'happier.channels/session-conversations-widget',
     title: 'External conversations',
@@ -38,9 +40,11 @@ const SUMMARY: WidgetCandidate = {
     inputs: { fields: [{ path: 'session', title: 'Session', description: 'Home has no session of its own, so pick one.', widget: 'json', required: true }] },
 };
 const CHECKS: WidgetCandidate = {
+    sizeDeclaration: { sizes: [...WIDGET_SIZE_POLICY_V1.home.sizes], defaultSize: WIDGET_SIZE_POLICY_V1.home.defaultSize },
     surface: { pluginId: 'happier.scm-github', localId: 'checks' },
     key: 'happier.scm-github/checks',
     title: 'Checks',
+    description: 'The checks on one branch',
     pluginName: 'GitHub',
     sharedPluginName: false,
     icon: 'check-circle',
@@ -62,9 +66,11 @@ const CHECKS: WidgetCandidate = {
     connectedAccountPurposeBindings: [{ path: 'account', purpose: 'checks-read', consumer: { pluginId: 'happier.scm-github', localId: 'checks' } }],
 };
 const LATEST: WidgetCandidate = {
+    sizeDeclaration: { sizes: [...WIDGET_SIZE_POLICY_V1.home.sizes], defaultSize: WIDGET_SIZE_POLICY_V1.home.defaultSize },
     surface: { pluginId: 'happier.triage', localId: 'latest' },
     key: 'happier.triage/latest',
     title: 'New for you',
+    description: 'PRs and issues waiting on you',
     pluginName: 'PRs & Issues',
     sharedPluginName: false,
     icon: 'git-pull-request',
@@ -78,7 +84,6 @@ const BOARD_SESSION: WidgetSurfaceContext = {
 const stylesheet = StyleSheet.create((theme) => ({
     desktop: { width: 800 },
     phone: { width: 390 },
-    gallery: { width: 560 },
     row: { ...Typography.default(), fontSize: 13, lineHeight: 18, color: theme.colors.text.primary },
     sub: { ...Typography.default(), fontSize: 12, lineHeight: 16, color: theme.colors.text.secondary },
 }));
@@ -130,7 +135,7 @@ function Step(props: Readonly<{ phone: boolean; kind: 'home' | 'board' }>) {
     return (
         <View style={props.phone ? stylesheet.phone : stylesheet.desktop}>
             <FloatingOverlay maxHeight={900}>
-                <WidgetSetupStep setup={setup} phone={props.phone} onBack={NOOP} onCancel={NOOP} onDone={NOOP} testID={`specimen-setup-${props.kind}`} />
+                <WidgetSetupStep setup={setup} phone={props.phone} onCancel={NOOP} onDone={NOOP} testID={`specimen-setup-${props.kind}`} />
             </FloatingOverlay>
         </View>
     );
@@ -140,32 +145,70 @@ const copy = (id: string, candidate: WidgetCandidate): WidgetInstanceV1 => ({
     v: 1, id, definition: candidate.surface ? { kind: 'installed', surface: candidate.surface } : candidate.definition!, bindings: {},
 });
 
-function HomeGallery(props: Readonly<{ phone: boolean }>) {
+// An Account definition (Your widgets) whose saved read is served by the analytics plugin.
+const SIGNUPS: WidgetCandidate = {
+    sizeDeclaration: { sizes: ['small', 'medium', 'wide'], defaultSize: 'medium' },
+    definition: { kind: 'artifact', artifactId: 'signups' },
+    key: 'artifact:signups',
+    title: 'Signups this week',
+    description: 'New people per day, against last week',
+    pluginName: 'analytics replica',
+    sharedPluginName: false,
+    icon: 'chart-bar',
+    homeDefault: 'available',
+    target: 'app',
+};
+const HOME_SCOPE = { serverId: 'specimen', accountId: 'specimen', owner: { kind: 'home' as const } };
+
+function StandInSignups(): React.ReactElement {
+    return (
+        <View style={{ gap: 6 }}>
+            <Text style={[stylesheet.row, { fontSize: 24, lineHeight: 30 }]}>1,284</Text>
+            <Text style={stylesheet.sub}>+18% vs the week before</Text>
+        </View>
+    );
+}
+
+/**
+ * The Add to Home surface (lab `widget-add` wsplit A0/A1/A2 and its phone push): the real surface
+ * and the real Home sections at static props, nothing selected or opened on one widget.
+ */
+function HomeAdd(props: Readonly<{ phone: boolean; entry?: string }>) {
     const sections = React.useMemo(() => {
         // Built in (lab dbind G): Happier's own widgets, apart from what plugins add.
         const builtIn = selectBuiltinWidgetCandidates();
         const summary = builtIn.find((candidate) => candidate.definition?.kind === 'builtin' && candidate.definition.id === 'session_summary')!;
         return buildHomeWidgetAddSections({
-            candidates: [...builtIn, CHECKS, LATEST],
+            candidates: [...builtIn, CHECKS, LATEST, SIGNUPS],
             instances: [copy('a', summary), copy('b', summary), copy('c', CHECKS), copy('d', CHECKS), copy('default:happier.triage/latest', LATEST)],
             addInstance: async () => {},
-            scope: null,
+            scope: HOME_SCOPE,
+            renderSetupPreview: (candidate) => (candidate.key === SIGNUPS.key ? <StandInSignups /> : <StandInChecks />),
         });
     }, []);
-    return (
-        <View style={props.phone ? stylesheet.phone : stylesheet.gallery}>
-            <FloatingOverlay maxHeight={900}>
-                <WidgetAddPanel
-                    testID="specimen-add-home"
-                    title={t('widgetAdd.homeTitle')}
-                    hint={t('widgetAdd.homeHint')}
-                    searchPlaceholder={t('widgetAdd.searchWidgets')}
-                    view="gallery"
-                    onViewChange={NOOP}
-                    sections={sections}
-                    phone={props.phone}
-                    onRequestClose={NOOP}
-                />
+    const panel = (
+        <WidgetAddPanel
+            testID={`specimen-add-home${props.entry ? `-${props.entry}` : ''}`}
+            title={t('widgetAdd.homeTitle')}
+            hint={t('widgetAdd.homeHint')}
+            searchPlaceholder={t('widgetAdd.searchWidgets')}
+            addLabel={t('widgetAdd.addToHome')}
+            composition={props.phone ? 'push' : 'split'}
+            phone={props.phone}
+            sections={sections}
+            {...(props.entry ? { initialEntryId: props.entry } : {})}
+            onRequestClose={NOOP}
+        />
+    );
+    return props.phone ? (
+        // The phone's bottom sheet: the same card frame `WidgetSheetShell` opens.
+        <View style={[stylesheet.phone, { height: 760, justifyContent: 'flex-end' }]}>
+            <ModalCardFrame header="none" title={t('widgetAdd.homeTitle')} presentation="sheet" testID="specimen-add-home.sheet">{panel}</ModalCardFrame>
+        </View>
+    ) : (
+        <View style={{ width: WIDGET_ADD_SURFACE_PX.width }}>
+            <FloatingOverlay maxHeight={WIDGET_ADD_SURFACE_PX.height} scrollEnabled={false}>
+                <View style={{ height: WIDGET_ADD_SURFACE_PX.height }}>{panel}</View>
             </FloatingOverlay>
         </View>
     );
@@ -174,5 +217,7 @@ function HomeGallery(props: Readonly<{ phone: boolean }>) {
 export const SETUP_SPECIMEN_FRAMES: WidgetSpecimenFrames = {
     SU: ({ phone }) => <Step kind="home" phone={phone} />,
     SUb: ({ phone }) => <Step kind="board" phone={phone} />,
-    GH: ({ phone }) => <HomeGallery phone={phone} />,
+    WA0: ({ phone }) => <HomeAdd phone={phone} />,
+    WA1: ({ phone }) => <HomeAdd phone={phone} entry={`plugin-${SIGNUPS.key}`} />,
+    WA2: ({ phone }) => <HomeAdd phone={phone} entry="plugin-builtin:session_summary" />,
 };

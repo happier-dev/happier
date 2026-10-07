@@ -9,10 +9,9 @@ import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Popover } from '@/components/ui/popover';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { useAccountWidgetAddSections, type AccountWidgetSurfaceLabels } from '@/components/widgets/add/accountWidgetAddSections';
-import { WidgetAddPopover, WidgetSetupPopover } from '@/components/widgets/add/WidgetAddPopover';
-import { resolveWidgetAddPick, type WidgetAddEntry, type WidgetAddOutcome } from '@/components/widgets/add/widgetAddModel';
-import type { WidgetSetup } from '@/components/widgets/add/widgetSetupModel';
-import { runWidgetSetupCommand, type WidgetSetupCommandResult } from '@/components/widgets/surface/widgetSurfaceSetup';
+import { WidgetAddSurface } from '@/components/widgets/add/WidgetAddSurface';
+import type { WidgetAddEntry } from '@/components/widgets/add/widgetAddModel';
+import type { WidgetSetupCommandResult } from '@/components/widgets/surface/widgetSurfaceSetup';
 import { SelectionList, type SelectionListOption, type SelectionListStep } from '@/components/ui/selectionList';
 import { Text } from '@/components/ui/text/Text';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -32,10 +31,11 @@ import type { BoardHomes } from '../model/useBoardContent';
 
 /**
  * Add to board (lab `boards-B5`, `dashboards` L1): one search across kinds, anchored to the header's
- * button. Widgets first — the shared gallery's entries, counted by the copies here, with the Gallery
- * one row away — then sessions, workflows, workflow runs and machines, grouped by kind, each with one
- * line of context. A work item already on the board says so and is not added twice; ↵ adds, ⌘↵ adds
- * and places it on the Canvas. A widget with missing inputs opens the shared Set up step.
+ * button. Widgets first — the shared Add surface's entries, counted by the copies here, with all of
+ * them one row away — then sessions, workflows, workflow runs and machines, grouped by kind, each
+ * with one line of context. A work item already on the board says so and is not added twice; ↵ adds,
+ * ⌘↵ adds and places it on the Canvas. A widget opens the shared Add surface on it (lab `widget-add`
+ * wsplit A): its inputs, its live body at its size, then Add; ⌘↵ on its row also places that Add.
  */
 
 const POPOVER_WIDTH_PX = 480;
@@ -46,7 +46,6 @@ const widgetOptionId = (entry: WidgetAddEntry) => `widget:${entry.id}`;
 const BOARD_WIDGET_LABELS: AccountWidgetSurfaceLabels = {
     count: (count) => t('widgetAdd.countOnBoard', { count }),
     get submit() { return t('boards.header.add'); },
-    get fromPluginsHint() { return t('widgetAdd.homeFromPluginsHint'); },
 };
 
 /** The Board as a widget surface: its copies and its one add intent (`widget_add`), with Add and place. */
@@ -70,10 +69,9 @@ export const AddToBoardButton = React.memo(function AddToBoardButton(props: Read
     const anchorRef = React.useRef<View>(null);
     const { onOpenChange } = props;
     const close = React.useCallback(() => onOpenChange(false), [onOpenChange]);
-    const [galleryOpen, setGalleryOpen] = React.useState(false);
-    const [galleryOutcome, setGalleryOutcome] = React.useState<WidgetAddOutcome | undefined>(undefined);
-    const [setup, setSetup] = React.useState<Readonly<{ entryId: string; title: string; setup: WidgetSetup }> | null>(null);
-    // ⌘↵ on a widget: the add it leads to (now, or when its Set up step is done) also places it.
+    // The shared Add surface: open on everything, or on the widget picked in the list.
+    const [gallery, setGallery] = React.useState<Readonly<{ entryId?: string }> | null>(null);
+    // ⌘↵ on a widget's row: the Add it leads to also places it.
     const place = React.useRef(false);
     const { addInstance } = props.widgets;
     const addWidget = React.useCallback((instance: WidgetInstanceV1, size?: WidgetSizeV1) => {
@@ -81,25 +79,13 @@ export const AddToBoardButton = React.memo(function AddToBoardButton(props: Read
         place.current = false;
         return addInstance(instance, options);
     }, [addInstance]);
-    const showUnfinishedAdd = React.useCallback((outcome: WidgetAddOutcome) => {
-        if (!outcome.result.ok || outcome.result.approvalPending) {
-            setGalleryOutcome(outcome);
-            setGalleryOpen(true);
-        }
-    }, []);
     const pickWidget = React.useCallback((entry: WidgetAddEntry, options: Readonly<{ place: boolean }>) => {
-        const decision = resolveWidgetAddPick(entry);
-        if (decision.kind === 'added') return;
         place.current = options.place;
         close();
-        if (decision.kind === 'setup') setSetup({ entryId: entry.id, title: entry.title, setup: decision.setup });
-        else {
-            void runWidgetSetupCommand(() => decision.kind === 'submit' ? decision.setup.submit(decision.setup.initial) : entry.onPick(), t('widgetAdd.addFailed'))
-                .then(result => showUnfinishedAdd({ entryId: entry.id, title: entry.title, result }));
-        }
-    }, [close, showUnfinishedAdd]);
-    const openGallery = React.useCallback(() => { close(); setGalleryOutcome(undefined); setGalleryOpen(true); }, [close]);
-    const closeSetup = React.useCallback(() => { place.current = false; setSetup(null); }, []);
+        setGallery({ entryId: entry.id });
+    }, [close]);
+    const openGallery = React.useCallback(() => { close(); place.current = false; setGallery({}); }, [close]);
+    const closeGallery = React.useCallback(() => { place.current = false; setGallery(null); }, []);
     return (
         <View ref={anchorRef} collapsable={false}>
             <RoundButton
@@ -150,47 +136,35 @@ export const AddToBoardButton = React.memo(function AddToBoardButton(props: Read
                     )}
                 </Popover>
             ) : null}
-            {galleryOpen ? (
-                <BoardWidgetGallery widgets={props.widgets} addWidget={addWidget} anchorRef={anchorRef} initialOutcome={galleryOutcome} onRequestClose={() => setGalleryOpen(false)} />
-            ) : null}
-            {setup ? (
-                <WidgetSetupPopover
-                    open
-                    anchorRef={anchorRef}
-                    setup={() => setup.setup}
-                    onRequestClose={closeSetup}
-                    onDone={result => {
-                        closeSetup();
-                        showUnfinishedAdd({ entryId: setup.entryId, title: setup.title, result });
-                    }}
-                    {...(props.widgets.scope ? { serverId: props.widgets.scope.serverId } : {})}
-                    testID="board-add.setup"
-                />
+            {gallery ? (
+                <BoardWidgetGallery widgets={props.widgets} addWidget={addWidget} anchorRef={anchorRef}
+                    {...(gallery.entryId ? { initialEntryId: gallery.entryId } : {})} onRequestClose={closeGallery} />
             ) : null}
         </View>
     );
 });
 
-/** The shared Gallery | List popover for this Board, mounted only while open. */
+/** The shared Add surface for this Board, mounted only while open. */
 function BoardWidgetGallery(props: Readonly<{
     widgets: AddToBoardWidgets;
     addWidget: (instance: WidgetInstanceV1, size?: WidgetSizeV1) => Promise<WidgetSetupCommandResult>;
     anchorRef: React.RefObject<View | null>;
-    initialOutcome: WidgetAddOutcome | undefined;
+    initialEntryId?: string;
     onRequestClose: () => void;
 }>): React.ReactElement {
     const sections = useAccountWidgetAddSections({ scope: props.widgets.scope, instances: props.widgets.instances,
         addInstance: props.addWidget, labels: BOARD_WIDGET_LABELS, testID: 'board-add.gallery' });
     return (
-        <WidgetAddPopover
+        <WidgetAddSurface
             open
             anchorRef={props.anchorRef}
             onRequestClose={props.onRequestClose}
             title={t('boards.header.add')}
             hint={t('boards.widgets.addHint')}
             searchPlaceholder={t('widgetAdd.searchWidgets')}
+            addLabel={t('boards.header.add')}
             sections={sections}
-            {...(props.initialOutcome ? { initialOutcome: props.initialOutcome } : {})}
+            {...(props.initialEntryId ? { initialEntryId: props.initialEntryId } : {})}
             {...(props.widgets.scope ? { serverId: props.widgets.scope.serverId } : {})}
             testID="board-add.gallery"
         />
@@ -245,7 +219,7 @@ const AddToBoardList = React.memo(function AddToBoardList(props: Readonly<{
             <Icon name={name} size={16} color={theme.colors.text.secondary} />
         );
 
-        // Widgets: the gallery's own entries (its counts, Added and Set up), then the Gallery itself.
+        // Widgets: the Add surface's own entries (its counts and Added), then the surface itself.
         const widgetEntries = new Map<string, WidgetAddEntry>();
         const widgets: SelectionListOption[] = widgetSections.flatMap(section => section.entries).map((entry) => {
             widgetEntries.set(widgetOptionId(entry), entry);

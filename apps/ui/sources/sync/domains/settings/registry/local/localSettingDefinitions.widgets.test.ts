@@ -7,7 +7,7 @@ describe('device-local widget preferences', () => {
         expect(localSettingsParse({ widgetViewerInputSelectionsV1: { first: selection } })).not.toHaveProperty('widgetViewerInputSelectionsV1');
     });
     it('recovers each malformed choice independently while retaining the other saved choices', () => {
-        expect(localSettingsParse({})).toMatchObject({ widgetFrameStyleHome: 'card', widgetFrameStyleBoard: 'card', widgetFrameStyleCompanion: 'plain', widgetGalleryViewV1: 'grid' });
-        expect(localSettingsParse({ widgetFrameStyleHome: 'plain', widgetFrameStyleBoard: 'wrong', widgetFrameStyleCompanion: 'card', widgetGalleryViewV1: 'list' })).toMatchObject({ widgetFrameStyleHome: 'plain', widgetFrameStyleBoard: 'card', widgetFrameStyleCompanion: 'card', widgetGalleryViewV1: 'list' });
+        expect(localSettingsParse({})).toMatchObject({ widgetFrameStyleHome: 'card', widgetFrameStyleBoard: 'card', widgetFrameStyleCompanion: 'plain' });
+        expect(localSettingsParse({ widgetFrameStyleHome: 'plain', widgetFrameStyleBoard: 'wrong', widgetFrameStyleCompanion: 'card' })).toMatchObject({ widgetFrameStyleHome: 'plain', widgetFrameStyleBoard: 'card', widgetFrameStyleCompanion: 'card' });
     });
 });

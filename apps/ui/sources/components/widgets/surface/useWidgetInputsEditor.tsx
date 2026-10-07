@@ -2,7 +2,7 @@ import * as React from 'react';
 import type { View } from 'react-native';
 import type { WidgetInputBindingsV1, WidgetInstanceV1, WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 
-import { WidgetSetupPopover } from '@/components/widgets/add/WidgetAddPopover';
+import { WidgetSetupPopover } from '@/components/widgets/add/WidgetSetupPopover';
 import type { WidgetSetupDraft, WidgetSetupSubmitResult } from '@/components/widgets/add/widgetSetupModel';
 import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { getSessionName } from '@/utils/sessions/sessionUtils';

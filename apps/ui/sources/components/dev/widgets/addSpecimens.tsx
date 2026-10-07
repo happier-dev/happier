@@ -1,14 +1,12 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { WIDGET_SIZE_POLICY_V1 } from '@happier-dev/protocol/widgets';
 
 import { SessionBoardDeclarativeContent } from '@/components/sessions/board/SessionBoardDeclarativeContent';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
-import { WidgetAddPanel } from '@/components/widgets/add/WidgetAddPanel';
+import { WIDGET_ADD_SURFACE_PX, WidgetAddPanel } from '@/components/widgets/add/WidgetAddSurface';
 import { buildBoardWidgetAddContent, buildCompanionWidgetAddSections } from '@/components/widgets/add/widgetAddSections';
-import type { WidgetAddView } from '@/components/widgets/add/widgetAddModel';
 import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { createSessionSurfaceNoteDocumentV1, type SessionSurfaceItemV1 } from '@happier-dev/protocol/sessions/board';
 import { projectSessionBoard } from '@/sync/domains/session/board';
@@ -17,15 +15,15 @@ import { t } from '@/text';
 import type { WidgetSpecimenFrames } from './widgetSpecimenTypes';
 
 /**
- * Dev-only fixtures for the one Add popover (lab `cwidgets` WG/WGp, WL/WLp and the Companion's WC3
- * popover): the real panel and the real section builders at static props. A plugin tile's live
- * preview needs a running plugin runtime, so here it shows a fixed stand-in body.
+ * Dev-only fixtures for the one Add surface on a Session Board and the Companion (lab `widget-add`
+ * wsplit A, `cwidgets` WC3): the real surface and the real section builders at static props.
  */
 
 const NOOP = (): void => {};
 
 function candidate(pluginId: string, localId: string, title: string, pluginName: string, icon: WidgetCandidate['icon']): WidgetCandidate {
     return {
+        sizeDeclaration: { sizes: [...WIDGET_SIZE_POLICY_V1.sessionBoard.sizes], defaultSize: WIDGET_SIZE_POLICY_V1.sessionBoard.defaultSize },
         surface: { pluginId, localId },
         key: `${pluginId}/${localId}`,
         title,
@@ -63,58 +61,46 @@ const BOARD = projectSessionBoard({
     incomplete: false,
 });
 
-const stylesheet = StyleSheet.create((theme) => ({
-    surface: { width: 560 },
-    surfaceList: { width: 420 },
+const stylesheet = StyleSheet.create(() => ({
     surfacePhone: { width: 390 },
-    row: { ...Typography.default(), fontSize: 13, lineHeight: 18, color: theme.colors.text.primary },
-    sub: { ...Typography.default(), fontSize: 12, lineHeight: 16, color: theme.colors.text.secondary },
 }));
 
-function StandInPreview(props: Readonly<{ lines: readonly [string, string][] }>) {
-    return (
-        <View style={{ gap: 6 }}>
-            {props.lines.map(([title, sub]) => (
-                <View key={title}>
-                    <Text style={stylesheet.row} numberOfLines={1}>{title}</Text>
-                    <Text style={stylesheet.sub} numberOfLines={1}>{sub}</Text>
-                </View>
-            ))}
+/** The real Add surface at its desktop composition, or the phone's pushed list. */
+function Surface(props: Readonly<{ phone: boolean; children: React.ReactNode }>) {
+    return props.phone ? (
+        <View style={stylesheet.surfacePhone}><FloatingOverlay maxHeight={900}>{props.children}</FloatingOverlay></View>
+    ) : (
+        <View style={{ width: WIDGET_ADD_SURFACE_PX.width }}>
+            <FloatingOverlay maxHeight={WIDGET_ADD_SURFACE_PX.height} scrollEnabled={false}>
+                <View style={{ height: WIDGET_ADD_SURFACE_PX.height }}>{props.children}</View>
+            </FloatingOverlay>
         </View>
     );
 }
 
-const PREVIEWS: Readonly<Record<string, readonly [string, string][]>> = {
-    'happier.triage/branch-pr': [['#2493 Retry relay handshake on 503', 'Open · Review requested from Ana'], ['3 of 4 checks passed', 'test · cli (windows) failed']],
-    'happier.channels/session-conversations-widget': [['Release crew', 'Telegram group · Ana replied 2 min ago'], ['#happier-dev', 'Discord channel · paused']],
-};
-
-function BoardAdd(props: Readonly<{ view: WidgetAddView; phone: boolean }>) {
+function BoardAdd(props: Readonly<{ phone: boolean }>) {
     const content = React.useMemo(() => buildBoardWidgetAddContent({
         intents: ['note', 'interactiveView', 'fromPlugins', 'askAgent'],
         candidates: CANDIDATES,
         snapshot: BOARD,
         run: NOOP,
-        renderPluginPreview: (row) => <StandInPreview lines={PREVIEWS[row.key] ?? []} />,
         openPlugins: NOOP,
     }), []);
     return (
-        <View style={props.phone ? stylesheet.surfacePhone : props.view === 'gallery' ? stylesheet.surface : stylesheet.surfaceList}>
-            <FloatingOverlay maxHeight={900}>
-                <WidgetAddPanel
-                    testID={`specimen-add-${props.view}`}
-                    title={t('widgetAdd.boardTitle')}
-                    hint={t('widgetAdd.boardHint')}
-                    searchPlaceholder={t('widgetAdd.searchWidgets')}
-                    view={props.view}
-                    onViewChange={NOOP}
-                    sections={content.sections}
-                    {...(content.ask ? { ask: content.ask } : {})}
-                    phone={props.phone}
-                    onRequestClose={NOOP}
-                />
-            </FloatingOverlay>
-        </View>
+        <Surface phone={props.phone}>
+            <WidgetAddPanel
+                testID="specimen-add-board"
+                title={t('widgetAdd.boardTitle')}
+                hint={t('widgetAdd.boardHint')}
+                searchPlaceholder={t('widgetAdd.searchWidgets')}
+                addLabel={t('widgetAdd.addToBoard')}
+                composition={props.phone ? 'push' : 'split'}
+                sections={content.sections}
+                {...(content.ask ? { ask: content.ask } : {})}
+                phone={props.phone}
+                onRequestClose={NOOP}
+            />
+        </Surface>
     );
 }
 
@@ -133,26 +119,23 @@ function CompanionAdd(props: Readonly<{ phone: boolean }>) {
         renderNotePreview: (document) => <SessionBoardDeclarativeContent document={document} actionBinding={null} />,
     }), []);
     return (
-        <View style={props.phone ? stylesheet.surfacePhone : stylesheet.surface}>
-            <FloatingOverlay maxHeight={900}>
-                <WidgetAddPanel
-                    testID="specimen-add-companion"
-                    title={t('widgetAdd.companionTitle')}
-                    hint={t('widgetAdd.companionHint')}
-                    searchPlaceholder={t('widgetAdd.searchCompanion')}
-                    view="gallery"
-                    onViewChange={NOOP}
-                    sections={sections}
-                    phone={props.phone}
-                    onRequestClose={NOOP}
-                />
-            </FloatingOverlay>
-        </View>
+        <Surface phone={props.phone}>
+            <WidgetAddPanel
+                testID="specimen-add-companion"
+                title={t('widgetAdd.companionTitle')}
+                hint={t('widgetAdd.companionHint')}
+                searchPlaceholder={t('widgetAdd.searchCompanion')}
+                addLabel={t('widgetAdd.addToCompanion')}
+                composition="push"
+                sections={sections}
+                phone={props.phone}
+                onRequestClose={NOOP}
+            />
+        </Surface>
     );
 }
 
 export const ADD_SPECIMEN_FRAMES: WidgetSpecimenFrames = {
-    WG: ({ phone }) => <BoardAdd view="gallery" phone={phone} />,
-    WL: ({ phone }) => <BoardAdd view="list" phone={phone} />,
+    WB: ({ phone }) => <BoardAdd phone={phone} />,
     WC3add: ({ phone }) => <CompanionAdd phone={phone} />,
 };

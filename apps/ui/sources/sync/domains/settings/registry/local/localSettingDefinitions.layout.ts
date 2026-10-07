@@ -40,10 +40,6 @@ export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
         schema: z.enum(['card', 'plain']).catch('plain'), default: 'plain',
         description: 'Default Companion widget frame style on this device', storageScope: 'local',
     },
-    widgetGalleryViewV1: {
-        schema: z.enum(['grid', 'list']).catch('grid'), default: 'grid',
-        description: 'Widget gallery view on this device', storageScope: 'local',
-    },
     uiContentWidthMode: {
         schema: z.enum(['compact', 'medium', 'full']),
         default: 'compact',

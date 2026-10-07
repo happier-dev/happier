@@ -242,12 +242,12 @@ describe('Board shared Run filter membership', () => {
         const surface = { serverId: homes.activeServerId!, accountId: 'account-a', owner: { kind: 'workBoard', boardId: 'widgets' } } as const;
         const instance = { v: 1, id: 'first', definition: { kind: 'builtin', id: 'changes' }, bindings: {} } as const;
         let board = createWorkBoardV1({ id: 'widgets', name: 'Mixed' });
-        const add = applyWorkBoardIntentV1({ v: 1, boards: [board] }, { kind: 'widget_add', boardId: board.id, ref: { surface, instanceId: instance.id }, instance, width: 2 });
+        const add = applyWorkBoardIntentV1({ v: 1, boards: [board] }, { kind: 'widget_add', boardId: board.id, ref: { surface, instanceId: instance.id }, instance, size: 'full' });
         if (add.status !== 'applied') throw new Error('add failed'); board = add.boards.boards[0]!;
         const next = applyWorkBoardIntentV1({ v: 1, boards: [board] }, { kind: 'widget_add', boardId: board.id, ref: { surface, instanceId: 'second' }, instance: { ...instance, id: 'second', bindings: { session: { kind: 'value', value: 'other' } } }, toIndex: 0 });
         if (next.status !== 'applied') throw new Error('add failed'); board = next.boards.boards[0]!;
         const hook = await renderHook(useBoardWidgets, { initialProps: board });
-        expect(hook.getCurrent().map(item => [item.instance.id, item.width])).toEqual([['second', 1], ['first', 2]]);
+        expect(hook.getCurrent().map(item => [item.instance.id, item.size])).toEqual([['second', 'medium'], ['first', 'full']]);
         expect((await hook.rerender({ ...board, mode: 'by_status' })).map(item => item.instance.id)).toEqual(['second', 'first']);
     });
     it('keeps Running positions through paging and consumes the existing window continuation before certifying completeness', async () => {

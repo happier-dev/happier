@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
+import { WIDGET_SIZE_POLICY_V1 } from '@happier-dev/protocol/widgets';
 
 import { HubAttentionList, type AttentionItem } from '@/components/hub/HubAttentionSection';
 import { HomeHubSectionList } from '@/components/hub/HomeHubSectionList';
@@ -51,6 +52,7 @@ const renderHomeLine = (detail: 'full' | 'name') => <HomeWhereLine detail={detai
 const NOW = Date.UTC(2026, 8, 29, 14, 42);
 
 const LAB_WIDGET: WidgetCandidate = {
+    sizeDeclaration: { sizes: [...WIDGET_SIZE_POLICY_V1.home.sizes], defaultSize: WIDGET_SIZE_POLICY_V1.home.defaultSize },
     surface: { pluginId: 'happier.triage', localId: 'latest' },
     key: 'happier.triage/latest',
     title: 'New for you',

@@ -17,6 +17,7 @@ const { AppShellPluginUiProjectionValueProvider } = await import('@/components/a
 const { SelectionList } = await import('@/components/ui/selectionList');
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { AddToBoardButton } = await import('./AddToBoardPopover');
+const { t } = await import('@/text');
 
 // The native Markdown package is a rendering boundary this picker never renders.
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({ splitStreamingRevealTextParts: () => [] }));
@@ -66,7 +67,7 @@ afterEach(async () => {
 });
 
 describe('AddToBoardButton library recovery', () => {
-    it.each(['refused', 'pending'] as const)('preserves the quick widget add %s result in the shared Gallery without adding twice', async kind => {
+    it.each(['refused', 'pending'] as const)('opens a picked widget in the shared Add surface and shows a %s Add there without adding twice', async kind => {
         harness.home.answer(serverId, ARTIFACT_LIST_PATH, { body: [] });
         harness.home.answer(serverId, RUN_STORAGE_PATH, { body: await boardRunStoragePage([]) });
         const projection = widgetProjectionOf([{ pluginId: 'acme.widgets', localId: 'counter', target: 'app', title: 'Counter' }],
@@ -89,11 +90,18 @@ describe('AddToBoardButton library recovery', () => {
         await flushHookEffects({ cycles: 4 });
         await act(async () => { screen.findByType(SelectionList).props.onSelect('widget:plugin-acme.widgets/counter'); });
         await flushHookEffects({ cycles: 4 });
+        // Picking is the preview, never the add.
+        expect(addInstance).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('board-add.gallery.detail.submit');
+        await flushHookEffects({ cycles: 4 });
         expect(addInstance).toHaveBeenCalledTimes(1);
+        // In place: on the pane's reserved line, and on the widget's row once back in the list.
+        expect(screen.findByTestId('board-add.gallery.detail.why')!.props.children).toBe(kind === 'pending' ? t('widgetAdd.areaApprovalPending') : 'permission_denied');
+        if (screen.findByTestId('board-add.gallery.detail.back')) await act(async () => { screen.pressByTestId('board-add.gallery.detail.back'); });
         expect(screen.findAllByTestId(`board-add.gallery.entry.plugin-acme.widgets/counter.${kind === 'pending' ? 'pending' : 'failed'}`).length).toBeGreaterThan(0);
         expect(screen.getTextContent()).not.toContain('widgetAdd.justAdded');
     });
-    it('preserves approval pending after the quick widget required-input setup without submitting twice', async () => {
+    it.each([false, true])('adds a picked widget once its required input is filled, keeping approval pending in place (⌘↵ places it: %s)', async place => {
         harness.home.answer(serverId, ARTIFACT_LIST_PATH, { body: [] });
         harness.home.answer(serverId, RUN_STORAGE_PATH, { body: await boardRunStoragePage([]) });
         const projection = widgetProjectionOf([{ pluginId: 'acme.widgets', localId: 'filtered', target: 'app', title: 'Filtered',
@@ -116,15 +124,18 @@ describe('AddToBoardButton library recovery', () => {
                 <QuickWidgetPicker />
             </AppShellPluginUiProjectionValueProvider>, layout,
         );
-        await act(async () => { screen.findByType(SelectionList).props.onSelect('widget:plugin-acme.widgets/filtered'); });
-        expect(screen.findByTestId('board-add.setup.submit')!.props.disabled).toBe(true);
+        await act(async () => { screen.findByType(SelectionList).props[place ? 'onCommandSelect' : 'onSelect']('widget:plugin-acme.widgets/filtered'); });
+        await flushHookEffects({ cycles: 4 });
+        expect(screen.findByTestId('board-add.gallery.detail.submit')!.props.disabled).toBe(true);
         expect(addInstance).not.toHaveBeenCalled();
-        await act(async () => { screen.changeTextByTestId('board-add.setup.field.filter.input', 'open'); });
-        expect(screen.findByTestId('board-add.setup.submit')!.props.disabled).toBe(false);
-        await screen.pressByTestIdAsync('board-add.setup.submit');
+        await act(async () => { screen.changeTextByTestId('board-add.gallery.detail.field.filter.input', 'open'); });
+        expect(screen.findByTestId('board-add.gallery.detail.submit')!.props.disabled).toBe(false);
+        await screen.pressByTestIdAsync('board-add.gallery.detail.submit');
         await flushHookEffects({ cycles: 4 });
         expect(addInstance).toHaveBeenCalledTimes(1);
-        expect(addInstance).toHaveBeenCalledWith(expect.objectContaining({ bindings: { filter: { kind: 'value', value: 'open' } } }), { place: false });
+        expect(addInstance).toHaveBeenCalledWith(expect.objectContaining({ bindings: { filter: { kind: 'value', value: 'open' } } }), { place });
+        expect(screen.findByTestId('board-add.gallery.detail.why')!.props.children).toBe(t('widgetAdd.areaApprovalPending'));
+        if (screen.findByTestId('board-add.gallery.detail.back')) await act(async () => { screen.pressByTestId('board-add.gallery.detail.back'); });
         expect(screen.findAllHostsByTestId('board-add.gallery.entry.plugin-acme.widgets/filtered.pending').length).toBeGreaterThan(0);
     });
     it('does not read while closed and offers independent Retry actions after initial failures', async () => {

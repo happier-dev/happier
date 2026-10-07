@@ -17,6 +17,7 @@ import {
 } from './sessionCompanionContentModel';
 import { widgetProjectionOf, widgetInstalledPackage } from '@/dev/testkit/fixtures/pluginWidgetProjectionFixtures';
 import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
+import { resolveWidgetSizeChoicesV1, WidgetSizeDeclarationV1Schema } from '@happier-dev/protocol/widgets';
 
 const item = (itemId: string): SessionBoardItemProjection => ({
     itemId,
@@ -257,6 +258,7 @@ function candidate(pluginId: string, localId: string, title: string): WidgetCand
         sharedPluginName: false,
         icon: 'puzzle-piece',
         homeDefault: 'available',
+        sizeDeclaration: WidgetSizeDeclarationV1Schema.parse(resolveWidgetSizeChoicesV1('sessionBoard')),
     };
 }
 

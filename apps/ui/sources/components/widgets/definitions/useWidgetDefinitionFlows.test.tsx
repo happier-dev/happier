@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { WIDGET_SIZE_POLICY_V1, type WidgetSizeDeclarationV1 } from '@happier-dev/protocol/widgets';
 
 // Imported from their owning testkit modules, never the `@/dev/testkit` barrel: the harness
 // installs its network boundaries with `vi.doMock`, which only reaches modules imported afterwards.
@@ -40,7 +41,9 @@ async function applyDefinitionHomeConnection() {
     return disconnectActiveServerConnection;
 }
 
+const SIZE_DECLARATION = { sizes: [...WIDGET_SIZE_POLICY_V1.home.sizes], defaultSize: WIDGET_SIZE_POLICY_V1.home.defaultSize } satisfies WidgetSizeDeclarationV1;
 const DRAFT = {
+    sizeDeclaration: SIZE_DECLARATION,
     name: 'Checks on main',
     body: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Checks' } } },
     inputs: { fields: [{ path: 'repo', title: 'Repository', widget: 'text' }] },
@@ -68,7 +71,7 @@ describe('widget definition flows', () => {
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
         const { storage } = await import('@/sync/domains/state/storage');
         const { CompanionWidgetAddPopover } = await import('../add/CompanionWidgetAddPopover');
-        const { WidgetAddPopover } = await import('../add/WidgetAddPopover');
+        const { WidgetAddSurface } = await import('../add/WidgetAddSurface');
         const { useSessionCompanionController } = await import('@/components/sessions/companion/state/useSessionCompanionController');
         const { renderScreen } = await import('@/dev/testkit/render/renderScreen');
         const { flushHookEffects } = await import('@/dev/testkit/hooks/flushHookEffects');
@@ -91,7 +94,7 @@ describe('widget definition flows', () => {
             }
             const screen = await renderScreen(React.createElement(Gallery));
             try {
-                const sections = (): readonly WidgetAddSection[] => screen.tree.root.findByType(WidgetAddPopover).props.sections;
+                const sections = (): readonly WidgetAddSection[] => screen.tree.root.findByType(WidgetAddSurface).props.sections;
                 await vi.waitFor(() => { expect(sections().find(section => section.id === 'yours')?.entries[0]?.title).toBe(DRAFT.name); });
                 const setup = sections().find(section => section.id === 'yours')!.entries[0]!.setup!();
                 await act(async () => { expect(await setup.submit({ bindings: { repo: { kind: 'value', value: 'main' } } })).toEqual({ ok: true }); });
@@ -103,7 +106,7 @@ describe('widget definition flows', () => {
         } finally { storage.setState(previousScopes); }
     });
 
-    it('admits App gallery previews through the configured surface and leaves unresolved inputs unmounted', async () => {
+    it('admits the selected widget’s preview through the configured surface and leaves unresolved inputs unmounted', async () => {
         const serverId = await addDefinitionHome();
         const { storage } = await import('@/sync/domains/state/storage');
         const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
@@ -111,7 +114,7 @@ describe('widget definition flows', () => {
         const { selectWidgetCandidates } = await import('../widgetCatalog');
         const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
         const { ConfiguredInstalledWidgetSurface } = await import('../InstalledWidgetSurface');
-        const { WidgetAddPopover } = await import('../add/WidgetAddPopover');
+        const { WidgetAddSurface } = await import('../add/WidgetAddSurface');
         const { renderScreen } = await import('@/dev/testkit/render/renderScreen');
         const { useSessionBoardController } = await import('@/components/sessions/board/useSessionBoardController');
         const { createSessionBoardActionsPort } = await import('@/sync/domains/session/board/sessionBoardActionsPort');
@@ -141,11 +144,14 @@ describe('widget definition flows', () => {
                 serverId, platform: 'web', reloadConnectedAccountProjection: () => {}, clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {},
             }, children: React.createElement(Gallery) }));
             try {
-                const sections: readonly WidgetAddSection[] = screen.tree.root.findByType(WidgetAddPopover).props.sections;
-                const missing = sections.flatMap(section => section.entries).find(entry => entry.id === 'plugin-acme.preview/missing');
-                expect(missing).toBeDefined();
-                expect(missing?.renderPreview).toBeUndefined();
-                const preview = sections.flatMap(section => section.entries).find(entry => entry.id === 'plugin-acme.preview/app')!.renderPreview!();
+                const sections: readonly WidgetAddSection[] = screen.tree.root.findByType(WidgetAddSurface).props.sections;
+                const missing = sections.flatMap(section => section.entries).find(entry => entry.id === 'plugin-acme.preview/missing')!.setup!();
+                // Its pane mounts a body only once the draft resolves; a missing input never does.
+                expect(missing.resolve(missing.initial).status).not.toBe('ready');
+                const app = sections.flatMap(section => section.entries).find(entry => entry.id === 'plugin-acme.preview/app')!.setup!();
+                const resolution = app.resolve(app.initial);
+                if (resolution.status !== 'ready') throw new Error('An inputless App widget resolves at once');
+                const preview = app.renderPreview!({ input: resolution.input, draft: app.initial });
                 const body = await renderScreen(React.createElement(AppShellPluginUiProjectionValueProvider, { value: {
                     pluginUiProjection: projection, pluginBrowserProjection: null, phase: 'current', interactionEnabled: false, machineId: 'app-machine',
                     serverId, platform: 'web', reloadConnectedAccountProjection: () => {}, clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {},
@@ -167,7 +173,7 @@ describe('widget definition flows', () => {
         const { renderScreen } = await import('@/dev/testkit/render/renderScreen');
         const { useSessionBoardController } = await import('@/components/sessions/board/useSessionBoardController');
         const { createSessionBoardActionsPort } = await import('@/sync/domains/session/board/sessionBoardActionsPort');
-        const { WidgetAddPopover } = await import('../add/WidgetAddPopover');
+        const { WidgetAddSurface } = await import('../add/WidgetAddSurface');
         const account = { serverId, accountId: ACCOUNT_ID };
         const surface = { ...account, owner: { kind: 'sessionBoard', sessionId: 'shared' } } as const;
         const previousScopes = { profileScope: storage.getState().profileScope, settingsScope: storage.getState().settingsScope };
@@ -191,9 +197,9 @@ describe('widget definition flows', () => {
             }
             const screen = await renderScreen(React.createElement(Gallery));
             try {
-                const sections = (): readonly WidgetAddSection[] => screen.tree.root.findByType(WidgetAddPopover).props.sections;
+                const sections = (): readonly WidgetAddSection[] => screen.tree.root.findByType(WidgetAddSurface).props.sections;
                 await vi.waitFor(() => { expect(sections().find(section => section.id === 'yours')?.entries[0]?.title).toBe(DRAFT.name); });
-                expect(sections().find(section => section.id === 'plugins')?.entries).toHaveLength(0);
+                expect(sections().filter(section => section.id.startsWith('plugin:'))).toHaveLength(0);
                 const entry = sections().find(section => section.id === 'yours')!.entries[0]!;
                 const before = new Set(harness.artifacts(serverId).list().map(row => row.id));
                 const setup = entry.setup!();
@@ -284,8 +290,9 @@ describe('widget definition flows', () => {
             const [demand, setDemand] = React.useState(false);
             demandPreview = setDemand;
             const sections = useAccountWidgetAddSections({ scope: { ...account, owner: { kind: 'home' } }, instances: [],
-                addInstance: async () => {}, labels: { count: String, submit: 'Add', fromPluginsHint: '' }, testID: 'gallery' });
-            return React.createElement(View, {}, demand ? sections.find(section => section.id === 'yours')?.entries[0]?.renderPreview?.() : null);
+                addInstance: async () => {}, labels: { count: String, submit: 'Add' }, testID: 'gallery' });
+            const setup = demand ? sections.find(section => section.id === 'yours')?.entries[0]?.setup?.() : undefined;
+            return React.createElement(View, {}, setup ? setup.renderPreview?.({ input: {}, draft: setup.initial }) : null);
         }
         try {
             expect(await createDefaultActionExecutor().execute('widgets.definition.create', { account, artifactId: 'checks-definition',
@@ -392,7 +399,7 @@ describe('widget definition flows', () => {
         });
         const instance = { v: 1, id: 'copy', definition: { kind: 'artifact', artifactId: 'checks-definition' }, bindings: {} } as const;
         const surface = { ...account, owner: { kind: 'pluginArea', pluginId: 'com.acme.checks', pageId: 'overview', area: 'pinned' } } as const;
-        const layout = WidgetSurfaceReadV1Schema.parse({ surface, instances: [{ instance, width: 'half' }], canEdit: true });
+        const layout = WidgetSurfaceReadV1Schema.parse({ surface, instances: [{ instance, size: WIDGET_SIZE_POLICY_V1.pluginArea.defaultSize }], canEdit: true });
         // The plugin-page Host API is the external boundary; metadata comes from real Account storage.
         const port = { execute: async () => ({ ok: true as const, result: layout }) };
         const executor = createDefaultActionExecutor();

@@ -7,14 +7,13 @@ import {
     describeWidgetSetupRow,
     proposeWidgetSetupDraft,
     setWidgetSetupBinding,
-    widgetSetupNeedsStep,
     type WidgetSetupField,
 } from './widgetSetupModel';
 
 /**
  * The Set up / Edit inputs step's presentation model (lab `dashboards` IN): follows vs pinned never
  * mix, missing asks, two or three surface values are choices in place, a lost pin keeps its name and
- * is never swapped, and the step appears only when something is missing or ambiguous.
+ * is never swapped, and a per-viewer connection never blocks.
  */
 const field = (path: string, title: string, extra: Partial<InputFieldHint> = {}): InputFieldHint =>
     ({ path, title, widget: 'json', required: true, ...extra }) as InputFieldHint;
@@ -47,13 +46,6 @@ describe('widget setup model', () => {
         });
     });
 
-    it('skips the step only when everything binds and nothing is ambiguous', () => {
-        expect(widgetSetupNeedsStep([sessionFollows], ready)).toBe(false);
-        expect(widgetSetupNeedsStep([sessionFollows], missing('session'))).toBe(true);
-        // Three checkouts resolve (the likeliest is pinned) yet still ask, so the person sees the choice.
-        expect(widgetSetupNeedsStep([checkout], ready)).toBe(true);
-    });
-
     it('describes follows, pins, a few choices in place, needed and viewer rows', () => {
         const draft = proposeWidgetSetupDraft([sessionFollows, account, checkout]);
         expect(describeWidgetSetupRow({ entry: sessionFollows, draft, resolution: ready, options: [] }))
@@ -71,9 +63,8 @@ describe('widget setup model', () => {
         // The binder has no value for it here (each viewer's own connection fills it when it reads)…
         expect(describeWidgetSetupRow({ entry: account, draft, resolution: viewerMissing, options: [{ value: 'leeroy-brun', label: 'leeroy-brun' }] }))
             .toEqual({ kind: 'viewer' });
-        // …so it never stops the step, and a fully bound pick adds without one.
+        // …so it never stops the step.
         expect(describeWidgetSetupBlocker([sessionFollows, account], viewerMissing)).toBeNull();
-        expect(widgetSetupNeedsStep([sessionFollows, account], viewerMissing)).toBe(false);
         // A real input still blocks beside it.
         const both: WidgetBindingResolutionV1 = { status: 'selection_required', fields: [
             { path: 'session', status: 'selection_required', reasonCode: 'widget_input_missing' },

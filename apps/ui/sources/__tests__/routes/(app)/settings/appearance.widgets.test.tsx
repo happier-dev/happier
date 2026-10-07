@@ -22,7 +22,6 @@ const shared = vi.hoisted(() => ({
         widgetFrameStyleHome: 'card',
         widgetFrameStyleBoard: 'card',
         widgetFrameStyleCompanion: 'plain',
-        widgetGalleryViewV1: 'grid',
     } as Record<string, unknown>,
 }));
 
@@ -112,7 +111,6 @@ afterEach(() => {
         widgetFrameStyleHome: 'card',
         widgetFrameStyleBoard: 'card',
         widgetFrameStyleCompanion: 'plain',
-        widgetGalleryViewV1: 'grid',
     });
 });
 
@@ -135,18 +133,5 @@ describe('Appearance → Widgets (lab WK)', () => {
         expect(shared.settingsState.widgetFrameStyleBoard).toBe('plain');
         expect(shared.settingsState.widgetFrameStyleHome).toBe('card');
         expect(shared.settingsState.widgetFrameStyleCompanion).toBe('plain');
-    });
-
-    it('remembers how the Add popover opens (Gallery | List) in the same section', async () => {
-        const mod = await import('@/app/(app)/settings/appearance');
-        const screen = await renderSettingsView(React.createElement(mod.default), {
-            flushOptions: { cycles: 0 },
-        });
-        const view = screen.findByProps({ title: 'widgetFrame.addViewTitle' });
-        expect(view.props.value).toBe('grid');
-        await act(async () => {
-            view.props.onChange('list');
-        });
-        expect(shared.settingsState.widgetGalleryViewV1).toBe('list');
     });
 });
