@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { PEER_MEDIATION_RECEIPTS, type MachineLiveStreamStartRequestV1 } from '@happier-dev/protocol';
+import type { MachineLiveStreamStartRequestV1 } from '@happier-dev/protocol';
 
 import { openMachineLiveStreamRelayClient } from './relayClient';
 
@@ -83,18 +83,7 @@ describe('openMachineLiveStreamRelayClient', () => {
         await expect(openMachineLiveStreamRelayClient(openInput({
             startProduction: async (input): ReturnType<NonNullable<Parameters<typeof openMachineLiveStreamRelayClient>[0]['startProduction']>> => {
                 routeKinds.push(input.routeKind);
-                return input.routeKind === 'loopback_direct' ? {
-                    ok: true as const,
-                    routeKind: 'loopback_direct' as const,
-                    response: {
-                        v: 2,
-                        ok: true,
-                        receipt: PEER_MEDIATION_RECEIPTS.streamStarted,
-                        streamId: input.streamId,
-                        routeKind: 'loopback_direct' as const,
-                        expiresAtMs: 61_000,
-                    },
-                } : { ok: true, routeKind: 'server_relay', startRequest: startRequest(), relayAuthorization: startRequest().authorization! };
+                return { ok: true, routeKind: 'server_relay', startRequest: startRequest(), relayAuthorization: startRequest().authorization! };
             },
             startDaemonRelay: async () => {
                 daemonCalled = true;

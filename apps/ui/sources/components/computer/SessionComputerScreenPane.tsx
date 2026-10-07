@@ -45,17 +45,18 @@ export function SessionComputerScreenPane(props: Readonly<{
         () => ({ sessionId: props.sessionId, machineId: props.machineId, serverId: props.serverId ?? null }),
         [props.machineId, props.serverId, props.sessionId],
     );
-    const [frameToken, setFrameToken] = React.useState<string | null>(null);
-    const control = useComputerSessionControl({ scope, refreshKey: frameToken });
+    const control = useComputerSessionControl({ scope, refreshKey: identity.turnActive });
     const stream = useComputerScreenStream({
+        sessionId: props.sessionId,
         machineId: props.machineId,
         serverId: props.serverId ?? null,
         sourceId: control.selection?.sourceId ?? null,
         machineName: control.machineName,
     });
-    // Controller status is pull-only: it is re-read as frames arrive (one read in flight at most).
-    const lastFrameUrl = stream?.playerState?.lastFrameUrl ?? null;
-    React.useEffect(() => { setFrameToken(lastFrameUrl); }, [lastFrameUrl]);
+    const streamStatus = stream?.playerState?.phase ?? null;
+    const refreshControl = control.refresh;
+    // Source availability changes are meaningful; changing image URLs are not status invalidations.
+    React.useEffect(() => { refreshControl(); }, [refreshControl, streamStatus]);
 
     useEscapeTakesControl(control.presence.kind === 'agent', control.takeControl);
     React.useEffect(() => {

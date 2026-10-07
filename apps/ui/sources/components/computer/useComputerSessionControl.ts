@@ -1,10 +1,10 @@
 import * as React from 'react';
-import type { ComputerControlStatusResponseV1, ComputerSelectedTargetResponseV1 } from '@happier-dev/protocol';
+import type { ComputerSelectedTargetResponseV1 } from '@happier-dev/protocol';
 import type { HappierPresenceTakeControlResult } from '@happier-dev/plugin-ui/presentation';
 
 import type { BrowserCopresence } from '@/sync/domains/browser/automation/copresence';
 import {
-    createComputerControlClient,
+    getComputerSessionProjection,
     type ComputerActionExecute,
     type ComputerControlClient,
     type ComputerSessionScope,
@@ -13,25 +13,10 @@ import { projectComputerCopresence } from '@/sync/domains/computer/presence';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
 let frontDoorExecute: ComputerActionExecute | null = null;
+const EMPTY_SNAPSHOT = { selection: null, status: null };
 /** The one Action front door, resolved on first use so mounting a viewer builds nothing. */
 function getFrontDoorExecute(): ComputerActionExecute {
     return frontDoorExecute ??= createFrontDoorActionExecute();
-}
-
-function sameStatus(left: ComputerControlStatusResponseV1 | null, right: ComputerControlStatusResponseV1): boolean {
-    return left !== null
-        && left.sourceId === right.sourceId
-        && left.controller === right.controller
-        && left.controlEpoch === right.controlEpoch
-        && left.stopping === right.stopping
-        && left.uncertain === right.uncertain
-        && left.activity?.kind === right.activity?.kind
-        && left.activity?.targetLabel === right.activity?.targetLabel
-        && left.activeTarget?.x === right.activeTarget?.x
-        && left.activeTarget?.y === right.activeTarget?.y
-        && left.activeTarget?.width === right.activeTarget?.width
-        && left.activeTarget?.height === right.activeTarget?.height
-        && left.activeTarget?.label === right.activeTarget?.label;
 }
 
 export type ComputerSessionControl = Readonly<{
@@ -62,9 +47,8 @@ export type ComputerSessionControl = Readonly<{
 /**
  * The person's side of a shared window: who is in control (the computer owner's `control.status`), and
  * Take control / Hand back / Check again against that owner. Controller truth is never mirrored here: the
- * only local fact is the gap between a press and the owner's answer. The status is pull-only (W7), so it
- * is re-read on mount, after each press, and whenever `refreshKey` changes (the viewer passes its frame
- * token, so the read follows the stream's own acknowledgement-paced cadence, one read in flight at most).
+ * only local fact is the gap between a press and the owner's answer. Mounted readers share the
+ * domain's Session projection and refresh on Actions and actual lifecycle changes, never on frames.
  */
 export function useComputerSessionControl(input: Readonly<{
     scope: ComputerSessionScope | null;
@@ -76,64 +60,33 @@ export function useComputerSessionControl(input: Readonly<{
     const serverId = scope?.serverId ?? null;
     const sessionId = scope?.sessionId ?? null;
     const machineId = scope?.machineId ?? null;
-    const client = React.useMemo<ComputerControlClient | null>(
-        () => (sessionId && machineId ? createComputerControlClient({ serverId, sessionId, machineId }, execute) : null),
+    const projection = React.useMemo(
+        () => (sessionId && machineId ? getComputerSessionProjection({ serverId, sessionId, machineId }, execute) : null),
         [execute, machineId, serverId, sessionId],
     );
-    const [selection, setSelection] = React.useState<ComputerSelectedTargetResponseV1 | null>(null);
-    const [status, setStatus] = React.useState<ComputerControlStatusResponseV1 | null>(null);
+    const client: ComputerControlClient | null = projection?.client ?? null;
+    const subscribe = React.useCallback((listener: () => void) => projection?.subscribe(listener) ?? (() => {}), [projection]);
+    const getSnapshot = React.useCallback(() => projection?.getSnapshot() ?? EMPTY_SNAPSHOT, [projection]);
+    const { selection, status } = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
     const [stopRequested, setStopRequested] = React.useState(false);
     const [busy, setBusy] = React.useState<ComputerSessionControl['busy']>(null);
     const [failure, setFailure] = React.useState<string | null>(null);
     const clientRef = React.useRef(client);
     clientRef.current = client;
-    const statusFlight = React.useRef<Promise<void> | null>(null);
-    const statusAgain = React.useRef(false);
-
-    const refreshStatus = React.useCallback((): Promise<void> => {
-        const owner = client;
-        if (!owner) return Promise.resolve();
-        if (statusFlight.current) {
-            // A press answered while a read was out: read once more after it, never in parallel.
-            statusAgain.current = true;
-            return statusFlight.current;
-        }
-        const flight = (async () => {
-            do {
-                statusAgain.current = false;
-                const result = await owner.status();
-                if (clientRef.current !== owner) return;
-                if (result.ok) setStatus((previous) => (sameStatus(previous, result.value) ? previous : result.value));
-                else if (result.code === 'computer_target_not_open') setStatus(null);
-            } while (statusAgain.current && clientRef.current === owner);
-        })().finally(() => { statusFlight.current = null; });
-        statusFlight.current = flight;
-        return flight;
-    }, [client]);
-
-    const readSelection = React.useCallback(async () => {
-        const owner = client;
-        if (!owner) return;
-        const result = await owner.getTarget();
-        if (clientRef.current !== owner) return;
-        if (result.ok) setSelection(result.value);
-    }, [client]);
+    const refreshStatus = React.useCallback(() => projection?.refresh() ?? Promise.resolve(), [projection]);
 
     React.useEffect(() => {
-        setSelection(null);
-        setStatus(null);
         setStopRequested(false);
         setFailure(null);
-        if (!client) return;
-        void readSelection().then(() => refreshStatus());
-    }, [client, readSelection, refreshStatus]);
+    }, [client]);
 
     const refreshKey = input.refreshKey;
-    const firstKey = React.useRef(true);
+    const lastRefresh = React.useRef({ projection, refreshKey });
     React.useEffect(() => {
-        if (firstKey.current) { firstKey.current = false; return; }
-        void refreshStatus();
-    }, [refreshKey, refreshStatus]);
+        const previous = lastRefresh.current;
+        lastRefresh.current = { projection, refreshKey };
+        if (previous.projection === projection && !Object.is(previous.refreshKey, refreshKey)) void projection?.refresh(true);
+    }, [projection, refreshKey]);
 
     const takeControl = React.useCallback(async (): Promise<HappierPresenceTakeControlResult> => {
         const owner = client;
@@ -193,20 +146,19 @@ export function useComputerSessionControl(input: Readonly<{
             if (clientRef.current !== owner) return;
             if (!result.ok) setFailure(result.code);
             else if (result.value.status !== 'dispatched') setFailure(result.value.status === 'failed' ? result.value.code : 'control_not_drained');
-            await readSelection();
             await refreshStatus();
             setBusy(null);
         })();
-    }, [client, readSelection, refreshStatus]);
+    }, [client, refreshStatus]);
 
     const refresh = React.useCallback(() => {
-        void readSelection().then(() => refreshStatus());
-    }, [readSelection, refreshStatus]);
-
-    const applySelection = React.useCallback((next: ComputerSelectedTargetResponseV1) => {
-        setSelection(next);
         void refreshStatus();
     }, [refreshStatus]);
+
+    const applySelection = React.useCallback((next: ComputerSelectedTargetResponseV1) => {
+        projection?.applySelection(next);
+        void refreshStatus();
+    }, [projection, refreshStatus]);
 
     const presence = React.useMemo(() => projectComputerCopresence({ status, stopRequested }), [status, stopRequested]);
     const agentActing = status?.controller === 'agent' && status.activity !== undefined;

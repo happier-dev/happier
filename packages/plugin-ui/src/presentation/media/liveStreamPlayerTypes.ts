@@ -20,16 +20,14 @@ export type HappierLiveStreamPlayerRenderEvent = Readonly<{
 }>;
 export type HappierLiveStreamPlayerRendererEvent =
   | Readonly<{ type: 'frame_decoded' }>
-  | Readonly<{ type: 'startup_timeout' | 'error'; reasonCode: string }>
+  | Readonly<{ type: 'decoder_error' | 'error'; reasonCode: string }>
   | Readonly<{ type: 'decoder_reconfigured'; width?: number; height?: number; orientation?: HappierLiveStreamOrientation }>;
 
 /** Decoder inputs remain host-owned; presentation only replaces its display callbacks. */
 export type HappierLiveStreamAvccInput = Readonly<{
-  startupTimeoutMs?: number;
   onDiagnostic?: (diagnostic: HappierLiveStreamPlayerDiagnostic) => void;
   onDecoded?: () => void;
   onReconfigured?: (event: HappierLiveStreamPlayerRenderEvent) => void;
-  onStartupTimeout?: (diagnostic: HappierLiveStreamPlayerDiagnostic) => void;
 }>;
 
 export type HappierLiveStreamPlayerHost<State extends HappierLiveStreamPlayerDisplayState, Avcc extends HappierLiveStreamAvccInput> = Readonly<{

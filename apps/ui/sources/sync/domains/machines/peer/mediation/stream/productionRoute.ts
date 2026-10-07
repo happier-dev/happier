@@ -12,23 +12,18 @@ import { parseToken } from '@/utils/auth/parseToken';
 import { resolvePeerMediationDirectPreferencesForScope } from '@/sync/domains/settings/peerMediationPreferences';
 
 import {
-    MACHINE_LIVE_STREAM_DIRECT_FETCH_TIMEOUT_MS,
     createBaseStartRequest,
     createLiveStreamStartRequest,
     requestLiveStreamRelayAuthorization,
     resolveTargetServer,
-    type MachineLiveStreamDirectStartResponse,
     type MachineLiveStreamUnsignedStartRequest,
 } from './productionRouteHttp';
 import { resolveMachineLiveStreamAvailability } from './availability';
 
 
+const SERVER_FEATURES_TIMEOUT_MS = 5_000;
+
 export type ProductionMachineLiveStreamStartResult =
-    | Readonly<{
-        ok: true;
-        routeKind: 'loopback_direct';
-        response: MachineLiveStreamDirectStartResponse;
-    }>
     | Readonly<{
         ok: true;
         routeKind: 'server_relay';
@@ -47,7 +42,7 @@ async function resolveServerFeatures(input: Readonly<{
 }>): Promise<FeaturesResponse | null> {
     return await getReadyServerFeatures({
         serverId: input.serverId,
-        timeoutMs: input.timeoutMs ?? MACHINE_LIVE_STREAM_DIRECT_FETCH_TIMEOUT_MS,
+        timeoutMs: input.timeoutMs ?? SERVER_FEATURES_TIMEOUT_MS,
     }).catch(() => null);
 }
 
