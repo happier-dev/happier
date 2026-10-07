@@ -177,6 +177,7 @@ import {
   bindingEndpointLabel,
   bindingRowLabel,
   connectionLabel,
+  channelsStatusNeedsYou,
   connectionStatus,
   isBindingInputMode,
   isHostMethodCurrentlyUnavailable,
@@ -1093,7 +1094,7 @@ function ConnectionPreparationReview(props: Readonly<{
         ]}
       />
       <Banner
-        tone="info"
+        tone="secondary"
         title={props.accountEncryptionMode === 'plain'
           ? props.t(
             'plugins.channels.surface.bindingCreatePrivacyPlain',
@@ -1221,7 +1222,7 @@ function connectionMachinePlacementLabel(connection: ChannelsConnection, t: Tran
 function connectionAttentionRank(connection: ChannelsConnection, t: Translate): number {
   const tone = connectionStatus(connection, t).tone;
   if (tone === 'danger') return 0;
-  if (tone === 'warning') return 1;
+  if (channelsStatusNeedsYou(tone)) return 1;
   return 2;
 }
 
@@ -1338,9 +1339,9 @@ function bindingStatus(presentation: BindingPresentation, t: Translate) {
     };
   }
   const connection = connectionStatus(presentation.connection, t);
-  if (connection.tone !== 'success') return connection;
+  if (connection.tone !== 'secondary') return connection;
   return presentation.binding.enabled
-    ? { tone: 'success' as const, label: t('plugins.channels.surface.enabled', 'Enabled') }
+    ? { tone: 'secondary' as const, label: t('plugins.channels.surface.enabled', 'Enabled') }
     : { tone: 'neutral' as const, label: t('plugins.channels.surface.disabled', 'Disabled') };
 }
 
@@ -1372,7 +1373,7 @@ function bindingDetail(presentation: BindingPresentation, t: Translate): string 
 function bindingAttentionRank(presentation: BindingPresentation, t: Translate): number {
   const tone = bindingStatus(presentation, t).tone;
   if (tone === 'danger') return 0;
-  if (tone === 'warning') return 1;
+  if (channelsStatusNeedsYou(tone)) return 1;
   return 2;
 }
 
@@ -2148,7 +2149,7 @@ function ConversationDetail(props: Readonly<{
   const needsUnknownDeleteRefresh = deleteOutcomeUnknown
     && props.outcomeUnknownDeletedBindingId === binding.bindingId;
   const botStatus = connection === undefined ? undefined : connectionStatus(connection, t);
-  const botNeedsYou = botStatus !== undefined && (botStatus.tone === 'warning' || botStatus.tone === 'danger');
+  const botNeedsYou = botStatus !== undefined && channelsStatusNeedsYou(botStatus.tone);
   const approvalSummary = bindingApprovalSummary(binding, t);
   const unknownEnablementDescription = t(
     'plugins.channels.surface.bindingSaveUnknownDescription',
@@ -2477,7 +2478,7 @@ function ConversationBotGroup(props: Readonly<{
 }>): React.ReactElement {
   const { connection, t } = props;
   const status = connection === undefined ? undefined : connectionStatus(connection, t);
-  const needsYou = status !== undefined && (status.tone === 'warning' || status.tone === 'danger');
+  const needsYou = status !== undefined && channelsStatusNeedsYou(status.tone);
   return (
     <ItemGroup testID="channels-page-bot" title={t('plugins.channels.page.bot', 'Bot')}>
       <Item
@@ -2487,7 +2488,7 @@ function ConversationBotGroup(props: Readonly<{
         {...(connection === undefined || status === undefined ? {} : {
           subtitle: `${status.label} · ${connectionMachinePlacementLabel(connection, t)}`,
         })}
-        {...(needsYou ? { tone: 'warning' as const } : {})}
+        {...(needsYou && status !== undefined ? { tone: status.tone } : {})}
         {...(connection === undefined ? {} : {
           icon: <BrandMark pluginId={connection.providerPluginId} size="small" externallyLabelled />,
         })}
@@ -3892,7 +3893,7 @@ function BindingCreatePairingHandoff(props: Readonly<{
 
   const feedbackContent = feedback === undefined ? null : feedback === 'completed' ? (
     <Status
-      tone="success"
+      tone="secondary"
       label={props.t(
         'plugins.channels.surface.bindingCreatePairingCompletedPaused',
         'Conversation paired. The binding is saved paused until you review and enable it.',
@@ -3966,7 +3967,7 @@ function BindingCreatePairingHandoff(props: Readonly<{
     return (
       <Stack gap="small">
         {unknownOutcome}
-        <Status tone="info" label={props.t('plugins.channels.surface.bindingCreatePairingFinalizing', 'Pairing is being completed')} />
+        <Status tone="neutral" label={props.t('plugins.channels.surface.bindingCreatePairingFinalizing', 'Pairing is being completed')} />
         {retryAction}
       </Stack>
     );
@@ -3976,7 +3977,7 @@ function BindingCreatePairingHandoff(props: Readonly<{
       <Stack gap="small">
         {unknownOutcome}
         {feedbackContent}
-        <Status tone="info" label={props.t('plugins.channels.surface.bindingCreatePairingProposal', 'Pairing request received')} />
+        <Status tone="attention" label={props.t('plugins.channels.surface.bindingCreatePairingProposal', 'Pairing request received')} />
         <Metadata
           title={props.t('plugins.channels.surface.bindingCreatePairingProposalDetails', 'Pairing request')}
           entries={[
@@ -4016,7 +4017,7 @@ function BindingCreatePairingHandoff(props: Readonly<{
         {challengeExpiry.countdown === undefined ? null : (
           <Text
             testID="channels-binding-create-pairing-countdown"
-            tone="info"
+            tone="secondary"
             value={`${props.t('plugins.channels.surface.bindingCreatePairingExpiresIn', 'Expires in')} ${challengeExpiry.countdown}`}
           />
         )}
@@ -4739,7 +4740,7 @@ function BindingCreateJourney(props: Readonly<{
       const openCreated = props.onOpenCreated;
       return (
         <Stack gap="small">
-          <Status tone="success" label={props.t('plugins.channels.surface.bindingCreateCreated', 'Binding created')} />
+          <Status tone="secondary" label={props.t('plugins.channels.surface.bindingCreateCreated', 'Binding created')} />
           {openCreated === undefined || createdBindingId === undefined ? null : (
             <Button
               testID="channels-binding-create-open-in-channels"
@@ -4836,7 +4837,7 @@ function BindingCreateJourney(props: Readonly<{
         <Stack gap="medium" testID="channels-binding-create-flow">
           <Status
             testID="channels-binding-create-stage"
-            tone="info"
+            tone="secondary"
             label={`${props.t('plugins.channels.surface.bindingCreateCurrentStep', 'Current step')}: ${bindingCreateStageTitle(stage, props.t)}`}
           />
           {availableConnections.length > 1 ? (
@@ -4974,7 +4975,7 @@ function BindingCreateJourney(props: Readonly<{
               />
               {pairingRequired ? (
                 <Banner
-                  tone="info"
+                  tone="secondary"
                   title={props.t('plugins.channels.surface.bindingCreatePairingTitle', 'Pairing is required')}
                   description={props.t(
                     'plugins.channels.surface.bindingCreatePairingDescription',
@@ -5187,7 +5188,7 @@ function BindingCreateJourney(props: Readonly<{
               />
               <Banner
                 testID="channels-binding-create-privacy-disclosure"
-                tone="info"
+                tone="secondary"
                 title={surface.accountEncryptionMode === 'plain'
                   ? props.t(
                     'plugins.channels.surface.bindingCreatePrivacyPlain',
@@ -6061,7 +6062,7 @@ function BindingEditJourney(props: Readonly<{
     }
     if (feedback === undefined) return null;
     if (feedback === 'updated') {
-      return <Status tone="success" label={props.t('plugins.channels.surface.bindingUpdated', 'Binding updated')} focusTarget={feedbackFocusTarget} />;
+      return <Status tone="secondary" label={props.t('plugins.channels.surface.bindingUpdated', 'Binding updated')} focusTarget={feedbackFocusTarget} />;
     }
     if (feedback === 'quotaIncompatible') {
       return (
@@ -6209,7 +6210,7 @@ function BindingEditJourney(props: Readonly<{
   return (
     <Stack gap="medium">
       <Status
-        tone="info"
+        tone="secondary"
         label={`${props.t('plugins.channels.surface.bindingEditCurrentStep', 'Current step')}: ${stage === 'policies'
           ? props.t('plugins.channels.surface.bindingEdit', 'Edit binding')
           : stage === 'endpoint'
@@ -6862,7 +6863,7 @@ function BindingsContent(props: BindingsContentProps): React.ReactElement {
           {props.savedPendingMachineReconciliation ? (
             <Status
               testID="channels-binding-saved-pending-machine-reconciliation"
-              tone="info"
+              tone="secondary"
               label={props.t(
                 'plugins.channels.surface.savedPendingMachineReconciliation',
                 'Saved to your Account. The selected machine will reconcile this policy when it is available.',
@@ -7395,7 +7396,7 @@ function AccountLocalBindingPolicyEditor(props: Readonly<{
       return (
         <Status
           testID="channels-account-local-binding-updated"
-          tone="success"
+          tone="secondary"
           label={props.t('plugins.channels.surface.bindingUpdated', 'Binding updated')}
           focusTarget={feedbackFocusTarget}
         />
@@ -7484,7 +7485,7 @@ function AccountLocalBindingPolicyEditor(props: Readonly<{
       ) : null}
       <Banner
         testID="channels-account-local-binding-provider-actions-unavailable"
-        tone="info"
+        tone="secondary"
         title={props.t(
           'plugins.channels.surface.providerActionsUnavailableTitle',
           'Provider actions need your selected machine',
@@ -7580,7 +7581,7 @@ function AccountLocalBindingPolicyEditor(props: Readonly<{
       ) : (
         <Banner
           testID="channels-account-local-binding-automation-target-unavailable"
-          tone="info"
+          tone="secondary"
           title={props.t(
             'plugins.channels.surface.bindingEditAutomationTargetOfflineTitle',
             'Automation target changes need your selected machine',
@@ -7803,7 +7804,7 @@ function AccountLocalBindingsSurface(props: Readonly<{
           {savedPendingMachineReconciliation ? (
             <Status
               testID="channels-binding-saved-pending-machine-reconciliation"
-              tone="info"
+              tone="secondary"
               label={t(
                 'plugins.channels.surface.savedPendingMachineReconciliation',
                 'Saved to your Account. The selected machine will reconcile this policy when it is available.',
@@ -8382,7 +8383,7 @@ function ConnectionPolicyEditor(props: Readonly<{
       {!props.providerDependentOperationsAvailable ? (
         <Banner
           testID="channels-connection-provider-actions-unavailable"
-          tone="info"
+          tone="secondary"
           title={props.t(
             'plugins.channels.surface.providerActionsUnavailableTitle',
             'Provider actions need your selected machine',
@@ -8441,7 +8442,7 @@ function ConnectionPolicyEditor(props: Readonly<{
       {props.execution.status === 'success' ? (
         <Status
           testID="channels-save-outcome"
-          tone="success"
+          tone="secondary"
           label={props.t(
             'plugins.channels.surface.saved',
             'Saved to your Account. The selected machine will reconcile this policy when it is available.',
@@ -8968,7 +8969,7 @@ function WebhookEndpointSetupInstructions(props: Readonly<{
       )}
       <Text
         testID={`${props.testIDPrefix}-webhook-readiness`}
-        tone="info"
+        tone="secondary"
         value={props.setup.readiness === 'credentialDisclosureLost'
           ? props.t(
             'plugins.channels.surface.webhookEndpointCredentialDisclosureLost',
@@ -9791,7 +9792,7 @@ function useConnectionRetest(props: ConnectionRetestProps): Readonly<{
         {verdict?.kind === 'ready' ? (
           <Banner
             testID="channels-connection-retest-ready"
-            tone="success"
+            tone="secondary"
             title={props.t('plugins.channels.surface.connectionRetestReadyTitle', 'The connection is working')}
             description={props.t(
               'plugins.channels.surface.connectionRetestReadyDescription',
@@ -10004,7 +10005,7 @@ function IngressAttentionControls(props: Readonly<{
       {initialLoading ? (
         <Status
           testID="channels-ingress-attention-loading"
-          tone="info"
+          tone="neutral"
           label={props.t('plugins.channels.surface.ingressAttentionLoading', 'Loading blocked inputs')}
           pulsing
         />
@@ -10264,7 +10265,7 @@ function ConnectionDeliveryResolutionControls(props: Readonly<{
       {initialLoading ? (
         <Status
           testID="channels-delivery-resolution-loading"
-          tone="info"
+          tone="neutral"
           label={props.t('plugins.channels.surface.deliveryResolutionLoading', 'Loading delivery details')}
           pulsing
         />
@@ -10371,7 +10372,7 @@ function ConnectionDeliveryResolutionControls(props: Readonly<{
       {!initialLoading && rows.length === 0 && !canLoadMore && deliveryRows.resource.error === undefined ? (
         <Status
           testID="channels-delivery-resolution-empty"
-          tone="info"
+          tone="secondary"
           label={props.t(
             'plugins.channels.surface.deliveryResolutionEmpty',
             'No unresolved delivery decisions are currently available.',
@@ -11439,7 +11440,7 @@ function ProviderSetupPicker(props: Readonly<{
       {feedback === 'ready' ? (
         <Status
           testID="channels-provider-setup-ready"
-          tone="success"
+          tone="secondary"
           label={props.t(
             'plugins.channels.surface.providerSetupReady',
             'Provider setup is ready. Choose a supported transport and create the connection.',
@@ -11693,7 +11694,7 @@ function ConnectionsContent(props: Readonly<{
       {announceDeletedConnection ? (
         <Status
           testID="channels-connection-deleted-announcement"
-          tone="success"
+          tone="secondary"
           label={props.t('plugins.channels.surface.connectionDeleted', 'Connection deleted.')}
         />
       ) : null}
@@ -11719,7 +11720,7 @@ function ConnectionsContent(props: Readonly<{
         <Stack gap="small" testID="channels-connection-created-continue">
           <Status
             testID="channels-connection-created-continue-status"
-            tone="success"
+            tone="secondary"
             label={props.t(
               'plugins.channels.surface.connectionCreatedAwaitingBinding',
               'Connection created. Add the conversation it should deliver to.',
@@ -12385,7 +12386,7 @@ function SessionConversationPeek(props: Readonly<{
     ...(connection === undefined ? [] : [{
       label: t('plugins.channels.session.bot', 'Bot'),
       value: `${connectionLabel(connection)} · ${connectionStatus(connection, t).label}`,
-      ...(connectionStatus(connection, t).tone === 'success' ? {} : { tone: 'warning' as const }),
+      ...(channelsStatusNeedsYou(connectionStatus(connection, t).tone) ? { tone: connectionStatus(connection, t).tone } : {}),
     }]),
     ...(lastDelivery === undefined ? [] : [{
       label: t('plugins.channels.session.lastReply', 'Last reply'),

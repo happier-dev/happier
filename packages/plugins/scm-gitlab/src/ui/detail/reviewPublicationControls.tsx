@@ -260,7 +260,7 @@ function PublicationResult({ result, text }: Readonly<{
     : ` ${describeTriageSourceFailureV1(result.failure, '')}`;
   return (
     <Banner
-      tone={complete ? 'success' : 'warning'}
+      tone={complete ? 'secondary' : 'warning'}
       title={complete
         ? text('plugins.gitlab.ui.publication.complete', 'Review published')
         : unknown

@@ -73,6 +73,7 @@ import {
 // could start meaning two things in one list. They are aliased to this file's local
 // vocabulary so the call sites read as the panel language they already are.
 import {
+  resolveTriageRowFactStatusToneV1,
   describeTriageSourceFailureV1 as failureDescription,
   formatTriageTimestampV1 as formatTimestamp,
   projectTriageDetailFieldTextV1 as fieldValueText,
@@ -84,7 +85,6 @@ import type {
   GitlabProjectedChangedFileRowV1,
   GitlabProjectedDiscussionRowV1,
   GitlabProjectedNoteRowV1,
-  GitlabProjectedPipelineRowV1,
 } from '../triage/detail/projection.js';
 import { GITLAB_ACTIVITY_EVENT_SOURCES_V1 } from '../triage/detail/routes.js';
 import type { GitlabKindId } from '../triage/types.js';
@@ -129,6 +129,7 @@ import {
   projectGitlabDiscussionRepliesV1,
 } from './detail/discussionReplies.js';
 import { gitlabChangesEvidenceUrlV1 } from './detail/changeEvidence.js';
+import { gitlabPipelineToneV1 } from './detail/rowTone.js';
 import {
   GITLAB_DEFAULT_DETAIL_TAB_V1,
   gitlabResolveSelectedTab,
@@ -406,7 +407,7 @@ function OverviewPanel({
         {statusFields.length === 0 ? null : (
           <Row gap="small">
             {statusFields.map((field) => (
-              <Status key={field.id} tone={field.tone} label={`${text(`plugins.gitlab.ui.field.${field.id.replace('gitlab/', '')}`, field.label)}: ${field.value}`} />
+              <Status key={field.id} tone={resolveTriageRowFactStatusToneV1(field.tone)} label={`${text(`plugins.gitlab.ui.field.${field.id.replace('gitlab/', '')}`, field.label)}: ${field.value}`} />
             ))}
           </Row>
         )}
@@ -889,13 +890,6 @@ function ChangesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>
 
 /* -------------------------------------------------------------------- Pipelines */
 
-function pipelineTone(row: GitlabProjectedPipelineRowV1): 'success' | 'danger' | 'warning' | 'neutral' {
-  if (row.status === 'success') return 'success';
-  if (row.status === 'failed') return 'danger';
-  if (row.status === 'running' || row.status === 'pending') return 'warning';
-  return 'neutral';
-}
-
 function PipelinesPanel({
   input,
   locale,
@@ -985,7 +979,7 @@ function PipelinesPanel({
         <Item
           title={`#${row.id} · ${row.status}`}
           {...(row.ref === undefined ? {} : { subtitle: row.ref })}
-          tone={pipelineTone(row)}
+          tone={gitlabPipelineToneV1(row)}
           {...(row.updatedAtMs === undefined
             ? {}
             : { detail: formatTimestamp(locale, row.updatedAtMs, 'relative', nowMs) })}

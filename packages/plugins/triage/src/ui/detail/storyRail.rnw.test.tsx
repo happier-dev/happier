@@ -9,7 +9,7 @@ import { defineUiSurface, useSessionState } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { TriageAgentStep, TriagePermissionCard } from './storyRail.js';
+import { TriageAgentStep, TriagePermissionCard, readTriageFindingSeverityToneV1 } from './storyRail.js';
 
 /**
  * The story rail's live agent half (r0.42): the permission card above the rail
@@ -123,6 +123,13 @@ describe('the story rail\'s live agent', () => {
     await expect(rail.getByText('Finding 1')).resolves.toBeDefined();
     await expect(rail.getByText('High')).resolves.toBeDefined();
     await expect(rail.getByText('src/cart/totals.ts:42')).resolves.toBeDefined();
+  });
+  it('colours a finding\'s severity only where it is trouble: blue is never a severity', () => {
+    expect(readTriageFindingSeverityToneV1('blocker')).toBe('danger');
+    expect(readTriageFindingSeverityToneV1('high')).toBe('danger');
+    expect(readTriageFindingSeverityToneV1('medium')).toBe('warning');
+    expect(readTriageFindingSeverityToneV1('low')).toBe('secondary');
+    expect(readTriageFindingSeverityToneV1('nit')).toBe('muted');
   });
   it('opens the Session that owns findings beyond the three-item preview', async () => {
     const rail = await mountRail([finding('1', 'session-a'), finding('2', 'session-a'),

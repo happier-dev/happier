@@ -47,6 +47,7 @@ import { buildTriageEntryAttachmentPresentation } from '../../composer/mutationP
 import { useTriageTierBEvidenceInsertion } from '../../composer/tierBEvidenceInsertion.js';
 import type { TriageMountedActionsV1 } from '../actions/useTriageActions.js';
 import {
+  readTriageAttentionBadgeToneV1,
   readTriageEntryGlyphV1,
   readTriagePinActionLabelV1,
   type TriageRowPinHandlersV1,
@@ -429,7 +430,7 @@ export function TriageDetailHeaderView(props: TriageDetailHeaderViewProps): Reac
       )}
       {props.headerHosted || contextLine === null ? null : <Text variant="caption" tone="secondary" value={contextLine} />}
       {props.lastKnown === true ? <Status tone="muted" labelKey="plugins.triage.surface.detail.lastKnown" label="These are the last facts this page held for this entry, and they may be out of date." /> : null}
-      {header.attention === null || props.attentionInActions === true ? null : <Badge variant="tinted" tone={header.attention.level === 'required' ? 'warning' : 'info'} value={header.attention.reasonLabel} />}
+      {header.attention === null || props.attentionInActions === true ? null : <Badge variant="tinted" tone={readTriageAttentionBadgeToneV1(header.attention.level)} value={header.attention.reasonLabel} />}
       {presenceCopy === null ? null : <Status tone="warning" label={presenceCopy} />}
       {header.sourceReadFailed ? <Status tone="muted" labelKey="plugins.triage.surface.detail.connectionUnhealthy" label="This connection could not be read in the last pass." /> : null}
       {props.showLinkedSessions === false ? null : <TriageLinkedSessions key={props.instanceKey} sessions={header.linkedSessions} hasMore={header.linkedSessionsHasMore} pageState={props.linkedSessionsPageState} onLoadMore={props.onLoadMoreLinkedSessions} onSelect={props.onSelectLinkedSession} />}
@@ -671,7 +672,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
   const actionRegionShown = workflowSubject !== null && display !== null && actionPresentation !== null && selected !== null;
   const viewerIsAuthor = row.content?.outcome.viewer.involvement.includes('author') === true;
   const attention = header.attention === null ? undefined : (
-    <Badge variant="tinted" tone={header.attention.level === 'required' ? 'warning' : 'info'} value={header.attention.reasonLabel} />
+    <Badge variant="tinted" tone={readTriageAttentionBadgeToneV1(header.attention.level)} value={header.attention.reasonLabel} />
   );
   return (
     <Stack gap="medium" style={DETAIL_FILL_STYLE_V1}>

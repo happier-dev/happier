@@ -15,6 +15,7 @@ import {
   useReviewCommentProposalsForEntry,
   type ReviewCommentProposalQueryV1,
   type SessionStateReadV1,
+  type TextTone,
 } from '@happier-dev/plugin-ui';
 import type { SessionPendingPermissionV1, SessionPermissionAnswerV1 } from '@happier-dev/plugin-sdk/ui';
 import type { TriageLinkedSessionProjectionV1 } from '@happier-dev/triage-protocol/v1';
@@ -38,9 +39,15 @@ function readTriageFindingLocationV1(anchor: TriageFindingV1['anchor']): string 
   }
 }
 
+// `medium` keeps `warning`: a severity rung is a caution about the finding, not a "needs you" state.
 const FINDING_SEVERITY_TONE = Object.freeze({
-  blocker: 'danger', high: 'danger', medium: 'warning', low: 'info', nit: 'secondary',
-} as const satisfies Record<NonNullable<TriageFindingV1['findingSeverity']>, 'danger' | 'warning' | 'info' | 'secondary'>);
+  blocker: 'danger', high: 'danger', medium: 'warning', low: 'secondary', nit: 'muted',
+} as const satisfies Record<NonNullable<TriageFindingV1['findingSeverity']>, TextTone>);
+
+/** The tone of a finding's severity badge. */
+export function readTriageFindingSeverityToneV1(severity: NonNullable<TriageFindingV1['findingSeverity']>): TextTone {
+  return FINDING_SEVERITY_TONE[severity];
+}
 const FINDING_SEVERITY_LABEL = Object.freeze({
   blocker: 'Blocker', high: 'High', medium: 'Medium', low: 'Low', nit: 'Nit',
 } as const satisfies Record<NonNullable<TriageFindingV1['findingSeverity']>, string>);
@@ -113,7 +120,7 @@ export function TriageAgentStep(props: Readonly<{
                     {severity === undefined ? null : (
                       <Badge
                         variant="tinted"
-                        tone={FINDING_SEVERITY_TONE[severity]}
+                        tone={readTriageFindingSeverityToneV1(severity)}
                         value={text(`plugins.triage.surface.detail.finding.severity.${severity}`, FINDING_SEVERITY_LABEL[severity])}
                       />
                     )}

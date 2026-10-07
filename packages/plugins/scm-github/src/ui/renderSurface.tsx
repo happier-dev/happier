@@ -104,6 +104,7 @@ import {
 // could start meaning two things in one list. They are aliased to this file's local
 // vocabulary so the call sites read as the panel language they already are.
 import {
+  resolveTriageRowFactStatusToneV1,
   describeTriageSourceFailureV1 as failureDescription,
   formatTriageCountV1 as formatNumber,
   formatTriageTimestampV1 as formatTimestamp,
@@ -171,7 +172,7 @@ import {
   type GithubOverviewControllerV1,
   type GithubPagedControllerV1,
 } from './detail/panelReaders.js';
-import { githubCheckToneV1 as checkTone } from './detail/story.js';
+import { githubCheckToneV1 as checkTone, githubOverviewStatusToneV1 } from './detail/story.js';
 import { readGithubCheckOutcomeV1 } from '../triage/checkOutcome.js';
 import type { GithubPagedStateV1, GithubReadStateV1 } from './detail/panelState.js';
 import {
@@ -418,7 +419,7 @@ function WriteOutcome({
     const hasUncertainty = outcome.uncertainCount > 0 || outcome.verdict === 'uncertain';
     return (
       <Banner
-        tone={fullyPublished ? 'success' : 'warning'}
+        tone={fullyPublished ? 'secondary' : 'warning'}
         title={fullyPublished
           ? text('plugins.github.ui.mutations.review.outcome.published', 'Review published')
           : hasUncertainty
@@ -434,7 +435,7 @@ function WriteOutcome({
     return outcome.effect === 'changed'
       ? (
         <Banner
-          tone="success"
+          tone="secondary"
           title="Done"
           titleKey="plugins.github.ui.mutations.applied"
           description={text(
@@ -445,7 +446,7 @@ function WriteOutcome({
       )
       : (
         <Banner
-          tone="info"
+          tone="secondary"
           title="Nothing to do"
           titleKey="plugins.github.ui.mutations.alreadySatisfied"
           description={text(
@@ -458,7 +459,7 @@ function WriteOutcome({
   if (outcome.kind === 'pending') {
     return (
       <Banner
-        tone="info"
+        tone="neutral"
         title="Accepted"
         titleKey="plugins.github.ui.mutations.pending"
         description={text(
@@ -711,7 +712,7 @@ function GithubMergeSignature({ state }: Readonly<{
     >
       <Icon
         name={state.terminal ? 'change-complete' : 'change-open'}
-        tone={state.terminal ? 'success' : 'secondary'}
+        tone={state.terminal ? 'neutral' : 'secondary'}
         testID={state.terminal ? 'github-merge-signature-complete' : 'github-merge-signature-open'}
       />
     </Animated.View>
@@ -1802,13 +1803,6 @@ function githubOverviewStatusLabel(
   return overview.state ?? 'Unavailable';
 }
 
-function githubOverviewStatusTone(label: string): 'success' | 'info' | 'warning' | 'neutral' {
-  if (label === 'Merged') return 'success';
-  if (label === 'Open') return 'info';
-  if (label === 'Draft') return 'warning';
-  return 'neutral';
-}
-
 function githubOverviewCollection(
   values: readonly string[] | undefined,
   empty: string,
@@ -2044,7 +2038,7 @@ function OverviewPanel({
           variant="title"
           value={exact === null ? input.observation.snapshot.title : exact.title ?? 'Unavailable'}
         />
-        <Status tone={githubOverviewStatusTone(statusLabel)} label={statusLabel} />
+        <Status tone={githubOverviewStatusToneV1(statusLabel)} label={statusLabel} />
         <Metadata
           title={text('plugins.github.ui.overview.details', 'Current GitHub details')}
           entries={currentEntries}
@@ -2072,7 +2066,7 @@ function OverviewPanel({
             {statusFields.map((field) => (
               <Status
                 key={field.id}
-                tone={field.tone}
+                tone={resolveTriageRowFactStatusToneV1(field.tone)}
                 label={text('plugins.github.ui.factStatus', '{label}: {value}', {
                   label: text(githubDetailFieldLabelKey(field.id), field.label),
                   value: field.value,
@@ -3351,7 +3345,7 @@ function useGithubFeedbackStream(context: GithubFeedbackWriteContextV1): GithubA
           ? (
             <Row gap="small">
               <Status
-                tone={view.review.tone}
+                tone={resolveTriageRowFactStatusToneV1(view.review.tone)}
                 label={text('plugins.github.ui.reviewDecision', 'Review: {value}', {
                   value: view.review.label,
                 })}

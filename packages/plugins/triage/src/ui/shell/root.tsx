@@ -1755,7 +1755,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
    * the lens are reachable from the very first frame.
    */
   const freshness = state.kind !== 'window' ? null : state.refreshing
-    ? { tone: 'info' as const, pulsing: true, label: text('plugins.triage.surface.refreshing', 'Refreshing') }
+    ? { tone: 'neutral' as const, pulsing: true, label: text('plugins.triage.surface.refreshing', 'Refreshing') }
     : state.stale
       ? { tone: 'warning' as const, pulsing: false, label: text('plugins.triage.surface.lastKnown', 'Showing the last known list') }
       : { tone: 'muted' as const, pulsing: false, label: text('plugins.triage.surface.upToDate', 'Up to date') };
@@ -2142,7 +2142,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           */}
           {refreshState.kind !== 'blocked' ? null : (
             <Banner
-              tone="info"
+              tone="secondary"
               {...readTriageRefreshPacingNotice(
                 refreshState.reason,
                 refreshState.nextEligibleAtMs,

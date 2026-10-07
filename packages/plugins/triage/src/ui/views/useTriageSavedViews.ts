@@ -33,7 +33,7 @@ import {
  */
 
 export type TriageSavedViewsNoticeV1 = Readonly<{
-  tone: 'success' | 'warning';
+  tone: 'secondary' | 'warning';
   message: string;
 }>;
 
@@ -144,7 +144,7 @@ export function useTriageSavedViews(): TriageMountedSavedViewsV1 {
         }
         setRevision(result.revision);
         setNotice({
-          tone: 'success',
+          tone: 'secondary',
           message: text('plugins.triage.surface.views.settled', 'Saved views updated'),
         });
         return { projection, viewId: result.viewId, revision: result.revision };

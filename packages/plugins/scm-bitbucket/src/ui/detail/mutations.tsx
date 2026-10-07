@@ -231,7 +231,7 @@ function projectSettledMutation(
   switch (result.kind) {
     case 'applied':
       return {
-        tone: 'success',
+        tone: 'secondary',
         title: operation === 'merge'
           ? text(
             'plugins.bitbucket.ui.mutations.merge.applied',
@@ -244,7 +244,7 @@ function projectSettledMutation(
       };
     case 'pending':
       return {
-        tone: 'warning',
+        tone: 'neutral',
         title: operation === 'merge'
           ? text(
             'plugins.bitbucket.ui.mutations.merge.pending',
@@ -383,7 +383,7 @@ function reviewPublicationBanner(
     ? { tone: 'warning', title: text('plugins.bitbucket.ui.mutations.review.uncertain', 'Some review effects are uncertain. Reload before trying again.'), detail: partialDetail }
     : failed > 0
       ? { tone: 'warning', title: text('plugins.bitbucket.ui.mutations.review.partial', 'The review was only partly published.'), detail: partialDetail }
-      : { tone: 'success', title: text('plugins.bitbucket.ui.mutations.review.published', 'Bitbucket confirmed every review effect.'), detail: outcomeCounts };
+      : { tone: 'secondary', title: text('plugins.bitbucket.ui.mutations.review.published', 'Bitbucket confirmed every review effect.'), detail: outcomeCounts };
 }
 
 function bitbucketReviewPublicationTarget(
@@ -804,7 +804,7 @@ function projectSettledCommentResolution(
   switch (result.kind) {
     case 'applied':
       return {
-        tone: 'success',
+        tone: 'secondary',
         title: operation === 'resolve'
           ? text(
             'plugins.bitbucket.ui.mutations.comment.resolved',

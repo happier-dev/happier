@@ -65,6 +65,7 @@ import { TriageDetailSpread, useTriageDetailPanelOpener, type TriageDetailSpread
 // could start meaning two things in one list. They are aliased to this file's local
 // vocabulary so the call sites read as the panel language they already are.
 import {
+  resolveTriageRowFactStatusToneV1,
   describeTriageSourceFailureV1 as failureDescription,
   formatTriageCountV1 as formatNumber,
   formatTriageTimestampV1 as formatTimestamp,
@@ -123,9 +124,10 @@ const DETAIL_PANEL_RETENTION = Object.fromEntries(
   SENTRY_DETAIL_TABS_V1.map((declaration) => [declaration.id, declaration.retention] as const),
 );
 
+// Open and resolved are both quiet states of an issue; neither is a caution nor "needs you".
 const STATE_TONES = Object.freeze({
-  active: 'warning',
-  resolved: 'success',
+  active: 'secondary',
+  resolved: 'secondary',
   closed: 'neutral',
   suppressed: 'neutral',
   unknown: 'neutral',
@@ -768,7 +770,7 @@ function OverviewPanel({
         {statusFields.length === 0 ? null : (
           <Row gap="small">
             {statusFields.map((field) => (
-              <Status key={field.id} tone={field.tone} label={`${factLabel(field)}: ${field.value}`} />
+              <Status key={field.id} tone={resolveTriageRowFactStatusToneV1(field.tone)} label={`${factLabel(field)}: ${field.value}`} />
             ))}
           </Row>
         )}
@@ -1515,11 +1517,11 @@ type SentryActivityHistoryItemV1 = Extract<SentryActivityHistoryV1, { status: 'a
 const SENTRY_ACTIVITY_KIND: Readonly<Record<string, Readonly<{ kind: TriageActivityKindV1; tone?: TextTone }>>> =
   Object.freeze({
     note: { kind: 'comment' },
-    set_resolved: { kind: 'state', tone: 'success' },
-    set_resolved_in_release: { kind: 'state', tone: 'success' },
-    set_resolved_by_age: { kind: 'state', tone: 'success' },
-    set_resolved_in_commit: { kind: 'state', tone: 'success' },
-    set_resolved_in_pull_request: { kind: 'state', tone: 'success' },
+    set_resolved: { kind: 'state', tone: 'secondary' },
+    set_resolved_in_release: { kind: 'state', tone: 'secondary' },
+    set_resolved_by_age: { kind: 'state', tone: 'secondary' },
+    set_resolved_in_commit: { kind: 'state', tone: 'secondary' },
+    set_resolved_in_pull_request: { kind: 'state', tone: 'secondary' },
     set_unresolved: { kind: 'state' },
     set_ignored: { kind: 'state' },
     set_regression: { kind: 'escalation', tone: 'danger' },

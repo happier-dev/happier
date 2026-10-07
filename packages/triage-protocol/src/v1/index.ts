@@ -41,10 +41,12 @@ export {
     formatTriageTimestampV1,
     projectTriageDetailFieldTextV1,
     projectTriageDetailFieldsV1,
+    resolveTriageRowFactStatusToneV1,
 } from './presentation.js';
 export type {
     TriageDetailFieldV1,
     TriageDetailFieldValueTextV1,
+    TriageRowFactStatusPresentationToneV1,
 } from './presentation.js';
 
 export {
