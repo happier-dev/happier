@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol';
+import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
 
@@ -243,7 +244,7 @@ describe('resolveNewSessionCapabilityProbeContext (stability)', () => {
 
         const context = resolveNewSessionModelCapabilityProbeContext(input);
         expect(context).toEqual({
-            cacheKeySuffixParts: ['happier.agent.claude/claude-subscription:group:team'],
+            cacheKeySuffixParts: ['happier.agent.claude/claude-subscription:group:team', `connected-services:${stableJsonStringify(input.connectedServices)}`],
             capabilityParams: { connectedServices: input.connectedServices },
             modelSuccessCacheMaxAgeMs: 5 * 60_000,
         });
@@ -272,7 +273,7 @@ describe('resolveNewSessionCapabilityProbeContext (stability)', () => {
         const { resolveNewSessionModelCapabilityProbeContext } = await import('./newSessionCapabilityProbeContext');
         expect(resolveNewSessionCapabilityProbeContext(input)).toBeNull();
         expect(resolveNewSessionModelCapabilityProbeContext(input)).toEqual({
-            cacheKeySuffixParts: ['happier.agent.claude/claude-subscription:group:team'],
+            cacheKeySuffixParts: ['happier.agent.claude/claude-subscription:group:team', `connected-services:${stableJsonStringify(input.connectedServices)}`],
             capabilityParams: { connectedServices: input.connectedServices },
             modelSuccessCacheMaxAgeMs: 5 * 60_000,
         });

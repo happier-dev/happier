@@ -106,6 +106,7 @@ function RoleEnginePopover(props: Readonly<{
             },
             renderDetailContent: () => buildSessionAgentPickerDetailContent({
                 backendTarget: entry.backendTarget,
+                agentCatalogEntry: entry.agentCatalogEntry,
                 runtimeCarrierAgentId: entry.agentId,
                 selectedMachineId: null,
                 capabilityServerId,

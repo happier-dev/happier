@@ -170,7 +170,8 @@ export function resolveNewSessionModelCapabilityProbeContext(params: Readonly<{
     // Connected service by the bundled scalar id. Canonical bindings are keyed
     // by qualified service keys, so the observation translates through the one
     // provenance-named legacy ingress before any binding lookup or probe cache
-    // identity is derived. Unknown ids fail closed (no model-only probe).
+    // identity is derived. This observation only owns its success-cache age;
+    // every Agent's selected launch bindings still reach its model probe.
     const observationServiceKey = observation
         ? resolveQualifiedConnectedAccountServiceKey(observation.connectedServiceId)
         : null;
@@ -178,13 +179,14 @@ export function resolveNewSessionModelCapabilityProbeContext(params: Readonly<{
     const selection = observationServiceKey && bindings.success
         ? bindings.data.bindingsByServiceId[observationServiceKey]
         : null;
-    if (!observation || !observationServiceKey || selection?.source !== 'connected') return shared;
-    const selectedIdentity = selection.selection === 'group'
+    if (!bindings.success || !Object.values(bindings.data.bindingsByServiceId).some((binding) => binding.source !== 'native')) return shared;
+    const selectedIdentity = !observationServiceKey || selection?.source !== 'connected' ? null : selection.selection === 'group'
         ? `${observationServiceKey}:group:${selection.groupId}`
         : `${observationServiceKey}:profile:${selection.profileId}`;
     const cacheKeySuffixParts = [
         ...(shared?.cacheKeySuffixParts ?? []),
-        selectedIdentity,
+        ...(selectedIdentity ? [selectedIdentity] : []),
+        `connected-services:${stableJsonStringify(bindings.data)}`,
         ...(params.connectedServicesCacheIdentity ? [params.connectedServicesCacheIdentity] : []),
     ];
     const capabilityParams = {
@@ -195,6 +197,6 @@ export function resolveNewSessionModelCapabilityProbeContext(params: Readonly<{
         key: stableJsonStringify({ cacheKeySuffixParts, capabilityParams }),
         cacheKeySuffixParts,
         capabilityParams,
-        modelSuccessCacheMaxAgeMs: 5 * 60_000,
+        ...(selectedIdentity ? { modelSuccessCacheMaxAgeMs: 5 * 60_000 } : {}),
     });
 }

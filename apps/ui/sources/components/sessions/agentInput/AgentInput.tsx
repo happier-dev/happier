@@ -1419,6 +1419,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         ? resolvedSessionAgentId
         : DEFAULT_AGENT_ID;
     const sessionAgentId = resolvedSessionAgentId ?? agentId;
+    const armedComposerTarget = resolveArmedComposerContinuation({
+        armedContinuationTarget: props.armedContinuationTarget,
+    });
     /**
      * Effective Session-authoring policy, resolved by the shared owner.
      *
@@ -1450,9 +1453,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         sessionModeChipPresentation,
         sessionModeChipInteraction,
     } = useSessionAuthoringControls({
-        agentId: sessionAgentId,
-        metadata: props.metadata ?? null,
-        composerOptionsInput: props.composerOptionsInput,
+        agentId: armedComposerTarget?.agentId ?? sessionAgentId,
+        metadata: armedComposerTarget ? null : props.metadata ?? null,
+        composerOptionsInput: armedComposerTarget ? null : props.composerOptionsInput,
         sessionId: props.sessionId,
         sessionActive: props.sessionActive,
         permissionMode: props.permissionMode ?? null,
@@ -1460,8 +1463,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         modelMode: props.modelMode ?? null,
         modelOptionsOverride: props.modelOptionsOverride ?? null,
         canChangeModel: Boolean(props.onModelModeChange),
-        canChangeSessionMode: Boolean(props.onAcpSessionModeChange),
-        canChangeConfigOption: Boolean(props.onAcpConfigOptionChange),
+        canChangeSessionMode: !armedComposerTarget && Boolean(props.onAcpSessionModeChange),
+        canChangeConfigOption: !armedComposerTarget && Boolean(props.onAcpConfigOptionChange),
         acpSessionModeOptionsOverride: props.acpSessionModeOptionsOverride ?? null,
         acpSessionModeSelectedIdOverride: props.acpSessionModeSelectedIdOverride ?? null,
         acpConfigOptionsOverride: props.acpConfigOptionsOverride ?? null,
@@ -2646,9 +2649,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
      * than waiting for a keystroke — while the button additionally requires that
      * pressing it would take the switch.
      */
-    const armedComposerTarget = resolveArmedComposerContinuation({
-        armedContinuationTarget: props.armedContinuationTarget,
-    });
     const engineChipLabel = React.useMemo(() => {
         if (props.engineLabel !== undefined) return props.engineLabel;
         // Selection IS the selection. An armed target with a model chosen names

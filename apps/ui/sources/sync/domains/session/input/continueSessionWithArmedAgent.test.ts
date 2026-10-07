@@ -1,4 +1,5 @@
 import type { SessionAgentTransitionResultV1 } from '@happier-dev/protocol';
+import { MetadataSchema } from '@happier-dev/session-core/state';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { t } from '@/text';
@@ -6,6 +7,7 @@ import { t } from '@/text';
 import {
     buildArmedAgentContinuationTransitionInput,
     continueSessionWithArmedAgent,
+    prepareArmedAgentContinuation,
     reconcileArmedAgentContinuationDisposition,
     resolveArmedAgentContinuationDisposition,
     type ArmedAgentContinuationCanonicalFacts,
@@ -16,7 +18,7 @@ const machineRpcWithServerScope = vi.hoisted(() => vi.fn());
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
+    return createTextModuleMock();
 });
 
 // The socket transport is the only genuine boundary in this path. Everything
@@ -52,6 +54,12 @@ function rpcError(rpcErrorCode: string): Error {
     return Object.assign(new Error(rpcErrorCode), { rpcErrorCode });
 }
 
+async function dispatchPreparedSubmission(value: ArmedAgentContinuationSubmission) {
+    const prepared = await prepareArmedAgentContinuation(value, MetadataSchema.parse({ path: '/repo', host: 'host', permissionMode: 'default' }));
+    if (prepared.status !== 'ready') throw new Error('Expected a prepared continuation');
+    return continueSessionWithArmedAgent(prepared);
+}
+
 describe('continueSessionWithArmedAgent', () => {
     beforeEach(() => {
         machineRpcWithServerScope.mockReset();
@@ -60,7 +68,7 @@ describe('continueSessionWithArmedAgent', () => {
     it('dispatches the submitted message to the ARMED TARGET Agent, not the current one', async () => {
         machineRpcWithServerScope.mockResolvedValue({ type: 'accepted', localId: 'local-1' });
 
-        const outcome = await continueSessionWithArmedAgent(submission());
+        const outcome = await dispatchPreparedSubmission(submission());
 
         expect(machineRpcWithServerScope).toHaveBeenCalledTimes(1);
         expect(machineRpcWithServerScope).toHaveBeenCalledWith(expect.objectContaining({
@@ -92,7 +100,7 @@ describe('continueSessionWithArmedAgent', () => {
     it('reports an old daemon as a no-effect rejection rather than an unknown outcome', async () => {
         machineRpcWithServerScope.mockRejectedValue(rpcError('RPC_METHOD_NOT_AVAILABLE'));
 
-        const outcome = await continueSessionWithArmedAgent(submission());
+        const outcome = await dispatchPreparedSubmission(submission());
 
         expect(outcome.result).toEqual({
             type: 'rejected',
@@ -110,40 +118,72 @@ describe('continueSessionWithArmedAgent', () => {
             'tool.sessionAgentTransition': { ok: false, checkedAt: 1,
                 error: { code: 'unknown-capability', message: 'Unknown capability' } },
         } });
-        const outcome = await continueSessionWithArmedAgent(submission({
-            committedPermissionMode: 'default', input: { text: 'ship it', meta: { permissionMode: 'yolo' } },
-        }));
+        const outcome = await prepareArmedAgentContinuation(submission({
+            input: { text: 'ship it', meta: { permissionMode: 'yolo' } },
+        }), MetadataSchema.parse({ path: '/repo', host: 'host', permissionMode: 'default' }));
         expect(machineRpcWithServerScope.mock.calls.map(([request]) => request.method)).toEqual(['capabilities.detect']);
-        expect(outcome.result).toBeNull();
-        expect(outcome.disposition).toMatchObject({ draft: 'preserve', arm: 'keep', send: 'allow' });
+        expect(outcome).toMatchObject({ status: 'refused', reason: 'unsupported_permission_intent' });
     });
 
     it('continues on an older daemon when permission aliases have the same canonical intent', async () => {
         machineRpcWithServerScope.mockResolvedValue({ type: 'accepted', localId: 'local-1' });
-        const outcome = await continueSessionWithArmedAgent(submission({
-            committedPermissionMode: 'bypassPermissions', input: { text: 'ship it', meta: { permissionMode: 'yolo' } },
-        }));
+        const prepared = await prepareArmedAgentContinuation(submission({
+            input: { text: 'ship it', meta: { permissionMode: 'yolo' } },
+        }), MetadataSchema.parse({ path: '/repo', host: 'host', permissionMode: 'bypassPermissions' }));
+        if (prepared.status !== 'ready') throw new Error('Expected equivalent permission intent to remain usable');
+        const outcome = await continueSessionWithArmedAgent(prepared);
         expect(machineRpcWithServerScope.mock.calls.map(([request]) => request.method)).toEqual(['session.agentTransition']);
         expect(outcome.result).toEqual({ type: 'accepted', localId: 'local-1' });
+    });
+
+    it('prepares a supported changed permission and dispatches that exact input', async () => {
+        machineRpcWithServerScope.mockResolvedValueOnce({ protocolVersion: 1, results: {
+            'tool.sessionAgentTransition': { ok: true, checkedAt: 1, data: { supportsInputPermissionIntent: true } },
+        } }).mockResolvedValueOnce({ type: 'accepted', localId: 'local-1' });
+        const value = submission({ input: { text: 'ship it', meta: { permissionMode: 'yolo' } } });
+        const prepared = await prepareArmedAgentContinuation(value, MetadataSchema.parse({ path: '/repo', host: 'host', permissionMode: 'default' }));
+        if (prepared.status !== 'ready') throw new Error('Expected supported intent to prepare');
+        const outcome = await continueSessionWithArmedAgent(prepared);
+        expect(outcome.result).toEqual({ type: 'accepted', localId: 'local-1' });
+        expect(machineRpcWithServerScope.mock.calls.map(([request]) => request.method)).toEqual(['capabilities.detect', 'session.agentTransition']);
+        expect(machineRpcWithServerScope).toHaveBeenLastCalledWith(expect.objectContaining({
+            payload: expect.objectContaining({ input: { localId: 'local-1', text: 'ship it', meta: { permissionMode: 'yolo' } } }),
+        }));
+    });
+
+    it('does not infer unchanged intent from an unknown token and missing owner metadata', async () => {
+        machineRpcWithServerScope.mockResolvedValueOnce({ protocolVersion: 1, results: {
+            'tool.sessionAgentTransition': { ok: true, checkedAt: 1, data: { supportsInputPermissionIntent: true } },
+        } }).mockResolvedValueOnce({ type: 'rejected', code: 'unsupported_operation', sourceEffect: 'none' });
+        const value = submission({ input: { text: 'ship it', meta: { permissionMode: 'future-intent' } } });
+        const prepared = await prepareArmedAgentContinuation(value, null);
+        if (prepared.status !== 'ready') throw new Error('Expected capable daemon to validate the token');
+        const outcome = await continueSessionWithArmedAgent(prepared);
+        expect(outcome.result).toEqual({ type: 'rejected', code: 'unsupported_operation', sourceEffect: 'none' });
+        expect(machineRpcWithServerScope.mock.calls.map(([request]) => request.method)).toEqual(['capabilities.detect', 'session.agentTransition']);
+        expect(machineRpcWithServerScope).toHaveBeenLastCalledWith(expect.objectContaining({
+            payload: expect.objectContaining({ input: expect.objectContaining({ meta: { permissionMode: 'future-intent' } }) }),
+        }));
     });
 
     it.each([{}, { protocolVersion: 1, results: { 'tool.sessionAgentTransition': { ok: true, checkedAt: 1, data: { supportsInputPermissionIntent: 'yes' } } } }])(
         'reports an unreadable permission capability as unavailable before attempting a transition', async (capabilities) => {
             machineRpcWithServerScope.mockResolvedValue(capabilities);
-            const outcome = await continueSessionWithArmedAgent(submission({
-                committedPermissionMode: 'default', input: { text: 'ship it', meta: { permissionMode: 'yolo' } },
-            }));
+            const outcome = await prepareArmedAgentContinuation(submission({
+                input: { text: 'ship it', meta: { permissionMode: 'yolo' } },
+            }), MetadataSchema.parse({ path: '/repo', host: 'host', permissionMode: 'default' }));
             expect(machineRpcWithServerScope.mock.calls.map(([request]) => request.method)).toEqual(['capabilities.detect']);
-            expect(outcome.result).toBeNull();
-            expect(outcome.disposition.notice?.message).not.toEqual(t('session.agentContinuation.transition.rejected.unsupportedOperation'));
-            expect(outcome.disposition).toMatchObject({ draft: 'preserve', arm: 'keep', send: 'allow' });
+            expect(outcome.status).toBe('refused');
+            if (outcome.status !== 'refused') throw new Error('Expected unavailable support refusal');
+            expect(outcome.reason).toBe('permission_support_unavailable');
+            expect(outcome.notice.message).not.toEqual(t('session.agentContinuation.transition.rejected.unsupportedOperation'));
         },
     );
 
     it('never fabricates a rejection when the transport proves nothing', async () => {
         machineRpcWithServerScope.mockRejectedValue(new Error('socket closed'));
 
-        const outcome = await continueSessionWithArmedAgent(submission());
+        const outcome = await dispatchPreparedSubmission(submission());
 
         // A rejection would promise `sourceEffect: 'none'` and hand the reader
         // Keep editing in front of a Session that may already have switched.
@@ -154,7 +194,7 @@ describe('continueSessionWithArmedAgent', () => {
     it('treats an unreadable answer as unknown, not as success', async () => {
         machineRpcWithServerScope.mockResolvedValue({ type: 'definitely_fine' });
 
-        const outcome = await continueSessionWithArmedAgent(submission());
+        const outcome = await dispatchPreparedSubmission(submission());
 
         expect(outcome.result).toEqual({ type: 'outcome_unknown', localId: 'local-1' });
         expect(outcome.disposition.draft).toBe('preserve');
@@ -163,7 +203,7 @@ describe('continueSessionWithArmedAgent', () => {
     it('carries the short display text the reader expects to read in the transcript', async () => {
         machineRpcWithServerScope.mockResolvedValue({ type: 'accepted', localId: 'local-1' });
 
-        await continueSessionWithArmedAgent(submission({
+        await dispatchPreparedSubmission(submission({
             input: {
                 text: 'review comment 1\nreview comment 2\n\nship it',
                 displayText: 'ship it',
@@ -188,7 +228,7 @@ describe('continueSessionWithArmedAgent', () => {
     it('never lets a blank display text blank out the transcript row', async () => {
         machineRpcWithServerScope.mockResolvedValue({ type: 'accepted', localId: 'local-1' });
 
-        await continueSessionWithArmedAgent(submission({
+        await dispatchPreparedSubmission(submission({
             input: { text: '[image.png](https://example.test/a.png)', displayText: '   ' },
         }));
 

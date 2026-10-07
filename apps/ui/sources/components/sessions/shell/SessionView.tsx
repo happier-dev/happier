@@ -341,6 +341,7 @@ import { resolveSessionComposerStateFromAuthoringContext } from '@/components/se
 import {
     buildArmedAgentContinuationTransitionInput,
     continueSessionWithArmedAgent,
+    prepareArmedAgentContinuation,
     reconcileArmedAgentContinuationDisposition,
     type ArmedAgentContinuationCanonicalFacts,
     type ArmedAgentContinuationInputCustody,
@@ -3726,9 +3727,9 @@ function SessionViewLoadedContent({
     // closure, so this is the gate — not a second interpretation beside it. It is
     // read once, here, and handed to the one owner that can arm a switch.
     // Scoped to THIS Session's server, not the sidebar's selection. The switch
-    // runs on the Session's machine against its own server, and neither the
-    // daemon nor the server re-gates the transition, so this decision's scope is
-    // the whole gate: an aggregate over other selected servers would let an
+    // runs on the Session's machine against its own server; the daemon and
+    // server enforce the current decision again before effects. An aggregate
+    // over other selected servers would let an
     // unrelated server's setting decide whether this Session may switch Agent.
     const agentSwitchingDecision = useFeatureDecision('sessions.agentSwitching', {
         scopeKind: 'spawn',
@@ -3819,8 +3820,14 @@ function SessionViewLoadedContent({
         const entry = sessionAgentCatalogEntries.find((catalogEntry) => (
             catalogEntry.agentId === intent.selection.agentId
         ));
+        const identity = entry?.identity ?? (entry ? parseQualifiedPluginContributionKey(entry.qualifiedId) : null);
         return {
             agentId: intent.selection.agentId,
+            authoringTarget: entry && identity ? {
+                agentId: entry.agentId,
+                agentIdentity: identity,
+                connectedAccounts: entry.connectedAccounts,
+            } : null,
             backendTargetKey: inSessionAgentPicker.agentPickerSelectedOptionId ?? undefined,
             label: entry?.title ?? intent.selection.agentId,
             // The picker's own words for the chosen model, so the composer's engine
@@ -7507,6 +7514,7 @@ function SessionViewLoadedContent({
             agentIdentity: currentSessionAgentCatalogEntry
                 ? parseQualifiedPluginContributionKey(currentSessionAgentCatalogEntry.qualifiedId)
                 : null,
+            armedAuthoringTarget: armedContinuationTarget ? armedContinuationTarget.authoringTarget : undefined,
             teamCredentialResources: teamCredentialConnectedServiceResources,
             teamCredentialResourceCurrentKeys: teamCredentialCatalog.currentResourceKeys,
             teamNameById: teamCredentialCatalog.teamNameById,
@@ -7515,6 +7523,8 @@ function SessionViewLoadedContent({
                 connectedServicesProfileLabelByKey: settings.connectedServicesProfileLabelByKey,
                 connectedServicesDefaultProfileByServiceId: settings.connectedServicesDefaultProfileByServiceId,
                 connectedServicesProviderStateSharingSettingsV1: settings.connectedServicesProviderStateSharingSettingsV1,
+                connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
+                connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
             },
             switchingDisabledReason: isReadOnly
                 ? 'read_only'
@@ -9012,6 +9022,27 @@ function SessionViewLoadedContent({
                             const transitionInput = existingSubmission?.localId === destination.localId
                                 ? existingSubmission.input
                                 : buildArmedAgentContinuationTransitionInput(transitionSubmission);
+                            // A retry uses the retained input, not newly authored
+                            // composer values. Preparation must precede first custody.
+                            const submissionForDispatch = existingSubmission?.localId === destination.localId
+                                ? {
+                                    ...transitionSubmission,
+                                    input: {
+                                        text: existingSubmission.input.text,
+                                        meta: existingSubmission.input.meta,
+                                    },
+                                }
+                                : transitionSubmission;
+                            const prepared = await prepareArmedAgentContinuation(submissionForDispatch, ownerMetadata);
+                            if (!outboundAccountLifetime.isCurrent()) return { status: 'rejected' };
+                            if (prepared.status === 'refused') {
+                                setArmedContinuationOutcome({
+                                    kind: 'refusal',
+                                    scopeKey: sessionAccountScopeKey,
+                                    message: prepared.notice.message,
+                                });
+                                return { status: 'rejected' };
+                            }
                             if (!inSessionAgentPicker.recordArmedContinuationSubmission({
                                 localId: destination.localId,
                                 input: transitionInput,
@@ -9030,17 +9061,8 @@ function SessionViewLoadedContent({
                             // server may reconcile it onto a later payload. A
                             // retry therefore dispatches the first exact nested
                             // input rather than an edited composer projection.
-                            const submissionForDispatch = existingSubmission?.localId === destination.localId
-                                ? {
-                                    ...transitionSubmission,
-                                    input: {
-                                        text: existingSubmission.input.text,
-                                        meta: existingSubmission.input.meta,
-                                    },
-                                }
-                                : transitionSubmission;
                             if (!outboundAccountLifetime.isCurrent()) return { status: 'rejected' };
-                            const { disposition, result } = await continueSessionWithArmedAgent(submissionForDispatch);
+                            const { disposition, result } = await continueSessionWithArmedAgent(prepared);
                             if (!outboundAccountLifetime.isCurrent()) return { status: 'rejected' };
                             // The armed row is dropped only once it stops being a
                             // truthful promise about the next message.

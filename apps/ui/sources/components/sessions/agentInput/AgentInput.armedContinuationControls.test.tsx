@@ -27,7 +27,7 @@ vi.mock('@/agents/registry/AgentIcon', () => ({
     AgentIcon: (props: Record<string, unknown>) => React.createElement('AgentIcon', props),
 }));
 vi.mock('expo-image', () => ({ Image: 'Image' }));
-vi.mock('react-native-svg', () => ({ SvgXml: 'SvgXml' }));
+vi.mock('react-native-svg', () => ({ SvgXml: 'SvgXml', Svg: 'Svg', Circle: 'Circle' }));
 
 const { AgentInput } = await import('./AgentInput');
 const { getPermissionModeBadgeLabelForAgentType } = await import('@/sync/domains/permissions/permissionModeOptions');
@@ -40,7 +40,7 @@ describe('AgentInput armed continuation controls', () => {
             agentType: 'codex',
             metadata: {
                 path: '/repo', host: 'host', flavor: 'codex',
-                sessionModesV1: { v: 1, updatedAt: 1, provider: 'codex', currentModeId: 'build', availableModes: [
+                sessionModesV1: { v: 1, updatedAt: 1, agentId: 'codex', currentModeId: 'build', availableModes: [
                     { id: 'build', name: 'Build' }, { id: 'plan', name: 'Plan' },
                 ] },
             },
@@ -55,6 +55,8 @@ describe('AgentInput armed continuation controls', () => {
         expect(permission).not.toBeNull();
         expect(permission?.findAll((node) => node.props.children === getPermissionModeBadgeLabelForAgentType('claude', 'yolo')).length).toBeGreaterThan(0);
         expect(onModeChange).not.toHaveBeenCalled();
+        await screen.update(<AgentInput {...props} />);
+        expect(screen.findByTestId('agent-input-session-mode-chip-label:build')).not.toBeNull();
         await screen.unmount();
     });
 });

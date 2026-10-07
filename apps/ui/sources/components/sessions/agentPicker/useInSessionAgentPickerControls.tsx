@@ -915,7 +915,8 @@ export function useInSessionAgentPickerControls(
                     deferredDetailContentCacheKey: `session-continuation-engine:${entry.backendTargetKey}`,
                     renderDetailContent: () => buildSessionAgentPickerDetailContent({
                         backendTarget: entry.backendTarget,
-                        runtimeCarrierAgentId: entry.agentId as never,
+                        agentCatalogEntry: entry.agentCatalogEntry,
+                        runtimeCarrierAgentId: entry.agentId,
                         selectedMachineId: params.detail.machineId,
                         capabilityServerId: params.detail.capabilityServerId,
                         cwd: params.detail.cwd,

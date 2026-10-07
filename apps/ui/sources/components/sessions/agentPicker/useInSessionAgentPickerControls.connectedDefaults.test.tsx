@@ -52,18 +52,26 @@ describe('continuation target account discovery', () => {
         const hook = await renderHook(() => useInSessionAgentPickerControls({
             sessionId: 'qualified-account-discovery', accountScope: null,
             currentAgentId: 'claude', currentAgentLabel: 'Claude', projectionCurrent: true,
-            entries: getResolvedBackendCatalogEntries({ enabledAgentIds: ['claude', 'codex'], acpCatalogSettingsV1: settings.acpCatalogSettingsV1 }),
+            entries: getResolvedBackendCatalogEntries({
+                enabledAgentIds: ['claude', 'codex'], acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
+                // The real Codex manifest declares this qualified launch purpose;
+                // a bare bundled presentation fallback has no daemon declarations.
+                mergedProviderProjectionById: { codex: {
+                    agentId: 'codex', qualifiedId: 'happier.agent.codex/codex',
+                    identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+                    connectedAccounts: [{ purpose: 'primary', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' } }],
+                } },
+            }),
             featureDecision: { state: 'enabled' },
             source: { currentBackendTargetKey: 'agent:happier.agent.claude/claude', storageKind: 'persisted', canEditSession: true, machinePresence: 'online', hasConversationToCarry: true },
             machine: { machineId: 'machine-1', serverId: 'server-1', connectionGeneration: 1, daemonGeneration: 1 },
-            detail: { settings, capabilityServerId: 'server-1', machineId: 'machine-1', cwd: '/repo',
-                connectedServicesFeatureEnabled: true, accountGroupsFeatureEnabled: true },
+            detail: { settings, capabilityServerId: 'server-1', machineId: 'machine-1', cwd: '/repo' },
         }));
         await act(async () => { hook.getCurrent().onAgentPickerVisibilityChange(true); });
         await act(async () => { await Promise.resolve(); });
         const option = hook.getCurrent().composeAgentPickerOptions([]).find((row) => row.id.includes('codex'));
         expect(option?.disabled).not.toBe(true);
-        const detail = option?.renderDetailContent?.();
+        const detail = option?.renderDetailContent?.({ phase: 'idle' });
         if (!React.isValidElement(detail)) throw new Error('Expected target Agent detail content');
         const screen = await renderScreen(detail);
         await act(async () => { await Promise.resolve(); });

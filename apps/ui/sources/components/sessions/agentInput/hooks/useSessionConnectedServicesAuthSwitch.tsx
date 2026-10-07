@@ -14,6 +14,11 @@ import type {
 } from '@happier-dev/protocol/teams';
 import { ConnectedAccountServiceKeySchema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import {
+    projectAgentConnectedAccountPurposeDefaultsToSessionBindings,
+    resolveAgentConnectedAccountPurposeDefaults,
+} from '@happier-dev/protocol/account/settings/connected-services';
+import { ActionListSection } from '@/components/ui/lists/ActionListSection';
 
 import type { AgentInputExtraActionChip, AgentInputStatusBadge } from '@/components/sessions/agentInput/agentInputContracts';
 import type { AgentInputContentPopoverRenderArgs } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
@@ -40,6 +45,10 @@ import {
     type ConnectedServicesServiceBinding,
 } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 import { readSessionConnectedServiceBindings } from '@/sync/domains/connectedServices/readSessionConnectedServiceBindings';
+import {
+    presentConnectedAccountPurposeTeamResource,
+    presentQualifiedConnectedAccountTarget,
+} from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 import {
     applyProjectedCredentialKindRestrictions,
     buildQualifiedConnectedAccountGroupOptionsByServiceId,
@@ -417,6 +426,12 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
     serverId?: string | null;
     connectedAccounts: readonly PluginProjectedAgentConnectedAccountPurposeV2[];
     agentIdentity?: PluginContributionIdentityV1 | null;
+    /** Undefined is unarmed; null is an armed target whose catalog is unavailable. */
+    armedAuthoringTarget?: Readonly<{
+        agentId: string;
+        agentIdentity: PluginContributionIdentityV1;
+        connectedAccounts: readonly PluginProjectedAgentConnectedAccountPurposeV2[];
+    }> | null;
     teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
     teamCredentialResourceCurrentKeys?: ReadonlySet<string>;
     teamNameById?: Readonly<Record<string, string>>;
@@ -425,6 +440,8 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         connectedServicesProfileLabelByKey: Record<string, string | undefined>;
         connectedServicesDefaultProfileByServiceId: Record<string, string | undefined>;
         connectedServicesProviderStateSharingSettingsV1?: unknown;
+        connectedAccountPurposeBindingsV1?: unknown;
+        connectedServicesDefaultAuthByAgentIdV1?: unknown;
     };
     switchingDisabledReason: SessionConnectedServicesAuthSwitchDisabledReason | null;
     sessionActive?: boolean;
@@ -939,7 +956,74 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
             : t('connectedServices.fallbackName');
     }, [connectedServicesRegistry]);
 
+    const armedAuthPreview = React.useMemo(() => {
+        const target = params.armedAuthoringTarget;
+        if (!target) return null;
+        const serviceIds = resolveProjectedConnectedAccountServiceKeys(target.connectedAccounts);
+        const defaults = resolveAgentConnectedAccountPurposeDefaults({
+            settings: params.settings,
+            agentId: target.agentId,
+            consumer: target.agentIdentity,
+            declarations: target.connectedAccounts,
+        });
+        const bindings = projectAgentConnectedAccountPurposeDefaultsToSessionBindings(defaults)?.bindingsByServiceId ?? {};
+        // This describes the requested launch binding, not an effective source
+        // runtime. Naming and privacy stay with the qualified-target presenter.
+        const actions = serviceIds.map((serviceId) => {
+            const binding = bindings[serviceId];
+            const serviceTitle = resolveServiceTitle(serviceId);
+            let selectionLabel = t('connectedServices.authChip.nativeLabel');
+            if (binding?.source === 'connected') {
+                const service = parseQualifiedPluginContributionKey(serviceId);
+                selectionLabel = service ? presentQualifiedConnectedAccountTarget({
+                    target: binding.selection === 'group'
+                        ? { kind: 'group', service, groupId: binding.groupId }
+                        : { kind: 'account', account: { service, accountId: binding.profileId } },
+                    accounts: accountProfile?.connectedAccountsV4 ?? [],
+                    groups: accountProfile?.connectedAccountGroupsV4 ?? [],
+                    labelsByKey: params.settings.connectedServicesProfileLabelByKey,
+                    serviceTitle,
+                    presentIdentity: present,
+                }).primaryLabel : t('common.unavailable');
+            } else if (binding?.source === 'team_resource') {
+                const teamResource = defaults.find((entry) => buildQualifiedPluginContributionKey(entry.service) === serviceId
+                    && entry.teamResource?.selection.resourceId === binding.resourceId)?.teamResource;
+                selectionLabel = teamResource ? presentConnectedAccountPurposeTeamResource({
+                    teamResource,
+                    teamResources: params.teamCredentialResources ?? [],
+                    teamNameById: params.teamNameById,
+                    serviceTitle,
+                }).primaryLabel : t('common.unavailable');
+            }
+            return {
+                id: serviceId,
+                label: `${serviceTitle}: ${selectionLabel}`,
+                disabled: true,
+            };
+        });
+        const connectedCount = serviceIds.filter((serviceId) => bindings[serviceId]?.source !== undefined
+            && bindings[serviceId]?.source !== 'native').length;
+        return {
+            actions,
+            serviceCount: serviceIds.length,
+            connectedCount,
+            label: connectedCount === 0 ? t('connectedServices.authChip.nativeLabel') : actions.map((action) => action.label).join(', '),
+        };
+    }, [accountProfile?.connectedAccountsV4, accountProfile?.connectedAccountGroupsV4, params.armedAuthoringTarget, params.settings, params.teamCredentialResources, params.teamNameById, present, resolveServiceTitle]);
+
     const connectedServicesAuthChip = React.useMemo<AgentInputExtraActionChip | null>(() => {
+        if (params.armedAuthoringTarget === null) return null;
+        if (armedAuthPreview) {
+            if (armedAuthPreview.serviceCount === 0) return null;
+            return createConnectedServicesAuthActionChip({
+                label: armedAuthPreview.label,
+                connectedCount: armedAuthPreview.connectedCount,
+                authSource: armedAuthPreview.connectedCount === 0 ? 'native'
+                    : armedAuthPreview.connectedCount === armedAuthPreview.serviceCount ? 'connected' : 'mixed',
+                popoverContent: () => <ActionListSection actions={armedAuthPreview.actions} />,
+                testID: 'session-connected-services-auth-chip',
+            });
+        }
         if (supportedConnectedServiceIds.length === 0) return null;
         const label = resolveConnectedServicesAuthLabel({
             supportedServiceIds: supportedConnectedServiceIds,
@@ -967,6 +1051,8 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
             testID: 'session-connected-services-auth-chip',
         });
     }, [
+        armedAuthPreview,
+        params.armedAuthoringTarget,
         accountGroupsFeatureEnabled,
         groupOptionsByServiceId,
         optimisticBindingsByServiceId,
