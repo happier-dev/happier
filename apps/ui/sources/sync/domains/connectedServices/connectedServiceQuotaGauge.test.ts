@@ -118,13 +118,13 @@ describe('gauge tone boundaries derive from the canonical resolveQuotaTone owner
 
 describe('computeConnectedServiceQuotaGaugeViewModel', () => {
     it('uses readable stored window labels for composer rows and rings without changing raw snapshots', () => {
-        const ids = ['five_hour', 'seven_day', 'seven_day_all', 'seven_day_fable', 'spend', 'future_api_window'];
+        const ids = ['five_hour', 'seven_day', 'seven_day_all', 'seven_day_fable', 'spend', 'future_api_window', 'base_model_inference:primary'];
         const usage = snapshot(ids.map((meterId) => meter({ meterId, label: meterId, utilizationPct: 20 })));
         const vm = computeConnectedServiceQuotaGaugeViewModel({
             snapshot: usage, windowMode: 'most_constrained', additionalMeterIds: ids,
             nowMs: 2_000, formatter,
         });
-        const labels = ['5-hour', 'Weekly', 'Weekly (all models)', 'Weekly (Fable)', 'Spend', 'Future API Window'];
+        const labels = ['5-hour', 'Weekly', 'Weekly (all models)', 'Weekly (Fable)', 'Spend', 'Future API Window', 'Base Model Inference Primary'];
         expect(vm?.allMeterRows.map((row) => row.label)).toEqual(labels);
         expect(vm?.usageRings.map((ring) => ring.label)).toEqual(labels);
         expect(vm?.effectiveMeter.label).toBe('5-hour');

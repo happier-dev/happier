@@ -7,6 +7,8 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { ConnectedServiceSetupPanel, type ConnectedServiceSetupCatalogEntry } from './ConnectedServiceSetupPanel';
 import { ConnectedServicesConnectMore } from './ConnectedServicesConnectMore';
 import { buildConnectedServicesIndexModel } from '../model/buildConnectedServicesIndexModel';
+import { ConnectedServicesIndexView } from '../index/ConnectedServicesIndexView';
+import { presentConnectedAccountIdentity } from '@/sync/domains/connectedServices/maskAccountEmail';
 
 const phoneNavigation = vi.hoisted(() => ({ push: vi.fn(), width: 390 }));
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
@@ -45,7 +47,51 @@ const tool: ConnectedServiceSetupCatalogEntry = {
     canAdd: true,
 };
 
+const STALE_DIAGNOSTIC = 'The service catalog could not be refreshed';
+function staleServiceModel() {
+    return buildConnectedServicesIndexModel({
+        transport: 'advertised-v4',
+        entries: [{ serviceId: 'openai-codex',
+            service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+            legacyServiceId: 'openai-codex', connectCommand: 'happier connect openai-codex',
+            supportsOauth: false, executable: false, projectionStatus: 'stale',
+            availability: { state: 'available', reason: 'resolved' }, projectedTitle: 'ChatGPT' }],
+        qualifiedAccounts: [], qualifiedGroups: [], legacyServices: [], defaultAccountByServiceKey: {},
+        resolveLabel: (candidate) => String(candidate?.projectedTitle ?? ''), resolveFallbackEntry: () => null,
+        presentDiagnostics: () => ({ primary: STALE_DIAGNOSTIC, supportDetails: null }), loadingLabel: 'Loading',
+    });
+}
+
 describe('ConnectedServiceSetupPanel tools disclosure', () => {
+    it('renders the service diagnostic in grid even when a known service has no accounts', async () => {
+        const screen = await renderScreen(<ConnectedServicesIndexView
+            model={staleServiceModel()} labelsByKey={{}}
+            present={(input) => presentConnectedAccountIdentity({
+                hidden: false, label: input.label ?? null, labelKind: input.labelKind,
+                email: input.email ?? null, accountId: input.accountId ?? null,
+            })}
+            now={0} presentation="grid" onPresentationChange={() => {}} compact={false}
+            summary={{ needsYouCount: 0, asOf: null }} connectMore={null}
+            fixProminence="primary" settled={null}
+            renderAccount={() => { throw new Error('No account exists in this diagnostic sheet'); }}
+            renderPool={() => { throw new Error('No pool exists in this diagnostic sheet'); }}
+            renderStar={() => null} onAddAccount={() => {}} onSignInAgain={() => {}}
+            onOpenAccount={() => {}} onOpenPool={() => {}}
+        />);
+        expect(screen.getTextContent()).toContain(STALE_DIAGNOSTIC);
+    });
+
+    it('opens the known-service catalog when every service is non-executable', async () => {
+        phoneNavigation.width = 1440;
+        const screen = await renderScreen(<ConnectedServicesConnectMore
+            model={staleServiceModel()} layout="section" request={{ kind: 'catalog' }}
+            onRequestHandled={() => {}} onConnected={() => {}} renderServiceFlow={() => <DraftFlow />}
+        />);
+        expect(screen.findHostByTestId('connected-services-connect-more:setup')).not.toBeNull();
+        expect(screen.findHostByTestId('connected-service-setup:block:happier.agent.codex/openai-codex')).not.toBeNull();
+        expect(screen.getTextContent()).toContain(STALE_DIAGNOSTIC);
+    });
+
     it('retains the open inline service flow and its draft across phone and desktop presentation', async () => {
         phoneNavigation.width = 1440;
         const service = { pluginId: 'happier.agent.claude', localId: 'anthropic' };

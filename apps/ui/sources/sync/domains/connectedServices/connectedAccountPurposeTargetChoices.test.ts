@@ -88,8 +88,8 @@ describe('buildConnectedAccountPurposeTargetChoices', () => {
     });
     expect(choices[0]?.presentation).toMatchObject({
       primaryLabel: 'wo•••@e•••.com',
-      secondaryLabel: 'Acme Gateway · provi•••42',
-      accessibilityLabel: 'Acme Gateway · wo•••@e•••.com · provi•••42',
+      secondaryLabel: 'Acme Gateway',
+      accessibilityLabel: 'Acme Gateway · wo•••@e•••.com',
     });
     expect(JSON.stringify(choices.map((choice) => choice.presentation))).not.toContain('provider-account-42');
   });

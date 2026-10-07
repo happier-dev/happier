@@ -8,6 +8,7 @@ import type {
 import type { ConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 
 import { buildConnectedServicesIndexModel, type ConnectedServicesIndexAgentUse } from './buildConnectedServicesIndexModel';
+import { buildConnectedServiceSetupCatalog } from '../setup/buildConnectedServiceSetupCatalog';
 
 const CLAUDE = { pluginId: 'happier.agent.claude', localId: 'anthropic' };
 const CODEX = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
@@ -114,5 +115,48 @@ describe('buildConnectedServicesIndexModel · who uses what', () => {
         const model = build(null);
 
         expect(model.sheets.every((sheet) => sheet.section === 'agents' && sheet.usedBy.length === 0)).toBe(true);
+    });
+
+    it('keeps known stale services navigable with credential health and diagnostics without admitting setup', () => {
+        const staleEntries = [entry(CODEX, 'ChatGPT'), entry(GEMINI, 'Gemini')].map((candidate): ConnectedServiceRegistryEntry => ({
+            ...candidate,
+            executable: false,
+            projectionStatus: 'stale',
+            availability: { state: 'available', reason: 'resolved' },
+            projectionConflicts: [],
+        }));
+        const diagnostic = 'The service catalog could not be refreshed';
+        const model = buildConnectedServicesIndexModel({
+            transport: 'advertised-v4',
+            entries: staleEntries,
+            qualifiedAccounts: [{ ...account(CODEX, 'work'), status: 'needs_reauth' }],
+            qualifiedGroups: [],
+            legacyServices: [],
+            defaultAccountByServiceKey: {},
+            resolveLabel: (candidate) => String(candidate?.projectedTitle ?? 'Unknown'),
+            resolveFallbackEntry: () => null,
+            presentDiagnostics: () => ({ primary: diagnostic, supportDetails: null }),
+            loadingLabel: 'Loading',
+        });
+
+        const codex = model.sheets.find((sheet) => sheet.serviceKey === 'happier.agent.codex/openai-codex');
+        expect(codex).toMatchObject({
+            canOpen: true,
+            attentionAccountId: 'work',
+            statusLine: diagnostic,
+            accounts: [{ accountId: 'work', status: 'needs_reauth' }],
+            entry: { executable: false, projectionStatus: 'stale' },
+        });
+        // A known service with no accounts still carries its diagnostic; it is not discarded.
+        expect(model.sheets.find((sheet) => sheet.service.localId === 'gemini')).toMatchObject({
+            canOpen: true,
+            accounts: [],
+            statusLine: diagnostic,
+        });
+        expect(buildConnectedServiceSetupCatalog(model).map((candidate) => [candidate.serviceKey, candidate.canAdd]))
+            .toEqual([
+                ['happier.agent.codex/openai-codex', false],
+                ['happier.agent.gemini/gemini', false],
+            ]);
     });
 });

@@ -94,7 +94,7 @@ describe('connectedAccountSettingsRoute', () => {
         expect(resolveConnectedAccountSettingsRoute({ ...service, newPool: 'yes' }, entries)).toBeNull();
     });
 
-    it('keeps a generated released qualified route reachable before its descriptor projects', () => {
+    it('keeps a released qualified route and account focus reachable through a non-executable projection', () => {
         const service = {
             pluginId: 'happier.agent.codex',
             localId: 'openai-codex',
@@ -113,6 +113,28 @@ describe('connectedAccountSettingsRoute', () => {
             pluginId: 'foreign.accounts',
             localId: 'openai-codex',
         }, [])).toBeNull();
+
+        const params = { ...service, accountId: 'work' };
+        expect(resolveQualifiedConnectedAccountSettingsRoute(params, [])).toMatchObject({
+            service,
+            focus: { kind: 'account', accountId: 'work' },
+        });
+        const staleEntry: ConnectedServiceRegistryEntry = {
+            serviceId: 'openai-codex',
+            service,
+            legacyServiceId: 'openai-codex',
+            connectCommand: 'happier connect openai-codex',
+            supportsOauth: false,
+            executable: false,
+            projectionStatus: 'stale',
+            availability: { state: 'available', reason: 'resolved' },
+            projectionConflicts: [],
+        };
+        expect(resolveQualifiedConnectedAccountSettingsRoute(params, [staleEntry])).toMatchObject({
+            service,
+            entry: staleEntry,
+            focus: { kind: 'account', accountId: 'work' },
+        });
     });
 
     it.each([

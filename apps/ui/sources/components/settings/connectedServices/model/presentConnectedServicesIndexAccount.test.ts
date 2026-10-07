@@ -69,18 +69,41 @@ describe('presentConnectedServicesIndexAccount privacy for released profiles', (
             [connectedServiceProfileKey({ serviceId: SERVICE_ID, profileId: 'work' })]: 'work@example.com',
             [connectedServiceProfileKey({ serviceId: SERVICE_ID, profileId: 'named' })]: 'Primary',
         });
-        expect(presentation['profile-id-42']?.title).toBe('profi•••42');
+        expect(presentation['profile-id-42']?.title).toBe('Claude account');
         expect(presentation.work?.title).toBe('wo•••@e•••.com');
-        expect(presentation.named).toMatchObject({ title: 'Primary', identityLabel: 'provi•••42' });
-        expect(presentation['at-sign']?.title).toBe('provi•••om');
+        expect(presentation.named).toMatchObject({ title: 'Primary', identityLabel: null });
+        expect(presentation['at-sign']?.title).toBe('Claude account');
     });
 
     it('preserves user names and restores released identities when privacy is off', () => {
         const labels = { [connectedServiceProfileKey({ serviceId: SERVICE_ID, profileId: 'named' })]: 'provider-account-42' };
         expect(presentLegacy(true, labels).named?.title).toBe('provider-account-42');
         const visible = presentLegacy(false, labels);
-        expect(visible['profile-id-42']?.title).toBe('profile-id-42');
+        expect(visible['profile-id-42']?.title).toBe('Claude account');
         expect(visible.work?.title).toBe('work@example.com');
-        expect(visible.named).toMatchObject({ title: 'provider-account-42', identityLabel: 'provider-account-42' });
+        expect(visible.named).toMatchObject({ title: 'provider-account-42', identityLabel: null });
+    });
+
+    it('never promotes an old producer UUID display name and keeps its disambiguator short', () => {
+        const providerId = '00ae5eea-6286-48bc-b82a-30a5f8492864';
+        const profile: QualifiedConnectedAccountProfileV4 = {
+            ref: { service: ENTRY.service!, accountId: 'internal-account-id' },
+            status: 'connected', authenticationModeId: 'oauth', revisionSemantics: 'revisioned',
+            credentialRevision: 'credential-1', configurationReady: true, configurationRevision: null,
+            scopes: [], displayName: providerId, providerIdentity: { accountId: providerId },
+        };
+        const model = buildConnectedServicesIndexModel({
+            transport: 'advertised-v4', entries: [ENTRY], qualifiedAccounts: [profile], qualifiedGroups: [],
+            legacyServices: [], defaultAccountByServiceKey: {}, resolveLabel: () => 'ChatGPT',
+            resolveFallbackEntry: () => null, presentDiagnostics: () => ({ primary: null, supportDetails: null }),
+            loadingLabel: 'Loading',
+        });
+        const sheet = model.sheets[0]!;
+        const shown = presentConnectedServicesIndexAccount(sheet, sheet.accounts[0]!, {}, (input) => presentConnectedAccountIdentity({
+            ...input, hidden: false, label: input.label ?? null, email: input.email ?? null, accountId: input.accountId ?? null,
+        }));
+        expect(shown.title).toBe('ChatGPT account');
+        expect(shown.identityLabel).toBe('00ae5•••64');
+        expect(shown.accountIdLabel).toBe(providerId);
     });
 });

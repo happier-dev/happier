@@ -30,7 +30,7 @@ const group = Object.freeze({
 });
 
 describe('presentQualifiedConnectedAccountTarget', () => {
-  it('preserves whether a primary identity is a provider id or a user name for privacy', () => {
+  it('preserves an assigned name while giving an unnamed account service copy', () => {
     const idOnlyAccount = { ref: account.ref, providerIdentity: { accountId: 'provider-account-42' } };
     const present = (accountLabel?: string) => {
       const target = presentQualifiedConnectedAccountTarget({
@@ -43,7 +43,7 @@ describe('presentQualifiedConnectedAccountTarget', () => {
         email: null, accountId: idOnlyAccount.providerIdentity.accountId,
       }).label;
     };
-    expect(present()).toBe('provi•••42');
+    expect(present()).toBe('External Gateway account');
     // A user-assigned name is a name even if its text matches the provider id.
     expect(present('provider-account-42')).toBe('provider-account-42');
   });
@@ -63,8 +63,9 @@ describe('presentQualifiedConnectedAccountTarget', () => {
 
     expect(presentation).toEqual({
       primaryLabel: 'Work account',
-      secondaryLabel: 'External Gateway · work@example.com · provider-account-42',
-      accessibilityLabel: 'External Gateway · Work account · work@example.com · provider-account-42',
+      identityLabel: 'work@example.com',
+      secondaryLabel: 'External Gateway · work@example.com',
+      accessibilityLabel: 'External Gateway · Work account · work@example.com',
     });
     expect(presentation.accessibilityLabel).not.toContain('secret-never-presented');
   });
@@ -99,7 +100,7 @@ describe('presentQualifiedConnectedAccountTarget', () => {
     }
     // The provider-side identity is still offered, so two unnamed accounts of
     // one service stay distinguishable without an internal id.
-    expect(accountPresentation.accessibilityLabel).toContain('provider-account-42');
+    expect(accountPresentation.accessibilityLabel).toContain('work@example.com');
   });
 
   it('does not promote opaque account or pool ids to the primary label', () => {
@@ -129,12 +130,38 @@ describe('presentQualifiedConnectedAccountTarget', () => {
     });
 
     expect(accountPresentation).toEqual({
-      primaryLabel: 'External Gateway',
-      accessibilityLabel: 'External Gateway',
+      primaryLabel: 'External Gateway account',
+      accessibilityLabel: 'External Gateway · External Gateway account',
     });
     expect(groupPresentation).toEqual({
       primaryLabel: 'External Gateway',
       accessibilityLabel: 'External Gateway',
     });
+  });
+
+  it('reads stored UUID display names tolerantly and keeps a short secondary hint when no human identity exists', () => {
+    const providerId = '00ae5eea-6286-48bc-b82a-30a5f8492864';
+    const presentation = presentQualifiedConnectedAccountTarget({
+      target: { kind: 'account', account: account.ref },
+      accounts: [{ ref: account.ref, displayName: providerId, providerIdentity: { accountId: providerId } }],
+      groups: [], labelsByKey: {}, serviceTitle: 'ChatGPT',
+    });
+    expect(presentation.primaryLabel).toBe('ChatGPT account');
+    expect(presentation.secondaryLabel).toContain('00ae5•••64');
+    expect(presentation.accessibilityLabel).not.toContain(providerId);
+  });
+  it('does not treat a service-title placeholder as an available human name', () => {
+    const input = {
+      target: { kind: 'account' as const, account: account.ref },
+      accounts: [{ ref: account.ref, displayName: 'ChatGPT', providerIdentity: { accountId: 'provider-account-42' } }],
+      groups: [], labelsByKey: {}, serviceTitle: 'ChatGPT',
+    };
+    const presentation = presentQualifiedConnectedAccountTarget(input);
+    expect(presentation.primaryLabel).toBe('ChatGPT account');
+    expect(presentation.identityLabel).toBe('provi•••42');
+    // Rename writes the Account preference, not provider-owned displayName.
+    expect(presentQualifiedConnectedAccountTarget({ ...input, labelsByKey: {
+      [connectedServiceProfileKey({ serviceId: qualifiedConnectedAccountPreferenceServiceKey(service), profileId: account.ref.accountId })]: 'ChatGPT',
+    } }).primaryLabel).toBe('ChatGPT');
   });
 });

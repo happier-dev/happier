@@ -10,6 +10,7 @@ import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol
 import { t } from '@/text';
 import type { ConnectedAccountUiNegotiation } from './resolveConnectedAccountUiNegotiation';
 import type { ConnectedAccountIdentityLabelKind, ConnectedAccountIdentityPresenter } from './maskAccountEmail';
+import { abbreviateConnectedAccountId } from './maskAccountEmail';
 
 import {
   resolveQualifiedConnectedAccountLabel,
@@ -39,6 +40,8 @@ export type QualifiedConnectedAccountTargetPresentation = Readonly<{
   primaryLabel: string;
   /** Identity fallback provenance for privacy; absent for names and service/state labels. */
   primaryLabelKind?: ConnectedAccountIdentityLabelKind;
+  /** Account identity beside its name, without repeating the service or primary label. */
+  identityLabel?: string;
   /** Supplemental, non-secret facts that distinguish targets with the same name. */
   secondaryLabel?: string;
   /**
@@ -74,6 +77,7 @@ function createPresentation(input: Readonly<{
   serviceTitle: string;
   primaryLabel: string;
   primaryLabelKind?: ConnectedAccountIdentityLabelKind;
+  identityLabel?: string | null;
   secondaryParts: ReadonlyArray<string | null>;
 }>): QualifiedConnectedAccountTargetPresentation {
   const secondaryParts = uniqueNonEmpty(input.secondaryParts)
@@ -87,6 +91,7 @@ function createPresentation(input: Readonly<{
   return {
     primaryLabel: input.primaryLabel,
     ...(input.primaryLabelKind ? { primaryLabelKind: input.primaryLabelKind } : {}),
+    ...(input.identityLabel ? { identityLabel: input.identityLabel } : {}),
     ...(secondaryLabel ? { secondaryLabel } : {}),
     accessibilityLabel: accessibilityParts.join(' · '),
   };
@@ -102,8 +107,8 @@ function createPresentation(input: Readonly<{
  * navigation params and request payloads — and a user cannot recognise a target
  * by one, so presenting one is noise on a visible row and an opaque handle in a
  * screen reader. Distinguishing facts come from the provider side instead: the
- * user label, then the provider email, display name and provider-reported
- * account id, then the service title.
+ * user label, then the provider display name and email, then the service's
+ * account label. A provider id is only a short secondary hint.
  */
 export function presentQualifiedConnectedAccountTarget(input: Readonly<{
   target: QualifiedConnectedAccountPurposeBindingTargetV1;
@@ -149,20 +154,29 @@ export function presentQualifiedConnectedAccountTarget(input: Readonly<{
       });
     const email = nonEmptyText(account.providerIdentity?.email);
     const providerAccountId = nonEmptyText(account.providerIdentity?.accountId);
-    const displayName = nonEmptyText(account.displayName);
-    const primaryLabel = userLabel ?? email ?? displayName ?? providerAccountId ?? serviceTitle;
-    const primaryLabelKind = userLabel ? undefined : email ? 'email' : displayName ? undefined : providerAccountId ? 'accountId' : undefined;
+    const storedDisplayName = nonEmptyText(account.displayName);
+    // Earlier producers used the provider id as displayName. Read those stored
+    // facts without requiring an Account write or a reconnect to fix the title.
+    const displayName = storedDisplayName === providerAccountId || storedDisplayName === account.ref.accountId || storedDisplayName === serviceTitle
+      ? null : storedDisplayName;
+    const fallbackLabel = t('connectedServicesCollection.accountLabel', { service: serviceTitle });
+    const primaryLabel = userLabel ?? displayName ?? email ?? fallbackLabel;
+    const primaryLabelKind = !userLabel && !displayName && email ? 'email' : undefined;
     const shown = input.presentIdentity?.({ label: primaryLabel, labelKind: primaryLabelKind, email, accountId: providerAccountId })
       ?? { label: primaryLabel, email, accountId: providerAccountId };
-    const shownPrimaryLabel = shown.label ?? serviceTitle;
+    const shownPrimaryLabel = shown.label ?? fallbackLabel;
+    const identityLabel = shown.email && shown.email !== shownPrimaryLabel
+      ? shown.email
+      : !email && !displayName && !userLabel ? abbreviateConnectedAccountId(shown.accountId) : null;
     return createPresentation({
       serviceTitle,
       primaryLabel: shownPrimaryLabel,
       primaryLabelKind,
+      identityLabel,
       secondaryParts: [
-        shownPrimaryLabel === serviceTitle ? null : serviceTitle,
+        primaryLabel === fallbackLabel ? null : serviceTitle,
         shown.email,
-        shown.accountId,
+        identityLabel,
       ],
     });
   }
