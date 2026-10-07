@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   deriveSessionCreationTagV1,
+  SessionCreationCorrespondenceV1Schema,
   SessionModelSelectionV1Schema,
   type SessionCreationCorrespondenceV1,
 } from '@happier-dev/protocol';
@@ -175,22 +176,58 @@ describe('buildHappySessionControlArgs', () => {
     });
   });
 
-  it('carries the immutable creation correspondence beside its tag', () => {
+  it('carries a long immutable creation recipe as canonical JSON beside its tag', () => {
+    const correspondence = SessionCreationCorrespondenceV1Schema.parse({
+      ...sessionCreationCorrespondence,
+      recipe: {
+        ...sessionCreationCorrespondence.recipe,
+        configuration: {
+          mode: { value: null, updatedAtMs: 1 },
+          model: { value: null, updatedAtMs: 1 },
+          permissionIntent: { value: null, updatedAtMs: 1 },
+          options: { notes: { value: 'a'.repeat(20_000), updatedAtMs: 1 } },
+        },
+      },
+    });
     const args = buildHappySessionControlArgs({
-      sessionCreationTag: sessionCreationCorrespondence.sessionCreationTag,
-      sessionCreationCorrespondence,
+      sessionCreationTag: correspondence.sessionCreationTag,
+      sessionCreationCorrespondence: correspondence,
     });
 
     expect(args).toEqual([
       '--session-creation-tag-v1',
-      sessionCreationCorrespondence.sessionCreationTag,
+      correspondence.sessionCreationTag,
       '--session-creation-correspondence-v1',
-      expect.stringMatching(/^scv1:[A-Za-z0-9_-]+$/u),
+      JSON.stringify(correspondence),
     ]);
     expect(partitionProviderSessionArgs({
       args: ['codex', '--started-by', 'daemon', ...args],
       providerSubcommand: 'codex',
-    })).toMatchObject({ sessionCreationCorrespondence });
+    })).toMatchObject({ sessionCreationCorrespondence: correspondence, providerArgs: [] });
+  });
+
+  it('rejects malformed or unauthorized JSON creation correspondence before provider passthrough', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((code?: string | number | null): never => {
+      throw new Error(`exit:${code ?? 0}`);
+    });
+    const tag = sessionCreationCorrespondence.sessionCreationTag;
+    const raw = JSON.stringify(sessionCreationCorrespondence);
+    try {
+      for (const args of [
+        ['--started-by', 'daemon', '--session-creation-tag-v1', tag, '--session-creation-correspondence-v1', '{'],
+        ['--started-by', 'daemon', '--session-creation-tag-v1', tag, '--session-creation-correspondence-v1', JSON.stringify({ ...sessionCreationCorrespondence, unknown: true })],
+        ['--started-by', 'daemon', '--session-creation-correspondence-v1', raw],
+        ['--started-by', 'daemon', '--session-creation-tag-v1', deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey: 'another-key' }), '--session-creation-correspondence-v1', raw],
+        ['--session-creation-tag-v1', tag, '--session-creation-correspondence-v1', raw],
+        ['--started-by', 'daemon', '--session-creation-tag-v1', tag, '--session-creation-correspondence-v1', raw, '--session-creation-correspondence-v1', raw],
+      ]) {
+        expect(() => partitionProviderSessionArgs({ args: ['codex', ...args], providerSubcommand: 'codex' })).toThrow('exit:1');
+      }
+    } finally {
+      errorSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
   });
 
   it('carries an initial title only as a daemon-to-runner control value', () => {

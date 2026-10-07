@@ -126,6 +126,7 @@ describe('commitDaemonLaunchSession', () => {
     const committed = await commitDaemonLaunchSession({ api: { getOrCreateSession } as never, credentials, options, directory: '/repo' });
     expect(committed.ok).toBe(true);
     expect(getOrCreateSession.mock.calls[0]![0]).toMatchObject({ initialTriggers });
+    expect(getOrCreateSession.mock.calls[0]![0].metadata).not.toHaveProperty('summary');
     if (!committed.ok) return;
     expect(withoutFreshSessionCreationFields(committed.session.options)).not.toHaveProperty('initialTriggers');
     expect(committed.session.attachPayload).not.toHaveProperty('initialTriggers');
@@ -152,7 +153,7 @@ describe('commitDaemonLaunchSession', () => {
     const committed = await commitDaemonLaunchSession({
       api: { getOrCreateSession } as never,
       credentials,
-      options: { ...directTeamOptions, creationAuthorization: { token: 'signed-proof' }, initialSessionRolesV1 },
+      options: { ...directTeamOptions, creationAuthorization: { token: 'signed-proof' }, initialSessionRolesV1, initialTitle: '3 · Implement' },
       directory: '/repo',
       agentModeId: 'plan',
       agentModeUpdatedAt: 5,
@@ -177,6 +178,7 @@ describe('commitDaemonLaunchSession', () => {
       mcpSelectionV1: { v: 1, forceIncludeServerIds: ['docs'] },
       connectedServiceMaterializationIdentityV1: committed.session.options.connectedServiceMaterializationIdentityV1,
       work: { sessionRolesV1: initialSessionRolesV1 },
+      summary: { text: '3 · Implement', updatedAt: expect.any(Number) },
     });
     expect(JSON.stringify(createInput.metadata)).toContain('"plan"');
     expect(committed.session).toMatchObject({
@@ -191,6 +193,7 @@ describe('commitDaemonLaunchSession', () => {
     expect(withoutFreshSessionCreationFields(committed.session.options)).not.toHaveProperty('primaryTeamId');
     expect(withoutFreshSessionCreationFields(committed.session.options)).not.toHaveProperty('reportsTo');
     expect(withoutFreshSessionCreationFields(committed.session.options)).not.toHaveProperty('initialSessionRolesV1');
+    expect(withoutFreshSessionCreationFields(committed.session.options)).not.toHaveProperty('initialTitle');
   });
 
   it('keeps the identity a rejoined Session already persisted', async () => {

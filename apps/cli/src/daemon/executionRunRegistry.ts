@@ -395,7 +395,7 @@ export async function writeExecutionRunMarker(marker: DaemonExecutionRunMarkerOw
   const dir = resolveExecutionRunMarkerDir();
   await mkdir(dir, { recursive: true });
 
-  const { pendingWorkerUpdateCiphertext: _pending, ...payload } = ExecutionRunMarkerOwnerWriteSchema.parse(marker);
+  const payload = ExecutionRunMarkerOwnerWriteSchema.parse(marker);
   await writeJsonAtomic(resolveExecutionRunMarkerPath(payload.runId), payload);
 }
 
@@ -441,7 +441,6 @@ export async function clearExecutionRunConnectedServicesCleanupReceipt(
   const current = await readExecutionRunMarkerFile(filePath);
   if (!current?.executionRunConnectedServicesCleanupReceiptV1) return;
   const {
-    pendingWorkerUpdateCiphertext: _pending,
     executionRunConnectedServicesCleanupReceiptV1: _cleanupReceipt,
     executionRunConnectedServicesLaunchV1: _legacyLaunch,
     happyHomeDir: _legacyHappyHomeDir,
@@ -498,7 +497,6 @@ function projectExecutionRunMarkerForPublication(
   const {
     executionRunConnectedServicesLaunchV1: _ownerLocalLaunch,
     executionRunConnectedServicesCleanupReceiptV1: _ownerLocalCleanupReceipt,
-    pendingWorkerUpdateCiphertext: _pendingWorkerUpdate,
     ...publicMarker
   } = marker;
   return ExecutionRunMarkerSchema.parse(publicMarker);

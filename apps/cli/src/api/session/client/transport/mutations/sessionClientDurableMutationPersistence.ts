@@ -6,7 +6,7 @@ import { configuration } from '@/configuration';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 import { getSessionStateFieldDescriptor } from '@happier-dev/agents';
 import { hasSessionStateFieldMetadataBinding } from '@happier-dev/agents/session/state/metadataWriters';
-import { SessionRoleIdV1Schema, SessionRoleConfigurationV1Schema } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
+import { SessionRoleIdV1Schema, StoredSessionRoleConfigurationV1Schema } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
 import { SessionMessageRoleSchema } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
 import { SessionRunnerRuntimeStateV1Schema } from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1';
 import { SessionStateAcpConfigOptionValueSchema } from '@happier-dev/protocol/sessions/state/valueSchemas/acpConfigOption';
@@ -635,7 +635,7 @@ function parseRegisteredSessionStateFieldValue(
         return parsed.success ? { ok: true, value: parsed.data } : { ok: false };
     }
     if (fieldId === 'intent.sessionRoles') {
-        const parsed = SessionRoleConfigurationV1Schema.safeParse(value);
+        const parsed = StoredSessionRoleConfigurationV1Schema.safeParse(value);
         return parsed.success ? { ok: true, value: parsed.data } : { ok: false };
     }
     if (fieldId === 'intent.permissionMode') {
