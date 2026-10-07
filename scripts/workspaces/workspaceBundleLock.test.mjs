@@ -66,6 +66,196 @@ test('a contended publication reuses its directory watch across fallback wakes a
 });
 
 for (const mode of ['async', 'sync']) {
+  for (const phase of ['revalidation', 'restoration']) {
+    test(`workspace bundle ${mode} preserves the live claimant when duplicate history disappears during ${phase}`, () => {
+      const script = `
+      import assert from 'node:assert/strict';
+      import fs from 'node:fs';
+      import { syncBuiltinESMExports } from 'node:module';
+      import { join } from 'node:path';
+      import { tmpdir } from 'node:os';
+      const root = fs.mkdtempSync(join(tmpdir(), 'workspace-duplicate-history-race-'));
+      const lockPath = join(root, 'publication.lock');
+      const claimPath = lockPath + '.priority-claim';
+      const retiredPath = claimPath + '.reclaim-a';
+      const livePath = claimPath + '.reclaim-b';
+      const raw = JSON.stringify({
+        pid: 42, token: 'live-claimant', processInstanceFingerprint: 'live-instance',
+        createdAtMs: Date.now(), updatedAtMs: Date.now(),
+      });
+      fs.writeFileSync(retiredPath, raw);
+      fs.writeFileSync(livePath, raw);
+      const nativeRead = fs.readFileSync;
+      const nativeLink = fs.linkSync;
+      let reads = 0;
+      fs.readFileSync = (path, ...args) => {
+        if (path === retiredPath && ++reads === 3 && ${JSON.stringify(phase)} === 'revalidation') fs.unlinkSync(retiredPath);
+        return nativeRead(path, ...args);
+      };
+      fs.linkSync = (from, to) => {
+        if (from === retiredPath && ${JSON.stringify(phase)} === 'restoration') fs.unlinkSync(retiredPath);
+        return nativeLink(from, to);
+      };
+      syncBuiltinESMExports();
+      const { withWorkspaceBundleLock, withWorkspaceBundleLockSync } = await import(${JSON.stringify(new URL('./workspaceBundleLock.mjs', import.meta.url).href)});
+      let observedRaw = null;
+      try {
+        const result = ${mode === 'async' ? 'await withWorkspaceBundleLock' : 'withWorkspaceBundleLockSync'}(({ assertOwned }) => {
+          assertOwned(); return 'published';
+        }, {
+          lockPath, pollIntervalMs: 1,
+          onWait() { observedRaw = nativeRead(claimPath, 'utf8'); fs.unlinkSync(claimPath); },
+        });
+        assert.equal(result, 'published');
+        assert.equal(reads, 3);
+        assert.equal(observedRaw, raw, 'the remaining live claimant must be restored and waited on');
+        assert.deepEqual(fs.readdirSync(root), []);
+      } finally {
+        fs.readFileSync = nativeRead;
+        fs.linkSync = nativeLink;
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+      `;
+      const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' });
+      assert.equal(result.status, 0, result.stderr);
+    });
+  }
+
+  for (const ownerKind of ['lock', 'priority-claim']) {
+    for (const successor of [false, true]) {
+      test(`workspace bundle ${mode} reobserves ${ownerKind} recovery when history ${successor ? 'moves to a successor' : 'is retired'}`, () => {
+        const script = `
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          import { syncBuiltinESMExports } from 'node:module';
+          import { join } from 'node:path';
+          import { tmpdir } from 'node:os';
+          const root = fs.mkdtempSync(join(tmpdir(), 'workspace-history-recovery-race-'));
+          const lockPath = join(root, 'publication.lock');
+          const ownerPath = lockPath + ${JSON.stringify(ownerKind === 'priority-claim' ? '.priority-claim' : '')};
+          const retainedPath = ownerPath + '.reclaim-race';
+          const retainedRaw = JSON.stringify({
+            pid: 42, token: 'retained-owner', processInstanceFingerprint: 'retained-instance',
+            createdAtMs: Date.now(), updatedAtMs: Date.now(),
+          });
+          const successorRaw = JSON.stringify({
+            pid: 42, token: 'successor-owner', processInstanceFingerprint: 'successor-instance',
+            createdAtMs: Date.now(), updatedAtMs: Date.now(),
+          });
+          fs.writeFileSync(retainedPath, retainedRaw);
+          const nativeLink = fs.linkSync;
+          let raced = false;
+          fs.linkSync = (from, to) => {
+            if (from === retainedPath && !raced) {
+              raced = true;
+              // Another admitted filesystem actor retires/restores the snapshot
+              // after classification but before this contender restores it.
+              if (${successor}) {
+                fs.renameSync(retainedPath, ownerPath);
+                fs.writeFileSync(ownerPath, successorRaw);
+              } else fs.unlinkSync(retainedPath);
+            }
+            return nativeLink(from, to);
+          };
+          syncBuiltinESMExports();
+          const { withWorkspaceBundleLock, withWorkspaceBundleLockSync } = await import(${JSON.stringify(new URL('./workspaceBundleLock.mjs', import.meta.url).href)});
+          let observedSuccessorRaw = null;
+          try {
+            const options = {
+              lockPath, pollIntervalMs: 1,
+              onWait() {
+                observedSuccessorRaw = fs.readFileSync(ownerPath, 'utf8');
+                fs.unlinkSync(ownerPath);
+              },
+            };
+            const result = ${mode === 'async' ? 'await withWorkspaceBundleLock' : 'withWorkspaceBundleLockSync'}(({ assertOwned }) => {
+              assertOwned(); return 'published';
+            }, options);
+            assert.equal(result, 'published');
+            assert.equal(raced, true);
+            assert.equal(observedSuccessorRaw, ${successor ? 'successorRaw' : 'null'});
+            assert.deepEqual(fs.readdirSync(root), []);
+          } finally {
+            fs.linkSync = nativeLink;
+            fs.rmSync(root, { recursive: true, force: true });
+          }
+        `;
+        const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' });
+        assert.equal(result.status, 0, result.stderr);
+      });
+    }
+  }
+
+  for (const race of ['removed', 'successor', 'restored-by-reaper', 'restored-by-reaper-with-successor']) {
+    test(`workspace bundle ${mode} publishes when acquired claim cleanup is ${race}`, () => {
+      // Schedule another filesystem actor at the native rename/read boundary; admission stays real.
+      const script = `
+        import assert from 'node:assert/strict';
+        import fs from 'node:fs';
+        import { syncBuiltinESMExports } from 'node:module';
+        import { join } from 'node:path';
+        import { tmpdir } from 'node:os';
+        const root = fs.mkdtempSync(join(tmpdir(), 'workspace-claim-cleanup-race-'));
+        const lockPath = join(root, 'publication.lock');
+        const claimPath = lockPath + '.priority-claim';
+        const successorRaw = JSON.stringify({
+          pid: process.pid, token: 'successor', processInstanceFingerprint: 'successor-instance',
+          createdAtMs: Date.now(), updatedAtMs: Date.now(),
+        });
+        const nativeRename = fs.renameSync;
+        const nativeRead = fs.readFileSync;
+        let raced = false;
+        fs.renameSync = (from, to) => {
+          if (from === claimPath && !raced && !${JSON.stringify(race)}.startsWith('restored-by-reaper')) {
+            raced = true;
+            fs.unlinkSync(claimPath);
+            if (${JSON.stringify(race)} === 'successor') fs.writeFileSync(claimPath, successorRaw);
+          }
+          return nativeRename(from, to);
+        };
+        fs.readFileSync = (path, ...args) => {
+          if (String(path).startsWith(claimPath + '.reclaim-') && !raced) {
+            raced = true;
+            // A reaper restores the quarantined claimant before this cleanup reads its snapshot.
+            nativeRename(path, claimPath);
+          }
+          return nativeRead(path, ...args);
+        };
+        syncBuiltinESMExports();
+        const { withWorkspaceBundleLock, withWorkspaceBundleLockSync } = await import(${JSON.stringify(new URL('./workspaceBundleLock.mjs', import.meta.url).href)});
+        fs.writeFileSync(lockPath, JSON.stringify({ pid: 42, token: 'holder', createdAtMs: Date.now(), updatedAtMs: Date.now() }));
+        try {
+          const publish = ({ waited, assertOwned }) => {
+            assert.equal(waited, true);
+            assertOwned();
+            if (${JSON.stringify(race)} === 'restored-by-reaper-with-successor') {
+              fs.unlinkSync(claimPath);
+              fs.writeFileSync(claimPath, successorRaw);
+            }
+            return 'published';
+          };
+          const options = {
+            lockPath, pollIntervalMs: 1, isRunningPidImpl: () => true,
+            onWait() { if (fs.existsSync(lockPath)) fs.unlinkSync(lockPath); },
+          };
+          const result = ${mode === 'async' ? 'await withWorkspaceBundleLock' : 'withWorkspaceBundleLockSync'}(publish, options);
+          assert.equal(result, 'published');
+          assert.equal(raced, true);
+          assert.equal(fs.existsSync(lockPath), false);
+          if (${JSON.stringify(race)}.includes('successor')) assert.equal(nativeRead(claimPath, 'utf8'), successorRaw);
+          else assert.equal(fs.existsSync(claimPath), false, 'release must retire a restored own claim');
+          assert.equal(fs.readdirSync(root).some(name => name.includes('.reclaim-')), false);
+        } finally {
+          fs.renameSync = nativeRename;
+          fs.readFileSync = nativeRead;
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      `;
+      const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' });
+      assert.equal(result.status, 0, result.stderr);
+    });
+  }
+
   test(`workspace bundle ${mode} preserves the filesystem failure when acquired claim cleanup cannot rename`, () => {
     // Rename permissions are an OS boundary; exercise real contention and cleanup beneath it.
     const script = `
