@@ -497,12 +497,11 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
     type AgentsBackendsListArgs = Readonly<{ includeDisabled?: boolean; limit?: number; machineId?: string }>;
     type AgentsModelsListArgs = Readonly<{ agentId?: string; machineId?: string; serverId?: string; limit?: number; backendTargetKey?: string }>;
 
-  const resolveSessionMachineId = (sessionId: string, metadata: { machineId?: unknown } | null | undefined): string => {
-    const controlMachineId = readMachineControlTargetForSession(sessionId)?.machineId ?? '';
-    if (controlMachineId) {
-      return controlMachineId;
-    }
-    return typeof metadata?.machineId === 'string' ? String(metadata.machineId).trim() : '';
+  const resolveSessionMachineId = (sessionId: string, serverId?: string): string => {
+    const exactServerId = String(serverId ?? '').trim();
+    return readMachineControlTargetForSession(exactServerId
+      ? { sessionId, serverId: exactServerId }
+      : sessionId)?.machineId ?? '';
   };
 
   const resolveActionsSettingsSnapshot = () => {
@@ -1066,8 +1065,7 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
       const resolvedServerId = String(serverId ?? opts?.resolveServerIdForSessionId?.(sid) ?? '').trim();
       const stateAny: any = storage.getState();
       const session = stateAny?.sessions?.[sid] ?? null;
-      const metadata = session ? readSessionOwnerMetadataView(session) : null;
-      const machineId = resolveSessionMachineId(sid, metadata);
+      const machineId = resolveSessionMachineId(sid, resolvedServerId);
 
       const settings = stateAny?.settings ?? null;
       const forkPoint = { type: 'latest' } as const;
@@ -1245,14 +1243,11 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
       const tid = String(targetMachineId ?? '').trim();
       if (!sid || !tid) return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
 
-      const stateAny: any = storage.getState();
-      const session = stateAny?.sessions?.[sid] ?? null;
-      const metadata = session ? readSessionOwnerMetadataView(session) : null;
       // Only the source machine is resolved here. Which storage the target
       // imports into is derived by the source daemon from the owner metadata it
       // loads itself, before the operation claim and before any stop or export,
       // so a cold or unprojected client view must not refuse a valid handoff.
-      const sourceMachineId = resolveSessionMachineId(sid, metadata);
+      const sourceMachineId = resolveSessionMachineId(sid, serverId);
 
       return await startSessionHandoffOp({
         sessionId: sid,

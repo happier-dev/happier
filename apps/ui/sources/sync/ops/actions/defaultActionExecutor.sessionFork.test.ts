@@ -51,6 +51,7 @@ const { storage } = await import('@/sync/domains/state/storage');
 const { sync } = await import('@/sync/sync');
 const { createServerFetchAtEndpoint } = await import('@/sync/http/client');
 const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+const { startSessionHandoff } = await import('@/sync/ops/sessionHandoffs');
 const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
 const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
 const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
@@ -97,6 +98,13 @@ function installSession(overrides: Partial<Session> = {}) {
 }
 function setSettings(delta: SettingsWriteDelta) {
   storage.getState().applySettingsLocal(delta);
+}
+function installOwnerMetadataUnavailableSession() {
+  const session = installSession();
+  const metadata = parseDecryptedSessionMetadata({ v: 1, agentPresentation: { agentId: 'codex' } }, 1);
+  if (!metadata) throw new Error('Expected recipient-safe Session metadata');
+  storage.setState({ sessions: { [session.id]: { ...session, metadataLayoutVersion: 1,
+    metadata, ownerMetadataView: null } } });
 }
 function answerFork() {
   installSession({ id: 'sess_child', metadata: { path: '/repo', host: 'tester.local', machineId: 'machine_1',
@@ -275,15 +283,23 @@ describe('default Action executor Session lifecycle contracts', () => {
   });
 
   it('reaches the source daemon when the owner metadata projection is unavailable on this device', async () => {
-    const session = installSession();
-    const metadata = parseDecryptedSessionMetadata({ v: 1, agentPresentation: { agentId: 'codex' } }, 1);
-    if (!metadata) throw new Error('Expected recipient-safe Session metadata');
-    storage.setState({ sessions: { [session.id]: { ...session, metadataLayoutVersion: 1,
-      metadata, ownerMetadataView: null } } });
+    installOwnerMetadataUnavailableSession();
     daemonAnswer = () => ({ handoffId: 'handoff_1', status: { handoffId: 'handoff_1', status: 'completed', phase: 'finalizing', recoveryActions: [] }, workspace: { kind: 'none' } });
-    expect(await executor().execute('session.handoff', { sessionId: 'sess_parent', targetMachineId: 'machine_2' }, context())).toMatchObject({ ok: true });
+    const result = await executor().execute('session.handoff', { sessionId: 'sess_parent', targetMachineId: 'machine_2' }, context());
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
     expect(rpcRequests(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3)[0]?.params).toMatchObject({ sessionId: 'sess_parent', targetMachineId: 'machine_2' });
     expect(rpcRequests(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3)[0]?.params).not.toHaveProperty('sessionStorageMode');
+  });
+
+  it('reaches the source daemon through the direct handoff entry point when the owner metadata projection is unavailable', async () => {
+    installOwnerMetadataUnavailableSession();
+    daemonAnswer = () => ({ handoffId: 'handoff_1', status: { handoffId: 'handoff_1', status: 'completed', phase: 'finalizing', recoveryActions: [] }, workspace: { kind: 'none' } });
+    const result = await startSessionHandoff({ sessionId: 'sess_parent', targetMachineId: 'machine_2', serverId });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+    expect(rpcRequests(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3)[0]?.params)
+      .toMatchObject({ sessionId: 'sess_parent', targetMachineId: 'machine_2', accountServerId: serverId });
+    expect(homes.requestsFor('/v1/machines/machine_1'))
+      .toContainEqual(expect.objectContaining({ serverId }));
   });
 
   it('sends the exact approved target receipt and Action input through the real handoff adapter', async () => {

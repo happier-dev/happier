@@ -69,8 +69,11 @@ function readError(raw: unknown): HandoffErrorResult | null {
     return { ok: false, errorCode, errorMessage: normalizeId(record.error) || normalizeId(record.errorMessage) || errorCode, ...(handoffId ? { handoffId } : {}), ...(status.success ? { status: status.data } : {}), ...(record.recovery !== undefined ? { recovery: record.recovery } : {}) };
 }
 
-function resolveSourceMachineId(options: Readonly<{ sessionId: string; sourceMachineId?: string | null }>): string | null {
-    return normalizeId(options.sourceMachineId) || normalizeId(readMachineControlTargetForSession(options.sessionId)?.machineId) || null;
+function resolveSourceMachineId(options: Pick<StartSessionHandoffOptions, 'sessionId' | 'sourceMachineId' | 'serverId'>): string | null {
+    const serverId = normalizeId(options.serverId);
+    return normalizeId(options.sourceMachineId) || normalizeId(readMachineControlTargetForSession(serverId
+        ? { sessionId: options.sessionId, serverId }
+        : options.sessionId)?.machineId) || null;
 }
 
 function unwrap(raw: unknown): unknown {
