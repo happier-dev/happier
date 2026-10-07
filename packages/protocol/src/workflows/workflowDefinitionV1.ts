@@ -7,6 +7,7 @@ import {
   type WorkflowDefinitionV1,
   WorkflowStepExecutionSelectionSchema,
   WorkflowEngineSelectionV1Schema,
+  WorkflowLeafExecutionTargetV1Schema,
 } from './workflowV1.js';
 import { WorkflowDefinitionIdV1Schema } from './workflowIdsV1.js';
 import { preservedBoundedNfcString } from '../strings/preservedBoundedNfcString.js';
@@ -117,10 +118,7 @@ export type WorkflowResolvedInputsV1 = z.infer<typeof WorkflowResolvedInputsV1Sc
  * Default execution class frozen for the admitted Run. Workflow-only attached
  * Runs are retired; Session-attached Execution Runs outside Workflows are not.
  */
-export const WorkflowRunExecutionTargetV1Schema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('session') }).strict(),
-  z.object({ kind: z.literal('detached_run') }).strict(),
-]);
+export const WorkflowRunExecutionTargetV1Schema = WorkflowLeafExecutionTargetV1Schema;
 export type WorkflowRunExecutionTargetV1 = z.infer<typeof WorkflowRunExecutionTargetV1Schema>;
 
 export const WorkflowMaterializedLeafV1Schema = z.object({

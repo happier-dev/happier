@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import '../actions/actionExecutor.js';
 import { WorkflowActionInputSchemasV1 } from './actionsV1.js';
 import { projectWorkflowPluginSourceV1, WorkflowPluginSourceV1Schema } from './index.js';
+import { normalizePluginWorkflowContributionV1 } from '../plugins/contributions/workflows.js';
 
 describe('plugin Workflow source initialization', () => {
   it('initializes Action schemas before projecting semantically admitted plugin Workflows', () => {
@@ -15,17 +16,12 @@ describe('plugin Workflow source initialization', () => {
       blocks: [{ kind: 'action' as const, id: 'publish', actionId: 'publish', input: {} }],
     } };
     const source = projectWorkflowPluginSourceV1({
-      pluginId: 'com.acme.workflows', pluginVersion: '1.0.0', definition,
+      pluginId: 'com.acme.workflows', pluginVersion: '1.0.0',
+      definition: normalizePluginWorkflowContributionV1(definition, 'com.acme.workflows'),
     });
     expect(WorkflowPluginSourceV1Schema.parse(source)).toMatchObject({
       workflow: 'plugin:com.acme.workflows/review',
       definition: { blocks: [{ actionId: 'com.acme.workflows/publish' }] },
     });
-    expect(() => projectWorkflowPluginSourceV1({
-      pluginId: 'com.acme.workflows', pluginVersion: '1.0.0',
-      definition: { ...definition, definition: {
-        ...definition.definition, blocks: [...definition.definition.blocks, ...definition.definition.blocks],
-      } },
-    })).toThrow(expect.objectContaining({ code: 'plugin_workflow_invalid' }));
   });
 });

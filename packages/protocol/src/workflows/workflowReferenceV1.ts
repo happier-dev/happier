@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { StrictJsonValueSchema, type JsonValue } from '../json/strictJsonValue.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { WorkflowBlockIdProtocolSchema } from './workflowBlockIdProtocol.js';
+import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
 
 export {
   WorkflowBlockIdProtocolSchema,
@@ -172,18 +173,84 @@ export type WorkflowCondition =
   | Readonly<{ kind: 'any'; conditions: readonly WorkflowCondition[] }>
   | Readonly<{ kind: 'not'; condition: WorkflowCondition }>;
 
-export const WorkflowConditionSchema: z.ZodType<WorkflowCondition> = z.lazy(() => z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('exists'), value: WorkflowValueReferenceSchema }).strict(),
-  z.object({
+function createWorkflowConditionSchema(stored = false): z.ZodType<WorkflowCondition> {
+  const exists = z.object({ kind: z.literal('exists'), value: WorkflowValueReferenceSchema }).strict();
+  const compare = z.object({
     kind: z.literal('compare'),
     operator: z.enum(WORKFLOW_COMPARE_OPERATORS),
     left: WorkflowValueReferenceSchema,
     right: WorkflowValueReferenceSchema,
-  }).strict(),
-  z.object({ kind: z.literal('all'), conditions: z.array(WorkflowConditionSchema).min(1) }).strict(),
-  z.object({ kind: z.literal('any'), conditions: z.array(WorkflowConditionSchema).min(1) }).strict(),
-  z.object({ kind: z.literal('not'), condition: WorkflowConditionSchema }).strict(),
-])) as unknown as z.ZodType<WorkflowCondition>;
+  }).strict();
+  const all = z.object({ kind: z.literal('all'), conditions: z.array(z.unknown()).min(1) }).strict();
+  const any = z.object({ kind: z.literal('any'), conditions: z.array(z.unknown()).min(1) }).strict();
+  const not = z.object({ kind: z.literal('not'), condition: z.unknown() }).strict();
+  const canonicalShallow = z.discriminatedUnion('kind', [exists, compare, all, any, not]);
+  const shallow = stored ? createStoredReadSchema(canonicalShallow) : canonicalShallow;
+  // Conditions have no authored depth cap. Parse their recursive edges with an
+  // explicit stack, retaining paths lazily so a valid deep chain stays linear.
+  type Path = { parent?: Path; segment: string | number };
+  const issuePath = (path?: Path): (string | number)[] => {
+    const segments: (string | number)[] = [];
+    for (let cursor = path; cursor; cursor = cursor.parent) segments.push(cursor.segment);
+    return segments.reverse();
+  };
+  const schema = z.unknown().transform((value, context): WorkflowCondition => {
+    let output: unknown;
+    let failed = false;
+    const ancestors = new WeakSet<object>();
+    type Task = { value: unknown; path?: Path; assign: (value: unknown) => void } | { finish: object };
+    const pending: Task[] = [{ value, assign: (parsed) => { output = parsed; } }];
+    while (pending.length) {
+      const task = pending.pop()!;
+      if ('finish' in task) { ancestors.delete(task.finish); continue; }
+      if (task.value !== null && typeof task.value === 'object') {
+        if (ancestors.has(task.value)) {
+          context.addIssue({ code: 'custom', path: issuePath(task.path), message: 'Workflow conditions cannot contain cycles' });
+          failed = true;
+          continue;
+        }
+        ancestors.add(task.value);
+        pending.push({ finish: task.value });
+      }
+      const parsed = shallow.safeParse(task.value);
+      if (!parsed.success) {
+        failed = true;
+        for (const issue of parsed.error.issues) context.addIssue({ ...issue, path: [...issuePath(task.path), ...issue.path] });
+        continue;
+      }
+      const node = parsed.data;
+      task.assign(node);
+      if (node.kind === 'not') {
+        pending.push({ value: node.condition, path: { parent: task.path, segment: 'condition' },
+          assign: (child) => { node.condition = child; } });
+      } else if (node.kind === 'all' || node.kind === 'any') {
+        const parent = { parent: task.path, segment: 'conditions' };
+        for (let index = node.conditions.length - 1; index >= 0; index -= 1) {
+          pending.push({ value: node.conditions[index], path: { parent, segment: index },
+            assign: (child) => { node.conditions[index] = child; } });
+        }
+      }
+    }
+    // All nodes and value references have passed their canonical field schemas.
+    return failed ? z.NEVER : output as WorkflowCondition;
+  });
+  // Export the same recursive declaration graph to Action/SDK JSON Schema
+  // consumers, without making it a competing recursive runtime parser.
+  const projection: z.ZodType<WorkflowCondition> = z.lazy(() => z.discriminatedUnion('kind', [exists, compare,
+    all.extend({ conditions: z.array(schema).min(1) }),
+    any.extend({ conditions: z.array(schema).min(1) }),
+    not.extend({ condition: schema }),
+  ])) as z.ZodType<WorkflowCondition>;
+  schema._zod.processJSONSchema = (context, _json, params) => {
+    context.reused = 'ref';
+    z.core.process(projection, context, params);
+    context.seen.get(schema)!.ref = projection;
+  };
+  return schema;
+}
+
+export const WorkflowConditionSchema = defineStoredReadProjection(createWorkflowConditionSchema(),
+  () => createWorkflowConditionSchema(true));
 
 /**
  * Conversation continuity is authored separately from workspace continuity and

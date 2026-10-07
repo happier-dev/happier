@@ -19,6 +19,24 @@ function fixture(): WorkflowDefinitionDraftV1 {
 }
 
 describe('typed workflow definition edits', () => {
+  it('edits and clears a block name through the typed Action operations without changing its prompt', () => {
+    const draft = fixture();
+    const block = draft.blocks[0]!;
+    const named = applyWorkflowDefinitionEditsV1(draft, [WorkflowDefinitionEditOpV1Schema.parse({
+      kind: 'set_block_name', blockId: block.id, name: '  Implement  ',
+    })]);
+    expect(named).toMatchObject({ ok: true, changedBlockIds: [block.id] });
+    if (!named.ok) throw new Error('expected name edit');
+    expect(named.draft.blocks[0]).toMatchObject({ name: 'Implement', document: { text: 'First' } });
+    const cleared = applyWorkflowDefinitionEditsV1(named.draft, [WorkflowDefinitionEditOpV1Schema.parse({
+      kind: 'set_block_name', blockId: block.id, name: '  ',
+    })]);
+    if (!cleared.ok) throw new Error('expected name clear');
+    expect(cleared.draft.blocks[0]).not.toHaveProperty('name');
+    expect(cleared.changedBlockIds).toEqual([block.id]);
+    expect(cleared.draft.blocks[1]).toBe(draft.blocks[1]);
+  });
+
   it('copies evaluated loops with fresh evaluator ids, aggregate paths and iteration scopes while preserving external references and literal data', () => {
     const draft: WorkflowDefinitionDraftV1 = { ...fixture(), blocks: [{ kind: 'loop', id: 'loop', body: [
       { kind: 'step', id: 'producer', document: { text: 'Produce', references: [], attachments: [] }, input: [], result: { kind: 'text' } },
