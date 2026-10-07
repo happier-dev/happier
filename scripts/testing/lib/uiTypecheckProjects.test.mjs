@@ -345,7 +345,7 @@ test('native UI projects redirect direct and transitive imports across the compl
     const names = ['foundation', 'core', 'source', 'test'];
     const moduleDeclaration = 'sources/activity/adapters/desktop/runtime/desktopActivityOverlayQaFixtures.d.ts';
     const downstreamImplementation = 'sources/activity/adapters/desktop/runtime/desktopActivityOverlayBridge.ts';
-    const files = { foundation: ['foundation.ts', 'flags.json', 'theme.ts'], core: ['left.ts', 'right.ts', downstreamImplementation],
+    const files = { foundation: ['foundation.ts', 'flags.json', 'sources/theme.ts'], core: ['left.ts', 'right.ts', downstreamImplementation],
       source: ['entry.ts'], test: ['entry.test.ts'] };
     for (let index = 0; index < names.length; index++) {
       const name = names[index];
@@ -354,7 +354,7 @@ test('native UI projects redirect direct and transitive imports across the compl
         extends: join(uiDir, 'tsconfig.json'),
         compilerOptions: { ...actual.compilerOptions, types: [], paths: {
           'react-native-unistyles': ['./node_modules/fixture-unistyles/index.d.ts'],
-          '@/theme': ['./theme.ts'],
+          '@/theme': ['./sources/theme.ts'],
         }, rootDir: '.',
           outDir: `./cache/${name}`, tsBuildInfoFile: `./cache/${name}.tsbuildinfo` },
         ...(index ? { references: [{ path: `./tsconfig.${names[index - 1]}.json` }] } : {}),
@@ -364,17 +364,17 @@ test('native UI projects redirect direct and transitive imports across the compl
       }));
     }
     write('ambient.d.ts', 'declare const fixtureAmbient: string;\n');
-    write('node_modules/fixture-unistyles/index.d.ts', 'export interface UnistylesThemes {}\nexport type Theme = UnistylesThemes[keyof UnistylesThemes];\n');
+    write('node_modules/fixture-unistyles/index.d.ts', 'export interface UnistylesThemes {}\n');
     // Shared augmentation must be present even before downstream runtime setup
     // entrypoints are compiled, without importing those implementations.
     write('sources/types/unistyles.d.ts', readFileSync(join(uiDir, 'sources/types/unistyles.d.ts'), 'utf8'));
-    write('theme.ts', 'export interface Theme { colors: { primary: string } }\n');
+    write('sources/theme.ts', 'export interface Theme { colors: { primary: string } }\n');
     // A module declaration belongs to the downstream source project, not the
     // shared ambient roots: its type import must not pull core into foundation.
     write(moduleDeclaration, "import type { bridge } from './desktopActivityOverlayBridge'; export declare const fixtureBridge: typeof bridge;\n");
     write(downstreamImplementation, "export { left as bridge } from '../../../../../left';\n");
     write('flags.json', '{"enabled":true}');
-    write('foundation.ts', "import flags from './flags.json'; import type { Theme } from 'react-native-unistyles'; export const label: string = 'ok'; export const enabled = flags.enabled; export function themeColor(theme: Theme): string { return theme.colors.primary; }\n");
+    write('foundation.ts', "import flags from './flags.json'; import type { UnistylesThemes } from 'react-native-unistyles'; type Theme = UnistylesThemes[keyof UnistylesThemes]; export const label: string = 'ok'; export const enabled = flags.enabled; export function themeColor(theme: Theme): string { return theme.colors.primary; }\n");
     write('left.ts', "import { label } from './foundation'; import { right } from './right'; export function left(): string { return label + right; }\n");
     write('right.ts', "import { left } from './left'; export const right: number = 'bad'; export const invoke = () => left();\n");
     write('entry.ts', "import { left } from './left'; import { label } from './foundation'; import { fixtureBridge } from './sources/activity/adapters/desktop/runtime/desktopActivityOverlayQaFixtures'; export const value = left() + label + fixtureAmbient + fixtureBridge();\n");
@@ -384,7 +384,7 @@ test('native UI projects redirect direct and transitive imports across the compl
     const foundationText = readFileSync(join(fixtureDir, 'foundation.ts'), 'utf8');
     write('foundation.ts', foundationText.replace('themeColor(theme: Theme): string', 'themeColor(theme: Theme): number'));
     const themeRed = run('foundation');
-    assert.notEqual(themeRed.status, 0);
+    assert.notEqual(themeRed.status, 0, themeRed.stdout + themeRed.stderr);
     assert.match(themeRed.stdout + themeRed.stderr, /foundation\.ts.*TS2322/u);
     write('foundation.ts', foundationText);
     const themeGreen = run('foundation');
