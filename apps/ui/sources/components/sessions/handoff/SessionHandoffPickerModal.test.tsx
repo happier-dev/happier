@@ -23,6 +23,7 @@ let sessionsState: any[] = [];
 let sessionsByIdState: Record<string, any> = {};
 let resetWorkspaceSyncStatusStoreForTests: typeof import('@/sync/domains/sessionHandoff/workspaceSyncStatusStore')['resetWorkspaceSyncStatusStoreForTests'];
 let setWorkspaceSyncStatus: typeof import('@/sync/domains/sessionHandoff/workspaceSyncStatusStore')['setWorkspaceSyncStatus'];
+let realStorage: typeof import('@/sync/domains/state/storageStore')['storage'];
 
 type CardChrome = Extract<CustomModalChromeConfig, { kind: 'card' }>;
 
@@ -63,7 +64,9 @@ vi.mock('@happier-dev/protocol', async (importOriginal) => {
 installSessionHandoffCommonModuleMocks({
     storage: async () => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        const { storage } = await import('@/sync/domains/state/storageStore');
         return createStorageModuleStub({
+            storage,
             useMachineListByServerId: () => machineListByServerIdState,
             useMachineRecordValues: () => allMachinesState,
             useAllSessionListRenderables: () => sessionsState,
@@ -138,6 +141,7 @@ vi.mock('@/components/ui/pathBrowser/openMachinePathBrowserModal', () => {
 
 describe('SessionHandoffPickerModal', () => {
     beforeEach(async () => {
+        ({ storage: realStorage } = await import('@/sync/domains/state/storageStore'));
         ({ resetWorkspaceSyncStatusStoreForTests, setWorkspaceSyncStatus } = await import(
             '@/sync/domains/sessionHandoff/workspaceSyncStatusStore'
         ));
@@ -214,7 +218,7 @@ describe('SessionHandoffPickerModal', () => {
         ];
         settingsState.favoriteMachines = [];
         settingsState.favoriteDirectories = [];
-        settingsState.recentMachinePaths = [];
+        realStorage.getState().resetAuthoringMemory();
         settingsState.workspaceRefsV1 = [];
         settingsState.workspaceSyncRelationshipsV1 = [];
         settingsState.sessionHandoffDefaultsV1 = {
@@ -778,10 +782,10 @@ describe('SessionHandoffPickerModal', () => {
 
         machineListByServerIdState.server_a[0]!.metadata.homeDir = '/home/target';
         allMachinesState[0]!.metadata.homeDir = '/home/target';
-        settingsState.recentMachinePaths = [{
+        realStorage.getState().applyAuthoringMemory({ recentMachinePaths: [{
             machineId: 'machine_target',
             path: '/home/target/recent-project',
-        }];
+        }] });
 
         const screen = await renderScreen(<SessionHandoffPickerModal
             onClose={vi.fn()}

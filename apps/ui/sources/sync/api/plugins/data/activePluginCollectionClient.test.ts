@@ -15,7 +15,6 @@ import {
     PluginAccountCollectionContributionV1Schema,
     openPluginCollectionPrivatePayloadV1,
     PluginCollectionMutationRequestV1Schema,
-    PluginAccountCollectionContributionV1Schema,
     sealPluginCollectionPrivatePayloadV1,
 } from '@happier-dev/protocol';
 

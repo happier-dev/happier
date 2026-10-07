@@ -733,7 +733,7 @@ describe('NewSessionDraftsSection', () => {
                 target: {
                     kind: 'newSession',
                     authoring: {
-                        directory: projection.document.target.authoring.directory,
+                        directory: document.target.authoring.directory,
                         agentTarget: {
                             mutationId: 'm-agent',
                             value: {

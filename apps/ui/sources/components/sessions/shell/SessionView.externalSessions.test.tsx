@@ -12,7 +12,6 @@ import {
   PluginProjectionV2Schema,
   ParticipantRecipientV1Schema,
   StrictJsonValueSchema,
-  PluginProjectionV2Schema,
   SessionCurrentProjectionRecordV1Schema,
   SessionMetadataTuplePatchV1Schema,
   SessionMetadataTuplePatchSuccessV1Schema,
@@ -73,7 +72,7 @@ import {
   writeExistingSessionDraft,
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { activateSessionShellStorageBoundary, installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
@@ -1061,7 +1060,10 @@ describe('SessionView (direct sessions)', () => {
     vi.clearAllMocks();
   });
 
-  beforeEach(activateSessionShellStorageBoundary);
+  beforeEach(async () => {
+    const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
+    await prepareSessionDraftPersistenceStorage();
+  });
 
   it('keeps external control footer status conservative and exposes one explicit takeover preflight', async () => {
     await renderSessionView();
@@ -1627,18 +1629,6 @@ describe('SessionView (direct sessions)', () => {
         isDecrypted: true,
       },
     };
-
-    for (const artifact of Object.values(storageState.artifacts)) {
-      const request = ApprovalRequestV1Schema.parse({
-        v: 1, status: 'open', createdAtMs: 1, updatedAtMs: 1,
-        createdBy: { surface: 'agent', sessionId: artifact.header.sessionId },
-        requestedSurface: 'agent', actionId: artifact.header.actionId,
-        actionArgs: {}, summary: artifact.header.approvalSummary,
-      });
-      artifact.header = buildApprovalRequestArtifactHeaderV1(request, { legacyServerId: 'server-canonical' });
-      artifact.body = JSON.stringify(request);
-      artifact.bodyVersion = 1;
-    }
 
     const screen = await renderSessionViewAndSettle();
 
@@ -2515,7 +2505,7 @@ describe('SessionView (direct sessions)', () => {
         displayName: 'Happier pool',
         policy: {
           v: 1, strategy: 'least_limited', autoSwitch: true,
-          quotaLimitSelection: { mode: 'all' },
+          quotaLimitSelection: { mode: 'all', providerLimitIds: [] },
           switchOn: { usageLimit: true, authExpired: true, accountChanged: false, refreshFailure: true },
         },
         activeConnectedAccountId: 'active-profile',
@@ -2786,7 +2776,7 @@ describe('SessionView (direct sessions)', () => {
     expect((emptyInput.props.extraActionChips ?? []).map((chip: { key: string }) => chip.key)).not.toContain('execution-run-requested-action');
     await act(async () => { emptyScreen.unmount(); });
     recipientStateState.current = {
-      recipient: null,
+      recipient: { kind: 'execution_run', runId: 'run-1' },
       setManualRecipient: vi.fn(),
       clearPersistedManualRecipient: vi.fn(),
       executionRunRequestedAction: { v: 1, kind: 'send_now' },
@@ -2825,8 +2815,9 @@ describe('SessionView (direct sessions)', () => {
     const section = recipientChip?.collapsedOptionsPopover?.rootStep?.sections[0];
     expect(section?.kind).toBe('static');
     expect(section?.options.map((option: { id: string }) => option.id)).toEqual(['lead']);
+    expect(readCanonicalDraftRecipient()).toEqual({ kind: 'execution_run', runId: 'run-1' });
     await act(async () => { section.options[0].onSelect(); });
-    expect(recipientStateState.current.setManualRecipient).toHaveBeenCalledWith(null);
+    expect(readCanonicalDraftRecipient()).toBeNull();
   });
 
   it('surfaces delivery controls when live participant routing data resolves to an execution run', async () => {

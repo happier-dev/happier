@@ -241,7 +241,8 @@ describe('SessionHandoffProgressModal', () => {
 
         const progressBar = screen.findByTestId('session-handoff-operation-progress-bar');
         expect(progressBar).toBeTruthy();
-        expect(progressBar?.props.accessibilityLabel).toBe('Packaging session state');
+        expect(progressBar?.props.accessibilityLabel).toBe('sessionHandoff.progress.primary.preparing');
+        expect(progressBar?.props.accessibilityValue).toEqual(expect.objectContaining({ min: 0, max: 100, now: 25 }));
         expect(screen.getTextContent()).toContain('25');
         expect(screen.getTextContent()).not.toContain('Packaging session state');
         await expandProgressDetails(screen);

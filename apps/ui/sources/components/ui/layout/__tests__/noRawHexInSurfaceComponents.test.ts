@@ -3,6 +3,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
+import ts from 'typescript';
 
 /**
  * L0-4 (RU2 capstone, audit PLG-1) — closure guard: no hardcoded hex colors in
@@ -48,11 +49,19 @@ describe('no hardcoded hex colors in capstone surface components (L0-4 closure)'
         for (const tree of SURFACE_TREES) {
             for (const file of collectSourceFiles(resolve(SOURCES_ROOT, tree))) {
                 const source = readFileSync(file, 'utf8');
-                for (const [index, line] of source.split('\n').entries()) {
-                    if (HEX_COLOR.test(line)) {
-                        violations.push(`${file.slice(SOURCES_ROOT.length + 1)}:${index + 1}: ${line.trim()}`);
+                // Inspect authored values, not explanatory comments containing color examples.
+                const syntax = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true,
+                    file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+                const lines = source.split('\n');
+                const visit = (node: ts.Node): void => {
+                    if ((ts.isStringLiteralLike(node) || ts.isTemplateHead(node) || ts.isTemplateMiddle(node) || ts.isTemplateTail(node))
+                        && HEX_COLOR.test(node.text)) {
+                        const { line } = syntax.getLineAndCharacterOfPosition(node.getStart(syntax));
+                        violations.push(`${file.slice(SOURCES_ROOT.length + 1)}:${line + 1}: ${lines[line]!.trim()}`);
                     }
-                }
+                    ts.forEachChild(node, visit);
+                };
+                visit(syntax);
             }
         }
         expect(violations, `hardcoded hex colors found:\n${violations.join('\n')}`).toEqual([]);
