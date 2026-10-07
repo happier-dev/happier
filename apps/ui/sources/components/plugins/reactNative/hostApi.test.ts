@@ -97,12 +97,12 @@ describe('canonical React Native plugin Host API adapter', () => {
         const mediaOwner = createPluginSurfaceStoredImageOwner({
             pluginId: surface.pluginId, occurrenceId: 'occurrence-1', machineId: 'machine-1', serverId: 'server-1',
             lifetimeSignal: new AbortController().signal, isCurrent: () => true,
-            // Only daemon transport is substituted; custody and mounted admission stay real.
+            // Only daemon transport is substituted; mounted admission stays real.
             read: async () => ({ ok: true, image: deliveredImage }),
         });
-        mediaOwner.retainActionResult({ mediaId: 'media-1', mediaKind: 'image', width: 2, height: 3, sizeBytes: 5,
-            file: { sessionId: 'session-1', storage: 'daemon', path: '.happier/uploads/artifacts/session-1/image.png',
-                sha256: 'a'.repeat(64), mimeType: 'image/png' } });
+        const reference = { mediaId: 'media-1', mediaKind: 'image' as const, width: 2, height: 3, sizeBytes: 5,
+            file: { sessionId: 'session-1', storage: 'daemon' as const, path: '.happier/uploads/artifacts/session-1/image.png',
+                sha256: 'a'.repeat(64), mimeType: 'image/png' as const } };
         const owner = createPluginSurfaceHostApi({
             surfaceContext: surface,
             handlers: { readStoredImage: mediaOwner.readStoredImage },
@@ -114,7 +114,6 @@ describe('canonical React Native plugin Host API adapter', () => {
             handleRequest: owner.handleRequest,
             installedMethods: owner.installedMethods,
         });
-        const reference = { sessionId: 'session-1', mediaId: 'media-1' };
         await expect(adapter.api.readStoredImage(reference)).resolves.toEqual(image);
         await expect(adapter.api.readStoredImage({ ...reference, path: '/private/image.png' } as never))
             .rejects.toMatchObject({ code: 'invalid_payload' });
