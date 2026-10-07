@@ -36,21 +36,14 @@ export async function runGitCommand(input: GitCommandOptions) {
 
 export async function createGitTemporaryIndex(input: {
     cwd: string;
-    seed: 'head-or-empty' | 'current-index' | GitTemporaryIndexSeed;
+    seed: GitTemporaryIndexSeed;
 }): Promise<
     | { success: true; tempIndex: GitTemporaryIndex }
     | { success: false; errorCode: 'COMMAND_FAILED'; error: string }
 > {
-    let seed: GitTemporaryIndexSeed;
-    if (input.seed === 'head-or-empty') {
-        const head = await runGitCommand({ cwd: input.cwd, args: ['rev-parse', '--verify', 'HEAD'], timeoutMs: 5000 });
-        seed = head.success ? { kind: 'tree', treeOid: head.stdout.trim() } : { kind: 'empty' };
-    } else {
-        seed = input.seed === 'current-index' ? { kind: 'current-index' } : input.seed;
-    }
     const result = await createSharedGitTemporaryIndex({
         cwd: input.cwd,
-        seed,
+        seed: input.seed,
         runGit: (command) => runGitCommand({ ...command, args: [...command.args], timeoutMs: 5000 }),
     });
     return result.success ? result : { success: false, errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, error: result.error };

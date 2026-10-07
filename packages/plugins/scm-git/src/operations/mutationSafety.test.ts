@@ -35,6 +35,90 @@ function createWorkspace(initialCommit = true) {
 // Loaded mac-host measured a completed real-Git case at 15.374s. Allow twice
 // that, rounded up to 40s, at the runner boundary; Git command deadlines stay intact.
 describe('Git mutation safety', { timeout: 40_000 }, () => {
+    it('publishes a prepared plan message beyond the ordinary request limit', async () => {
+        const { cwd, context } = createWorkspace();
+        try {
+            const expectedHeadOid = git(cwd, ['rev-parse', 'HEAD']);
+            const expectedRef = git(cwd, ['symbolic-ref', 'HEAD']);
+            const expectedIndexTreeOid = git(cwd, ['write-tree']);
+            writeFileSync(join(cwd, 'a.txt'), 'accepted\n');
+            git(cwd, ['add', 'a.txt']);
+            const preparedTreeOid = git(cwd, ['write-tree']);
+            git(cwd, ['reset', '-q', 'HEAD']);
+            const message = 'm'.repeat(4097);
+            const response = await runWithRealGitScmRuntime(() => gitCommitCreate({ context, request: {
+                message, expectedHeadOid, expectedRef, expectedIndexTreeOid,
+                preparedTreeOid, expectedCandidateTreeOid: preparedTreeOid,
+            } }));
+            expect(response, JSON.stringify(response)).toMatchObject({ success: true, publication: { state: 'published', actualMessage: message } });
+            expect(git(cwd, ['show', '-s', '--format=%B', 'HEAD'])).toBe(message);
+            expect(git(cwd, ['rev-parse', 'HEAD^{tree}'])).toBe(preparedTreeOid);
+        } finally { rmSync(cwd, { recursive: true, force: true }); }
+    });
+
+    it('compares a prepared plan against the actual parent tree despite replacement refs', async () => {
+        const { cwd, context } = createWorkspace();
+        try {
+            const expectedHeadOid = git(cwd, ['rev-parse', 'HEAD']);
+            const expectedRef = git(cwd, ['symbolic-ref', 'HEAD']);
+            const parentTreeOid = git(cwd, ['write-tree']);
+            writeFileSync(join(cwd, 'a.txt'), 'accepted\n');
+            git(cwd, ['add', 'a.txt']);
+            const preparedTreeOid = git(cwd, ['write-tree']);
+            git(cwd, ['reset', '-q', 'HEAD']);
+            writeFileSync(join(cwd, 'b.txt'), 'unrelated staged intent\n');
+            git(cwd, ['add', 'b.txt']);
+            const expectedIndexTreeOid = git(cwd, ['write-tree']);
+            const displayCommit = git(cwd, ['commit-tree', preparedTreeOid, '-m', 'replacement display']);
+            git(cwd, ['replace', expectedHeadOid, displayCommit]);
+            expect(git(cwd, ['rev-parse', `${expectedHeadOid}^{tree}`])).toBe(preparedTreeOid);
+            expect(git(cwd, ['--no-replace-objects', 'rev-parse', `${expectedHeadOid}^{tree}`])).toBe(parentTreeOid);
+            const response = await runWithRealGitScmRuntime(() => gitCommitCreate({ context, request: {
+                message: 'accepted', expectedHeadOid, expectedRef, expectedIndexTreeOid,
+                preparedTreeOid, expectedCandidateTreeOid: preparedTreeOid,
+            } }));
+            expect(response, JSON.stringify(response)).toMatchObject({ success: true, publication: { state: 'published' } });
+            expect(git(cwd, ['--no-replace-objects', 'rev-parse', 'HEAD^{tree}'])).toBe(preparedTreeOid);
+            expect(git(cwd, ['--no-replace-objects', 'show', '-s', '--format=%P', 'HEAD'])).toBe(expectedHeadOid);
+            expect(git(cwd, ['show', ':a.txt'])).toBe('accepted');
+            expect(git(cwd, ['show', ':b.txt'])).toBe('unrelated staged intent');
+            expect(git(cwd, ['diff', '--cached', '--name-only'])).toBe('b.txt');
+        } finally { rmSync(cwd, { recursive: true, force: true }); }
+    });
+
+    it('does not attribute a timed-out candidate through replacement history', async () => {
+        const { cwd, context } = createWorkspace();
+        try {
+            const head = git(cwd, ['rev-parse', 'HEAD']);
+            const index = readFileSync(join(cwd, '.git', 'index'));
+            writeFileSync(join(cwd, 'a.txt'), 'selected\n');
+            const runtime = createRealGitScmBackendRuntimeServices();
+            let candidateOid = '';
+            let externalOid = '';
+            const response = await runWithGitScmCommandRunner(async (input) => {
+                if (input.args[0] === 'update-ref' && input.stdinInteraction) {
+                    candidateOid = /^update HEAD ([a-f0-9]+) /m.exec(input.stdin ?? '')?.[1] ?? '';
+                    const baseTree = git(cwd, ['rev-parse', `${head}^{tree}`]);
+                    externalOid = git(cwd, ['commit-tree', baseTree, '-m', 'external root']);
+                    git(cwd, ['update-ref', 'HEAD', externalOid, head]);
+                    const replacement = git(cwd, ['commit-tree', baseTree, '-p', candidateOid, '-m', 'replacement history']);
+                    git(cwd, ['replace', externalOid, replacement]);
+                    // The lost process response supplies no evidence of publication.
+                    return { success: false, stdout: '', stderr: 'Publication response lost', exitCode: -1, timedOut: true };
+                }
+                return runtime.runCommand(input);
+            }, () => gitCommitCreate({ context, request: { message: 'selected', scope: { kind: 'paths', include: ['a.txt'] } } }));
+            expect(candidateOid).not.toBe('');
+            expect(spawnSync('git', ['merge-base', '--is-ancestor', candidateOid, externalOid], { cwd }).status).toBe(0);
+            expect(spawnSync('git', ['--no-replace-objects', 'merge-base', '--is-ancestor', candidateOid, externalOid], { cwd }).status).toBe(1);
+            expect(response).toMatchObject({ success: false, errorCode: 'COMMAND_TIMEOUT', publication: { state: 'unknown', candidateOid }, outcome: { kind: 'outcome_unknown' } });
+            expect(response.commitSha).toBeUndefined();
+            expect(git(cwd, ['rev-parse', 'HEAD'])).toBe(externalOid);
+            expect(readFileSync(join(cwd, '.git', 'index'))).toEqual(index);
+            expect(existsSync(join(cwd, '.git', 'index.lock'))).toBe(false);
+        } finally { rmSync(cwd, { recursive: true, force: true }); }
+    });
+
     it.skipIf(process.platform === 'win32').each(['staged', 'scoped', 'amend'] as const)('matches native post-publication hook index reads and staging writes (%s)', async (kind) => {
         const owner = createWorkspace();
         const native = createWorkspace();
@@ -612,7 +696,7 @@ describe('Git mutation safety', { timeout: 40_000 }, () => {
             let contenderStatus: number | null | undefined;
             const response = await runWithGitScmCommandRunner(async (input) => {
                 const result = await runtime.runCommand(input);
-                if (input.args[0] === 'merge-tree') {
+                if (input.args.includes('merge-tree')) {
                     writeFileSync(join(cwd, 'b.txt'), 'stage contender\n');
                     contenderStatus = spawnSync('git', ['add', 'b.txt'], { cwd, encoding: 'utf8' }).status;
                 }

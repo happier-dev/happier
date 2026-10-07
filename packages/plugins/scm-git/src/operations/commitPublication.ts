@@ -12,6 +12,7 @@ import { readGitStateFile, resolveGitStatePath } from './branchOperationState.js
 import { createGitExecutionFeatureDetector, type GitExecutionFeatures } from '../repository.js';
 import { applyValidatedGitPatch } from './applyValidatedGitPatch.js';
 import { parseNumStatZ } from '../statusParser.js';
+import { observeGitCommitPublication } from './commitOutcome.js';
 
 const COMMIT_STATE_FILES = ['MERGE_HEAD', 'MERGE_MSG', 'MERGE_MODE', 'SQUASH_MSG', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'AUTO_MERGE'] as const;
 export type GitCommitTarget = Readonly<{ headOid: string | null; ref: string | null; baseTreeOid: string; mergeHeads: readonly string[]; cherryPickOid: string | null; stateFiles: readonly Readonly<{ name: typeof COMMIT_STATE_FILES[number]; content: string | null }>[] }>;
@@ -43,7 +44,7 @@ export async function captureGitCommitTarget(context: ScmBackendContext, request
             publication: { state: 'not_published', expectedHeadOid: request.expectedHeadOid === undefined ? headOid : request.expectedHeadOid,
                 expectedRef: request.expectedRef === undefined ? ref : request.expectedRef, indexReconciliation: 'not_required' } } };
     }
-    const tree = headOid ? await run(['rev-parse', `${headOid}^{tree}`]) : await run(['hash-object', '-w', '-t', 'tree', '--stdin'], '');
+    const tree = headOid ? await run(['--no-replace-objects', 'rev-parse', `${headOid}^{tree}`]) : await run(['hash-object', '-w', '-t', 'tree', '--stdin'], '');
     if (!tree.success) return { success: false, response: failure(mapGitErrorCode(tree.stderr), tree.stderr || 'Could not capture the base tree') };
     const stateFiles = await Promise.all(COMMIT_STATE_FILES.map(async (name) => ({ name, content: await readGitStateFile(context, name, 'raw') })));
     const mergeHeads = (stateFiles.find((file) => file.name === 'MERGE_HEAD')?.content ?? '').split(/\s+/).filter(Boolean);
@@ -91,7 +92,7 @@ async function reconcileIndex(input: { cwd: string; target: GitCommitTarget; can
             if (!emptyBase.success) return refuse(mapGitErrorCode(emptyBase.stderr), emptyBase.stderr || 'Could not inspect unborn staging intent');
             mergeBase = emptyBase.stdout.trim();
         }
-        const merged = await run(['merge-tree', '--write-tree', `--merge-base=${mergeBase}`, input.candidateOid, stagedCommit.stdout.trim()]);
+        const merged = await run(['--no-replace-objects', 'merge-tree', '--write-tree', `--merge-base=${mergeBase}`, input.candidateOid, stagedCommit.stdout.trim()]);
         if (merged.success) mergedTree = merged.stdout.split('\n')[0]!.trim();
         else {
             // Git reports a conflict for adjacent insertions even when the staged blob
@@ -319,7 +320,7 @@ export async function publishGitCommit(input: { context: ScmBackendContext; requ
             if (mode & 0o100) sharedMode |= (sharedMode & 0o444) >> 2;
             fchmodSync(lockFd, replaceMode ? sharedMode : mode | sharedMode);
         }
-        const current = await createGitTemporaryIndex({ cwd, seed: 'current-index' });
+        const current = await createGitTemporaryIndex({ cwd, seed: { kind: 'current-index' } });
         if (!current.success) return decorate(current);
         reconciledIndex = current.tempIndex;
         const reconciliation = await reconcileIndex({ cwd, target, candidateOid, candidateTree, expectedIndexTreeOid: request.expectedIndexTreeOid, index: reconciledIndex, identityEnv, gitFeatures });
@@ -345,11 +346,8 @@ export async function publishGitCommit(input: { context: ScmBackendContext; requ
         if (publication.success && targetMatches) state = 'published';
         else if (getScmCommandIndeterminateErrorCode(publication)) {
             state = 'unknown';
-            const observed = await run(['rev-parse', '--verify', target.ref ?? 'HEAD']);
-            if (observed.success) {
-                const contains = await run(['merge-base', '--is-ancestor', candidateOid, observed.stdout.trim()]);
-                if (contains.success) state = 'published';
-            }
+            const observed = await observeGitCommitPublication({ cwd, candidateOid, expectedHeadOid: target.headOid, expectedRef: target.ref });
+            if (observed.success && observed.state === 'published') state = 'published';
         }
         if (state !== 'published') {
             const indeterminate = getScmCommandIndeterminateErrorCode(publication);

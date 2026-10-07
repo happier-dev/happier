@@ -133,7 +133,7 @@ export async function gitCommitCreate(input: {
             error: 'Commit message cannot be empty',
         };
     }
-    if (message.length > SCM_COMMIT_MESSAGE_MAX_LENGTH) {
+    if (request.preparedTreeOid === undefined && message.length > SCM_COMMIT_MESSAGE_MAX_LENGTH) {
         return {
             success: false,
             errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
@@ -217,7 +217,7 @@ export async function gitCommitCreate(input: {
     const tempIndex = await createGitTemporaryIndex({
         cwd: context.cwd,
         seed: request.preparedTreeOid !== undefined ? { kind: 'tree', treeOid: request.preparedTreeOid } : request.scope?.kind === 'all-pending' || (!isAmend && !request.scope && !hasPatchSelection)
-            ? 'current-index'
+            ? { kind: 'current-index' }
             : { kind: 'tree', treeOid: target.baseTreeOid },
     });
     if (!tempIndex.success) return withPublication(tempIndex);

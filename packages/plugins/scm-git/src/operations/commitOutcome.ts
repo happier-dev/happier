@@ -4,6 +4,43 @@ import type { ScmBackendContext } from '../types.js';
 import { getScmCommandIndeterminateErrorCode, normalizeCommitRef } from '../runtime.js';
 import { runGitCommand } from './commitExecutionRuntime.js';
 
+/** Both immediate recovery and later resolution observe the actual ref history. */
+export async function observeGitCommitPublication(input: {
+    cwd: string;
+    candidateOid: string;
+    expectedHeadOid: string | null;
+    expectedRef: string | null;
+}): Promise<
+    | { success: true; state: 'not_published' | 'published' | 'unknown' }
+    | { success: false; error: string; errorCode: ScmOperationErrorCode }
+> {
+    const run = (args: string[]) => runGitCommand({ cwd: input.cwd, args });
+    const refuse = (result: Awaited<ReturnType<typeof run>>, fallback: string) => ({
+        success: false as const, error: result.stderr || fallback,
+        errorCode: getScmCommandIndeterminateErrorCode(result) ?? SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+    });
+    if (input.expectedRef === null) {
+        const symbolic = await run(['symbolic-ref', '-q', 'HEAD']);
+        if (symbolic.success) return { success: true, state: 'unknown' };
+        if (symbolic.exitCode !== 1 || getScmCommandIndeterminateErrorCode(symbolic)) return refuse(symbolic, 'Could not inspect the detached target');
+    }
+    const tip = await run(['--no-replace-objects', 'rev-parse', '--verify', `${input.expectedRef ?? 'HEAD'}^{commit}`]);
+    if (!tip.success) {
+        if (input.expectedHeadOid === null && input.expectedRef !== null) {
+            const absent = await run(['show-ref', '--verify', '--quiet', input.expectedRef]);
+            if (absent.exitCode === 1 && !getScmCommandIndeterminateErrorCode(absent)) return { success: true, state: 'not_published' };
+        }
+        return refuse(tip, 'Could not inspect the expected target');
+    }
+    const tipOid = tip.stdout.trim();
+    if (tipOid === input.expectedHeadOid) return { success: true, state: 'not_published' };
+    if (tipOid === input.candidateOid) return { success: true, state: 'published' };
+    const ancestor = await run(['--no-replace-objects', 'merge-base', '--is-ancestor', input.candidateOid, tipOid]);
+    if (ancestor.success) return { success: true, state: 'published' };
+    if (ancestor.exitCode !== 1 || getScmCommandIndeterminateErrorCode(ancestor)) return refuse(ancestor, 'Could not inspect the candidate ancestry');
+    return { success: true, state: 'unknown' };
+}
+
 /** Observe only: an existing object is not evidence that this writer published it. */
 export async function gitCommitResolveOutcome(input: {
     context: ScmBackendContext;
@@ -36,31 +73,8 @@ export async function gitCommitResolveOutcome(input: {
         return refuse('The candidate does not have the expected parent');
     }
     publication.actualMessage = object.stdout.slice(boundary + 2).replace(/\n$/, '');
-    const result = (): ScmCommitResolveOutcomeResponse => ({ success: true, publication, candidateTreeOid });
-    const ref = request.expectedRef ?? 'HEAD';
-    if (request.expectedRef === null) {
-        const symbolic = await run(['symbolic-ref', '-q', 'HEAD']);
-        if (symbolic.success) return result();
-        if (symbolic.exitCode !== 1 || getScmCommandIndeterminateErrorCode(symbolic)) return refuse(symbolic.stderr || 'Could not inspect the detached target', getScmCommandIndeterminateErrorCode(symbolic) ?? SCM_OPERATION_ERROR_CODES.COMMAND_FAILED);
-    }
-    const tip = await run(['--no-replace-objects', 'rev-parse', '--verify', `${ref}^{commit}`]);
-    if (!tip.success) {
-        if (request.expectedHeadOid === null && request.expectedRef !== null) {
-            const absent = await run(['show-ref', '--verify', '--quiet', request.expectedRef]);
-            if (absent.exitCode === 1 && !getScmCommandIndeterminateErrorCode(absent)) {
-                publication.state = 'not_published';
-                return result();
-            }
-        }
-        return refuse(tip.stderr || 'Could not inspect the expected target', getScmCommandIndeterminateErrorCode(tip) ?? SCM_OPERATION_ERROR_CODES.COMMAND_FAILED);
-    }
-    const tipOid = tip.stdout.trim();
-    if (tipOid === request.expectedHeadOid) publication.state = 'not_published';
-    else if (tipOid === request.candidateOid) publication.state = 'published';
-    else {
-        const ancestor = await run(['--no-replace-objects', 'merge-base', '--is-ancestor', request.candidateOid, tipOid]);
-        if (ancestor.success) publication.state = 'published';
-        else if (ancestor.exitCode !== 1 || getScmCommandIndeterminateErrorCode(ancestor)) return refuse(ancestor.stderr || 'Could not inspect the candidate ancestry', getScmCommandIndeterminateErrorCode(ancestor) ?? SCM_OPERATION_ERROR_CODES.COMMAND_FAILED);
-    }
-    return result();
+    const observed = await observeGitCommitPublication({ cwd: context.cwd, ...request });
+    if (!observed.success) return refuse(observed.error, observed.errorCode);
+    publication.state = observed.state;
+    return { success: true, publication, candidateTreeOid };
 }

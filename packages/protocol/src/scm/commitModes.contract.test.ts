@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  SCM_COMMIT_MESSAGE_MAX_LENGTH,
   ScmCommitCreateRequestSchema,
   ScmCommitCreateResponseSchema,
   ScmOperationErrorCodeSchema,
@@ -10,6 +11,21 @@ import {
 import { ScmBackendCommitCapabilitiesSchema } from './backendCapabilities.js';
 
 describe('explicit commit modes', () => {
+  it('admits uncapped nonblank prepared-plan messages while retaining ordinary message admission', () => {
+    const message = 'm'.repeat(SCM_COMMIT_MESSAGE_MAX_LENGTH + 1);
+    const prepared = {
+      message,
+      expectedHeadOid: 'a'.repeat(40),
+      expectedRef: 'refs/heads/main',
+      expectedCandidateTreeOid: 'b'.repeat(40),
+      preparedTreeOid: 'b'.repeat(40),
+    };
+    expect(ScmCommitCreateRequestSchema.parse(prepared)).toEqual(prepared);
+    expect(ScmCommitCreateRequestSchema.safeParse({ ...prepared, message: ' \n\t ' }).success).toBe(false);
+    expect(ScmCommitCreateRequestSchema.safeParse({ message }).success).toBe(false);
+    expect(ScmCommitCreateRequestSchema.parse({ message: message.slice(1) })).toEqual({ message: message.slice(1) });
+    expect(ScmCommitCreateRequestSchema.parse({ message: '' })).toEqual({ message: '' });
+  });
   it('requires exact-tree plan authority and advertised safe-plan support while preserving ordinary callers', () => {
     const request = { message: 'planned', expectedHeadOid: 'a'.repeat(40), expectedRef: 'refs/heads/main', expectedCandidateTreeOid: 'b'.repeat(40), acceptedHookTreeOid: 'c'.repeat(40) };
     expect(ScmCommitCreateRequestSchema.safeParse(request).success).toBe(true);
