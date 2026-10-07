@@ -15,6 +15,53 @@ async function importRpcPolicy() {
 }
 
 describe('MachineRpcRoutePolicyV1', () => {
+  it('keeps session role, notes and runtime mutations on the exact Session server route without granting Runner Machine access', async () => {
+    const protocol = await importRpcPolicy();
+    if ('importError' in protocol) throw protocol.importError;
+    for (const method of [
+      SESSION_RPC_METHODS.SESSION_ROLE_SET,
+      SESSION_RPC_METHODS.SESSION_ROLES_CONFIGURATION_SET,
+      SESSION_RPC_METHODS.SESSION_ROLES_OVERRIDE_SET,
+      SESSION_RPC_METHODS.SESSION_ROLES_OVERRIDE_CLEAR,
+      SESSION_RPC_METHODS.SESSION_ROLES_ADD,
+      SESSION_RPC_METHODS.SESSION_ROLES_REMOVE,
+      SESSION_RPC_METHODS.SESSION_NOTES_SET,
+      SESSION_RPC_METHODS.SESSION_ROLES_APPLY_TO_REPORTS,
+      SESSION_RPC_METHODS.SESSION_WORKFLOW_STEP_WITHDRAW,
+      SESSION_RPC_METHODS.SESSION_PROVIDER_CLI_ATTACH_PREPARE,
+    ]) {
+      expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
+        routeClass: 'server_required', serverRequiredReason: 'durable_session_write',
+        scope: { accountRequired: true, machineRequired: true, sessionRequired: true, serverRequired: true },
+      });
+      expect(protocol.resolveEphemeralRunnerMachineRpcAuthority(method)).toBeNull();
+    }
+  });
+
+  it('binds SCM comparison operations to their existing Action authority without opening direct or Runner routes', async () => {
+    const protocol = await importRpcPolicy();
+    if ('importError' in protocol) throw protocol.importError;
+    const methods = [
+      [RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE, 'scm.diffSummary.capture'],
+      [RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_EDIT, 'scm.diffSummary.result.edit'],
+      [RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_UNDO, 'scm.diffSummary.result.undo'],
+      [RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_DELETE, 'scm.diffSummary.result.delete'],
+      [RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_CLEAR, 'scm.diffSummary.result.clear'],
+      [RPC_METHODS.SCM_DIFF_SUMMARY_REFINE, 'scm.diffSummary.refine'],
+      [RPC_METHODS.SCM_DIFF_SUMMARY_ADD_OUTPUTS, 'scm.diffSummary.addOutputs'],
+      [RPC_METHODS.SCM_DIFF_SUMMARY_DISCUSS, 'scm.diffSummary.discuss'],
+      [RPC_METHODS.SCM_DIFF_SUMMARY_REVIEWED_MARK, 'scm.diffSummary.reviewed.mark'],
+      [RPC_METHODS.SCM_DIFF_SUMMARY_REVIEWED_UNMARK, 'scm.diffSummary.reviewed.unmark'],
+      [RPC_METHODS.SCM_COMMIT_RESOLVE_OUTCOME, 'scm.commit.resolveOutcome'],
+      [RPC_METHODS.SCM_COMMIT_UNDO_LAST, 'scm.commit.undoLast'],
+    ] as const;
+    for (const [method, actionSpecId] of methods) {
+      expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
+        routeClass: 'server_required', rpcClassification: 'action_spec_bound', actionSpecId,
+      });
+      expect(protocol.resolveEphemeralRunnerMachineRpcAuthority(method)).toBeNull();
+    }
+  });
   it('keeps explicit machine log reads on the classified Account and Machine server route', async () => {
     const protocol = await importRpcPolicy();
     if ('importError' in protocol) throw protocol.importError;
