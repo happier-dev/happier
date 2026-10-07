@@ -1,17 +1,19 @@
 import { tmpdir } from 'node:os';
-import { realpath } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import type { RpcHandlerContext } from '@/api/rpc/types';
 
 import { registerBashHandler } from './bash';
 
 function createRegistrar() {
-    const handlers = new Map<string, (payload: unknown) => Promise<unknown>>();
+    const handlers = new Map<string, (payload: unknown, context?: RpcHandlerContext) => Promise<unknown>>();
     return {
         handlers,
         registrar: {
-            registerHandler(method: string, handler: (payload: unknown) => Promise<unknown>) {
+            registerHandler(method: string, handler: (payload: unknown, context?: RpcHandlerContext) => Promise<unknown>) {
                 handlers.set(method, handler);
             },
         },
@@ -44,6 +46,98 @@ async function settleWithin<T>(
 }
 
 describe('registerBashHandler', () => {
+    it('passes env values verbatim into argv execution while retaining the machine environment', async () => {
+        const { handlers, registrar } = createRegistrar();
+        registerBashHandler(registrar as never, process.cwd());
+        const value = 'quoted "value"; $(printf injected) & <literal>\nnext line';
+        await expect(handlers.get(RPC_METHODS.BASH)!({
+            argv: [process.execPath, '-e', 'process.stdout.write(JSON.stringify({ value: process.env.HB_COMMAND_VALUE, path: process.env.PATH }))'],
+            env: { HB_COMMAND_VALUE: value },
+        })).resolves.toMatchObject({
+            success: true,
+            stdout: JSON.stringify({ value, path: process.env.PATH }),
+        });
+    });
+
+    it.skipIf(process.platform === 'win32')('runs fixed shell text in the selected workspace and retains env values and failed output', async () => {
+        const { handlers, registrar } = createRegistrar();
+        registerBashHandler(registrar as never, process.cwd());
+        const workspace = await realpath(tmpdir());
+        const value = '$(printf injected); "quoted" & <literal>\nnext line';
+        await expect(handlers.get(RPC_METHODS.BASH)!({
+            command: 'printf "%s" "$HB_COMMAND_VALUE"; printf "%s" "$PWD" >&2; exit 7',
+            env: { HB_COMMAND_VALUE: value },
+            cwd: workspace,
+            timeout: 0,
+        })).resolves.toMatchObject({ success: false, stdout: value, stderr: workspace, exitCode: 7 });
+    });
+
+    it.each(['argv', 'shell'] as const)('cancels running %s work through the RPC signal and retains partial output', async (mode) => {
+        const { handlers, registrar } = createRegistrar();
+        registerBashHandler(registrar as never, process.cwd());
+        const directory = await mkdtemp(join(tmpdir(), 'happier-bash-cancel-'));
+        const marker = join(directory, 'started');
+        const controller = new AbortController();
+        try {
+            const script = "process.stdout.write('partial'); require('node:fs').writeFileSync(process.argv[1], 'ready'); setTimeout(() => {}, 2000)";
+            const pending = handlers.get(RPC_METHODS.BASH)!({
+                ...(mode === 'argv'
+                    ? { argv: [process.execPath, '-e', script, marker] }
+                    : { command: `"${process.execPath}" -e "${script}" "${marker}"` }),
+                timeout: 0,
+            }, { signal: controller.signal });
+            await vi.waitFor(async () => expect(await readFile(marker, 'utf8')).toBe('ready'));
+            controller.abort();
+            await expect(pending).resolves.toMatchObject({ success: false, stdout: 'partial', error: 'Command cancelled' });
+        } finally {
+            await rm(directory, { recursive: true, force: true });
+        }
+    });
+
+    it('lets explicit zero delegate the command lifetime to the caller', async () => {
+        const { handlers, registrar } = createRegistrar();
+        registerBashHandler(registrar as never, process.cwd());
+        const directory = await mkdtemp(join(tmpdir(), 'happier-bash-lifetime-'));
+        const marker = join(directory, 'started');
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        try {
+            const pending = handlers.get(RPC_METHODS.BASH)!({
+                argv: [process.execPath, '-e', 'require("node:fs").writeFileSync(process.argv[1], "ready"); setTimeout(() => process.stdout.write("finished"), 500)', marker],
+                timeout: 0,
+            });
+            await vi.waitFor(async () => expect(await readFile(marker, 'utf8')).toBe('ready'));
+            await vi.advanceTimersByTimeAsync(30_001);
+            await expect(pending).resolves.toMatchObject({ success: true, stdout: 'finished', exitCode: 0 });
+        } finally {
+            vi.useRealTimers();
+            await rm(directory, { recursive: true, force: true });
+        }
+    });
+
+    it('preserves shell output beyond the buffered-execution default', async () => {
+        const { handlers, registrar } = createRegistrar();
+        registerBashHandler(registrar as never, process.cwd());
+        const output = 'x'.repeat(1_200_000);
+        const result = await handlers.get(RPC_METHODS.BASH)!({
+            command: `"${process.execPath}" -e "process.stdout.write('x'.repeat(${output.length}))"`,
+            timeout: 0,
+        }) as { success: boolean; stdout: string; stderr: string; exitCode: number };
+        expect(result.success).toBe(true);
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout.length).toBe(output.length);
+        expect(result.stderr).toBe('');
+    });
+
+    it.skipIf(process.platform === 'win32')('honors an explicit filesystem-root workspace while retaining the detection sentinel', async () => {
+        const { handlers, registrar } = createRegistrar();
+        registerBashHandler(registrar as never, await realpath(tmpdir()));
+        const argv = [process.execPath, '-e', 'process.stdout.write(process.cwd())'];
+        await expect(handlers.get(RPC_METHODS.BASH)!({ argv, cwd: '/', cwdMode: 'explicit' }))
+            .resolves.toMatchObject({ success: true, stdout: '/' });
+        await expect(handlers.get(RPC_METHODS.BASH)!({ argv, cwd: '/' }))
+            .resolves.toMatchObject({ success: true, stdout: await realpath(process.cwd()) });
+    });
+
     it('runs argv payloads without going through the default shell', async () => {
         const { handlers, registrar } = createRegistrar();
         registerBashHandler(registrar as never, process.cwd());

@@ -47,5 +47,7 @@ export type WorkflowClaimForCoordination = Readonly<{
   ) => void;
   /** Exact live coordinator callback; the incumbent worker remains its owner. */
   registerReviewHoldRefresh?: (refresh: () => Promise<void>) => void;
+  /** Reserve the incumbent machine budget after private materialization. */
+  acquireMachineStartCapacity?: (signal?: AbortSignal) => Promise<void>;
   signal?: AbortSignal;
 }>;

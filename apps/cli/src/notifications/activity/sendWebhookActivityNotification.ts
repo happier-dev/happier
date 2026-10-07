@@ -8,8 +8,9 @@ import { buildActivityWebhookPayload } from '@happier-dev/protocol/activity/webh
 import { decryptSecretValueWithKeysV1 } from '@happier-dev/protocol/crypto/settingsSecretStringsV1';
 import { hasConfiguredSecretStringValue } from '@happier-dev/protocol/account/settings/notificationChannels';
 import type { AttentionPreviewBehavior, WebhookNotificationChannelV1 } from '@happier-dev/protocol';
+import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
-import { openPinnedHttpStream, type PinnedHttpStreamTransport } from '@/network/pinnedHttp';
+import { openPinnedHttpStream, type PinnedHttpStreamTransport, type PinnedHttpStreamResponse } from '@/network/pinnedHttp';
 
 import type { ActivityNotificationEvent } from './activityNotificationEvent';
 import { buildActivityNotificationContent } from './buildActivityNotificationContent';
@@ -38,6 +39,14 @@ type AdmittedWebhookDestination = Readonly<{
   url: string;
   validatedAddresses: readonly string[];
 }>;
+
+/** This failure is known to precede the outbound effect, unlike a transport failure. */
+export class WebhookDestinationAdmissionError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : 'Webhook destination rejected', { cause });
+    this.name = 'WebhookDestinationAdmissionError';
+  }
+}
 
 function readSigningSecret(
   secret: WebhookNotificationChannelV1['signingSecret'],
@@ -108,6 +117,50 @@ async function admitWebhookDestination(
   });
 }
 
+/** The one destination admission and pinned POST path for notifications and JSON Actions. */
+async function openWebhookPostAsync(params: Readonly<{
+  url: string; body: Buffer; headers: Readonly<Record<string, string>>;
+  signal?: AbortSignal; wallTimeMs?: number; network?: WebhookActivityNotificationNetworkDependencies;
+}>): Promise<PinnedHttpStreamResponse> {
+  params.signal?.throwIfAborted();
+  let destination: AdmittedWebhookDestination;
+  try {
+    destination = await admitWebhookDestination(params.url,
+      params.network?.resolveAddresses ?? resolveWebhookDestinationAddresses);
+  } catch (error) {
+    throw new WebhookDestinationAdmissionError(error);
+  }
+  params.signal?.throwIfAborted();
+  return (params.network?.openPinnedStream ?? openPinnedHttpStream)({
+    url: destination.url, validatedAddresses: destination.validatedAddresses,
+    method: 'POST', headers: params.headers, body: params.body,
+    signal: params.signal ?? new AbortController().signal,
+    ...(params.wallTimeMs === undefined ? {} : { wallTimeMs: params.wallTimeMs }),
+  });
+}
+
+export async function postWebhookJsonAsync(params: Readonly<{
+  url: string; body: JsonValue; idempotencyKey: string; signal?: AbortSignal;
+  network?: WebhookActivityNotificationNetworkDependencies;
+}>): Promise<Readonly<{ status: number; body: string }>> {
+  const body = Buffer.from(JSON.stringify(params.body), 'utf8');
+  const response = await openWebhookPostAsync({ ...params, body, headers: {
+    'content-type': 'application/json', 'content-length': String(body.byteLength),
+    'idempotency-key': params.idempotencyKey,
+  } });
+  try {
+    const chunks: Uint8Array[] = [];
+    for (;;) {
+      const chunk = await response.read();
+      if (chunk === null) break;
+      chunks.push(chunk);
+    }
+    return { status: response.status, body: Buffer.concat(chunks).toString('utf8') };
+  } finally {
+    response.cancel();
+  }
+}
+
 export async function sendWebhookActivityNotificationAsync(params: Readonly<{
   channel: WebhookNotificationChannelV1;
   event: ActivityNotificationEvent;
@@ -164,20 +217,8 @@ export async function sendWebhookActivityNotificationAsync(params: Readonly<{
     headers['x-happier-signature-256'] = `sha256=${createHmac('sha256', signingSecret).update(body).digest('hex')}`;
   }
 
-  const destination = await admitWebhookDestination(
-    params.channel.url,
-    params.network?.resolveAddresses ?? resolveWebhookDestinationAddresses,
-  );
-  const abort = new AbortController();
-  const response = await (params.network?.openPinnedStream ?? openPinnedHttpStream)({
-    url: destination.url,
-    validatedAddresses: destination.validatedAddresses,
-    headers,
-    method: 'POST',
-    body,
-    signal: abort.signal,
-    wallTimeMs: WEBHOOK_REQUEST_WALL_TIME_MS,
-  });
+  const response = await openWebhookPostAsync({ url: params.channel.url, body, headers,
+    wallTimeMs: WEBHOOK_REQUEST_WALL_TIME_MS, ...(params.network ? { network: params.network } : {}) });
   response.cancel();
   if (response.status >= 300 && response.status < 400) {
     // Following the hop would dispatch the signed payload to a destination this

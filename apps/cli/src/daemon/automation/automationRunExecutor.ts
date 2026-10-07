@@ -1309,6 +1309,7 @@ export async function executeClaimedRun(params: {
   /** Origin-neutral workflow coordinator supplied by daemon bootstrap. */
   coordinateWorkflowRun?: ReturnType<typeof createProductionWorkflowRunCoordinator>;
   registerReviewHoldRefresh?: Parameters<ReturnType<typeof createProductionWorkflowRunCoordinator>>[0]['registerReviewHoldRefresh'];
+  acquireMachineStartCapacity?: Parameters<ReturnType<typeof createProductionWorkflowRunCoordinator>>[0]['acquireMachineStartCapacity'];
   claimed: ClaimableRunPayload;
 }): Promise<void> {
   const {
@@ -1394,6 +1395,7 @@ export async function executeClaimedRun(params: {
             workflowControlCheck = check;
           },
           registerReviewHoldRefresh: params.registerReviewHoldRefresh,
+          acquireMachineStartCapacity: params.acquireMachineStartCapacity,
           signal: executionController.signal,
         });
         return;
@@ -1426,6 +1428,7 @@ export async function executeClaimedRun(params: {
             workflowControlCheck = check;
           },
           registerReviewHoldRefresh: params.registerReviewHoldRefresh,
+          acquireMachineStartCapacity: params.acquireMachineStartCapacity,
           signal: executionController.signal,
         });
         if ('admission' in result && result.admission === 'refused') {

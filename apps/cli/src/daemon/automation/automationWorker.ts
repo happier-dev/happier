@@ -132,7 +132,7 @@ export function startAutomationWorker(params: {
   let claimConsecutiveFailures = 0;
   let claimRetryAfter = 0;
   let noWorkCooldownUntil = 0;
-  let noWorkCooldownScope: 'session_scoped' | undefined;
+  let noWorkCooldownScope: 'workflow' | undefined;
   let pendingQueuedWake = false;
   let nextAssignmentReconciliationAt = 0;
   let latestAssignmentRefreshRequest = 0;
@@ -141,18 +141,19 @@ export function startAutomationWorker(params: {
   let claimTimerAt = 0;
   let claimInFlight = false;
   let refreshSoonTimer: NodeJS.Timeout | null = null;
-  // One active-execution map owns ordinary capacity and cancellation. Scoped
-  // runs stay in this map without charging the ordinary machine budget; their
-  // review leaves use the existing execution-run budget. The server owns every
-  // durable lifecycle fact.
+  // One map owns capacity and cancellation. Workflow claims open their private
+  // accepted graph before reserving a slot; existing-Session writes reserve none.
   const activeExecutions = new Map<string, {
     runId: string;
     automationId: string | null;
     scopeSessionId?: string | null;
+    consumesStartCapacity: boolean;
     attempt: number;
     controller: AbortController;
     refreshReviewHolds?: () => void;
   }>();
+  const capacityWaiters = new Set<() => void>();
+  const wakeCapacityWaiters = () => { for (const wake of capacityWaiters) wake(); };
   const actionExecutor = params.credentials
     ? createCliActionExecutorFromCredentials({
       credentials: params.credentials,
@@ -221,9 +222,9 @@ export function startAutomationWorker(params: {
   }
 
   function scheduleCapacityRefill(reason: string) {
-    // A scoped-only null claim says nothing about ordinary queued work. When
+    // A Workflow-only null claim says nothing about ordinary queued work. When
     // an ordinary slot opens, refill it through the incumbent claim loop.
-    if (hasExecutionCapacity() && noWorkCooldownScope === 'session_scoped') {
+    if (hasExecutionCapacity() && noWorkCooldownScope === 'workflow') {
       noWorkCooldownUntil = 0;
       noWorkCooldownScope = undefined;
     }
@@ -269,9 +270,30 @@ export function startAutomationWorker(params: {
   function hasExecutionCapacity(): boolean {
     let ordinaryActiveRuns = 0;
     for (const active of activeExecutions.values()) {
-      if (!active.scopeSessionId) ordinaryActiveRuns += 1;
+      if (active.consumesStartCapacity) ordinaryActiveRuns += 1;
     }
     return ordinaryActiveRuns < maxActiveRunsPerMachine;
+  }
+
+  async function acquireMachineStartCapacity(runId: string, controller: AbortController, signal?: AbortSignal): Promise<void> {
+    while (true) {
+      signal?.throwIfAborted();
+      const active = activeExecutions.get(runId);
+      if (!active || active.controller !== controller) throw new Error('automation_claim_not_current');
+      if (active.consumesStartCapacity) return;
+      if (!paused && hasExecutionCapacity()) {
+        active.consumesStartCapacity = true;
+        return;
+      }
+      await new Promise<void>((resolve, reject) => {
+        const cleanup = () => { capacityWaiters.delete(wake); signal?.removeEventListener('abort', abort); };
+        const wake = () => { cleanup(); resolve(); };
+        const abort = () => { cleanup(); reject(signal?.reason ?? new Error('automation_claim_cancelled')); };
+        capacityWaiters.add(wake);
+        signal?.addEventListener('abort', abort, { once: true });
+        if (signal?.aborted) abort();
+      });
+    }
   }
 
   function rescheduleClaim(reason: string, force = false) {
@@ -336,6 +358,7 @@ export function startAutomationWorker(params: {
       const previousMaxActiveRunsPerMachine = maxActiveRunsPerMachine;
       // The current server is the execution-capacity settings authority.
       maxActiveRunsPerMachine = response.settings.maxActiveRunsPerMachine;
+      wakeCapacityWaiters();
       assignments.replace(response.assignments);
       sourceObservers.replace(response.runLifecycleSources ?? []);
       scheduleNextAssignmentReconciliation();
@@ -410,7 +433,7 @@ export function startAutomationWorker(params: {
     try {
       claimInFlight = true;
       pendingQueuedWake = false;
-      const scope = hasExecutionCapacity() ? undefined : 'session_scoped';
+      const scope = hasExecutionCapacity() ? undefined : 'workflow';
       const claimResult = await claimClient.claimRun({
         machineId: params.machineId,
         leaseDurationMs: scheduler.leaseDurationMs,
@@ -441,6 +464,7 @@ export function startAutomationWorker(params: {
         runId: claimed.run.id,
         automationId: claimed.run.automationId,
         scopeSessionId: claimed.automation?.scopeSessionId,
+        consumesStartCapacity: claimed.run.automationId !== null && claimed.run.recipeKind !== 'workflow-v2',
         attempt: claimed.run.attempt,
         controller: executionController,
       });
@@ -453,6 +477,7 @@ export function startAutomationWorker(params: {
             ...(params.credentials ? { credentials: params.credentials } : {}),
             machineId: params.machineId,
             claimClient,
+            acquireMachineStartCapacity: (signal) => acquireMachineStartCapacity(claimed.run.id, executionController, signal),
             registerReviewHoldRefresh: (refresh) => {
               const active = activeExecutions.get(claimed.run.id);
               if (active?.controller !== executionController) return;
@@ -506,6 +531,7 @@ export function startAutomationWorker(params: {
           const active = activeExecutions.get(claimed.run.id);
           if (active?.controller === executionController) {
             activeExecutions.delete(claimed.run.id);
+            wakeCapacityWaiters();
           }
           if (!stopped && !paused) {
             // This is the same bounded map's capacity continuation. The
@@ -540,7 +566,8 @@ export function startAutomationWorker(params: {
       if (claimedRunStarted) {
         // Refill through the same map and claim timer after releasing request
         // admission. At ordinary capacity the server filters this next claim
-        // to scoped work; no second scheduler or local cap is introduced.
+        // to private Workflow recipes, whose accepted graph determines whether
+        // admission needs a start slot; no second scheduler or cap is introduced.
         scheduleCapacityRefill('claimed-run-capacity-available');
         return;
       }
@@ -586,6 +613,7 @@ export function startAutomationWorker(params: {
     resume: () => {
       if (stopped || !paused) return;
       paused = false;
+      wakeCapacityWaiters();
       void refreshAssignments();
       rescheduleClaim('resumed');
     },

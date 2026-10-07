@@ -9,7 +9,11 @@ interface BashRequest {
     command?: string;
     argv?: string[];
     cwd?: string;
-    timeout?: number; // timeout in milliseconds
+    /** Treat cwd literally, including the filesystem root instead of the legacy detection sentinel. */
+    cwdMode?: 'explicit';
+    env?: Record<string, string>;
+    /** Milliseconds; zero delegates the lifetime to the caller's cancellation signal. */
+    timeout?: number;
 }
 
 interface BashResponse {
@@ -22,18 +26,13 @@ interface BashResponse {
 
 async function executeArgvRequest(
     argv: readonly string[],
-    options: Readonly<{ cwd?: string; timeout: number }>,
+    options: ExecFileWithDeadlineOptions,
 ): Promise<BashResponse> {
     const [file, ...args] = argv;
     try {
         const { stdout, stderr } = await execFileWithDeadline(file, args, {
-            cwd: options.cwd,
-            ...(options.timeout > 0 ? { timeout: options.timeout } : {}),
-            windowsHide: true,
+            ...options,
             shell: false,
-            // The argv path previously accumulated all output; do not impose execFile's
-            // default buffer ceiling when moving its deadline to the shared owner.
-            maxBuffer: Infinity,
         });
         return { success: true, stdout: stdout.toString(), stderr: stderr.toString(), exitCode: 0 };
     } catch (error) {
@@ -48,14 +47,15 @@ async function executeArgvRequest(
         };
         const stdout = execError.stdout?.toString() ?? '';
         const stderr = execError.stderr?.toString() ?? '';
-        const timedOut = execError.code === 'ETIMEDOUT' || execError.killed === true;
-        const message = timedOut
+        const cancelled = execError.code === 'ABORT_ERR' || execError.name === 'AbortError';
+        const timedOut = !cancelled && (execError.code === 'ETIMEDOUT' || execError.killed === true);
+        const message = cancelled ? 'Command cancelled' : timedOut
             ? 'Command timed out'
             : (typeof execError.code === 'number' || execError.signal ? stderr || 'Command failed' : execError.message);
         return {
             success: false,
             stdout,
-            stderr: timedOut ? stderr : stderr || message,
+            stderr: timedOut || cancelled ? stderr : stderr || message,
             exitCode: typeof execError.code === 'number' ? execError.code : -1,
             error: message,
         };
@@ -69,7 +69,7 @@ export function registerBashHandler(
 ): void {
     const accessPolicy = opts?.accessPolicy ?? { kind: 'osUser' };
     // Shell command handler - executes commands in the default shell
-    rpcHandlerManager.registerHandler<BashRequest, BashResponse>(RPC_METHODS.BASH, async (data) => {
+    rpcHandlerManager.registerHandler<BashRequest, BashResponse>(RPC_METHODS.BASH, async (data, context) => {
         logger.debug('Shell command request:', data.command);
 
         // Validate cwd if provided
@@ -77,7 +77,7 @@ export function registerBashHandler(
         // Security: Still validate all other paths to prevent directory traversal
         let cwd: string | undefined = workingDirectory;
         if (data.cwd) {
-            if (data.cwd === '/') {
+            if (data.cwd === '/' && data.cwdMode !== 'explicit') {
                 cwd = undefined;
             } else {
                 const validation = authorizeFilesystemPath({
@@ -93,21 +93,23 @@ export function registerBashHandler(
         }
 
         try {
-            // Build options with shell enabled by default
-            // Note: ExecOptions doesn't support boolean for shell, but exec() uses the default shell when shell is undefined
-            // If cwd is "/", use undefined to let shell use its default (respects user's PATH)
+            // Legacy callers retain their default budget; Action callers explicitly select
+            // zero and supply the containing operation's cancellation signal.
+            const timeout = data.timeout ?? 30000;
             const options: ExecFileWithDeadlineOptions = {
                 cwd,
-                timeout: data.timeout || 30000, // Default 30 seconds timeout
+                ...(timeout > 0 ? { timeout } : {}),
+                ...(data.env ? { env: { ...process.env, ...data.env } } : {}),
+                ...(context?.signal ? { signal: context.signal } : {}),
                 windowsHide: true,
+                // Both machine exec paths return output. The containing Action/Workflow
+                // transport owns result admission, not Node's incidental execFile cap.
+                maxBuffer: Infinity,
             };
 
             if (Array.isArray(data.argv) && data.argv.length > 0 && data.argv.every((value) => typeof value === 'string')) {
                 logger.debug('Shell argv request executing...', { cwd: options.cwd, timeout: options.timeout, argc: data.argv.length });
-                return await executeArgvRequest(data.argv, {
-                    cwd: typeof options.cwd === 'string' ? options.cwd : undefined,
-                    timeout: options.timeout ?? 30000,
-                });
+                return await executeArgvRequest(data.argv, options);
             }
 
             if (typeof data.command !== 'string' || data.command.length === 0) {
@@ -154,6 +156,16 @@ export function registerBashHandler(
                 code?: number | string;
                 killed?: boolean;
             };
+
+            if (execError.code === 'ABORT_ERR' || execError.name === 'AbortError') {
+                return {
+                    success: false,
+                    stdout: execError.stdout?.toString() ?? '',
+                    stderr: execError.stderr?.toString() ?? '',
+                    exitCode: typeof execError.code === 'number' ? execError.code : -1,
+                    error: 'Command cancelled',
+                };
+            }
 
             // Check if the error was due to timeout
             if (execError.code === 'ETIMEDOUT' || execError.killed) {

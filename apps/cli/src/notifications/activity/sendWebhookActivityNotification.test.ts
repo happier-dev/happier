@@ -14,7 +14,7 @@ import type {
 } from '@/network/pinnedHttp';
 
 import type { ActivityNotificationEvent } from './activityNotificationEvent';
-import { sendWebhookActivityNotificationAsync } from './sendWebhookActivityNotification';
+import { postWebhookJsonAsync, sendWebhookActivityNotificationAsync } from './sendWebhookActivityNotification';
 
 const READY_EVENT: ActivityNotificationEvent = {
   topic: 'ready',
@@ -63,6 +63,37 @@ function createRecordingTransport(...responses: readonly StubbedResponse[]) {
 function resolvesTo(...addresses: readonly string[]) {
   return async () => addresses;
 }
+
+describe('workflow JSON webhook transport', () => {
+  it('posts JSON with the host idempotency identity and retains a redirect response without following it', async () => {
+    const requests: PinnedHttpStreamRequest[] = [];
+    const chunks = [Buffer.from('redirect '), Buffer.from('body')];
+    let cancelled = false;
+    const response = await postWebhookJsonAsync({
+      url: 'https://hooks.example.test/work', body: { text: '$(not a command)', count: 2 },
+      idempotencyKey: 'run/step/0',
+      network: { resolveAddresses: resolvesTo('93.184.216.34'), openPinnedStream: async (request) => {
+        requests.push(request);
+        return { status: 302, headers: { location: 'http://169.254.169.254/' }, contentLength: 13,
+          read: async () => chunks.shift() ?? null, cancel: () => { cancelled = true; } };
+      } },
+    });
+    expect(response).toEqual({ status: 302, body: 'redirect body' });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ method: 'POST', validatedAddresses: ['93.184.216.34'],
+      headers: { 'content-type': 'application/json', 'idempotency-key': 'run/step/0' } });
+    expect(JSON.parse(Buffer.from(requests[0]!.body!).toString('utf8'))).toEqual({ text: '$(not a command)', count: 2 });
+    expect(cancelled).toBe(true);
+  });
+
+  it('uses the notification destination policy before any JSON effect', async () => {
+    const transport = createRecordingTransport({ status: 200 });
+    await expect(postWebhookJsonAsync({ url: 'https://hooks.example.test/work', body: {}, idempotencyKey: 'run/step/0',
+      network: { resolveAddresses: resolvesTo('127.0.0.1'), openPinnedStream: transport.openPinnedStream } }))
+      .rejects.toThrow();
+    expect(transport.requests).toHaveLength(0);
+  });
+});
 
 describe('sendWebhookActivityNotificationAsync', () => {
   it('projects a workflow update through the strict webhook arm without Session or private content', async () => {
