@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 
 const AgentStateObjectSchema = z.object({
     controlledByUser: z.boolean().nullish(),
@@ -38,6 +39,19 @@ const AgentStateObjectSchema = z.object({
             .nullish()
             .catch(undefined),
         updatedPermissions: z.any().optional(),
+        // Source-owned completion evidence remains opaque here; its consumers validate it.
+        allowTools: z.unknown().optional(),
+        answers: z.unknown().optional(),
+        structuredAnswersV1: z.unknown().optional(),
+        dialogId: z.unknown().optional(),
+        dialogChoice: z.unknown().optional(),
+        responseTarget: z.unknown().optional(),
+        subagentRef: z.unknown().optional(),
+        sidechainId: z.unknown().optional(),
+        permissionSuggestions: z.unknown().optional(),
+        permissionDecisionActorV1: z.unknown().optional(),
+        permissionDecisionClaimV1: z.unknown().optional(),
+        remoteMediationSettlementId: z.unknown().optional(),
     }).passthrough()).nullish(),
     /**
      * Optional agent capabilities negotiated via agentState.
@@ -74,7 +88,7 @@ const AgentStateObjectSchema = z.object({
     }).nullish(),
 }).passthrough();
 
-export const AgentStateSchema = z.preprocess((value) => {
+export const AgentStateSchema = createStoredReadSchema(z.preprocess((value) => {
     if (typeof value !== 'string') return value;
     const trimmed = value.trim();
     if (!trimmed) return value;
@@ -83,6 +97,6 @@ export const AgentStateSchema = z.preprocess((value) => {
     } catch {
         return value;
     }
-}, AgentStateObjectSchema);
+}, AgentStateObjectSchema));
 
 export type AgentState = z.infer<typeof AgentStateSchema>;

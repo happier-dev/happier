@@ -1,3 +1,7 @@
+import type { core } from 'zod';
+import { ActionJsonSchemaProjectionError, zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
+import { createPluginManifestJsonSchemaV2 } from '../manifest/jsonSchema.js';
+import { PluginManifestV2Schema } from '../manifest/v2.js';
 import { describe, expect, it } from 'vitest';
 
 import { AgentUiProjectedDeclarationV1Schema } from './agentUiGrammar.js';
@@ -369,5 +373,50 @@ describe('public Agent UI authoring grammar', () => {
     };
     expect(parse(declarationFromANewerGrammar).success).toBe(false);
     expect(AgentUiProjectedDeclarationV1Schema.safeParse(declarationFromANewerGrammar).success).toBe(true);
+  });
+});
+
+describe('Agent UI grammar in the full public Manifest projection', () => {
+  it('keeps shared identifiers, setting references, and dialogs concrete in both dialects', () => {
+    const projections = [createPluginManifestJsonSchemaV2()];
+    for (const target of ['draft-7', 'draft-2020-12'] as const) {
+      projections.push(PluginManifestV2Schema.toJSONSchema({ io: 'input', target, unrepresentable: 'any' }));
+      // Custom authoring nodes are intentionally unrepresentable by the strict action helper.
+      expect(() => zodSchemaToJsonSchemaObject(PluginManifestV2Schema, { target }))
+        .toThrow(ActionJsonSchemaProjectionError);
+    }
+    for (const schema of projections) {
+      const definitions = (schema.$defs ?? schema.definitions) as Record<string, core.JSONSchema.JSONSchema>;
+      const object = (node: unknown): core.JSONSchema.JSONSchema => {
+        if (!node || typeof node !== 'object') throw new Error('Expected a projected schema object');
+        return node as core.JSONSchema.JSONSchema;
+      };
+      const resolve = (node: unknown) => {
+        const schemaObject = object(node);
+        const reference = schemaObject.$ref ?? (schemaObject.allOf?.length === 1 ? schemaObject.allOf[0]?.$ref : undefined);
+        return reference
+          ? object(definitions[reference.slice(reference.lastIndexOf('/') + 1)])
+          : schemaObject;
+      };
+      const declaration = Object.values(definitions).find((node) => {
+        const behavior = node.properties?.behavior;
+        return behavior && typeof behavior === 'object' && behavior.properties?.descriptorId;
+      });
+      const behavior = object(declaration?.properties?.behavior);
+      expect(resolve(behavior.properties?.descriptorId)).toEqual({ type: 'string', minLength: 1 });
+      const payload = object(behavior.properties?.payload);
+      const sessionExtras = object(payload.properties?.sessionExtras);
+      expect(resolve(sessionExtras.properties?.values)).toEqual({
+        type: 'array', items: { $ref: expect.any(String) },
+      });
+      expect(resolve(sessionExtras.properties?.settingKey)).toMatchObject({
+        type: 'object', properties: { scope: { type: 'string', enum: ['host', 'account', 'daemon'] } },
+      });
+      const askUserQuestion = object(behavior.properties?.askUserQuestion);
+      const dialogs = resolve(askUserQuestion.properties?.dialogs);
+      expect(resolve(dialogs.items)).toMatchObject({
+        properties: { dialogId: { $ref: expect.any(String) } }, required: ['dialogId'],
+      });
+    }
   });
 });

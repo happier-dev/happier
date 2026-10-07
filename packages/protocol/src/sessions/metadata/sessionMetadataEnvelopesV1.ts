@@ -1,4 +1,5 @@
 import type { AccountEncryptionMode } from '../../features/payload/capabilities/encryptionCapabilities.js';
+import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import {
   openAccountScopedBlobCiphertext,
   sealAccountScopedBlobCiphertext,
@@ -6,6 +7,7 @@ import {
 } from '../../crypto/accountScopedCipher.js';
 import {
   SESSION_OWNER_METADATA_ACCOUNT_SCOPED_KIND,
+  SessionOwnerMetadataEnvelopeV1Schema,
   SessionOwnerMetadataV1Schema,
   validateSessionOwnerMetadataEnvelopeForAccountModeV1,
   type SessionOwnerMetadataV1,
@@ -48,8 +50,9 @@ export function openSessionOwnerMetadataEnvelopeV1(params: Readonly<{
   envelope: unknown;
   material?: AccountScopedCryptoMaterial | null;
 }>): OpenSessionOwnerMetadataEnvelopeV1Result {
+  const stored = createStoredReadSchema(SessionOwnerMetadataEnvelopeV1Schema).safeParse(params.envelope);
   const validated = validateSessionOwnerMetadataEnvelopeForAccountModeV1(
-    params,
+    { ...params, envelope: stored.success ? stored.data : params.envelope },
   );
   if (!validated.ok) return validated;
   if (validated.envelope.t === 'plain') {
@@ -83,7 +86,7 @@ export function openSessionOwnerMetadataV1(params: Readonly<{
   ) {
     return null;
   }
-  const parsed = SessionOwnerMetadataV1Schema.safeParse(opened.value);
+  const parsed = createStoredReadSchema(SessionOwnerMetadataV1Schema).safeParse(opened.value);
   return parsed.success ? parsed.data : null;
 }
 

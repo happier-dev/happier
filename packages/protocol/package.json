@@ -3,9 +3,21 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "happier": {
+    "installFreshnessInputs": [
+      "src/auth/accountPasswordCredential.ts",
+      "src/crypto/base64.ts",
+      "src/crypto/canonicalDigest.ts",
+      "src/features/payload/capabilities/encryptionCapabilities.ts"
+    ]
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./common/deadlineTimer": {
+      "types": "./dist/common/deadlineTimer.d.ts",
+      "default": "./dist/common/deadlineTimer.js"
+    },
     "./lazyZodSchema": {
       "types": "./dist/lazyZodSchema.d.ts",
       "default": "./dist/lazyZodSchema.js"
@@ -1725,6 +1737,10 @@
     "./json/strictJsonValue": {
       "types": "./dist/json/strictJsonValue.d.ts",
       "default": "./dist/json/strictJsonValue.js"
+    },
+    "./json/storedReadSchema": {
+      "types": "./dist/json/storedReadSchema.d.ts",
+      "default": "./dist/json/storedReadSchema.js"
     },
     "./reviews/reviewPublicationEvidence": {
       "types": "./dist/reviews/reviewPublicationEvidence.d.ts",

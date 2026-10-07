@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { RoleActionIdV1 } from './roleActionIdsV1.js';
 import { RoleArtifactV1Schema } from './roleArtifactV1.js';
 import { RoleInstructionsOverrideV1Schema, RoleOverrideV1Schema } from './rolesV1.js';
 
@@ -36,7 +37,7 @@ export const RoleActionInputSchemasV1 = {
   'roles.delete': RoleIdentityV1Schema.extend({ expectedRevision: RoleArtifactRevisionV1Schema }).strict(),
   'roles.override.set': RoleInstructionsOverrideV1Schema,
   'roles.override.reset': RoleIdentityV1Schema,
-} as const;
+} as const satisfies Readonly<Record<RoleActionIdV1, z.ZodTypeAny>>;
 
 export const RoleActionOutputSchemasV1 = {
   'session.role.set': RoleActionUpdatedV1Schema,
@@ -53,7 +54,7 @@ export const RoleActionOutputSchemasV1 = {
   'roles.delete': z.object({ deleted: z.literal(true) }).strict(),
   'roles.override.set': RoleActionUpdatedV1Schema,
   'roles.override.reset': RoleActionUpdatedV1Schema,
-} as const;
+} as const satisfies Readonly<Record<RoleActionIdV1, z.ZodTypeAny>>;
 
 export const ACCOUNT_ROLE_MUTATION_IDS_V1 = [
   'roles.create', 'roles.update', 'roles.delete', 'roles.override.set', 'roles.override.reset',

@@ -1,3 +1,7 @@
+import type { core } from 'zod';
+import { ActionJsonSchemaProjectionError, zodSchemaToJsonSchemaObject } from '../../../actions/actionInputJsonSchema.js';
+import { createPluginManifestJsonSchemaV2 } from '../../manifest/jsonSchema.js';
+import { PluginManifestV2Schema } from '../../manifest/v2.js';
 import { describe, expect, it } from 'vitest';
 import Ajv2020 from 'ajv/dist/2020.js';
 
@@ -271,7 +275,20 @@ describe('declarative node vocabulary v2', () => {
       'bug',
       'pin',
       'conversations',
+      'waveform',
+      'desktop',
       'pause',
+      'failure',
+      'unavailable',
+      'denied',
+      'review',
+      'attention',
+      'escalating',
+      'merge-ready',
+      'mention',
+      'assigned',
+      'new',
+      'waiting',
     ]);
 
     // Metadata is bounded, and an empty metadata block is a modeling mistake.
@@ -533,6 +550,43 @@ describe('declarative node vocabulary v2', () => {
         contentType: PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1,
       },
     }).success).toBe(false);
+  });
+});
+
+describe('UI contributions in the full public Manifest projection', () => {
+  it('keeps the View union inline and bounded-label references unchanged in both dialects', () => {
+    const projections = [createPluginManifestJsonSchemaV2()];
+    for (const target of ['draft-7', 'draft-2020-12'] as const) {
+      projections.push(PluginManifestV2Schema.toJSONSchema({ io: 'input', target, unrepresentable: 'any' }));
+      expect(() => zodSchemaToJsonSchemaObject(PluginManifestV2Schema, { target }))
+        .toThrow(ActionJsonSchemaProjectionError);
+    }
+    for (const schema of projections) {
+      const definitions = (schema.$defs ?? schema.definitions) as Record<string, core.JSONSchema.JSONSchema>;
+      const object = (node: unknown): core.JSONSchema.JSONSchema => {
+        if (!node || typeof node !== 'object') throw new Error('Expected a projected schema object');
+        return node as core.JSONSchema.JSONSchema;
+      };
+      const resolve = (node: unknown) => {
+        const value = object(node);
+        const reference = value.$ref ?? (value.allOf?.length === 1 ? value.allOf[0]?.$ref : undefined);
+        return reference ? object(definitions[reference.slice(reference.lastIndexOf('/') + 1)]) : value;
+      };
+      const family = Object.values(definitions).find((node) => node.properties?.views && node.properties?.settingsGroups);
+      const views = resolve(family?.properties?.views);
+      expect(views.items).toEqual({ anyOf: expect.arrayContaining([{ $ref: expect.any(String) }]) });
+      if (schema.$schema === 'http://json-schema.org/draft-07/schema#') {
+        const view = Object.values(definitions).find((node) => {
+          const container = node.properties?.container;
+          return typeof container === 'object' && container.const === 'appPage' && node.properties?.badge;
+        });
+        const badge = resolve(view?.properties?.badge);
+        expect(badge.properties?.label).toEqual({ allOf: [{ $ref: expect.any(String) }] });
+        const groups = resolve(family?.properties?.settingsGroups);
+        const group = resolve(groups.items);
+        expect(resolve(group.properties?.title)).toEqual({ allOf: [{ $ref: expect.any(String) }] });
+      }
+    }
   });
 });
 

@@ -3,6 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { MetadataSchema } from "./metadata.js";
 
 describe('MetadataSchema (forkV1)', () => {
+    it('preserves managed directory classification while dropping unknown stored marker fields', () => {
+        const parsed = MetadataSchema.parse({
+            sessionDirectoryV1: { v: 1, kind: 'managed', futureField: 'ignored' },
+        });
+        expect(parsed.sessionDirectoryV1).toEqual({ v: 1, kind: 'managed' });
+    });
+
     it('retains the durable request identity used to reconcile an issued fork', () => {
         const parsed = MetadataSchema.parse({
             forkV1: {

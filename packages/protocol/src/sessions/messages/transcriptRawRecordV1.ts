@@ -1,4 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { z } from 'zod';
 
 import {
@@ -1038,7 +1039,7 @@ export function createTranscriptRawRecordV1Schema<MetaSchema extends z.ZodTypeAn
     metaSchema?: MetaSchema;
   }>,
 ) {
-  const metaSchema = options?.metaSchema ?? createSessionMessageMetaSchema(zod);
+  const metaSchema = options?.metaSchema ?? createStoredReadSchema(createSessionMessageMetaSchema(zod));
 
   return zod.preprocess(
     preprocessMessageContent,

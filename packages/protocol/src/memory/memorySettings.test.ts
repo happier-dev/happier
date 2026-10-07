@@ -1,3 +1,4 @@
+import { sealSecretsDeepV1, unsealSecretsDeepV1 } from '../crypto/settingsSecretStringsV1.js';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -185,5 +186,33 @@ describe('memorySettings archived eligibility', () => {
       MemorySettingsV1Schema.parse({ v: 1, enabled: true, includeArchivedSessions: true })
         .includeArchivedSessions,
     ).toBe(true);
+  });
+});
+
+describe('memory settings materialization and persistence artifacts', () => {
+  it('produces plain cloneable defaults and preserves the real seal/JSON/unseal path', () => {
+    const defaults = MemorySettingsV1Schema.parse({ v: 1 });
+    expect(structuredClone(defaults)).toEqual(defaults);
+    expect(normalizeMemorySettings(JSON.parse(JSON.stringify(DEFAULT_MEMORY_SETTINGS)))).toEqual(defaults);
+    const settings = MemorySettingsV1Schema.parse({
+      v: 1,
+      enabled: true,
+      embeddings: {
+        mode: 'custom',
+        custom: {
+          kind: 'openai_compatible',
+          apiKey: { _isSecretValue: true, value: 'memory-secret' },
+        },
+      },
+    });
+    const key = new Uint8Array(32).fill(7);
+    const sealed = sealSecretsDeepV1(settings, key, (length) => new Uint8Array(length).fill(5));
+    const persisted = JSON.stringify(sealed);
+    expect(persisted).not.toContain('memory-secret');
+    const reopened = unsealSecretsDeepV1(MemorySettingsV1Schema.parse(JSON.parse(persisted)), key);
+    expect(structuredClone(reopened)).toEqual(reopened);
+    expect(reopened.embeddings.custom?.kind).toBe('openai_compatible');
+    if (reopened.embeddings.custom?.kind !== 'openai_compatible') throw new Error('Expected remote embeddings');
+    expect(reopened.embeddings.custom.apiKey?.value).toBe('memory-secret');
   });
 });

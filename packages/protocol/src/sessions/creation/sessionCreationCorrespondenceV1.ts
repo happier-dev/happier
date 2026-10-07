@@ -1,8 +1,8 @@
 import { z } from 'zod';
+import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 
 import { AgentExecutionTargetV1Schema } from '../../agents/executionTargetV1.js';
 import { ConnectedServiceBindingsV2IngressSchema } from '../../connect/connectedServiceBindings.js';
-import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
 import { SessionMcpSelectionV1Schema } from '../../mcp/servers/sessionSelectionV1.js';
 import { SessionModelSelectionV1Schema } from '../../providers/selection/v1.js';
 import { AgentSessionConfigurationSnapshotV1Schema } from '../../runtime/agentSessionV1.js';
@@ -55,6 +55,7 @@ export const SessionCreationCorrespondenceV1Schema = z.object({
 export type SessionCreationCorrespondenceV1 = z.infer<
   typeof SessionCreationCorrespondenceV1Schema
 >;
+export const SessionCreationCorrespondenceV1ReadSchema = createStoredReadSchema(SessionCreationCorrespondenceV1Schema);
 
 export function normalizeSessionCreationOrganizationPlacementV1(
   input: z.input<typeof SessionOrganizationPlacementV1Schema> | undefined,
@@ -72,8 +73,8 @@ export function sessionCreationCorrespondenceMatchesV1(
   left: unknown,
   right: unknown,
 ): boolean {
-  const parsedLeft = SessionCreationCorrespondenceV1Schema.safeParse(left);
-  const parsedRight = SessionCreationCorrespondenceV1Schema.safeParse(right);
+  const parsedLeft = SessionCreationCorrespondenceV1ReadSchema.safeParse(left);
+  const parsedRight = SessionCreationCorrespondenceV1ReadSchema.safeParse(right);
   return parsedLeft.success
     && parsedRight.success
     && JSON.stringify(semanticCorrespondence(parsedLeft.data)) === JSON.stringify(semanticCorrespondence(parsedRight.data));
@@ -90,48 +91,4 @@ function semanticCorrespondence(value: SessionCreationCorrespondenceV1) {
       modelSelection: selection ? { v: selection.v, ref: selection.ref } : null,
     },
   };
-}
-
-const SESSION_CREATION_CORRESPONDENCE_V1_TRANSPORT_PREFIX = 'scv1:';
-const SESSION_CREATION_CORRESPONDENCE_V1_TRANSPORT_MAX_LENGTH = 24_000;
-const transportEncoder = new TextEncoder();
-const transportDecoder = new TextDecoder('utf-8', { fatal: true });
-
-export function serializeSessionCreationCorrespondenceV1(
-  correspondence: SessionCreationCorrespondenceV1,
-): string {
-  const parsed = SessionCreationCorrespondenceV1Schema.parse(correspondence);
-  const encoded = `${SESSION_CREATION_CORRESPONDENCE_V1_TRANSPORT_PREFIX}${encodeBase64(
-    transportEncoder.encode(JSON.stringify(parsed)),
-    'base64url',
-  ).replace(/=+$/u, '')}`;
-  if (encoded.length > SESSION_CREATION_CORRESPONDENCE_V1_TRANSPORT_MAX_LENGTH) {
-    throw new Error('Session creation correspondence transport exceeds its maximum length');
-  }
-  return encoded;
-}
-
-export function deserializeSessionCreationCorrespondenceV1(
-  value: string,
-): SessionCreationCorrespondenceV1 {
-  if (
-    value.length > SESSION_CREATION_CORRESPONDENCE_V1_TRANSPORT_MAX_LENGTH
-    || !/^scv1:[A-Za-z0-9_-]+$/u.test(value)
-  ) {
-    throw new Error('Invalid Session creation correspondence transport');
-  }
-  try {
-    const parsed = SessionCreationCorrespondenceV1Schema.parse(JSON.parse(
-      transportDecoder.decode(decodeBase64(
-        value.slice(SESSION_CREATION_CORRESPONDENCE_V1_TRANSPORT_PREFIX.length),
-        'base64url',
-      )),
-    ) as unknown);
-    if (serializeSessionCreationCorrespondenceV1(parsed) !== value) {
-      throw new Error('non-canonical transport');
-    }
-    return parsed;
-  } catch {
-    throw new Error('Invalid Session creation correspondence transport');
-  }
 }

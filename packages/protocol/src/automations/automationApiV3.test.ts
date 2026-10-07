@@ -427,10 +427,12 @@ describe('Automation versioned API schemas', () => {
       ...listDefinition,
       trigger: schedule,
     }).success).toBe(false);
-    expect(Api.AutomationDefinitionDetailSchema.safeParse({
+    const openedDetail = Api.AutomationDefinitionDetailSchema.parse({
       ...detail,
       executionRecipe: { ...recipe, assignmentMachineIds: ['machine-1'] },
-    }).success).toBe(false);
+    });
+    expect(openedDetail.executionRecipe).toEqual(Api.AutomationDefinitionDetailSchema.parse(detail).executionRecipe);
+    expect(openedDetail.executionRecipe).not.toHaveProperty('assignmentMachineIds');
   });
 
   it('owns stable exact-turn registration refusal codes', () => {

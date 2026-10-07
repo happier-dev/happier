@@ -9,6 +9,7 @@ import { BUILT_IN_ROLES_V1 } from './builtInRolesV1.js';
 import { buildRoleArtifactHeaderV1, RoleArtifactV1Schema } from './roleArtifactV1.js';
 import { RoleActionInputSchemasV1, type RoleActionEntryV1 } from './roleActionsV1.js';
 import type { PluginRoleContributionV1 } from './rolesV1.js';
+import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 
 export type RoleArtifactStoreV1 = Omit<WorkflowDefinitionArtifactOperations, 'read' | 'create'> & Readonly<{
   read: (artifactId: string, options?: Readonly<{ signal?: AbortSignal }>) => Promise<Readonly<{
@@ -49,12 +50,14 @@ export function createRoleSourceReaderV1(params: RoleSourceReaderParamsV1): Role
         const page = await params.artifactStore.list({ limit: 500, ...(cursor ? { cursor } : {}), ...(signal ? { signal } : {}) });
         for (const header of page.items) {
           if (header.header.kind !== 'role.v1') continue;
-          const artifact = await params.artifactStore.read(header.artifactId, signal ? { signal } : undefined);
-          if (!artifact || typeof artifact.body !== 'string') refuse('artifact_content_unavailable');
+          let artifact: Awaited<ReturnType<RoleArtifactStoreV1['read']>>;
+          try { artifact = await params.artifactStore.read(header.artifactId, signal ? { signal } : undefined); }
+          catch { signal?.throwIfAborted(); continue; }
+          if (!artifact || typeof artifact.body !== 'string') continue;
           let content: unknown;
-          try { content = JSON.parse(artifact.body); } catch { refuse('artifact_content_unavailable'); }
-          const role = RoleArtifactV1Schema.safeParse(content);
-          if (!role.success) refuse('artifact_content_unavailable');
+          try { content = JSON.parse(artifact.body); } catch { continue; }
+          const role = createStoredReadSchema(RoleArtifactV1Schema).safeParse(content);
+          if (!role.success) continue;
           const access = ArtifactCallerAccessV1Schema.parse(header.access);
           entries.push({ roleId: artifact.artifactId, role: role.data, revision: artifact.revision,
             shared: access !== 'owner', viewOnly: access === 'view', migratedFromV0_2: artifact.header.migratedFromV0_2 === true });
@@ -123,7 +126,7 @@ export function createAccountRoleActionExecutorV1(params: RoleSourceReaderParams
     if (actionId === 'roles.override.set' || actionId === 'roles.override.reset') {
       const request = RoleActionInputSchemasV1[actionId].parse(input);
       await params.mutateAccountSettings(async (raw) => {
-        const rolesV1 = RolesV1Schema.parse(Object.hasOwn(raw, 'rolesV1') ? raw.rolesV1 : { overrides: {} });
+        const rolesV1 = createStoredReadSchema(RolesV1Schema).parse(Object.hasOwn(raw, 'rolesV1') ? raw.rolesV1 : { overrides: {} });
         if (actionId === 'roles.override.reset') delete rolesV1.overrides[request.roleId];
         else rolesV1.overrides[request.roleId] = RoleActionInputSchemasV1['roles.override.set'].parse(input);
         return await retainLegacy(raw, rolesV1, context);
@@ -133,7 +136,7 @@ export function createAccountRoleActionExecutorV1(params: RoleSourceReaderParams
     const request = RoleActionInputSchemasV1[actionId].parse(input);
     if ('roleId' in request && request.roleId && (Object.hasOwn(BUILT_IN_ROLES_V1, request.roleId) || request.roleId.startsWith('plugin:'))) refuse('role_read_only');
     await params.mutateAccountSettings(async (raw) => await retainLegacy(raw,
-      RolesV1Schema.parse(Object.hasOwn(raw, 'rolesV1') ? raw.rolesV1 : { overrides: {} }), context), context.signal);
+      createStoredReadSchema(RolesV1Schema).parse(Object.hasOwn(raw, 'rolesV1') ? raw.rolesV1 : { overrides: {} }), context), context.signal);
     if (actionId === 'roles.create') {
       const request = RoleActionInputSchemasV1[actionId].parse(input);
       const roleId = request.roleId ?? params.generateId();
