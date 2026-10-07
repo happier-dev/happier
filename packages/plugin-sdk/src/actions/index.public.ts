@@ -93,6 +93,7 @@ export type { TodoSessionLinkActionInputById, TodoSessionLinkActionResultById } 
 export type { VoiceControlsActionInputById, VoiceControlsActionResultById } from './dtos/voiceControlsActionDtos.generated.js';
 export type { WidgetsActionInputById, WidgetsActionResultById } from './dtos/widgetsActionDtos.generated.js';
 export type { WorkflowAuthoringActionInputById, WorkflowAuthoringActionResultById } from './dtos/workflowAuthoringActionDtos.generated.js';
+export type { WorkflowEffectsActionInputById, WorkflowEffectsActionResultById } from './dtos/workflowEffectsActionDtos.generated.js';
 export type { WorkflowsActionInputById, WorkflowsActionResultById } from './dtos/workflowsActionDtos.generated.js';
 export type { WorkspaceLayoutActionInputById, WorkspaceLayoutActionResultById } from './dtos/workspaceLayoutActionDtos.generated.js';
 export type { PluginAgentExternalSessionLinkDataArray } from './actionTypeMap.generated.js';

@@ -427,6 +427,8 @@
 | `./actions` | `WidgetsActionResultById` | type | any |
 | `./actions` | `WorkflowAuthoringActionInputById` | type | any |
 | `./actions` | `WorkflowAuthoringActionResultById` | type | any |
+| `./actions` | `WorkflowEffectsActionInputById` | type | any |
+| `./actions` | `WorkflowEffectsActionResultById` | type | any |
 | `./actions` | `WorkflowsActionInputById` | type | any |
 | `./actions` | `WorkflowsActionResultById` | type | any |
 | `./actions` | `WorkspaceFileSearchActionInputById` | type | any |
@@ -1078,6 +1080,7 @@
 | `./connected-accounts` | `parseCredentialRecord` | value | daemon |
 | `./connected-accounts` | `requireOauthCredentialRecordWithExpiry` | value | daemon |
 | `./connected-accounts` | `requireTokenCredentialRecord` | value | daemon |
+| `./connected-accounts` | `resolveConnectedServiceQuotaMeterLabel` | value | any |
 | `./connected-accounts` | `unsupportedAccountUsage` | value | any |
 | `./contributions` | `ContributionActionDangerLevel` | type | any |
 | `./contributions` | `ContributionActionSurface` | type | any |
@@ -2202,7 +2205,9 @@
 | `./sessions/external` | `HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1` | value | daemon |
 | `./sessions/external` | `compareExternalSessionCandidatePrecedence` | value | daemon |
 | `./sessions/external` | `createAgentExternalSessionsProducerOverflowFailure` | value | daemon |
+| `./sessions/external` | `createExternalSessionContentMatchSnippet` | value | daemon |
 | `./sessions/external` | `deriveExternalSessionActivity` | value | daemon |
+| `./sessions/external` | `findExternalSessionContentMatchRange` | value | daemon |
 | `./sessions/external` | `getAgentExternalSessionsInvocationFailure` | value | daemon |
 | `./sessions/external` | `isAgentExternalSessionsFailureCode` | value | daemon |
 | `./sessions/external` | `isAgentExternalSessionsResultWithinByteBudget` | value | daemon |

@@ -18,7 +18,7 @@ import type { ClaudeExternalSessionSource } from './source.js';
 import type { AgentExternalSessionsInvocation } from '@happier-dev/plugin-sdk/sessions/external';
 import { searchClaudeExternalTranscript } from './transcript.js';
 import { readClaudeJsonlFileSize } from './files.js';
-import { findExternalSessionContentMatchRange } from '@happier-dev/protocol/sessions/external/contentSearchMatch';
+import { findExternalSessionContentMatchRange } from '@happier-dev/plugin-sdk/sessions/external';
 
 export type ClaudeExternalSessionCandidate = Readonly<{
     remoteSessionId: string;

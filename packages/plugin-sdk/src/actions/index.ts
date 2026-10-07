@@ -249,6 +249,8 @@ export type { WidgetsActionInputById } from './dtos/widgetsActionDtos.generated.
 export type { WidgetsActionResultById } from './dtos/widgetsActionDtos.generated.js';
 export type { WorkflowAuthoringActionInputById } from './dtos/workflowAuthoringActionDtos.generated.js';
 export type { WorkflowAuthoringActionResultById } from './dtos/workflowAuthoringActionDtos.generated.js';
+export type { WorkflowEffectsActionInputById } from './dtos/workflowEffectsActionDtos.generated.js';
+export type { WorkflowEffectsActionResultById } from './dtos/workflowEffectsActionDtos.generated.js';
 export type { WorkflowsActionInputById } from './dtos/workflowsActionDtos.generated.js';
 export type { WorkflowsActionResultById } from './dtos/workflowsActionDtos.generated.js';
 export type { WorkspaceFileSearchActionInputById } from './dtos/workspaceFileSearchActionDtos.generated.js';

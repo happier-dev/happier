@@ -3,7 +3,7 @@ import { open, stat, type FileHandle } from 'node:fs/promises';
 
 import type { AgentExternalSessionTranscriptItem, AgentExternalSessionsInvocation } from '@happier-dev/plugin-sdk/sessions/external';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
-import { createExternalSessionContentMatchSnippet } from '@happier-dev/protocol/sessions/external/contentSearchMatch';
+import { createExternalSessionContentMatchSnippet } from '@happier-dev/plugin-sdk/sessions/external';
 import {
   readJsonlFileBackwardPage,
   readJsonlFileForwardLines,

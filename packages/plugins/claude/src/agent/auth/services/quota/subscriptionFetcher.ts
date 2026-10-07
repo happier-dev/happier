@@ -1,4 +1,4 @@
-import { resolveConnectedServiceQuotaMeterLabel } from '@happier-dev/protocol';
+import { resolveConnectedServiceQuotaMeterLabel } from '@happier-dev/plugin-sdk/connected-accounts';
 import type {
     AgentAccountUsageMeter,
     AgentAccountUsageSnapshot,

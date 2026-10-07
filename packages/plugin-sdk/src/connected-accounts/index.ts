@@ -86,4 +86,5 @@ export { defineAuthMaterialization } from '../connectedAccounts.js';
 export { parseCredentialRecord } from '../connectedAccounts.js';
 export { requireOauthCredentialRecordWithExpiry } from '../connectedAccounts.js';
 export { requireTokenCredentialRecord } from '../connectedAccounts.js';
+export { resolveConnectedServiceQuotaMeterLabel } from '../connectedAccounts.js';
 export { unsupportedAccountUsage } from '../connectedAccounts.js';
