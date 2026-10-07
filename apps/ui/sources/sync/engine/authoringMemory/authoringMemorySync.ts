@@ -1,6 +1,7 @@
 import {
     AuthoringMemoryValueV1Schema,
     AuthoringMemoryEngineSelectionsV1Schema,
+    StoredAuthoringMemoryEngineSelectionsV1Schema,
     LegacyRecentMachinePathsSchema,
     LegacyLastUsedProfileSchema,
     LegacyRememberedEngineSelectionsByScopeV1Schema,
@@ -56,7 +57,7 @@ export function createAuthoringMemorySync(options: Readonly<{
         if (!options.isCurrent()) throw new Error('Authoring memory Account/Home scope retired');
     }
     function engineRow(key: string, value: AuthoringMemoryValueV1) {
-        const row = AuthoringMemoryEngineSelectionsV1Schema.parse(value);
+        const row = StoredAuthoringMemoryEngineSelectionsV1Schema.parse(value);
         const scope = key.slice('engineSelection:'.length);
         for (const rawScope of Object.keys(row.selectionsByScope)) {
             if ((normalizeRememberedEngineSelectionScopeKey(rawScope.trim()) ?? rawScope) !== scope) {

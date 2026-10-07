@@ -586,7 +586,7 @@ describe('spawnAttemptNonceStore persistence', () => {
         }
     });
 
-    it('fails a blocked success mutation finitely and fences its late Web Lock callback', async () => {
+    it('retains a successful spawn while waiting for its Web Lock beyond a local timeout', async () => {
         const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
         const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
         const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
@@ -640,25 +640,25 @@ describe('spawnAttemptNonceStore persistence', () => {
                 nonce: 'resolved-spawn-nonce',
                 createdSessionId: 'resolved-session',
             });
-            const finiteResult = Promise.race([
-                mutation,
-                new Promise<'test_timeout'>((resolve) => {
-                    setTimeout(() => resolve('test_timeout'), 60_000);
-                }),
-            ]);
+            let settled = false;
+            void mutation.then(() => { settled = true; });
 
             await vi.advanceTimersByTimeAsync(60_000);
 
-            await expect(finiteResult).resolves.toBeNull();
+            expect(settled).toBe(false);
             if (!blockedCallback.invoke) throw new Error('expected a blocked Web Lock callback');
             await blockedCallback.invoke();
+            await expect(mutation).resolves.toMatchObject({
+                nonce: 'resolved-spawn-nonce',
+                createdSessionId: 'resolved-session',
+            });
             expect(store.readSpawnAttemptCustodyState(scope)).toMatchObject({
                 status: 'valid',
                 attempts: {
                     [compositeRecordId]: {
                         nonce: 'resolved-spawn-nonce',
                         submissionState: 'submitted',
-                        createdSessionId: null,
+                        createdSessionId: 'resolved-session',
                     },
                 },
             });

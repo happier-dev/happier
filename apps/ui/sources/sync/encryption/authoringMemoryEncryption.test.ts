@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createAuthoringMemoryCipher } from './authoringMemoryEncryption';
+import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol';
 
 describe('authoring memory Account envelope', () => {
     const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(3) };
@@ -19,5 +20,14 @@ describe('authoring memory Account envelope', () => {
         expect(() => keyless.seal('lastUsedProfile', 'p')).toThrow();
         const plain = createAuthoringMemoryCipher({ mode: 'plain', material: null, randomBytes });
         expect(() => plain.open('lastUsedProfile', content)).toThrow();
+    });
+    it('opens persisted E2EE payloads with additive fields without weakening the row binding', () => {
+        const cipher = createAuthoringMemoryCipher({ mode: 'e2ee', material, randomBytes });
+        const content = { t: 'encrypted' as const, c: sealAccountScopedBlobCiphertext({
+            kind: 'authoring_memory', material, randomBytes,
+            payload: { key: 'lastUsedProfile', value: 'p', futurePayloadField: { extra: true } },
+        }), futureEnvelopeField: true };
+        expect(cipher.open('lastUsedProfile', content)).toBe('p');
+        expect(() => cipher.open('recentMachinePaths', content)).toThrow();
     });
 });
