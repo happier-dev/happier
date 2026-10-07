@@ -45,6 +45,12 @@ native backing before the web root clears its opaque canvas. Blur Off can retain
 backing. The 0.2 enable/intensity keys remain inputs; the old device-local backdrop switch is no
 longer a second runtime decision.
 
+## Loading indicators
+
+In 0.3 development source, core's `ActivitySpinner` and plugin `Spinner` share the frame generation and platform renderers in [`presentation/feedback`](../packages/plugin-ui/src/presentation/feedback/Spinner.tsx). The default is the eight-dot Happier mark: the seven-dot H plus a bottom-centre dot. Appearance retains each seven-dot H motion as an `h…` choice, alongside the Classic Ring. Shape is part of the shared style descriptor; consumers do not add their own dot or animation.
+
+Core injects device-local style, speed and pause preferences, including pending release previews through the existing presentation host; plugin surfaces use the shared default. Both preserve paused marks, reduced-motion breathing, explicit color overrides and the existing native clocks/web filmstrips.
+
 ## Retained content and recovery
 
 [`SurfaceFreshnessLine`](../apps/ui/sources/components/ui/surfaces/SurfaceFreshnessLine.tsx) presents the retained observation's time, refresh/reconnect reason and optional recovery action. Show it alongside retained content, under the header; when there is no retained content, show the appropriate loading/error/unavailable card instead. It and the public Plugin UI freshness component consume the same `HappierFreshnessLine` renderer and freshness-text formatter. Domain adapters still own observation timestamps and recovery actions.
@@ -52,6 +58,8 @@ longer a second runtime decision.
 Loading narration and diagnostic disclosure belong to the composition. The card does not own retries, availability, permissions or the underlying request lifecycle. Supply truthful state from that domain's owner, stop live activity at its terminal outcome and keep technical codes behind details. Avoid a second consumer-local spinner/error parser or timer for the same work.
 
 Plugin Resource hooks retain their store snapshot when host mount activity turns inactive, release their read/watch subscription, and refresh through the same owner when activity resumes. Providers without a host activity fact keep their existing live behavior. Imperative `hostApi.watchResource` subscriptions remain caller-owned until disposal; view consumers should use the Resource hooks rather than create another presentation-driven polling lifecycle.
+
+The shared Plugin UI `useSessionState` / `useSessionStates` hooks consume that same host activity eligibility. They retain the last ready Session snapshot while inactive, release watches and pending reads, ignore retired callbacks, and re-read on reactivation. The host's `readSession` remains the snapshot authority; these hooks add no cache, timer or Session status classifier. Providers without an activity fact remain live.
 
 ## Related
 
