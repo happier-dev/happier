@@ -218,7 +218,11 @@ async function stopExecutionHostVm({ profile, executor, force }) {
       serviceTunnels.push(await stopExecutionHostServiceTunnel({ profile, workspaceId, env: process.env }));
     }
   }
-  await unmountExecutionHostWorkspace({ profile, env: process.env, mountDir: profile.hostMountDir || '' });
+  // Force-stop must remain independent of SSHFS health and its reconciliation lock.
+  // A subsequent mount reconciles the stale mount after the guest is restarted.
+  if (!force) {
+    await unmountExecutionHostWorkspace({ profile, env: process.env, mountDir: profile.hostMountDir || '' });
+  }
   const result = await stopManagedLimaInstance({ executor, instance: profile.instance, force });
   return { ...result, serviceTunnels };
 }

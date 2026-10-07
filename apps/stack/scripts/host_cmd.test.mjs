@@ -352,7 +352,13 @@ async function createDevVmLifecycleFixture(t, { withLiveTunnelLock = false } = {
 test('dev-vm stop --force bypasses a wedged tunnel lock and forces the retained VM down', async (t) => {
   const fixture = await createDevVmLifecycleFixture(t, { withLiveTunnelLock: true });
 
+  const mountCalls = join(fixture.env.HAPPIER_STACK_HOME_DIR, 'mount-calls');
+  const mountCommand = join(fixture.env.PATH.split(':')[0], 'mount');
+  await writeFile(mountCommand, `#!/bin/sh\nprintf inspected > '${mountCalls}'\nexit 1\n`, 'utf8');
+  await chmod(mountCommand, 0o755);
+
   const result = await runNodeCapture([script, 'stop', '--force', '--json'], { env: fixture.env });
+  await assert.rejects(readFile(mountCalls, 'utf8'), /ENOENT/);
 
   assert.equal(result.code, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).status, 'Stopped');
