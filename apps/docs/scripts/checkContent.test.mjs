@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import test from 'node:test';
+import test, { afterEach } from 'node:test';
+import { createTestTempDirectory } from '../../../scripts/testing/process/temporaryDirectories.mjs';
 
 import {
   checkCliCommandCoverage,
@@ -17,8 +17,17 @@ import {
   slugifyHeading,
 } from './checkContent.mjs';
 
+const fixtureCleanups = new Set();
+afterEach(() => {
+  for (const cleanup of fixtureCleanups) cleanup();
+  fixtureCleanups.clear();
+});
+
 function fixture(files) {
-  const root = mkdtempSync(join(tmpdir(), 'docs-check-'));
+  // These fixtures are read in this process; no subprocess receives the root.
+  const temporary = createTestTempDirectory('docs-check-');
+  fixtureCleanups.add(temporary.cleanup);
+  const root = temporary.root;
   for (const [path, body] of Object.entries(files)) {
     const full = join(root, path);
     mkdirSync(join(full, '..'), { recursive: true });
