@@ -77,6 +77,11 @@ describe("publicShareRoutes (AccountChange integration)", () => {
             initAuth: false,
             initEncrypt: false,
             initFiles: false,
+            env: {
+                HAPPIER_PUBLIC_SERVER_URL: 'https://home.example.test',
+                HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN: 'preview.example.test',
+                HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOW_TEST_RATE_LIMIT_CHECKER: '1',
+            },
         });
     }, 120_000);
 
@@ -151,7 +156,7 @@ describe("publicShareRoutes (AccountChange integration)", () => {
                             "x-test-user-id": "unavailable-account",
                             "content-type": "application/json",
                         },
-                        payload: { token: "must-not-reach-handler" },
+                        payload: { lookupId: "must-not-reach-handler", keyDerivation: "fragment_v1" },
                     },
                     {
                         method: "DELETE" as const,
@@ -202,7 +207,7 @@ describe("publicShareRoutes (AccountChange integration)", () => {
                     {
                         method: "POST" as const,
                         headers: { "content-type": "application/json" },
-                        payload: { token: "forbidden-public-link" },
+                        payload: { lookupId: "forbidden-public-link", keyDerivation: "fragment_v1" },
                     },
                     { method: "DELETE" as const },
                 ]) {
@@ -244,7 +249,7 @@ describe("publicShareRoutes (AccountChange integration)", () => {
                         "content-type": "application/json",
                         ...CURRENT_ACCOUNT_STORED_CONTENT_HEADERS,
                     },
-                    payload: { token: "epoch-expiry-token", expiresAt: 0 },
+                    payload: { lookupId: "epoch-expiry-token", keyDerivation: "fragment_v1", expiresAt: 0 },
                 });
                 expect(create.statusCode, create.body).toBe(200);
                 expect(create.json().publicShare.expiresAt).toBe(0);
@@ -282,7 +287,7 @@ describe("publicShareRoutes (AccountChange integration)", () => {
                         "content-type": "application/json",
                         ...CURRENT_ACCOUNT_STORED_CONTENT_HEADERS,
                     },
-                    payload: { token, expiresAt, maxUses: 5, isConsentRequired: true },
+                    payload: { lookupId: token, keyDerivation: "fragment_v1", expiresAt, maxUses: 5, isConsentRequired: true },
                 });
                 expect(initial.statusCode, initial.body).toBe(200);
 
@@ -300,7 +305,7 @@ describe("publicShareRoutes (AccountChange integration)", () => {
                         "content-type": "application/json",
                         ...CURRENT_ACCOUNT_STORED_CONTENT_HEADERS,
                     },
-                    payload: { token, expiresAt, maxUses: 5, isConsentRequired: true },
+                    payload: { lookupId: token, keyDerivation: "fragment_v1", expiresAt, maxUses: 5, isConsentRequired: true },
                 });
                 expect(replay.statusCode, replay.body).toBe(200);
                 expect(replay.json().publicShare).toMatchObject({
@@ -338,7 +343,8 @@ describe("publicShareRoutes (AccountChange integration)", () => {
                         ...CURRENT_ACCOUNT_STORED_CONTENT_HEADERS,
                     },
                     payload: {
-                        token: "genuinely-changed-token",
+                        lookupId: "genuinely-changed-token",
+                        keyDerivation: "fragment_v1",
                         expiresAt,
                         maxUses: 5,
                         isConsentRequired: true,
@@ -376,7 +382,8 @@ describe("publicShareRoutes (AccountChange integration)", () => {
                         ...CURRENT_ACCOUNT_STORED_CONTENT_HEADERS,
                     },
                     payload: {
-                        token: "tok-invalid-dek",
+                        lookupId: "tok-invalid-dek",
+                        keyDerivation: "fragment_v1",
                         encryptedDataKey: MALFORMED_ENCRYPTED_DATA_KEY,
                     },
                 });
@@ -411,7 +418,7 @@ describe("publicShareRoutes (AccountChange integration)", () => {
                         "content-type": "application/json",
                         ...CURRENT_ACCOUNT_STORED_CONTENT_HEADERS,
                     },
-                    payload: { token: "disabled-public-link" },
+                    payload: { lookupId: "disabled-public-link", keyDerivation: "fragment_v1" },
                 });
                 expect(res.statusCode).toBe(403);
                 expect(res.json()).toEqual({ error: "session_access_external_sharing_disabled" });
@@ -452,7 +459,7 @@ describe("publicShareRoutes (AccountChange integration)", () => {
                         "content-type": "application/json",
                         ...CURRENT_ACCOUNT_STORED_CONTENT_HEADERS,
                     },
-                    payload: { token: "follow-public-link" },
+                    payload: { lookupId: "follow-public-link", keyDerivation: "fragment_v1" },
                 });
                 expect(res.statusCode, res.body).toBe(200);
             },
@@ -495,7 +502,7 @@ describe("publicShareRoutes (AccountChange integration)", () => {
                         "content-type": "application/json",
                         ...CURRENT_ACCOUNT_STORED_CONTENT_HEADERS,
                     },
-                    payload: { token: "unavailable-public-link" },
+                    payload: { lookupId: "unavailable-public-link", keyDerivation: "fragment_v1" },
                 });
                 expect(res.statusCode, res.body).toBe(503);
                 expect(res.json()).toEqual({ error: "session_access_authentication_unavailable" });
@@ -572,7 +579,6 @@ describe("publicShareRoutes (AccountChange integration)", () => {
                         ...CURRENT_ACCOUNT_STORED_CONTENT_HEADERS,
                     },
                     payload: {
-                        token: "original-active-token",
                         expiresAt: existing.expiresAt?.getTime(),
                         maxUses: 1,
                         isConsentRequired: false,
@@ -580,7 +586,7 @@ describe("publicShareRoutes (AccountChange integration)", () => {
                 });
                 expect(exactReplay.statusCode, exactReplay.body).toBe(200);
                 expect(exactReplay.json().publicShare).toMatchObject({
-                    token: "original-active-token",
+                    token: null,
                     useCount: 1,
                 });
                 expect(markAccountChanged).not.toHaveBeenCalled();
@@ -594,7 +600,7 @@ describe("publicShareRoutes (AccountChange integration)", () => {
                         "content-type": "application/json",
                         ...CURRENT_ACCOUNT_STORED_CONTENT_HEADERS,
                     },
-                    payload: { token: "replacement-active-token", maxUses: 1 },
+                    payload: { lookupId: "replacement-active-token", keyDerivation: "fragment_v1", maxUses: 1 },
                 });
                 expect(res.statusCode).toBe(403);
                 expect(res.json()).toEqual({ error: "session_access_external_sharing_disabled" });
@@ -669,7 +675,8 @@ describe("publicShareRoutes (AccountChange integration)", () => {
                         ...CURRENT_ACCOUNT_STORED_CONTENT_HEADERS,
                     },
                     payload: {
-                        token: "tok-unsplit",
+                        lookupId: "tok-unsplit",
+                        keyDerivation: "fragment_v1",
                         encryptedDataKey: VALID_ENCRYPTED_DATA_KEY,
                     },
                 });
@@ -706,13 +713,15 @@ describe("publicShareRoutes (AccountChange integration)", () => {
                         ...CURRENT_ACCOUNT_STORED_CONTENT_HEADERS,
                     },
                     payload: {
-                        token: "tok-create",
+                        lookupId: "tok-create",
+                        keyDerivation: "fragment_v1",
                         encryptedDataKey: VALID_ENCRYPTED_DATA_KEY,
                     },
                 });
 
                 expect(res.statusCode).toBe(200);
                 expect(res.json()).toEqual({
+                    isolatedOrigin: expect.any(String),
                     publicShare: expect.objectContaining({
                         token: "tok-create",
                         useCount: 0,

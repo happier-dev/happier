@@ -56,6 +56,11 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
             initAuth: false,
             initEncrypt: false,
             initFiles: false,
+            env: {
+                HAPPIER_PUBLIC_SERVER_URL: 'https://home.example.test',
+                HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN: 'preview.example.test',
+                HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOW_TEST_RATE_LIMIT_CHECKER: '1',
+            },
         });
     });
 
@@ -280,19 +285,20 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
                 method: "POST",
                 url: `/v1/sessions/${session.id}/public-share`,
                 headers: { "x-test-user-id": owner.id, "content-type": "application/json" },
-                payload: JSON.stringify({ token, isConsentRequired: false }),
+                payload: JSON.stringify({ lookupId: token, keyDerivation: 'fragment_v1', isConsentRequired: false }),
             });
             expect(createRes.statusCode).toBe(200);
 
             const accessRes = await app.inject({
                 method: "GET",
-                url: `/v1/public-share/${encodeURIComponent(token)}`,
+                url: `/v1/public-shares/${encodeURIComponent(token)}/content`,
+                headers: { host: new URL(createRes.json().isolatedOrigin).host },
             });
             expect(accessRes.statusCode).toBe(200);
             const json = accessRes.json();
-            expect(json.session?.id).toBe(session.id);
-            expect(json.session?.encryptionMode).toBe("plain");
-            const publicMetadata = JSON.parse(json.session?.metadata);
+            expect(json.content.kind).toBe('session');
+            expect(json.encryptionMode).toBe("plain");
+            const publicMetadata = JSON.parse(json.content.metadata);
             expect(publicMetadata.externalSessionOperationPresentationV1).toEqual(
                 externalSessionOperationPresentationV1,
             );
@@ -337,7 +343,7 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
                     method: "POST",
                     url: `/v1/sessions/${session.id}/public-share`,
                     headers: { "x-test-user-id": owner.id, "content-type": "application/json" },
-                    payload: JSON.stringify({ token, isConsentRequired: false }),
+                    payload: JSON.stringify({ lookupId: token, keyDerivation: 'fragment_v1', isConsentRequired: false }),
                 });
                 expect(createRes.statusCode).toBe(409);
                 expect(createRes.json()).toMatchObject({ code: "session_transcript_not_shareable" });
