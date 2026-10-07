@@ -11,6 +11,7 @@ import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { encodePasswordCredentialFieldV1 } from '@happier-dev/protocol/auth/accountPasswordCredential';
 import { signAccountContentKeyBindingV1 } from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
+import { redactBugReportSensitiveText, registerSensitiveDiagnosticValues, type SensitiveDiagnosticValuesLease } from '@happier-dev/protocol/bugs/reports/redaction';
 
 import { createHttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -28,6 +29,8 @@ import { assertCommandArguments, readFlagValue, readRawFlagValue } from '@/cli/c
 import { printJsonEnvelope, wantsJson, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { applyServerSelectionFromArgs } from '@/server/serverSelection';
 import { promptSecretInput } from '@/terminal/prompts/promptInput';
+import { logger } from '@/ui/logger';
+import { projectSafeAuthError } from './errorDiagnostic';
 
 export const NATIVE_EMAIL_USAGE = [
   'Usage:',
@@ -178,7 +181,6 @@ async function postNative(params: Readonly<{
 }>): Promise<{ status: number; data: unknown }> {
   const response = await axios.post<unknown>(`${params.serverApiUrl}${params.path}`, params.body, {
     headers: { 'Content-Type': 'application/json' },
-    timeout: 30_000,
     ...(params.signal ? { signal: params.signal } : {}),
     validateStatus: () => true,
   });
@@ -792,7 +794,6 @@ async function handleEmailChangeComplete(args: string[], signal?: AbortSignal): 
       AccountEmailChangeCompleteRequestV1Schema.parse({ v: 1, verificationToken }),
       {
         headers: { Authorization: `Bearer ${credentials.token}`, 'Content-Type': 'application/json' },
-        timeout: 15_000,
         ...(signal ? { signal } : {}),
         validateStatus: () => true,
       },
@@ -823,6 +824,8 @@ async function handleRecoveryKey(args: string[], signal?: AbortSignal): Promise<
   }
   const kind = subcommand === 'login' ? 'auth_recovery_key_login' : 'auth_recovery_key_validate';
   const jsonRequested = wantsJson(args);
+  let phase = 'arguments';
+  const diagnosticLeases: SensitiveDiagnosticValuesLease[] = [];
   try {
     if (subcommand !== 'login') throw new NativeEmailCommandError('invalid_arguments', NATIVE_EMAIL_USAGE);
     if (subcommand === 'login') args = await applyServerSelectionFromArgs(args);
@@ -835,6 +838,7 @@ async function handleRecoveryKey(args: string[], signal?: AbortSignal): Promise<
       maxPositionals: 0,
     });
     const key = await readSecretFlagOrPrompt(rest, '--key', 'Recovery key: ', wantsJson(args));
+    diagnosticLeases.push(registerSensitiveDiagnosticValues([key]));
     // Typed secret-safe recovery: reuse the canonical parser, never log or
     // return key material. A valid key proves format only; it never proves
     // Account identity or decrypts content on its own.
@@ -849,11 +853,17 @@ async function handleRecoveryKey(args: string[], signal?: AbortSignal): Promise<
       return;
     }
     if (subcommand === 'login') {
+      diagnosticLeases.push(registerSensitiveDiagnosticValues([
+        Buffer.from(parsed.bytes).toString('base64'),
+        Buffer.from(parsed.bytes).toString('base64url'),
+        Buffer.from(parsed.bytes).toString('hex'),
+      ]));
       try {
         signal?.throwIfAborted();
         const serverApiUrl = resolveServerHttpBaseUrl();
         const serverId = configuration.activeServerId;
         const serverUrl = configuration.serverUrl;
+        phase = 'home_features';
         const snapshot = await fetchServerFeaturesSnapshot({ serverUrl: serverApiUrl, ...(signal ? { signal } : {}) });
         const serverIdentityId = snapshot.status === 'ready'
           ? snapshot.features.capabilities.serverIdentity.serverIdentityId?.trim() ?? ''
@@ -867,13 +877,16 @@ async function handleRecoveryKey(args: string[], signal?: AbortSignal): Promise<
           normalizedEmail: '',
           invitationToken: null,
         };
+        phase = 'challenge_redemption';
         const token = await authenticateExistingAccountWithLegacySecret({
           secret: parsed.bytes,
           serverApiUrl,
           serverIdentityId,
           ...(signal ? { signal } : {}),
         });
+        diagnosticLeases.push(registerSensitiveDiagnosticValues([token]));
         const credentials = { token, encryption: { type: 'legacy' as const, secret: parsed.bytes } };
+        phase = 'machine_registration';
         const { registerMachineWithAuthenticatedHomeRuntime } = await import('@/ui/auth');
         const registration = await registerMachineWithAuthenticatedHomeRuntime({
           credentials,
@@ -882,6 +895,7 @@ async function handleRecoveryKey(args: string[], signal?: AbortSignal): Promise<
         });
         signal?.throwIfAborted();
         assertStillCaptured(captured);
+        phase = 'credential_persistence';
         await writeCredentialsLegacy({ token, secret: parsed.bytes });
         const accountId = readAccountIdFromToken(token);
         const data = { accountId, serverId, machineId: registration.machineId };
@@ -895,12 +909,38 @@ async function handleRecoveryKey(args: string[], signal?: AbortSignal): Promise<
     parsed.bytes.fill(0);
     throw new NativeEmailCommandError('invalid_arguments', NATIVE_EMAIL_USAGE);
   } catch (error) {
-    const code = error instanceof NativeEmailCommandError ? error.code : 'authentication_failed';
-    const message = error instanceof NativeEmailCommandError ? error.message : 'Recovery-key validation failed.';
-    if (jsonRequested || wantsJson(args)) await printJsonEnvelope({ ok: false, kind, error: { code, message } });
+    const diagnostic = projectSafeAuthError(error);
+    const code = redactBugReportSensitiveText(String(diagnostic.code ?? `recovery_key_${phase}_failed`));
+    const message = error instanceof NativeEmailCommandError
+      ? error.message
+      : `Recovery-key login failed during ${phase} (${code}).`;
+    // Only describe the real error's text and actionable fields. Never hand
+    // axios config, headers, bodies, argv, or credentials to the logger.
+    const stack = typeof error === 'object' && error !== null && 'stack' in error && typeof error.stack === 'string'
+      ? redactBugReportSensitiveText(error.stack)
+      : undefined;
+    try {
+      logger.warnLocalFile('[AUTH] Recovery-key login failed', {
+        phase,
+        ...(diagnostic.status ? { status: diagnostic.status } : {}),
+        error: {
+          ...diagnostic,
+          name: redactBugReportSensitiveText(diagnostic.name),
+          message: redactBugReportSensitiveText(diagnostic.message),
+          code,
+          ...(stack ? { stack } : {}),
+        },
+      });
+      logger.flushSync();
+    } catch {
+      // Diagnostic I/O must not replace the originating failure.
+    }
+    if (jsonRequested || wantsJson(args)) await printJsonEnvelope({ ok: false, kind, error: { code, message, phase, ...(diagnostic.status ? { status: diagnostic.status } : {}) } });
     else {
       console.error(message);
       process.exitCode = 1;
     }
+  } finally {
+    for (const lease of diagnosticLeases) lease.close();
   }
 }
