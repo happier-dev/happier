@@ -783,20 +783,20 @@ async function readDynamicBytes(
 }
 
 /**
- * The admission read of one dynamic producer, bounded through the shared
- * plugin-callback timeout owner. Cancellation is delivered to the producer as
- * an abort signal rather than only abandoned, so a well-behaved `read()` can
- * release whatever it was waiting on.
+ * The admission read of one dynamic producer inherits a supplied startup
+ * deadline through the shared timeout owner. Cancellation is delivered to the
+ * producer as an abort signal rather than only abandoned, so a well-behaved
+ * `read()` can release whatever it was waiting on.
  */
 async function readAdmissionBytes(
     resource: AdmittedDynamicResource,
     context: DynamicResourceContextState,
-    deadlineMs: number,
+    deadlineMs: number | null,
     bindAccountStorage?: BindDynamicResourceAccountStorage,
     isBindingCurrent?: () => boolean | Promise<boolean>,
 ): Promise<Readonly<{ bytes: Uint8Array; digest: string }>> {
-    const remainingMs = deadlineMs - performance.now();
-    if (remainingMs <= 0) {
+    const remainingMs = deadlineMs === null ? null : deadlineMs - performance.now();
+    if (remainingMs !== null && remainingMs <= 0) {
         throw new PluginError({
             code: 'plugin_resource_producer_timed_out',
             message: 'Dynamic resource producer did not answer within its admission budget',
@@ -1340,15 +1340,16 @@ async function createStablePluginResourcesOwnerFromNormalized(
         return true;
     }
 
-    // Global admissions share the remaining cold-start initialization window. Parallelism is
-    // bounded by the aggregate byte cap, so stalled producers cannot multiply
-    // daemon startup time or let concurrent replies exceed the byte budget.
-    const admissionDeadlineMs = performance.now()
-        + remainingPluginInitializationTimeoutMs(params.startupDeadlineAtMs);
+    // Global admissions share the containing startup deadline when supplied.
+    // Parallel replies remain bounded by the aggregate byte cap.
+    const admissionTimeoutMs = remainingPluginInitializationTimeoutMs(params.startupDeadlineAtMs);
+    const admissionDeadlineMs = admissionTimeoutMs === null
+        ? null
+        : performance.now() + admissionTimeoutMs;
     async function admitGlobalDynamicResource(dynamic: AdmittedDynamicResource): Promise<void> {
         const context = dynamic.globalContext;
         if (!context) return;
-        if (performance.now() >= admissionDeadlineMs) {
+        if (admissionDeadlineMs !== null && performance.now() >= admissionDeadlineMs) {
             // The queue never invoked this producer. Leave it readable on
             // demand instead of publishing a permanent producer failure.
             logger.warn('[PLUGIN RUNTIME] Dynamic Resource admission deferred', {

@@ -255,7 +255,7 @@ describe('background service runner host', () => {
         expect(policyCalls).toEqual([{
             target: {
                 pluginId,
-                occurrenceId: '1',
+                occurrenceId: activated.readPluginOccurrenceId(pluginId),
                 qualifiedId: `${pluginId}/backgroundServices/gateway-supervisor`,
             },
             context: expect.objectContaining({
@@ -386,7 +386,7 @@ describe('background service runner host', () => {
             expect(policyCalls).toEqual([{
                 target: {
                     pluginId,
-                    occurrenceId: '1',
+                    occurrenceId: activated.readPluginOccurrenceId(pluginId),
                     qualifiedId: `${pluginId}/backgroundServices/account-state-supervisor`,
                 },
                 context: expect.objectContaining({
@@ -637,12 +637,17 @@ describe('background service runner host', () => {
         expect(diagnostics).toEqual(['background_service_failed:broken']);
     });
 
-    it('bounds ignored cancellation without claiming containment', async () => {
+    it.each([undefined, 25])('settles retired service work using only a caller budget (%s)', async (settlementTimeoutMs) => {
         vi.useFakeTimers();
         const diagnostics: string[] = [];
+        const work = deferred();
+        let retirementSignal: AbortSignal | undefined;
         const host = createBackgroundServiceRunnerHost({
-            registrations: [registration('ignores-abort', async () => await new Promise<void>(() => {}))],
-            settlementTimeoutMs: 25,
+            registrations: [registration('ignores-abort', async (context) => {
+                retirementSignal = context.signal;
+                await work.promise;
+            })],
+            settlementTimeoutMs,
             createContext(input) {
                 return Object.freeze({
                     context: Object.freeze({
@@ -665,12 +670,27 @@ describe('background service runner host', () => {
         host.start();
         await Promise.resolve();
         host.retire(['acme.indexer']);
-        const settlement = host.settle(['acme.indexer']);
-        await vi.advanceTimersByTimeAsync(25);
-        await settlement;
-
-        expect(diagnostics).toEqual(['background_service_settlement_timeout']);
-        vi.useRealTimers();
+        let settled = false;
+        const settlement = host.settle(['acme.indexer']).then(() => { settled = true; });
+        try {
+            expect(retirementSignal?.aborted).toBe(true);
+            if (settlementTimeoutMs === undefined) {
+                await vi.advanceTimersByTimeAsync(5_001);
+                expect(settled).toBe(false);
+                expect(diagnostics).toEqual([]);
+                work.resolve();
+                await settlement;
+            } else {
+                await vi.advanceTimersByTimeAsync(settlementTimeoutMs);
+                await settlement;
+                expect(diagnostics).toEqual(['background_service_settlement_timeout']);
+            }
+        } finally {
+            work.resolve();
+            await settlement;
+            await host.dispose();
+            vi.useRealTimers();
+        }
     });
 
     it('does not enter a runner retired before its deferred post-adoption start', async () => {

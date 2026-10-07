@@ -38,6 +38,74 @@ async function createCommittedFileBackedFixtureActivationSource(params: Readonly
 }
 
 describe('target activation publication', () => {
+    it('joins slow on-demand module loading and activation without phase deadlines', async () => {
+        vi.useFakeTimers();
+        const pluginId = 'acme.slow-lazy';
+        const ingested = ingestCanonicalPluginManifest({
+            schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: pluginId,
+            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+            entrypoints: { daemon: './daemon.mjs' },
+            contributes: {
+                actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
+            },
+        }, { sourceProvenance: 'registryCustodied' });
+        if (!ingested.ok) throw new Error('Expected valid lazy activation fixture');
+        let releaseLoad!: () => void;
+        let releaseActivation!: () => void;
+        const loadGate = new Promise<void>((resolve) => { releaseLoad = resolve; });
+        const activationGate = new Promise<void>((resolve) => { releaseActivation = resolve; });
+        const load = vi.fn(async () => {
+            await loadGate;
+            return {
+                async activate(api: PluginApi) {
+                    await activationGate;
+                    api.actions.register('run', async () => ({ ok: true }));
+                },
+            };
+        });
+        const registry = await activatePluginRuntimeRegistry({
+            contributes: {
+                agents: [], actions: [], resources: [],
+                activationTargets: [{
+                    provenance: 'first_party', source: { kind: 'bundled' }, pluginId,
+                    manifestPath: '/virtual/slow/plugin.json', daemonEntryPath: '/virtual/slow/daemon.mjs',
+                    sourceSpec: { kind: 'package', locator: '@happier-dev/slow-lazy', trustPolicy: 'bundled_trusted', installPolicy: 'copy' },
+                    activationEvents: [], manifest: ingested.manifest,
+                }],
+                catalogEntriesById: Object.freeze({}), agentDefinitionsById: new Map(),
+                pluginDiagnosticsByPluginId: Object.freeze({}),
+            } as unknown as ResolvedContributionRegistry,
+            generation: 27,
+            resolveActivationSource: () => ({ kind: 'bundled', moduleId: '@happier-dev/slow-lazy/daemon', load }),
+        });
+        const demand = [{ pluginId, family: 'actions' as const, localId: 'run' }];
+        let settled = false;
+        const activation = Promise.all([
+            registry.activateContributionsOnDemand(demand),
+            registry.activateContributionsOnDemand(demand),
+        ]).then((results) => { settled = true; return results; });
+        try {
+            await vi.advanceTimersByTimeAsync(30_001);
+            expect(settled).toBe(false);
+            expect(registry.failedActivationPluginIds.has(pluginId)).toBe(false);
+            releaseLoad();
+            await vi.advanceTimersByTimeAsync(30_001);
+            expect(settled).toBe(false);
+            expect(registry.failedActivationPluginIds.has(pluginId)).toBe(false);
+            releaseActivation();
+            await activation;
+            expect(load).toHaveBeenCalledOnce();
+            expect(registry.activatedPluginIds.has(pluginId)).toBe(true);
+            expect(registry.targetRegistrations).toEqual([expect.objectContaining({ pluginId })]);
+        } finally {
+            releaseLoad();
+            releaseActivation();
+            await activation;
+            await registry.dispose();
+            vi.useRealTimers();
+        }
+    });
+
     it('bounds bundled source preparation within the cold-start deadline', async () => {
         vi.useFakeTimers();
         const pluginId = 'acme.prepare-hangs';
@@ -1358,13 +1426,17 @@ describe('target activation publication', () => {
         expect(activated.targetRegistrations).toEqual([]);
     });
 
-    it('bounds hanging target cleanup by default, diagnoses it, and continues later cleanup', async () => {
+    it('waits for slow target cleanup beyond five seconds and observes its eventual failure', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-target-disposal-timeout-'));
         const daemonEntryPath = join(root, 'daemon.mjs');
+        let rejectCleanup!: (error: Error) => void;
+        const cleanupGate = new Promise<void>((_resolve, reject) => { rejectCleanup = reject; });
+        const fixtureGlobal = globalThis as typeof globalThis & { __HAPPIER_SLOW_CLEANUP?: Promise<void> };
+        fixtureGlobal.__HAPPIER_SLOW_CLEANUP = cleanupGate;
         await writeFile(daemonEntryPath, [
             'export function activate(api) {',
             '  api.actions.register("run", async () => ({ ok: true }));',
-            '  return () => new Promise(() => undefined);',
+            '  return () => globalThis.__HAPPIER_SLOW_CLEANUP;',
             '}',
         ].join('\n'));
         const ingested = ingestCanonicalPluginManifest({
@@ -1404,21 +1476,28 @@ describe('target activation publication', () => {
 
         vi.useFakeTimers();
         try {
-            const disposal = activated.dispose({ onError });
+            let settled = false;
+            const disposal = activated.dispose({ onError }).then(() => { settled = true; });
             await Promise.resolve();
             expect(laterCleanup).not.toHaveBeenCalled();
 
-            await vi.advanceTimersByTimeAsync(5_000);
+            await vi.advanceTimersByTimeAsync(5_001);
+            expect(settled).toBe(false);
+            expect(onError).not.toHaveBeenCalled();
+            expect(laterCleanup).not.toHaveBeenCalled();
+            rejectCleanup(new Error('slow target cleanup failed'));
             await expect(disposal).resolves.toBeUndefined();
 
             expect(onError).toHaveBeenCalledWith(expect.objectContaining({
                 pluginId: 'acme.target.cleanup-timeout',
                 phase: 'target_activation',
-                error: expect.objectContaining({ message: expect.stringMatching(/timed out after 5000ms/i) }),
+                error: expect.objectContaining({ message: 'slow target cleanup failed' }),
             }));
             expect(laterCleanup).toHaveBeenCalledTimes(1);
             expect(activated.targetRegistrations).toEqual([]);
         } finally {
+            rejectCleanup(new Error('slow target cleanup failed'));
+            delete fixtureGlobal.__HAPPIER_SLOW_CLEANUP;
             vi.useRealTimers();
         }
     });

@@ -431,6 +431,7 @@ describe('production invocation service owners', () => {
                     follow: { status: 'unavailable' as const, code: 'not_bound' },
                 })),
                 list: vi.fn(async () => ({ items: [], nextCursor: null })),
+                closeList: vi.fn(async () => {}),
                 attach: vi.fn(async () => { throw new Error('not_bound'); }),
                 readTranscript: vi.fn(async () => { throw new Error('not_bound'); }),
                 followTranscript: vi.fn(async () => ({
