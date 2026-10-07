@@ -176,6 +176,8 @@
 | `.` | `redactBugReportSensitiveText` | value | any |
 | `.` | `selectCurrentTargetedContribution` | value | any |
 | `.` | `trimBugReportTextToMaxBytes` | value | any |
+| `./actions` | `AccountApiTokensActionInputById` | type | any |
+| `./actions` | `AccountApiTokensActionResultById` | type | any |
 | `./actions` | `AccountPluginDataActionInputById` | type | any |
 | `./actions` | `AccountPluginDataActionResultById` | type | any |
 | `./actions` | `AccountSecurityActionInputById` | type | any |
@@ -378,6 +380,8 @@
 | `./actions` | `ScopeActionResultById` | type | any |
 | `./actions` | `SessionAccessActionInputById` | type | any |
 | `./actions` | `SessionAccessActionResultById` | type | any |
+| `./actions` | `SessionAttentionActionInputById` | type | any |
+| `./actions` | `SessionAttentionActionResultById` | type | any |
 | `./actions` | `SessionAudienceSelectionV1` | type | any |
 | `./actions` | `SessionBoardActionInputById` | type | any |
 | `./actions` | `SessionBoardActionResultById` | type | any |
@@ -614,6 +618,7 @@
 | `./agents/runtime` | `AgentFiniteExecutionRunResult` | type | daemon |
 | `./agents/runtime` | `AgentLaunchEnvironment` | type | daemon |
 | `./agents/runtime` | `AgentPermissionIntent` | type | daemon |
+| `./agents/runtime` | `AgentPreflightExecutableSelectorV1` | type | daemon |
 | `./agents/runtime` | `AgentPreflightJsonRpcRequestClientV1` | type | daemon |
 | `./agents/runtime` | `AgentPreflightSessionControlsCommandResultV1` | type | daemon |
 | `./agents/runtime` | `AgentPreflightSessionControlsCommandV1` | type | daemon |
@@ -1202,6 +1207,7 @@
 | `./first-party/claude` | `normalizeClaudeUnifiedTerminalHost` | value | any |
 | `./first-party/claude` | `normalizeClaudeUnifiedTerminalResumeChoice` | value | any |
 | `./first-party/claude` | `normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy` | value | any |
+| `./first-party/claude` | `readClaudeSettingSourcesV2` | value | any |
 | `./first-party/connected-accounts` | `CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1` | value | any |
 | `./first-party/connected-accounts` | `CLAUDE_SUBSCRIPTION_OAUTH_PROFILE` | value | any |
 | `./first-party/connected-accounts` | `CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1` | value | any |

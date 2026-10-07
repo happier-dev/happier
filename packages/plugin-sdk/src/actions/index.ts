@@ -1,3 +1,5 @@
+export type { AccountApiTokensActionInputById } from './dtos/accountApiTokensActionDtos.generated.js';
+export type { AccountApiTokensActionResultById } from './dtos/accountApiTokensActionDtos.generated.js';
 export type { AccountPluginDataActionInputById } from './dtos/accountPluginDataActionDtos.generated.js';
 export type { AccountPluginDataActionResultById } from './dtos/accountPluginDataActionDtos.generated.js';
 export type { AccountSecurityActionInputById } from './dtos/accountSecurityActionDtos.generated.js';
@@ -200,6 +202,8 @@ export type { ScopeActionInputById } from './dtos/scopeActionDtos.generated.js';
 export type { ScopeActionResultById } from './dtos/scopeActionDtos.generated.js';
 export type { SessionAccessActionInputById } from './dtos/sessionAccessActionDtos.generated.js';
 export type { SessionAccessActionResultById } from './dtos/sessionAccessActionDtos.generated.js';
+export type { SessionAttentionActionInputById } from './dtos/sessionAttentionActionDtos.generated.js';
+export type { SessionAttentionActionResultById } from './dtos/sessionAttentionActionDtos.generated.js';
 export type { SessionAudienceSelectionV1 } from './dtos/pluginActionDtoSupport.generated.js';
 export type { SessionBoardActionInputById } from './dtos/sessionBoardActionDtos.generated.js';
 export type { SessionBoardActionResultById } from './dtos/sessionBoardActionDtos.generated.js';

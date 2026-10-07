@@ -134,6 +134,7 @@ export type { AgentFiniteExecutionRunProgressEvent } from '../../agentRuntime/pr
 export type { AgentFiniteExecutionRunResult } from '../../agentRuntime/projections.js';
 export type { AgentLaunchEnvironment } from '../../agentRuntime/projections.js';
 export type { AgentPermissionIntent } from '../../agentRuntime/projections.js';
+export type { AgentPreflightExecutableSelectorV1 } from '../../agentRuntime/projections.js';
 export type { AgentPreflightJsonRpcRequestClientV1 } from '../../agentRuntime/projections.js';
 export type { AgentPreflightSessionControlsCommandResultV1 } from '../../agentRuntime/projections.js';
 export type { AgentPreflightSessionControlsCommandV1 } from '../../agentRuntime/projections.js';
