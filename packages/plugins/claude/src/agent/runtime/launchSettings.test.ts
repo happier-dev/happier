@@ -167,6 +167,7 @@ describe('resolveClaudeNativeLaunchSettings', () => {
   it('restores released same-key account values into the native Claude launch', async () => {
     const get = vi.fn(async (key: string) => {
       if (key === 'claudeCodeExperimentalAgentTeamsEnabled') return true;
+      if (key === 'claudeRemoteSettingSourcesV2') return ['project'];
       if (key === 'claudeRemoteAdvancedOptionsJson') {
         return JSON.stringify({
           plugins: [{ type: 'local', path: '/tmp/plugin' }],
@@ -177,7 +178,7 @@ describe('resolveClaudeNativeLaunchSettings', () => {
     });
 
     await expect(resolveClaudeNativeLaunchSettings({
-      settings: { get },
+      settings: { get, snapshot: async () => ({ values: { claudeRemoteSettingSourcesV2: ['project'] } }) },
       launchEnv: { EXISTING_ENV: 'kept' },
       includeAdvancedOptions: true,
     })).resolves.toEqual({
@@ -188,9 +189,32 @@ describe('resolveClaudeNativeLaunchSettings', () => {
       advancedOptions: {
         plugins: [{ type: 'local', path: '/tmp/plugin' }],
       },
+      settingSources: ['project'],
     });
     expect(get).toHaveBeenCalledWith('claudeCodeExperimentalAgentTeamsEnabled');
     expect(get).toHaveBeenCalledWith('claudeRemoteAdvancedOptionsJson');
+  });
+
+  it('preserves an explicitly empty settings-source selection', async () => {
+    await expect(resolveClaudeNativeLaunchSettings({
+      settings: {
+        get: async (key) => key === 'claudeRemoteSettingSourcesV2' ? [] : null,
+        snapshot: async () => ({ values: { claudeRemoteSettingSourcesV2: [] } }),
+      },
+      launchEnv: {},
+      includeAdvancedOptions: false,
+    })).resolves.toMatchObject({ settingSources: [] });
+  });
+
+  it('resolves stored legacy source selection before declaration defaults', async () => {
+    await expect(resolveClaudeNativeLaunchSettings({
+      settings: {
+        get: async (key) => key === 'claudeRemoteSettingSourcesV2' ? ['user', 'project', 'local'] : null,
+        snapshot: async () => ({ values: { claudeRemoteSettingSources: 'none' } }),
+      },
+      launchEnv: {},
+      includeAdvancedOptions: false,
+    })).resolves.toMatchObject({ settingSources: [] });
   });
 
   it('leaves explicit launch state unchanged when settings are absent or malformed', async () => {
@@ -199,12 +223,13 @@ describe('resolveClaudeNativeLaunchSettings', () => {
       CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: 'caller-owned',
     };
     await expect(resolveClaudeNativeLaunchSettings({
-      settings: { get: vi.fn(async () => 'not-enabled') },
+      settings: { get: vi.fn(async () => 'not-enabled'), snapshot: async () => ({ values: {} }) },
       launchEnv,
       includeAdvancedOptions: false,
     })).resolves.toEqual({
       launchEnv,
       advancedOptions: {},
+      settingSources: ['user', 'project', 'local'],
     });
   });
 });

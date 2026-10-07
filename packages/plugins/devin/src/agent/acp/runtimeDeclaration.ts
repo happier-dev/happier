@@ -1,5 +1,7 @@
 import type { PluginHostOwnedAgentDeclaration } from '@happier-dev/plugin-sdk/agents';
 
+import { DEVIN_ACP_COMMAND } from './preflight.js';
+
 type DevinHostOwnedAcpRuntime = Extract<
   PluginHostOwnedAgentDeclaration,
   { runtime: { kind: 'acp' } }
@@ -25,8 +27,8 @@ export const DEVIN_ACP_RUNTIME_DECLARATION = {
   kind: 'acp',
   transport: {
     kind: 'stdio',
-    executable: { kind: 'systemTool', id: 'devin-cli' },
-    args: ['acp'],
+    executable: { kind: 'systemTool', id: DEVIN_ACP_COMMAND.toolId },
+    args: [...DEVIN_ACP_COMMAND.args],
   },
   definition: {
     modelConfigOptionId: 'model',

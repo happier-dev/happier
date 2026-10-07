@@ -1,6 +1,7 @@
 import type { AgentRuntimeFactoryContext, PluginInvocationContext } from '../invocation.js';
 import type {
   StructuredImageInputV1,
+  SessionAuthService,
   SubagentSummary,
   WorkStateService,
 } from '../services/sessions.js';
@@ -654,6 +655,8 @@ export type AgentExecutionRunHostServicesV1 = Readonly<{
   mcp: AgentSessionMcpService;
   toolExecution: AgentToolExecutionService;
   nativeHome?: AgentSessionNativeHomeService;
+  /** Host-bound Run authentication; it grants no Session identity or projection. */
+  auth?: SessionAuthService;
 }>;
 
 export type AgentSessionRuntimeContext = AgentRuntimeContext & Readonly<{

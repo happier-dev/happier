@@ -11,6 +11,7 @@ import {
   buildOpenCodeV2ModelRef,
   buildOpenCodeV2PermissionRuleset,
   buildOpenCodeV2Prompt,
+  OpenCodeSkillIdentityError,
   combineOpenCodeV2Providers,
   normalizeOpenCodeV2Messages,
   normalizeOpenCodeV2PermissionRequest,
@@ -30,6 +31,7 @@ import {
 } from './openCodeV2Forms.js';
 import { subscribeSseJson } from './openCodeSse.js';
 import type { OpenCodePromptPart } from './promptParts.js';
+import { normalizeOpenCodeSkills } from './skills.js';
 import type {
   OpenCodeNativeFetch,
   OpenCodeServerTransport,
@@ -153,6 +155,18 @@ export type OpenCodeServerClient = Readonly<{
     variant?: string | null;
     config?: Readonly<Record<string, unknown>> | null;
   }>): Promise<unknown>;
+  sessionCommand(input: Readonly<{
+    directory?: string | null;
+    sessionId: string;
+    command: string;
+    arguments: string;
+    messageId?: string | null;
+    parts?: readonly OpenCodePromptPart[];
+    model?: OpenCodeServerPromptModel | null;
+    agent?: string | null;
+    variant?: string | null;
+    delivery?: 'steer' | 'queue';
+  }>): Promise<unknown>;
   sessionAbort(input: Readonly<{ directory?: string | null; sessionId: string }>): Promise<void>;
   sessionSummarize(input: Readonly<{
     sessionId: string;
@@ -188,6 +202,7 @@ export type OpenCodeServerClient = Readonly<{
     sessionId?: string | null;
     requestId: string;
   }>): Promise<void>;
+  appCommands(input: Readonly<{ directory: string }>): Promise<readonly unknown[]>;
   appSkills(input: Readonly<{ directory: string }>): Promise<unknown>;
   subscribeGlobalEvents(input: Readonly<{
     sessionId?: string | null;
@@ -207,6 +222,7 @@ export type OpenCodeServerClient = Readonly<{
 export type OpenCodeServerRequestOperation =
   | 'mcp_registration'
   | 'server_request'
+  | 'command_catalog'
   | 'skill_catalog';
 
 export class OpenCodeServerHttpError extends Error {
@@ -251,6 +267,8 @@ export type OpenCodeServerUnsupportedOperation =
   | 'mcp_registration'
   | 'session_todo'
   | 'session_prompt_config'
+  | 'session_command_delivery'
+  | 'session_command_attachments'
   | 'global_config';
 
 export class OpenCodeServerUnsupportedOperationError extends Error {
@@ -373,6 +391,7 @@ async function requestOptionalJson(params: Readonly<{
   query?: Readonly<Record<string, string | null | undefined>>;
   body?: unknown;
   operation?: OpenCodeServerRequestOperation;
+  signal?: AbortSignal;
 }>): Promise<unknown> {
   const response = await params.fetch({
     url: params.query
@@ -381,6 +400,7 @@ async function requestOptionalJson(params: Readonly<{
     method: params.method,
     headers: { 'content-type': 'application/json' },
     ...(params.body === undefined ? {} : { body: JSON.stringify(params.body) }),
+    ...(params.signal ? { signal: params.signal } : {}),
   });
   if (!response.ok) {
     const responseBodyPreview = await readResponseBodyPreview(response);
@@ -766,6 +786,25 @@ export function createOpenCodeServerClient(input: Readonly<{
     return sessionId;
   };
 
+  async function resolveV2SkillParts(
+    parts: readonly OpenCodePromptPart[] | undefined,
+    readCatalog: () => Promise<unknown>,
+  ): Promise<readonly OpenCodePromptPart[] | undefined> {
+    if (!parts?.some((part) => part.type === 'skill' && !readNonBlankOpaqueIdentifier(part.id))) return parts;
+    // Older released selections have name/path only. Resolve through the existing native
+    // catalog owner at this wire compatibility seam, never infer an opaque ID from a name.
+    const catalog = normalizeOpenCodeSkills(await readCatalog());
+    return parts.map((part) => {
+      if (part.type !== 'skill' || readNonBlankOpaqueIdentifier(part.id)) return part;
+      const matches = catalog.filter((skill) => skill.name === part.name
+        && (part.path === undefined || skill.path === part.path));
+      const match = matches.length === 1 ? matches[0] : undefined;
+      const id = readNonBlankOpaqueIdentifier(match?.id);
+      if (!id) throw new OpenCodeSkillIdentityError();
+      return { ...part, id };
+    });
+  }
+
   return {
     async mcpAdd(input) {
       if (isV2) {
@@ -940,7 +979,7 @@ export function createOpenCodeServerClient(input: Readonly<{
       if (isV2) {
         // V2 splits what V1 accepted in one body: the model is its own
         // `session.switchModel` call, and `session.prompt` carries only
-        // `{ id?, prompt, delivery?, resume? }`.
+        // the flat `{ id?, text, files?, agents?, skills?, delivery?, resume? }`.
         const promptConfig = buildPromptConfig(input);
         if (promptConfig.config) {
           throw unsupported(
@@ -948,6 +987,10 @@ export function createOpenCodeServerClient(input: Readonly<{
             'OpenCode V2 servers accept no per-prompt configuration override',
           );
         }
+        const prompt = buildOpenCodeV2Prompt({
+          text: input.text,
+          parts: await resolveV2SkillParts(input.parts, () => this.appSkills({ directory: resolveDirectory(input.directory) ?? '' })),
+        });
         if (input.agent) await this.sessionSetAgent({ sessionId: input.sessionId, agent: input.agent });
         if (input.model || promptConfig.variant) await this.sessionSetModel({
           sessionId: input.sessionId, model: input.model, variant: promptConfig.variant,
@@ -958,10 +1001,7 @@ export function createOpenCodeServerClient(input: Readonly<{
           path: `/api/session/${encodeURIComponent(input.sessionId)}/prompt`,
           body: {
             ...(input.messageId ? { id: input.messageId } : {}),
-            ...buildOpenCodeV2Prompt({
-              text: input.text,
-              ...(input.parts ? { parts: input.parts } : {}),
-            }),
+            ...prompt,
           },
         });
         return readOpenCodeV2Data(response);
@@ -977,8 +1017,48 @@ export function createOpenCodeServerClient(input: Readonly<{
           ...(input.model ? { model: input.model } : {}),
           ...(input.agent ? { agent: input.agent } : {}),
           ...promptConfig,
-          parts: input.parts ?? [{ type: 'text', text: input.text }],
+          parts: input.parts?.map((part) => part.type === 'skill'
+            ? { type: 'text', text: part.text, synthetic: true } : part) ?? [{ type: 'text', text: input.text }],
         },
+      });
+    },
+    async sessionCommand(input) {
+      const variant = normalizeString(input.variant);
+      let body: Readonly<Record<string, unknown>>;
+      if (isV2) {
+        body = {
+          name: input.command,
+          ...buildOpenCodeV2Prompt({ text: input.arguments, parts: await resolveV2SkillParts([
+            { type: 'text', text: input.arguments }, ...(input.parts ?? []),
+          ], () => this.appSkills({ directory: resolveDirectory(input.directory) ?? '' })) }),
+          ...(input.delivery ? { delivery: input.delivery } : {}),
+        };
+        if (input.agent) await this.sessionSetAgent({ sessionId: input.sessionId, agent: input.agent });
+        if (input.model || variant) await this.sessionSetModel({ sessionId: input.sessionId, model: input.model, variant });
+      } else {
+        if (input.delivery) throw unsupported('session_command_delivery', 'OpenCode V1 commands do not support native delivery');
+        if (input.parts?.some((part) => part.type !== 'file')) {
+          throw unsupported('session_command_attachments', 'OpenCode V1 commands support only file attachments');
+        }
+        body = {
+          command: input.command,
+          arguments: input.arguments,
+          ...(input.messageId ? { messageID: input.messageId } : {}),
+          ...(input.model ? { model: `${input.model.providerID}/${input.model.modelID}` } : {}),
+          ...(input.agent ? { agent: input.agent } : {}),
+          ...(variant ? { variant } : {}),
+          ...(input.parts && input.parts.length > 0 ? { parts: input.parts } : {}),
+        };
+      }
+      // V1 waits for the generated response; V2 waits for its callback. Reuse the native prompt
+      // transport without a control-read deadline or replay, retaining lifecycle cancellation.
+      return await requestOptionalJson({
+        fetch: params.fetch,
+        method: 'POST',
+        path: `${isV2 ? '/api' : ''}/session/${encodeURIComponent(input.sessionId)}/command`,
+        ...(isV2 ? {} : { query: directoryQuery(input.directory) }),
+        body,
+        signal: lifecycleSignal,
       });
     },
     async sessionAbort(input) {
@@ -1233,6 +1313,16 @@ export function createOpenCodeServerClient(input: Readonly<{
         body: {},
         expectJson: false,
       });
+    },
+    async appCommands(input) {
+      const response = await requestJson({
+        fetch: params.fetch,
+        method: 'GET',
+        path: isV2 ? '/api/command' : '/command',
+        query: isV2 ? locationQuery(input.directory) : directoryQuery(input.directory),
+        operation: 'command_catalog',
+      });
+      return isV2 ? readOpenCodeV2DataArray(response) : Array.isArray(response) ? response : [];
     },
     async appSkills(input) {
       if (isV2) {

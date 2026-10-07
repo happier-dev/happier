@@ -881,7 +881,8 @@ describe('plugin registration scope targets', () => {
         expect(dispose).toHaveBeenCalledOnce();
     });
 
-    it('bounds each captured MCP cleanup attempt and continues after a hung disposer', async () => {
+    it.each([undefined, 20])('retires captured MCP cleanup using only the host-provided bound (%s)', async (cleanupTimeoutMs) => {
+        vi.useFakeTimers();
         const attempts: string[] = [];
         const mcpRuntime = (dispose: PluginMcpServerRuntime['dispose']) => ({
             async listTools() { return { items: [] }; },
@@ -894,9 +895,11 @@ describe('plugin registration scope targets', () => {
             async getPrompt() { return { messages: [] }; },
             dispose,
         } satisfies PluginMcpServerRuntime);
+        let rejectCleanup!: (error: Error) => void;
+        const cleanupGate = new Promise<void>((_resolve, reject) => { rejectCleanup = reject; });
         const hung = vi.fn((): Promise<void> => {
             attempts.push('hung');
-            return new Promise<void>(() => undefined);
+            return cleanupGate;
         });
         const older = vi.fn(async () => {
             attempts.push('older');
@@ -908,20 +911,36 @@ describe('plugin registration scope targets', () => {
                 { family: 'mcp.servers', localId: 'older', target: { realm: 'daemon' } },
                 { family: 'mcp.servers', localId: 'hung', target: { realm: 'daemon' } },
             ],
-            cleanupTimeoutMs: 20,
+            cleanupTimeoutMs,
         });
         scope.api.mcp.registerServer('older', mcpRuntime(older));
         scope.api.mcp.registerServer('hung', mcpRuntime(hung));
         scope.commit();
 
-        // Reverse order is attempted, the hung newest disposer cannot starve
-        // the older cleanup, and the hung step is diagnosed by its identity.
-        await expect(scope.dispose()).rejects.toThrow(
-            /cleanup for 'mcp\.servers\/hung' timed out after 20ms/u,
-        );
-        expect(attempts).toEqual(['hung', 'older']);
-        expect(hung).toHaveBeenCalledTimes(1);
-        expect(older).toHaveBeenCalledTimes(1);
+        const disposal = scope.dispose();
+        let failure: unknown = null;
+        void disposal.catch((error: unknown) => { failure = error; });
+        try {
+            if (cleanupTimeoutMs === undefined) {
+                await vi.advanceTimersByTimeAsync(5_001);
+                expect(failure).toBeNull();
+                expect(attempts).toEqual(['hung']);
+                rejectCleanup(new Error('slow MCP cleanup failed'));
+                await expect(disposal).rejects.toThrow('slow MCP cleanup failed');
+            } else {
+                await vi.advanceTimersByTimeAsync(cleanupTimeoutMs);
+                await expect(disposal).rejects.toThrow(
+                    /cleanup for 'mcp\.servers\/hung' timed out after 20ms/u,
+                );
+            }
+            expect(attempts).toEqual(['hung', 'older']);
+            expect(hung).toHaveBeenCalledTimes(1);
+            expect(older).toHaveBeenCalledTimes(1);
+        } finally {
+            rejectCleanup(new Error('slow MCP cleanup failed'));
+            await disposal.catch(() => undefined);
+            vi.useRealTimers();
+        }
     });
 
     it('publishes no partial generation when plugin-owned capture code disposes during commit', async () => {

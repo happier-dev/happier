@@ -262,6 +262,7 @@ describe('createCodexNativeAppServerSessionRuntime', () => {
       sessionId: 'session-1',
       cwd: '/tmp/codex',
       providerSessionId: 'thread-1',
+      launchEnvironment: { values: {}, unset: ['CODEX_HOME', 'CODEX_SQLITE_HOME'] },
       startupInstructions: {
         v: 1 as const,
         id: 'happier.global_voice_agent',
@@ -312,6 +313,7 @@ describe('createCodexNativeAppServerSessionRuntime', () => {
       sessionId: 'session-1',
       cwd: '/tmp/codex',
       providerSessionId: 'thread-1',
+      launchEnvironment: { values: {}, unset: ['CODEX_HOME', 'CODEX_SQLITE_HOME'] },
       strictNativeResumeIdentity: true,
     }, context);
 
@@ -428,6 +430,7 @@ describe('createCodexNativeAppServerSessionRuntime', () => {
       kind: 'fork',
       sessionId: 'session-1',
       cwd: '/tmp/codex',
+      launchEnvironment: { values: { PATH: process.env.PATH ?? '' }, unset: ['CODEX_HOME', 'CODEX_SQLITE_HOME'] },
       source: {
         sessionId: 'parent-session',
         providerSessionId: 'parent-thread',
@@ -463,6 +466,7 @@ describe('createCodexNativeAppServerSessionRuntime', () => {
       sessionId: 'session-1',
       cwd: '/tmp/codex',
       providerSessionId: 'thread-1',
+      launchEnvironment: { values: {}, unset: ['CODEX_HOME', 'CODEX_SQLITE_HOME'] },
       startupInstructions: {
         v: 1 as const,
         id: 'happier.global_voice_agent',
@@ -962,7 +966,13 @@ describe('createCodexNativeAppServerSessionRuntime', () => {
   });
 
   it('refreshes runtime auth through the common Session handle without forwarding Agent identity', async () => {
-    const refreshRuntimeAuth = vi.fn(async () => ({ status: 'refreshed' as const }));
+    // The common host settles authority and exact-home materialization, not a native token codec.
+    const refreshRuntimeAuth = vi.fn(async () => ({ status: 'refreshed' as const,
+      result: { credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS' } }));
+    const expected = { status: 'refreshed', result: {
+      accessToken: 'synthetic-fresh', chatgptAccountId: 'account-1', chatgptPlanType: null,
+      credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+    } };
     const controller = new AbortController();
     const context = {
       signal: controller.signal,
@@ -976,7 +986,11 @@ describe('createCodexNativeAppServerSessionRuntime', () => {
         },
         connectedAccounts: createConnectedAccountsFixture(),
       },
-      session: { id: 'session-1', services: {} },
+      session: { id: 'session-1', services: { nativeHome: {
+        root: '/fixture', readFiles: async () => ({ 'auth.json': new TextEncoder().encode(JSON.stringify({
+          auth_mode: 'chatgptAuthTokens', tokens: { access_token: 'synthetic-fresh', account_id: 'account-1' },
+        })) }),
+      } } },
       ui: { title: { set: vi.fn(async () => undefined) } },
     } as unknown as AgentSessionRuntimeContext;
     const host = createCodexNativeAppServerRuntimeHost({
@@ -988,13 +1002,13 @@ describe('createCodexNativeAppServerSessionRuntime', () => {
     await expect(host.refreshRuntimeAuth?.({
       serviceId: 'openai-codex',
       reason: 'credential_expired',
-    })).resolves.toEqual({ status: 'refreshed' });
+    })).resolves.toEqual(expected);
     await expect(host.refreshRuntimeAuth?.({
       serviceId: 'openai-codex',
       targetId: 'session-1',
       classification: { kind: 'capacity_exhausted' },
       reason: 'provider_session_capacity_failure',
-    })).resolves.toEqual({ status: 'refreshed' });
+    })).resolves.toEqual(expected);
 
     expect(refreshRuntimeAuth).toHaveBeenNthCalledWith(1, {
       serviceId: 'openai-codex',

@@ -34,6 +34,7 @@ import {
   CLAUDE_PROVIDER_BINDING_ADAPTER_V1,
   CLAUDE_PROVIDER_OWNED_ENV_KEYS,
 } from './agent/providerBinding/adapter.js';
+import { CLAUDE_PREFLIGHT_CATALOGS } from './agent/preflight/catalogs.js';
 import { createClaudeAgentRuntime } from './agent/runtime/nativeRuntime.js';
 import { createClaudePromptSubmitVerificationPolicy } from './agent/runtime/terminal/unified/promptSubmitVerification.js';
 import { claudeExternalSessionsContribution } from './agent/surfaces/sessions/external/contribution.js';
@@ -431,6 +432,7 @@ export const CLAUDE_PLUGIN = definePlugin({
         } },
       },
       factory: createClaudeAgentRuntime,
+      preflightSessionControls: { catalogs: CLAUDE_PREFLIGHT_CATALOGS },
       connectedAccountLaunch: {
         switchContinuity: {
           continuityMode: 'restart_same_home',

@@ -79,7 +79,7 @@ function toNativeResponse(response: ManagedServiceResponse): Response {
 }
 
 export function createOpenCodeServerTransport(params: Readonly<{
-  managedService: ManagedServiceHandle;
+  managedService: Pick<ManagedServiceHandle, 'request'>;
   signal?: AbortSignal;
 }>): OpenCodeServerTransport {
   const fetchBound: OpenCodeNativeFetch = async (input, init = {}) => {

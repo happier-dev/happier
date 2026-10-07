@@ -2,6 +2,7 @@ import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sd
 import { definePlugin } from '@happier-dev/plugin-sdk';
 
 import { AGENT_DEFINITION } from './agent/definition.js';
+import { KILO_ACP_COMMAND } from './agent/acp/command.js';
 import { KILO_OPENCODE_PERMISSION_ENV } from './agent/permissions/opencodePermissionPolicy.js';
 import { createKiloAgentRuntime } from './agent/runtime/factory.js';
 import { KILO_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
@@ -71,6 +72,7 @@ export const KILO_PLUGIN = definePlugin({
       },
       factory: createKiloAgentRuntime,
       preflightSessionControls: {
+        catalogs: { kind: 'acp', command: KILO_ACP_COMMAND },
         models: {
           command: {
             toolId: 'kilo-cli',

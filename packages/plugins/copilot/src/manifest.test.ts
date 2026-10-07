@@ -20,6 +20,8 @@ describe('Copilot plugin manifest', () => {
     const context: AgentPreflightSessionControlsProbeContextV1 = {
       cwd: '/workspace/project', accountSettings: null, environment: {}, signal: new AbortController().signal,
       runDeclaredSystemToolCommand: async () => { throw new Error('Unexpected text command'); },
+      resolveDeclaredSystemTool: async () => { throw new Error('Native managed service is not used by this fixture'); },
+      withDeclaredManagedService: async () => { throw new Error('Native managed service is not used by this fixture'); },
       withDeclaredJsonRpcClient: async (command, inspect) => {
         expect(command).toEqual({ toolId: 'copilot-cli', args: ['--acp'] });
         return await inspect({

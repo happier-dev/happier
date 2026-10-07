@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { BrowserContextMessageMetaV1Schema, BrowserContextMessagePayloadV1Schema } from '../../browser/context/v1.js';
 
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
+import { readNonBlankOpaqueIdentifier } from '../../strings/opaqueIdentifier.js';
 import { ExecutionRunCompletionV1Schema } from '../../execution/runs/completionInputV1.js';
 import { SessionDiscussionSelectionSourceV1Schema } from '../../sessions/discussions/content.js';
 import { MAX_INTERACTION_TRANSIENT_JSON_BYTES_V1 } from '../../plugins/interactions/transientV1.js';
@@ -190,7 +191,9 @@ function normalizeSkillMention(value: MetadataRecord): SkillMentionV1 | null {
   if (!name) return null;
 
   const path = readString(value.path);
-  const id = readString(value.id ?? value.projectionRef ?? path ?? name);
+  const id = value.id == null
+    ? readString(value.projectionRef ?? path ?? name)
+    : readNonBlankOpaqueIdentifier(value.id);
   const legacyOrigin = resolveSkillCatalogOriginV1(readString(value.origin));
   const label = readString(value.label ?? value.displayName);
   const projectionRef = readString(value.projectionRef) ?? legacyOrigin.projectionRef;
@@ -198,6 +201,7 @@ function normalizeSkillMention(value: MetadataRecord): SkillMentionV1 | null {
   const candidate: MetadataRecord = {
     ...value,
     ...(id ? { id } : {}),
+    ...(value.id == null && id ? { idSource: 'generated' } : {}),
     name,
     ...(path ? { path } : {}),
     ...(label ? { label } : {}),

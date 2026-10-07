@@ -94,7 +94,7 @@ function readEnumArray<TValue extends string>(
     return out;
 }
 
-function readClaudeSettingSourcesV2(defaults: ClaudePredecessorMessageMetaDefaults, settings: Readonly<Record<string, unknown>>): ClaudeSettingSourcesV2 {
+export function readClaudeSettingSourcesV2(defaults: Pick<ClaudePredecessorMessageMetaDefaults, 'claudeRemoteSettingSourcesV2'>, settings: Readonly<Record<string, unknown>>): ClaudeSettingSourcesV2 {
     const parsed = readEnumArray(settings.claudeRemoteSettingSourcesV2, CLAUDE_SETTING_SOURCES_V2, 3);
     if (parsed) return parsed;
     if (typeof settings.claudeRemoteSettingSources === 'string') {

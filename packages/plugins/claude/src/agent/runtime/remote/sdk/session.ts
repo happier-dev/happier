@@ -104,6 +104,8 @@ import {
 } from '../../shared/runtimeHelpers.js';
 import { createClaudePermissionHookHandler } from '../../shared/permissionHookHandler.js';
 import { buildClaudeHookSettingsOverlay } from '../../../hooks/settings.js';
+import type { ClaudeSettingSourceV2 } from '@happier-dev/plugin-sdk/first-party/claude';
+import { readClaudeNativeCommands } from '../../../transcripts/nativeCommands.js';
 import { resolveClaudeLaunchSettingsOverlayArgs } from '../../launchSettings.js';
 import { buildClaudeEffortCliArgs } from '../../reasoningEffort.js';
 import { buildClaudePermissionModeArgs, mapToClaudePermissionMode } from '../../permissionMode.js';
@@ -643,6 +645,7 @@ export type ClaudeAgentSdkTurnOperationsParams = Readonly<{
     directory: string;
     launchEnv: Readonly<Record<string, string>>;
     advancedOptions?: ClaudeRemoteAdvancedOptions;
+    settingSources?: readonly ClaudeSettingSourceV2[];
     permissionMode: string;
     workspaceWrites?: 'allow' | 'deny';
     happierSessionId?: string | null;
@@ -1034,6 +1037,7 @@ export function createClaudeAgentSdkTurnOperations(
                     ...buildClaudeMcpConfigArgs(params.mcpServers),
                 ],
                 ...params.advancedOptions,
+                settingSources: params.settingSources,
                 ...(params.startupInstructions ? {
                     appendSystemPrompt: params.startupInstructions,
                     appendSystemPromptFile: true,
@@ -1394,6 +1398,13 @@ export function createClaudeAgentSdkTurnOperations(
                 const nextMessage = await turnQuery.next();
                 if (nextMessage.done) break;
                 const message = nextMessage.value;
+                const commands = readClaudeNativeCommands(message);
+                if (commands !== null) {
+                    publishRuntimeEvent(ClaudeProviderEventSchema.parse({
+                        kind: 'available-commands', sessionId: readRuntimeEventSessionId(),
+                        emittedAtMs: Date.now(), commands,
+                    }));
+                }
                 messageSequence += 1;
                 const initializedModel = isSdkSystemMessage(message) && message.subtype === 'init' ? readString(message.model) : null;
                 if (initializedModel && launchEffort) {
@@ -1919,6 +1930,7 @@ export function createClaudeAgentSdkTurnOperations(
                                 : {}),
                         ...(getClaudeSdkOAuthToken ? { getOAuthToken: getClaudeSdkOAuthToken } : {}),
                         ...params.advancedOptions,
+                        settingSources: params.settingSources,
                         ...(params.startupInstructions ? {
                             appendSystemPrompt: params.startupInstructions,
                             appendSystemPromptFile: true,

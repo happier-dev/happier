@@ -539,6 +539,107 @@ describe('createOpenCodeServerClient', () => {
     );
   });
 
+  it.each(['v1', 'v2'] as const)('executes native commands through the %s command route and preserves its declared attachments', async (dialect) => {
+    const requests: ManagedServiceRequest[] = [];
+    const request = vi.fn<ManagedServiceHandle['request']>(async (input) => {
+      requests.push(input);
+      return dialect === 'v2' ? createNoContentResponse() : createJsonResponse({ info: { id: 'msg_native' }, parts: [] });
+    });
+    const client = createClient({ request, directory: '/repo', dialect });
+    const file = { type: 'file' as const, url: 'file:///repo/a.png', mime: 'image/png', filename: 'a.png' };
+
+    await client.sessionCommand({ sessionId: 'ses-1', command: 'review', arguments: 'main', messageId: 'msg_local',
+      model: { providerID: 'openai', modelID: 'gpt-5' }, agent: 'build', variant: 'high',
+      parts: dialect === 'v2' ? [file, { type: 'agent', name: 'reviewer' }, { type: 'skill', id: 'native-skill-id', name: 'Reviewer', text: 'Instructions' }] : [file],
+      ...(dialect === 'v2' ? { delivery: 'steer' } : {}),
+    });
+
+    expect(requests.at(-1)?.pathAndQuery).toBe(dialect === 'v2' ? '/api/session/ses-1/command' : '/session/ses-1/command?directory=%2Frepo');
+    expect(readJsonRequestBody(requests.at(-1))).toEqual(dialect === 'v2'
+      ? { name: 'review', text: 'main', files: [{ uri: 'file:///repo/a.png', name: 'a.png' }], agents: [{ name: 'reviewer' }], skills: [{ id: 'native-skill-id' }], delivery: 'steer' }
+      : { command: 'review', arguments: 'main', messageID: 'msg_local', model: 'openai/gpt-5', agent: 'build', variant: 'high', parts: [file] });
+    expect(requests.map((input) => input.pathAndQuery)).toEqual(dialect === 'v2'
+      ? ['/api/session/ses-1/agent', '/api/session/ses-1/model', '/api/session/ses-1/command']
+      : ['/session/ses-1/command?directory=%2Frepo']);
+  });
+
+  it('rejects unsupported V1 native command delivery and agent attachments before any server write', async () => {
+    const request = vi.fn<ManagedServiceHandle['request']>(async () => createNoContentResponse());
+    const client = createClient({ request });
+
+    await expect(client.sessionCommand({ sessionId: 'ses-1', command: 'review', arguments: '', delivery: 'steer' }))
+      .rejects.toMatchObject({ code: 'opencode_server_operation_unsupported', operation: 'session_command_delivery' });
+    await expect(client.sessionCommand({ sessionId: 'ses-1', command: 'review', arguments: '', parts: [{ type: 'agent', name: 'reviewer' }] }))
+      .rejects.toMatchObject({ code: 'opencode_server_operation_unsupported', operation: 'session_command_attachments' });
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it.each(['v1', 'v2'] as const)('projects selected skills through the %s native prompt contract', async (dialect) => {
+    const requests: ManagedServiceRequest[] = [];
+    const client = createClient({ directory: '/repo', dialect, request: async (input) => {
+      requests.push(input);
+      return createJsonResponse({ data: { id: 'msg-native' } });
+    } });
+    await client.sessionPromptAsync({ sessionId: 'ses-1', text: 'Review this', parts: [
+      { type: 'skill', id: 'opaque-native-id', name: 'Reviewer', text: 'Use reviewer instructions' },
+      { type: 'text', text: 'Review this' },
+    ] });
+    expect(readJsonRequestBody(requests.at(-1))).toEqual(dialect === 'v2'
+      ? { text: 'Review this', skills: [{ id: 'opaque-native-id' }] }
+      : { parts: [{ type: 'text', text: 'Use reviewer instructions', synthetic: true }, { type: 'text', text: 'Review this' }] });
+    expect(requests).toHaveLength(1);
+  });
+
+  it.each(['prompt', 'command'] as const)('resolves legacy V2 skills with native name/path before %s admission', async (operation) => {
+    const requests: ManagedServiceRequest[] = [];
+    const skillPath = '/repo/folder/SKILL.md';
+    const client = createClient({ directory: '/repo', dialect: 'v2', request: async (input) => {
+      requests.push(input);
+      return input.method === 'GET' ? createJsonResponse({ data: [
+        { id: 'exact-id', name: 'Reviewer', path: skillPath },
+        { id: 'other-id', name: 'Reviewer', path: '/other/SKILL.md' },
+      ] }) : createNoContentResponse();
+    } });
+    const skill = { type: 'skill' as const, name: 'Reviewer', path: skillPath, text: 'Legacy instructions' };
+    if (operation === 'prompt') await client.sessionPromptAsync({ sessionId: 'ses-1', text: 'Review this',
+      parts: [{ type: 'text', text: 'Review this' }, skill] });
+    else await client.sessionCommand({ sessionId: 'ses-1', command: 'review', arguments: 'Review this', parts: [skill] });
+    expect(requests.at(0)?.pathAndQuery).toBe('/api/skill?location%5Bdirectory%5D=%2Frepo');
+    expect(readJsonRequestBody(requests.at(-1))).toEqual({
+      ...(operation === 'command' ? { name: 'review' } : {}), text: 'Review this', skills: [{ id: 'exact-id' }],
+    });
+  });
+
+  it.each(['prompt', 'command'] as const)('rejects ambiguous legacy V2 skills before %s native effects', async (operation) => {
+    const requests: ManagedServiceRequest[] = [];
+    const client = createClient({ directory: '/repo', dialect: 'v2', request: async (input) => {
+      requests.push(input);
+      return createJsonResponse({ data: [{ id: 'one', name: 'Reviewer' }, { id: 'two', name: 'Reviewer' }] });
+    } });
+    const parts = [{ type: 'skill' as const, name: 'Reviewer', text: 'Legacy instructions' }];
+    const input = { sessionId: 'ses-1', agent: 'build', model: { providerID: 'openai', modelID: 'gpt-5' }, parts };
+    const outcome = operation === 'prompt' ? client.sessionPromptAsync({ ...input, text: '' })
+      : client.sessionCommand({ ...input, command: 'review', arguments: '' });
+    await expect(outcome).rejects.toMatchObject({ code: 'opencode_skill_identity_missing' });
+    expect(requests.filter((request) => request.method === 'POST')).toEqual([]);
+  });
+
+  it.each(['v1', 'v2'] as const)('discovers directory-scoped native commands through the %s server', async (dialect) => {
+    const requests: ManagedServiceRequest[] = [];
+    const commands = [{ name: 'review', description: 'Review the current change' }];
+    const request = vi.fn<ManagedServiceHandle['request']>(async (input) => {
+      requests.push(input);
+      return createJsonResponse(dialect === 'v2' ? { location: { directory: '/other' }, data: commands } : commands);
+    });
+    const client = createClient({ request, directory: '/repo', dialect });
+
+    await expect(client.appCommands({ directory: '  /other  ' })).resolves.toEqual(commands);
+    expect(requests.at(0)).toMatchObject({
+      method: 'GET',
+      pathAndQuery: dialect === 'v2' ? '/api/command?location%5Bdirectory%5D=%2Fother' : '/command?directory=%2Fother',
+    });
+  });
+
   it('fetches native app skills through the exact managed service request transport', async () => {
     const requests: ManagedServiceRequest[] = [];
     const request = vi.fn<ManagedServiceHandle['request']>(async (input) => {
@@ -1349,6 +1450,7 @@ describe('createOpenCodeServerClient (OpenCode V2 beta dialect)', () => {
           // A user message whose `text` is not a string carries no text part.
           { id: 'msg_0', type: 'user', text: 7, time: { created: 5 } },
           { id: 'msg_1', type: 'user', text: '  hi\n', time: { created: 10 } },
+          { id: 'msg_synthetic', type: 'synthetic', text: '<subagent-completion>private injected result</subagent-completion>', metadata: { source: 'subagent', childID: 'ses_child' }, time: { created: 20 } },
         ],
         // The server minted this cursor; the continuation must send it back
         // byte-for-byte, surrounding whitespace and newline included.
@@ -1371,6 +1473,10 @@ describe('createOpenCodeServerClient (OpenCode V2 beta dialect)', () => {
       {
         info: { id: 'msg_1', role: 'user', sessionID: 'ses-1', time: { created: 10 } },
         parts: [{ type: 'text', text: '  hi\n' }],
+      },
+      {
+        info: { id: 'msg_synthetic', role: 'user', synthetic: true, metadata: { source: 'subagent', childID: 'ses_child' }, sessionID: 'ses-1', time: { created: 20 } },
+        parts: [],
       },
       {
         info: {

@@ -43,6 +43,42 @@ type SessionParamsWithCredentials =
 
 describe('bindClaudeAgentSdkFallbackSession', () => {
   it.each([
+    { label: 'nonempty', advertised: ['/Review'], commands: [{ name: 'review' }] },
+    { label: 'empty', advertised: [], commands: [] },
+  ])('publishes the $label native command catalog and selected settings sources', async ({ advertised, commands }) => {
+    const exec = createSdkExecFixture();
+    const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, { exec: exec.service });
+    const operations = createClaudeAgentSdkProviderOperations({
+      ctx, directory: '/tmp/claude-project', launchEnv: {}, happierSessionId: 'sdk-native-catalog',
+      permissionMode: 'default', settingSources: ['project'],
+    });
+    const context = { session: { services: {
+      activeInput: { bind: () => ({ dispose() {} }) },
+      models: { bind: () => ({ dispose() {} }) },
+    } } } as unknown as AgentSessionRuntimeContext;
+    const session = createClaudeNativeSessionRuntimeFromOperations(operations, {
+      kind: 'create', sessionId: 'sdk-native-catalog', cwd: '/tmp/claude-project',
+    }, context);
+    const events: AgentSessionRuntimeEvent[] = [];
+    const subscription = session.watch((event) => events.push(event));
+    try {
+      await operations.sendProviderTurnPrompt('/review changed-file.ts');
+      await vi.waitFor(() => expect(exec.spawnClient).toHaveBeenCalledOnce());
+      await exec.emit({ type: 'system', subtype: 'init', session_id: 'native-catalog', slash_commands: advertised });
+      await vi.waitFor(() => expect(events).toEqual(expect.arrayContaining([
+        expect.objectContaining({ kind: 'available-commands', commands }),
+      ])));
+      expect(exec.spawnClient.mock.calls[0]?.[0].launch.args).toEqual(expect.arrayContaining(['--setting-sources', 'project']));
+      expect(exec.written).toContainEqual(expect.objectContaining({
+        type: 'user', message: { role: 'user', content: '/review changed-file.ts' },
+      }));
+    } finally {
+      subscription.dispose();
+      await session.dispose();
+    }
+  });
+
+  it.each([
     { requestedModel: 'sonnet', runtimeModel: 'claude-sonnet-4-6' },
     { requestedModel: 'sonnet[1m]', runtimeModel: 'claude-sonnet-4-6[1m]' },
   ])('publishes actual SDK launch effort only after init without echoing pending configuration ($requestedModel)', async ({ requestedModel, runtimeModel }) => {

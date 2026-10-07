@@ -24,3 +24,4 @@ export { normalizeClaudeRemoteAdvancedOptionsJson } from './projections.js';
 export { normalizeClaudeUnifiedTerminalHost } from './projections.js';
 export { normalizeClaudeUnifiedTerminalResumeChoice } from './projections.js';
 export { normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy } from './projections.js';
+export { readClaudeSettingSourcesV2 } from './projections.js';

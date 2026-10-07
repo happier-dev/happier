@@ -1,7 +1,8 @@
-import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
+import { projectAgentCapabilitiesV2FromDefinition, type PluginHostOwnedAgentDeclaration } from '@happier-dev/plugin-sdk/agents';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 
 import { AGENT_DEFINITION } from './agent/definition.js';
+import { DROID_ACP_COMMAND } from './agent/preflight.js';
 import { DROID_TERMINAL_CONTRIBUTION } from './agent/terminal/contribution.js';
 import { DROID_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
 
@@ -11,13 +12,13 @@ export const DROID_PLUGIN = definePlugin({
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: { required: [{
     id: 'droid-process', capability: 'process', reason: 'Run the declared Factory Droid CLI executable.',
-    scope: { envKeys: ['FACTORY_API_KEY'], executables: [{ kind: 'systemTool', id: 'droid-cli' }] },
+    scope: { envKeys: ['FACTORY_API_KEY'], executables: [{ kind: 'systemTool', id: DROID_ACP_COMMAND.toolId }] },
   }], optional: [] },
   agents: { droid: {
     declaration: {
       title: { key: 'agentInput.agent.droid', fallback: 'Factory Droid' },
       description: { key: 'profiles.aiBackend.droidSubtitleExperimental', fallback: 'Factory Droid (experimental)' },
-      runtime: { kind: 'acp', transport: { kind: 'stdio', executable: { kind: 'systemTool', id: 'droid-cli' }, args: ['exec', '--output-format', 'acp'] }, definition: { modelConfigOptionId: 'model', mcp: { policy: 'pass_through' } } },
+      runtime: { kind: 'acp', transport: { kind: 'stdio', executable: { kind: 'systemTool', id: 'droid-cli' }, args: [...DROID_ACP_COMMAND.args] }, definition: { modelConfigOptionId: 'model', mcp: { policy: 'pass_through' } } },
       cli: {
         displayName: 'Factory Droid CLI', executable: { binaryName: 'droid', knownUserBinDirSuffixes: ['.local/bin'], sourcePreference: 'system-first', systemCommandResolutionStrategy: 'path-first' },
         install: {
@@ -60,7 +61,7 @@ export const DROID_PLUGIN = definePlugin({
           executionRunContext: { versions: [1] },
         },
       }),
-    },
+    } satisfies PluginHostOwnedAgentDeclaration,
     terminal: DROID_TERMINAL_CONTRIBUTION,
   } },
   systemTools: { 'droid-cli': { title: 'Factory Droid CLI', executableNames: ['droid'] } },

@@ -2,6 +2,7 @@ import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sd
 import { definePlugin } from '@happier-dev/plugin-sdk';
 
 import { AGENT_DEFINITION } from './agent/definition.js';
+import { KIMI_ACP_COMMAND } from './agent/acp/preflight.js';
 import { KIMI_SYSTEM_TOOL_READINESS } from './agent/readiness/declaration.js';
 import { KIMI_TERMINAL_CONTRIBUTION } from './agent/terminal/contribution.js';
 import { KIMI_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
@@ -17,7 +18,7 @@ export const KIMI_PLUGIN = definePlugin({
       capability: 'process',
       reason: 'Run the declared Kimi CLI executable.',
       scope: {
-        executables: [{ kind: 'systemTool', id: 'kimi-cli' }],
+        executables: [{ kind: 'systemTool', id: KIMI_ACP_COMMAND.toolId }],
       },
     }],
     optional: [],
@@ -32,7 +33,7 @@ export const KIMI_PLUGIN = definePlugin({
           transport: {
             kind: 'stdio',
             executable: { kind: 'systemTool', id: 'kimi-cli' },
-            args: ['acp'],
+            args: [...KIMI_ACP_COMMAND.args],
             timeouts: { initializeMs: 90_000, idleMs: 500, toolCallMs: 120_000 },
           },
           definition: {

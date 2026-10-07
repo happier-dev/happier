@@ -1,3 +1,4 @@
+import type { ClaudeSettingSourceV2 } from '@happier-dev/plugin-sdk/first-party/claude';
 import type { ClaudeRemoteAdvancedOptions } from '../../protocol/remoteSettings.js';
 
 export interface SDKMessage {
@@ -114,6 +115,7 @@ export interface QueryOptions extends ClaudeRemoteAdvancedOptions {
     continue?: boolean;
     resume?: string;
     strictMcpConfig?: boolean;
+    settingSources?: readonly ClaudeSettingSourceV2[];
     canCallTool?: CanCallToolCallback;
     getOAuthToken?: GetOAuthTokenCallback;
     settingsPath?: string;

@@ -41,6 +41,12 @@ import type { OpenCodeGlobalEvent, OpenCodeRuntimeFetch } from './openCodeServer
  */
 export type OpenCodeServerDialect = 'v1' | 'v2';
 
+/** The native CLI prints either a plain version or `opencode v<version>`. */
+export function readOpenCodeCliVersionDialect(version: string | null | undefined): OpenCodeServerDialect | null {
+  const major = /^(?:opencode\s+)?v?([12])(?:\.|$)/iu.exec(version?.trim() ?? '')?.[1];
+  return major === '1' ? 'v1' : major === '2' ? 'v2' : null;
+}
+
 /**
  * The legacy liveness route, mounted only by the V1 instance server
  * (`packages/opencode/src/server/routes/instance/httpapi/groups/global.ts`).

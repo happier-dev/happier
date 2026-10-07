@@ -282,6 +282,8 @@ function committedMessage(
 
 function mapEvent(event: ClaudeProviderEvent): AgentExecutionRunConversationEventV1 | null {
   switch (event.kind) {
+    case 'available-commands':
+      return { kind: event.kind, commands: event.commands };
     case 'context-compaction':
       return { kind: event.kind, compactionId: event.compactionId, phase: event.phase, trigger: event.trigger,
         ...(event.turnId ? { turnId: event.turnId } : {}) };
@@ -1293,6 +1295,7 @@ async function openClaudeNativeAgentSdkSession(input: Readonly<{
     directory: input.request.cwd,
     launchEnv: launchSettings.launchEnv,
     advancedOptions: launchSettings.advancedOptions,
+    settingSources: launchSettings.settingSources,
     permissionMode: input.request.configuration?.permissionIntent.value ?? 'default',
     workspaceWrites: input.request.configuration?.workspaceWrites,
     supportsEffort: input.supportsEffort === true,
@@ -1351,6 +1354,7 @@ async function openClaudeNativeAgentSdkExecutionRunConversation(input: Readonly<
     directory: input.request.cwd,
     launchEnv: launchSettings.launchEnv,
     advancedOptions: launchSettings.advancedOptions,
+    settingSources: launchSettings.settingSources,
     permissionMode: input.request.configuration?.permissionIntent.value ?? 'default',
     workspaceWrites: input.request.configuration?.workspaceWrites,
     supportsEffort: input.supportsEffort,

@@ -174,6 +174,8 @@ export type AgentAcpInFlightSteerDefinition = Readonly<{
     providerSessionId: string;
     inputIds: readonly [string, ...string[]];
     input: AgentSessionInput;
+    /** ACP text/image blocks projected and verified by the host before dispatch. */
+    content: readonly JsonValue[];
   }>): JsonValue;
   isAccepted(response: JsonValue): boolean;
 }>;

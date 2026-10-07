@@ -18,6 +18,7 @@ import {
 import { OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES } from '../auth/services/accountPurposes.js';
 import { OH_MY_PI_SYSTEM_TOOL_ID } from '../systemTool.js';
 import { AGENT_DEFINITION } from '../definition.js';
+import { OH_MY_PI_ACP_COMMAND } from '../preflight/models.js';
 
 export {
   ohMyPiExternalSessionsContribution,
@@ -248,7 +249,7 @@ async function openOhMyPiExecutionRun(
             kind: 'systemTool',
             id: OH_MY_PI_SYSTEM_TOOL_ID,
           },
-          args: ['--mode', 'acp'],
+          args: [...OH_MY_PI_ACP_COMMAND.args],
         },
         definition: OH_MY_PI_ACP_RUNTIME_DEFINITION,
       },
@@ -276,7 +277,7 @@ async function openOhMyPiSession(
           kind: 'systemTool',
           id: OH_MY_PI_SYSTEM_TOOL_ID,
         },
-        args: ['--mode', 'acp'],
+        args: [...OH_MY_PI_ACP_COMMAND.args],
       },
       definition: OH_MY_PI_ACP_RUNTIME_DEFINITION,
     });

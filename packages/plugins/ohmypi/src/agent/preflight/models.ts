@@ -15,6 +15,8 @@ export type OhMyPiPreflightModel = Readonly<{
   modelOptions?: readonly OhMyPiPreflightModelOption[];
 }>;
 
+export const OH_MY_PI_ACP_COMMAND = Object.freeze({ toolId: 'ohmypi-cli', args: Object.freeze(['--mode', 'acp']) });
+
 const OH_MY_PI_CLI_MODELS_COMMAND_ARGS = ['--list-models'] as const;
 
 const OH_MY_PI_THINKING_MODEL_OPTION: OhMyPiPreflightModelOption = Object.freeze({
@@ -80,6 +82,7 @@ export function buildOhMyPiPreflightModelsFromListModelsOutput(
 }
 
 export const OH_MY_PI_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
+  catalogs: Object.freeze({ kind: 'acp' as const, command: OH_MY_PI_ACP_COMMAND }),
   models: Object.freeze({
     command: Object.freeze({ toolId: 'ohmypi-cli', args: OH_MY_PI_CLI_MODELS_COMMAND_ARGS }),
     parseOutput: ({ stdout, stderr }) =>

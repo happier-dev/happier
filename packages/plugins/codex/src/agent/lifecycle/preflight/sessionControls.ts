@@ -18,6 +18,7 @@ import {
   readCodexAppServerSessionControls,
   type CodexAppServerSessionControlsSnapshot,
 } from '../../runtime/appServer/state/controls.js';
+import { listCodexAppServerSkills } from '../../runtime/appServer/catalog/index.js';
 import { resolveCodexSessionBackendMode } from '../backendMode.js';
 
 export const CODEX_PREFLIGHT_RUNTIME_DIAGNOSTIC_ENV_KEYS = Object.freeze([
@@ -30,6 +31,10 @@ const CODEX_PREFLIGHT_JSON_RPC_COMMAND = Object.freeze({
   toolId: 'codex-cli',
   args: buildCodexAppServerBaseArgs(false),
   environmentExcludeKeys: CODEX_PREFLIGHT_RUNTIME_DIAGNOSTIC_ENV_KEYS,
+});
+const CODEX_PREFLIGHT_ACP_COMMAND = Object.freeze({
+  executable: Object.freeze({ kind: 'managedDependency' as const, id: 'codex-acp' }),
+  args: Object.freeze([]),
 });
 const CODEX_REALTIME_PREFLIGHT_JSON_RPC_COMMAND = Object.freeze({
   ...CODEX_PREFLIGHT_JSON_RPC_COMMAND,
@@ -171,6 +176,7 @@ export const CODEX_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
   jsonRpcCommands: Object.freeze([
     CODEX_PREFLIGHT_JSON_RPC_COMMAND,
     CODEX_REALTIME_PREFLIGHT_JSON_RPC_COMMAND,
+    CODEX_PREFLIGHT_ACP_COMMAND,
   ]),
   resolveProbeVariant: ({ accountSettings, runtimeDescriptorV1, runtimeKindOverride }) => {
     const backendMode = resolveCodexSessionBackendMode({ accountSettings, runtimeDescriptorV1, runtimeKindOverride }) ?? 'appServer';
@@ -182,5 +188,34 @@ export const CODEX_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
   },
   probeModes: async (context) => (await readCodexPreflightSessionControls(context))?.availableModes ?? null,
   probeConfigOptions: async (context) => (await readCodexPreflightSessionControls(context))?.configOptions ?? null,
+  probeCatalogs: async (context) => {
+    if (!usesCodexAppServer(context)) {
+      const authenticationMethodId = context.nonblankEnvironment?.OPENAI_API_KEY === true
+        ? 'openai-api-key'
+        : context.nonblankEnvironment?.CODEX_API_KEY === true ? 'codex-api-key' : undefined;
+      return await context.probeDeclaredAcpCatalogs({
+        ...CODEX_PREFLIGHT_ACP_COMMAND,
+        ...(authenticationMethodId ? { authenticationMethodId } : {}),
+      });
+    }
+    return await context.withDeclaredJsonRpcClient(
+      CODEX_PREFLIGHT_JSON_RPC_COMMAND,
+      async (client, signal) => {
+        const initialized = await waitForCodexOperationOrAbort(
+          initializeCodexAppServerClient(client), signal,
+        );
+        if (initialized === CODEX_OPERATION_ABORTED) return { commands: null, skills: null };
+        const result = await waitForCodexOperationOrAbort(
+          listCodexAppServerSkills({ client, cwd: context.cwd }), signal,
+        );
+        if (result === CODEX_OPERATION_ABORTED) return { commands: null, skills: null };
+        return {
+          commands: null,
+          skills: result.supported ? result.skills : null,
+          ...(result.diagnostic ? { diagnostic: result.diagnostic } : {}),
+        };
+      },
+    );
+  },
   probePassiveRealtimeSetup: probeCodexPassiveRealtimeSetup,
 } satisfies AgentPreflightSessionControlsContributionV1);

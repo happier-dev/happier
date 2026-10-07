@@ -1,6 +1,7 @@
 import { asRecord, normalizeString } from './openCodeParsing.js';
 
 export function normalizeOpenCodeSkills(value: unknown): Array<{
+  id?: string;
   name: string;
   displayName: string;
   description?: string;
@@ -15,8 +16,10 @@ export function normalizeOpenCodeSkills(value: unknown): Array<{
     const name = normalizeString(record?.name);
     if (!name) continue;
     const description = normalizeString(record?.description);
-    const path = normalizeString(record?.location);
+    const path = normalizeString(record?.path) || normalizeString(record?.location);
+    const id = typeof record?.id === 'string' && record.id.length > 0 ? record.id : undefined;
     skills.push({
+      ...(id ? { id } : {}),
       name,
       displayName: name,
       ...(description ? { description } : {}),

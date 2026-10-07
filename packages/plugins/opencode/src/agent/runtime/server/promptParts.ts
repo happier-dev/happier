@@ -5,7 +5,8 @@ import {
 import type { AgentSessionInputFilesService } from '@happier-dev/plugin-sdk/agents/runtime';
 
 export type OpenCodePromptPart =
-  | Readonly<{ type: 'text'; text: string }>
+  | Readonly<{ type: 'text'; text: string; synthetic?: boolean }>
+  | Readonly<{ type: 'skill'; id?: string; name: string; path?: string; text: string }>
   | Readonly<{ type: 'agent'; name: string }>
   | Readonly<{ type: 'file'; mime: string; filename?: string; url: string }>;
 
@@ -65,7 +66,10 @@ export function buildOpenCodePromptParts(params: Readonly<{
     }
     for (const skill of mentionSources.skillMentions) {
       parts.push({
-        type: 'text',
+        type: 'skill',
+        ...(skill.id && skill.idSource !== 'generated' ? { id: skill.id } : {}),
+        name: skill.name,
+        ...(skill.path ? { path: skill.path } : {}),
         text: `Use the ${skill.name} skill for this request.`,
       });
     }

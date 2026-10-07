@@ -262,6 +262,7 @@ export async function openClaudeNativeUnifiedTerminalSession(
     hostPreference: readClaudeTerminalRuntimeSelection(input.request.runtimeDescriptorV1)?.host
       ?? readHostPreference(hostSetting),
     launchEnv,
+    settingSources: launchSettings.settingSources,
     supportsEffort: input.supportsEffort === true,
     supportsSystemPromptSnapshotOff: input.supportsSystemPromptSnapshotOff === true,
     ...(input.request.startupInstructions
