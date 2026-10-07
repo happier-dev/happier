@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Animated, Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { MultiPaneHost, type MultiPaneHostProps } from './MultiPaneHost';
+import type { ResolvedBottomPanePresentation } from './resolveBottomPaneLayout';
 import { ResizableDockedPaneVertical } from './resizable/ResizableDockedPaneVertical';
 import { PaneAnimatedScrimPressable } from './motion/PaneAnimatedScrimPressable';
 import {
@@ -14,7 +15,7 @@ import { ESCAPE_LAYER_PRIORITIES } from '@/keyboard/escape';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { t } from '@/text';
 
-export type BottomPanePresentation = 'docked' | 'overlay' | 'hidden';
+export type BottomPanePresentation = ResolvedBottomPanePresentation;
 
 export type MultiPaneHostWithBottomProps = MultiPaneHostProps & Readonly<{
     bottomPane: React.ReactNode | null;
