@@ -81,12 +81,6 @@ describe("plugin permission strict subject DB contract", () => {
                 ...credentialSubject,
                 selectedRawAccessDigest: CredentialAccessSelectedRawAccessDigestSchema.parse("f".repeat(64)),
             },
-            {
-                ...credentialSubject,
-            },
-            {
-                ...credentialSubject,
-            },
         ] as const satisfies readonly PluginPermissionSubjectV1[];
 
         await db.account.create({

@@ -231,7 +231,10 @@ describe("SessionSystemRecord CONTRACT on SQLite", () => {
                 itemContent, expectedItemRevision: null, placement: { layoutContent, expectedLayoutRevision: null } } });
             expect(created.statusCode).toBe(200);
             const converted = await app.inject({ method: "PUT", url, payload: { operation: "upsert_item", itemId: "note",
-                itemContent: { ...itemContent, v: { ...itemContent.v, source: { kind: "installedSurface", surface: { pluginId: "com.acme.test", localId: "dashboard" } } } },
+                itemContent: { ...itemContent, v: { ...itemContent.v,
+                    source: { kind: "widget", instance: { v: 1, id: "note",
+                        definition: { kind: "installed", surface: { pluginId: "com.acme.test", localId: "dashboard" } },
+                        bindings: {} } } } },
                 expectedItemRevision: created.json().itemRevision } });
             expect(converted.statusCode).toBe(409);
             expect(converted.json().error).toBe("session_board_source_conflict");

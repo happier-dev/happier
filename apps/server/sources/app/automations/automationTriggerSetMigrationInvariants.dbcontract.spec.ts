@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { deriveAutomationOccurrenceKeyV1 } from "@happier-dev/protocol";
+import { deriveAutomationManualOccurrenceKeyV1, deriveAutomationOccurrenceKeyV1 } from "@happier-dev/protocol";
 
 import { db, initDbMysql, initDbPostgres, isPrismaErrorCode } from "@/storage/db";
 import { AUTOMATION_RUN_TERMINAL_STATES, type AutomationRunState } from "./automationTypes";
@@ -412,7 +412,8 @@ describe(
                     select: { id: true },
                 })).rejects.toThrow();
 
-                // Manual cause: no trigger identity and no occurrence key.
+                // Manual cause: no trigger identity. New idempotent invocations
+                // use the canonical occurrence key, never both retry identities.
                 await expect(db.automationRun.create({
                     data: {
                         id: `trigger-invariants-manual-with-trigger-${fixture.suffix}`,
@@ -427,20 +428,43 @@ describe(
                     },
                     select: { id: true },
                 })).rejects.toThrow();
+                const manualOccurrenceKey = deriveAutomationManualOccurrenceKeyV1({
+                    automationId: fixture.automationId,
+                    idempotencyKey: `current-manual-${fixture.suffix}`,
+                });
                 await expect(db.automationRun.create({
                     data: {
-                        id: `trigger-invariants-manual-with-key-${fixture.suffix}`,
+                        id: `trigger-invariants-manual-with-competing-identities-${fixture.suffix}`,
                         automationId: fixture.automationId,
                         accountId: fixture.accountId,
                         causeKind: "manual",
                         causeOccurredAt: now,
-                        occurrenceKey: "G".repeat(43),
+                        occurrenceKey: manualOccurrenceKey,
+                        legacyManualIdempotencyKey: `released-manual-${fixture.suffix}`,
                         scheduledAt: now,
                         dueAt: now,
                         executionInputEnvelope: '{"t":"plain","v":{}}',
                     },
                     select: { id: true },
                 })).rejects.toThrow();
+                await expect(db.automationRun.create({
+                    data: {
+                        id: `trigger-invariants-current-manual-${fixture.suffix}`,
+                        automationId: fixture.automationId,
+                        accountId: fixture.accountId,
+                        causeKind: "manual",
+                        causeOccurredAt: now,
+                        occurrenceKey: manualOccurrenceKey,
+                        scheduledAt: now,
+                        dueAt: now,
+                        executionInputEnvelope: '{"t":"plain","v":{}}',
+                    },
+                    select: { triggerId: true, occurrenceKey: true, legacyManualIdempotencyKey: true },
+                })).resolves.toEqual({
+                    triggerId: null,
+                    occurrenceKey: manualOccurrenceKey,
+                    legacyManualIdempotencyKey: null,
+                });
                 await db.automationRun.create({
                     data: {
                         id: `trigger-invariants-manual-${fixture.suffix}`,

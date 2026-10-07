@@ -30,6 +30,7 @@ import { hashPasswordMaterial } from "@/app/auth/password/passwordMaterialVerifi
 import { registerAccountSecurityRoutes } from "./registerAccountSecurityRoutes";
 import { db, initDbMysql, initDbPostgres, shutdownDbClient } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
+import { createEnvPatcher } from "@/testkit/env";
 
 type NativeContractProvider = "postgres" | "mysql";
 
@@ -121,6 +122,7 @@ describe("native password public-owner provider contract", () => {
     const createdTeamIds = new Set<string>();
     const issuedProofKeys = new Set<string>();
     let connected = false;
+    const env = createEnvPatcher(["HANDY_MASTER_SECRET"]);
 
     beforeAll(async () => {
         if (!databaseUrl) return;
@@ -134,6 +136,7 @@ describe("native password public-owner provider contract", () => {
         process.env.AUTH_REQUIRED_LOGIN_PROVIDERS = "";
         process.env.HAPPIER_PUBLIC_SERVER_URL = "https://home.example.test";
         process.env.HAPPIER_SERVER_IDENTITY_ID = `native-auth-${provider}-contract`;
+        env.set("HANDY_MASTER_SECRET", process.env.HANDY_MASTER_SECRET ?? "native-password-lifecycle-db-contract");
         if (provider === "mysql") await initDbMysql();
         else initDbPostgres();
         await db.$connect();
@@ -159,6 +162,7 @@ describe("native password public-owner provider contract", () => {
 
     afterAll(async () => {
         if (connected) await shutdownDbClient();
+        env.restore();
     });
 
     providerIt("provisions, logs in, changes a full-length sign-in address, and preserves normalization uniqueness", async () => {

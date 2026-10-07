@@ -135,7 +135,7 @@ function eventExecutionRecipe(params: Readonly<{
                     serverId: SERVER_IDENTITY_ID,
                     machineId: params.machineId,
                 },
-                directory: "/tmp/event-crud-dbcontract",
+                directory: { kind: "path", path: "/tmp/event-crud-dbcontract" },
                 agentTarget: {
                     kind: "agent",
                     identity: {

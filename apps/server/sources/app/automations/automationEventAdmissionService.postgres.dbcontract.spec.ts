@@ -96,7 +96,7 @@ function strictEventDefinitionRecipe(machineId: string): string {
             kind: "newSession",
             spawn: {
                 executionTarget: { serverId: "server-postgres-event-admission", machineId },
-                directory: "/tmp/postgres-event-admission",
+                directory: { kind: "path", path: "/tmp/postgres-event-admission" },
                 agentTarget: {
                     kind: "agent",
                     identity: { pluginId: "happier.agent.codex", localId: "codex" },
