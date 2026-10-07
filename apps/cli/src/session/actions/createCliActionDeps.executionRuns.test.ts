@@ -31,6 +31,7 @@ vi.mock('@/session/transport/rpc/sessionRpc', () => ({
 
 vi.mock('@/session/transport/rpc/machineRpc', () => ({
   callMachineRpc,
+  callExactMachineRpc: callMachineRpc,
   readMachineRpcRequestDisposition,
 }));
 
@@ -45,6 +46,74 @@ import { createCliActionDeps } from './createCliActionDeps';
 const executionMaterialization = createPluginActionCallerMaterializationFixture('acme.execution');
 
 describe('detached exact Run output observation transport', () => {
+  it('ends a local passive observation at its authored deadline despite blocked output', async () => {
+    const snapshot = { run: {
+      runId: 'run-watch', callId: 'call', sidechainId: 'call', intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response', startedAtMs: 1, status: 'running',
+    } };
+    let release!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
+      sessionId: 'cli-global', mode: 'plain', ctx: null,
+      machineActionDirectTargetTransport: { machineId: 'machine-1', invoke: async () =>
+        ({ ok: true, status: 'running', disposition: 'snapshot', result: snapshot }) } });
+    vi.useFakeTimers();
+    try {
+      const waiting = deps.executionRunWait(null, { runId: 'run-watch', timeoutSeconds: 1 },
+        { exactMachineId: 'machine-1', workDepth: 3, onSnapshot: async () => blocked });
+      let completed: unknown;
+      void waiting.then(result => { completed = result; });
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(completed).toMatchObject({ ok: false, code: 'observation_timeout' });
+      release();
+      await waiting;
+    } finally { release(); vi.useRealTimers(); }
+  });
+
+  it('keeps a causally admitted local wait on its native direct target', async () => {
+    const result = { ok: true, status: 'running', disposition: 'needs_attention', result: { run: {
+      runId: 'run-watch', callId: 'call', sidechainId: 'call', intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response', startedAtMs: 1, status: 'running',
+      attention: { kind: 'permission_required', requestIds: ['permission'] },
+    } } };
+    const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
+      sessionId: 'cli-global', mode: 'plain', ctx: null,
+      machineActionDirectTargetTransport: { machineId: 'machine-1', invoke: async () => result } });
+    expect(await deps.executionRunWait(null, { runId: 'run-watch', condition: 'needs_attention' },
+      { exactMachineId: 'machine-1', workDepth: 3 })).toMatchObject(result);
+  });
+
+  it.each([null, 'session-1'] as const)('publishes passive Run snapshots through the native service for %s scope', async (sessionId) => {
+    const controller = new AbortController();
+    const snapshot = { run: {
+      runId: 'run-watch', callId: 'call', sidechainId: 'call', intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response', startedAtMs: 1, status: 'running',
+    } };
+    const boundary = async (params: Parameters<typeof import('@/session/transport/rpc/sessionRpc')['callSessionRpc']>[0]) => {
+      const result = { ok: true, status: 'running', disposition: 'snapshot', result: snapshot };
+      if (!params.reattachOnReconnect?.onResult) return result;
+      await params.reattachOnReconnect.onResult(result);
+      params.signal?.throwIfAborted();
+      throw new Error('passive observer must cancel after accepting baseline');
+    };
+    callSessionRpc.mockImplementationOnce(boundary);
+    callMachineRpc.mockImplementationOnce(boundary);
+    resolveSessionTransportContext.mockResolvedValue({ ok: true, sessionId: 'session-1',
+      rawSession: { id: 'session-1', active: true }, mode: 'plain', ctx: null });
+    const credentials = { token: 'token', encryption: null };
+    const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null });
+    const snapshots: unknown[] = [];
+    const waiting = deps.executionRunWait(sessionId, { runId: 'run-watch' }, { targetMachineId: 'machine-1',
+      signal: controller.signal, onSnapshot: value => { snapshots.push(value); controller.abort(); } });
+    await waiting.catch(() => undefined);
+    expect(snapshots).toEqual([snapshot]);
+    callSessionRpc.mockReset();
+    callMachineRpc.mockReset();
+  });
+
   it.each([{ waitForInputId: 'input-1' }, { waitForOutput: { kind: 'review_walkthrough' as const, comparisonId: 'comparison-1' } }])
   ('keeps exact get observation under caller lifecycle: %j', async (wait) => {
     callMachineRpc.mockResolvedValueOnce({ run: { runId: 'run-1' } });

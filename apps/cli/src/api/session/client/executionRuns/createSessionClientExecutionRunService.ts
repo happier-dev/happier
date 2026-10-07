@@ -11,6 +11,8 @@ import {
 } from '@/session/services/executionRuns';
 import { normalizeExecutionRunWaitTimeoutMs } from '@/session/services/executionRunWaitTiming';
 import type { SessionStoredContentCryptoContext } from '@/session/transport/encryption/sessionEncryptionContext';
+import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { ExecutionRunWaitConditionSchema } from '@happier-dev/protocol/execution/runs/waitForTerminal';
 
 function readUnknownRecordProperty(value: unknown, key: string): unknown {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
@@ -70,11 +72,15 @@ export function createSessionClientExecutionRunService(
             })),
         wait: async (request: unknown, options?: Readonly<{ signal?: AbortSignal }>) => {
             const rawTimeoutSeconds = readUnknownRecordProperty(request, 'timeoutSeconds');
+            const condition = readUnknownRecordProperty(request, 'condition');
+            const after = readUnknownRecordProperty(request, 'after');
 
             return await runWithServerHttpBaseUrl(serverUrl, async () => waitForExecutionRun({
                 ...readExecutionRunServiceContext(),
                 runId: String(readUnknownRecordProperty(request, 'runId') ?? ''),
                 timeoutMs: normalizeExecutionRunWaitTimeoutMs(rawTimeoutSeconds),
+                ...(condition === undefined ? {} : { condition: ExecutionRunWaitConditionSchema.parse(condition) }),
+                ...(after === undefined ? {} : { after: ExecutionRunGetResponseSchema.parse(after) }),
                 ...(options?.signal ? { signal: options.signal } : {}),
             }));
         },

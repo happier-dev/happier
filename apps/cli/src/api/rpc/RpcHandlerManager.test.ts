@@ -1138,6 +1138,30 @@ describe('RpcHandlerManager request lifetime', () => {
       method: 'sess_1:demo.timeout', params: {}, timeoutMs: 5,
     } as Parameters<typeof rpc.handleRequest>[0])).resolves.toEqual({ aborted: true });
   });
+
+  it('preserves a long forwarded handler lifetime across the Node timer boundary', async () => {
+    vi.useFakeTimers();
+    const rpc = new RpcHandlerManager({ scopePrefix: 'machine-long', encryptionMode: 'plain', logger: () => {} });
+    const timeoutMs = 30 * 24 * 60 * 60_000;
+    let settled = false;
+    rpc.registerHandler('demo.long', async (_request: unknown, context?: RpcHandlerContext) => {
+      if (!context) return { aborted: false };
+      await new Promise<void>((resolve) => context.signal.addEventListener('abort', () => resolve(), { once: true }));
+      return { aborted: context.signal.aborted };
+    });
+    try {
+      const waiting = rpc.handleRequest({ method: 'machine-long:demo.long', params: {}, timeoutMs })
+        .then((result) => { settled = true; return result; });
+      await vi.advanceTimersByTimeAsync(2_147_483_647);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(timeoutMs - 2_147_483_647);
+      await expect(waiting).resolves.toEqual({ aborted: true });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      rpc.onSocketDisconnect();
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('RpcHandlerManager owned handler replacement', () => {

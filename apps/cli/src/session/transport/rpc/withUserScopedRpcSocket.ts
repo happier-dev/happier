@@ -6,10 +6,49 @@ import { createAuthenticationHttpStatusError } from '@/api/client/httpStatusErro
 
 type RpcSocket = ReturnType<typeof createUserScopedSocketConnection>['socket'];
 
+export type RpcObservationOptions = Readonly<{
+  readRequest?: () => unknown;
+  /** False observes the next owner change on the same connection. */
+  onResult?: (result: unknown) => boolean | Promise<boolean>;
+}>;
+
+/** Shared passive response pump for Session and exact-Machine RPC adapters. */
+export async function readRpcObservation(params: Readonly<{
+  request: unknown;
+  signal?: AbortSignal;
+  observation?: RpcObservationOptions;
+  read: (request: unknown) => Promise<unknown>;
+}>): Promise<unknown> {
+  const withinCallerLifetime = async <T>(pending: Promise<T>): Promise<T> => {
+    const signal = params.signal;
+    if (!signal) return await pending;
+    signal.throwIfAborted();
+    let onAbort = () => {};
+    const cancelled = new Promise<never>((_resolve, reject) => {
+      onAbort = () => reject(signal.reason);
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
+    try { return await Promise.race([pending, cancelled]); }
+    finally { signal.removeEventListener('abort', onAbort); }
+  };
+  for (;;) {
+    params.signal?.throwIfAborted();
+    const request = await withinCallerLifetime(Promise.resolve(params.observation?.readRequest?.() ?? params.request));
+    params.signal?.throwIfAborted();
+    // The RPC transport owns issued/not-sent cancellation evidence. Race only
+    // output backpressure, not its in-flight read, against the caller lifetime.
+    const result = await params.read(request);
+    params.signal?.throwIfAborted();
+    if (!params.observation?.onResult
+      || await withinCallerLifetime(Promise.resolve(params.observation.onResult(result)))) return result;
+  }
+}
+
 /** CLI-owned RPC lifetime; read-only observations use the shared reconnect owner. */
 export async function withUserScopedRpcSocket<R>(
   params: Readonly<{
     token: string;
+    authorityCeiling?: 'account_automation';
     serverUrl?: string;
     connectTimeoutMs: number;
     signal?: AbortSignal;

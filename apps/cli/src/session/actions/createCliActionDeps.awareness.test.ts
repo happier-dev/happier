@@ -133,7 +133,7 @@ describe('CLI activity compatibility awareness', () => {
     const settled = vi.fn();
     const waiting = owner.sessionAwarenessWait!({ context,
       input: { target: { kind: 'session', serverId: 'home', sessionId }, condition: { kind } },
-      options: { timeoutMs: 10_000, deadlineMs: now + 10_000 },
+      options: { condition: { kind }, timeoutMs: 10_000, deadlineMs: now + 10_000 },
       readAwareness: () => owner.sessionActivityGet({ context, sessionId, view: 'awareness' }),
     }).then((result) => { settled(result); return result; });
     await vi.advanceTimersByTimeAsync(0);

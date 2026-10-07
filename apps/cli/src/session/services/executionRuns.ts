@@ -13,6 +13,9 @@ import type {
     SessionStoredContentCryptoContext,
 } from '@/session/transport/encryption/sessionEncryptionContext';
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
+import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
+import { readRpcObservation } from '@/session/transport/rpc/withUserScopedRpcSocket';
+import type { StoredCredentials } from '@/persistence';
 import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 import { applyExecutionRunListRequest } from './applyExecutionRunListRequest';
 import {
@@ -26,6 +29,7 @@ type ExecutionRunRpcContext = Readonly<{
     token: string;
     sessionId: string;
     signal?: AbortSignal;
+    authorityCeiling?: 'account_automation';
 }> & SessionStoredContentCryptoContext;
 
 export type ExecutionRunTerminalStatus = ProtocolExecutionRunTerminalStatus;
@@ -843,6 +847,15 @@ type ExecutionRunWaitRequest = Readonly<{
     onSnapshot?: (snapshot: ExecutionRunGetResponse) => void | Promise<void>;
 }>;
 
+type ExecutionRunWaitContext = ExecutionRunRpcContext | Readonly<{
+    credentials: StoredCredentials;
+    machineId: string;
+    serverUrl?: string;
+    authorityCeiling?: 'account_automation';
+    /** Existing private same-Machine transport; no target selection happens here. */
+    invokeWait?: (request: unknown, signal?: AbortSignal) => Promise<unknown>;
+}>;
+
 function projectTerminalExecutionRunWaitResult(data: unknown): WaitForExecutionRunResult | null {
     if (!isRecord(data) || !isRecord(data.run) || !isExecutionRunTerminalStatus(data.run.status)) {
         return null;
@@ -868,7 +881,7 @@ async function readExecutionRunWaitCompatibilitySnapshot(
 }
 
 export async function waitForExecutionRun(
-    params: ExecutionRunRpcContext & ExecutionRunWaitRequest,
+    params: ExecutionRunWaitContext & ExecutionRunWaitRequest,
 ): Promise<WaitForExecutionRunResult> {
     const observationTimeoutMs = normalizeExecutionRunWaitTimeoutMs(
         params.timeoutMs === null ? null : params.timeoutMs / 1_000,
@@ -915,16 +928,7 @@ export async function waitForExecutionRun(
         armDeadline();
         let waitedPayload: unknown;
         try {
-            waitedPayload = await callSessionRpc({
-                ...observedParams,
-                token: params.token,
-                sessionId: params.sessionId,
-                method: `${params.sessionId}:${SESSION_RPC_METHODS.EXECUTION_RUN_WAIT}`,
-                request,
-                // No acknowledgement timeout: the observation's own signal spans
-                // the entire connection/reconnect/output lifetime.
-                timeoutMs: null,
-                reattachOnReconnect: { readRequest, ...(params.onSnapshot ? {
+            const reattachOnReconnect = { readRequest, ...(params.onSnapshot ? {
                     onResult: async (raw: unknown) => {
                         signal?.throwIfAborted();
                         const parsed = ExecutionRunWaitResultSchema.safeParse(raw);
@@ -936,13 +940,24 @@ export async function waitForExecutionRun(
                         await snapshotDelivery;
                         return false;
                     },
-                } : {}) },
-            });
+                } : {}) };
+            // Both transports consume the same observer and reconnect/output
+            // budget. Detached reads stay on the admitted exact Machine.
+            waitedPayload = 'machineId' in observedParams && observedParams.invokeWait
+                ? await readRpcObservation({ request, signal, observation: reattachOnReconnect,
+                    read: request => observedParams.invokeWait!(request, signal) })
+                : 'machineId' in observedParams
+                ? await callExactMachineRpc({ ...observedParams,
+                    method: SESSION_RPC_METHODS.EXECUTION_RUN_WAIT, request, timeoutMs: null, reattachOnReconnect })
+                : await callSessionRpc({ ...observedParams,
+                    method: `${observedParams.sessionId}:${SESSION_RPC_METHODS.EXECUTION_RUN_WAIT}`,
+                    request, timeoutMs: null, reattachOnReconnect });
         } catch (error) {
             signal?.throwIfAborted();
             const fallbackCode = classifyExecutionRunRpcFallback(error);
             if (!fallbackCode) throw error;
             if (params.condition || params.onSnapshot) return { ok: false, code: fallbackCode };
+            if ('machineId' in observedParams) return { ok: false, code: fallbackCode };
             const fallback = await readExecutionRunWaitCompatibilitySnapshot(observedParams);
             return fallback ?? {
                 ok: false,
@@ -966,7 +981,7 @@ export async function waitForExecutionRun(
             return waited.data;
         }
         const normalized = normalizeExecutionRunRpcPayload(waitedPayload);
-        if (!params.condition && !params.onSnapshot && !normalized.ok && isFallbackSafeExecutionRunServiceError(normalized)) {
+        if (!('machineId' in observedParams) && !params.condition && !params.onSnapshot && !normalized.ok && isFallbackSafeExecutionRunServiceError(normalized)) {
             return await readExecutionRunWaitCompatibilitySnapshot(observedParams) ?? normalized;
         }
         return {
@@ -986,7 +1001,7 @@ export async function waitForExecutionRun(
 }
 
 /** Passive snapshots from the same supervised execution wait RPC; cancellation ends observation only. */
-export async function watchExecutionRun(params: ExecutionRunRpcContext & ExecutionRunWaitRequest & Readonly<{
+export async function watchExecutionRun(params: ExecutionRunWaitContext & ExecutionRunWaitRequest & Readonly<{
     onSnapshot: (snapshot: ExecutionRunGetResponse) => void | Promise<void>;
 }>): Promise<WaitForExecutionRunResult> {
     return await waitForExecutionRun(params);

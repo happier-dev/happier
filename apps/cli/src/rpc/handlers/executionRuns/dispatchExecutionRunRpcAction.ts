@@ -82,6 +82,16 @@ type ExecutionRunRpcFailure = Readonly<{
   errorCode: string;
   details?: unknown;
 }>;
+
+/** Caller input to a Voice run belongs to the present user, not its opener. */
+export function admitExecutionRunCallerTurn(
+  run: Pick<NonNullable<ReturnType<ExecutionRunHostBridgeContract['get']>>, 'intent'>,
+  authority: ActionExecutorContext['authority'],
+): ExecutionRunRpcFailure | null {
+  return run.intent === 'voice_agent' && authority !== 'present_user'
+    ? { ok: false, errorCode: 'execution_run_not_allowed', error: 'Voice turns require present-user authority' }
+    : null;
+}
 /**
  * Grants the Team visibility a Session-owned Run's selected resource requires,
  * through the Session access owner, after the user confirmed it. The Run keeps
@@ -629,7 +639,10 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       if (!isAuthoritativeScope(sessionId)) return executionRunScopeMismatch();
       await params.manager.recoverRetainedRuns();
       const parsed = ExecutionRunSendRequestSchema.parse(request);
-      if (!getRunInAuthoritativeScope(parsed.runId, sessionId)) return executionRunNotFound();
+      const run = getRunInAuthoritativeScope(parsed.runId, sessionId);
+      if (!run) return executionRunNotFound();
+      const refusal = admitExecutionRunCallerTurn(run, actionOptions?.authority);
+      if (refusal) return refusal;
       const permissionRequestStore = readPermissionRequestStore(actionOptions?.permissionRequestStore);
       if (actionOptions?.permissionRequestStore !== undefined && !permissionRequestStore) {
         return { ok: false, errorCode: 'execution_run_invalid_action_input', error: 'Invalid interaction target' };
@@ -723,7 +736,10 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       if (!isAuthoritativeScope(sessionId)) return executionRunScopeMismatch();
       await params.manager.recoverRetainedRuns();
       const parsed = ExecutionRunTurnStreamStartRequestSchema.parse(request);
-      if (!getRunInAuthoritativeScope(parsed.runId, sessionId)) return executionRunNotFound();
+      const run = getRunInAuthoritativeScope(parsed.runId, sessionId);
+      if (!run) return executionRunNotFound();
+      const refusal = admitExecutionRunCallerTurn(run, actionOptions?.authority);
+      if (refusal) return refusal;
       const started = await params.manager.startTurnStream(parsed.runId, {
         message: parsed.message,
         ...(parsed.speechSegmentTargetChars !== undefined
@@ -807,6 +823,8 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       const runState = getRunInAuthoritativeScope(parsed.runId, sessionId);
       if (!runState && params.manager.get(parsed.runId)) return executionRunScopeMismatch();
       if (!runState && parsed.actionId !== 'review.triage') return executionRunNotFound();
+      const refusal = runState ? admitExecutionRunCallerTurn(runState, opts?.authority) : null;
+      if (refusal) return refusal;
       if (isRuntimeActionIdV1(parsed.actionId)) {
         if (sessionId === null) {
           return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Runtime actions require a Session scope' };
