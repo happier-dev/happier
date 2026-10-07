@@ -181,6 +181,46 @@ function persistence(
 }
 
 describe("Review Comment Account-encryption migration owner", () => {
+    it.each([
+        { comments: 201, eventsPerComment: 10 },
+        { comments: 1, eventsPerComment: 2_001 },
+    ])("migrates the complete $comments-comment inventory with $eventsPerComment events per comment", async ({ comments, eventsPerComment }) => {
+        const rows = Array.from({ length: comments }, (_, commentIndex) => {
+            const row = storedComment({ commentId: `comment-${commentIndex}` });
+            return {
+                ...row,
+                events: Array.from({ length: eventsPerComment }, (_, eventIndex) => {
+                    const currentEvent = event({
+                        eventId: `event-${commentIndex}-${eventIndex}`,
+                        commentId: row.commentId,
+                        serverRevision: eventIndex + 1,
+                    });
+                    return {
+                        event: currentEvent,
+                        sensitiveEnvelope: boundEvent(currentEvent, "source"),
+                        sourceLayout: "canonical_v1" as const,
+                    };
+                }),
+            };
+        });
+        const store = persistence(rows);
+        const items = rows.map((row) => migrationItem(row));
+        const directive = { action: "migrate" as const, items };
+
+        const postState = await migrateReviewCommentAccountEncryptionInTx({
+            accountId: "account-1", targetMode: "plain", directive, persistence: store,
+        });
+
+        expect(postState.comments).toHaveLength(comments);
+        expect(postState.comments.reduce((count, row) => count + row.events.length, 0))
+            .toBe(comments * eventsPerComment);
+        expect(rows.every((row) => row.sensitiveSource.layout === "canonical_v1"
+            && row.sensitiveSource.envelope.t === "plain")).toBe(true);
+        await expect(reviewCommentAccountEncryptionPostStateMatches({
+            accountId: "account-1", targetMode: "plain", directive, persistence: store,
+        })).resolves.toBe(true);
+    });
+
     it("rewrites one complete exact comment/event inventory", async () => {
         const rows = [storedComment({ commentId: "comment-1" }), storedComment({ commentId: "comment-2" })];
         const store = persistence(rows);

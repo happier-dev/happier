@@ -22,6 +22,9 @@ import {
 } from "@/testkit/pluginInstallationPublisherTestkit";
 import {
     signAccountContentKeyBindingV1,
+    bindReviewCommentEventSensitiveEnvelopeV1,
+    buildReviewCommentEventRequestBindingV1,
+    sealReviewCommentEventSensitiveEnvelopeV1,
     GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
     buildReviewCommentPublicationTransportRequestV1,
     openReviewCommentPublicationTransportResponseV1,
@@ -52,6 +55,7 @@ import {
 } from "@happier-dev/protocol";
 import { createReviewCommentOperations } from "./operations";
 import { registerReviewCommentRoutes } from "./routes";
+import { createReviewCommentAccountEncryptionMigrationPersistenceInTx } from "./accountEncryptionMigrationPersistence";
 import {
     createSqlReviewCommentStore,
     type ReviewCommentStore,
@@ -304,6 +308,52 @@ describe("review comment durable storage", () => {
             () => db.userKVStore.deleteMany(),
             () => db.account.deleteMany(),
         ]);
+    });
+
+    it("reads the complete Account migration inventory beyond former comment and event count cutoffs", async () => {
+        const account = await db.account.create({ data: {
+            id: "account-complete-review-inventory", publicKey: "complete-review-inventory", encryptionMode: "plain",
+        } });
+        const actor = { kind: "user", userId: account.id } as const;
+        const commentIds = Array.from({ length: 203 }, (_, index) => `inventory-comment-${index}`);
+        await db.reviewComment.createMany({ data: commentIds.map((id) => ({
+            id, accountId: account.id, projectId: "project-1", threadId: id,
+            state: "open", flagsJson: "{}", authorJson: JSON.stringify(actor),
+            anchorJson: JSON.stringify({ kind: "file" }),
+            snapshotEnvelopeJson: JSON.stringify({ v: 1, layout: "review_comment_sensitive_in_body_v1" }),
+            bodyEnvelopeJson: JSON.stringify({ t: "plain", v: {} }),
+            bodyVersion: 1, serverRevision: 1, editsJson: "[]", dispositionsJson: "{}",
+            transitionsJson: "[]", createdAt: 1n, updatedAt: 1n,
+        })) });
+        const events = Array.from({ length: 2_101 }, (_, index) => {
+            const eventId = `inventory-event-${index}`;
+            const commentId = commentIds[index % commentIds.length]!;
+            const clientMutationId = `mutation-${eventId}`;
+            const requestBinding = buildReviewCommentEventRequestBindingV1({
+                accountId: account.id, projectId: "project-1", actor, actionId: "reviews.comments.edit",
+                input: { projectId: "project-1", commentId, expectedServerRevision: 1,
+                    expectedBodyVersion: 1, clientMutationId },
+            });
+            const event = { eventId, commentId, accountId: account.id, projectId: "project-1",
+                eventKind: "edited" as const, actor, createdAt: 1, serverRevision: 1,
+                event: { clientMutationId } };
+            const envelope = bindReviewCommentEventSensitiveEnvelopeV1({ event, requestBinding,
+                sensitive: sealReviewCommentEventSensitiveEnvelopeV1({
+                    payload: { v: 1, requestBinding, details: event.event }, mode: "plain",
+                }),
+            });
+            return { eventId, commentId, accountId: account.id, projectId: "project-1",
+                eventKind: event.eventKind, eventEnvelopeJson: JSON.stringify(envelope), clientMutationId,
+                actorJson: JSON.stringify(actor), serverRevision: 1, createdAt: 1n };
+        });
+        await db.reviewCommentEvent.createMany({ data: events });
+
+        const inventory = await inTx(async (tx) => createReviewCommentAccountEncryptionMigrationPersistenceInTx(tx)
+            .readInventory(account.id));
+
+        expect(inventory.map((row) => row.commentId).sort()).toEqual([...commentIds].sort());
+        expect(inventory.flatMap((row) => row.events.map((entry) => entry.event.eventId)).sort())
+            .toEqual(events.map((entry) => entry.eventId).sort());
     });
 
     it("prepares and commits canonical E2EE records over HTTP without plaintext sensitive columns", async () => {
