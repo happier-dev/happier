@@ -1,12 +1,40 @@
 export type CodexExternalSessionInvocationBounds = Readonly<{
   signal?: AbortSignal;
   deadlineAtMs?: number;
+  /** Content discovery may yield before another observed work unit cannot fit. */
+  onProgress?: (resetEstimate?: boolean) => void;
 }>;
+
+export class CodexExternalSessionContentSearchYield extends Error {}
+
+export function createCodexContentSearchInvocationBounds(
+  bounds: CodexExternalSessionInvocationBounds,
+): CodexExternalSessionInvocationBounds {
+  let previousWorkAtMs = Date.now();
+  let longestWorkMs = 0;
+  let yielded = false;
+  return {
+    ...bounds,
+    onProgress(resetEstimate) {
+      const nowMs = Date.now();
+      if (resetEstimate) longestWorkMs = 0;
+      else longestWorkMs = Math.max(longestWorkMs, nowMs - previousWorkAtMs);
+      previousWorkAtMs = nowMs;
+      // Discovery, filesystem reads and decoding use the same host deadline.
+      // Preserve the unfinished semantic unit rather than publishing its prefix.
+      if (yielded || (bounds.deadlineAtMs !== undefined && bounds.deadlineAtMs - nowMs <= longestWorkMs)) {
+        yielded = true;
+        throw new CodexExternalSessionContentSearchYield();
+      }
+    },
+  };
+}
 
 export function throwIfCodexExternalSessionInvocationStopped(
   bounds: CodexExternalSessionInvocationBounds,
 ): void {
   bounds.signal?.throwIfAborted();
+  bounds.onProgress?.();
   if (
     bounds.deadlineAtMs !== undefined
     && Number.isFinite(bounds.deadlineAtMs)

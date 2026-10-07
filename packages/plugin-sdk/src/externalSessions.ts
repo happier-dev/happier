@@ -107,14 +107,13 @@ export type AgentExternalSessionsManagedEndpointRead = (
 ) => Promise<AgentExternalSessionsManagedEndpointReadResponse>;
 
 /**
- * Bounds supplied by the host for one contribution call. The contribution must
- * settle before the absolute deadline, observe the signal, and keep its complete
- * serialized result within `maxSerializedBytes`.
+ * Caller-owned cancellation and optional operation budgets. Omission does not
+ * establish an implicit deadline or serialized-result limit.
  */
 export type AgentExternalSessionsInvocationBounds = Readonly<{
     signal: AbortSignal;
-    deadlineAtMs: number;
-    maxSerializedBytes: number;
+    deadlineAtMs?: number;
+    maxSerializedBytes?: number;
 }>;
 
 /** Packaged host tool; paths are the source-owned file set, never PATH resolution. */
@@ -163,7 +162,7 @@ export function getAgentExternalSessionsInvocationFailure(
             message: 'External-session operation was cancelled.',
         };
     }
-    if (Date.now() >= invocation.deadlineAtMs) {
+    if (invocation.deadlineAtMs !== undefined && Date.now() >= invocation.deadlineAtMs) {
         return {
             ok: false,
             code: 'timeout',
@@ -171,7 +170,7 @@ export function getAgentExternalSessionsInvocationFailure(
             retryable: true,
         };
     }
-    if (!Number.isFinite(invocation.maxSerializedBytes) || invocation.maxSerializedBytes < 1) {
+    if (invocation.maxSerializedBytes !== undefined && (!Number.isFinite(invocation.maxSerializedBytes) || invocation.maxSerializedBytes < 1)) {
         return {
             ok: false,
             code: 'invalid_request',
@@ -187,9 +186,9 @@ export function getAgentExternalSessionsInvocationFailure(
  */
 export function isAgentExternalSessionsResultWithinByteBudget(
     result: AgentExternalSessionsResult<unknown>,
-    maxSerializedBytes: number,
+    maxSerializedBytes: number | undefined,
 ): boolean {
-    return Buffer.byteLength(JSON.stringify(result), 'utf8') <= maxSerializedBytes;
+    return maxSerializedBytes === undefined || Buffer.byteLength(JSON.stringify(result), 'utf8') <= maxSerializedBytes;
 }
 
 /**
@@ -284,6 +283,7 @@ export type AgentExternalSessionsResolveSourceResult = Readonly<{
 }>;
 
 export type AgentExternalSessionsListCandidatesRequest = AgentExternalSessionsInvocation & Readonly<{
+    maxSerializedBytes: number;
     source: AgentExternalSessionSource;
     cursor?: string;
     maxItems: number;
@@ -340,6 +340,7 @@ export type AgentExternalSessionsResolvedIdentity = Readonly<{
 }>;
 
 export type AgentExternalSessionsPageTranscriptRequest = AgentExternalSessionsInvocation & Readonly<{
+    maxSerializedBytes: number;
     /** Forward terminal catch-up may include ordered nonvisual source evidence. */
     projection?: 'terminal';
     source: AgentExternalSessionSource;
@@ -349,6 +350,7 @@ export type AgentExternalSessionsPageTranscriptRequest = AgentExternalSessionsIn
     maxItems: number;
 }>;
 export type AgentExternalSessionsReadAfterTranscriptRequest = AgentExternalSessionsInvocation & Readonly<{
+    maxSerializedBytes: number;
     /** Terminal consumers also receive ordered nonvisual source evidence. */
     projection?: 'terminal';
     source: AgentExternalSessionSource;

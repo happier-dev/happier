@@ -14,6 +14,7 @@ import type {
 } from '@happier-dev/plugin-sdk/sessions/external';
 import {
     createAgentExternalSessionsProducerOverflowFailure,
+    getAgentExternalSessionsInvocationFailure as invocationFailure,
 } from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
@@ -58,21 +59,6 @@ function failed(
         message,
         ...(typeof retryable === 'boolean' ? { retryable } : {}),
     };
-}
-
-function invocationFailure(
-    invocation: AgentExternalSessionsInvocation,
-): AgentExternalSessionsResult<never> | null {
-    if (invocation.signal.aborted) {
-        return failed('cancelled', 'Claude external-session operation was cancelled.');
-    }
-    if (Date.now() >= invocation.deadlineAtMs) {
-        return failed('timeout', 'Claude external-session operation exceeded its deadline.', true);
-    }
-    if (!Number.isFinite(invocation.maxSerializedBytes) || invocation.maxSerializedBytes < 1) {
-        return failed('invalid_request', 'Claude external-session result byte bound must be positive.');
-    }
-    return null;
 }
 
 function readOptionalString(value: AgentExternalSessionLinkDataValue | undefined): string | null {

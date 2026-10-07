@@ -36,6 +36,10 @@ import {
 } from '@happier-dev/protocol';
 
 describe('External Sessions public producer projections', () => {
+    it('accepts cancellation-only invocations without inventing a deadline or result cap', () => {
+        expect(getAgentExternalSessionsInvocationFailure({ signal: new AbortController().signal })).toBeNull();
+        expect(isAgentExternalSessionsResultWithinByteBudget({ ok: true, value: { text: 'valid source identity' } }, undefined)).toBe(true);
+    });
     it('publishes one terminal and producer-overflow classifier for bounded contribution calls', () => {
         const liveInvocation = (overrides: Partial<AgentExternalSessionsInvocationBounds> = {}) => ({
             signal: new AbortController().signal,

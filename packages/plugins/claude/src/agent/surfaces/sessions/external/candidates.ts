@@ -1,6 +1,8 @@
 import {
     deriveExternalSessionActivity,
 } from '@happier-dev/plugin-sdk/sessions/external';
+import { open, stat } from 'node:fs/promises';
+import type { JsonlScannerFileSystem } from '@happier-dev/plugin-sdk/sessions/file-stores';
 import {
     ClaudeCandidateSourceChangedError,
     findClaudeJsonlSessionsById,
@@ -79,6 +81,45 @@ export class ClaudeCandidateInvalidCursorError extends Error {
     readonly name = 'ClaudeCandidateInvalidCursorError';
 }
 
+class ClaudeContentSearchYield extends Error {}
+
+function createContentSearchFileSystem(params: Readonly<{ signal?: AbortSignal; deadlineAtMs?: number }>) {
+    let previousReadAtMs: number | undefined;
+    let longestReadMs = 0;
+    let yielded = false;
+    const beforeRead = () => {
+        throwIfAborted(params.signal);
+        const nowMs = Date.now();
+        if (previousReadAtMs !== undefined) longestReadMs = Math.max(longestReadMs, nowMs - previousReadAtMs);
+        previousReadAtMs = nowMs;
+        // Include decoding between reads in the observed work cost. The host
+        // deadline governs the first file too, without a second time budget.
+        if (yielded || (params.deadlineAtMs !== undefined && params.deadlineAtMs - nowMs <= longestReadMs)) {
+            yielded = true;
+            throw new ClaudeContentSearchYield();
+        }
+    };
+    const fileSystem: JsonlScannerFileSystem = {
+        async stat(filePath) {
+            beforeRead();
+            return stat(filePath);
+        },
+        async read(filePath, position, length) {
+            beforeRead();
+            const handle = await open(filePath, 'r');
+            try {
+                throwIfAborted(params.signal);
+                const buffer = Buffer.alloc(length);
+                const { bytesRead } = await handle.read(buffer, 0, length, position);
+                return buffer.subarray(0, bytesRead);
+            } finally {
+                await handle.close();
+            }
+        },
+    };
+    return { fileSystem, checkWork: beforeRead, assertNotYielded() { if (yielded) throw new ClaudeContentSearchYield(); } };
+}
+
 function encodeCandidateCursor(cursor: ClaudeCandidateCursorV5): string {
     const searchMode = cursor.search.searchMode === 'fast' ? 'f' : 'l';
     const value = cursor.kind === 'claudeCandidateIndexScan'
@@ -147,7 +188,7 @@ function decodeCandidateCursor(
             && typeof parsed[2] === 'string'
             && parsed[2].length > 0
             && Number.isSafeInteger(parsed[3])
-            && (parsed[3] as number) > 0
+            && (parsed[3] as number) >= 0
             && Number.isSafeInteger(parsed[4])
             && (parsed[4] as number) >= 0
         )
@@ -200,6 +241,7 @@ async function buildCandidate(params: Readonly<{
         projectId: string;
     }>) => unknown;
     signal?: AbortSignal;
+    fileSystem?: JsonlScannerFileSystem;
 }>): Promise<ClaudeExternalSessionCandidate> {
     throwIfAborted(params.signal);
     const indexedTitle = params.includeTitle
@@ -210,6 +252,7 @@ async function buildCandidate(params: Readonly<{
                 remoteSessionId: params.session.remoteSessionId,
                 projectId: params.session.projectId,
             }),
+            fileSystem: params.fileSystem,
         }).catch(() => null)
         : null;
     throwIfAborted(params.signal);
@@ -330,6 +373,7 @@ export async function listClaudeExternalSessionCandidates(params: Readonly<{
     const rawSearchTerm = typeof params.searchTerm === 'string' ? params.searchTerm.trim() : '';
     const search = normalizeCandidateSearchContext(params);
     const searchTerm = search.searchTerm;
+    const contentFileSystem = search.searchTarget === 'content' ? createContentSearchFileSystem(params) : undefined;
     const decodedCursor = params.cursor ? decodeCandidateCursor(params.cursor) : null;
     if (params.cursor && !decodedCursor) {
         throw new ClaudeCandidateInvalidCursorError('Claude candidate cursor is invalid.');
@@ -507,7 +551,14 @@ export async function listClaudeExternalSessionCandidates(params: Readonly<{
                 scanned: scannedBefore + traversalIndex,
                 search,
             })
-            : undefined;
+            : encodeCandidateCursor({
+                v: 5,
+                kind: 'claudeCandidateIndexScan',
+                sourceGeneration: session.sourceGeneration,
+                scanPosition: { projectId: session.projectId, sessionEntryOffset: 0 },
+                scanned: scannedBefore + traversalIndex,
+                search,
+            });
         if (search.searchTarget === 'content' && params.deadlineAtMs !== undefined) {
             const nowMs = Date.now();
             if (fileStartedAtMs !== undefined) {
@@ -531,30 +582,41 @@ export async function listClaudeExternalSessionCandidates(params: Readonly<{
         let candidate: ClaudeExternalSessionCandidate;
         let needsSelectedRowTitle = false;
         if (search.searchTarget === 'content') {
-            if (!searchTerm) continue;
-            // Prefilter one file at a time so a large corpus can yield at a
-            // completed file boundary. The native codec remains authoritative.
-            if (!/[^\x00-\x7F]/.test(searchTerm)) {
-                const result = await params.ripgrep!.run({
-                    args: ['--no-config', '--files-with-matches', '--null', '--ignore-case', '--multiline', '--fixed-strings', '-e', searchTerm, '-e', '\\'],
-                    paths: [session.filePath], signal: params.signal,
+            try {
+                if (!searchTerm) continue;
+                // Prefilter one file at a time so a large corpus can yield at a
+                // completed file boundary. The native codec remains authoritative.
+                if (!/[^\x00-\x7F]/.test(searchTerm)) {
+                    const result = await params.ripgrep!.run({
+                        args: ['--no-config', '--files-with-matches', '--null', '--ignore-case', '--multiline', '--fixed-strings', '-e', searchTerm, '-e', '\\'],
+                        paths: [session.filePath], signal: params.signal,
+                    });
+                    throwIfAborted(params.signal);
+                    if (!result.stdoutTruncated && result.exitCode !== 0 && result.exitCode !== 1) throw new Error('Claude conversation prefilter failed.');
+                    if (!result.stdoutTruncated && !result.stdout.split('\0').includes(session.filePath)) continue;
+                }
+                const projection = await searchClaudeExternalTranscript({
+                    filePath: session.filePath,
+                    fileRelPath: `${session.projectId}/${session.remoteSessionId}.jsonl`,
+                    query: searchTerm,
+                    // Source record span and serialized result size are different
+                    // resources: decode one real row, then pack its hit context.
+                    maxBytes: Math.max(1, await readClaudeJsonlFileSize(session.filePath, params.signal)),
+                    signal: params.signal,
+                    fileSystem: contentFileSystem?.fileSystem,
+                    checkWork: contentFileSystem?.checkWork,
                 });
-                throwIfAborted(params.signal);
-                if (!result.stdoutTruncated && result.exitCode !== 0 && result.exitCode !== 1) throw new Error('Claude conversation prefilter failed.');
-                if (!result.stdoutTruncated && !result.stdout.split('\0').includes(session.filePath)) continue;
+                contentFileSystem?.assertNotYielded();
+                contentPartial ||= projection.partial;
+                if (!projection.match) continue;
+                candidate = { ...await buildCandidate({ session, env: params.env, includeTitle: true, signal: params.signal, fileSystem: contentFileSystem?.fileSystem }), match: projection.match };
+            } catch (error) {
+                if (!(error instanceof ClaudeContentSearchYield)) throw error;
+                if (params.resultBudget && !params.resultBudget.fits(page, cursorBefore, true, undefined)) {
+                    throw new ClaudeCandidateResultBudgetTooSmallError('Claude candidate result byte budget cannot fit the continuation envelope.');
+                }
+                return { candidates: page, nextCursor: cursorBefore, contentCoverage: 'partial', searchIncomplete: true };
             }
-            const projection = await searchClaudeExternalTranscript({
-                filePath: session.filePath,
-                fileRelPath: `${session.projectId}/${session.remoteSessionId}.jsonl`,
-                query: searchTerm,
-                // Source record span and serialized result size are different
-                // resources: decode one real row, then pack its hit context.
-                maxBytes: Math.max(1, await readClaudeJsonlFileSize(session.filePath, params.signal)),
-                signal: params.signal,
-            });
-            contentPartial ||= projection.partial;
-            if (!projection.match) continue;
-            candidate = { ...await buildCandidate({ session, env: params.env, includeTitle: true, signal: params.signal }), match: projection.match };
         } else if (!searchTerm) {
             candidate = buildMetadataCandidate({ session, env: params.env });
             needsSelectedRowTitle = true;

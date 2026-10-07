@@ -11,6 +11,7 @@ import type {
 import {
     readJsonlFileBackwardPage,
     readJsonlFileForward,
+    type JsonlScannerFileSystem,
 } from '@happier-dev/plugin-sdk/sessions/file-stores';
 
 import { classifyClaudeNativeTranscriptRow, projectClaudeNativeTranscriptObservation } from '../../../transcripts/nativeSemanticProjection.js';
@@ -156,6 +157,8 @@ export async function readClaudeExternalTranscriptBranch(params: Readonly<{
     filePath: string;
     maxBytes: number;
     signal?: AbortSignal;
+    fileSystem?: JsonlScannerFileSystem;
+    checkWork?: () => void;
 }>): Promise<Readonly<{ offsets: ReadonlySet<number> | null; partial: boolean }>> {
     const offsets = new Set<number>();
     let parentUuid: string | null | undefined;
@@ -166,10 +169,11 @@ export async function readClaudeExternalTranscriptBranch(params: Readonly<{
         // The source byte bound also bounds the number of nonempty JSONL rows.
         // Consume each read once instead of reopening an overlapping chunk for
         // every row in a long conversation.
-        const page = await readJsonlFileBackwardPage({ filePath: params.filePath, endOffsetBytes, maxBytes: params.maxBytes, maxItems: Math.max(1, params.maxBytes) });
+        const page = await readJsonlFileBackwardPage({ filePath: params.filePath, endOffsetBytes, maxBytes: params.maxBytes, maxItems: Math.max(1, params.maxBytes), fileSystem: params.fileSystem });
         throwIfAborted(params.signal);
         partial ||= Boolean(page.diagnostics?.length);
         for (let index = page.items.length - 1; index >= 0; index -= 1) {
+            params.checkWork?.();
             const line = page.items[index]!;
             const selected = selectClaudeExternalBranchLine(line.value, parentUuid);
             parentUuid = selected.parentUuid;
@@ -188,6 +192,8 @@ export async function searchClaudeExternalTranscript(params: Readonly<{
     query: string;
     maxBytes: number;
     signal?: AbortSignal;
+    fileSystem?: JsonlScannerFileSystem;
+    checkWork?: () => void;
 }>): Promise<Readonly<{ match?: { snippet: string; sourceItemId: string; messageIndex: number }; partial: boolean }>> {
     const branch = await readClaudeExternalTranscriptBranch(params);
     let offsetBytes = 0;
@@ -196,10 +202,11 @@ export async function searchClaudeExternalTranscript(params: Readonly<{
     let match: { snippet: string; sourceItemId: string; messageIndex: number } | undefined;
     while (true) {
         throwIfAborted(params.signal);
-        const page = await readJsonlFileForward({ filePath: params.filePath, offsetBytes, maxBytes: params.maxBytes, maxItems: Math.max(1, params.maxBytes) });
+        const page = await readJsonlFileForward({ filePath: params.filePath, offsetBytes, maxBytes: params.maxBytes, maxItems: Math.max(1, params.maxBytes), fileSystem: params.fileSystem });
         throwIfAborted(params.signal);
         partial ||= page.truncated || Boolean(page.diagnostics?.length);
         for (const line of page.items) {
+            params.checkWork?.();
             if (branch.offsets && !branch.offsets.has(line.startOffsetBytes)) continue;
             const projected = projectClaudeJsonlLineRecord({ fileRelPath: params.fileRelPath, lineStartOffsetBytes: line.startOffsetBytes, lineValue: line.value });
             partial ||= projected.disposition === 'unsupported';
