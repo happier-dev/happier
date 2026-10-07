@@ -2,6 +2,7 @@ import {
     assertAuthoringMemoryContentForModeV1,
     AuthoringMemoryChangeHintV1Schema,
     AuthoringMemoryContentV1Schema,
+    StoredAuthoringMemoryContentV1Schema,
     type AuthoringMemoryContentV1,
     type AuthoringMemoryRowV1,
 } from "@happier-dev/protocol";
@@ -23,16 +24,16 @@ import {
     type ReservedAccountScopedKvRowMutationResult,
 } from "./reservedAccountScopedKvRow";
 
-const parseEnvelope = (value: unknown): AuthoringMemoryContentV1 | null => {
-    const parsed = AuthoringMemoryContentV1Schema.safeParse(value);
+const parseEnvelope = (value: unknown, schema: typeof AuthoringMemoryContentV1Schema): AuthoringMemoryContentV1 | null => {
+    const parsed = schema.safeParse(value);
     return parsed.success ? parsed.data : null;
 };
 
 /** Only this domain's grammar, mode rule and hint vary from the reserved-row owner. */
 const authoringMemoryDomain: ReservedAccountScopedKvRowDomain<AuthoringMemoryContentV1> = Object.freeze({
     label: "Authoring memory",
-    parseStoredEnvelope: parseEnvelope,
-    parseCandidateEnvelope: parseEnvelope,
+    parseStoredEnvelope: (value) => parseEnvelope(value, StoredAuthoringMemoryContentV1Schema),
+    parseCandidateEnvelope: (value) => parseEnvelope(value, AuthoringMemoryContentV1Schema),
     assertEnvelopeForMode: (envelope, mode) => { assertAuthoringMemoryContentForModeV1(envelope, mode); },
 });
 
