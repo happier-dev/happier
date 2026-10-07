@@ -9,8 +9,11 @@ import { createDeferred, createMachineFixture, flushHookEffects, renderScreen } 
 import { storage } from '@/sync/domains/state/storageStore';
 import { installSessionDetailsPanelNonRnModuleMocks } from '@/components/sessions/panes/sessionDetailsPanelNonRnModuleMocks';
 import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
+import { createBuiltinPaneDestination, type SelectedPaneDestinationV1 } from '@/components/appShell/panes/model/selectedPaneDestination';
 
 const device = vi.hoisted(() => ({ phone: false, native: false }));
+vi.mock('socket.io-client', async (importOriginal) =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 vi.mock('react-native-safe-area-context', async (importOriginal) => ({
     ...await importOriginal<typeof import('react-native-safe-area-context')>(),
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
@@ -30,18 +33,26 @@ vi.mock('react-native', async () => {
 const PLUGIN_ID = 'acme.review';
 const DESTINATION_ID = 'project-review-panel';
 const TAB_ID = `plugin:${PLUGIN_ID}:${DESTINATION_ID}`;
+const PLUGIN_DESTINATION = {
+    kind: 'plugin', destination: { pluginId: PLUGIN_ID, localId: DESTINATION_ID },
+} satisfies SelectedPaneDestinationV1;
 let projection = PluginProjectionV2Schema.parse({ v: 2, generation: 4, familiesById: {} });
 let deferred: ReturnType<typeof createDeferred<ReturnType<typeof PluginProjectionV2Schema.parse>>> | null = null;
+const projectionTransportTrace: string[] = [];
 const runtime = installSessionPaneRuntimeTestHarness({
     scopeId: 'project:wr_1',
     request: async (url, init) => {
-        if ((init?.method ?? 'GET') === 'GET' && new URL(String(url)).pathname === '/v1/machines/m1') {
+        const method = init?.method ?? 'GET';
+        const pathname = new URL(String(url)).pathname;
+        projectionTransportTrace.push(`HTTP ${method} ${pathname}`);
+        if (method === 'GET' && pathname === '/v1/machines/m1') {
             return Response.json({ machine: { id: 'm1', kind: 'persistent', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } });
         }
         return null;
     },
     configureSocket: socket => {
         vi.mocked(socket.connect).mockImplementation(() => {
+            projectionTransportTrace.push('Socket connect');
             socket.connected = true; socket.id = 'project-viewer-socket';
             for (const listener of socket.listeners('connect')) listener();
             return socket;
@@ -55,6 +66,7 @@ const runtime = installSessionPaneRuntimeTestHarness({
         vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event, payload) => {
             if (event !== 'rpc-call') throw new Error(`Unexpected Project transport event: ${event}`);
             const request = z.object({ method: z.string(), params: z.unknown() }).passthrough().parse(payload);
+            projectionTransportTrace.push(`Socket ${event} ${request.method}`);
             if (request.method.endsWith(`:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`)) {
                 return { ok: true, result: DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
                     protocolVersion: 1, projection: deferred ? await deferred.promise : projection,
@@ -86,19 +98,21 @@ function createProjection(pluginId = PLUGIN_ID, destinationId = DESTINATION_ID) 
 }
 beforeEach(async () => {
     device.phone = false; device.native = false; deferred = null;
+    projectionTransportTrace.length = 0;
     projection = createProjection();
     const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
     clearDaemonMergedProjectionCacheForTests();
-    storage.getState().applyMachines([createMachineFixture({ id: 'm1', activeAt: Date.now() })]);
+    // With no observed heartbeat, the canonical presence owner uses the active bit.
+    storage.getState().applyMachines([createMachineFixture({ id: 'm1', activeAt: 0 })]);
 });
 function panelProps() {
     return { workspaceRef: { id: 'wr_1', serverId: runtime.serverId, machineId: 'm1', rootPath: '/repo', createdAtMs: 1 },
         scopeId: 'project:wr_1', activeRootPath: '/repo', onSelectRootPath: () => {} };
 }
-async function mount(tabId = 'services') {
+async function mount(destination: SelectedPaneDestinationV1 = createBuiltinPaneDestination('services')) {
     const { ProjectRightPanel } = await import('./ProjectRightPanel');
     const screen = await renderScreen(<runtime.Wrapper />);
-    await act(async () => runtime.pane.openRight({ tabId }));
+    await act(async () => runtime.pane.selectRightDestination(destination));
     await act(async () => screen.update(<runtime.Wrapper><ProjectRightPanel {...panelProps()} /></runtime.Wrapper>));
     await flushHookEffects({ cycles: 30 });
     return screen;
@@ -118,7 +132,7 @@ describe('ProjectRightPanel right-sidebar registry tabs', () => {
     });
     it('keeps Browser and Services available on phone', async () => {
         device.phone = true;
-        const screen = await mount('browser');
+        const screen = await mount(createBuiltinPaneDestination('browser'));
         expect(screen.findHostByTestId('project-rightpanel-tab:browser')).not.toBeNull();
         expect(screen.findHostByTestId('project-rightpanel-tab:services')).not.toBeNull();
         expect(screen.findHostByTestId('project-rightpanel-surface-browser')).not.toBeNull();
@@ -137,15 +151,39 @@ describe('ProjectRightPanel right-sidebar registry tabs', () => {
         expect(screen.findHostByTestId('project-rightpanel-surface-services')).not.toBeNull();
     });
     it('keeps the plugin action rail usable while its panel body is closed', async () => {
+        const { createHappierSocket } = await import('@happier-dev/sync-client');
+        const boundary = createHappierSocket({ endpoint: 'https://session-pane.test', token: 'socket-boundary-precondition', clientType: 'user-scoped' });
+        try {
+            expect(vi.isMockFunction(boundary.socket.connect), 'Happier Socket must consume the configured SDK network boundary').toBe(true);
+        } finally {
+            await boundary.transport.destroy();
+        }
         const { ProjectRightSidebarProvider, ProjectRightSidebarRail } = await import('./ProjectRightPanel');
         const screen = await renderScreen(<runtime.Wrapper><ProjectRightSidebarProvider {...panelProps()}>
             <ProjectRightSidebarRail />
         </ProjectRightSidebarProvider></runtime.Wrapper>);
         await flushHookEffects({ cycles: 30 });
+        const { readCachedDaemonMergedProjectionCacheEntry } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { isServerReachabilityNetworkAllowed, peekServerReachabilityState } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+        const { isMachineOnline } = await import('@/utils/sessions/machineUtils');
+        const state = storage.getState();
+        const machine = state.machines.m1;
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        const demandQualification = {
+            endpointStatus: state.endpointStatus, endpointReason: state.endpointReason,
+            machinePresent: Boolean(machine), machineOnline: machine ? isMachineOnline(machine) : false,
+            accountScope: lifetime?.scope ?? null, accountCurrent: lifetime?.isCurrent() ?? null,
+            networkAllowed: isServerReachabilityNetworkAllowed(),
+            reachability: peekServerReachabilityState('https://session-pane.test'),
+        };
+        expect(readCachedDaemonMergedProjectionCacheEntry({ machineId: 'm1', serverId: runtime.serverId }),
+            `Projection qualification: ${JSON.stringify(demandQualification)}; transport: ${JSON.stringify(projectionTransportTrace)}`,
+        ).toMatchObject({ kind: 'ready', inputs: { pluginProjectionV2: { generation: 4 } } });
         expect(screen.findHostByTestId('project-right-panel-root')).toBeNull();
         await screen.pressByTestIdAsync(`project-rightpanel-action:${TAB_ID}`);
         expect(runtime.pane.scopeState?.right).toMatchObject({
-            isOpen: true, activeTabId: TAB_ID, selectedDestination: {
+            isOpen: true, activeTabId: null, selectedDestination: {
                 kind: 'plugin', destination: { pluginId: PLUGIN_ID, localId: DESTINATION_ID },
             },
         });
@@ -178,18 +216,20 @@ describe('ProjectRightPanel right-sidebar registry tabs', () => {
     });
     it('retains a restored qualified selection while the real describe is establishing', async () => {
         deferred = createDeferred();
-        const screen = await mount(TAB_ID);
-        expect(runtime.pane.scopeState?.right.activeTabId).toBe(TAB_ID);
+        const screen = await mount(PLUGIN_DESTINATION);
+        expect(runtime.pane.scopeState?.right.selectedDestination).toEqual(PLUGIN_DESTINATION);
         expect(screen.findHostByTestId('project-rightpanel-surface-git')).toBeNull();
         await act(async () => deferred?.resolve(projection));
         await flushHookEffects({ cycles: 30 });
         expect(screen.findHostByTestId(`project-rightpanel-tab:${TAB_ID}`)).not.toBeNull();
-        expect(runtime.pane.scopeState?.right.activeTabId).toBe(TAB_ID);
+        expect(runtime.pane.scopeState?.right.selectedDestination).toEqual(PLUGIN_DESTINATION);
     });
     it('keeps the admitted offline projection visible but denies interaction', async () => {
-        const screen = await mount(TAB_ID);
+        const screen = await mount(PLUGIN_DESTINATION);
         expect((await pluginHost(screen)).props.projectionInteractionEnabled).toBe(true);
-        await act(async () => storage.getState().applyMachines([createMachineFixture({ id: 'm1', active: false, activeAt: Date.now() })]));
+        const machine = storage.getState().machines.m1;
+        if (!machine) throw new Error('Expected the current Project Machine');
+        await act(async () => storage.getState().applyMachines([{ ...machine, active: false }]));
         await flushHookEffects();
         const host = await pluginHost(screen);
         expect(host.props.projectionInteractionEnabled).toBe(false);
@@ -198,15 +238,37 @@ describe('ProjectRightPanel right-sidebar registry tabs', () => {
                 destination: { pluginId: PLUGIN_ID, localId: DESTINATION_ID },
             })).resolves.toMatchObject({ ok: false, code: 'unavailable' });
         });
-        expect(runtime.pane.scopeState?.right.activeTabId).toBe(TAB_ID);
+        expect(runtime.pane.scopeState?.right.selectedDestination).toEqual(PLUGIN_DESTINATION);
     });
     it('keeps a restored desktop Project destination as a native-phone tombstone', async () => {
         device.phone = true; device.native = true;
-        const screen = await mount(TAB_ID);
+        const screen = await mount(PLUGIN_DESTINATION);
         const { PluginSurfacePlacementHost } = await import('@/components/plugins/surfaces');
+        const { PluginReactNativeUnavailable } = await import('@/components/plugins/reactNative/PluginReactNativeUnavailable');
         expect(screen.findHostByTestId(`project-rightpanel-tab:${TAB_ID}`)).toBeNull();
         expect(screen.tree.findAllByType(PluginSurfacePlacementHost)).toHaveLength(0);
-        expect(screen.findHostByTestId('plugin-rn-ui-unavailable-diagnostic-plugin_destination_unavailable')).not.toBeNull();
-        expect(runtime.pane.scopeState?.right.activeTabId).toBe(TAB_ID);
+        const mountedDiagnostics = screen.findAllByType<typeof PluginReactNativeUnavailable>(PluginReactNativeUnavailable)
+            .map(node => node.props.diagnostics);
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { isMachineOnline } = await import('@/utils/sessions/machineUtils');
+        const { readCachedDaemonMergedProjectionCacheEntry } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+        const { resolveNativeReactNativeHostRuntimeIdentity } = await import('@/components/plugins/reactNative/hostRuntimeIdentity');
+        const { resolveHostedWebFrameCapability } = await import('@/components/plugins/hostedWeb/hostedWebFrameCapability');
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        const machine = storage.getState().machines.m1;
+        const qualification = {
+            endpointStatus: storage.getState().endpointStatus,
+            endpointStatusReason: storage.getState().endpointStatusReason,
+            machinePresent: !!machine,
+            machineOnline: !!machine && isMachineOnline(machine),
+            accountScope: lifetime?.scope ?? null,
+            accountCurrent: lifetime?.isCurrent() ?? false,
+            projectionCache: readCachedDaemonMergedProjectionCacheEntry({ serverId: runtime.serverId, machineId: 'm1' }),
+            nativeRuntimeIdentity: resolveNativeReactNativeHostRuntimeIdentity(),
+            hostedFrameCapability: await resolveHostedWebFrameCapability(),
+        };
+        expect(screen.findHostByTestId('plugin-rn-ui-unavailable-diagnostic-plugin_destination_unavailable'),
+            `Mounted tombstone diagnostics: ${JSON.stringify(mountedDiagnostics)}; qualification: ${JSON.stringify(qualification)}; transport: ${JSON.stringify(projectionTransportTrace)}`).not.toBeNull();
+        expect(runtime.pane.scopeState?.right.selectedDestination).toEqual(PLUGIN_DESTINATION);
     });
 });
