@@ -21,7 +21,7 @@ const IDLE = ['╭─────╮', '│ >   │', '╰─────╯', '
 const USER_DRAFT = ['╭─────╮', '│ > do not send this yet │', '╰─────╯'].join('\n');
 const ACCEPT_EDITS_IDLE = ['╭─────╮', '│ >   │', '╰─────╯', '  ⏵⏵ accept edits on (shift+tab to cycle)'].join('\n');
 const EFFORT_OK = ['Set reasoning effort to high', '╭─────╮', '│ >   │', '╰─────╯'].join('\n');
-const GENERATING = ['● working', '✶ Forging… (10s · esc to interrupt)', '╭─────╮', '│ >   │', '╰─────╯'].join('\n');
+const GENERATING = ['● working', '✶ Forging… (10s · esc to interrupt)', '╭─────╮', '│ >   │', '╰─────╯', '  ⏸ manual'].join('\n');
 const GEN_ACCEPT = [
   '● working',
   '✶ Forging… (12s · esc to interrupt)',

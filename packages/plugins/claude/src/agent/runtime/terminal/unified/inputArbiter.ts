@@ -108,7 +108,9 @@ export type ClaudeUnifiedInputArbiter = Readonly<{
 }>;
 
 export type ClaudeUnifiedInputArbiterOptions = Readonly<{
-  injectPrompt(input: TerminalPromptInput): Promise<TerminalInputInjectionResult>;
+  injectPrompt(input: TerminalPromptInput, delivery?: Readonly<{
+    resolveDeliveryState: NonNullable<TerminalPromptInput['resolveDeliveryState']>;
+  }>): Promise<TerminalInputInjectionResult>;
   onPromptInjected?: (
     input: TerminalPromptInput,
     acceptance: ClaudeUnifiedPromptAcceptance,
@@ -847,7 +849,13 @@ export function createClaudeUnifiedInputArbiter(
       injectingProviderAcceptance = injectionAcceptance;
       let result: TerminalInputInjectionResult;
       try {
-        result = await options.injectPrompt(input);
+        result = await options.injectPrompt(input, {
+          resolveDeliveryState: () => {
+            if (providerAcceptanceObservedDuringInjection?.input === input) return 'accepted';
+            if (disposed || !queue.includes(input)) return 'retired';
+            return null;
+          },
+        });
       } catch (error) {
         clearInjectionAcceptanceForInput(input);
         throw error;

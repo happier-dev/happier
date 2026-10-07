@@ -3,6 +3,16 @@ import { describe, expect, it } from 'vitest';
 import { createClaudePromptSubmitVerificationPolicy } from './promptSubmitVerification.js';
 
 describe('Claude unified terminal prompt submit verification', () => {
+  it('hands back a positively foreign composer while ambiguous redraws keep waiting', () => {
+    const policy = createClaudePromptSubmitVerificationPolicy();
+    const promptText = 'authorized prompt';
+    const screenText = '❯ A changed user draft\n  with a separate paragraph';
+    expect(() => policy.verifyBeforeSubmitStaging({ promptText, screenText })).toThrow();
+    expect(policy.verifyAfterSubmit({ promptText, screenText })).toBe(false);
+    expect(policy.verifyBeforeSubmitStaging({ promptText, screenText: '❯ Try editing a file' })).toBe(false);
+    expect(policy.verifyBeforeSubmitStaging({ promptText, screenText: '❯ [Pasted text #1' })).toBe(false);
+  });
+
   it('treats a matching collapsed paste marker as a still-pending multiline prompt after Enter', () => {
     const policy = createClaudePromptSubmitVerificationPolicy();
     const prompt = Array.from({ length: 41 }, (_, index) => `line ${index}`).join('\n');
@@ -148,10 +158,10 @@ Explain whether the message arrived, and report any remaining issue.`;
 
     expect(policy.verifyBeforeSubmitStaging({ promptText, screenText })).toBe(true);
     expect(policy.verifyAfterSubmit({ promptText, screenText })).toBe(true);
-    expect(policy.verifyBeforeSubmitStaging({
+    expect(() => policy.verifyBeforeSubmitStaging({
       promptText,
       screenText: screenText.replace('remaining', 'unrelated'),
-    })).toBe(false);
+    })).toThrow();
   });
 
   it('accepts a sufficiently long canonical visible composer window before and after submit', () => {

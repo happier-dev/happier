@@ -13,6 +13,10 @@ export type TerminalInjectionDuplicateRisk = 'none' | 'possible' | 'likely';
 export type TerminalPromptInput = Readonly<{
     text: string;
     multiline: boolean;
+    /** Session-owned cancellation; terminal commands retain their own bounded timeout. */
+    signal?: AbortSignal;
+    /** Reads canonical delivery custody without adding a second acceptance owner. */
+    resolveDeliveryState?: () => 'accepted' | 'retired' | null;
     origin: Readonly<{
         kind: 'ui_pending' | 'ui_immediate' | 'rpc';
         clientId?: string;
