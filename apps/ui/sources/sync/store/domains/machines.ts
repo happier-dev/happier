@@ -25,7 +25,6 @@ import {
     scheduleMachineDisplayWarmCacheSave,
     scheduleMachineListDisplayWarmCacheSave,
 } from '../../domains/state/machineDisplayWarmCacheWriter';
-import { areSessionValuesDeepEqual } from './areStoredSessionsEqual';
 import { areStoredMachinesEqual, hasMachineDaemonBeenReplaced, hasMachineDaemonStateAdvanced } from './areStoredMachinesEqual';
 import { applyWorkspaceSyncRuntimeEvent } from '../../domains/sessionHandoff/applyWorkspaceSyncRuntimeEvent';
 
@@ -86,23 +85,17 @@ function mergeMachineListById(
     incoming: Machine[],
     options: Readonly<{ replace: boolean }>,
 ): Machine[] {
-    if (options.replace) {
-        return incoming.slice();
-    }
-    const mergedById = new Map<string, Machine>();
-    if (Array.isArray(current)) {
-        for (const machine of current) {
-            mergedById.set(machine.id, machine);
-        }
-    }
+    const currentById = new Map((current ?? []).map((machine) => [machine.id, machine]));
+    const mergedById = options.replace ? new Map<string, Machine>() : new Map(currentById);
     for (const machine of incoming) {
-        mergedById.set(machine.id, machine);
+        const previous = currentById.get(machine.id);
+        mergedById.set(machine.id, previous && areStoredMachinesEqual(previous, machine) ? previous : machine);
     }
     const merged = Array.from(mergedById.values());
     if (
         Array.isArray(current)
         && current.length === merged.length
-        && current.every((machine, index) => areStoredMachinesEqual(machine, merged[index]))
+        && current.every((machine, index) => machine === merged[index])
     ) {
         return current;
     }
@@ -206,14 +199,13 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                         : null,
                     shouldUpdateActiveProjection ? state.machines[machine.id] : null,
                 ]));
-                const machineListByServerId = sourceServerId
+                const nextScopedMachines = sourceServerId
+                    ? mergeMachineListById(currentScopedMachines, normalizedMachines, { replace })
+                    : currentScopedMachines;
+                const machineListByServerId = sourceServerId && nextScopedMachines !== currentScopedMachines
                     ? {
                         ...state.machineListByServerId,
-                        [sourceServerId]: mergeMachineListById(
-                            currentScopedMachines,
-                            normalizedMachines,
-                            { replace },
-                        ),
+                        [sourceServerId]: nextScopedMachines ?? null,
                     }
                     : state.machineListByServerId;
                 const machineListStatusByServerId = sourceServerId
@@ -238,7 +230,8 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                         event: machine.daemonState?.workspaceSync,
                     });
                 }
-                if (!shouldUpdateActiveProjection && sourceServerId && Array.isArray(scopedMachines)) {
+                if (!shouldUpdateActiveProjection && sourceServerId && Array.isArray(scopedMachines)
+                    && scopedMachines !== currentScopedMachines) {
                     scheduleMachineListDisplayWarmCacheSave({
                         serverId: sourceServerId,
                         accountId: state.profile.id,
@@ -247,6 +240,8 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                 }
 
                 if (!shouldUpdateActiveProjection) {
+                    if (machineListByServerId === state.machineListByServerId
+                        && machineListStatusByServerId === state.machineListStatusByServerId) return state;
                     return {
                         ...state,
                         machineListByServerId,
@@ -254,52 +249,47 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                     };
                 }
 
-                let mergedMachines: Record<string, Machine>;
-                let mergedMachineDisplays: Record<string, MachineDisplayRenderable>;
+                let mergedMachines = state.machines;
+                let mergedMachineDisplays = state.machineDisplayById;
                 const machinesWithAdvancedDaemonState = new Set<string>();
                 const machinesWithReplacedDaemon = new Set<string>();
 
                 if (replace) {
-                    mergedMachines = {};
-                    mergedMachineDisplays = {};
-                    normalizedMachines.forEach((machine) => {
-                        const previousMachine = state.machines[machine.id];
-                        if (hasMachineDaemonStateAdvanced(previousMachine, machine)) {
-                            machinesWithAdvancedDaemonState.add(machine.id);
-                        }
-                        if (hasMachineDaemonBeenReplaced(previousMachine, machine)) {
-                            machinesWithReplacedDaemon.add(machine.id);
+                    const retainedIds = new Set(normalizedMachines.map((machine) => machine.id));
+                    for (const id of Object.keys(mergedMachines)) {
+                        if (retainedIds.has(id)) continue;
+                        if (mergedMachines === state.machines) mergedMachines = { ...state.machines };
+                        delete mergedMachines[id];
+                    }
+                    for (const id of Object.keys(mergedMachineDisplays)) {
+                        if (retainedIds.has(id)) continue;
+                        if (mergedMachineDisplays === state.machineDisplayById) mergedMachineDisplays = { ...state.machineDisplayById };
+                        delete mergedMachineDisplays[id];
+                    }
+                }
+                normalizedMachines.forEach((machine) => {
+                    const previousMachine = state.machines[machine.id];
+                    if (hasMachineDaemonStateAdvanced(previousMachine, machine)) {
+                        machinesWithAdvancedDaemonState.add(machine.id);
+                    }
+                    if (hasMachineDaemonBeenReplaced(previousMachine, machine)) {
+                        machinesWithReplacedDaemon.add(machine.id);
+                    }
+                    if (!areStoredMachinesEqual(previousMachine, machine)) {
+                        if (mergedMachines === state.machines) {
+                            mergedMachines = { ...state.machines };
                         }
                         mergedMachines[machine.id] = machine;
-                        mergedMachineDisplays[machine.id] = buildMachineDisplayRenderableFromMachine(machine);
-                    });
-                } else {
-                    mergedMachines = state.machines;
-                    mergedMachineDisplays = state.machineDisplayById;
-                    normalizedMachines.forEach((machine) => {
-                        const previousMachine = state.machines[machine.id];
-                        if (hasMachineDaemonStateAdvanced(previousMachine, machine)) {
-                            machinesWithAdvancedDaemonState.add(machine.id);
+                    }
+                    const nextDisplay = buildMachineDisplayRenderableFromMachine(machine);
+                    const previousDisplay = state.machineDisplayById[machine.id];
+                    if (!areMachineDisplayRenderablesEqual(previousDisplay, nextDisplay)) {
+                        if (mergedMachineDisplays === state.machineDisplayById) {
+                            mergedMachineDisplays = { ...state.machineDisplayById };
                         }
-                        if (hasMachineDaemonBeenReplaced(previousMachine, machine)) {
-                            machinesWithReplacedDaemon.add(machine.id);
-                        }
-                        if (!areStoredMachinesEqual(previousMachine, machine)) {
-                            if (mergedMachines === state.machines) {
-                                mergedMachines = { ...state.machines };
-                            }
-                            mergedMachines[machine.id] = machine;
-                        }
-                        const nextDisplay = buildMachineDisplayRenderableFromMachine(machine);
-                        const previousDisplay = state.machineDisplayById[machine.id];
-                        if (!areMachineDisplayRenderablesEqual(previousDisplay, nextDisplay)) {
-                            if (mergedMachineDisplays === state.machineDisplayById) {
-                                mergedMachineDisplays = { ...state.machineDisplayById };
-                            }
-                            mergedMachineDisplays[machine.id] = nextDisplay;
-                        }
-                    });
-                }
+                        mergedMachineDisplays[machine.id] = nextDisplay;
+                    }
+                });
 
                 if (
                     mergedMachines === state.machines
@@ -411,13 +401,18 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                 const displays = [...machines, ...Object.values(state.machineDisplayById).filter((machine) => (
                     !isPersistentMachine(machine) && !incomingDisplayIds.has(machine.id)
                 ))];
-                const nextMachineDisplays = Object.fromEntries(displays.map((machine) => [
-                    machine.id,
-                    preserveNewestMachinePresence(machine, [
+                const nextMachineDisplays = Object.fromEntries(displays.map((machine) => {
+                    const nextDisplay = preserveNewestMachinePresence(machine, [
                         state.machineDisplayById[machine.id],
                         state.machines[machine.id],
-                    ]),
-                ]));
+                    ]);
+                    const previousDisplay = state.machineDisplayById[machine.id];
+                    return [machine.id, previousDisplay && areMachineDisplayRenderablesEqual(previousDisplay, nextDisplay) ? previousDisplay : nextDisplay];
+                }));
+                if (Object.keys(nextMachineDisplays).length === Object.keys(state.machineDisplayById).length
+                    && Object.entries(nextMachineDisplays).every(([id, display]) => display === state.machineDisplayById[id])) {
+                    return state;
+                }
                 const previousIndexByServerId = state.sessionListIndexByServerId ?? {};
                 const previousActiveIndex = activeServerId ? (previousIndexByServerId[activeServerId] ?? null) : null;
                 const activeSessionListRows = activeServerId ? readOrdinaryRowsForServer(state, activeServerId) : {};

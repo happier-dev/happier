@@ -9,7 +9,7 @@ import {
     resetLocalServiceInventoryStoreForTests,
     subscribeLocalServiceInventoryStore,
 } from './sharedStore';
-import { selectLocalServiceInventoryRows, type LocalServiceInventorySnapshot } from './store';
+import { selectLocalServiceInventoryRows, selectLocalServiceInventoryPresentationRows, type LocalServiceInventorySnapshot } from './store';
 
 const snapshot = {
     v: 1,
@@ -81,6 +81,26 @@ describe('shared local-service inventory store', () => {
         expect(selectLocalServiceInventoryRows(getLocalServiceInventoryState(key))).toEqual(snapshot.entries);
         expect(snapshotClient).toHaveBeenCalledTimes(1);
 
+        unsub();
+    });
+
+    it('suppresses identical publications while retaining observable scan freshness', async () => {
+        const key = { machineId: 'machine-a', serverId: 'server-a', sessionId: 'session-a' };
+        const listener = vi.fn();
+        const unsub = subscribeLocalServiceInventoryStore(key, listener, {
+            snapshotClient: async () => ({ ok: true, snapshot }),
+            watchClient: async () => ({ ok: false, reason: 'unavailable' }),
+        });
+        await flushMicrotasks();
+        listener.mockClear();
+        const presentation = selectLocalServiceInventoryPresentationRows(getLocalServiceInventoryState(key));
+        for (let index = 0; index < 3; index += 1) publishLocalServiceInventorySnapshot(key, structuredClone(snapshot));
+        expect(listener).not.toHaveBeenCalled();
+        publishLocalServiceInventorySnapshot(key, { ...snapshot, generatedAt: 2_000,
+            entries: snapshot.entries.map(row => ({ ...row, lastSeenAt: 2_000 })) });
+        expect(listener).toHaveBeenCalledTimes(1);
+        expect(getLocalServiceInventoryState(key).generatedAt).toBe(2_000);
+        expect(selectLocalServiceInventoryPresentationRows(getLocalServiceInventoryState(key))).toBe(presentation);
         unsub();
     });
 

@@ -1,8 +1,8 @@
 import * as React from 'react';
 
 import {
-    selectLocalServiceInventoryRows,
-    type LocalServiceInventoryRow,
+    selectLocalServiceInventoryPresentationRows,
+    type LocalServiceInventoryPresentationRow,
     type LocalServiceInventoryState,
 } from './store';
 export type LocalServiceInventoryViewStatus = 'loading' | 'empty' | 'ready' | 'error';
@@ -10,18 +10,18 @@ export type LocalServiceInventoryViewStatus = 'loading' | 'empty' | 'ready' | 'e
 export type LocalServiceInventoryViewModel = Readonly<{
     status: LocalServiceInventoryViewStatus;
     isRefreshing: boolean;
-    rows: readonly LocalServiceInventoryRow[];
+    rows: readonly LocalServiceInventoryPresentationRow[];
     diagnostics: readonly unknown[];
 }>;
 
 export function useLocalServiceInventory(input: Readonly<{
     inventoryState: LocalServiceInventoryState;
 }>): LocalServiceInventoryViewModel {
+    const rows = selectLocalServiceInventoryPresentationRows(input.inventoryState);
+    const diagnostics = input.inventoryState.diagnostics;
+    const isRefreshing = input.inventoryState.refreshState === 'refreshing';
+    const hasError = input.inventoryState.refreshState === 'error';
     return React.useMemo(() => {
-        const rows = selectLocalServiceInventoryRows(input.inventoryState);
-        const diagnostics = input.inventoryState.diagnostics;
-        const isRefreshing = input.inventoryState.refreshState === 'refreshing';
-        const hasError = input.inventoryState.refreshState === 'error';
         const status: LocalServiceInventoryViewStatus = rows.length > 0
             ? 'ready'
             : hasError
@@ -36,5 +36,5 @@ export function useLocalServiceInventory(input: Readonly<{
             rows,
             diagnostics,
         };
-    }, [input.inventoryState]);
+    }, [diagnostics, hasError, isRefreshing, rows]);
 }

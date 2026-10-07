@@ -3,6 +3,7 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { MachineDataKeyCacheEntry } from './syncMachines';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { buildMachineDisplayRenderableFromMachine, type MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 
 const legacyCredentials = {
     token: `e30.${btoa(JSON.stringify({ sub: 'account-1' }))}.signature`,
@@ -81,6 +82,64 @@ async function loadFetchAndApplyMachines() {
 }
 
 describe('fetchAndApplyMachines request override', () => {
+    it('retains the readable warm state and skips hydration for unchanged encrypted versions', async () => {
+        const fetchAndApplyMachines = await loadFetchAndApplyMachines();
+        const existing = createMachineFixture({
+            id: 'm_unchanged',
+            kind: 'persistent',
+            daemonState: { healthy: true },
+            daemonStateVersion: 7,
+            storageMode: 'e2ee',
+            availability: { kind: 'available' },
+        });
+        // Crypto and HTTP are external boundaries; fetch/hydration logic remains real.
+        const encryption = createEncryptionHarness();
+        const applied: Machine[][] = [];
+        const displayed: MachineDisplayRenderable[][] = [];
+        await fetchAndApplyMachines({
+            credentials: legacyCredentials,
+            sourceServerId: 'home-1',
+            encryption,
+            machineDataKeys: new Map(),
+            request: async () => jsonResponse([{
+                ...existing, metadata: 'unchanged-metadata', daemonState: 'unchanged-daemon', dataEncryptionKey: null,
+            }]),
+            getExistingMachine: () => existing,
+            cachedMachineDisplayEntries: {},
+            applyMachineDisplayEntries: (machines) => { displayed.push(machines); },
+            applyMachines: (machines) => { applied.push(machines); },
+        });
+        expect(applied[0]?.[0]).toMatchObject({
+            storageMode: 'e2ee', availability: { kind: 'available' },
+            metadata: existing.metadata, daemonState: existing.daemonState, daemonStateVersion: 7,
+        });
+        expect(encryption.decryptMetadata).not.toHaveBeenCalled();
+        expect(encryption.decryptDaemonState).not.toHaveBeenCalled();
+        expect(displayed[0]).toEqual([buildMachineDisplayRenderableFromMachine(existing)]);
+    });
+
+    it('rehydrates an unchanged version when its machine data-key envelope changes', async () => {
+        const fetchAndApplyMachines = await loadFetchAndApplyMachines();
+        const existing = createMachineFixture({
+            id: 'm_rotated', storageMode: 'e2ee', availability: { kind: 'available' },
+        });
+        const encryption = createEncryptionHarness();
+        let current = existing;
+        await fetchAndApplyMachines({
+            credentials: legacyCredentials,
+            sourceServerId: 'home-1',
+            encryption,
+            machineDataKeys: new Map([[existing.id, { envelope: 'previous-key', dataKey: new Uint8Array([4, 5, 6]) }]]),
+            request: async () => jsonResponse([{
+                ...existing, metadata: 'rotated-metadata', dataEncryptionKey: 'next-key',
+            }]),
+            getExistingMachine: () => current,
+            applyMachineDisplayEntries: () => {},
+            applyMachines: (machines) => { current = machines[0]!; },
+        });
+        await vi.waitFor(() => expect(current.metadata).toEqual({ decrypted: 'rotated-metadata' }));
+    });
+
     it('preserves terminal capabilities and their version until refreshed metadata is hydrated', async () => {
         const fetchAndApplyMachines = await loadFetchAndApplyMachines();
         const existing = createMachineFixture({

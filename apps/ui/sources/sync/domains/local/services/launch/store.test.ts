@@ -30,6 +30,18 @@ const snapshot = {
 } satisfies LocalServiceLauncherSnapshotV1;
 
 describe('local service launcher UI store', () => {
+    it('keeps identical collections and selected targets stable across feed freshness changes', async () => {
+        const { applyLocalServiceLauncherSnapshot, createLocalServiceLauncherState, selectLocalServiceLaunchTargets } = await import('./store');
+        const loaded = applyLocalServiceLauncherSnapshot(createLocalServiceLauncherState(), snapshot);
+        const targets = selectLocalServiceLaunchTargets(loaded);
+        const repeated = applyLocalServiceLauncherSnapshot(loaded, structuredClone(snapshot));
+        expect(repeated).toBe(loaded);
+        const tick = applyLocalServiceLauncherSnapshot(loaded, { ...snapshot, updatedAt: 2_000 });
+        expect(tick.updatedAt).toBe(2_000);
+        expect(tick.targetIds).toBe(loaded.targetIds);
+        expect(tick.targetsById).toBe(loaded.targetsById);
+        expect(selectLocalServiceLaunchTargets(tick)).toBe(targets);
+    });
     it('normalizes launcher snapshots and keeps last-known targets during refresh', async () => {
         const {
             applyLocalServiceLauncherRefreshStarted,

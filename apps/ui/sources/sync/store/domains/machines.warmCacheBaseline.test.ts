@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createServerProfilesModuleMock } from '@/dev/testkit/mocks/serverProfiles';
+import { createStore } from 'zustand/vanilla';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { settingsDefaults } from '../../domains/settings/settings';
 import type { Machine, MachineMetadata } from '../../domains/state/storageTypes';
+import type { StorageState } from '../types';
+import type { createMachinesDomain, MachinesDomain } from './machines';
 
 const { mmkvStore } = vi.hoisted(() => ({
     mmkvStore: new Map<string, string>(),
@@ -20,10 +24,20 @@ vi.mock('react-native-mmkv', () => {
         delete(key: string) {
             mmkvStore.delete(key);
         }
+
+        getAllKeys() { return [...mmkvStore.keys()]; }
+        trim() {}
     }
 
     return { MMKV };
 });
+
+// The native keystore boundary already contains a valid cache key this boot.
+vi.mock('expo-secure-store', () => ({
+    getItemAsync: async () => 'ABCDEFGHIJKLMNOP',
+    setItemAsync: async () => {},
+    deleteItemAsync: async () => {},
+}));
 
 afterEach(() => {
     vi.resetModules();
@@ -40,10 +54,10 @@ const BASE_MACHINE_METADATA: MachineMetadata = {
     happyHomeDir: '/home/u/.happy',
     homeDir: '/home/u',
     displayName: 'Dev box',
-} as MachineMetadata;
+};
 
 function makeMachine(overrides?: Partial<Machine>): Machine {
-    return {
+    return createMachineFixture({
         id: 'm-1',
         createdAt: 1,
         updatedAt: 10,
@@ -52,35 +66,28 @@ function makeMachine(overrides?: Partial<Machine>): Machine {
         metadataVersion: 1,
         metadata: BASE_MACHINE_METADATA,
         ...(overrides ?? {}),
-    } as Machine;
+    });
 }
 
-function createHarness(createMachinesDomain: any) {
-    let state: any = {
+type TestState = MachinesDomain & Pick<StorageState,
+    'sessions' | 'sessionListRowsByServerId' | 'ordinarySessionListMembershipByServerId'
+    | 'sessionListIndexByServerId' | 'settings'
+> & { profile: { id: string } };
+
+function createHarness(createDomain: typeof createMachinesDomain) {
+    const store = createStore<TestState>()((set, get) => ({
         sessions: {},
         sessionListRowsByServerId: {},
         ordinarySessionListMembershipByServerId: {},
-        archivedSessionListMembershipByServerId: {},
         sessionListIndexByServerId: {},
-        machines: {},
         profile: { id: 'account-1' },
-        settings: {
-            sessionListActiveGroupingV1: undefined,
-            sessionListInactiveGroupingV1: undefined,
-            sessionListSectionModeV1: undefined,
-        },
-    };
-    const get = () => state;
-    const set = (updater: any) => {
-        const next = typeof updater === 'function' ? updater(state) : updater;
-        state = { ...state, ...next };
-    };
-    const domain = createMachinesDomain({ get, set } as any);
-    state = { ...state, ...domain };
-    return { get, domain };
+        settings: settingsDefaults,
+        ...createDomain<TestState>({ get, set }),
+    }));
+    return { get: store.getState, domain: store.getState() };
 }
 
-function mockMachineDomainBoundaries(options?: Readonly<{
+function seedPersistedHomes(options?: Readonly<{
     activeServerId?: string;
     profiles?: ReadonlyArray<Readonly<{
         id: string;
@@ -92,19 +99,25 @@ function mockMachineDomainBoundaries(options?: Readonly<{
 }>): void {
     const activeServerId = options?.activeServerId ?? 'server_a';
     const profiles = options?.profiles ?? [{ id: 'server_a', name: 'server_a', serverUrl: 'http://server_a.local' }];
-    vi.doMock('../../domains/server/serverRuntime', () => ({
-        getActiveServerSnapshot: () => ({ serverId: activeServerId, serverUrl: 'http://server.local', generation: 0 }),
-    }));
-    vi.doMock('../../domains/server/serverProfiles', () => createServerProfilesModuleMock({
-        profiles,
-    }));
-    vi.doMock('../../domains/transfers/runtime/transferRouteCache', () => ({
-        invalidateCachedTransferRoutesForMachine: vi.fn(),
+    // Only native persistence boundaries are mocked. Real profile parsing, alias resolution,
+    // store reconciliation and warm-cache persistence consume the retained bytes.
+    mmkvStore.set('server-state-v1', JSON.stringify({
+        activeServerId,
+        activeServerIdIsExplicit: true,
+        servers: Object.fromEntries(profiles.map((profile) => [profile.id, {
+            ...profile, name: profile.name ?? profile.id, createdAt: 1, updatedAt: 1, lastUsedAt: 1,
+        }])),
     }));
 }
 
 async function flushWarmCacheSave(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 1));
+}
+
+async function loadMachineDomainAfterBoot() {
+    const { prepareWarmCacheStorage } = await import('../../domains/state/warmCachePersistence');
+    await prepareWarmCacheStorage();
+    return await import('./machines');
 }
 
 function readPersistedMachineEntry(machineId: string): Record<string, unknown> | undefined {
@@ -115,8 +128,8 @@ function readPersistedMachineEntry(machineId: string): Record<string, unknown> |
 
 describe('machines domain: warm cache baseline', () => {
     it('preserves the persisted machine display name when a later apply carries no metadata', async () => {
-        mockMachineDomainBoundaries();
-        const { createMachinesDomain } = await import('./machines');
+        seedPersistedHomes();
+        const { createMachinesDomain } = await loadMachineDomainAfterBoot();
         const { domain } = createHarness(createMachinesDomain);
 
         domain.applyMachines([makeMachine()], true, { sourceServerId: 'server_a' });
@@ -135,15 +148,15 @@ describe('machines domain: warm cache baseline', () => {
     });
 
     it('adopts fresh metadata over the persisted baseline', async () => {
-        mockMachineDomainBoundaries();
-        const { createMachinesDomain } = await import('./machines');
+        seedPersistedHomes();
+        const { createMachinesDomain } = await loadMachineDomainAfterBoot();
         const { domain } = createHarness(createMachinesDomain);
 
         domain.applyMachines([makeMachine()], true, { sourceServerId: 'server_a' });
         await flushWarmCacheSave();
 
         domain.applyMachines([makeMachine({
-            metadata: { ...BASE_MACHINE_METADATA, displayName: 'Renamed box' } as MachineMetadata,
+            metadata: { ...BASE_MACHINE_METADATA, displayName: 'Renamed box' },
             metadataVersion: 2,
             updatedAt: 30,
         })], false, { sourceServerId: 'server_a' });
@@ -153,7 +166,7 @@ describe('machines domain: warm cache baseline', () => {
     });
 
     it('persists non-active raw machine inventories under the canonical server identity', async () => {
-        mockMachineDomainBoundaries({
+        seedPersistedHomes({
             activeServerId: 'srv_server_a',
             profiles: [
                 {
@@ -169,7 +182,7 @@ describe('machines domain: warm cache baseline', () => {
                 },
             ],
         });
-        const { createMachinesDomain } = await import('./machines');
+        const { createMachinesDomain } = await loadMachineDomainAfterBoot();
         const { domain, get } = createHarness(createMachinesDomain);
 
         domain.applyMachines([makeMachine({
