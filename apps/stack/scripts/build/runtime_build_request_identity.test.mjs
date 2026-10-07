@@ -57,6 +57,27 @@ test('daemon support identity ignores unshipped tests while retaining shipped re
   for (const [index, value] of (await fingerprint()).entries()) assert.notEqual(value, runtimeChanged[index], 'explicit shipped resources override test naming');
 });
 
+test('daemon support identity retains runtime inputs under test-named checkout parents and opaque host paths', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'runtime-host-inputs-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const repoDir = join(root, 'tests', 'checkout');
+  const cliDir = join(repoDir, 'apps/cli');
+  await mkdir(join(cliDir, 'src'), { recursive: true });
+  await mkdir(join(cliDir, 'codex/tests'), { recursive: true });
+  await writeFile(join(cliDir, 'package.json'), JSON.stringify({ name: '@happier-dev/cli' }));
+  await writeFile(join(cliDir, 'src/index.ts'), 'export const runtime = 1;');
+  await writeFile(join(cliDir, 'codex/tests/runtime.cjs'), 'module.exports = 1;');
+  const fingerprint = () => readRuntimeComponentSourceFingerprint({
+    component: 'daemon', sourceMetadata: { repoDir }, includeRuntimeSupportInputs: true,
+  });
+  const before = await fingerprint();
+  await writeFile(join(cliDir, 'src/index.ts'), 'export const runtime = 2;');
+  const sourceChanged = await fingerprint();
+  assert.notEqual(sourceChanged, before, 'checkout ancestor names must not exclude runtime source');
+  await writeFile(join(cliDir, 'codex/tests/runtime.cjs'), 'module.exports = 2;');
+  assert.notEqual(await fingerprint(), sourceChanged, 'opaque host support is not source-test membership');
+});
+
 const sourceMetadata = Object.freeze({
   repoDir: '/repo',
   commitSha: 'commit-a',

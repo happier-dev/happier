@@ -1,5 +1,5 @@
 import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
-import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 const SOURCE_ROOTS = ['src', 'sources', 'scripts'];
 const TEST_DIRECTORY_NAMES = new Set(['__fixtures__', '__tests__', 'fixtures', 'test', 'testkit', 'tests', 'test-support']);
@@ -20,14 +20,23 @@ export function isWorkspaceBuildInputIgnoredPath(path) {
     || name.startsWith('test-setup.');
 }
 
-export function createWorkspaceBuildInputIgnorePath(packageDirs, options = {}) {
+export function createWorkspaceBuildInputIgnorePath(packageDirs, { repoDir, hostDir, ...options } = {}) {
   // Inventory is the authority for exceptions: shipped/native data and relative
   // extended configs may legitimately have test-like names.
   const directories = Array.isArray(packageDirs) ? packageDirs : [packageDirs];
+  const inputPath = path => repoDir ? relative(repoDir, path) : path;
   const admitted = new Set(directories.flatMap(packageDir =>
     readWorkspaceBuildInputs(packageDir, { ...options, includeDirectories: true }).map(path => join(packageDir, path)))
-    .filter(isWorkspaceBuildInputIgnoredPath));
-  return path => isWorkspaceBuildInputIgnoredPath(path) && !admitted.has(path);
+    .filter(path => isWorkspaceBuildInputIgnoredPath(inputPath(path))));
+  return path => {
+    if (hostDir) {
+      const hostRelative = relative(hostDir, path);
+      const belongsToHost = !isAbsolute(hostRelative) && hostRelative !== '..' && !hostRelative.startsWith(`..${sep}`);
+      // Host assets, native support and Prisma inputs are opaque build data.
+      if (belongsToHost && !isWorkspaceBuildSourcePath(hostRelative)) return false;
+    }
+    return isWorkspaceBuildInputIgnoredPath(inputPath(path)) && !admitted.has(path);
+  };
 }
 
 function isWorkspaceBuildConfigFile(name) {

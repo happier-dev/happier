@@ -10,7 +10,7 @@ import { createWorkspaceBuildInputIgnorePath, resolveWorkspaceBuildInputWatchPat
 
 export function createHappyCliRuntimeInputIgnorePath({ cliDir, includeShippedFiles = false, excludeGeneratedPluginArtifacts = false }) {
   return createWorkspaceBuildInputIgnorePath(collectHappyCliRuntimePackageDirs({ cliDir }).map(({ dir }) => dir),
-    { includeShippedFiles, excludeGeneratedPluginArtifacts });
+    { repoDir: resolve(cliDir, '..', '..'), hostDir: cliDir, includeShippedFiles, excludeGeneratedPluginArtifacts });
 }
 
 export function collectHappyCliRuntimePackageDirs({
