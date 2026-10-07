@@ -6,7 +6,8 @@ import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import type { WorkflowEngineSelectionV1, WorkflowSessionAuthoringSelection } from '@happier-dev/protocol/workflows/workflowV1';
 import type { WorkflowRoleV1 } from '@happier-dev/protocol';
 
-import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
+import { DEFAULT_AGENT_ID, hasAgentIconMark } from '@/agents/catalog/catalog';
+import { AgentIcon } from '@/agents/registry/AgentIcon';
 import type { AgentInputExtraActionChipRenderContext } from '@/components/sessions/agentInput/agentInputContracts';
 import { AgentInputChipPickerPopover } from '@/components/sessions/agentInput/components/AgentInputChipPickerPopover';
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
@@ -15,7 +16,9 @@ import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
 import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { Item } from '@/components/ui/lists/Item';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+import { resolveTouchTargetFloorPx } from '@/components/ui/interactiveTargetSize';
+import { SelectionListFilterChip } from '@/components/ui/selectionList';
+import { resolveRoleDisplayName } from '@/sync/domains/roles/roleCatalog';
 import { Typography } from '@/constants/Typography';
 import { isPermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type { Metadata } from '@happier-dev/session-core/state';
@@ -59,8 +62,10 @@ import { useSessionAuthoringEnginePicker } from './useSessionAuthoringEnginePick
  * never reads it and the desktop app is the web bundle, so a slop-declared
  * target there is a target that does not exist. Growth is on the free vertical
  * axis, so a wrapping chip row still meets at its gap rather than overlapping.
+ * Under a precise pointer they keep the chip row's dense height (the shared
+ * touch-floor policy), the height of the other chips beside them.
  */
-const MINIMUM_TARGET_SIZE = resolveMinimumInteractiveTargetSize(Platform.OS);
+const MINIMUM_TARGET_SIZE = resolveTouchTargetFloorPx(Platform.OS) ?? undefined;
 
 const styles = StyleSheet.create((theme) => ({
     root: {
@@ -141,6 +146,10 @@ function SessionAuthoringOptionChip(props: Readonly<{
     changed?: boolean;
     changedAccessibilityHint?: string;
     onSelect: (optionId: string) => void;
+    /** The value's identity mark (the Agent's), leading a bordered chip. */
+    leading?: React.ReactNode;
+    /** Fields only: `row` when its row stacks the field under the label. */
+    fieldSpan?: 'content' | 'row';
     testID: string;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
@@ -148,6 +157,46 @@ function SessionAuthoringOptionChip(props: Readonly<{
     const anchorRef = React.useRef<React.ComponentRef<typeof View> | null>(null);
     const currentLabel = props.valueLabel ?? resolveSessionAuthoringOptionLabel(props.options, props.selectedOptionId, props.unselectedLabel);
     const pickerOptions = props.pickerOptions ?? props.options;
+
+    const picker = (
+        <AgentInputChipPickerPopover
+            open={open}
+            anchorRef={anchorRef}
+            title={props.title}
+            options={pickerOptions}
+            selectedOptionId={props.selectedOptionId}
+            onSelect={props.onSelect}
+            onRequestClose={() => setOpen(false)}
+            maxHeightCap={460}
+        />
+    );
+    if (props.presentation === 'chips' && props.changed === true) {
+        // A value this subject sets is the canonical bordered chip, the one the header's Where and
+        // Triggers chips are, so the header line reads as one set (lab E1). Its chooser stays this
+        // field's own picker, anchored to the chip.
+        return (
+            <>
+                <View ref={anchorRef} collapsable={false} style={{ alignSelf: 'flex-start' }}>
+                    <SelectionListFilterChip
+                        filter={{
+                            id: props.controlId,
+                            testID: props.testID,
+                            label: props.title,
+                            valueLabel: currentLabel,
+                            ...(props.leading === undefined ? {} : { icon: props.leading }),
+                            ...(props.changedAccessibilityHint === undefined ? {} : { accessibilityHint: props.changedAccessibilityHint }),
+                            disabled: props.disabled === true,
+                            // The chip only asks to open; this field's own picker below is the chooser.
+                            open: false,
+                            onOpenChange: (next) => { if (next) setOpen(true); },
+                            renderPopoverContent: () => null,
+                        }}
+                    />
+                </View>
+                {picker}
+            </>
+        );
+    }
 
     return (
         <>
@@ -182,6 +231,8 @@ function SessionAuthoringOptionChip(props: Readonly<{
                             open,
                             detailColor: theme.colors.text.primary,
                             chevronColor: theme.colors.text.secondary,
+                            // Stacked under its label in a settings row, the field spans the row (E1).
+                            ...(props.fieldSpan === undefined ? {} : { fieldSpan: props.fieldSpan }),
                             // The field box's own border carries the keyboard focus ring.
                             field: {
                                 ...resolveFieldBoxColors(theme),
@@ -195,17 +246,7 @@ function SessionAuthoringOptionChip(props: Readonly<{
                         )}
                 </HappierPressable>
             </View>
-
-            <AgentInputChipPickerPopover
-                open={open}
-                anchorRef={anchorRef}
-                title={props.title}
-                options={pickerOptions}
-                selectedOptionId={props.selectedOptionId}
-                onSelect={props.onSelect}
-                onRequestClose={() => setOpen(false)}
-                maxHeightCap={460}
-            />
+            {picker}
         </>
     );
 }
@@ -449,6 +490,44 @@ export function useSessionAuthoringFieldSummary(params: Readonly<{
 
 const EMPTY_FACTS: SessionAuthoringControlFacts = {};
 
+/**
+ * What the Agent & model control says: a role by its name, or the Agent and its model ("Claude ·
+ * Opus 5.5"). The chip and a phone's value row read it here, so they never word it two ways.
+ */
+function formatSessionAuthoringEngineLabel(params: Readonly<{
+    engine: WorkflowEngineSelectionV1 | undefined;
+    workflowRoles: readonly WorkflowRoleV1[] | undefined;
+    agentLabel: string;
+    values: WorkflowSessionAuthoringSelection;
+    controls: ReturnType<typeof useResolvedSessionAuthoringControls>['controls'];
+    facts: SessionAuthoringControlFacts;
+    agentId: ReturnType<typeof resolveSessionAuthoringAgentId>;
+}>): string {
+    if (params.engine && 'role' in params.engine) return resolveRoleDisplayName(params.engine.role, params.workflowRoles);
+    if (!params.values.agentTarget) return t('agentInput.agent.unselected');
+    const modelControl = resolveSessionAuthoringFieldControl({ field: 'modelSelection', values: params.values,
+        controls: params.controls, facts: params.facts, agentId: params.agentId });
+    const modelLabel = modelControl.kind === 'options'
+        ? resolveSessionAuthoringOptionLabel(modelControl.options, modelControl.selectedOptionId, modelControl.unselectedLabel)
+        : params.values.modelSelection?.ref.modelId;
+    return [params.agentLabel, modelLabel].filter(Boolean).join(' · ');
+}
+
+/** The Agent & model summary for a host that shows it as a value row rather than the chip. */
+export function useSessionAuthoringEngineSummary(params: Readonly<{
+    values: WorkflowSessionAuthoringSelection;
+    engine?: WorkflowEngineSelectionV1;
+    workflowRoles?: readonly WorkflowRoleV1[];
+    facts?: SessionAuthoringControlFacts;
+    metadata?: Metadata | null;
+}>): string {
+    const facts = params.facts ?? EMPTY_FACTS;
+    const { agentId, controls } = useResolvedSessionAuthoringControls(params.values, facts, params.metadata);
+    const enginePicker = useSessionAuthoringEnginePicker({ values: params.values, facts, disabled: true });
+    return formatSessionAuthoringEngineLabel({ engine: params.engine, workflowRoles: params.workflowRoles,
+        agentLabel: enginePicker.label, values: params.values, controls, facts, agentId });
+}
+
 export function SessionAuthoringControls(props: SessionAuthoringControlsProps): React.ReactElement {
     const testIDPrefix = props.testIDPrefix ?? 'session-authoring-control';
     const facts = props.facts ?? EMPTY_FACTS;
@@ -456,6 +535,7 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
     const { theme } = useUnistyles();
 
     const { agentId, controls } = useResolvedSessionAuthoringControls(props.values, facts, props.metadata);
+    const engineSummary = useSessionAuthoringEngineSummary(props);
     const roleSelection = React.useMemo(() => props.onChangeEngine === undefined ? undefined : {
         value: props.engine && 'role' in props.engine ? props.engine.role : null,
         workflowRoles: props.workflowRoles,
@@ -489,18 +569,13 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
                 if (engineField !== undefined && (field === 'acpSessionModeId' || field === 'sessionConfigOptionOverrides')) return null;
                 if (engineField !== undefined && (field === 'agentTarget' || field === 'modelSelection')) {
                     if (field !== engineField) return null;
-                    const modelControl = resolveSessionAuthoringFieldControl({ field: 'modelSelection', values: props.values, controls, facts, agentId });
-                    const modelLabel = modelControl.kind === 'options'
-                        ? resolveSessionAuthoringOptionLabel(modelControl.options, modelControl.selectedOptionId, modelControl.unselectedLabel)
-                        : props.values.modelSelection?.ref.modelId;
                     const rendered = <SessionAuthoringOptionChip
                         controlId="engine" title={t('workflows.page.sections.agentTitle')}
                         options={[]} pickerOptions={enginePicker.options}
                         selectedOptionId={enginePicker.selectedOptionId ?? ''}
-                        valueLabel={props.engine && 'role' in props.engine
-                            ? props.workflowRoles?.flatMap(role => role.roleId === roleSelection?.value && 'name' in role ? [role.name] : [])[0] ?? props.engine.role
-                            : [enginePicker.label, modelLabel].filter(Boolean).join(' · ')}
-                        disabled={props.disabled} presentation={presentation}
+                        valueLabel={engineSummary}
+                        {...(agentId !== null && hasAgentIconMark(agentId, theme) ? { leading: <AgentIcon agentId={agentId} size={14} /> } : {})}
+                        disabled={props.disabled} presentation={presentation} fieldSpan="row"
                         changed={isChanged('agentTarget') || isChanged('modelSelection')}
                         onSelect={enginePicker.onSelect} testID={`${testIDPrefix}-${engineField}`}
                     />;

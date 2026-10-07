@@ -336,6 +336,10 @@ describe('AgentInput (send button accessibility)', () => {
         const strips = screen.root.findAll((node) => node.type === stripType);
         expect(strips).toHaveLength(1);
         expect(strips[0]?.findAll((node) => typeof node.type === 'string' && String(node.type) === 'Text' && node.children.includes(badgeLabel))).toHaveLength(0);
+        const { VoiceComposerPlanetMount } = await import('@/components/voice/composer/VoiceComposerPlanetMount');
+        const voiceMountType = 'type' in VoiceComposerPlanetMount ? VoiceComposerPlanetMount.type : VoiceComposerPlanetMount;
+        expect(screen.root.findAll((node) => node.type === voiceMountType)).toHaveLength(0);
+        expect(screen.findByTestId('agent-input-dictation')).not.toBeNull();
         await screen.unmount();
     });
 
@@ -1336,6 +1340,9 @@ describe('AgentInput (send button accessibility)', () => {
                 />);
 
         const send = screen.findByTestId('session-composer-send');
+        const { VoiceComposerPlanetMount } = await import('@/components/voice/composer/VoiceComposerPlanetMount');
+        const voiceMountType = 'type' in VoiceComposerPlanetMount ? VoiceComposerPlanetMount.type : VoiceComposerPlanetMount;
+        expect(screen.root.findAll((node) => node.type === voiceMountType)).toHaveLength(1);
         expect(send).toBeTruthy();
         if (!send) throw new Error('session-composer-send not found');
         const images = send.findAllByType('Image' as any);
@@ -1390,6 +1397,7 @@ describe('AgentInput (send button accessibility)', () => {
 
         const screen = await renderScreen(<AgentInput
             sessionId="session-1"
+            voiceAffordance="dictation"
             value=""
             placeholder="Type"
             onChangeText={onChangeText}
@@ -1397,10 +1405,15 @@ describe('AgentInput (send button accessibility)', () => {
             autocompleteKinds={[]}
             autocompleteSuggestions={async () => []}
         />);
+        const { VoiceComposerPlanetMount } = await import('@/components/voice/composer/VoiceComposerPlanetMount');
+        const voiceMountType = 'type' in VoiceComposerPlanetMount ? VoiceComposerPlanetMount.type : VoiceComposerPlanetMount;
+        expect(screen.root.findAll((node) => node.type === voiceMountType)).toHaveLength(0);
+        expect(screen.findByTestId('agent-input-dictation')).not.toBeNull();
         await screen.pressByTestIdAsync('agent-input-dictation');
         dictationState.status = 'listening';
         await screen.update(<AgentInput
             sessionId="session-1"
+            voiceAffordance="dictation"
             value="before selected after"
             placeholder="Type"
             onChangeText={onChangeText}
