@@ -267,8 +267,10 @@ describe('the mounted selected-PR review chooser', () => {
     expect(focusedLabels.at(-1)).toBe('Codex');
     expect(calls.map((call) => call.action)).toEqual(['review.engines.list']);
 
+    const focusTransfers = focusedLabels.length;
     await fixture.press(await fixture.getByRole('checkbox', { name: 'Codex' }));
     await fixture.press(await fixture.getByRole('checkbox', { name: 'Claude' }));
+    expect(focusedLabels).toHaveLength(focusTransfers);
     await fixture.press(await fixture.getByRole('button', { name: 'Start review' }));
     await settle();
 
