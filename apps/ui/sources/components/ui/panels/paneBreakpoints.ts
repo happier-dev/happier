@@ -19,6 +19,8 @@ export type ResolvePaneLayoutInput = Readonly<{
     multiPaneEnabled: boolean;
     rightOpen: boolean;
     detailsOpen: boolean;
+    /** A selected destination detail is content, not an optional auxiliary side panel. */
+    destinationOwnsDetails?: boolean;
     /**
      * When only the right pane is open and main+right mins fit, we normally dock and clamp
      * sizing later. Callers can opt into overlay presentation when the preferred width
@@ -58,8 +60,15 @@ export function resolvePaneLayout(input: ResolvePaneLayoutInput): ResolvedPaneLa
     const rightPreferredPx = Math.max(rightMinPx, input.rightPreferredPx ?? rightMinPx);
     const detailsPreferredPx = Math.max(detailsMinPx, input.detailsPreferredPx ?? detailsMinPx);
 
-    if (!input.multiPaneEnabled) return { kind: 'single', right: 'hidden', details: 'hidden' };
-    if (input.deviceType === 'phone') return { kind: 'single', right: 'hidden', details: 'hidden' };
+    if (!input.multiPaneEnabled || input.deviceType === 'phone') {
+        return {
+            kind: 'single',
+            right: 'hidden',
+            details: input.destinationOwnsDetails === true && input.detailsOpen
+                && Number.isFinite(input.containerWidthPx) && input.containerWidthPx > 0
+                ? 'overlay' : 'hidden',
+        };
+    }
 
     const width = input.containerWidthPx;
     if (!Number.isFinite(width) || width <= 0) return { kind: 'single', right: 'hidden', details: 'hidden' };

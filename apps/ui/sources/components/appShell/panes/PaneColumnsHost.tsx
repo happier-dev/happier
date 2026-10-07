@@ -42,6 +42,8 @@ export type PaneColumnsHostProps = Readonly<{
     /** The owner's open state. A pane can be open but hidden by the layout (narrow overlay stacks). */
     rightOpen?: boolean;
     detailsOpen?: boolean;
+    /** A destination's selected content survives losing the optional side-panel presentation. */
+    destinationOwnsDetails?: boolean;
     bottomOpen?: boolean;
     /** Pane focus mode: the open panes take the main column's place. */
     paneFocusModeActive?: boolean;
@@ -104,8 +106,9 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
     const rightOpen = props.rightOpen ?? rightPane !== null;
     const detailsOpen = props.detailsOpen ?? detailsPane !== null;
     const bottomOpen = props.bottomOpen ?? bottomPane !== null;
-    const paneFocusModeActive = props.paneFocusModeActive === true && (rightOpen || detailsOpen);
-    const showActionRail = props.actionRail != null;
+    const sidePanesAvailable = multiPaneEnabled && multiPaneDeviceType !== 'phone';
+    const paneFocusModeActive = sidePanesAvailable && props.paneFocusModeActive === true && (rightOpen || detailsOpen);
+    const showActionRail = sidePanesAvailable && props.actionRail != null;
     const containerWidthPx = Math.max(0, hostWidthPx - (showActionRail ? PANE_ACTION_RAIL_WIDTH : 0));
     const mainMinPx = paneFocusModeActive ? 0 : (props.mainMinWidthPx ?? PANE_SIZING_DEFAULTS.mainMinPx);
     // With both side panes docked the canonical main column may run a little narrower; a caller's
@@ -207,6 +210,7 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
         multiPaneEnabled,
         rightOpen,
         detailsOpen,
+        destinationOwnsDetails: props.destinationOwnsDetails,
         rightPreferOverlayWhenPreferredDoesNotFit: rightPrefersOverlay,
         detailsPreferOverlayWhenPreferredDoesNotFit: detailsPrefersOverlay,
         detailsOpenedFrom: props.detailsOpenedFrom ?? null,
@@ -223,6 +227,7 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
         detailsOpen,
         baseLayout: resolvePaneLayout(paneLayoutInput),
     });
+    const destinationDetailOnly = resolvedLayout.kind === 'single' && resolvedLayout.details === 'overlay';
 
     // NOTE: When both panes are open on narrow widths, `resolvePaneLayout` can return `overlayStack`
     // with `right: 'hidden'` + `details: 'overlay'`. We intentionally keep the right pane "open"
@@ -254,6 +259,7 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
     const baseSizing = React.useMemo(() => {
         const prefersFullScreenOverlay = deviceType === 'phone';
         const clampOverlayWidth = (value: number, minPx: number) => {
+            if (destinationDetailOnly) return containerWidthPx;
             if (prefersFullScreenOverlay) return Math.max(minPx, mainRegionWidthPx);
             if (!Number.isFinite(value)) return minPx;
             return Math.min(mainRegionWidthPx, Math.max(minPx, value));
@@ -281,6 +287,8 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
         return { rightWidthPx, detailsWidthPx, rightMaxWidthPx, detailsMaxWidthPx };
     }, [
         deviceType,
+        destinationDetailOnly,
+        containerWidthPx,
         details.maxPx,
         details.minPx,
         detailsPreferredPxForLayout,
@@ -339,6 +347,11 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
                 rightMinWidthPx = available;
             }
         }
+        if (destinationDetailOnly) {
+            detailsWidthPx = containerWidthPx;
+            detailsMinWidthPx = containerWidthPx;
+            detailsMaxWidthPx = containerWidthPx;
+        }
         return { rightWidthPx, detailsWidthPx, rightMaxWidthPx, detailsMaxWidthPx, rightMinWidthPx, detailsMinWidthPx };
     }, [
         baseSizing.detailsMaxWidthPx,
@@ -348,6 +361,7 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
         containerWidthPx,
         details.minPx,
         detailsPane,
+        destinationDetailOnly,
         paneFocusModeActive,
         resolvedLayout.details,
         resolvedLayout.right,
@@ -465,7 +479,7 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
                 onDragRightDockWidthPx={setRightDragWidthPx}
                 onDragDetailsDockWidthPx={onDragDetailsDockWidthPx}
                 bottomPane={bottomPane}
-                bottomPresentation={resolvedBottomLayout.presentation}
+                bottomPresentation={destinationDetailOnly ? 'hidden' : resolvedBottomLayout.presentation}
                 bottomDockHeightPx={effectiveBottomDockHeightPx}
                 bottomDockMinHeightPx={PANE_SIZING_DEFAULTS.bottom.minPx}
                 bottomDockMaxHeightPx={bottomResizeMaxHeightPx}
