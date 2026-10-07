@@ -1,4 +1,6 @@
 import type { PluginUiPlatform, PluginUiThemeV1 } from '@happier-dev/plugin-sdk/ui';
+import type { HappierRaisedEdge } from '../presentation/layout/raisedEdge.js';
+import type { HappierPortableStyle } from '../presentation/portableTypes.js';
 
 /** Semantic theme facts presentation may consume without importing host transport. */
 export type HappierUiTheme = PluginUiThemeV1;
@@ -99,10 +101,17 @@ export type HappierUiPalette = Readonly<{
   groupDivider: string;
   /** The outline of a field box, an unselected tile and other bordered controls. */
   controlBorder: string;
+  /**
+   * The raised edge (and its lift) a field box stands on, resolved by the host from `controlBorder`'s
+   * raised colour and its colour scheme (`resolveHappierRaisedEdge`). Absent, field boxes draw flat.
+   */
+  controlEdge?: HappierRaisedEdge;
   /** The inside of a field box (a page select trigger or text field). */
   fieldBackground: string;
   /** The placeholder / "Choose…" text of an empty field box. */
   placeholder: string;
+  /** The light top line of a primary (accent-filled) button, resolved by the host; absent, it draws flat. */
+  accentGloss?: HappierRaisedEdge;
   /** The ring or fill that marks the chosen tile. */
   selection: string;
   switchTrackOn: string;
@@ -111,6 +120,8 @@ export type HappierUiPalette = Readonly<{
   /** A segmented control's track and its selected segment. */
   segmentTrack: string;
   segmentThumb: string;
+  /** The low elevation the chosen segment stands on; absent, it sits flat. */
+  segmentThumbLift?: HappierPortableStyle;
   /**
    * A navigation column's open row (the plane's selected chip) and a row under the pointer. The
    * column's plane itself is the host's (`appShellColumnSurface`); a column never paints its own.
@@ -124,6 +135,8 @@ export type HappierUiPalette = Readonly<{
   inset?: string;
   /** Same-realm compact search radius; unhosted search uses its public theme's control radius. */
   searchFieldRadiusPx?: number;
+  /** The raised edge of the compact search field (drawn on `sheetBorder`); absent, it draws flat. */
+  searchFieldEdge?: HappierRaisedEdge;
 }>;
 
 export type HappierUiTextDirection = 'ltr' | 'rtl';

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { StyleSheet } from 'react-native';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -10,10 +11,44 @@ import { glassPresetMaterials } from '@/components/ui/glass/glassMaterial';
 import { GlassRuntimeEnvironmentProvider } from '@/components/ui/glass/glassRuntimeEnvironment';
 import { readPersonalizeChoices } from './personalizeFlowModel';
 import { PersonalizeStage, buildPersonalizeListSample } from './PersonalizeStage';
-import { ThinkingDisplayPreview } from '@/components/settings/session/SessionSettingPreviews';
+import { SessionTranscriptSample, ThinkingDisplayPreview } from '@/components/settings/session/SessionSettingPreviews';
 
 installMessageViewCommonModuleMocks({ storage: importOriginal => importOriginal() });
 afterEach(standardCleanup);
+
+describe('Personalize stage content geometry', () => {
+    it.each(['none', 'transcript'] as const)('keeps the phone conversation inside its measured content when focus is %s and the card resizes', async (focus) => {
+        const { storage } = await import('@/sync/domains/state/storage');
+        const before = storage.getState();
+        const choices = readPersonalizeChoices(settingsDefaults, localSettingsDefaults);
+        const screen = await renderScreen(<PersonalizeStage testID="stage" draft={choices} presentation="card" focus={focus} />);
+        // Native layout is the external boundary. These are card/content boxes,
+        // not a second copy of the stage's padding or sidebar calculations.
+        const boxes = focus === 'transcript'
+            ? [[358, 288], [430, 360]] as const
+            : [[358, 292], [430, 364]] as const;
+        for (const [cardWidth, contentWidth] of boxes) {
+            await act(async () => {
+                screen.findHostByTestId('stage')!.props.onLayout?.({
+                    nativeEvent: { layout: { x: 0, y: 0, width: cardWidth, height: 300 } },
+                });
+            });
+            const sample = screen.findByType(SessionTranscriptSample);
+            await act(async () => {
+                sample.parent?.props.onLayout?.({
+                    nativeEvent: { layout: { x: 0, y: 0, width: contentWidth, height: 220 } },
+                });
+            });
+            // A full-size sample can inherit the native content box or receive
+            // its measured width; an outer-card width clips the real user row.
+            expect(screen.findByType(SessionTranscriptSample).props.width ?? contentWidth).toBe(contentWidth);
+            expect(screen.getTextContent()).toContain('settingsSessionPages.preview.userMessage');
+            expect(screen.getTextContent()).toContain('settingsSessionPages.preview.agentReply');
+        }
+        expect(storage.getState().settings).toBe(before.settings);
+        expect(storage.getState().localSettings).toBe(before.localSettings);
+    });
+});
 
 describe('Personalize thinking preview transitions', () => {
     it('switches Summary to Hidden and back without losing the remaining conversation', async () => {

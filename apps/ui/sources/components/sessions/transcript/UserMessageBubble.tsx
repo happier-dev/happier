@@ -4,6 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import type { Theme } from '@/theme';
 import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
+import { SurfaceRim } from '@/components/ui/surfaces/SurfaceRim';
 
 import { TranscriptJumpAttention } from './navigation/TranscriptJumpHighlightOverlay';
 
@@ -24,7 +25,8 @@ export function UserMessageBubble(props: Readonly<{
         maxWidth: '100%' as const,
         ...(props.discarded ? { opacity: 0.65 } : null),
     };
+    const rim = <SurfaceRim role="bubble" radius={theme.parts.userBubble.radius} border="surface" theme={theme} />;
     return props.attention
-        ? <TranscriptJumpAttention {...props.attention} style={style}>{props.children}</TranscriptJumpAttention>
-        : <View style={style}>{props.children}</View>;
+        ? <TranscriptJumpAttention {...props.attention} style={style}>{props.children}{rim}</TranscriptJumpAttention>
+        : <View style={style}>{props.children}{rim}</View>;
 }

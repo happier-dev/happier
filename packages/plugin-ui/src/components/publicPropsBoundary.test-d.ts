@@ -258,6 +258,8 @@ type _AuthorEmptyStatePropKeysAreCurated = Assert<IsEqual<keyof EmptyStateProps,
   | 'size'
   // The quiet second way forward (agents-plugin-tabs lane, slice 1a).
   | 'secondaryAction'
+  // The Daybreak scene in the mark slot (widgets plan A5).
+  | 'scene'
   // A lifecycle caller opts a transition into urgency; static states remain silent.
   | 'accessibilitySemantics'
   | 'testID'

@@ -63,14 +63,16 @@ afterEach(() => {
 });
 
 describe('ItemGroup surface chrome', () => {
-    it('does not add curated surface shadow when surface chrome tokens are transparent', async () => {
+    it('stands a borderless light sheet on its raised bottom lip and the card elevation', async () => {
         const screen = await renderItemGroup();
         const style = findGroupSurfaceStyle(screen);
 
         expect(style.borderWidth).toBe(0);
-        expect(style.borderTopWidth).toBe(0);
-        expect(hasShadow(style)).toBe(false);
+        expect(style.borderTopWidth).toBeUndefined();
+        expect(Number(style.borderBottomWidth)).toBeGreaterThan(0);
+        expect(hasShadow(style)).toBe(true);
     });
+
 
     it('clips only the inner rounded surface when embedded content paints to the card edges', async () => {
         const screen = await renderItemGroup({ clipContent: true });

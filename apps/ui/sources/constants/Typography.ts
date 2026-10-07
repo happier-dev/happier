@@ -3,7 +3,7 @@ import { Platform, type TextStyle } from 'react-native';
 /**
  * Typography system for Happier app
  * 
- * Default typography: Inter (except Apple web, where we prefer the system font stack)
+ * Default typography: Inter on every platform
  * Monospace typography: IBM Plex Mono  
  * Logo typography: Bricolage Grotesque (specific use only)
  * 
@@ -28,17 +28,6 @@ import { Platform, type TextStyle } from 'react-native';
  * <Text style={{ fontSize: 14, fontFamily: getMonoFont() }}>Direct mono usage</Text>
  * <Text style={{ fontSize: 28, fontFamily: getLogoFont() }}>Direct logo usage</Text>
  */
-
-const APPLE_WEB_SYSTEM_FONT_STACK =
-    "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', system-ui, sans-serif";
-
-function shouldPreferAppleSystemFontOnWeb(): boolean {
-    if (Platform.OS !== 'web') return false;
-    if (typeof navigator === 'undefined') return false;
-    const ua = typeof navigator.userAgent === 'string' ? navigator.userAgent : '';
-    // Matches macOS and iOS (including iPadOS desktop-mode UAs that report Macintosh).
-    return /Macintosh|iPhone|iPad|iPod/i.test(ua);
-}
 
 // Font family constants
 export const FontFamilies = {
@@ -74,10 +63,8 @@ export const FontFamilies = {
 /**
  * Default-family weights.
  *
- * `semiBold` predates the others and is intentionally left as it was (Inter 600 file, but 500 on
- * Apple, which renders SF noticeably heavier). `medium` is a true 500 everywhere and is the weight of
- * row titles; `bold` is a true 600 everywhere and is the weight of page and section headings, so the
- * heading/row hierarchy holds on every platform instead of collapsing to 500/500 on Apple.
+ * The Inter face encodes its weight and style: `medium` uses the 500 file, while
+ * `semiBold` and `bold` use the 600 file on every platform.
  */
 export type DefaultFontWeight = 'regular' | 'italic' | 'medium' | 'semiBold' | 'bold';
 export type MonoFontWeight = 'regular' | 'italic' | 'semiBold';
@@ -101,7 +88,6 @@ export function getHappierFontFamily(kind: 'default', weight: DefaultFontWeight)
 export function getHappierFontFamily(kind: 'mono', weight: MonoFontWeight): string;
 export function getHappierFontFamily(kind: ThemeFontKind, weight: DefaultFontWeight | MonoFontWeight): string {
     if (kind === 'mono') return FontFamilies.mono[weight as MonoFontWeight];
-    if (shouldPreferAppleSystemFontOnWeb()) return APPLE_WEB_SYSTEM_FONT_STACK;
     return FontFamilies.default[weight as DefaultFontWeight];
 }
 
@@ -131,38 +117,10 @@ export const FontWeights = {
 } as const;
 
 // Style utilities for easy inline usage
-function defaultTypography(): Pick<TextStyle, 'fontFamily'>;
-function defaultTypography(weight: 'regular'): Pick<TextStyle, 'fontFamily'>;
-function defaultTypography(weight: 'italic'): Pick<TextStyle, 'fontFamily' | 'fontStyle'>;
-function defaultTypography(weight: 'medium' | 'semiBold' | 'bold'): Pick<TextStyle, 'fontFamily' | 'fontWeight'>;
-function defaultTypography(
-    weight?: DefaultFontWeight,
-): Pick<TextStyle, 'fontFamily' | 'fontStyle' | 'fontWeight'>;
 function defaultTypography(
     weight: DefaultFontWeight = 'regular',
-): Pick<TextStyle, 'fontFamily' | 'fontStyle' | 'fontWeight'> {
-    // Native iOS: prefer the system font (SF). We omit `fontFamily` so RN uses the platform default.
-    if (Platform.OS === 'ios') {
-        if (weight === 'italic') {
-            return { fontStyle: 'italic' };
-        }
-        if (weight === 'regular') return {};
-        return { fontWeight: FontWeights[weight] };
-    }
-
-    const fontFamily = getDefaultFont(weight);
-
-    // Keep existing Inter behavior (family encodes weight/style).
-    if (!shouldPreferAppleSystemFontOnWeb()) {
-        return { fontFamily };
-    }
-
-    // Apple web: use system stack + explicit weight/style when needed.
-    if (weight === 'italic') {
-        return { fontFamily, fontStyle: 'italic' };
-    }
-    if (weight === 'regular') return { fontFamily };
-    return { fontFamily, fontWeight: FontWeights[weight] };
+): Pick<TextStyle, 'fontFamily'> {
+    return { fontFamily: getDefaultFont(weight) };
 }
 
 function tabularTypography(): Pick<TextStyle, 'fontVariant'> {
@@ -238,7 +196,7 @@ function timestampTypography(): Pick<TextStyle, 'fontFamily' | 'fontSize' | 'lin
 }
 
 export const Typography = {
-    // Default font styles (Inter, except Apple web system stack)
+    // Default font styles (Inter on every platform)
     default: defaultTypography,
 
     // Monospace font styles (IBM Plex Mono)

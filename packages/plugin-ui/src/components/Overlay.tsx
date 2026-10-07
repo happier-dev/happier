@@ -22,6 +22,7 @@ import {
 import type { HappierTextVariant, HappierTone } from '../presentation/semantics.js';
 import { HAPPIER_PRESS_FEEDBACK_V1, happierPressTransitionStyle } from '../presentation/interaction/pressFeedback.js';
 import { resolveHappierButtonChrome } from '../presentation/interaction/buttonChrome.js';
+import { settleHappierRaisedEdge } from '../presentation/layout/raisedEdge.js';
 import { HAPPIER_ICON_BUTTON_SIZE, resolveHappierIconButtonChrome } from '../presentation/interaction/iconButtonChrome.js';
 import {
   HappierFieldBoxChevron,
@@ -212,6 +213,8 @@ function PopoverPresentation({
                 variant: 'primary',
                 disabled: state.disabled,
                 focused: state.focused,
+                pressed: state.pressed,
+                gloss: palette.accentGloss,
               }).style
             : {}),
           ...(!fieldTrigger && triggerIcon === undefined && triggerAppearance === 'control'
@@ -241,6 +244,7 @@ function PopoverPresentation({
               colors={{
                 borderColor: state.focused ? theme.colors.focus : palette.controlBorder,
                 backgroundColor: palette.fieldBackground,
+                edge: settleHappierRaisedEdge(palette.controlEdge, { focused: state.focused }),
               }}
               trailing={<HappierFieldBoxChevron open={open} color={theme.colors.secondaryText} />}
             >

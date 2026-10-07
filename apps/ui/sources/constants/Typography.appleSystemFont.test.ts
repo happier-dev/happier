@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 type PlatformMock = {
     OS: string;
@@ -13,25 +13,29 @@ async function loadTypography(params: Readonly<{ platform: PlatformMock; userAge
     });
 
     if (params.userAgent) {
-        vi.stubGlobal('navigator', { userAgent: params.userAgent } as any);
+        vi.stubGlobal('navigator', { userAgent: params.userAgent });
     }
 
     return await import('./Typography');
 }
 
-describe('Typography.default Apple system font preference', () => {
+describe('Typography.default Inter on every platform', () => {
     beforeEach(() => {
         vi.resetModules();
-        // Ensure previous tests don't leak navigator overrides.
-        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-        delete (globalThis as any).navigator;
+        vi.stubGlobal('navigator', undefined);
     });
 
-    it('uses system font on native iOS by omitting fontFamily', async () => {
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        vi.doUnmock('react-native');
+    });
+
+    it('uses Inter on native iOS, with weight and style encoded in the face', async () => {
         const mod = await loadTypography({ platform: { OS: 'ios' } });
-        expect(mod.Typography.default()).not.toHaveProperty('fontFamily');
-        expect(mod.Typography.default('semiBold')).toEqual({ fontWeight: mod.FontWeights.semiBold });
-        expect(mod.Typography.default('italic')).toEqual({ fontStyle: 'italic' });
+        expect(mod.Typography.default()).toEqual({ fontFamily: 'Inter-Regular' });
+        expect(mod.Typography.default('semiBold')).toEqual({ fontFamily: 'Inter-SemiBold' });
+        expect(mod.Typography.default('italic')).toEqual({ fontFamily: 'Inter-Italic' });
+        expect(mod.Typography.mono()).toEqual({ fontFamily: 'IBMPlexMono-Regular' });
     });
 
     it('uses Inter on non-Apple platforms', async () => {
@@ -41,19 +45,22 @@ describe('Typography.default Apple system font preference', () => {
         expect(mod.Typography.default('italic')).toEqual({ fontFamily: 'Inter-Italic' });
     });
 
-    it('uses the Apple system font stack on Apple web', async () => {
+    it.each([
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 Safari/605.1.15',
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15',
+        'Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X) AppleWebKit/605.1.15',
+    ])('uses Inter through the theme-held family on Apple web (%s)', async (userAgent) => {
         const mod = await loadTypography({
             platform: { OS: 'web' },
-            userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 Safari/605.1.15',
+            userAgent,
         });
-        // The theme-held family variable comes first; unset, the Apple system stack renders as before.
-        expect(mod.Typography.default()).toEqual({
-            fontFamily: "var(--happier-font-default-regular, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', system-ui, sans-serif)",
-        });
-        expect(mod.Typography.default('semiBold')).toEqual({
-            fontFamily: "var(--happier-font-default-semiBold, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', system-ui, sans-serif)",
-            fontWeight: mod.FontWeights.semiBold,
-        });
+        for (const weight of mod.DEFAULT_FONT_WEIGHTS) {
+            expect(mod.Typography.default(weight)).toEqual({
+                fontFamily: `var(--happier-font-default-${weight}, ${mod.FontFamilies.default[weight]})`,
+            });
+            expect(mod.getHappierFontFamily('default', weight)).toBe(mod.FontFamilies.default[weight]);
+        }
+        expect(mod.Typography.mono()).toEqual({ fontFamily: 'var(--happier-font-mono-regular, IBMPlexMono-Regular)' });
     });
 
     it('reads the theme-held family variable on other web platforms, falling back to Inter', async () => {
@@ -74,15 +81,15 @@ describe('Typography.default Apple system font preference', () => {
 
         vi.resetModules();
         const ios = await loadTypography({ platform: { OS: 'ios' } });
-        expect(ios.Typography.default('medium')).toEqual({ fontWeight: '500' });
-        expect(ios.Typography.default('bold')).toEqual({ fontWeight: '600' });
+        expect(ios.Typography.default('medium')).toEqual({ fontFamily: 'Inter-Medium' });
+        expect(ios.Typography.default('bold')).toEqual({ fontFamily: 'Inter-SemiBold' });
 
         vi.resetModules();
         const appleWeb = await loadTypography({
             platform: { OS: 'web' },
             userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 Safari/605.1.15',
         });
-        expect(appleWeb.Typography.default('medium')).toMatchObject({ fontWeight: '500' });
-        expect(appleWeb.Typography.default('bold')).toMatchObject({ fontWeight: '600' });
+        expect(appleWeb.Typography.default('medium')).toEqual({ fontFamily: 'var(--happier-font-default-medium, Inter-Medium)' });
+        expect(appleWeb.Typography.default('bold')).toEqual({ fontFamily: 'var(--happier-font-default-bold, Inter-SemiBold)' });
     });
 });

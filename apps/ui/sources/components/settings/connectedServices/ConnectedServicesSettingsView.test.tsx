@@ -123,18 +123,23 @@ const machineState = vi.hoisted(() => ({
     machines: [] as Array<{ id: string; active: boolean; activeAt?: number; metadata?: { displayName?: string } }>,
 }));
 
+// One settings fixture behind both settings readers, so a narrowed `useSettingsSelector` read and a
+// whole-object `useSettings` read never disagree.
+const SETTINGS_FIXTURE = vi.hoisted(() => ({
+    connectedServicesDefaultProfileByServiceId: {},
+    connectedServicesProfileLabelByKey: {},
+    connectedServicesProviderStateSharingSettingsV1: {},
+    connectedServicesDefaultAuthByAgentIdV1: {},
+}));
+
 vi.mock('@/sync/store/hooks', () => ({
     useActiveServerAccountScope: () => profileState.activeAccountScope,
     useAllMachines: () => machineState.machines,
     useProfile: () => ({
         connectedServicesV2: profileState.connectedServicesV2,
     }),
-    useSettings: () => ({
-        connectedServicesDefaultProfileByServiceId: {},
-        connectedServicesProfileLabelByKey: {},
-        connectedServicesProviderStateSharingSettingsV1: {},
-        connectedServicesDefaultAuthByAgentIdV1: {},
-    }),
+    useSettings: () => SETTINGS_FIXTURE,
+    useSettingsSelector: <T,>(selector: (settings: typeof SETTINGS_FIXTURE) => T): T => selector(SETTINGS_FIXTURE),
     useSettingMutable: () => [{}, vi.fn()],
     useSetting: () => undefined,
     useLocalSetting: () => undefined,

@@ -1,11 +1,17 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 
 import { Popover } from '@/components/ui/popover/Popover';
 import { Text } from '@/components/ui/text/Text';
+import { resolveThemeSurfaceChromeStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
+import { resolveThemeRaisedEdge } from '@/components/ui/surfaces/themeRaisedEdge';
+import { SurfaceRim } from '@/components/ui/surfaces/SurfaceRim';
+import { surfaceUsesRim } from '@/components/ui/surfaces/surfaceEdgeTreatment';
 import { Typography } from '@/constants/Typography';
+import { shadowLevelStyle } from '@/shadowElevation';
 
+const TOOLTIP_RADIUS_PX = 6;
 /** Keeps a tooltip off the window's edge when it is clamped there. */
 const TOOLTIP_EDGE_PADDING_PX = 8;
 /** `edgePadding` insets the boundary; the tooltip's own box carries no extra padding. */
@@ -26,7 +32,6 @@ export default function AnchoredTooltip(props: Readonly<{
     testID?: string;
     placement?: 'top' | 'bottom' | 'left' | 'right';
 }>) {
-    const { theme } = useUnistyles();
     return (
         <Popover
             open
@@ -44,10 +49,35 @@ export default function AnchoredTooltip(props: Readonly<{
             maxHeightCap={TOOLTIP_MAX_HEIGHT_PX}
         >
             {() => (
-                <View role="tooltip" testID={props.testID} style={{ pointerEvents: 'none', paddingHorizontal: 8, paddingVertical: 5, borderRadius: 6, borderWidth: 1, borderColor: theme.colors.border.surface, backgroundColor: theme.colors.surface.elevated }}>
-                    {props.content ?? <Text style={{ ...Typography.default(), fontSize: 12, lineHeight: 16, color: theme.colors.text.primary }}>{props.label}</Text>}
+                <View role="tooltip" testID={props.testID} style={styles.bubble}>
+                    {props.content ?? <Text style={styles.label}>{props.label}</Text>}
+                    <SurfaceRim role="floating" radius={TOOLTIP_RADIUS_PX} border="modal" />
                 </View>
             )}
         </Popover>
     );
 }
+
+// A tooltip is the smallest floating surface: the shared surface hairline, its raised edge and the
+// tooltip step of the elevation ladder.
+const styles = StyleSheet.create((theme) => ({
+    bubble: {
+        pointerEvents: 'none',
+        paddingHorizontal: 8,
+        paddingVertical: 5,
+        borderRadius: TOOLTIP_RADIUS_PX,
+        backgroundColor: theme.colors.surface.elevated,
+        ...resolveThemeSurfaceChromeStyle({
+            borderColor: theme.colors.border.modal,
+            edge: resolveThemeRaisedEdge(theme, 'modal'),
+            rim: surfaceUsesRim('floating', theme.dark),
+            shadowStyle: shadowLevelStyle(theme.colors.shadowLevels[2]),
+        }),
+    },
+    label: {
+        ...Typography.default(),
+        fontSize: 12,
+        lineHeight: 16,
+        color: theme.colors.text.primary,
+    },
+}));

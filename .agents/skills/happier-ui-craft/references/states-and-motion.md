@@ -10,8 +10,9 @@ its rows at full strength under one `SurfaceFreshnessLine`.
 
 ## Empty is designed, not left over
 
-- Anatomy (`EmptyState layout="page"`): a calm glyph with no tile, a short title ("No Teams yet"),
-  one line saying what would be here and why it is worth having, and one primary action. Same
+- Anatomy (`EmptyState layout="page"`): a calm mark with no tile — a Daybreak scene when the
+  container is about 220 px or more, otherwise the glyph — a short title ("No Teams yet"), one plain
+  sentence saying what would be here and why it is worth having, and one primary action. Same
   spacing on every page; the state sits in the content column, not in a card.
 - In a list, a rail or a sheet it is one quiet line on the rows' edge (`layout="line"`); never a
   second full state beside a detail that already shows one.
@@ -77,3 +78,11 @@ Doctrine: `DESIGN.md` → "Motion". Mechanics:
   highlights.
 - Pulse or highlight to answer "where did it go?" (search reveal), once or twice, then stop.
 - No indefinite decorative animation on routine surfaces.
+
+## Motion roles
+
+Every surface reads its motion from the role in the motion owner; no local durations.
+Hover changes colour only. Press scales controls slightly. Popovers and menus grow from their
+trigger and leave faster than they arrive; dialogs fade and scale a little; phone sheets follow the
+finger. The Daybreak moments (rise, ring, dawn) are one-shots driven by facts. Under reduced motion
+every movement becomes a short cross-fade.

@@ -1,4 +1,5 @@
 import type { Theme } from '@/theme';
+import { buildRaisedEdgeColors, deriveRaisedEdgeInk } from '../raisedEdge';
 import { createVerticalGradient } from '../verticalGradient';
 
 type ThemeControlGradient = Theme['colors']['button']['primary']['gradient'];
@@ -52,63 +53,79 @@ const deriveFeedCardBackground = (theme: Theme, baseTheme: Theme): string => {
     return theme.colors.surface.elevated;
 };
 
-export const deriveThemeColors = (theme: Theme, baseTheme: Theme): Theme => ({
-    ...theme,
-    colors: {
-        ...theme.colors,
-        button: {
-            ...theme.colors.button,
-            primary: {
-                ...theme.colors.button.primary,
-                gradient: derivePrimaryButtonGradient(theme, baseTheme),
+// An edge ink the profile set explicitly is kept as set; otherwise it follows the profile's own text ink.
+const deriveRaisedEdgeInkForProfile = (theme: Theme, baseTheme: Theme): string => (
+    theme.colors.effect.surfaceHighlight !== baseTheme.colors.effect.surfaceHighlight
+        ? theme.colors.effect.surfaceHighlight
+        : deriveRaisedEdgeInk(theme.colors.text.primary, theme.dark)
+);
+
+export const deriveThemeColors = (theme: Theme, baseTheme: Theme): Theme => {
+    const raisedEdgeInk = deriveRaisedEdgeInkForProfile(theme, baseTheme);
+    return {
+        ...theme,
+        colors: {
+            ...theme.colors,
+            effect: {
+                ...theme.colors.effect,
+                surfaceHighlight: raisedEdgeInk,
+            },
+            // Always re-derived: every border role's raised colour follows the profile's borders and ink.
+            edge: buildRaisedEdgeColors(theme.colors, raisedEdgeInk, theme.dark),
+            button: {
+                ...theme.colors.button,
+                primary: {
+                    ...theme.colors.button.primary,
+                    gradient: derivePrimaryButtonGradient(theme, baseTheme),
+                },
+            },
+            fab: {
+                ...theme.colors.fab,
+                gradient: deriveFabGradient(theme, baseTheme),
+            },
+            segmentedControl: {
+                ...theme.colors.segmentedControl,
+                activeGradient: deriveSegmentedControlActiveGradient(theme, baseTheme),
+            },
+            feed: {
+                ...theme.colors.feed,
+                card: {
+                    ...theme.colors.feed.card,
+                    background: deriveFeedCardBackground(theme, baseTheme),
+                },
+            },
+            status: {
+                connected: deriveStatusColor(
+                    theme.colors.state.success.foreground,
+                    baseTheme.colors.state.success.foreground,
+                    theme.colors.status.connected,
+                ),
+                actionRequired: deriveStatusColor(
+                    theme.colors.state.warning.foreground,
+                    baseTheme.colors.state.warning.foreground,
+                    theme.colors.status.actionRequired,
+                ),
+                connecting: deriveStatusColor(
+                    theme.colors.state.info.foreground,
+                    baseTheme.colors.state.info.foreground,
+                    theme.colors.status.connecting,
+                ),
+                default: deriveStatusColor(
+                    theme.colors.state.neutral.foreground,
+                    baseTheme.colors.state.neutral.foreground,
+                    theme.colors.status.default,
+                ),
+                disconnected: deriveStatusColor(
+                    theme.colors.state.neutral.foreground,
+                    baseTheme.colors.state.neutral.foreground,
+                    theme.colors.status.disconnected,
+                ),
+                error: deriveStatusColor(
+                    theme.colors.state.danger.foreground,
+                    baseTheme.colors.state.danger.foreground,
+                    theme.colors.status.error,
+                ),
             },
         },
-        fab: {
-            ...theme.colors.fab,
-            gradient: deriveFabGradient(theme, baseTheme),
-        },
-        segmentedControl: {
-            ...theme.colors.segmentedControl,
-            activeGradient: deriveSegmentedControlActiveGradient(theme, baseTheme),
-        },
-        feed: {
-            ...theme.colors.feed,
-            card: {
-                ...theme.colors.feed.card,
-                background: deriveFeedCardBackground(theme, baseTheme),
-            },
-        },
-        status: {
-            connected: deriveStatusColor(
-                theme.colors.state.success.foreground,
-                baseTheme.colors.state.success.foreground,
-                theme.colors.status.connected,
-            ),
-            actionRequired: deriveStatusColor(
-                theme.colors.state.warning.foreground,
-                baseTheme.colors.state.warning.foreground,
-                theme.colors.status.actionRequired,
-            ),
-            connecting: deriveStatusColor(
-                theme.colors.state.info.foreground,
-                baseTheme.colors.state.info.foreground,
-                theme.colors.status.connecting,
-            ),
-            default: deriveStatusColor(
-                theme.colors.state.neutral.foreground,
-                baseTheme.colors.state.neutral.foreground,
-                theme.colors.status.default,
-            ),
-            disconnected: deriveStatusColor(
-                theme.colors.state.neutral.foreground,
-                baseTheme.colors.state.neutral.foreground,
-                theme.colors.status.disconnected,
-            ),
-            error: deriveStatusColor(
-                theme.colors.state.danger.foreground,
-                baseTheme.colors.state.danger.foreground,
-                theme.colors.status.error,
-            ),
-        },
-    },
-});
+    };
+};

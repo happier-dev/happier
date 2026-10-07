@@ -34,7 +34,8 @@ every difference is explained.
 3. Do it for light, dark and a 390px phone, and for the states that matter (loading, empty, offline,
    error), not only the populated one.
 4. When something "looks flat" or "has no background", sample pixel colours in both images instead of
-   guessing, and map the difference to a token.
+   guessing, and map the difference to a token. Check the edge too: which side carries it, whether
+   the border is ink, and whether a floating surface has its role's edge (rim at whisper strength).
 5. List every remaining difference with its reason: data not available on this stack, deliberate
    decision, platform limit, or not yet fixed.
 

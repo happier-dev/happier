@@ -619,6 +619,7 @@ export const TeamCreateScreen = React.memo(function TeamCreateScreen(props: Read
             <SurfaceStateCard
                 testID="teams-create-unavailable"
                 kind="unavailable"
+                scene={denied ? 'notAllowed' : undefined}
                 title={denied ? t('homeGovernance.forbiddenTitle') : t('teams.unavailable.title')}
                 reason={denied
                     ? t('teams.errors.forbidden')
@@ -657,6 +658,7 @@ export const TeamCreateScreen = React.memo(function TeamCreateScreen(props: Read
             <SurfaceStateCard
                 testID="teams-create-managed-only"
                 kind="unavailable"
+                scene="notAllowed"
                 title={t('teams.create.managedOnlyTitle')}
                 reason={t('teams.create.managedOnlyBody')}
             />,

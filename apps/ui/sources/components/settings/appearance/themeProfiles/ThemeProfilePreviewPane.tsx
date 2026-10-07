@@ -6,6 +6,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Eyebrow } from '@/components/ui/text/Eyebrow';
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import { resolveThemeSurfaceChromeStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
+import { resolveThemeRaisedEdge } from '@/components/ui/surfaces/themeRaisedEdge';
 import { shadowLevelStyle } from '@/shadowElevation';
 import { t } from '@/text';
 import { resolveThemeProfile } from '@/theme/profiles/resolveThemeProfile';
@@ -18,7 +19,7 @@ export const ThemeProfilePreviewPane = React.memo(function ThemeProfilePreviewPa
     const previewTheme = React.useMemo(() => resolveThemeProfile({ mode: props.mode, profile: props.profile }), [props.mode, props.profile]);
     const previewCardChromeStyle = React.useMemo(() => resolveThemeSurfaceChromeStyle({
         borderColor: previewTheme.colors.border.surface,
-        highlightColor: previewTheme.colors.effect.surfaceHighlight,
+        edge: resolveThemeRaisedEdge(previewTheme, 'surface'),
         shadowStyle: shadowLevelStyle(previewTheme.colors.shadowLevels[1]),
     }), [previewTheme]);
     const styles = stylesheet;

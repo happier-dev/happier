@@ -1,4 +1,4 @@
-import { HAPPIER_STATE_LINE_METRICS, HAPPIER_STATE_SIZE_METRICS, HappierSurfaceStateFrame, HappierStateLine, HappierStateDetails, resolveHappierStateAnnouncement, resolveHappierStateFailureGlyph, type HappierStateSize, type HappierSurfaceStateKind } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_STATE_LINE_METRICS, HAPPIER_STATE_SIZE_METRICS, HappierSurfaceStateFrame, HappierStateLine, HappierStateDetails, resolveHappierStateAnnouncement, resolveHappierStateFailureGlyph, type HappierSceneInput, type HappierStateSize, type HappierSurfaceStateKind } from '@happier-dev/plugin-ui/presentation';
 import { resolvePluginUiIconName } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
@@ -199,6 +199,12 @@ export function SurfaceStateCard(props: Readonly<{
     icon?: React.ReactNode;
     /** Override the per-kind default glyph. */
     iconName?: IconName;
+    /**
+     * The Daybreak scene drawn in the glyph's place (plugin-ui scene registry) when the card is centred
+     * with room for it; a line or inline card keeps its glyph. Pass a built-in scene id or a scene
+     * defined once.
+     */
+    scene?: HappierSceneInput;
     animationEnabled?: boolean;
     /** Opts this dynamic state into one live-region owner; static cards stay silent by default. */
     accessibilitySemantics?: SurfaceStateAccessibilitySemantics;
@@ -416,6 +422,8 @@ export function SurfaceStateCard(props: Readonly<{
                 <EmptyState
                     size={metrics ? size : undefined}
                     icon={iconSlot}
+                    scene={props.scene}
+                    animationEnabled={props.animationEnabled}
                     title={props.title}
                     titleContent={props.titleContent}
                     subtitle={props.reasonContent ?? props.reason}

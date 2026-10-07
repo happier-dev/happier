@@ -110,10 +110,8 @@ const stylesheet = StyleSheet.create(() => ({
     phraseLabel: {
         ...Typography.default(),
         fontSize: 11,
-        // `Typography.default()` omits `fontWeight` for the regular weight — on the Inter path the
-        // family name carries it. But the micro-label uses `default('semiBold')`, which on iOS and
-        // Apple web sets an explicit `fontWeight`, and that survives spreading regular over it.
-        // Reset it here or phrase pills stay semiBold on exactly those platforms.
+        // The regular Inter face carries its weight; reset any explicit weight
+        // from a preceding label style so phrase pills remain regular.
         fontWeight: FontWeights.regular,
         letterSpacing: 0,
     },

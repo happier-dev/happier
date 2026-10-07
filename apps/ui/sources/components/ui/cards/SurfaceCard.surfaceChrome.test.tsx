@@ -59,10 +59,13 @@ afterEach(() => {
 });
 
 describe('SurfaceCard surface chrome', () => {
-    it('does not add curated surface shadow when surface chrome tokens are transparent', async () => {
+    it('stands on its raised lip and the card elevation like a grouped sheet, even with a transparent border', async () => {
         const screen = await renderSurfaceCard();
+        const style = findSurfaceCardStyle(screen);
 
-        expect(hasShadow(findSurfaceCardStyle(screen))).toBe(false);
+        expect(style.borderWidth).toBe(0);
+        expect(Number(style.borderBottomWidth)).toBeGreaterThan(0);
+        expect(hasShadow(style)).toBe(true);
     });
 
     it('sits on a configuration page as a sheet rather than a floating shadowed card', async () => {

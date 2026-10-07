@@ -190,7 +190,6 @@ export const BUILT_IN_THEME_PROFILES: readonly BuiltInThemeProfileDefinition[] =
                 'surface.elevated': '#FCFCFC',
                 'border.surface': 'rgba(0,0,0,0.08)',
                 'border.strong': 'rgba(0,0,0,0.14)',
-                'effect.surfaceHighlight': 'transparent',
                 'text.primary': '#111114',
                 'text.secondary': '#5A5A5F',
                 'text.tertiary': '#7A7A80',

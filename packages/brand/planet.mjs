@@ -57,6 +57,7 @@ export const PLANET_PALETTES = {
       [0.82, [40, 110, 214]], [0.92, [14, 60, 170]], [1, [8, 30, 110]],
     ],
     rose: [196, 58, 132],
+    attention: [224, 182, 90],
     rim: [255, 214, 120],
     halo: [[0, [255, 190, 90]], [0.5, [214, 80, 110]], [1, [40, 70, 170]]],
   },
@@ -77,6 +78,7 @@ export const PLANET_PALETTES = {
       [1, [120, 152, 244]],
     ],
     rose: [230, 120, 190],
+    attention: [148, 82, 0],
     rim: [250, 184, 90],
     halo: [[0, [250, 190, 100]], [0.5, [236, 150, 210]], [1, [130, 156, 246]]],
   },
@@ -317,12 +319,17 @@ function atmosphereForEnergy(energy) {
  * `bleed` (a fraction of the box per side, e.g. 0.3) is the live mark's geometry (see
  * `createLiveMarkDots`). Without it the planet sits inside the box (hero/readiness art).
  */
-export function createPlanetDots({ size = 24, theme = 'dark', pose = 'ready', energy = 0, light, bleed = 0 } = {}) {
+export function createPlanetDots({ size = 24, theme = 'dark', pose = 'ready', energy = 0, light, bleed = 0, rows: latticeRows, halo = 1, warmth = 0 } = {}) {
   const amplitude = Number.isFinite(energy) ? clamp(energy) : 0;
   if (Number.isFinite(bleed) && bleed > 0) return createLiveMarkDots({ size, theme, pose, amplitude, light, bleed });
-  const { rows, pitch } = planetLattice(size);
+  // Scene art keeps a finer lattice than a mark of the same box (`rows`), a quieter halo and, at golden
+  // hour, a warmer body; the sampler, palette and light are the same planet.
+  const { rows, pitch } = Number.isFinite(latticeRows) && latticeRows > 0
+    ? { rows: Math.round(latticeRows), pitch: size / Math.round(latticeRows) }
+    : planetLattice(size);
   const palette = PLANET_PALETTES[theme === 'light' ? 'light' : 'dark'];
-  const sample = planetSample(palette, pose, light, amplitude);
+  const sample = planetSample(palette, pose, light, amplitude, Number.isFinite(halo) ? Math.max(0, halo) : 1);
+  const warm = Number.isFinite(warmth) ? clamp(warmth) : 0;
   const radius = size * 0.4;
   return Array.from({ length: rows * rows }, (_, id) => {
     const column = id % rows;
@@ -341,6 +348,7 @@ export function createPlanetDots({ size = 24, theme = 'dark', pose = 'ready', en
       opacity = haloOpacity(theme, distance);
     }
     if (rgb && pose === 'shade') rgb = mixRgb(rgb, palette.rose, 0.24);
+    if (rgb && warm > 0) rgb = mixRgb(rgb, palette.rim, warm);
     return { id, x, y, radius: pitch * 0.33, rgb: (rgb ? inkDot(rgb, theme) : palette.background).map(Math.round), opacity };
   });
 }
@@ -455,7 +463,8 @@ export function createPlanetStatusCell({ kind, size = 14, theme = 'dark', progre
   const p = Number.isFinite(progress) ? clamp(progress) : null;
   const perimeter = [0, 1, 3, 5, 7, 6, 4, 2];
   const lead = p === null ? 0 : Math.min(7, Math.floor(p * 8));
-  const colour = kind === 'needs_you' ? palette.rose : kind === 'thinking' ? gradient(palette.body, 0.6) : palette.rim;
+  // "Needs you" is the attention amber everywhere it appears; rose is reserved for failure (the shade pose).
+  const colour = kind === 'needs_you' ? palette.attention : kind === 'thinking' ? gradient(palette.body, 0.6) : palette.rim;
   const pitch = size / 4;
   return Array.from({ length: 8 }, (_, id) => {
     const row = Math.floor(id / 2);
@@ -479,6 +488,12 @@ export const PLANET_LIGHT_RAMP = {
 export const PLANET_ARTWORK_BREATH = { durationMs: 20_000, scalePeak: 1.012, bloomOpacityDelta: 0.1 };
 export const PLANET_GRAIN = { opacity: 0.02, tileSize: 16 };
 export const PLANET_ACCENT_HEX = '#d6a24a';
+
+/**
+ * "Needs you": the one attention amber per theme, shared by the status cell, scene beacons and the app
+ * theme's `state.attention` (a deep amber on paper so its label stays AA on its own tint).
+ */
+export const PLANET_ATTENTION_HEX = Object.freeze({ light: '#945200', dark: '#E0B65A' });
 
 /**
  * Real audio levels a live mark's atmosphere is sampled at, once per pose. A renderer follows the

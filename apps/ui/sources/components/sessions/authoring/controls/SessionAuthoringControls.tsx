@@ -234,10 +234,7 @@ function SessionAuthoringOptionChip(props: Readonly<{
                             // Stacked under its label in a settings row, the field spans the row (E1).
                             ...(props.fieldSpan === undefined ? {} : { fieldSpan: props.fieldSpan }),
                             // The field box's own border carries the keyboard focus ring.
-                            field: {
-                                ...resolveFieldBoxColors(theme),
-                                ...focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
-                            },
+                            field: resolveFieldBoxColors(theme, state.focused ? 'focused' : 'idle'),
                         })
                         : (
                             <Text numberOfLines={1} style={styles.chipText}>

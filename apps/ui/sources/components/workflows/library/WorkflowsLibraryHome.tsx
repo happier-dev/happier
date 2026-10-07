@@ -443,7 +443,7 @@ function WorkflowsFirstVisit(props: Readonly<{ onNewWorkflow: () => void; onImpo
                 <EmptyState
                     testID="workflows-home:firstVisit"
                     layout="page"
-                    iconName="tree-structure"
+                    scene="noWorkflows"
                     title={t('workflows.destination.firstVisitTitle')}
                     subtitle={t('workflows.destination.firstVisitBody')}
                     primaryAction={{ label: t('workflows.newWorkflow'), onPress: props.onNewWorkflow, testID: 'workflows-home:firstVisit:new' }}

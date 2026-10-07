@@ -1,3 +1,5 @@
+import type { HappierRaisedEdge } from '@happier-dev/plugin-ui/presentation';
+
 import { Platform, StyleSheet } from 'react-native';
 
 const THEME_HAIRLINE_WIDTH = StyleSheet.hairlineWidth || 1;
@@ -8,11 +10,14 @@ export type ThemeHairlineBorderStyle = Readonly<{
     borderWidth: number;
 }>;
 
+/** A surface's hairline, plus the one side its raised edge recolours (top on dark, bottom on light). */
 export type ThemeSurfaceBorderStyle = Readonly<{
     borderColor: string;
     borderWidth: number;
-    borderTopColor: string;
-    borderTopWidth: number;
+    borderTopColor?: string;
+    borderTopWidth?: number;
+    borderBottomColor?: string;
+    borderBottomWidth?: number;
 }>;
 
 export type ThemeSurfaceChromeShadowStyle = Partial<Readonly<{
@@ -80,31 +85,47 @@ export function resolveThemeHairlineBorderStyle(color: string): ThemeHairlineBor
     };
 }
 
-export function resolveThemeSurfaceBorderStyle(options: Readonly<{
+type ThemeSurfaceEdgeOptions = Readonly<{
     borderColor: string;
-    highlightColor: string;
-}>): ThemeSurfaceBorderStyle {
-    const borderStyle = resolveThemeHairlineBorderStyle(options.borderColor);
-    const borderWidth = borderStyle.borderWidth;
+    /**
+     * The raised edge of `borderColor`'s role (`resolveThemeRaisedEdge`). Omit it for chrome that must
+     * stay flat, such as a rotated popover arrow, whose sides are diagonals.
+     */
+    edge?: HappierRaisedEdge | null;
+    /**
+     * The surface's role stands on the directional rim in this scheme (`surfaceUsesRim`): it draws no
+     * border of its own and no flat edge, because its `SurfaceRim` draws the whole hairline.
+     */
+    rim?: boolean;
+}>;
 
-    return {
-        ...borderStyle,
-        borderTopColor: borderStyle.borderColor,
-        borderTopWidth: borderWidth,
-    };
+/**
+ * A raised surface's border: the role's hairline, with one side recoloured as its raised edge. The edge
+ * side keeps a hairline even where the rest of the border is invisible (a light theme's borderless
+ * sheet still gets its bottom lip).
+ */
+export function resolveThemeSurfaceBorderStyle(options: ThemeSurfaceEdgeOptions): ThemeSurfaceBorderStyle {
+    const borderStyle = resolveThemeHairlineBorderStyle(options.borderColor);
+    if (options.rim === true) {
+        return { borderColor: options.borderColor, borderWidth: 0 };
+    }
+    const edge = options.edge;
+    if (!edge) return borderStyle;
+    const edgeWidth = resolveThemeHairlineBorderStyle(edge.color).borderWidth || borderStyle.borderWidth;
+    return edge.side === 'top'
+        ? { ...borderStyle, borderTopColor: edge.color, borderTopWidth: edgeWidth }
+        : { ...borderStyle, borderBottomColor: edge.color, borderBottomWidth: edgeWidth };
 }
 
-export function resolveThemeSurfaceChromeStyle(options: Readonly<{
-    borderColor: string;
-    highlightColor: string;
+/** The surface border plus its elevation, cast only while the surface draws any edge at all. */
+export function resolveThemeSurfaceChromeStyle(options: ThemeSurfaceEdgeOptions & Readonly<{
     shadowStyle: ThemeSurfaceChromeShadowStyle;
 }>): ThemeSurfaceChromeStyle {
-    const borderStyle = resolveThemeSurfaceBorderStyle({
-        borderColor: options.borderColor,
-        highlightColor: options.highlightColor,
-    });
-    const highlightStyle = resolveThemeHairlineBorderStyle(options.highlightColor);
-    const hasVisibleChrome = borderStyle.borderWidth > 0 || highlightStyle.borderWidth > 0;
+    const borderStyle = resolveThemeSurfaceBorderStyle(options);
+    const hasVisibleChrome = options.rim === true
+        || borderStyle.borderWidth > 0
+        || (borderStyle.borderTopWidth ?? 0) > 0
+        || (borderStyle.borderBottomWidth ?? 0) > 0;
 
     return {
         ...borderStyle,

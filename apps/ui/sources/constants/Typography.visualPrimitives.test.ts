@@ -31,6 +31,16 @@ describe('Typography visual primitive helpers', () => {
         expect(Number(meta.lineHeight)).toBeGreaterThanOrEqual(Number(meta.fontSize));
     });
 
+    it('uses the canonical Inter faces for prose and chrome while key hints stay mono', () => {
+        expect(Typography.reading().fontFamily).toContain('Inter-Regular');
+        expect(Typography.rowMeta().fontFamily).toContain('Inter-Regular');
+        expect(Typography.timestamp().fontFamily).toContain('Inter-Regular');
+        expect(Typography.eyebrow().fontFamily).toContain('Inter-SemiBold');
+        expect(Typography.rowTitle().fontFamily).toContain('Inter-SemiBold');
+        expect(Typography.pillLabel().fontFamily).toContain('Inter-SemiBold');
+        expect(Typography.keyHint().fontFamily).toContain('IBMPlexMono-Regular');
+    });
+
     it('exposes compact pill and key-hint label helpers', () => {
         const pillLabel = Typography.pillLabel();
         const keyHint = Typography.keyHint();

@@ -146,7 +146,7 @@ import {
   planTriageConfigureSourceOffersV1,
   type TriageConfigureSourceOfferV1,
 } from './configureSources.js';
-import { readTriageListEmptyState, readTriageListEmptyStateKeys } from './emptyState.js';
+import { readTriageListEmptyScene, readTriageListEmptyState, readTriageListEmptyStateKeys } from './emptyState.js';
 import { retainTriageLastKnownRowV1, type TriageLastKnownRowV1 } from './lastKnownRow.js';
 import {
   TRIAGE_SPLIT_LIST_RATIO_PREFERENCE_V1,
@@ -2357,6 +2357,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
             />
           ) : (
             <EmptyState
+              scene={readTriageListEmptyScene(empty.kind)}
               title={text(readTriageListEmptyStateKeys(empty.kind).title, empty.title)}
               description={text(readTriageListEmptyStateKeys(empty.kind).description, empty.description)}
             />

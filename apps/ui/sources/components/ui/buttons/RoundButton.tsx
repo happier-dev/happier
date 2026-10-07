@@ -1,4 +1,4 @@
-import { HappierPressable, type HappierPressableProps } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, happierRaisedEdgeStyle, type HappierPressableProps } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import { Platform, StyleProp, TextStyle, View } from 'react-native';
 import Animated from 'react-native-reanimated';
@@ -9,6 +9,7 @@ import { Text } from '@/components/ui/text/Text';
 import { GradientSurface, type SurfaceGradient } from '@/components/ui/surfaces/GradientSurface';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
+import { resolveThemeControlEdge, resolveThemeGloss } from '@/components/ui/surfaces/themeRaisedEdge';
 import { usePressFeedback } from '@/components/ui/interactions/usePressFeedback';
 
 
@@ -102,6 +103,21 @@ const stylesheet = StyleSheet.create((theme) => ({
         includeFontPadding: false,
     },
 }));
+
+/**
+ * What the pill stands on: the primary fill's gloss, the bordered actions' raised edge, nothing for a
+ * bare text button. A focused or disabled pill sits flat (press feedback is the pill's own scale).
+ */
+function resolveRoundButtonEdge(
+    theme: Parameters<typeof resolveThemeGloss>[0],
+    display: RoundButtonDisplay,
+    state: Readonly<{ focused: boolean; disabled: boolean }>,
+) {
+    if (display === 'default') return resolveThemeGloss(theme, state);
+    if (display === 'secondary') return resolveThemeControlEdge(theme, 'strong', state);
+    if (display === 'destructive') return resolveThemeControlEdge(theme, 'danger', state);
+    return null;
+}
 
 type RoundButtonStyle = Exclude<HappierPressableProps['style'], (state: never) => unknown>;
 
@@ -204,12 +220,12 @@ export const RoundButton = React.memo((props: {
             textColor: theme.colors.button.primary.tint
         },
         secondary: {
-            backgroundColor: theme.colors.surface.base,
+            backgroundColor: theme.colors.edge.fill,
             borderColor: theme.colors.border.strong,
             textColor: theme.colors.text.primary,
         },
         destructive: {
-            backgroundColor: theme.colors.surface.base,
+            backgroundColor: theme.colors.edge.fill,
             borderColor: theme.colors.state.danger.border,
             textColor: theme.colors.state.danger.foreground,
         },
@@ -270,6 +286,7 @@ export const RoundButton = React.memo((props: {
                             ? { flexGrow: 0, height: props.capsuleHeight, borderRadius: props.capsuleHeight / 2 }
                             : null,
                         focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
+                        happierRaisedEdgeStyle(resolveRoundButtonEdge(theme, props.display ?? 'default', { focused: state.focused, disabled: props.disabled === true })),
                         pressFeedback.animatedStyle,
                     ]}
                 >

@@ -3,16 +3,8 @@ import { View } from 'react-native';
 import { useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useUnistyles } from 'react-native-unistyles';
 
-import {
-    applyAcpBackendDeleteV1,
-    applyAcpBackendUpsertV1,
-    normalizeAcpCatalogSettingsV1,
-    suggestAcpBackendIdV1,
-    type AcpBackendDefinitionV1,
-    type AcpBackendUpsertResultV1,
-    type AcpCatalogAuthSupportV1,
-    type AcpCatalogSupportHintV1,
-} from '@happier-dev/protocol';
+import { applyAcpBackendDeleteV1, applyAcpBackendUpsertV1, normalizeAcpCatalogSettingsV1, suggestAcpBackendIdV1, type AcpBackendUpsertResultV1 } from '@happier-dev/protocol/acp/catalog/catalogMutationsV1';
+import type { AcpBackendDefinitionV1, AcpCatalogAuthSupportV1, AcpCatalogSupportHintV1 } from '@happier-dev/protocol/acp/catalog/settingsV1';
 
 import { createCustomAcpAgentSettingsRoute } from '@/agents/catalog/agentSettingsRoutes';
 import { useSavedSecretsMutable } from '@/components/secrets/useSavedSecretsMutable';
@@ -365,8 +357,8 @@ export const AcpBackendEditorScreen = React.memo(function AcpBackendEditorScreen
                         : t('settingsAgents.customAcp.idFixedDescription')}
                     subtitleLines={0}
                     detail={identifiersFollowName || !isNew ? (effectiveDraft.id || t('settingsAgents.customAcp.idPending')) : undefined}
-                    // The field moves under the label when narrow; the short value and Edit stay beside it.
-                    accessoryLayout={isNew && identifiersEdited ? 'adaptive' : 'inline'}
+                    // The generated ID and Edit action recompose together, just like the editable field.
+                    accessoryLayout={isNew ? 'adaptive' : 'inline'}
                     showChevron={false}
                     rightElement={isNew && identifiersEdited ? (
                         <FieldTextInput

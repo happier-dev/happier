@@ -6,6 +6,8 @@ import { StyleSheet } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { resolveThemeControlEdge, resolveThemeGloss } from '@/components/ui/surfaces/themeRaisedEdge';
+import { happierRaisedEdgeStyle } from '@happier-dev/plugin-ui/presentation';
 
 /**
  * The canonical small labelled action for pane toolbars and surface headers.
@@ -74,9 +76,16 @@ const stylesheet = StyleSheet.create((theme) => ({
     md: {
         minHeight: 34,
     },
+    // A quiet button stands on its raised edge at rest and hover; pressed, active or disabled it sits flat.
+    raised: {
+        ...happierRaisedEdgeStyle(resolveThemeControlEdge(theme, 'subtle')),
+    },
     primary: {
-        borderWidth: 0,
+        borderColor: 'transparent',
         backgroundColor: theme.colors.button.primary.background,
+    },
+    primaryRaised: {
+        ...happierRaisedEdgeStyle(resolveThemeGloss(theme)),
     },
     primaryPressed: {
         opacity: motionTokens.press.opacity,
@@ -129,6 +138,7 @@ export const ToolbarButton = React.memo((props: ToolbarButtonProps) => {
                 // A primary keeps its fill under the pointer; the quiet fills are for the quiet tones.
                 hovered && !props.disabled && !isPrimary ? styles.hovered : null,
                 pressed && !props.disabled ? (isPrimary ? styles.primaryPressed : styles.pressed) : null,
+                !pressed && !props.disabled && !props.active ? (isPrimary ? styles.primaryRaised : styles.raised) : null,
                 props.disabled ? styles.disabled : null,
                 props.style,
             ]}

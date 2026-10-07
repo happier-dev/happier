@@ -4,7 +4,8 @@ import { HappierSurface } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { shadowLevelStyle } from '@/shadowElevation';
-import { resolveThemeSurfaceBorderStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
+import { resolveThemeSurfaceChromeStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
+import { resolveThemeRaisedEdge } from '@/components/ui/surfaces/themeRaisedEdge';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useListPresentation } from '@/components/ui/lists/listPresentation';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
@@ -52,20 +53,17 @@ type SurfaceCardProps = Readonly<{
 const FILL_STYLE = { flexGrow: 1 } as const;
 
 const styles = StyleSheet.create((theme) => {
-    const surfaceBorderStyle = resolveThemeSurfaceBorderStyle({
-        borderColor: theme.colors.border.surface,
-        highlightColor: theme.colors.effect.surfaceHighlight,
-    });
-    const hasVisibleSurfaceChrome = surfaceBorderStyle.borderWidth > 0 || surfaceBorderStyle.borderTopWidth > 0;
-
     return {
         cardBase: {
             width: '100%',
             minWidth: 0,
             borderRadius: SURFACE_CARD_RADIUS_PX,
             backgroundColor: theme.colors.surface.base,
-            ...surfaceBorderStyle,
-            ...(hasVisibleSurfaceChrome ? shadowLevelStyle(theme.colors.shadowLevels[1]) : {}),
+            ...resolveThemeSurfaceChromeStyle({
+                borderColor: theme.colors.border.surface,
+                edge: resolveThemeRaisedEdge(theme, 'surface'),
+                shadowStyle: shadowLevelStyle(theme.colors.shadowLevels[1]),
+            }),
         },
         toneMuted: {
             backgroundColor: theme.colors.surface.inset,

@@ -1,7 +1,7 @@
 import type { ReactElement, ReactNode } from 'react';
 import { View } from 'react-native';
 
-import { useOptionalHappierUiAccessibility } from '../environment/context.js';
+import { useOptionalHappierUiAccessibility, useOptionalHappierUiPalette } from '../environment/context.js';
 import { HappierPressable, type HappierPressableStyleState } from '../presentation/interaction/Pressable.js';
 import {
   happierDiscretePressStyle,
@@ -125,11 +125,13 @@ export function Button({
   const focusBinding = usePluginUiFocusTargetBindingInternal(focusTarget);
 
   const reducedMotion = useOptionalHappierUiAccessibility()?.reducedMotion ?? false;
+  const palette = useOptionalHappierUiPalette(theme);
   const nativeMinimumTarget = useHappierNativeMinimumInteractiveTargetSize();
   const { foreground } = resolveHappierButtonChrome({ theme, variant, disabled: disabled === true, focused: false });
   const resolveStyle = (state: HappierPressableStyleState): HappierPortableStyle => ({
     ...resolveHappierButtonChrome({
       theme, variant, size, nativeMinimumTarget, disabled: disabled === true, focused: state.focused,
+      pressed: state.pressed, gloss: palette?.accentGloss,
     }).style,
     opacity: state.disabled && !state.busy ? HAPPIER_BUTTON_DISABLED_OPACITY : 1,
     // The shared press vocabulary: a discrete control scales under the finger

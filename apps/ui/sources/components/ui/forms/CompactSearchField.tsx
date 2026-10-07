@@ -5,6 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useHappierNativeMinimumInteractiveTargetSize } from '@happier-dev/plugin-ui/environment';
 
 import { Icon } from '@/components/ui/icons/Icon';
+import { resolveThemeControlEdge } from '@/components/ui/surfaces/themeRaisedEdge';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
 import { TextInput } from '@/components/ui/text/Text';
@@ -116,7 +117,7 @@ const CompactSearchFieldFrame = React.memo(function CompactSearchFieldFrame(prop
             <HappierSearchFieldBox
                 testID={props.testID}
                 onFocusInput={focusInput}
-                colors={{ backgroundColor: theme.colors.surface.base, borderColor: theme.colors.border.default }}
+                colors={{ backgroundColor: theme.colors.edge.fill, borderColor: theme.colors.border.default, edge: resolveThemeControlEdge(theme, 'default') }}
                 radius={theme.borderRadius.lg}
                 minimumTargetSize={nativeMinimumTargetSize ?? resolveCompactSearchFieldHeightPx()}
                 leading={

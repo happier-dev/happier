@@ -1,4 +1,4 @@
-import { HappierFieldBoxTrigger, resolveHappierFieldBoxLabel } from '@happier-dev/plugin-ui/presentation';
+import { HappierFieldBoxTrigger, resolveHappierFieldBoxLabel, type HappierFieldBoxColors } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import { View } from 'react-native';
 
@@ -22,7 +22,7 @@ export function renderDropdownItemTriggerRightElement(params: Readonly<{
      * Render the current value as a bordered field (configuration pages) instead of bare value text.
      * Colours come from the caller, which reads the theme.
      */
-    field?: Readonly<{ borderColor: string; backgroundColor: string; valueColor: string; placeholderColor: string }>;
+    field?: HappierFieldBoxColors;
     /**
      * Configuration pages only: what an empty selection says ("Choose…") instead of a blank field or a
      * bare chevron. Grouped triggers leave it out and show only the chevron.

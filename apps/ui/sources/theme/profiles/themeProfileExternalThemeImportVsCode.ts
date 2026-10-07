@@ -144,20 +144,17 @@ const buildExternalThemeOverlays = (mode: ThemeProfileMode): Readonly<{
     pressedOverlay: string;
     sectionTint: string;
     ripple: string;
-    highlight: string;
 }> => (
     mode === 'dark'
         ? {
             pressedOverlay: 'rgba(255,255,255,0.06)',
             sectionTint: 'rgba(255,255,255,0.014)',
             ripple: 'rgba(255,255,255,0.10)',
-            highlight: 'transparent',
         }
         : {
             pressedOverlay: 'rgba(0,0,0,0.06)',
             sectionTint: 'rgba(0,0,0,0.012)',
             ripple: 'rgba(0,0,0,0.10)',
-            highlight: 'transparent',
         }
 );
 
@@ -203,7 +200,6 @@ const buildThemeProfileOverridesFromVsCodeTheme = (theme: Record<string, unknown
     setOverride(overrides, 'border.surface', borderSurface);
     setOverride(overrides, 'border.strong', borderStrong);
     setOverride(overrides, 'border.modal', borderSurface);
-    setOverride(overrides, 'effect.surfaceHighlight', overlay.highlight);
     setOverride(overrides, 'chrome.header.background', headerBackground);
     setOverride(overrides, 'chrome.header.foreground', headerForeground);
     setOverride(overrides, 'text.primary', textPrimary);

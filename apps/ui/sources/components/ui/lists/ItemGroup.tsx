@@ -21,6 +21,7 @@ import { ItemGroupRowPositionProvider } from './ItemGroupRowPosition';
 import { countSelectableItems } from './ItemGroup.selectableCount';
 import { Eyebrow } from '@/components/ui/text/Eyebrow';
 import { resolveThemeSurfaceChromeStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
+import { resolveThemeRaisedEdge } from '@/components/ui/surfaces/themeRaisedEdge';
 import { projectPluginUiHostPalette } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { ItemGroupColumns } from './ItemGroupColumns';
 import {
@@ -120,7 +121,7 @@ export interface ItemGroupProps {
 const stylesheet = StyleSheet.create((theme) => {
     const surfaceChromeStyle = resolveThemeSurfaceChromeStyle({
         borderColor: theme.colors.border.surface,
-        highlightColor: theme.colors.effect.surfaceHighlight,
+        edge: resolveThemeRaisedEdge(theme, 'surface'),
         shadowStyle: shadowLevelStyle(theme.colors.shadowLevels[1]),
     });
 

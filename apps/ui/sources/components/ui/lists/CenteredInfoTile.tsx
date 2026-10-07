@@ -8,6 +8,8 @@ import { Text } from '@/components/ui/text/Text';
 
 type CenteredInfoTileProps = Readonly<{
     icon?: React.ReactNode;
+    /** The mark's gap to the title when it is not the size step's glyph (a scene keeps its own). */
+    iconGap?: number;
     title: string;
     /** Optional glyph decoration within the existing title typography. */
     titleContent?: React.ReactNode;
@@ -36,7 +38,7 @@ export const CenteredInfoTile = React.memo((props: CenteredInfoTileProps) => {
     return (
         <HappierInfoTile
             // The glyph stands alone above the title, with room to breathe rather than touching it.
-            icon={props.icon ? <View style={{ marginBottom: metrics?.glyphGapPx ?? 12 }}>{props.icon}</View> : undefined}
+            icon={props.icon ? <View style={{ marginBottom: props.iconGap ?? metrics?.glyphGapPx ?? 12 }}>{props.icon}</View> : undefined}
             paddingHorizontal={props.paddingHorizontal}
             paddingVertical={props.paddingVertical}
             size={props.size}

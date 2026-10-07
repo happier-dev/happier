@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
+import { happierRaisedEdgeStyle, type HappierRaisedEdge } from '../layout/raisedEdge.js';
 import type { HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
 
 /** The compact rail/search well; phones take the platform target supplied by the adapter. */
@@ -8,7 +9,7 @@ export const HAPPIER_SEARCH_FIELD_METRICS = Object.freeze({ heightPx: 32, iconIn
 
 export function HappierSearchFieldBox(props: Readonly<{
   testID?: string;
-  colors: Pick<HappierFieldBoxColors, 'borderColor' | 'backgroundColor'>;
+  colors: Pick<HappierFieldBoxColors, 'borderColor' | 'backgroundColor' | 'edge'>;
   radius: number;
   minimumTargetSize?: number;
   onFocusInput: () => void;
@@ -18,7 +19,7 @@ export function HappierSearchFieldBox(props: Readonly<{
   style?: HappierStyleProp;
 }>) {
   const metrics = HAPPIER_SEARCH_FIELD_METRICS;
-  return <Pressable testID={props.testID ? `${props.testID}.field` : undefined} onPress={props.onFocusInput} accessible={false} focusable={false} tabIndex={-1} style={[{ flexDirection: 'row', alignItems: 'center', borderRadius: props.radius, paddingLeft: metrics.iconInsetPx, paddingRight: metrics.trailingInsetPx, paddingVertical: 0, minHeight: Math.max(metrics.heightPx, props.minimumTargetSize ?? 0), backgroundColor: props.colors.backgroundColor, borderColor: props.colors.borderColor, borderWidth: StyleSheet.hairlineWidth }, props.style]}>
+  return <Pressable testID={props.testID ? `${props.testID}.field` : undefined} onPress={props.onFocusInput} accessible={false} focusable={false} tabIndex={-1} style={[{ flexDirection: 'row', alignItems: 'center', borderRadius: props.radius, paddingLeft: metrics.iconInsetPx, paddingRight: metrics.trailingInsetPx, paddingVertical: 0, minHeight: Math.max(metrics.heightPx, props.minimumTargetSize ?? 0), backgroundColor: props.colors.backgroundColor, borderColor: props.colors.borderColor, borderWidth: StyleSheet.hairlineWidth }, happierRaisedEdgeStyle(props.colors.edge), props.style]}>
     {props.leading ? <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ marginRight: metrics.iconGapPx }}>{props.leading}</View> : null}
     {props.children}
     {props.trailing ?? null}
@@ -53,6 +54,11 @@ export type HappierFieldBoxColors = Readonly<{
   backgroundColor: string;
   valueColor: string;
   placeholderColor: string;
+  /**
+   * The box's raised edge (`resolveHappierRaisedEdge` over the host's raised control-border colour);
+   * absent or `null` draws it flat, as an invalid field does.
+   */
+  edge?: HappierRaisedEdge | null;
 }>;
 
 /** The value text a select trigger shows, and how it is drawn. */
@@ -96,7 +102,7 @@ export const HAPPIER_FIELD_BOX_SHAPE: HappierPortableStyle = Object.freeze({
 });
 
 export type HappierFieldBoxTriggerProps = Readonly<{
-  colors: Pick<HappierFieldBoxColors, 'borderColor' | 'backgroundColor'>;
+  colors: Pick<HappierFieldBoxColors, 'borderColor' | 'backgroundColor' | 'edge'>;
   /** A mark before the value (a selected agent's brand mark). */
   leading?: ReactNode;
   /** The value text, drawn by the adapter's text host from {@link resolveHappierFieldBoxLabel}. */
@@ -126,7 +132,7 @@ export function HappierFieldBoxTrigger({ colors, leading, children, trailing, sp
         ...(span === 'row' ? { alignSelf: 'stretch' as const } : { maxWidth: HAPPIER_FIELD_BOX_METRICS.triggerMaxWidthPx }),
         borderColor: colors.borderColor,
         backgroundColor: colors.backgroundColor,
-      }]}
+      }, happierRaisedEdgeStyle(colors.edge)]}
     >
       {leading ?? null}
       {children}
@@ -223,7 +229,7 @@ export function resolveHappierFieldTextInputMetrics(input: Readonly<{
 }
 
 export type HappierFieldTextBoxProps = Readonly<{
-  colors: Pick<HappierFieldBoxColors, 'borderColor' | 'backgroundColor'>;
+  colors: Pick<HappierFieldBoxColors, 'borderColor' | 'backgroundColor' | 'edge'>;
   multiline?: boolean;
   /** The adapter's text input, styled with {@link resolveHappierFieldTextInputMetrics}. */
   children: ReactNode;
@@ -249,6 +255,7 @@ export function HappierFieldTextBox(props: HappierFieldTextBoxProps) {
         style={[
           HAPPIER_FIELD_BOX_SHAPE,
           { justifyContent: 'center', borderColor: props.colors.borderColor, backgroundColor: props.colors.backgroundColor },
+          happierRaisedEdgeStyle(props.colors.edge),
           props.multiline ? { paddingVertical: HAPPIER_FIELD_TEXT_METRICS.multilinePaddingVerticalPx } : null,
         ]}
       >

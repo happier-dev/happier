@@ -4,6 +4,7 @@ import type { UnistylesThemes } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { resolveThemeSurfaceBorderStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
+import { resolveThemeRaisedEdge } from '@/components/ui/surfaces/themeRaisedEdge';
 import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
 
 
@@ -26,7 +27,7 @@ export function resolveAgentInputPanelLayoutStyle(theme: Theme, readOnly = false
         borderRadius: theme.parts.composer.radius,
         ...resolveThemeSurfaceBorderStyle({
             borderColor: readOnly ? theme.colors.border.default : theme.colors.border.surface,
-            highlightColor: theme.colors.effect.surfaceHighlight,
+            edge: resolveThemeRaisedEdge(theme, readOnly ? 'default' : 'surface'),
         }),
         overflow: 'hidden' as const,
         paddingTop: AGENT_INPUT_PANEL_PADDING_TOP,

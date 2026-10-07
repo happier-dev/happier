@@ -31,87 +31,65 @@ describe('resolveThemeHairlineBorderStyle', () => {
         });
     });
 
-    it('keeps the surface border uniform when highlight is transparent', () => {
-        expect(surfaceBorderStyles.resolveThemeSurfaceBorderStyle).toBeTypeOf('function');
-        if (typeof surfaceBorderStyles.resolveThemeSurfaceBorderStyle !== 'function') return;
-
-        expect(resolveThemeSurfaceBorderStyle({
-            borderColor: 'rgba(0,0,0,0.08)',
-            highlightColor: 'transparent',
-        })).toEqual({
+    it('keeps the surface border uniform without an edge (a popover arrow)', () => {
+        expect(resolveThemeSurfaceBorderStyle({ borderColor: 'rgba(0,0,0,0.08)' })).toEqual({
             borderColor: 'rgba(0,0,0,0.08)',
             borderWidth: StyleSheet.hairlineWidth,
-            borderTopColor: 'rgba(0,0,0,0.08)',
+        });
+    });
+
+    it('recolours the top border as the raised edge on dark', () => {
+        expect(resolveThemeSurfaceBorderStyle({
+            borderColor: 'rgba(255,255,255,0.056)',
+            edge: { side: 'top', color: 'rgba(255,255,255,0.113)' },
+        })).toEqual({
+            borderColor: 'rgba(255,255,255,0.056)',
+            borderWidth: StyleSheet.hairlineWidth,
+            borderTopColor: 'rgba(255,255,255,0.113)',
             borderTopWidth: StyleSheet.hairlineWidth,
         });
     });
 
-    it('keeps the top border color aligned with the rest of the surface border', () => {
-        expect(surfaceBorderStyles.resolveThemeSurfaceBorderStyle).toBeTypeOf('function');
-        if (typeof surfaceBorderStyles.resolveThemeSurfaceBorderStyle !== 'function') return;
-
-        expect(resolveThemeSurfaceBorderStyle({
-            borderColor: 'rgba(255,255,255,0.07)',
-            highlightColor: 'rgba(255,255,255,0.04)',
-        })).toEqual({
-            borderColor: 'rgba(255,255,255,0.07)',
-            borderWidth: StyleSheet.hairlineWidth,
-            borderTopColor: 'rgba(255,255,255,0.07)',
-            borderTopWidth: StyleSheet.hairlineWidth,
+    it('gives a borderless light sheet its bottom lip alone, and grounds it once it draws one', () => {
+        const edge = { side: 'bottom', color: 'rgba(34, 34, 34, 0.04)' } as const;
+        expect(resolveThemeSurfaceBorderStyle({ borderColor: 'transparent', edge })).toEqual({
+            borderColor: 'transparent',
+            borderWidth: 0,
+            borderBottomColor: 'rgba(34, 34, 34, 0.04)',
+            borderBottomWidth: StyleSheet.hairlineWidth,
         });
-    });
-
-    it('does not add surface shadow when surface chrome colors are transparent', () => {
-        expect(surfaceBorderStyles.resolveThemeSurfaceChromeStyle).toBeTypeOf('function');
-        if (typeof surfaceBorderStyles.resolveThemeSurfaceChromeStyle !== 'function') return;
-
         expect(resolveThemeSurfaceChromeStyle({
             borderColor: 'transparent',
-            highlightColor: 'rgba(255,255,255,0)',
+            edge,
+            shadowStyle: { boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)' },
+        })).toMatchObject({ borderWidth: 0, borderBottomWidth: StyleSheet.hairlineWidth, boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)' });
+    });
+
+    it('hands a rim surface\'s whole hairline to its rim, keeping its elevation', () => {
+        expect(resolveThemeSurfaceChromeStyle({
+            borderColor: 'rgba(255,255,255,0.064)',
+            edge: { side: 'top', color: 'rgba(255,255,255,0.12)' },
+            rim: true,
+            shadowStyle: { boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' },
+        })).toEqual({
+            borderColor: 'rgba(255,255,255,0.064)',
+            borderWidth: 0,
+            boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)',
+        });
+    });
+
+    it('casts no surface shadow when the surface draws no edge at all', () => {
+        expect(resolveThemeSurfaceChromeStyle({
+            borderColor: 'transparent',
+            edge: { side: 'bottom', color: 'rgba(0,0,0,0)' },
             shadowStyle: { boxShadow: '0 4px 12px rgba(0,0,0,0.2)' },
         })).toEqual({
             borderColor: 'transparent',
             borderWidth: 0,
-            borderTopColor: 'transparent',
-            borderTopWidth: 0,
-        });
-    });
-
-    it('adds surface shadow when surface chrome colors are visible', () => {
-        expect(surfaceBorderStyles.resolveThemeSurfaceChromeStyle).toBeTypeOf('function');
-        if (typeof surfaceBorderStyles.resolveThemeSurfaceChromeStyle !== 'function') return;
-
-        expect(resolveThemeSurfaceChromeStyle({
-            borderColor: 'rgba(0,0,0,0.08)',
-            highlightColor: 'rgba(255,255,255,0.04)',
-            shadowStyle: { boxShadow: '0 4px 12px rgba(0,0,0,0.2)' },
-        })).toEqual({
-            borderColor: 'rgba(0,0,0,0.08)',
-            borderWidth: StyleSheet.hairlineWidth,
-            borderTopColor: 'rgba(0,0,0,0.08)',
-            borderTopWidth: StyleSheet.hairlineWidth,
-            boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+            borderBottomColor: 'rgba(0,0,0,0)',
+            borderBottomWidth: 0,
         });
     });
 });
 
-function resolveThemeSurfaceBorderStyle(options: {
-    borderColor: string;
-    highlightColor: string;
-}) {
-    if (typeof surfaceBorderStyles.resolveThemeSurfaceBorderStyle !== 'function') {
-        throw new TypeError('resolveThemeSurfaceBorderStyle is not available');
-    }
-    return surfaceBorderStyles.resolveThemeSurfaceBorderStyle(options);
-}
-
-function resolveThemeSurfaceChromeStyle(options: {
-    borderColor: string;
-    highlightColor: string;
-    shadowStyle: Record<string, unknown>;
-}) {
-    if (typeof surfaceBorderStyles.resolveThemeSurfaceChromeStyle !== 'function') {
-        throw new TypeError('resolveThemeSurfaceChromeStyle is not available');
-    }
-    return surfaceBorderStyles.resolveThemeSurfaceChromeStyle(options);
-}
+const { resolveThemeSurfaceBorderStyle, resolveThemeSurfaceChromeStyle } = surfaceBorderStyles;

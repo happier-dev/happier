@@ -176,7 +176,6 @@ html[data-happy-backdrop-blur="off"] [data-vaul-overlay] {
     --diffs-font-size: 12px;
     --diffs-line-height: 22px;
     --diffs-tab-size: 2;
-    --diffs-header-font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     --diffs-min-number-column-width: 4ch;
     --diffs-gap-inline: 0;
     --diffs-gap-block: 0;

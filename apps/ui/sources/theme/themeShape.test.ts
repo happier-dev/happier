@@ -53,8 +53,6 @@ describe('canonical theme color shape', () => {
         expect(darkTheme.colors.border.surface).toBe('rgba(255,255,255,0.056)');
         expect(darkTheme.colors.border.modal).toBe('rgba(255,255,255,0.064)');
 
-        expect(lightTheme.colors.effect.surfaceHighlight).toBe('transparent');
-        expect(darkTheme.colors.effect.surfaceHighlight).toBe('transparent');
         expect(lightTheme.colors.chrome.header.background).toBe('#ffffff');
         expect(lightTheme.colors.chrome.header.foreground).toBe('#18171C');
         expect(darkTheme.colors.chrome.header.background).toBe('#131111');

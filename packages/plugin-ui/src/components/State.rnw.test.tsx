@@ -8,6 +8,7 @@ import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testS
 import { HappierInfoState, HappierInfoTile } from '../presentation/state/InfoState.js';
 import { HappierStatus } from '../presentation/status/Status.js';
 import type { PluginUiPresentationHost } from '../presentationHost/context.js';
+import { defineHappierScene, defineHappierSceneProp, type HappierSceneRenderRequest } from '../presentation/state/scenes.js';
 import { PluginUiProvider, PluginUiProviderInternal } from './PluginUiProvider.js';
 import { Button, EmptyState, ErrorState, FreshnessLine, LoadingState, Spinner, State, Status } from './index.js';
 
@@ -426,6 +427,43 @@ describe('plugin states take the container they are mounted in (lab 5 host primi
     const unsized = mountSurface(<LoadingState title="Loading" />);
     expect(measureOf(unsized, 'Loading')).toBe('520px');
     unsized.unmount();
+  });
+
+  it('draws a Daybreak scene through the host renderer in the glyph\'s place, and keeps text in a line', () => {
+    const requests: HappierSceneRenderRequest[] = [];
+    const host: Partial<PluginUiPresentationHost> = {
+      stateSize: 'pane',
+      renderIcon: (input) => <span data-testid={`glyph-${input.name}`} />,
+      renderScene: (input) => {
+        requests.push(input);
+        return <span data-testid={`scene-${input.scene.name}-${input.size}`} />;
+      },
+    };
+    const deploys = defineHappierScene({
+      name: 'acme.no-deploys',
+      base: 'nothingListening',
+      props: [{ prop: defineHappierSceneProp({ name: 'acme.crate', marks: [{ shape: 'rect', x: -6, y: -8, width: 12, height: 8 }] }), x: 104 }],
+    });
+
+    const pane = mountInHost(<EmptyState testID="deploys" icon="search" scene={deploys} title="No deploys yet" />, host);
+    expect(pane.container.querySelector('[data-testid="scene-acme.no-deploys-pane"]')).not.toBeNull();
+    expect(pane.container.querySelector('[data-testid="glyph-search"]'), 'the scene replaces the glyph').toBeNull();
+    expect(requests.at(-1)?.scene.layers.at(-1)).toMatchObject({ name: 'acme.crate', x: 104, y: 46 });
+    expect(requests.at(-1)?.testID).toBe('deploys-scene');
+    pane.unmount();
+
+    const page = mountInHost(<EmptyState layout="page" scene="noMatch" title="Nothing matches" />, host);
+    expect(page.container.querySelector('[data-testid="scene-noMatch-page"]')).not.toBeNull();
+    page.unmount();
+
+    const line = mountInHost(<EmptyState layout="line" scene="noMatch" title="Nothing matches" />, host);
+    expect(line.container.querySelector('[data-testid^="scene-"]'), 'a compact line stays text only').toBeNull();
+    line.unmount();
+
+    // A host without a scene renderer keeps the author's glyph.
+    const bare = mountInHost(<EmptyState icon="search" scene="noMatch" title="Nothing matches" />, { stateSize: 'pane', renderIcon: host.renderIcon });
+    expect(bare.container.querySelector('[data-testid="glyph-search"]')).not.toBeNull();
+    bare.unmount();
   });
 });
 

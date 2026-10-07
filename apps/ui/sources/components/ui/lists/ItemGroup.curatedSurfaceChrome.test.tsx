@@ -62,7 +62,8 @@ describe('ItemGroup curated surface chrome', () => {
 
         expect(surfaceStyle.borderColor).toBe('rgba(0,0,0,0.08)');
         expect(Number(surfaceStyle.borderWidth)).toBeGreaterThan(0);
-        expect(Number(surfaceStyle.borderTopWidth)).toBeGreaterThan(0);
+        // Light: the raised edge is the bottom lip.
+        expect(Number(surfaceStyle.borderBottomWidth)).toBeGreaterThan(0);
         expect(hasShadow(surfaceStyle)).toBe(true);
     });
 });

@@ -52,6 +52,7 @@ import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import { SessionMessageAccountByline } from '@/components/sessions/transcript/SessionMessageAccountByline';
 import { useSessionMessageAuthorshipScope } from '@/components/sessions/transcript/useSessionMessageAuthorshipScope';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { SurfaceRim } from '@/components/ui/surfaces/SurfaceRim';
 
 function getPendingText(message: PendingMessage | DiscardedPendingMessage): string {
     const raw = (message.displayText ?? message.text) ?? '';
@@ -910,7 +911,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                 // utterance that paints dimmer BRIGHTENS one step at the crossover,
                                 // which reads as the message popping rather than settling. The
                                 // delivery state is carried by the status chip, not by the ink.
-                                { backgroundColor: theme.colors.message.user.background, opacity: pressed ? motionTokens.press.opacitySubtle : 1 },
+                                { backgroundColor: theme.colors.message.user.background, borderRadius: theme.parts.userBubble.radius, opacity: pressed ? motionTokens.press.opacitySubtle : 1 },
                             ])}
                         >
                             {isExpanded ? (
@@ -944,6 +945,8 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                     </Text>
                                 </Pressable>
                             ) : null}
+                            {/* The committed bubble's edge, so the crossover changes nothing but the status. */}
+                            <SurfaceRim role="bubble" radius={theme.parts.userBubble.radius} border="surface" />
                         </Pressable>
 
                         <View

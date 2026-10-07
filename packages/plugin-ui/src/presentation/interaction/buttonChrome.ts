@@ -1,6 +1,7 @@
 import type { HappierUiTheme } from '../../environment/types.js';
 import { HAPPIER_DEFAULT_MINIMUM_INTERACTIVE_TARGET_SIZE } from '../../environment/interactiveTarget.js';
 import type { HappierPortableStyle } from '../portableTypes.js';
+import { happierRaisedEdgeStyle, settleHappierRaisedEdge, type HappierRaisedEdge } from '../layout/raisedEdge.js';
 
 export type HappierButtonChromeVariant = 'primary' | 'secondary' | 'plain' | 'destructive';
 
@@ -33,6 +34,10 @@ export function resolveHappierButtonChrome(input: Readonly<{
   size?: HappierButtonChromeSize;
   /** The native touch floor (`useHappierNativeMinimumInteractiveTargetSize`); undefined on pointer platforms. */
   nativeMinimumTarget?: number;
+  /** Pressed this frame: a primary button's gloss goes flat under the finger. */
+  pressed?: boolean;
+  /** The host's accent gloss (`HappierUiPalette.accentGloss`), the light top line of the primary fill. */
+  gloss?: HappierRaisedEdge | null;
 }>): Readonly<{ style: HappierPortableStyle; foreground: string }> {
   const { theme, variant } = input;
   const small = input.size === 'small';
@@ -61,6 +66,13 @@ export function resolveHappierButtonChrome(input: Readonly<{
       // keeps its box on every platform React Native renders to.
       borderWidth: BUTTON_FOCUS_RING_WIDTH,
       borderColor: input.focused ? theme.colors.focus : 'transparent',
+      ...(variant === 'primary'
+        ? happierRaisedEdgeStyle(settleHappierRaisedEdge(input.gloss, {
+          disabled: input.disabled,
+          focused: input.focused,
+          pressed: input.pressed === true,
+        }))
+        : null),
     },
   };
 }

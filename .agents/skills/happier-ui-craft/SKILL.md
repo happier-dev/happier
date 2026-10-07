@@ -43,6 +43,15 @@ personal present, one hero, one rhythm, inviting empty states. Read it before de
 - Identity first: a page about a thing opens with that thing — its mark, name and the one fact that
   distinguishes it (account ID, version and machine, model count).
 
+**Material** (see `DESIGN.md` → Materials; values in the edge and elevation owners)
+- Ink borders, ink dividers, ink selection — never a fixed grey.
+- Flat edge for everything in flow; the directional rim only for floating surfaces and the message
+  bubble, by role (lighter corner on dark, a breath darker on light, never white). Never on buttons,
+  fields or rows. The rim is a whisper: if you notice it before the content, it is too strong.
+- One radius base, concentric nesting; one spacing rhythm.
+- Meta in one right-aligned tabular column; mono only for ids, paths, code and shortcuts.
+- Colour means state: amber needs you, rose failed; glyphs stay ink.
+
 **Anatomy** (configuration and detail pages; see `references/anatomy.md`)
 - Page header: title + one-sentence purpose. Sections: sentence-case title, description *above* the
   rows, one sheet. No uppercase group labels, no explanatory footers under rows.
@@ -95,7 +104,8 @@ personal present, one hero, one rhythm, inviting empty states. Read it before de
 
 1. **Find the canonical owner** for every element you will render (`references/components.md`),
    and search for an existing same-concept component before writing one. A second component for an
-   existing concept is a defect even if it looks better.
+   existing concept is a defect even if it looks better; so is a local edge, grey, radius or shadow
+   where a material or ink role exists.
 2. **Start from a reference, not from a blank file.** For a new or reworked surface, sketch it in the
    design lab (`.happier/design-lab/`, HTML in the product's real tokens) or pick the closest shipped
    Happier screen as the reference. Compare two or three compositions when hierarchy is unclear;

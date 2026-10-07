@@ -124,6 +124,7 @@ export const SessionTerminalWorkspaceView = React.memo(function SessionTerminalW
                         <SurfaceStateCard
                             kind="empty"
                             iconName="terminal"
+                            scene="noTerminal"
                             title={t('terminalWorkspace.states.empty')}
                             {...(props.emptyAction ? { action: { label: t('terminalWorkspace.states.emptyAction'), onPress: props.emptyAction } } : {})}
                         />

@@ -90,7 +90,7 @@ export function HomeReachabilityGate(props: Readonly<{
         <EmptyState
             layout="page"
             testID="home-unreachable"
-            iconName="cloud-slash"
+            scene="homeOffline"
             title={t('sidebarFooter.homeUnreachableTitle', { home })}
             subtitle={t('sidebarFooter.homeUnreachableBody')}
             primaryAction={retry}
