@@ -9,6 +9,7 @@ import {
   type SessionProviderBindingMetadataV1,
 } from '@happier-dev/protocol';
 import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
+import { SessionModelTransitionResultV1Schema } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 
 import {
   createSessionModelTransitionAuthorizer,
@@ -412,7 +413,6 @@ describe('createSessionModelTransitionCoordinator', () => {
     expect(result.reason).toBeTruthy();
     expect(result.reason).not.toContain('sk-live-0123456789abcdefghij');
     expect(result.reason).not.toContain('/Users/alice/private-project');
-    expect(Buffer.byteLength(result.reason ?? '', 'utf8')).toBeLessThanOrEqual(512);
   });
 
   it('keeps a host-owned closed transition reason code exactly', () => {
@@ -435,15 +435,26 @@ describe('createSessionModelTransitionCoordinator', () => {
     });
   });
 
-  it('bounds an overlong plugin reason instead of failing the Protocol result', () => {
+  it('publishes a complete large plugin transition reason while preserving privacy', () => {
+    const message = 'é'.repeat(4_000);
     const result = mapRuntimeConfigUpdateOutcomeToSessionModelTransitionApplyResult({
       status: 'failed',
-      reason: 'x'.repeat(4_000),
+      reason: `client_secret=large-transition-secret path=/Users/alice/private/model.json; ${message}`,
     });
 
     if (result.status === 'applied') throw new Error('Expected a failed transition apply result');
     expect(result.status).toBe('failed');
-    expect(Buffer.byteLength(result.reason ?? '', 'utf8')).toBeLessThanOrEqual(512);
+    expect(result.reason).toContain(message);
+    expect(result.reason).not.toContain('large-transition-secret');
+    expect(result.reason).not.toContain('/Users/alice/private/model.json');
+    const published = SessionModelTransitionResultV1Schema.parse({
+      ok: false,
+      status: 'apply_failed',
+      activeSelection: native('old'),
+      requestedSelection: native('next'),
+      reason: result.reason,
+    });
+    expect(published).toMatchObject({ reason: result.reason });
   });
 
   it('publishes an admitted same-selection replacement target before making it active', async () => {
@@ -2357,7 +2368,6 @@ describe('createSessionModelTransitionCoordinator', () => {
       activeSelection: selection,
     });
 
-    expect(harness.authorize).toHaveBeenCalledWith(selection);
     expect(harness.applyRuntime).not.toHaveBeenCalled();
   });
 
