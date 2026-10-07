@@ -610,6 +610,10 @@ export async function fetchSessionListPageCompat(params: Readonly<{
         if (!isQuery) {
             return {
                 headers: buildSessionRequestHeaders(params.token, { includeSessionListTiming: true }),
+                // Each logical list acquisition owns its freshness/retirement fence.
+                // Do not inherit an older in-flight response after that read is invalidated.
+                // Equivalent Sync snapshots still share through their owning acquisition.
+                cache: 'no-store',
             } satisfies RequestInit;
         }
         const { cursor: _sourceCursor, attentionCursor: _sourceAttentionCursor, limit: _sourceLimit, ...queryBase } = source.body;
@@ -717,6 +721,7 @@ export async function fetchSessionListPageCompat(params: Readonly<{
 
     const legacyResponse = await params.request('/v1/sessions', {
         headers: buildSessionRequestHeaders(params.token),
+        cache: 'no-store',
     });
     let legacyResponseChars: number | undefined;
     const legacyBody = await readJsonSafe(legacyResponse, {

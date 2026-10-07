@@ -1,10 +1,11 @@
 import * as React from 'react';
 import { afterAll, vi } from 'vitest';
-import { AccountSettingsV2GetResponseSchema, MACHINE_PLAIN_DATA_KEY_MARKER, ScmWorkingSnapshotSchema } from '@happier-dev/protocol';
+import { AccountSettingsV2GetResponseSchema, AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema, encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER, ScmWorkingSnapshotSchema } from '@happier-dev/protocol';
 import { createScmCapabilities } from '@happier-dev/protocol/scm/capabilities';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 
 export type FileViewRpcRequest = Readonly<{ targetId: string; method: string; payload: unknown }>;
 let dispatch: (request: FileViewRpcRequest) => unknown | Promise<unknown>;
@@ -82,18 +83,29 @@ export async function createSessionFilesViewFixture(input: Readonly<{
         return input.rpc?.(request) ?? { success: false, error: 'RPC method not available', errorCode: 'METHOD_NOT_AVAILABLE' };
     };
     const features = createRootLayoutFeaturesResponse({ features: { machines: transferFeatures().features.machines } });
+    const machine = transferMachine({ id: input.machineId ?? 'm1', storageMode: 'plain' });
+    const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'alice', encryptionMode: 'plain' });
     const homeRequest: NonNullable<Parameters<typeof restoreServerAccountForTest>[0]['request']> = async (url, init) => {
-        const path = new URL(String(url)).pathname;
+        const requestUrl = new URL(String(url));
+        const path = requestUrl.pathname;
         const handled = await input.request?.(url, init);
         if (handled && handled.status !== 404) return handled;
+        const artifactResponse = artifacts.handle(path + requestUrl.search, init);
+        if (artifactResponse) return artifactResponse;
         if (path === '/health') return Response.json({ status: 'ok' });
         if (path === '/v1/features') return Response.json(features);
         if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
         if (path === '/v2/cursor') return Response.json({ cursor: 0, changesFloor: 0 });
         if (path === '/v2/account/settings') return Response.json(AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: {} }, version: 0 }));
+        if (path === AUTHORING_MEMORY_ROUTE_V1) return Response.json(AuthoringMemoryListResponseV1Schema.parse({ rows: [] }));
         if (path.endsWith('/messages')) return Response.json({ messages: [], hasMore: false });
         if (path.startsWith('/v1/machines/')) return Response.json({ machine: { id: input.machineId ?? 'm1', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } });
-        if (path.includes('/machines')) return Response.json({ machines: [] });
+        if (path === '/v1/machines') return Response.json([{
+            ...machine,
+            metadata: encodePlainMachineStoredContent(machine.metadata),
+            daemonState: machine.daemonState === null ? null : encodePlainMachineStoredContent(machine.daemonState),
+            dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+        }]);
         return Response.json({}, { status: 404 });
     };
     const connection = await restoreServerAccountForTest({ serverUrl: 'https://session-file-views.test', accountId: 'alice', request: homeRequest });
@@ -112,7 +124,7 @@ export async function createSessionFilesViewFixture(input: Readonly<{
     }
     const scope = { serverId: connection.home.id, machineId: input.machineId ?? 'm1', rootPath: input.rootPath ?? '/workspace' };
     const session = createSessionFixture({ id: input.sessionId ?? 's1', serverId: scope.serverId, active: true, metadata: { path: scope.rootPath, machineId: scope.machineId, host: 'tester.local' } });
-    installTransferProjection({ serverId: scope.serverId, session, machine: transferMachine({ id: scope.machineId, storageMode: 'plain' }), features });
+    installTransferProjection({ serverId: scope.serverId, session, machine, features });
     storage.getState().applySettingsLocal({ experiments: true, featureToggles: { 'scm.writeOperations': true, 'files.reviewComments': false, 'files.diffSyntaxHighlighting': false, 'files.editor': false } });
     projectManager.clear();
     storage.getState().applySessions([session]);

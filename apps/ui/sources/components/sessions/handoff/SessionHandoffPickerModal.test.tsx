@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act, ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol';
+import { computeWorkspaceSyncPolicyDigest, encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
 import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -10,6 +10,7 @@ import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fi
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import type { FetchedMachineRow } from '@/sync/engine/machines/syncMachines';
 import { installSessionHandoffCommonModuleMocks } from './sessionHandoffTestHelpers';
 import type { CustomModalChromeConfig } from '@/modal';
 
@@ -76,12 +77,32 @@ const { renderScreen: renderScreenBase, invokeTestInstanceHandler, standardClean
 const homeA = { id: await home.addHome({ name: 'Handoff A', serverUrl: 'https://handoff-a.example.test', accountId: 'account-a' }) };
 const homeB = { id: await home.addHome({ name: 'Handoff B', serverUrl: 'https://handoff-b.example.test', accountId: 'account-b' }) };
 home.answer(homeA.id, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
-home.answer(homeA.id, '/v1/machines', { body: [] });
+answerHomeMachines(homeA.id);
 const refreshMachinesThrottledMock = vi.spyOn(sync, 'refreshMachinesThrottled');
 const workspaceOps = await import('@/sync/ops/workspaceSync');
 const listWorkspaceSyncStatusesMock = vi.spyOn(workspaceOps, 'listWorkspaceSyncStatuses');
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 const initialStorage = storage.getState();
+
+function answerHomeMachines(serverId: string) {
+    home.answer(serverId, '/v1/machines', { select: () => {
+        const inventory = serverId === activeServerIdState
+            ? allMachinesState
+            : machineListByServerIdState[serverId] ?? [];
+        return { body: inventory.map((machine: Partial<Machine>) => {
+            const fixture = createMachineFixture({
+                ...machine, metadata: { ...createMachineFixture().metadata!, ...machine.metadata },
+            });
+            return {
+                id: fixture.id, seq: fixture.seq, createdAt: fixture.createdAt, updatedAt: fixture.updatedAt,
+                active: fixture.active, activeAt: fixture.activeAt,
+                metadata: encodePlainMachineStoredContent(fixture.metadata), metadataVersion: fixture.metadataVersion,
+                daemonState: fixture.daemonState === null ? null : encodePlainMachineStoredContent(fixture.daemonState),
+                daemonStateVersion: fixture.daemonStateVersion, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+            } satisfies FetchedMachineRow;
+        }) };
+    } });
+}
 
 async function applyFixtureState() {
     if (getActiveServerSnapshot().serverId !== activeServerIdState) {
@@ -128,11 +149,15 @@ afterAll(() => { refreshMachinesThrottledMock.mockRestore(); listWorkspaceSyncSt
 
 describe('SessionHandoffPickerModal', () => {
     beforeEach(async () => {
+        activeServerIdState = '';
+        machineListByServerIdState = {};
+        allMachinesState = [];
         // The package harness clears persisted profiles before every test.
         homeA.id = await home.addHome({ name: 'Handoff A', serverUrl: 'https://handoff-a.example.test', accountId: 'account-a' });
         homeB.id = await home.addHome({ name: 'Handoff B', serverUrl: 'https://handoff-b.example.test', accountId: 'account-b', active: false });
         home.answer(homeA.id, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
-        home.answer(homeA.id, '/v1/machines', { body: [] });
+        answerHomeMachines(homeA.id);
+        answerHomeMachines(homeB.id);
         connection = await restoreServerAccountForTest({ serverUrl: 'https://handoff-a.example.test', accountId: 'account-a', request: async (url, init) => {
             const { serverFetch } = await import('@/sync/http/client');
             const target = new URL(String(url));

@@ -187,40 +187,7 @@ function stubSnapshotRefreshFetch(): ReturnType<typeof vi.fn> {
           : 'url' in input
             ? String(input.url)
             : input.toString();
-    if (url.includes('/v2/session-organization')) {
-      return new Response(JSON.stringify({
-        snapshot: {
-          schemaVersion: 1,
-          version: 0,
-          pins: [],
-          folders: [],
-          folderAssignments: [],
-          tags: [],
-          tagAssignments: [],
-          orderEntries: [],
-          labels: [],
-        },
-      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-    }
-    if (url.includes('/v2/sessions')) {
-      return new Response(
-        JSON.stringify({ sessions: [], nextCursor: null, hasNext: false }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } },
-      );
-    }
-    if (url.includes('/v1/machines')) {
-      return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
-    }
-    if (url.includes('/v1/artifacts')) {
-      return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
-    }
-    if (url.includes('/v1/feed')) {
-      return new Response(JSON.stringify({ items: [], hasMore: false }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-    }
-    if (url.includes('/v1/account/profile')) {
-      return new Response(JSON.stringify({ ...profileDefaults, id: 'test-account' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-    }
-    return new Response(JSON.stringify({}), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    return defaultHomeResponse(new URL(url, 'http://localhost').pathname);
   });
   vi.stubGlobal('fetch', fetchMock);
   routeApiSocketRequestsThroughFetch(fetchMock);
@@ -1003,7 +970,7 @@ describe('sync socket offline tracking', () => {
     const snapshotReleased = new Promise<void>((resolve) => {
       releaseSnapshot = resolve;
     });
-    const staleListRow = {
+    const staleListRow = currentOwnerSessionWireRow({
       id: sessionId,
       seq: 4,
       createdAt: 1,
@@ -1018,16 +985,16 @@ describe('sync socket offline tracking', () => {
       agentStateVersion: 1,
       dataEncryptionKey: null,
       share: null,
-    };
+    });
     let activeSnapshotCalls = 0;
     apiSocketRequestMock.mockImplementation(async (path) => {
       if (path.startsWith('/v2/sessions/active')) {
-        activeSnapshotCalls += 1;
-        if (activeSnapshotCalls === 1) {
+        const snapshotCall = ++activeSnapshotCalls;
+        if (snapshotCall === 1) {
           await snapshotReleased;
         }
         return new Response(JSON.stringify({
-          sessions: activeSnapshotCalls === 1 ? [staleListRow] : [],
+          sessions: snapshotCall === 1 ? [staleListRow] : [],
           nextCursor: null,
           hasNext: false,
         }), { status: 200, headers: { 'Content-Type': 'application/json' } });
@@ -1063,11 +1030,9 @@ describe('sync socket offline tracking', () => {
     releaseSnapshot();
     await snapshotFetch;
     await (sync as any).sessionsSync.awaitQueue();
-    expect(activeSnapshotCalls, JSON.stringify({
-      requests: apiSocketRequestMock.mock.calls.map(([path]) => path),
-      queue: await (sync as any).sessionsSync.awaitQueue(),
-    })).toBe(2);
-
+    // Retirement fences this Home's row, even when the read already carried it.
+    // A second list request is incidental; absence after the stale response is
+    // the observable contract.
     expect(storage.getState().sessions[sessionId]).toBeUndefined();
     expect(Object.values(storage.getState().sessionListRowsByServerId).map((rows) => rows[sessionId]).find(Boolean)).toBeUndefined();
   });
@@ -1108,7 +1073,7 @@ describe('sync socket offline tracking', () => {
     const olderSnapshotReleased = new Promise<void>((resolve) => {
       releaseOlderSnapshot = resolve;
     });
-    const staleListRow = {
+    const staleListRow = currentOwnerSessionWireRow({
       id: sessionId,
       seq: 4,
       createdAt: 1,
@@ -1123,7 +1088,7 @@ describe('sync socket offline tracking', () => {
       agentStateVersion: 1,
       dataEncryptionKey: null,
       share: null,
-    };
+    });
     let activeSnapshotCalls = 0;
     apiSocketRequestMock.mockImplementation(async (path) => {
       if (path.startsWith('/v2/sessions/active')) {
@@ -1169,24 +1134,28 @@ describe('sync socket offline tracking', () => {
     });
 
     const olderSnapshot = (sync as any).fetchSessions();
-    onTestFinished(async () => { releaseOlderSnapshot(); await olderSnapshot; });
-    await expect.poll(() => activeSnapshotCalls).toBe(1);
+    try {
+      await expect.poll(() => activeSnapshotCalls).toBe(1);
 
-    const exactHydration = (sync as any).fetchSessions({
-      requiredHydrationSessionIds: [sessionId],
-      prioritizeSessionIds: [sessionId],
-      awaitSessionListHydration: true,
-    });
-    await expect.poll(() => apiSocketRequestMock.mock.calls.some(([path]) => (
-      new URL(path, 'http://localhost').pathname === `/v2/sessions/${sessionId}`
-    )), { message: 'Exact Home hydration must run independently of the older held snapshot' }).toBe(true);
-    await exactHydration;
+      const exactHydration = await sync.ensureSessionVisibleForMessageRoute(sessionId, {
+        forceRefresh: true,
+        hydrateMessages: false,
+      });
+      expect(exactHydration).toMatchObject({ kind: 'missing', cause: 'not_found' });
+      expect(apiSocketRequestMock.mock.calls.some(([path]) => (
+        new URL(path, 'http://localhost').pathname === `/v2/sessions/${sessionId}`
+      ))).toBe(true);
+      // The unresolved-owner transcript path retires only after this exact
+      // owner proves absence, through this same public local retirement owner.
+      sync.retireLocalSession(sessionId, exactHydration.serverId);
 
-    expect(storage.getState().sessions[sessionId]).toBeUndefined();
-    expect(Object.values(storage.getState().sessionListRowsByServerId).map((rows) => rows[sessionId]).find(Boolean)).toBeUndefined();
-
-    releaseOlderSnapshot();
-    await olderSnapshot;
+      expect(storage.getState().sessions[sessionId]).toBeUndefined();
+      expect(Object.values(storage.getState().sessionListRowsByServerId).map((rows) => rows[sessionId]).find(Boolean)).toBeUndefined();
+    } finally {
+      // Release before Account disposal, including when an assertion fails.
+      releaseOlderSnapshot();
+      await olderSnapshot;
+    }
     await (sync as any).sessionsSync.awaitQueue({ timeoutMs: 2_000 });
 
     expect(storage.getState().sessions[sessionId]).toBeUndefined();
@@ -1278,10 +1247,7 @@ describe('sync socket offline tracking', () => {
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         );
       }
-      return new Response(JSON.stringify({}), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      });
+      return defaultHomeResponse(new URL(url, 'http://localhost').pathname);
     });
     routeApiSocketRequestsThroughFetch(fetchMock);
 
@@ -1383,10 +1349,7 @@ describe('sync socket offline tracking', () => {
           attentionHasNext: !terminal,
         }), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
-      return new Response(JSON.stringify({}), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      });
+      return defaultHomeResponse(new URL(url, 'http://localhost').pathname);
     });
     routeApiSocketRequestsThroughFetch(fetchMock);
 
@@ -1725,7 +1688,7 @@ describe('sync socket offline tracking', () => {
           headers: { 'Content-Type': 'application/json' },
         });
       }
-      return new Response(JSON.stringify({}), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      return defaultHomeResponse(new URL(url, 'http://localhost').pathname);
     });
     routeApiSocketRequestsThroughFetch(fetchMock);
 
@@ -1838,7 +1801,7 @@ describe('sync socket offline tracking', () => {
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         );
       }
-      return new Response(JSON.stringify({}), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      return defaultHomeResponse(new URL(url, 'http://localhost').pathname);
     });
     routeApiSocketRequestsThroughFetch(fetchMock);
 
@@ -1896,7 +1859,7 @@ describe('sync socket offline tracking', () => {
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         );
       }
-      return new Response(JSON.stringify({}), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      return defaultHomeResponse(new URL(url, 'http://localhost').pathname);
     });
     routeApiSocketRequestsThroughFetch(fetchMock);
 
@@ -1953,7 +1916,7 @@ describe('sync socket offline tracking', () => {
       if (url.includes('/v1/machines')) {
         return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
-      return new Response(JSON.stringify({}), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      return defaultHomeResponse(new URL(url, 'http://localhost').pathname);
     });
     routeApiSocketRequestsThroughFetch(fetchMock);
 
@@ -1986,7 +1949,7 @@ describe('sync socket offline tracking', () => {
       if (url.includes('/v1/machines')) {
         return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
-      return new Response(JSON.stringify({}), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      return defaultHomeResponse(new URL(url, 'http://localhost').pathname);
     });
     routeApiSocketRequestsThroughFetch(fetchMock);
 
@@ -2077,7 +2040,7 @@ describe('sync socket offline tracking', () => {
       if (url.includes('/v1/account/profile')) {
         return new Response(JSON.stringify({ ...profileDefaults, id: 'test-account' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
-      return new Response(JSON.stringify({}), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      return defaultHomeResponse(new URL(url, 'http://localhost').pathname);
     });
     routeApiSocketRequestsThroughFetch(fetchMock);
 
@@ -2195,7 +2158,7 @@ describe('sync socket offline tracking', () => {
       if (url.includes('/v1/account/profile')) {
         return new Response(JSON.stringify({ ...profileDefaults, id: 'test-account' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
-      return new Response(JSON.stringify({}), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      return defaultHomeResponse(new URL(url, 'http://localhost').pathname);
     });
     routeApiSocketRequestsThroughFetch(fetchMock);
 
@@ -2281,7 +2244,7 @@ describe('sync socket offline tracking', () => {
       if (url.includes('/v1/native-update')) {
         return new Response(JSON.stringify({ updateAvailable: false }), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
-      return new Response(JSON.stringify({}), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      return defaultHomeResponse(new URL(url, 'http://localhost').pathname);
     });
     routeApiSocketRequestsThroughFetch(fetchMock);
 
