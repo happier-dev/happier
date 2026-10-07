@@ -1,9 +1,13 @@
 import { randomUUID } from "node:crypto";
+import tweetnacl from "tweetnacl";
 import {
     MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT,
     serializeAutomationStoredDefinitionExecutionRecipeV1,
     serializeAutomationStoredWorkflowDefinitionRecipeV2,
     sealWorkflowCheckpointStoredEnvelopeV1,
+    AutomationRunCauseSchema,
+    deriveAutomationManualOccurrenceKeyV1,
+    PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
 } from "@happier-dev/protocol";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -16,6 +20,7 @@ import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { createSignedPluginInstallationPublisherHeader } from "@/testkit/pluginInstallationPublisherTestkit";
 import { withAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { registerSessionArchiveRoutes } from "@/app/api/routes/session/registerSessionArchiveRoutes";
 import { deleteOwnedSession } from "@/app/session/delete/deleteOwnedSession";
@@ -27,6 +32,7 @@ import { claimAutomationRun } from "./automationClaimService";
 import { admitDueAutomationScheduleTriggerTx } from "./automationRunQueueService";
 import { failAutomationRun } from "./automationRunService";
 import { validateSessionLifecycleTriggerRegistrationTx } from "./automationSessionLifecycleRegistration";
+import { encodeAutomationRunCause } from "./automationRunCauseCodec";
 
 const authentication = createPresentUserSessionAccessAuthentication();
 
@@ -296,6 +302,69 @@ describe("Session lifecycle Automation admission on SQLite", () => {
         await expect(db.automationRun.count({ where: { triggerId: { in: [first.id, second.id] } } })).resolves.toBe(2);
     });
 
+    it("suppresses an ancestor trigger's own needs-you event before consuming its budget, while unrelated and later user events still fire", async () => {
+        const current = await source();
+        const origin = await trigger({ ...current, events: ["userActionRequired"], policy: { kind: "firstMatch" } });
+        const unrelated = await trigger({ ...current, events: ["userActionRequired"], policy: { kind: "everyMatch" } });
+        // The accepted Run predates the trigger's edit to firstMatch; identity, not revision, prevents the loop.
+        await db.automationTrigger.update({ where: { id: origin.id }, data: { revision: 2 } });
+        const parent = await db.automationRun.create({ data: {
+            accountId: current.accountId, automationId: origin.automationId,
+            scheduledAt: new Date(), dueAt: new Date(), state: "running",
+            workflowCustodyState: "pending", workflowAcceptedSnapshotEnvelope: "{}",
+            ...encodeAutomationRunCause(AutomationRunCauseSchema.parse({
+                kind: "trigger", triggerKind: "sessionLifecycle", triggerId: origin.id, triggerRevision: 1,
+                occurrenceKey: deriveAutomationManualOccurrenceKeyV1({ automationId: origin.automationId, idempotencyKey: `origin-${current.suffix}` }), occurredAt: Date.now(), evidence: {
+                    event: "userActionRequired", sourceSessionId: current.sessionId, sourceTurnId: current.turnId,
+                    requestId: "initial-request", requestKind: "permission", policy: { kind: "everyMatch" },
+                },
+            })),
+        } });
+        const bridge = await db.automationTrigger.create({ data: {
+            automationId: origin.automationId, kind: "runLifecycle", sourceRunId: parent.id,
+            remainingOccurrences: 1, runLifecycleConfigurationJson: JSON.stringify({ kind: "runLifecycle",
+                source: { kind: "workflow_run", runId: parent.id }, condition: "terminal" }),
+        } });
+        const descendant = await db.automationRun.create({ data: {
+            accountId: current.accountId, automationId: origin.automationId,
+            scheduledAt: new Date(), dueAt: new Date(), state: "running",
+            workflowCustodyState: "pending", workflowAcceptedSnapshotEnvelope: "{}",
+            ...encodeAutomationRunCause(AutomationRunCauseSchema.parse({
+                kind: "trigger", triggerKind: "runLifecycle", triggerId: bridge.id, triggerRevision: 1,
+                occurrenceKey: deriveAutomationManualOccurrenceKeyV1({ automationId: origin.automationId, idempotencyKey: `descendant-${current.suffix}` }), occurredAt: Date.now(),
+                evidence: { source: { kind: "workflow_run", runId: parent.id }, condition: "terminal", sourceRevision: 0 },
+            })),
+        } });
+        await applySessionTurnMutation({ actorUserId: current.accountId, mutation: {
+            v: 1, sessionId: current.sessionId, turnId: current.turnId, action: "complete",
+            mutationId: `complete-${current.suffix}`, observedAt: Date.now(),
+        } });
+        const workflowTurnId = `workflow-${current.suffix}`;
+        await applySessionTurnMutation({ actorUserId: current.accountId, mutation: {
+            v: 1, sessionId: current.sessionId, turnId: workflowTurnId, action: "begin",
+            mutationId: `begin-workflow-${current.suffix}`, observedAt: Date.now(), initiator: "workflow", workDepth: 2,
+            workflowInvocation: { runId: descendant.id, invocationRecordId: "step" },
+        } });
+        const fire = (requestId: string, turnId: string) => inTx(tx => admitSessionLifecycleAutomationRunsTx({ tx, accountId: current.accountId,
+            occurrence: { v: 1, kind: "sessionLifecycle", event: "userActionRequired", sourceSessionId: current.sessionId,
+                sourceTurnId: turnId, requestId, requestKind: "permission", occurredAt: Date.now() } }));
+        await fire("workflow-request", workflowTurnId);
+        expect(await db.automationRun.count({ where: { triggerId: origin.id } })).toBe(1);
+        expect((await db.automationTrigger.findUniqueOrThrow({ where: { id: origin.id } })).remainingOccurrences).toBe(1);
+        expect(await db.automationRun.count({ where: { triggerId: unrelated.id } })).toBe(1);
+        await applySessionTurnMutation({ actorUserId: current.accountId, mutation: {
+            v: 1, sessionId: current.sessionId, turnId: workflowTurnId, action: "complete",
+            mutationId: `complete-workflow-${current.suffix}`, observedAt: Date.now(),
+        } });
+        const userTurnId = `user-${current.suffix}`;
+        await applySessionTurnMutation({ actorUserId: current.accountId, mutation: {
+            v: 1, sessionId: current.sessionId, turnId: userTurnId, action: "begin",
+            mutationId: `begin-user-${current.suffix}`, observedAt: Date.now(), initiator: "user", workDepth: 0,
+        } });
+        await fire("user-request", userTurnId);
+        expect(await db.automationRun.count({ where: { triggerId: origin.id } })).toBe(2);
+    });
+
     it("coalesces scoped pending firings without reserving another bounded occurrence, then claims the newest after active completion", async () => {
         const current = await source();
         const attached = await trigger({ ...current, scoped: true, policy: { kind: "nextMatches", count: 2 } });
@@ -349,6 +418,43 @@ describe("Session lifecycle Automation admission on SQLite", () => {
             .toEqual({ runId: active.run!.id, checkpointEnvelope: null });
         expect((await claimAutomationRun(claimParams)).receiptReplay?.run)
             .toMatchObject({ id: newest.id, lastSucceededRun: { runId: active.run!.id, checkpointEnvelope } });
+    });
+
+    it("suppresses signed host archive origin, retains ancestry for unrelated triggers, and refuses an unsigned origin claim", async () => {
+        const current = await source();
+        const own = await trigger({ ...current, workflow: true, policy: { kind: "firstMatch" } });
+        const unrelated = await trigger({ ...current, workflow: true, policy: { kind: "firstMatch" } });
+        await db.automationTrigger.updateMany({ where: { id: { in: [own.id, unrelated.id] } },
+            data: { sessionLifecycleEventsJson: '["sessionArchived"]' } });
+        const root = await db.automationRun.create({ data: { accountId: current.accountId, automationId: own.automationId,
+            state: "running", scheduledAt: new Date(), dueAt: new Date(), workflowCustodyState: "pending",
+            workflowAcceptedSnapshotEnvelope: "{}", ...encodeAutomationRunCause(AutomationRunCauseSchema.parse({
+                kind: "trigger", triggerKind: "schedule", triggerId: own.id, triggerRevision: 1, occurredAt: 100,
+                evidence: { scheduledFor: 100 }, occurrenceKey: deriveAutomationManualOccurrenceKeyV1({
+                    automationId: own.automationId, idempotencyKey: randomUUID(),
+                }),
+            })) } });
+        const assignment = await db.automationAssignment.findFirstOrThrow({ where: { automationId: own.automationId } });
+        const keyPair = tweetnacl.sign.keyPair();
+        const installationId = randomUUID();
+        await db.machine.update({ where: { id: assignment.machineId },
+            data: { installationId, installationPublicKey: keyPair.publicKey } });
+        await db.automationRunAssignment.create({ data: { runId: root.id, machineId: assignment.machineId } });
+        await withAuthenticatedTestApp(registerSessionArchiveRoutes, async (app) => {
+            const url = `/v2/sessions/${current.sessionId}/archive`;
+            const body = { originRunId: root.id };
+            const headers = { "x-test-user-id": current.accountId };
+            expect((await app.inject({ method: "POST", url, payload: body, headers })).statusCode).toBe(403);
+            expect((await db.session.findUniqueOrThrow({ where: { id: current.sessionId } })).archivedAt).toBeNull();
+            const signed = createSignedPluginInstallationPublisherHeader({ keyPair, machineId: assignment.machineId,
+                installationId, path: url, body });
+            expect((await app.inject({ method: "POST", url, payload: body,
+                headers: { ...headers, [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: signed } })).statusCode).toBe(200);
+            expect(await db.automationRun.count({ where: { triggerId: own.id } })).toBe(1);
+            expect((await db.automationTrigger.findUniqueOrThrow({ where: { id: own.id } })).remainingOccurrences).toBe(1);
+            const descendant = await db.automationRun.findFirstOrThrow({ where: { triggerId: unrelated.id } });
+            expect(JSON.parse(descendant.triggerEvidenceEnvelope!)).toMatchObject({ originRunId: root.id, evidence: null });
+        });
     });
 
     it("admits archive triggers only on archive transitions through the HTTP owner and rolls back archive when admission fails", async () => {

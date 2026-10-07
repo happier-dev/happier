@@ -3,6 +3,23 @@ import { ExecutionRunPublicStateSchema, type AutomationRunLifecycleOccurrenceEvi
 import { createAutomationRunLifecycleObservers } from './automationRunLifecycleObservers';
 
 describe('Automation exact execution source observers', () => {
+  it('reports the retained host Workflow origin without deriving it from the watched Session', async () => {
+    const reports: unknown[] = [];
+    const observers = createAutomationRunLifecycleObservers({
+      wait: async () => ({ ok: true, status: 'succeeded', result: { run: ExecutionRunPublicStateSchema.parse({
+        runId: 'execution', callId: 'call', sidechainId: 'sidechain', intent: 'review',
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        permissionMode: 'read-only', retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
+        startedAtMs: 100, finishedAtMs: 200, status: 'succeeded', originWorkflowRunId: 'host-origin',
+      }) } }),
+      report: async occurrence => { reports.push(occurrence); }, onError: error => { throw error; },
+    });
+    observers.replace([{ kind: 'execution_run', machineId: 'machine-one', runId: 'execution', sessionId: 'unrelated-session' }]);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(reports).toEqual([expect.objectContaining({ originRunId: 'host-origin' })]);
+    observers.clear();
+  });
   it('refuses terminal evidence for a different retained Run', async () => {
     const reports: AutomationRunLifecycleOccurrenceEvidenceV1[] = [];
     const errors: unknown[] = [];

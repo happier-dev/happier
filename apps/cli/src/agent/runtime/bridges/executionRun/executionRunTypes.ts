@@ -155,6 +155,8 @@ export type ExecutionRunState = Readonly<{
   runId: string;
   callId: string;
   sidechainId: string;
+  /** Immutable host-stamped Workflow parent; independent of a watched Session. */
+  originWorkflowRunId?: string;
   sessionId: string | null;
   depth: number;
   intent: ExecutionRunManagerStartParams['intent'];

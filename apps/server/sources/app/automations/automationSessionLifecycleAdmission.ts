@@ -19,6 +19,7 @@ import {
 import { decodeAutomationSessionLifecycleConfiguration } from "./automationSessionLifecycleConfigurationCodec";
 import { automationPortableQueryChunks } from "./automationPortableQueryChunks";
 import { lockScopedAutomationTriggerInTx } from "./automationScopedTrigger";
+import { readAutomationOriginTriggerIdsTx } from "./automationTriggerCauseChain";
 
 export type SessionLifecycleAdmissionResult = Readonly<{
     triggerId: string;
@@ -157,6 +158,8 @@ export async function admitSessionLifecycleAutomationRunsTx(params: Readonly<{
         },
     });
 
+    const originTriggerIds = rows.length > 0
+        ? await readAutomationOriginTriggerIdsTx(params.tx, occurrence) : new Set<string>();
     const candidates: Array<{
         row: typeof rows[number];
         cause: ReturnType<typeof buildLifecycleCause>;
@@ -168,6 +171,7 @@ export async function admitSessionLifecycleAutomationRunsTx(params: Readonly<{
     }> = [];
     const budgetConsumedWithoutRun = new Set<string>();
     for (const listedRow of rows) {
+        if (originTriggerIds.has(listedRow.id)) continue;
         const scoped = listedRow.automation.scopeSessionId !== null
             ? await lockScopedAutomationTriggerInTx(params.tx, params.accountId, listedRow.id) : null;
         const row = scoped ? { ...listedRow, ...scoped } : listedRow;

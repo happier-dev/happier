@@ -17,6 +17,7 @@ import type { ExecutionRunState } from './executionRunTypes';
 /** Private lifecycle custody, independent of the daemon's disposable visibility marker. */
 const RetainedRunStateSchema = z.object({
   runId: z.string().min(1), callId: z.string().min(1), sidechainId: z.string().min(1),
+  originWorkflowRunId: z.string().min(1).optional(),
   sessionId: z.string().min(1).nullable(), depth: z.number().int().nonnegative(),
   intent: ExecutionRunIntentSchema, roleId: z.string().optional(), launchProfileId: z.string().optional(),
   profileId: z.string().nullable().optional(), profileSourceCustody: PluginSourceCustodyV1Schema.nullable().optional(),
