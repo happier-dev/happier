@@ -299,8 +299,9 @@ function validateApprovalRequestLifecycle(
   if (value.sessionCreationDirectoryApproval !== undefined && value.actionId !== 'session.spawn_new') {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['sessionCreationDirectoryApproval'], message: 'Directory creation approval evidence belongs only to session.spawn_new.' });
   }
-  if (value.handoffTargetReplacementApproval !== undefined && value.actionId !== 'session.handoff') {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['handoffTargetReplacementApproval'], message: 'Handoff target-replacement approval evidence belongs only to session.handoff.' });
+  if (value.handoffTargetReplacementApproval !== undefined && value.actionId !== 'session.handoff'
+    && !(value.v === 2 && value.actionId === 'workspace.sync.relationship.create')) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['handoffTargetReplacementApproval'], message: 'Target-replacement approval evidence belongs only to workspace destination Actions.' });
   }
 }
 

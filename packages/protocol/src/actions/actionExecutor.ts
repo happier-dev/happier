@@ -2549,6 +2549,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       )
       : null;
     const persistedHandoffTargetApproval = request.actionId === 'session.handoff'
+      || request.actionId === 'workspace.sync.relationship.create'
       ? HandoffTargetReplacementApprovalV1Schema.safeParse(
         request.handoffTargetReplacementApproval,
       )
