@@ -185,6 +185,44 @@ describe('todoOps plaintext account storage', () => {
         });
     });
 
+    it('loads all Tasks and the index across the KV page boundary before reconciling order', async () => {
+        const item = (id: string) => ({ key: `todo.${id}`, version: 2,
+            value: encodeBase64StoredJsonContentEnvelope({ t: 'plain', v: {
+                id, title: id, done: false, createdAt: 1, updatedAt: 1,
+                linkedSessions: id === 'z-last' ? { session: { title: 'Linked session', linkedAt: 1 } } : {},
+            } }) });
+        const first = Array.from({ length: 1000 }, (_, n) => item(`a-${String(n).padStart(4, '0')}`));
+        mocks.kvList.mockResolvedValueOnce({ items: first }).mockResolvedValueOnce({ items: [
+            { key: 'todo.index', version: 3, value: encodeBase64StoredJsonContentEnvelope({ t: 'plain', v: {
+                undoneOrder: ['z-last', ...first.map(row => row.key.slice('todo.'.length))], completedOrder: [],
+            } }) }, item('z-last'),
+        ] });
+        const request = vi.fn();
+        const state = await fetchTodos({ token: 'token-only' }, { retry: 'none', request });
+        expect(Object.keys(state.todos)).toHaveLength(1001);
+        expect(state.undoneOrder[0]).toBe('z-last');
+        expect(state.todos['z-last']?.linkedSessions).toEqual({ session: { title: 'Linked session', linkedAt: 1 } });
+        expect(state.versions['todo.index']).toBe(3);
+        expect(mocks.kvList).toHaveBeenLastCalledWith({ token: 'token-only' }, expect.objectContaining({
+            afterKey: 'todo.a-0999', limit: 1000, retry: 'none', request,
+        }));
+    });
+
+    it('preserves hydrated Tasks when a later refresh page fails instead of publishing partial acquisition', async () => {
+        const prior = { todos: { retained: { id: 'retained', title: 'Retained', done: false, createdAt: 1, updatedAt: 1 } },
+            undoneOrder: ['retained'], doneOrder: [], versions: { 'todo.retained': 1 } };
+        mocks.todoState = prior;
+        const item = (id: string) => ({ key: `todo.${id}`, version: 1,
+            value: encodeBase64StoredJsonContentEnvelope({ t: 'plain', v: {
+                id, title: 'Keep', done: false, createdAt: 1, updatedAt: 1,
+            } }) });
+        mocks.kvList.mockResolvedValueOnce({ items: Array.from({ length: 1000 }, (_, n) => item(`a-${String(n).padStart(4, '0')}`)) })
+            .mockRejectedValueOnce(new Error('later page unavailable'));
+        await expect(initializeTodoSync({ token: 'token-only' })).rejects.toThrow('later page unavailable');
+        expect(mocks.todoState).toBe(prior);
+        expect(mocks.applyTodos).not.toHaveBeenCalled();
+    });
+
     it('retains the predecessor raw-ciphertext read path when encryption material exists', async () => {
         mocks.fetchAccountEncryptionCurrentness.mockResolvedValue({
             mode: 'e2ee',
