@@ -7,6 +7,7 @@ import type {
     SessionBoardItemWidth,
     SessionSurfaceItemV1,
 } from '@happier-dev/protocol/sessions/board';
+import { getSessionBoardWidgetFootprintV1, resolveSessionBoardWidgetSizeV1 } from '@happier-dev/protocol/widgets';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
@@ -38,11 +39,14 @@ import { UnavailableInstalledWidget } from '@/components/widgets/InstalledWidget
 import { WidgetSurface } from '@/components/widgets/surface/WidgetSurface';
 import { useSessionWidgetSurface, useWidgetInputsEditor } from '@/components/widgets/surface/useWidgetInputsEditor';
 import { useWidgetDefinitionFlows, type WidgetDefinitionSessionItem } from '@/components/widgets/definitions/useWidgetDefinitionFlows';
+import { runWidgetDefinitionCommand } from '@/components/widgets/definitions/widgetDefinitionCommands';
+import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { WidgetSnapshotCaptureContext } from '@/components/widgets/definitions/widgetSnapshotCapture';
 import type { WidgetSetupSubmitResult } from '@/components/widgets/add/widgetSetupModel';
 import { useWidgetFrameRename } from '@/components/widgets/frame/useWidgetFrameRename';
 import { readWidgetDescriptor } from '@/components/widgets/widgetCatalog';
-import { projectWidgetDefinitionPromotionBindingsV1, type WidgetInputBindingsV1 } from '@happier-dev/protocol/widgets';
+import { resolveWidgetSizeChoicesV1, projectWidgetDefinitionPromotionBindingsV1, type WidgetInputBindingsV1, type WidgetSizeV1 } from '@happier-dev/protocol/widgets';
+import { renderWidgetSizeMenuSection, stepWidgetSizeControl, type WidgetSizeControl } from '@/components/widgets/frame/WidgetSizeControl';
 import { useWidgetInstanceDescriptor } from '@/components/widgets/surface/useWidgetInstanceDescriptor';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
@@ -401,8 +405,37 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
         testID,
     });
 
+    const nativeWidth = props.width ?? 'medium';
+    const nativeHeightSize = state.kind === 'ready' && !section
+        ? state.item.height.mode === 'auto' ? state.item.height.fallback : state.item.height.size : undefined;
+    const widgetPresentation = React.useMemo(() => nativeHeightSize ? {
+        size: resolveSessionBoardWidgetSizeV1(nativeWidth, { mode: 'fixed', size: nativeHeightSize }),
+        footprint: getSessionBoardWidgetFootprintV1(nativeWidth, { mode: 'fixed', size: nativeHeightSize }),
+    } : undefined, [nativeWidth, nativeHeightSize]);
+
     // The menu is the card's published operation set, built the same way the
     // Companion builds its own: one entry per handler that genuinely exists.
+    const [sizeBusy, setSizeBusy] = React.useState(false);
+    const sizeChoices = resolveWidgetSizeChoicesV1('sessionBoard', widgetDescriptor?.sizeDeclaration);
+    const sizeControl: WidgetSizeControl | undefined = props.density === 'full' && props.canEdit && widgetInstance && widgetDescriptor && props.onResize && boardSurface.scope && sizeChoices.defaultSize ? {
+        surface: 'sessionBoard', sizes: sizeChoices.sizes,
+        size: widgetPresentation?.size,
+        disabled: sizeBusy,
+        onSet: (size: WidgetSizeV1) => {
+            if (sizeBusy || !boardSurface.scope || !widgetInstance) return;
+            setSizeBusy(true);
+            void runWidgetDefinitionCommand('widgets.instance.size.set', {
+                ref: { surface: boardSurface.scope, instanceId: widgetInstance.id }, size,
+            }, boardSurface.scope).then(outcome => {
+                if (outcome.kind === 'refused') publishPresentationNotice({
+                    key: `${props.sessionId}:${widgetInstance.id}:size`, severity: 'error', message: t('widgetAdd.saveFailed'),
+                });
+                if (outcome.kind === 'approvalPending') publishPresentationNotice({
+                    key: `${props.sessionId}:${widgetInstance.id}:size`, severity: 'info', message: t('widgetAdd.areaApprovalPending'),
+                });
+            }).finally(() => setSizeBusy(false));
+        },
+    } : undefined;
     const itemActions = React.useMemo(() => buildSessionBoardItemActions({
         density: props.density,
         canEdit: props.canEdit,
@@ -421,6 +454,7 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
         moveDestinations: props.moveDestinations,
         onMoveToView: props.onMoveToView,
         onResize: props.onResize,
+        sizeControl,
         reportedHeight: props.reportedHeight ?? hostedFrameReportedHeight,
         onSetHeight: props.onSetHeight,
         onAddToCompanion: props.onAddToCompanion,
@@ -448,6 +482,7 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
         props.onReadFull,
         props.onRemove,
         props.onResize,
+        sizeControl,
         props.reportedHeight,
         hostedFrameReportedHeight,
         props.onSetHeight,
@@ -587,7 +622,8 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
                         providedContext={{ session: [{ serverId: viewerScope.serverId, sessionId: props.sessionId }] }}
                         instance={state.item.source.instance}
                         descriptor={widgetDescriptor}
-                        recordRevision={props.item.revision}
+                        // Presentation-only native height revisions do not change this configured executable.
+                        recordRevision={stableJsonStringify(state.item.source.instance)}
                         // The embedded plugin presentation describes the actual
                         // host composition, not persisted outer card chrome.
                         presentation={embeddedPresentation}
@@ -722,6 +758,8 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
                     compactThreshold={Number.POSITIVE_INFINITY}
                     overflowTriggerTestID={`${testID}-actions`}
                     overflowTriggerAccessibilityLabel={t('common.moreActions')}
+                    onOverflowTriggerKeyDown={key => stepWidgetSizeControl(sizeControl, key)}
+                    renderOverflowSection={({ id }) => renderWidgetSizeMenuSection(sizeControl, id, `${testID}.size`)}
                     iconSize={18}
                     gap={8}
                 />
@@ -751,6 +789,8 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
                 meta={meta}
                 menu={controls}
                 fresh={props.fresh === true}
+                widgetPresentation={widgetPresentation}
+                viewportHeight={resolvedHeight?.height}
                 bodyStyle={bodyReachesEdge ? FULL_BLEED_BODY : undefined}
                 body={{
                     kind: 'content',

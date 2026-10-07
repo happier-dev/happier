@@ -3,7 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { normalizeActionsSettingsV1 } from './actionSettings.js';
 import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
-import { SessionBoardLayoutUpdateInputV1Schema } from '../sessions/board/actions.js';
+import { SessionBoardLayoutUpdateInputV1Schema, SessionBoardItemUpsertInputV1Schema, type SessionBoardItemUpsertInputV1 } from '../sessions/board/actions.js';
+import { createWidgetActionInputResolverV1 } from '../widgets/widgetActionInputResolverV1.js';
 import { applySessionBoardLayoutOperationV1 } from '../sessions/board/layoutOperations.js';
 import type { SessionBoardLayoutV1 } from '../sessions/board/layout.js';
 
@@ -40,6 +41,38 @@ function mutationResult(operation: 'upsert_item' | 'remove_item' | 'update_layou
 }
 
 describe('createActionExecutor (Session Board family)', () => {
+  it('admits declared native widget Add footprints atomically without restricting existing custom native shapes', async () => {
+    const saved: SessionBoardItemUpsertInputV1[] = [];
+    const executor = createActionExecutor({ widgetAccountScope: () => ({ serverId: 'home-1', accountId: 'account' }),
+      widgetInputs: createWidgetActionInputResolverV1({ readDescriptor: async () => ({ sizeDeclaration: { sizes: ['medium', 'tall'], defaultSize: 'tall' },
+        inputs: { fields: [] }, inputSchema: { type: 'object', additionalProperties: false } }),
+        readContext: async () => ({}), readViewerValues: async () => ({ values: {} }), validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [] }),
+      // Sealed Session Record persistence is the boundary; Action admission remains real.
+      sessionBoardAction: async ({ input }) => {
+        const request = SessionBoardItemUpsertInputV1Schema.parse(input); saved.push(request);
+        return { v: 1, serverId: 'home-1', sessionId: 'session-1',
+          result: { operation: 'upsert_item', itemId: request.itemId, outcome: request.expectedItemRevision ? 'updated' : 'created', itemRevision: revision, layoutRevision: revision },
+          destination: { tabId: request.placement!.tabId ?? 'overview', width: request.placement!.width ?? 'medium' },
+          preview: { title: request.item.title, sourceKind: 'widget' } };
+      },
+    });
+    const configured = { ...item, source: { kind: 'widget' as const, instance: { v: 1 as const, id: 'copy',
+      definition: { kind: 'installed' as const, surface: { pluginId: 'acme.sizes', localId: 'checks' } }, bindings: {} } } };
+    const context = { surface: 'mcp' as const, serverId: 'home-1', defaultSessionId: 'session-1', bypassApprovals: true };
+    const execute = (input: unknown) => executor.execute('session.board.item.upsert', input, context);
+    const base = { itemId: 'copy', expectedItemRevision: null, item: configured };
+    expect(await execute({ ...base, placement: { tabId: 'overview', width: 'full' } })).toMatchObject({ ok: false, errorCode: 'widget_size_unsupported' });
+    expect(await execute({ ...base, item: { ...configured, height: { mode: 'fixed', size: 'tall' } }, placement: { tabId: 'overview', width: 'compact' } }))
+      .toMatchObject({ ok: false, errorCode: 'widget_size_unsupported' });
+    expect(saved).toEqual([]);
+    expect(await execute({ ...base, placement: { tabId: 'overview' } })).toMatchObject({ ok: true });
+    expect(saved[0]).toMatchObject({ placement: { width: 'medium' }, item: { height: { mode: 'fixed', size: 'tall' } } });
+    expect(await execute({ ...base, placement: { tabId: 'overview', width: 'medium' } })).toMatchObject({ ok: true });
+    expect(saved[1]).toMatchObject({ placement: { width: 'medium' }, item: { height: { mode: 'auto', fallback: 'regular' } } });
+    const custom = { ...base, expectedItemRevision: revision, item: { ...configured, height: { mode: 'fixed', size: 'tall' } }, placement: { tabId: 'overview', width: 'compact' } };
+    expect(await execute(custom)).toMatchObject({ ok: true });
+    expect(saved[2]).toEqual(custom);
+  });
   it.each(['agent', 'ui'] as const)('requires approval for shared layout edits through both %s fronts, while a policy waiver reaches the same writer', async surface => {
     let document: SessionBoardLayoutV1 = { v: 1, tabs: [{ id: 'overview', title: 'Overview', items: [{ itemId: 'copy', width: 'wide' }] }] };
     const original = document;

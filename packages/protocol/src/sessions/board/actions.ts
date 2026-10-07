@@ -162,9 +162,14 @@ export const SessionBoardItemUpsertInputV1Schema = z.object({
   itemId: SessionSurfaceItemIdSchema,
   /** `null` requests creation; every other value is an exact optimistic-concurrency operand. */
   expectedItemRevision: SessionSystemRecordRevisionSchema.nullable(),
+  /** Optional captured layout operand for an atomic content+placement edit. */
+  expectedLayoutRevision: SessionSystemRecordRevisionSchema.nullable().optional(),
   item: z.lazy(() => SessionSurfaceItemV1Schema),
   placement: SessionBoardItemPlacementV1Schema.optional(),
 }).strict().superRefine((input, context) => {
+  if (input.expectedLayoutRevision !== undefined && !input.placement) {
+    context.addIssue({ code: 'custom', path: ['expectedLayoutRevision'], message: 'A captured layout revision requires a placement edit' });
+  }
   if (!isSessionSurfaceItemIdentityCorrespondingV1(input.itemId, input.item)) {
     context.addIssue({ code: 'custom', path: ['item', 'source', 'instance', 'id'], message: 'Widget instance identity must match its Board item identity' });
   }
@@ -322,6 +327,10 @@ export const SessionBoardActionRecoveryEvidenceV1Schema = SessionBoardMutationAc
         });
       }
       const intendedPlacement = evidence.intent.placement;
+      if (evidence.intent.expectedLayoutRevision !== undefined
+        && mutation.placement?.expectedLayoutRevision !== evidence.intent.expectedLayoutRevision) {
+        context.addIssue({ code: 'custom', path: ['requestBody'], message: 'Recovery mutation must retain the captured layout revision' });
+      }
       if ((intendedPlacement === undefined) !== (mutation.placement === undefined)) {
         context.addIssue({
           code: 'custom', path: ['requestBody'],

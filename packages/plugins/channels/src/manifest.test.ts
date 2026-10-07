@@ -2143,6 +2143,7 @@ describe('Channels Session-facing surfaces (CU-03)', () => {
     expect(views.find((view) => view.id === 'conversations-widget')).toEqual({
       id: 'conversations-widget',
       container: 'widget',
+      sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' },
       target: { kind: 'app' },
       renderer: 'channels-glance',
       resources: [

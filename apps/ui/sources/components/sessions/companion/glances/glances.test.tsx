@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { WidgetPresentationProvider } from '@happier-dev/plugin-ui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
@@ -12,6 +13,8 @@ import { ChangesGlanceView } from './ChangesGlance';
 import { resolveLocalServicesGlanceRows } from './glanceModels';
 import { LocalServicesGlance, LocalServicesGlanceView } from './LocalServicesGlance';
 import { PaneLinkRowView } from './PaneLinkRow';
+import { SessionAgentPlanCard } from '../plan/SessionAgentPlanCard';
+import { projectSessionAgentPlan } from '../plan/sessionAgentPlan';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -42,6 +45,26 @@ vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () =
 
 afterEach(() => {
     standardCleanup();
+});
+
+describe('Sized agent plan', () => {
+    it('leads a compact body with the current step and restores source order in a tall body without dropping steps', async () => {
+        const plan = projectSessionAgentPlan([
+            { id: 'done', content: 'Prepared', status: 'completed' },
+            { id: 'now', content: 'Verifying', status: 'in_progress' },
+            { id: 'next', content: 'Handing off', status: 'pending' },
+        ]);
+        const render = (size: 'small' | 'tall') => <WidgetPresentationProvider value={{ size,
+            footprint: { columns: 2, columnSpan: 1, rowSpan: size === 'small' ? 1 : 4,
+                width: 'half', height: size === 'small' ? 'compact' : 'tall' } }}>
+            <SessionAgentPlanCard plan={plan} agentLabel="Codex" activity="working" presentation="body" testID="sized-plan" />
+        </WidgetPresentationProvider>;
+        const screen = await renderScreen(render('small'));
+        expect(screen.getTextContent().indexOf('Verifying')).toBeLessThan(screen.getTextContent().indexOf('Prepared'));
+        expect(screen.getTextContent()).toContain('Handing off');
+        await screen.update(render('tall'));
+        expect(screen.getTextContent().indexOf('Prepared')).toBeLessThan(screen.getTextContent().indexOf('Verifying'));
+    });
 });
 
 function entry(path: string, kind: ScmWorkingEntry['kind'], added: number, removed: number): ScmWorkingEntry {
@@ -114,7 +137,49 @@ function inventoryRow(id: string, port: number): LocalServiceInventoryRow {
     } as LocalServiceInventoryRow;
 }
 
+describe('Sized local services', () => {
+    it('compacts status into a spoken service row and restores richer status lines without losing facts or Open', async () => {
+        const open = vi.fn();
+        const target = launchTarget({});
+        const state = { kind: 'ready' as const, runningCount: 1, rows: [
+            { id: 'web', title: 'web', detail: 'localhost:8081', running: true, openTarget: target },
+            { id: 'docs', title: 'docs', detail: 'storybook', running: false, openTarget: null },
+        ] };
+        const render = (size: 'small' | 'tall') => <WidgetPresentationProvider value={{ size,
+            footprint: { columns: 2, columnSpan: 1, rowSpan: size === 'small' ? 1 : 4, width: 'half', height: size === 'small' ? 'compact' : 'tall' } }}>
+            <LocalServicesGlanceView testID="sized-services" frameStyle="plain" presentation="body" machineName="Mac" state={state} onOpen={open} />
+        </WidgetPresentationProvider>;
+        const screen = await renderScreen(render('small'));
+        expect(screen.findByTestId('sized-services.row.web')?.props.accessibilityLabel).toBe('web, localhost:8081, widgetGlances.running');
+        expect(screen.findByTestId('sized-services.row.web.status')).toBeNull();
+        const openControl = screen.findByTestId('sized-services.row.web.open');
+        await screen.update(render('tall'));
+        expect(screen.findByTestId('sized-services.row.web.status')).not.toBeNull();
+        expect(screen.findByTestId('sized-services.row.web.open')).toBe(openControl);
+        expect(screen.getTextContent()).toContain('localhost:8081');
+        expect(screen.getTextContent()).toContain('storybook');
+        expect(screen.getTextContent()).toContain('widgetGlances.notRunning');
+        await screen.pressByTestIdAsync('sized-services.row.web.open');
+        expect(open).toHaveBeenCalledWith(target);
+    });
+});
+
 describe('Changes glance', () => {
+    it('recomposes compact and tall sizes without losing the real changed total or review action', async () => {
+        const summary = buildSessionScmSummary(snapshot())!;
+        const review = vi.fn();
+        const render = (size: 'small' | 'tall', rowSpan: number) => <WidgetPresentationProvider value={{ size,
+            footprint: { columns: 2, columnSpan: 1, rowSpan, height: size === 'small' ? 'compact' : 'tall', width: 'half' } }}>
+            <ChangesGlanceView testID="sized-changes" frameStyle="plain" state={{ kind: 'ready', summary }} onReviewChanges={review} />
+        </WidgetPresentationProvider>;
+        const screen = await renderScreen(render('small', 1));
+        expect(screen.findAll(node => node.props?.testID === 'sized-changes.file')).toHaveLength(1);
+        expect(screen.getTextContent()).toContain('widgetGlances.moreFiles');
+        await screen.update(render('tall', 4));
+        expect(screen.findAll(node => node.props?.testID === 'sized-changes.file')).toHaveLength(5);
+        await screen.pressByTestIdAsync('sized-changes.open');
+        expect(review).toHaveBeenCalledOnce();
+    });
     it('offers walkthrough beside review without replacing the review footer', async () => {
         const review = vi.fn();
         const walk = vi.fn();

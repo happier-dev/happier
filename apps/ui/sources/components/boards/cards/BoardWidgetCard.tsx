@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { View, type LayoutChangeEvent } from 'react-native';
-import type { WorkBoardWidgetIntentV1, WorkBoardWidgetPlacementV1 } from '@happier-dev/protocol';
-import type { WidgetInputBindingsV1 } from '@happier-dev/protocol/widgets';
+import { type WorkBoardWidgetIntentV1, type WorkBoardWidgetPlacementV1 } from '@happier-dev/protocol';
+import { resolveWidgetSizeChoicesV1, type WidgetInputBindingsV1, type WidgetSizeV1 } from '@happier-dev/protocol/widgets';
+import { getWidgetSizeFootprintV1 } from '@happier-dev/protocol/widgets';
 
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
@@ -9,13 +10,13 @@ import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { WidgetFrame } from '@/components/widgets/frame/WidgetFrame';
 import { useWidgetFrameRename } from '@/components/widgets/frame/useWidgetFrameRename';
 import { useWidgetFrameSurfaceDefault } from '@/components/widgets/frame/useWidgetFrameStyle';
-import { buildWidgetDefinitionActions, buildWidgetFrameStyleActions, buildWidgetInstanceActions, buildWidgetMoveActions, orderWidgetMenu } from '@/components/widgets/frame/widgetFrameMenu';
+import { buildWidgetDefinitionActions, buildWidgetFrameStyleActions, buildWidgetInstanceActions, buildWidgetMoveActions, buildWidgetSizeActions, orderWidgetMenu } from '@/components/widgets/frame/widgetFrameMenu';
+import { renderWidgetSizeMenuSection, stepWidgetSizeControl, type WidgetSizeControl } from '@/components/widgets/frame/WidgetSizeControl';
 import { useWidgetInputsEditor } from '@/components/widgets/surface/useWidgetInputsEditor';
 import { useWidgetDefinitionFlows } from '@/components/widgets/definitions/useWidgetDefinitionFlows';
 import { useWidgetInstanceBindingLabel } from '@/components/widgets/surface/useWidgetInstanceBindingLabel';
 import { WidgetSurface } from '@/components/widgets/surface/WidgetSurface';
-import { readWidgetDescriptor, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
-import { useWidgetInstanceDescriptor } from '@/components/widgets/surface/useWidgetInstanceDescriptor';
+import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { t } from '@/text';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 
@@ -25,7 +26,7 @@ import type { WorkBoardSaveOutcome } from '../model/workBoardSaveQueue';
 type WidgetEdit =
     | Readonly<{ kind: 'widget_inputs'; bindings: WidgetInputBindingsV1 }>
     | Readonly<{ kind: 'widget_rename'; displayName: string | null }>
-    | Readonly<{ kind: 'widget_width'; width: 1 | 2 }>
+    | Readonly<{ kind: 'widget_size'; size: WidgetSizeV1 }>
     | Readonly<{ kind: 'widget_frame'; frameStyle: 'card' | 'plain' | null }>
     | Readonly<{ kind: 'widget_move'; toIndex: number }>
     | Readonly<{ kind: 'widget_remove' }>;
@@ -37,6 +38,9 @@ const ALWAYS_OVERFLOW = Number.POSITIVE_INFINITY;
 export type BoardWidgetCardProps = Readonly<{
     boardId: string;
     placement: WorkBoardWidgetPlacementV1;
+    /** The parent's current header projection, shared with Canvas sizing. */
+    descriptor: WidgetCandidate | null;
+    size: WidgetSizeV1;
     /** This copy's place among the Board's widgets, for Move earlier / later. */
     index: number;
     count: number;
@@ -54,19 +58,17 @@ export type BoardWidgetCardProps = Readonly<{
 /**
  * One configured widget on a WorkBoard (lab `dashboards` L1, dbind E): the shared widget frame and
  * instance body, named by its binding in the source slot, with the widget ⋯ — Edit inputs…, Rename,
- * Width (one or two cards), Move, the frame override and Remove. Each entry writes this copy only,
+ * Size, Move, the frame override and Remove. Each entry writes this copy only,
  * through the Board's one WorkBoard intent owner.
  */
 export const BoardWidgetCard = React.memo(function BoardWidgetCard(props: BoardWidgetCardProps) {
     const { placement, boardId, dispatch } = props;
     const { instance } = placement;
     const appRuntime = useAppShellPluginUiProjection();
-    const installedCandidate = React.useMemo(
-        () => readWidgetDescriptor(appRuntime.pluginUiProjection, instance.definition),
-        [appRuntime.pluginUiProjection, instance.definition],
-    );
     const scope = placement.ref.surface;
-    const candidate = useWidgetInstanceDescriptor(scope, instance, installedCandidate);
+    const candidate = props.descriptor;
+    const size = props.size;
+    const widgetPresentation = React.useMemo(() => ({ size, footprint: getWidgetSizeFootprintV1('workBoard', size)! }), [size]);
     const edit = React.useCallback((change: WidgetEdit) => dispatch({ ...change, boardId, ref: placement.ref }), [boardId, dispatch, placement.ref]);
     const setInputs = React.useCallback(async (bindings: WidgetInputBindingsV1) => {
         const outcome = await edit({ kind: 'widget_inputs', bindings });
@@ -91,16 +93,17 @@ export const BoardWidgetCard = React.memo(function BoardWidgetCard(props: BoardW
     const surfaceDefault = useWidgetFrameSurfaceDefault('board');
     const frameStyle = placement.frameStyle ?? surfaceDefault;
 
+    const choices = resolveWidgetSizeChoicesV1('workBoard', candidate?.sizeDeclaration);
+    const sizeControl: WidgetSizeControl | undefined = candidate && choices.defaultSize ? {
+        surface: 'workBoard', sizes: choices.sizes,
+        size,
+        onSet: size => { void edit({ kind: 'widget_size', size }); },
+    } : undefined;
     const actions = React.useMemo((): ItemAction[] => {
-        const width = { id: 'width', title: t('widgetAdd.width') } as const;
         return orderWidgetMenu({
             instance: buildWidgetInstanceActions({ editInputs: inputs.editInputs, onRename: rename.begin }),
-            // One card column or two (lab Q8): the Canvas width step; By status and phones keep one column.
-            width: ([1, 2] as const).map((span): ItemAction => ({
-                id: `width-${span}`, title: span === 1 ? t('boards.widgets.widthOne') : t('boards.widgets.widthTwo'),
-                icon: span === 1 ? 'square' : 'square-split-horizontal', selected: placement.width === span, group: width,
-                onPress: () => { if (placement.width !== span) void edit({ kind: 'widget_width', width: span }); },
-            })),
+            // The same declaration-filtered variants; the Canvas and grid retain their layout owners.
+            size: buildWidgetSizeActions(sizeControl),
             frame: buildWidgetFrameStyleActions({
                 placement: 'board', surfaceDefault, override: placement.frameStyle ?? null,
                 onSet: (style) => { void edit({ kind: 'widget_frame', frameStyle: style }); },
@@ -115,7 +118,7 @@ export const BoardWidgetCard = React.memo(function BoardWidgetCard(props: BoardW
             remove: [{ id: 'remove', title: t('boards.widgets.remove'), icon: 'trash', destructive: true,
                 onPress: () => { void edit({ kind: 'widget_remove' }); } }],
         });
-    }, [definition.about, edit, inputs.editInputs, placement.frameStyle, placement.width, props.count, props.index, rename.begin, surfaceDefault]);
+    }, [definition.about, edit, inputs.editInputs, placement.frameStyle, sizeControl, props.count, props.index, rename.begin, surfaceDefault]);
 
     // Leaving the Board keeps each card's place: the body's last height stays while it holds no reads.
     const [bodyHeight, setBodyHeight] = React.useState(0);
@@ -133,12 +136,13 @@ export const BoardWidgetCard = React.memo(function BoardWidgetCard(props: BoardW
                 providedContext={NO_CONTEXT}
                 recordRevision={stableJsonStringify(instance)}
                 presentation="content"
+                size={size}
                 appRuntime={appRuntime}
                 {...(inputs.onRepairInputs ? { onRepairInputs: inputs.onRepairInputs } : {})}
                 testID={`${props.testID}.widget`}
             /></View>
         ) : <View testID={`${props.testID}.deferred`} style={{ minHeight: bodyHeight }} />,
-    }), [appRuntime, bodyHeight, candidate, inputs.onRepairInputs, instance, onBodyLayout, props.active, props.testID, scope]);
+    }), [appRuntime, bodyHeight, candidate, inputs.onRepairInputs, instance, onBodyLayout, props.active, props.testID, scope, size]);
 
     return (
         <>
@@ -146,6 +150,7 @@ export const BoardWidgetCard = React.memo(function BoardWidgetCard(props: BoardW
                 testID={props.testID}
                 frameStyle={frameStyle}
                 placement="board"
+                widgetPresentation={widgetPresentation}
                 mark={candidate?.icon ?? 'squares-four'}
                 title={rename.field ?? title}
                 source={bindingLabel ?? candidate?.pluginName}
@@ -158,6 +163,8 @@ export const BoardWidgetCard = React.memo(function BoardWidgetCard(props: BoardW
                                 compactActionIds={[]}
                                 overflowTriggerTestID={`${props.testID}.menu`}
                                 overflowTriggerAccessibilityLabel={t('boards.widgets.menuA11y', { widget: title })}
+                                onOverflowTriggerKeyDown={key => stepWidgetSizeControl(sizeControl, key)}
+                                renderOverflowSection={({ id }) => renderWidgetSizeMenuSection(sizeControl, id, `${props.testID}.size`)}
                                 actions={actions}
                             />
                         </View>

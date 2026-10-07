@@ -1,7 +1,8 @@
 import { act } from 'react';
 import { describe, expect, it } from 'vitest';
 
-import { DataTable, Metric } from '../../components/Data.js';
+import { Chart, DataTable, Metric } from '../../components/Data.js';
+import { WidgetPresentationProvider } from '../../components/WidgetPresentation.js';
 import { PluginUiProvider } from '../../components/PluginUiProvider.js';
 import { mountThroughReactNativeWeb } from '../../rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from '../../surfaceFixture.testSupport.js';
@@ -17,6 +18,28 @@ function layout(element: Element | null, width: number) {
 }
 
 describe('public data nodes through React Native Web', () => {
+  it('recomposes the same chart for compact and tall measured widget viewports without dropping or hiding points', async () => {
+    const context = createSurfaceContext();
+    const points = [{ x: 'Mon', y: 214 }, { x: 'Tue', y: 236 }, { x: 'Wed', y: 183 }];
+    const render = (height: number, rowSpan: number) => <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+      <WidgetPresentationProvider value={{ size: rowSpan === 1 ? 'small' : 'tall',
+        footprint: { columns: 2, columnSpan: 1, rowSpan, height: rowSpan === 1 ? 'compact' : 'tall', width: 'half' },
+        geometry: { width: 350, height } }}>
+        <Chart testID="sized-chart" label="Signups" style="bar" points={points} />
+      </WidgetPresentationProvider>
+    </PluginUiProvider>;
+    const mount = mountThroughReactNativeWeb(render(96, 1));
+    try {
+      const chart = query(mount.container, 'sized-chart')!;
+      const bar = query(mount.container, 'sized-chart-bar-1')!.firstElementChild as HTMLElement;
+      const compactHeight = Number.parseFloat(bar.style.height);
+      await mount.render(render(384, 4));
+      expect(Number.parseFloat(bar.style.height)).toBeGreaterThan(compactHeight);
+      expect(query(mount.container, 'sized-chart')).toBe(chart);
+      expect(mount.container.querySelectorAll('[data-testid^="sized-chart-bar-"]')).toHaveLength(3);
+      expect(chart.getAttribute('aria-label')).toBe('Signups: Mon 214, Tue 236, Wed 183');
+    } finally { mount.unmount(); }
+  });
   it('shows the status mark and announces its label for every CI row', () => {
     const context = createSurfaceContext();
     const mount = mountThroughReactNativeWeb(<HappierDataRows testID="checks" theme={context.theme}

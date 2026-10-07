@@ -5,7 +5,7 @@ import { WidgetInstanceRefV1Schema as InstanceRefSchema, WidgetInstanceV1Schema 
 const WidgetInstanceRefV1Schema = z.lazy(() => InstanceRefSchema);
 const WidgetInstanceV1Schema = z.lazy(() => InstanceSchema);
 const WidgetInputBindingsV1Schema = z.lazy(() => BindingsSchema);
-import { WidgetExpectedPresentationV1Schema } from '../widgets/widgetPresentationV1.js';
+import { WidgetExpectedPresentationV1Schema, WidgetGridSizeV1Schema, WIDGET_SIZE_POLICY_V1 } from '../widgets/widgetPresentationV1.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
@@ -74,9 +74,11 @@ export const WorkBoardPositionV1Schema = z.object({
 }).strict();
 export type WorkBoardPositionV1 = Readonly<{ x: number; y: number }>;
 
+export const WorkBoardWidgetSizeV1Schema = WidgetGridSizeV1Schema;
+const defaultWidgetSize = WIDGET_SIZE_POLICY_V1.workBoard.defaultSize;
 export const WorkBoardWidgetPlacementV1Schema = z.object({
     kind: z.literal('widget'), ref: WidgetInstanceRefV1Schema,
-    instance: WidgetInstanceV1Schema, width: z.union([z.literal(1), z.literal(2)]).default(1),
+    instance: WidgetInstanceV1Schema, size: WorkBoardWidgetSizeV1Schema.default(defaultWidgetSize),
     frameStyle: z.enum(['card', 'plain']).optional(),
 }).strict().refine(value => value.ref.surface.owner.kind === 'workBoard' && value.ref.instanceId === value.instance.id,
     'Widget placement must name its configured WorkBoard instance');
@@ -412,14 +414,14 @@ const WorkBoardMembershipV1Schema = z.object({
 const widgetTarget = { boardId: IdentifierSchema, ref: WidgetInstanceRefV1Schema };
 export const WorkBoardWidgetIntentV1Schema = z.discriminatedUnion('kind', [
     z.object({ ...widgetTarget, kind: z.literal('widget_add'), instance: WidgetInstanceV1Schema,
-        width: z.union([z.literal(1), z.literal(2)]).optional(), frameStyle: z.enum(['card', 'plain']).optional(),
+        size: WorkBoardWidgetSizeV1Schema.optional(), frameStyle: z.enum(['card', 'plain']).optional(),
         toIndex: z.number().int().nonnegative().optional(), nativeIndex: z.number().int().nonnegative().optional(),
         position: WorkBoardPositionV1Schema.optional() }).strict(),
     z.object({ ...widgetTarget, kind: z.literal('widget_remove'), expectedInstance: WidgetInstanceV1Schema.optional(),
         expectedPresentation: WidgetExpectedPresentationV1Schema.optional() }).strict(),
     z.object({ ...widgetTarget, kind: z.literal('widget_move'), toIndex: z.number().int().nonnegative().optional(),
         nativeIndex: z.number().int().nonnegative().optional() }).strict().refine(value => (value.toIndex === undefined) !== (value.nativeIndex === undefined)),
-    z.object({ ...widgetTarget, kind: z.literal('widget_width'), width: z.union([z.literal(1), z.literal(2)]) }).strict(),
+    z.object({ ...widgetTarget, kind: z.literal('widget_size'), size: WorkBoardWidgetSizeV1Schema }).strict(),
     z.object({ ...widgetTarget, kind: z.literal('widget_frame'), frameStyle: z.enum(['card', 'plain']).nullable() }).strict(),
     z.object({ ...widgetTarget, kind: z.literal('widget_rename'), displayName: IdentifierSchema.nullable() }).strict(),
     z.object({ ...widgetTarget, kind: z.literal('widget_inputs'), bindings: WidgetInputBindingsV1Schema }).strict(),
@@ -554,7 +556,7 @@ function applyWorkBoardWidgetIntentV1(boards: WorkBoardsV1, intent: WorkBoardWid
         if (intent.kind === 'widget_add') {
             if (current) throw new WorkBoardWidgetMutationErrorV1('widget_instance_already_exists');
             if (intent.instance.id !== intent.ref.instanceId) throw new WorkBoardWidgetMutationErrorV1('widget_placement_unsupported');
-            widgets.push({ kind: 'widget', ref: intent.ref, instance: intent.instance, width: intent.width ?? 1,
+            widgets.push({ kind: 'widget', ref: intent.ref, instance: intent.instance, size: intent.size ?? defaultWidgetSize,
                 ...(intent.frameStyle ? { frameStyle: intent.frameStyle } : {}) });
             insert(intent.nativeIndex, intent.toIndex);
             return { ...board, widgets, itemOrder, positionsByItemRef: { ...board.positionsByItemRef,
@@ -565,7 +567,7 @@ function applyWorkBoardWidgetIntentV1(boards: WorkBoardsV1, intent: WorkBoardWid
             case 'widget_remove': {
                 if (intent.expectedInstance && !sameStrictJsonValue(current.instance, intent.expectedInstance)) throw new WorkBoardWidgetMutationErrorV1('widget_instance_changed');
                 if (intent.expectedPresentation && !sameStrictJsonValue(intent.expectedPresentation, {
-                    nativeIndex: itemOrder.indexOf(key), width: current.width === 2 ? 'full' : 'half', frameStyle: current.frameStyle ?? null,
+                    nativeIndex: itemOrder.indexOf(key), size: current.size, frameStyle: current.frameStyle ?? null,
                     ...(intent.expectedPresentation.canvasPosition !== undefined ? { canvasPosition: board.positionsByItemRef[key]
                         ? [board.positionsByItemRef[key]!.x, board.positionsByItemRef[key]!.y] : null } : {}),
                 })) throw new WorkBoardWidgetMutationErrorV1('widget_placement_changed');
@@ -574,7 +576,7 @@ function applyWorkBoardWidgetIntentV1(boards: WorkBoardsV1, intent: WorkBoardWid
                 return { ...board, widgets, itemOrder, positionsByItemRef };
             }
             case 'widget_move': insert(intent.nativeIndex, intent.toIndex); break;
-            case 'widget_width': widgets[index] = { ...current, width: intent.width }; break;
+            case 'widget_size': widgets[index] = { ...current, size: intent.size }; break;
             case 'widget_frame': {
                 const { frameStyle: _old, ...rest } = current;
                 widgets[index] = { ...rest, ...(intent.frameStyle ? { frameStyle: intent.frameStyle } : {}) }; break;

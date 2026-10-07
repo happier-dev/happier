@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import { MeterBar } from '@/components/ui/lists/MeterBar';
 import { I18nManager, Platform, Pressable, View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
@@ -540,17 +541,20 @@ export const SessionSummaryCard = React.memo(function SessionSummaryCard(props: 
 }>) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
+    const widgetPresentation = useWidgetPresentation();
     const reducedMotion = useReducedMotionPreference();
     const testID = props.testID ?? 'session-companion-summary';
     const { model } = props;
     const visible = React.useMemo(
         () => resolveSessionSummaryDetailRows(
             model,
-            props.presentation === 'full' || !props.onOpenFullSurface
+            widgetPresentation?.footprint.height === 'compact' && props.onOpenFullSurface
+                ? { kind: 'widgetSummary' }
+                : props.presentation === 'full' || !props.onOpenFullSurface
                 ? { kind: 'full' }
                 : { kind: 'card', density: props.density },
         ),
-        [props.density, model, props.onOpenFullSurface, props.presentation],
+        [props.density, model, props.onOpenFullSurface, props.presentation, widgetPresentation?.footprint.height],
     );
     const approvalCount = React.useMemo(() => (
         model.rows.find((row) => row.kind === 'approvals')?.count ?? 0

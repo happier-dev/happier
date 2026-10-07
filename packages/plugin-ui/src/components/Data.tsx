@@ -5,6 +5,7 @@ import { HappierDataRows, HappierDataTable, type HappierDataRowsProps } from '..
 import type { HappierDataColumn, HappierDataPoint, HappierDataValue } from '../presentation/data/dataModel.js';
 import { HappierDataMetric, type HappierDataMetricComparison } from '../presentation/data/Metric.js';
 import { usePluginTheme } from './PluginUiProvider.js';
+import { useWidgetPresentation } from './WidgetPresentation.js';
 
 /**
  * The native data nodes for executable plugin surfaces: the very components Happier's own widgets
@@ -54,5 +55,6 @@ export type ChartProps = Readonly<{
 
 /** One series: bars for counts per period, a line for a rate. */
 export function Chart(props: ChartProps): ReactElement {
-  return <HappierDataChart {...props} theme={usePluginTheme()} />;
+  const presentation = useWidgetPresentation();
+  return <HappierDataChart {...props} theme={usePluginTheme()} viewportHeight={presentation?.geometry?.height} />;
 }

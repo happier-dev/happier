@@ -43,7 +43,9 @@ describe('Companion widget Action adapter', () => {
             // The current-client transport boundary acknowledges the real preference reducer.
             applyPresentation: async (_surface, intent) => {
                 if (intent.kind === 'companion.instance.inputs.set') preference = setSessionCompanionInstanceInputs(preference, intent.instanceId, intent.bindings);
-                if (intent.kind === 'companion.item.remove') preference = removeSessionCompanionItem(preference, intent.item);
+                if (intent.kind === 'companion.item.remove') preference = removeSessionCompanionItem(preference, intent.item,
+                    intent.expectedInstance ? { expectedInstance: intent.expectedInstance,
+                        ...(intent.expectedPresentation ? { expectedPresentation: intent.expectedPresentation } : {}) } : undefined);
                 if (intent.kind === 'companion.item.add') preference = addSessionCompanionItem(preference, intent.item, intent.index);
                 return { ok: true, result: { status: 'applied', revision: 'acknowledged' } };
             },
@@ -51,7 +53,14 @@ describe('Companion widget Action adapter', () => {
         expect(await port.read(surface, {})).toMatchObject({ instances: [{ instance }], canEdit: true });
         expect(await port.apply(surface, { kind: 'inputs', instanceId: 'copy-a', bindings: { session: { kind: 'value', value: 'session-b' } } }, {})).toMatchObject({ ok: true, result: { instance: { bindings: { session: { kind: 'value', value: 'session-b' } } } } });
         expect(preference.items[0]).toEqual({ kind: 'widget', widgetId: 'shared' });
-        expect(await port.apply(surface, { kind: 'width', instanceId: 'copy-a', width: 'full' }, {})).toMatchObject({ ok: false, errorCode: 'widgets_width_unavailable' });
+        expect(await port.apply(surface, { kind: 'add', instance: { ...instance, id: 'copy-b' }, presentation: { size: 'full' } }, {}))
+            .toMatchObject({ ok: false, errorCode: 'widgets_size_unavailable' });
+        expect(await port.apply(surface, { kind: 'size', instanceId: 'copy-a', size: 'full' }, {}))
+            .toMatchObject({ ok: false, errorCode: 'widgets_size_unavailable' });
+        const currentInstance = { ...instance, bindings: { session: { kind: 'value' as const, value: 'session-b' } } };
+        await port.apply(surface, { kind: 'remove', instanceId: 'copy-a', expectedInstance: currentInstance,
+            expectedPresentation: { frameStyle: null, nativeIndex: 1, size: 'medium' } }, {});
+        expect(preference.items).toEqual([{ kind: 'widget', widgetId: 'shared' }, { kind: 'instance', instance: currentInstance }]);
         expect(await port.apply(surface, { kind: 'add', instance: { ...instance, id: 'copy-b' }, placement: { tabId: 't' } }, {})).toMatchObject({ ok: false, errorCode: 'widgets_placement_unavailable' });
         expect(preference.items).toHaveLength(2);
         current = false;

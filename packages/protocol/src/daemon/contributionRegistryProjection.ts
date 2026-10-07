@@ -2,6 +2,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { InputHintsSchema, InputPathSchema } from '../inputs/inputFields.js';
 import { WidgetConnectedAccountPurposeBindingV1Schema } from '../widgets/widgetConnectedAccountPurposeBindingV1.js';
+import { WidgetSizeDeclarationV1Schema } from '../widgets/widgetPresentationV1.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { PluginHostedHtmlSourceV1Schema } from '../plugins/contributions/ui/hostedHtmlSourceV1.js';
 import { PluginUiHostedHtmlRequestedCapabilitiesV1Schema } from '../plugins/contributions/ui/hostedHtmlCapabilitiesV1.js';
@@ -1983,6 +1984,7 @@ const PluginProjectedUiGenericEntryV2Schema = lazyZodSchema(() => strictProjecte
   'featureGate',
   'badge',
   'home',
+  'sizeDeclaration',
   'inputs',
   'inputSchema',
   'sessionInputPath',
@@ -2014,6 +2016,7 @@ const PluginProjectedUiGenericEntryV2Schema = lazyZodSchema(() => strictProjecte
   sessionInputPath: InputPathSchema.optional(),
   connectedAccountPurposeBindings: z.array(WidgetConnectedAccountPurposeBindingV1Schema).optional(),
   resources: z.array(PluginContributionIdentityV1Schema).optional(),
+  sizeDeclaration: WidgetSizeDeclarationV1Schema.optional(),
   container: PluginUiContainerV1Schema.optional(),
   identity: PluginContributionIdentityV1Schema.optional(),
   viewer: OpenableContentViewerSelectorV1Schema.optional(),
@@ -2031,6 +2034,10 @@ const PluginProjectedUiGenericEntryV2Schema = lazyZodSchema(() => strictProjecte
   serverIdentityId: PluginMachineExecutionOriginV1Schema.shape.serverIdentityId.optional(),
   materializationRef: PluginMachineExecutionOriginV1Schema.shape.materializationRef.optional(),
 }).strict().superRefine((value, context) => {
+  const isWidget = value.contributionKind === 'surfacePlacement' && value.binding?.kind === 'inline' && value.binding.role === 'widget';
+  if (isWidget !== (value.sizeDeclaration !== undefined)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['sizeDeclaration'], message: 'Only widget Views require a useful size declaration.' });
+  }
   if (value.resources !== undefined && (value.contributionKind !== 'surfacePlacement'
     || value.binding?.kind !== 'inline' || value.binding.role !== 'widget'
     || value.resources.some(resource => resource.pluginId !== value.pluginId))) {

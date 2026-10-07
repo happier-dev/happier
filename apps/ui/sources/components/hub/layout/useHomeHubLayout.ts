@@ -1,10 +1,12 @@
 import * as React from 'react';
 import type { HomeHubLayoutIntent } from '@happier-dev/protocol/home';
-import type { WidgetInstanceV1, WidgetInputBindingsV1 } from '@happier-dev/protocol/widgets';
+import { isSameWidgetDefinitionV1, widgetCandidateDefinitionV1, type WidgetInstanceV1, type WidgetInputBindingsV1, type WidgetSizeV1 } from '@happier-dev/protocol/widgets';
 import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { resolveHomeHubLayout, listHiddenHomeSetupSteps, HOME_HUB_BUILTIN_DEFINITIONS, type HomeHubSection } from './homeHubLayout';
 import { useHomeWidgetCandidates } from './useHomeWidgetCandidates';
 import { useHomeHubArtifactLayout } from './useHomeHubArtifactLayout';
+import { useWidgetInstanceDescriptors } from '@/components/widgets/surface/useWidgetInstanceDescriptor';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 
 export type HomeHubLayout = Readonly<{
     sections: readonly HomeHubSection<WidgetCandidate>[];
@@ -23,18 +25,26 @@ export type HomeHubLayout = Readonly<{
     setFrameStyle: (id: string, style: 'card' | 'plain' | null) => Promise<void>;
     showHiddenSetupSteps: () => Promise<void>;
     reset: () => Promise<void>;
-    addInstance: (instance: WidgetInstanceV1) => Promise<void>;
+    addInstance: (instance: WidgetInstanceV1, size?: WidgetSizeV1) => Promise<void>;
     remove: (instanceId: string) => Promise<void>;
     rename: (instanceId: string, displayName?: string) => Promise<void>;
     setInputs: (instanceId: string, bindings: WidgetInputBindingsV1) => Promise<void>;
-    setWidth: (instanceId: string, width: 'half' | 'full') => Promise<void>;
+    setSize: (instanceId: string, size: WidgetSizeV1) => Promise<void>;
 }>;
 /** Projection only: acknowledged Account Artifact layout plus stable, unpersisted defaults. */
 export function useHomeHubLayout(): HomeHubLayout {
     const state = useHomeHubArtifactLayout();
     const widgets = useHomeWidgetCandidates();
     const layout = state.layout;
-    const resolved = React.useMemo(() => resolveHomeHubLayout(layout, HOME_HUB_BUILTIN_DEFINITIONS, widgets), [layout, widgets]);
+    const scope = useActiveServerAccountScope();
+    const descriptors = useWidgetInstanceDescriptors(scope, layout.instances, widgets);
+    const layoutWidgets = React.useMemo(() => {
+        const next = [...widgets];
+        for (const descriptor of descriptors) if (descriptor && !next.some(widget =>
+            isSameWidgetDefinitionV1(widgetCandidateDefinitionV1(widget), widgetCandidateDefinitionV1(descriptor)))) next.push(descriptor);
+        return next;
+    }, [widgets, descriptors]);
+    const resolved = React.useMemo(() => resolveHomeHubLayout(layout, HOME_HUB_BUILTIN_DEFINITIONS, layoutWidgets), [layout, layoutWidgets]);
     const write = state.dispatch;
     const dispatch = React.useCallback((intent: HomeHubLayoutIntent) => write(intent, { rethrow: true }), [write]);
     return React.useMemo(() => ({
@@ -50,10 +60,10 @@ export function useHomeHubLayout(): HomeHubLayout {
         setFrameStyle: (sectionId, frameStyle) => dispatch({ kind: 'frameStyle', sectionId, frameStyle }),
         showHiddenSetupSteps: () => dispatch({ kind: 'restore_setup' }),
         reset: () => dispatch({ kind: 'reset' }),
-        addInstance: instance => dispatch({ kind: 'widget_add', instance }),
+        addInstance: (instance, size) => dispatch({ kind: 'widget_add', instance, ...(size ? { size } : {}) }),
         remove: instanceId => dispatch({ kind: 'widget_remove', instanceId }),
         rename: (instanceId, displayName) => dispatch({ kind: 'widget_rename', instanceId, ...(displayName ? { displayName } : {}) }),
         setInputs: (instanceId, bindings) => dispatch({ kind: 'widget_inputs', instanceId, bindings }),
-        setWidth: (instanceId, width) => dispatch({ kind: 'widget_width', instanceId, width }),
+        setSize: (instanceId, size) => dispatch({ kind: 'widget_size', instanceId, size }),
     }), [dispatch, layout, resolved, state.cancelFailedIntent, state.errorCode, state.failedIntent, state.retry, state.status]);
 }

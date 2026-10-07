@@ -4,11 +4,46 @@ import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportD
 import { createCliWidgetInputActionDepsV1 } from './widgetInputActionDeps';
 
 describe('CLI widget existing viewer purpose selection', () => {
+    it('follows exact native owner B context while an explicit C pin still selects current C metadata', async () => {
+        const identity = { pluginId: 'acme.exact-target', localId: 'widget' };
+        const descriptor = (sessionId: string) => ({ surface: identity, availability: 'available' as const, sessionInputPath: 'session',
+            sizeDeclaration: { sizes: [sessionId === 'B' ? 'tall' : 'full'], defaultSize: sessionId === 'B' ? 'tall' : 'full' } satisfies import('@happier-dev/protocol/widgets').WidgetSizeDeclarationV1,
+            inputs: { fields: [{ path: 'session', title: 'Session', widget: 'json' as const }] },
+            inputSchema: { type: 'object' as const, properties: { session: { type: 'object' as const } }, additionalProperties: false } });
+        const deps = createCliWidgetInputActionDepsV1({ serverId: 'home', accountId: 'account', getDeps: createUnavailableActionTransportDeps,
+            readCandidates: async (_signal, session) => session ? [descriptor(session.sessionId)] : [], validateSession: async () => true });
+        const request = { ref: { surface: { serverId: 'home', accountId: 'account', owner: { kind: 'sessionBoard' as const, sessionId: 'B' } }, instanceId: 'copy' },
+            instance: { v: 1 as const, id: 'copy', definition: { kind: 'installed' as const, surface: identity },
+                bindings: { session: { kind: 'context' as const, slot: 'session' } } }, context: { surface: 'cli' as const } };
+        expect(await deps.widgetInputs!.resolve(request)).toMatchObject({ status: 'ready', input: { session: { serverId: 'home', sessionId: 'B' } } });
+        expect(await deps.widgetInputs!.readSizeDeclaration(request)).toEqual({ sizes: ['tall'], defaultSize: 'tall' });
+        expect(await deps.widgetInputs!.readSizeDeclaration({ ...request, instance: { ...request.instance,
+            bindings: { session: { kind: 'value', value: { serverId: 'home', sessionId: 'C' } } } } })).toEqual({ sizes: ['full'], defaultSize: 'full' });
+    });
+    it('discovers only the exact declared pinned Session for a B-only widget and refuses wrong-path or competing pins', async () => {
+        const surface = { serverId: 'home', accountId: 'account', owner: { kind: 'sessionBoard' as const, sessionId: 'A' } };
+        const identity = { pluginId: 'acme.b-only', localId: 'widget' };
+        const descriptor = (path: string) => ({ surface: identity, availability: 'available' as const, sessionInputPath: path,
+            sizeDeclaration: { sizes: ['tall'], defaultSize: 'tall' } satisfies import('@happier-dev/protocol/widgets').WidgetSizeDeclarationV1,
+            inputs: { fields: [{ path, title: 'Session', widget: 'select' as const }] },
+            inputSchema: { type: 'object' as const, properties: { [path]: { type: 'object' as const } }, required: [path], additionalProperties: false } });
+        const deps = createCliWidgetInputActionDepsV1({ serverId: 'home', accountId: 'account', getDeps: createUnavailableActionTransportDeps,
+            readCandidates: async (_signal, session) => session?.sessionId === 'B' ? [descriptor('session')]
+                : session?.sessionId === 'C' ? [descriptor('other')] : [], validateSession: async session => ['B', 'C'].includes(session.sessionId) });
+        const request = { ref: { surface, instanceId: 'copy' }, instance: { v: 1 as const, id: 'copy',
+            definition: { kind: 'installed' as const, surface: identity }, bindings: { session: { kind: 'value' as const, value: { serverId: 'home', sessionId: 'B' } } } },
+            context: { surface: 'cli' as const } };
+        expect(await deps.widgetInputs!.resolve(request)).toMatchObject({ status: 'ready', input: { session: { serverId: 'home', sessionId: 'B' } } });
+        expect(await deps.widgetInputs!.readSizeDeclaration(request)).toEqual({ sizes: ['tall'], defaultSize: 'tall' });
+        expect(await deps.widgetInputs!.readSizeDeclaration({ ...request, instance: { ...request.instance, bindings: { wrong: request.instance.bindings.session } } })).toBeNull();
+        expect(await deps.widgetInputs!.readSizeDeclaration({ ...request, instance: { ...request.instance, bindings: {
+            ...request.instance.bindings, other: { kind: 'value', value: { serverId: 'home', sessionId: 'C' } } } } })).toBeNull();
+    });
     it('resolves each authenticated principal own current selection and clears missing or revoked selections', async () => {
         const surface = { pluginId: 'acme.metrics', localId: 'widget' };
         const consumer = { pluginId: surface.pluginId, localId: 'metrics' };
         const service = { pluginId: surface.pluginId, localId: 'cloud' };
-        const candidate = { surface, availability: 'available' as const, resources: [consumer],
+        const candidate = { surface, sizeDeclaration: { sizes: ['medium', 'full'], defaultSize: 'medium' } satisfies import('@happier-dev/protocol/widgets').WidgetSizeDeclarationV1, availability: 'available' as const, resources: [consumer],
             connectedAccountDescriptors: [ConnectedAccountUiProjectionEntryV1Schema.parse({ id: service.localId, pluginId: service.pluginId, serviceId: service.localId,
                 provenance: 'external', sourceKind: 'installed', title: 'Cloud', capabilities: [], diagnostics: [], availability: { state: 'available', reason: 'resolved' },
                 authentication: { defaultModeId: 'token', modes: [{ id: 'token', kind: 'oauthDeviceCode', outcomeReconciliation: 'none' }] } })],
@@ -19,7 +54,7 @@ describe('CLI widget existing viewer purpose selection', () => {
             inputSchema: { type: 'object' as const, properties: { connection: { type: 'object' as const, properties: {
                 service: { type: 'object' as const, properties: { pluginId: { type: 'string' as const }, localId: { type: 'string' as const } }, required: ['pluginId', 'localId'], additionalProperties: false },
                 accountId: { type: 'string' as const } }, required: ['service', 'accountId'], additionalProperties: false } }, additionalProperties: false } };
-        const admitted = PluginUiViewV2Schema.parse({ id: surface.localId, renderer: 'native', container: 'widget', target: { kind: 'app' },
+        const admitted = PluginUiViewV2Schema.parse({ sizeDeclaration: candidate.sizeDeclaration, id: surface.localId, renderer: 'native', container: 'widget', target: { kind: 'app' },
             inputs: candidate.inputs, inputSchema: candidate.inputSchema, resources: candidate.resources,
             connectedAccountPurposeBindings: candidate.connectedAccountPurposeBindings });
         expect(admitted).toMatchObject({ inputs: candidate.inputs, inputSchema: candidate.inputSchema });
@@ -34,7 +69,7 @@ describe('CLI widget existing viewer purpose selection', () => {
                 getDeps: () => ({ ...createUnavailableActionTransportDeps(), ...deps,
                     widgetAccountScope: () => ({ serverId: 'home', accountId }),
                     widgetCatalog: { list: async () => [{ definition: { kind: 'installed', surface }, title: 'Metrics',
-                        fields: candidate.inputs.fields, availability: 'available', instanceCount: 0 }] },
+                        fields: candidate.inputs.fields, sizeDeclaration: candidate.sizeDeclaration, availability: 'available', instanceCount: 0 }] },
                 }), readCandidates: async () => [{ ...candidate,
                     resourceDeclarations: retired ? [] : candidate.resourceDeclarations }], validateSession: async () => true,
                 // Authenticated profile/settings transport is the boundary; purpose admission and binding remain real.

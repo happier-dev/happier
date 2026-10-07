@@ -76,15 +76,18 @@ const scope = { serverId: 'home-a', accountId: 'account-a' } as const;
 const surface = { ...scope, owner: { kind: 'workBoard', boardId: 'b1' } } as const;
 const work: BoardItemRefV1 = { kind: 'session', qualifiedId: { serverId: 'home-a', id: 'checkout' } };
 const CHECKS: WidgetCandidate = {
+    sizeDeclaration: { sizes: ['medium', 'full'], defaultSize: 'medium' },
     surface: { pluginId: 'acme.ci', localId: 'checks' }, key: 'acme.ci/checks', title: 'Checks', pluginName: 'CI',
     sharedPluginName: false, icon: 'check-circle', homeDefault: 'available', target: 'app',
     inputs: { fields: [{ path: 'branch', title: 'Branch', widget: 'text' }] },
 };
 const NOTES: WidgetCandidate = {
+    sizeDeclaration: { sizes: ['medium', 'full'], defaultSize: 'medium' },
     surface: { pluginId: 'acme.notes', localId: 'status' }, key: 'acme.notes/status', title: 'Notes', pluginName: 'Notes',
     sharedPluginName: false, icon: 'note', homeDefault: 'available', target: 'app',
 };
 const SUMMARY: WidgetCandidate = {
+    sizeDeclaration: { sizes: ['medium', 'full'], defaultSize: 'medium' },
     surface: { pluginId: 'happier.sessions', localId: 'summary' }, key: 'happier.sessions/summary', title: 'Summary',
     pluginName: 'Sessions', sharedPluginName: false, icon: 'chat-circle', homeDefault: 'available', target: 'session',
     sessionInputPath: 'session', inputs: { fields: [{ path: 'session', title: 'Session', widget: 'json', required: true }] },
@@ -93,8 +96,8 @@ const SUMMARY: WidgetCandidate = {
 function copy(id: string, candidate: WidgetCandidate = CHECKS, branch?: string): WidgetInstanceV1 {
     return { v: 1, id, definition: widgetCandidateDefinitionV1(candidate), bindings: branch ? { branch: { kind: 'value', value: branch } } : {} };
 }
-function placement(instance: WidgetInstanceV1, width: 1 | 2 = 1): WorkBoardWidgetPlacementV1 {
-    return { kind: 'widget', ref: { surface, instanceId: instance.id }, instance, width };
+function placement(instance: WidgetInstanceV1, columns: 1 | 2 = 1): WorkBoardWidgetPlacementV1 {
+    return { kind: 'widget', ref: { surface, instanceId: instance.id }, instance, size: columns === 2 ? 'full' : 'medium' };
 }
 const keyOf = (placed: WorkBoardWidgetPlacementV1) => buildWorkBoardWidgetKeyV1(placed.ref);
 
@@ -192,7 +195,7 @@ describe('WorkBoard widgets', () => {
         // A Canvas one column wide draws it one card wide; its saved width is untouched.
         await layout(BOARD_CANVAS_METRICS.cardWidthPx + BOARD_CANVAS_METRICS.paddingPx * 2);
         expect(widthsAround(`board-canvas-widget:${keyOf(board.widgets![1]!)}`)).not.toContain(twoCards);
-        expect(b.board().widgets?.[1]?.width).toBe(2);
+        expect(b.board().widgets?.[1]?.size).toBe('full');
     });
 
     it('places a widget with the shared grip keyboard and accessibility controls, saving its qualified key and keeping the work card', async () => {
@@ -229,20 +232,20 @@ describe('WorkBoard widgets', () => {
         const b = boardStore(boardWith([first, second]));
         await b.store.refresh();
         const screen = await renderScreen(<>
-            <BoardWidgetCard boardId="b1" placement={first} index={0} count={2} dispatch={b.store.queue.dispatch} active={false} testID="board-widget:c1" />
-            <BoardWidgetCard boardId="b1" placement={second} index={1} count={2} dispatch={b.store.queue.dispatch} active={false} testID="board-widget:c2" />
+            <BoardWidgetCard boardId="b1" placement={first} descriptor={CHECKS} size={first.size} index={0} count={2} dispatch={b.store.queue.dispatch} active={false} testID="board-widget:c1" />
+            <BoardWidgetCard boardId="b1" placement={second} descriptor={CHECKS} size={second.size} index={1} count={2} dispatch={b.store.queue.dispatch} active={false} testID="board-widget:c2" />
         </>, { wrapper: Wrapper });
         const actions = (testID: string) => (screen.tree.findAll(node =>
             (node.props as { overflowTriggerTestID?: string }).overflowTriggerTestID === `${testID}.menu`
             && Array.isArray((node.props as { actions?: unknown }).actions)).at(-1)?.props as { actions: ReadonlyArray<{ id: string; selected?: boolean; disabled?: boolean; onPress: () => void }> }).actions;
-        expect(actions('board-widget:c1').map(action => action.id)).toEqual(expect.arrayContaining(['rename', 'width-1', 'width-2', 'moveDown', 'remove']));
-        expect(actions('board-widget:c1').find(action => action.id === 'width-1')?.selected).toBe(true);
+        expect(actions('board-widget:c1').map(action => action.id)).toEqual(expect.arrayContaining(['rename', 'size-medium', 'size-full', 'moveDown', 'remove']));
+        expect(actions('board-widget:c1').find(action => action.id === 'size-medium')?.selected).toBe(true);
         // The first card has no "earlier" entry to show disabled: a step that does nothing is absent.
         expect(actions('board-widget:c1').find(action => action.id === 'moveUp')).toBeUndefined();
         expect(actions('board-widget:c1').at(-1)?.id).toBe('remove');
 
-        await act(async () => { actions('board-widget:c1').find(action => action.id === 'width-2')!.onPress(); });
-        await vi.waitFor(() => expect(b.board().widgets?.map(widget => [widget.instance.id, widget.width])).toEqual([['c1', 2], ['c2', 1]]));
+        await act(async () => { actions('board-widget:c1').find(action => action.id === 'size-full')!.onPress(); });
+        await vi.waitFor(() => expect(b.board().widgets?.map(widget => [widget.instance.id, widget.size])).toEqual([['c1', 'full'], ['c2', 'medium']]));
 
         await act(async () => { actions('board-widget:c1').find(action => action.id === 'remove')!.onPress(); });
         await vi.waitFor(() => expect(b.board().widgets?.map(widget => widget.instance.id)).toEqual(['c2']));
@@ -269,8 +272,8 @@ describe('WorkBoard widgets', () => {
         // A copy is already here: counted, and still offered for another.
         expect(entry(CHECKS.key).count).toBe('on the board ×1');
         const checks = resolveWidgetAddPick(entry(CHECKS.key));
-        expect(checks.kind).toBe('submit');
-        if (checks.kind !== 'submit') return;
+        expect(checks.kind).toBe('setup');
+        if (checks.kind !== 'setup') return;
         await expect(checks.setup.submit(checks.setup.initial)).resolves.toEqual({ ok: true });
         expect(b.board().widgets?.map(widget => widget.instance.id)).toEqual(['c1', added[0]!.id]);
         expect(added[0]!.id).not.toBe('c1');
@@ -278,8 +281,8 @@ describe('WorkBoard widgets', () => {
 
         // A Board has no Session of its own: Summary asks for one instead of borrowing.
         expect(resolveWidgetAddPick(entry(SUMMARY.key)).kind).toBe('setup');
-        // A widget without inputs is a plain pick.
-        expect(resolveWidgetAddPick(entry(NOTES.key)).kind).toBe('pick');
+        // Even without inputs, useful size variants are chosen in the shared setup step.
+        expect(resolveWidgetAddPick(entry(NOTES.key)).kind).toBe('setup');
     });
 
     it('By status leads with the Board’s widgets, in Board order, before the work status groups', async () => {
@@ -296,7 +299,7 @@ describe('WorkBoard widgets', () => {
         expect(unique).toEqual(['board-by-status:column:widgets', 'stub:c2', 'stub:c1', 'board-by-status:column:working']);
     });
 
-    it.each(['rename', 'inputs', 'width', 'frame', 'order', 'position'] as const)(
+    it.each(['rename', 'inputs', 'size', 'frame', 'order', 'position'] as const)(
         'mounted arrival Undo preserves an acknowledged %s edit and removes the untouched arrivals', async (edit) => {
         const mine = placement(copy('mine', CHECKS, 'main'));
         const agentA = placement(copy('agent-a', CHECKS, 'main'));
@@ -325,7 +328,7 @@ describe('WorkBoard widgets', () => {
         const edits: Record<typeof edit, WorkBoardIntentV1> = {
             rename: { ...target, kind: 'widget_rename', displayName: 'Mine now' },
             inputs: { ...target, kind: 'widget_inputs', bindings: { branch: { kind: 'value', value: 'changed' } } },
-            width: { ...target, kind: 'widget_width', width: 2 },
+            size: { ...target, kind: 'widget_size', size: 'full' },
             frame: { ...target, kind: 'widget_frame', frameStyle: 'plain' },
             order: { ...target, kind: 'widget_move', nativeIndex: 0 },
             position: { kind: 'set_positions', boardId: 'b1', positionsByItemRef: { [keyOf(agentA)]: { x: 48, y: 24 } } },

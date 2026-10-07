@@ -24,8 +24,9 @@ import {
     widgetDefinitionOfCandidate,
     widgetSetupFieldsForCandidate,
     type WidgetSurfaceContext,
+    type WidgetSetupCommandResult,
 } from '@/components/widgets/surface/widgetSurfaceSetup';
-import { readBuiltinWidgetDescriptorV1, type WidgetInputBindingsV1, type WidgetInstanceV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
+import { normalizeWidgetSizeForSurfaceV1, readBuiltinWidgetDescriptorV1, type WidgetInputBindingsV1, type WidgetInstanceV1, type WidgetSizeV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 
 import type { WidgetAddAsk, WidgetAddEntry, WidgetAddSection } from './widgetAddModel';
 import { proposeWidgetSetupDraft, type WidgetSetup, type WidgetSetupSubmitResult } from './widgetSetupModel';
@@ -69,7 +70,7 @@ export function buildBoardWidgetAddContent(input: Readonly<{
     /** What the Board fills on its own: its Session ("This session"). */
     context?: WidgetSurfaceContext;
     /** Saved private definitions enter the canonical shared-publication Action, never direct upsert. */
-    publishSavedWidget?: (instance: WidgetInstanceV1) => Promise<WidgetSetupSubmitResult>;
+    publishSavedWidget?: (instance: WidgetInstanceV1, size?: WidgetSizeV1) => Promise<WidgetSetupSubmitResult>;
     /** Opens the plugin catalog ("Find more widgets"). */
     openPlugins: () => void;
 }>): Readonly<{ sections: readonly WidgetAddSection[]; ask?: WidgetAddAsk }> {
@@ -80,14 +81,16 @@ export function buildBoardWidgetAddContent(input: Readonly<{
         const definition = widgetDefinitionOfCandidate(candidate);
         const copies = countWidgetInstances(instances, definition);
         const add = definition.kind === 'artifact'
-            ? (publishSavedWidget ? (bindings: WidgetInputBindingsV1) => publishSavedWidget({ v: 1, id: randomUUID(), definition, bindings, displayName: candidate.title }) : null)
-            : (bindings: WidgetInputBindingsV1) => runAcknowledgedWidgetSetupCommand(() => run({ kind: 'item.addWidget', definition, title: candidate.title, bindings }), t('widgetAdd.addFailed'));
+            ? (publishSavedWidget ? (bindings: WidgetInputBindingsV1, size?: WidgetSizeV1) => publishSavedWidget({ v: 1, id: randomUUID(), definition, bindings, displayName: candidate.title }, normalizeWidgetSizeForSurfaceV1('sessionBoard', size, candidate.sizeDeclaration)) : null)
+            : (bindings: WidgetInputBindingsV1, size?: WidgetSizeV1) => runAcknowledgedWidgetSetupCommand(() => run({ kind: 'item.addWidget', definition, title: candidate.title, bindings,
+                size: normalizeWidgetSizeForSurfaceV1('sessionBoard', size, candidate.sizeDeclaration) }), t('widgetAdd.addFailed'));
         if (!add) return [];
         // A widget with inputs is counted and can be added again, differently bound; one without
         // inputs stays Added, because a second identical copy would show the same thing (dbind G).
         const configurable = isConfigurableWidgetCandidate(candidate);
         const proposed = buildWidgetCandidateSetup({ candidate, context, audience: 'shared',
-            mode: { kind: 'add', submitLabel: t('widgetAdd.addToBoard') }, submit: draft => add(draft.bindings), scope: input.scope ?? null });
+            mode: { kind: 'add', submitLabel: t('widgetAdd.addToBoard') }, submit: draft => add(draft.bindings, draft.size), scope: input.scope ?? null,
+            ...(renderSetupPreview ? { renderPreview: (preview: WidgetSetupPreview) => renderSetupPreview(candidate, preview) } : {}) });
         const canPreview = proposed.resolve(proposed.initial).status === 'ready';
         return [{
             id: `plugin-${candidate.key}`,
@@ -98,19 +101,9 @@ export function buildBoardWidgetAddContent(input: Readonly<{
                 ? (copies > 0 ? { count: t('widgetAdd.countOnBoard', { count: copies }) } : {})
                 : { added: copies > 0 }),
             ...(renderPluginPreview && canPreview ? { renderPreview: () => renderPluginPreview(candidate) } : {}),
-            ...(configurable || definition.kind === 'artifact' ? {
-                setup: () => buildWidgetCandidateSetup({
-                    candidate,
-                    context,
-                    audience: 'shared',
-                    mode: { kind: 'add', submitLabel: t('widgetAdd.addToBoard') },
-                    // Only an applied (or approval-pending) add finishes the step.
-                    submit: (draft) => add(draft.bindings),
-                    ...(renderSetupPreview ? { renderPreview: (preview: WidgetSetupPreview) => renderSetupPreview(candidate, preview) } : {}),
-                    scope: input.scope ?? null,
-                }),
-            } : {}),
-            onPick: () => { void add(startingBindings(candidate, context, 'shared')); },
+            ...(configurable || definition.kind === 'artifact' || (proposed.sizeChoices?.sizes.length ?? 0) > 1
+                ? { setup: () => proposed } : {}),
+            onPick: () => add(startingBindings(candidate, context, 'shared')),
         }];
     };
     const widgets = partitionWidgetCandidatesBySource(input.candidates);
@@ -192,7 +185,7 @@ export function buildCompanionWidgetAddSections(input: Readonly<{
     /** Universal plugin widget candidates, from the current plugin runtime. */
     glanceCandidates: readonly WidgetCandidate[];
     pluginProjection: PluginUiProjectionModel | null | undefined;
-    addItem: (ref: SessionCompanionItemRefV1) => void | Promise<void>;
+    addItem: (ref: SessionCompanionItemRefV1) => WidgetSetupCommandResult | Promise<WidgetSetupCommandResult>;
     /** What the Companion fills on its own: its Session ("This session"). */
     context?: WidgetSurfaceContext;
     /** The Set up step's live preview at the chosen inputs (Session B beside Session A, dbind X). */
@@ -241,7 +234,7 @@ export function buildCompanionWidgetAddSections(input: Readonly<{
                         scope: input.scope ?? null,
                     }),
                 } : {}),
-                onPick: () => { void runWidgetSetupCommand(() => add(startingBindings(candidate, context, 'personal')), t('widgetAdd.addFailed')); },
+                onPick: () => runWidgetSetupCommand(() => add(startingBindings(candidate, context, 'personal')), t('widgetAdd.addFailed')),
             };
         }),
     ];
@@ -257,7 +250,7 @@ export function buildCompanionWidgetAddSections(input: Readonly<{
             icon: source.kind === 'declarative' ? 'note' : 'squares-four',
             added: row.added,
             ...notePreview,
-            onPick: () => { void runWidgetSetupCommand(() => addItem({ kind: 'widget', widgetId: row.widgetId }), t('widgetAdd.addFailed')); },
+            onPick: () => runWidgetSetupCommand(() => addItem({ kind: 'widget', widgetId: row.widgetId }), t('widgetAdd.addFailed')),
         };
     });
     const panes: WidgetAddEntry[] = RIGHT_SIDEBAR_BUILTIN_TABS
@@ -267,7 +260,7 @@ export function buildCompanionWidgetAddSections(input: Readonly<{
             title: t(tab.labelKey),
             icon: tab.icon,
             added: refs.some((ref) => ref.kind === 'pane' && ref.paneId === tab.id),
-            onPick: () => { void runWidgetSetupCommand(() => addItem({ kind: 'pane', paneId: tab.id }), t('widgetAdd.addFailed')); },
+            onPick: () => runWidgetSetupCommand(() => addItem({ kind: 'pane', paneId: tab.id }), t('widgetAdd.addFailed')),
         }));
     return [
         { id: 'glances', title: t('widgetAdd.glances'), hint: t('widgetAdd.glancesHint'), kind: 'preview', entries: glances.filter(entry => !yourKeys.has(entry.id)) },

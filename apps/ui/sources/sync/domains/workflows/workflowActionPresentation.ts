@@ -37,7 +37,7 @@ const ACTION_TITLE_KEYS = {
     'widgets.instance.remove': 'workflows.actionTitles.widgetRemove',
     'widgets.instance.move': 'workflows.actionTitles.widgetMove',
     'widgets.instance.rename': 'workflows.actionTitles.widgetRename',
-    'widgets.instance.width.set': 'workflows.actionTitles.widgetWidth',
+    'widgets.instance.size.set': 'workflows.actionTitles.widgetSize',
     'widgets.instance.frame.set': 'workflows.actionTitles.widgetFrame',
     'widgets.instance.inputs.get': 'workflows.actionTitles.widgetInputs',
     'widgets.instance.inputs.validate': 'workflows.actionTitles.widgetValidate',

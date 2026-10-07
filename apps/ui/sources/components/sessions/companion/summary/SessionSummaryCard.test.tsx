@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { I18nManager } from 'react-native';
+import { WidgetPresentationProvider } from '@happier-dev/plugin-ui';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -51,6 +52,25 @@ function model(overrides: Partial<SessionSummaryCardModel> = {}): SessionSummary
 }
 
 describe('SessionSummaryCard (the Companion hero)', () => {
+    it('uses the compact widget summary with a truthful full-surface route and expands detail for a tall body', async () => {
+        const openFull = vi.fn();
+        const summary = model({ rows: [
+            { kind: 'approvals', count: 1, destination: 'approvals' },
+            { kind: 'workflow', runCount: 2, destination: 'workTab' },
+        ] });
+        const render = (size: 'small' | 'tall') => <WidgetPresentationProvider value={{ size,
+            footprint: { columns: 2, columnSpan: 1, rowSpan: size === 'small' ? 1 : 4,
+                width: 'half', height: size === 'small' ? 'compact' : 'tall' } }}>
+            <SessionSummaryCard model={summary} density="comfortable" presentation="full" onOpenFullSurface={openFull} />
+        </WidgetPresentationProvider>;
+        const screen = await renderScreen(render('small'));
+        expect(screen.findByTestId('session-companion-summary-more')).not.toBeNull();
+        screen.pressByTestId('session-companion-summary-more');
+        expect(openFull).toHaveBeenCalledOnce();
+        await screen.update(render('tall'));
+        expect(screen.findByTestId('session-companion-summary-more')).toBeNull();
+        expect(screen.findByTestId('session-companion-summary-row-approvals')).not.toBeNull();
+    });
     it('renders a pending question through the shared prompt controls instead of permission answers', async () => {
         const answerUserAction = vi.fn(async () => {});
         const request = {

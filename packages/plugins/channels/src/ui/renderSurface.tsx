@@ -59,6 +59,7 @@ import {
   usePluginUiFocusTarget,
   useSessionState,
   useSurfaceContext,
+  useWidgetPresentation,
   type PluginUiResourceSnapshot,
 } from '@happier-dev/plugin-ui';
 import {
@@ -12595,6 +12596,7 @@ function SessionConversationsTab(props: Readonly<{
   onRefresh: () => void;
 }>): React.ReactElement {
   const t = usePluginTranslation();
+  const bodyHeight = useWidgetPresentation()?.geometry?.height;
   const { presentations, attentionByBindingId } = props;
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
   const onToggle = React.useCallback((bindingId: string) => {
@@ -12617,14 +12619,14 @@ function SessionConversationsTab(props: Readonly<{
   );
   if (presentations.length === 0) {
     return (
-      <Screen testID="channels-session-conversations" safeArea>
+      <Screen testID="channels-session-conversations" safeArea style={bodyHeight === undefined ? undefined : { height: bodyHeight }}>
         {header}
         <SessionConversationsEmpty connections={props.connections} t={t} />
       </Screen>
     );
   }
   return (
-    <Screen testID="channels-session-conversations" safeArea>
+    <Screen testID="channels-session-conversations" safeArea style={bodyHeight === undefined ? undefined : { height: bodyHeight }}>
       {header}
       <List<SessionConversationRowModel>
         sections={sections}

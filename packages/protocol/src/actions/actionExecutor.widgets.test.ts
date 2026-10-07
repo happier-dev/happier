@@ -10,10 +10,88 @@ import { createWorkBoardArtifactBoundary } from '../boards/workBoardArtifactV1.t
 import { createWidgetDefinitionArtifactPortV1 } from '../widgets/widgetDefinitionArtifactV1.js';
 import { resolveWidgetBindingsV1, type WidgetInstanceV1 } from '../widgets/widgetInstanceV1.js';
 import { ApiTokenGrantV1Schema } from '../auth/apiTokenGrant.js';
+import { createWidgetActionInputResolverV1 } from '../widgets/widgetActionInputResolverV1.js';
 
 const surface = { serverId: 'home', accountId: 'account', owner: { kind: 'home' } } as const;
 
 describe('configured widget Actions', () => {
+  it('resizes projected default Home widgets through native and universal Actions before materialization', async () => {
+    for (const native of [true, false]) {
+      const boundary = createWorkBoardArtifactBoundary();
+      const widget = { key: 'com.acme.sizes/checks', homeDefault: 'shown' as const,
+        surface: { pluginId: 'com.acme.sizes', localId: 'checks' } };
+      const homeHubArtifacts = createHomeHubArtifactPortV1(boundary.forAccount(surface.accountId), {
+        accountId: surface.accountId, readWidgets: () => [widget],
+      });
+      const executor = createActionExecutor({ homeHubArtifacts, widgetAccountScope: () => ({ serverId: surface.serverId, accountId: surface.accountId }),
+        widgetInputs: createWidgetActionInputResolverV1({ readDescriptor: async () => ({ sizeDeclaration: { sizes: ['medium', 'tall'], defaultSize: 'medium' },
+          inputs: { fields: [] }, inputSchema: { type: 'object', additionalProperties: false } }),
+          readContext: async () => ({}), readViewerValues: async () => ({ values: {} }), validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [] }),
+      });
+      const instanceId = `default:${widget.key}`;
+      expect((await homeHubArtifacts.read()).instances).toEqual([]);
+      const result = native
+        ? await executor.execute('home.hub.layout.update', { intent: { kind: 'widget_size', instanceId, size: 'tall' } }, { surface: 'mcp', bypassApprovals: true })
+        : await executor.execute('widgets.instance.size.set', { ref: { surface, instanceId }, size: 'tall' }, { surface: 'mcp', bypassApprovals: true });
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+      expect(await homeHubArtifacts.read()).toMatchObject({ instances: [{ id: instanceId }], sections: { [instanceId]: { size: 'tall' } } });
+    }
+  });
+  it('uses the exact declared size set for catalog, atomic Add and resize with the existing Artifact owner', async () => {
+    const boundary = createWorkBoardArtifactBoundary();
+    const homeHubArtifacts = createHomeHubArtifactPortV1(boundary.forAccount(surface.accountId), { accountId: surface.accountId });
+    const sizeDeclaration = { sizes: ['medium', 'tall'], defaultSize: 'tall' } satisfies import('../widgets/widgetPresentationV1.js').WidgetSizeDeclarationV1;
+    const descriptor = { sizeDeclaration, inputs: { fields: [] }, inputSchema: { type: 'object' as const, additionalProperties: false } };
+    const instance = { v: 1 as const, id: 'sized-copy', definition: { kind: 'installed' as const, surface: { pluginId: 'com.acme.sizes', localId: 'checks' } }, bindings: {} };
+    const executor = createActionExecutor({ homeHubArtifacts,
+      widgetAccountScope: () => ({ serverId: surface.serverId, accountId: surface.accountId }),
+      widgetCatalog: { list: async () => [{ definition: instance.definition, title: 'Checks', fields: [], sizeDeclaration,
+        availability: 'available', instanceCount: 0 }] },
+      widgetInputs: createWidgetActionInputResolverV1({ readDescriptor: async () => descriptor,
+        readContext: async () => ({}), readViewerValues: async () => ({ values: {} }),
+        validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [] }),
+    });
+    const context = { surface: 'mcp' as const, serverId: surface.serverId, bypassApprovals: true };
+    expect(await executor.execute('widgets.catalog.list', { surface }, context)).toMatchObject({ ok: true,
+      result: { entries: [{ presentation: { sizes: ['medium', 'tall'], defaultSize: 'tall' } }] } });
+    const execute = (id: string, input: unknown) => executor.execute(id as ActionId, input, context);
+    expect(await execute('widgets.instance.add', { surface, instance, size: 'medium' })).toMatchObject({ ok: true });
+    expect((await homeHubArtifacts.read()).sections?.['sized-copy']?.size).toBe('medium');
+    expect(await execute('widgets.instance.size.set', { ref: { surface, instanceId: instance.id }, size: 'tall' })).toMatchObject({ ok: true });
+    const before = await homeHubArtifacts.read();
+    expect(await execute('widgets.instance.size.set', { ref: { surface, instanceId: instance.id }, size: 'full' }))
+      .toMatchObject({ ok: false, errorCode: 'widget_size_unsupported' });
+    expect(await execute('widgets.instance.add', { surface, instance: { ...instance, id: 'refused' }, size: 'full' }))
+      .toMatchObject({ ok: false, errorCode: 'widget_size_unsupported' });
+    expect(await execute('home.hub.layout.update', { intent: { kind: 'widget_size', instanceId: instance.id, size: 'full' } }))
+      .toMatchObject({ ok: false, errorCode: 'widget_size_unsupported' });
+    expect(await execute('home.hub.layout.update', { intent: { kind: 'widget_add', instance: { ...instance, id: 'native-refused' }, size: 'full' } }))
+      .toMatchObject({ ok: false, errorCode: 'widget_size_unsupported' });
+    expect(await homeHubArtifacts.read()).toEqual(before);
+    expect(ActionIdSchema.safeParse('widgets.instance.width.set').success).toBe(false);
+    const spec = getActionSpec('widgets.instance.size.set' as ActionId);
+    expect(spec.bindings?.mcpToolName).toBe('widgets_instance_size_set');
+    expect(isApprovalRequiredByActionsSettings(spec.id, normalizeActionsSettingsV1({ v: 1 }), { surface: 'mcp' })).toBe(true);
+    expect(isApprovalRequiredByActionsSettings(spec.id, normalizeActionsSettingsV1({ v: 1,
+      approvalWaivedSurfaces: { [spec.id]: ['mcp'] } }), { surface: 'mcp' })).toBe(false);
+  });
+  it('discovers the target size choices and default through the catalog Action', async () => {
+    // The catalog port is supplied by the answering UI/daemon's installed projection.
+    const executor = createActionExecutor({
+      widgetAccountScope: () => ({ serverId: surface.serverId, accountId: surface.accountId }),
+      widgetCatalog: { list: async () => [] },
+    });
+    for (const [owner, presentation] of [
+      [{ kind: 'home' }, { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' }],
+      [{ kind: 'sessionBoard', sessionId: 'shared' }, { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' }],
+      [{ kind: 'project', projectId: 'project' }, { sizes: [] }],
+    ] as const) {
+      const result = await executor.execute('widgets.catalog.list', { surface: { ...surface, owner } },
+        { surface: 'mcp', serverId: surface.serverId, bypassApprovals: true });
+      expect(result, JSON.stringify(result))
+        .toMatchObject({ ok: true, result: { presentation } });
+    }
+  });
   it('keeps definition deletion behind default approval and credential admission, with an explicit policy waiver reaching the Artifact owner', async () => {
     const boundary = createWorkBoardArtifactBoundary();
     const definitions = createWidgetDefinitionArtifactPortV1({ ...boundary.transport,
@@ -21,7 +99,7 @@ describe('configured widget Actions', () => {
       list: async options => { const page = await boundary.transport.list(options); return { ...page,
         items: page.items.map(row => ({ ...row, ownerAccountId: surface.accountId })) }; },
     }, { accountId: surface.accountId });
-    const definition = await definitions.create({ v: 1, id: 'checks', name: 'Checks', inputs: { fields: [] },
+    const definition = await definitions.create({ sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' }, v: 1, id: 'checks', name: 'Checks', inputs: { fields: [] },
       inputSchema: { type: 'object', additionalProperties: false },
       body: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Saved checks' } } },
       provenance: { source: { kind: 'authored' } },
@@ -203,11 +281,13 @@ describe('configured widget Actions', () => {
     }, { accountId: surface.accountId });
     const executor = createActionExecutor({
       homeHubArtifacts, widgetAccountScope: () => ({ serverId: surface.serverId, accountId: surface.accountId }),
-      widgetInputs: { resolve: async ({ instance }) => resolveWidgetBindingsV1({
-        instance, fields: [{ path: 'count', title: 'Count', widget: 'integer' }], context: {}, viewerValues: {},
-        validateValue: (_field, value) => typeof value === 'number' && Number.isSafeInteger(value)
-          ? { status: 'valid' } : { status: 'invalid', reasonCode: 'invalid_count' },
-      }) },
+      widgetInputs: createWidgetActionInputResolverV1({
+        readDescriptor: async () => ({ sizeDeclaration: { sizes: ['medium', 'full'], defaultSize: 'medium' },
+          inputs: { fields: [{ path: 'count', title: 'Count', widget: 'integer' }] }, inputSchema: { type: 'object', properties: { count: { type: 'integer' } }, additionalProperties: false } }),
+        readContext: async () => ({}), readViewerValues: async () => ({ values: {} }),
+        validateValue: async (_field, value) => typeof value === 'number' && Number.isSafeInteger(value)
+          ? { status: 'valid' } : { status: 'invalid', reasonCode: 'invalid_count' }, resolveOptions: async () => [],
+      }),
     } as unknown as ActionExecutorDeps);
     const execute = (id: string, input: unknown) => executor.execute(id as ActionId, input, { surface: 'mcp', bypassApprovals: true });
     const instance = (id: string, value: number): WidgetInstanceV1 => ({ v: 1, id, definition: { kind: 'builtin', id: 'count' }, bindings: { count: { kind: 'value', value } } });
@@ -215,19 +295,19 @@ describe('configured widget Actions', () => {
     expect(await execute('widgets.instance.add', { surface, instance: instance('two', 2) })).toMatchObject({ ok: true });
     const ref = { surface, instanceId: 'one' };
     expect(await execute('widgets.instance.inputs.set', { ref, bindings: { count: { kind: 'value', value: 3 } } })).toMatchObject({ ok: true });
-    expect(await execute('widgets.instance.width.set', { ref, width: 'full' })).toMatchObject({ ok: true });
+    expect(await execute('widgets.instance.size.set', { ref, size: 'full' })).toMatchObject({ ok: true });
     expect(await execute('widgets.instance.frame.set', { ref, frameStyle: 'plain' })).toMatchObject({ ok: true });
     expect(await execute('widgets.instance.rename', { ref, displayName: 'First' })).toMatchObject({ ok: true });
     expect(await execute('widgets.instance.move', { ref, toIndex: 1 })).toMatchObject({ ok: true });
     const result = await execute('widgets.instance.list', { surface });
     expect(result).toMatchObject({ ok: true, result: { instances: [
-      { instance: instance('two', 2), width: 'half' },
-      { instance: { ...instance('one', 3), displayName: 'First' }, width: 'full', frameStyle: 'plain' },
+      { instance: instance('two', 2), size: 'medium' },
+      { instance: { ...instance('one', 3), displayName: 'First' }, size: 'full', frameStyle: 'plain' },
     ] } });
     const before = await homeHubArtifacts.read();
     expect(await execute('widgets.instance.move', { ref, toIndex: 0, to: { surface, index: 1 } })).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
     expect(await execute('widgets.instance.move', { ref, to: { surface: { ...surface, accountId: 'other' }, index: 0 } })).toMatchObject({ ok: false, errorCode: 'account_target_mismatch' });
-    expect(await execute('widgets.instance.width.set', { ref, width: 'compact' })).toMatchObject({ ok: false, errorCode: 'widget_width_unsupported' });
+    expect(await execute('widgets.instance.size.set', { ref, size: 'small' })).toMatchObject({ ok: false, errorCode: 'widget_size_unsupported' });
     expect(await homeHubArtifacts.read()).toEqual(before);
     expect(await execute('widgets.instance.remove', { ref: { surface: { ...surface, accountId: 'other' }, instanceId: 'one' } })).toMatchObject({ ok: false, errorCode: 'account_target_mismatch' });
     expect(await homeHubArtifacts.read()).toEqual(before);

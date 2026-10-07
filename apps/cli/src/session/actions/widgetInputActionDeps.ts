@@ -59,7 +59,7 @@ export function createCliWidgetInputActionDepsV1(input: Readonly<{
         const resources = authored?.body.kind === 'declarative' ? await input.readResources?.(context.signal, consumer.selectedSession) : null;
         const descriptor: Descriptor | undefined = authored?.body.kind === 'declarative'
             ? { ...authored, resources: readWidgetDefinitionResourcesV1(authored), resourceDeclarations: resources?.resources ?? [] }
-            : candidate && (authored ? { ...candidate, inputs: authored.inputs, inputSchema: authored.inputSchema,
+            : candidate && (authored ? { ...candidate, sizeDeclaration: authored.sizeDeclaration, inputs: authored.inputs, inputSchema: authored.inputSchema,
                 connectedAccountPurposeBindings: authored.connectedAccountPurposeBindings } : candidate);
         const current = await input.readViewerPurposeContext?.(context.signal);
         context.signal?.throwIfAborted();
@@ -80,7 +80,7 @@ export function createCliWidgetInputActionDepsV1(input: Readonly<{
             if ((reference.kind === 'artifact' || reference.kind === 'inline') && !authored) return null;
             if (authored?.body.kind === 'declarative') {
                 const projection = await input.readResources?.(request.signal);
-                let descriptor: Descriptor = { inputs: authored.inputs, inputSchema: authored.inputSchema, sessionInputPath: authored.sessionInputPath,
+                let descriptor: Descriptor = { sizeDeclaration: authored.sizeDeclaration, inputs: authored.inputs, inputSchema: authored.inputSchema, sessionInputPath: authored.sessionInputPath,
                     connectedAccountPurposeBindings: authored.connectedAccountPurposeBindings, resources: readWidgetDefinitionResourcesV1(authored),
                     resourceDeclarations: projection?.resources ?? [], connectedAccountDescriptors: projection?.connectedAccountDescriptors ?? [] };
                 if (descriptor.sessionInputPath) {
@@ -98,18 +98,37 @@ export function createCliWidgetInputActionDepsV1(input: Readonly<{
             const definition = authored?.body ?? reference;
             const matches = (candidate: Candidate) => candidate.availability === 'available'
                 && isSameWidgetDefinitionV1(widgetCandidateDefinitionV1(candidate), definition);
-            let candidate = (await input.readCandidates(request.signal)).find(matches);
-            if (candidate?.sessionInputPath) {
-                const bound = resolveConfiguredWidgetTargetInputV1({ instance: request.instance, descriptor: candidate,
-                    providedContext: readContext(request), viewerValues: (await readViewerPurpose(request, candidate))?.values ?? {} });
-                const target = bound.status === 'ready' ? VoiceTrackedSessionAddressV1Schema.safeParse(readInputPath(bound.input, candidate.sessionInputPath)) : null;
-                if (target?.success && target.data.serverId === input.serverId) {
-                    const current = (await input.readCandidates(request.signal, target.data)).find(matches);
-                    candidate = current?.sessionInputPath === candidate.sessionInputPath ? current : undefined;
+            const owner = request.ref.surface.owner;
+            const ownerSession = owner.kind === 'sessionBoard' || owner.kind === 'companion'
+                ? { serverId: request.ref.surface.serverId, sessionId: owner.sessionId } : undefined;
+            let candidate = (await input.readCandidates(request.signal, ownerSession)).find(matches);
+            // A saved definition supplies its exact target field even when physical A
+            // has no matching plugin. Bare installed copies may discover metadata only
+            // through their explicitly pinned, authorized Session bindings.
+            if (!candidate && !authored) {
+                const pinned: Candidate[] = [];
+                for (const [path, binding] of Object.entries(request.instance.bindings)) {
+                    if (binding.kind !== 'value') continue;
+                    const target = VoiceTrackedSessionAddressV1Schema.safeParse(binding.value);
+                    if (!target.success || target.data.serverId !== input.serverId || !await input.validateSession(target.data, request.signal)) continue;
+                    const current = (await input.readCandidates(request.signal, target.data)).filter(candidate => matches(candidate) && candidate.sessionInputPath === path);
+                    pinned.push(...current);
                 }
+                if (pinned.length !== 1) return null;
+                candidate = pinned[0];
+            }
+            const targetDescriptor = authored?.sessionInputPath ? authored : candidate;
+            if (targetDescriptor?.sessionInputPath) {
+                const bound = resolveConfiguredWidgetTargetInputV1({ instance: request.instance, descriptor: targetDescriptor,
+                    providedContext: readContext(request), viewerValues: (await readViewerPurpose(request, targetDescriptor))?.values ?? {} });
+                const target = bound.status === 'ready' ? VoiceTrackedSessionAddressV1Schema.safeParse(readInputPath(bound.input, targetDescriptor.sessionInputPath)) : null;
+                if (target?.success && target.data.serverId === input.serverId && await input.validateSession(target.data, request.signal)) {
+                    const current = (await input.readCandidates(request.signal, target.data)).find(matches);
+                    candidate = current?.sessionInputPath === targetDescriptor.sessionInputPath ? current : undefined;
+                } else return null;
             }
             if (!candidate || authored && candidate.sessionInputPath !== authored.sessionInputPath) return null;
-            const descriptor = authored ? { ...candidate, inputs: authored.inputs, inputSchema: authored.inputSchema,
+            const descriptor = authored ? { ...candidate, sizeDeclaration: authored.sizeDeclaration, inputs: authored.inputs, inputSchema: authored.inputSchema,
                 sessionInputPath: authored.sessionInputPath, connectedAccountPurposeBindings: authored.connectedAccountPurposeBindings } : candidate;
             descriptors.set(request, descriptor);
             return descriptor;

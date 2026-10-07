@@ -2,6 +2,7 @@ import * as React from 'react';
 import type { View } from 'react-native';
 import type { PublicActionInputById } from '@happier-dev/protocol';
 import { SESSION_BOARD_DEFAULT_ITEM_WIDTH_V1 } from '@happier-dev/protocol/sessions/board';
+import type { WidgetSizeV1 } from '@happier-dev/protocol/widgets';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
@@ -74,8 +75,8 @@ function OpenBoardWidgetAddPopover(props: React.ComponentProps<typeof BoardWidge
         context,
         scope,
         ...(scope && canPublish ? {
-            publishSavedWidget: (instance: Parameters<typeof publishSavedBoardWidget>[0]['instance']) => publishSavedBoardWidget({
-                surface: scope, instance, placement: {
+            publishSavedWidget: (instance: Parameters<typeof publishSavedBoardWidget>[0]['instance'], size?: WidgetSizeV1) => publishSavedBoardWidget({
+                surface: scope, instance, ...(size ? { size } : {}), placement: {
                     tabId: controller.activeView?.synthetic ? SESSION_BOARD_OVERVIEW_VIEW_ID : controller.activeView?.id ?? SESSION_BOARD_OVERVIEW_VIEW_ID,
                     tabTitle: controller.activeView?.title ?? t('sessionBoard.views.overview'), width: SESSION_BOARD_DEFAULT_ITEM_WIDTH_V1,
                 },

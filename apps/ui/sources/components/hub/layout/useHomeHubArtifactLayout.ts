@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { buildHomeHubArtifactIdV1, HomeHubLayoutV1Schema, type HomeHubArtifactTransportV1 } from '@happier-dev/protocol/home';
+import { buildHomeHubArtifactIdV1, type HomeHubArtifactTransportV1 } from '@happier-dev/protocol/home';
 import { useOptionalAuth } from '@/auth/context/AuthContext';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
@@ -11,6 +11,7 @@ import { apiSocket } from '@/sync/api/session/apiSocket';
 import { InvalidateSync } from '@/utils/sessions/sync';
 import { parseToken } from '@/utils/auth/parseToken';
 import { createHomeHubAccountStore } from './homeHubAccountStore';
+import { executeHomeHubLayoutIntent } from './homeHubActionWriter';
 
 type Store = ReturnType<typeof createHomeHubAccountStore> & { retain(): () => void; isCurrent(): boolean };
 const stores = new WeakMap<ActiveServerAccountScopeLifetime, WeakMap<AuthCredentials, Store>>();
@@ -57,13 +58,7 @@ export function useHomeHubArtifactLayout() {
             const domain = createHomeHubAccountStore({ accountId: scope.accountId, transport, isCurrent, execute: async intent => {
                 if (!isCurrent()) throw new Error('Home Account scope retired');
                 const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
-                const result = await createDefaultActionExecutor().execute('home.hub.layout.update', { intent }, {
-                    surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: scope.serverId, expectedAccountId: scope.accountId,
-                });
-                if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
-                const value = result.result;
-                if (!value || typeof value !== 'object' || !('layout' in value)) throw new Error('Home layout acknowledgement unavailable');
-                return HomeHubLayoutV1Schema.parse(value.layout);
+                return executeHomeHubLayoutIntent({ intent, scope, transport, execute: createDefaultActionExecutor().execute });
             } });
             let references = 0;
             let detach: (() => void) | null = null;

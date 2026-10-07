@@ -22,6 +22,26 @@ function createSessionBoardActionAdapter(options: Omit<Parameters<typeof createA
 }
 
 describe('Session Board Action adapter', () => {
+    it('refuses a size placement whose captured layout changed before adapter assembly without writing', async () => {
+        const movedLayoutRevision = 'ssr1.AAAACHN5c3JlY18xAAAAAg';
+        let writes = 0;
+        const layout = { v: 1, tabs: [{ id: 'old', title: 'Old', items: [] },
+            { id: 'new', title: 'New', items: [{ itemId: 'status', width: 'full', frameStyle: 'plain' }] }] };
+        const execute = createSessionBoardActionAdapter({ scope, session, contentContext: { mode: 'plain' },
+            capabilities: { readTranscript: true, editSessionRecords: true }, request: async (path, init) => {
+                if (init?.method === 'PUT') { writes++; throw new Error('Stale size must not be written'); }
+                const kind = new URL(path, 'https://home-a').searchParams.get('kind');
+                return new Response(JSON.stringify({ record: { id: kind === 'layout.v1' ? 'layout-row' : 'item-row',
+                    address: { owner: 'host', namespace: 'surface', kind, localId: kind === 'layout.v1' ? 'layout' : 'status' },
+                    content: { t: 'plain', v: kind === 'layout.v1' ? layout : installed }, revision: kind === 'layout.v1' ? movedLayoutRevision : revision,
+                    createdAt: '2026-09-05T00:00:00.000Z', updatedAt: '2026-09-05T00:00:00.000Z' } }));
+            } });
+        await expect(execute({ actionId: 'session.board.item.upsert', context: {}, input: { sessionId: session.sessionId,
+            itemId: 'status', expectedItemRevision: revision, expectedLayoutRevision: revision,
+            item: { ...installed, height: { mode: 'fixed', size: 'tall' } }, placement: { tabId: 'old', width: 'medium' } } }))
+            .resolves.toMatchObject({ errorCode: 'session_board_revision_conflict' });
+        expect(writes).toBe(0);
+    });
     it('reads additive stored items and layouts, then writes only canonical content', async () => {
         const canonicalLayout = { v: 1, tabs: [{ id: 'overview', title: 'Overview', items: [{ itemId: 'status', width: 'wide' }] }] };
         const storedItem = { ...installed, extra: true, source: { ...installed.source, extra: true,

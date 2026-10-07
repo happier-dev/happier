@@ -1,5 +1,7 @@
 import * as React from 'react';
-import { WORK_BOARD_ARTIFACT_KIND_V1, WorkBoardActionOutputSchemasV1, type WorkBoardIntentV1, type WorkBoardV1, type WorkBoardsV1, type WorkBoardArtifactTransportV1 } from '@happier-dev/protocol';
+import { WORK_BOARD_ARTIFACT_KIND_V1, type WorkBoardArtifactTransportV1 } from '@happier-dev/protocol/boards/workBoardArtifactV1';
+import { WorkBoardActionOutputSchemasV1 } from '@happier-dev/protocol/boards/actionsV1';
+import type { WorkBoardIntentV1, WorkBoardV1, WorkBoardsV1 } from '@happier-dev/protocol/boards/workBoardV1';
 import { useOptionalAuth } from '@/auth/context/AuthContext';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
@@ -11,6 +13,10 @@ import { apiSocket } from '@/sync/api/session/apiSocket';
 import { InvalidateSync } from '@/utils/sessions/sync';
 import { parseToken } from '@/utils/auth/parseToken';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import { classifyWidgetDefinitionCommandResult } from '@/components/widgets/definitions/widgetDefinitionCommands';
+import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
+import { randomUUID } from '@/platform/randomUUID';
+import { t } from '@/text';
 import { createWorkBoardUiActionPort, type WorkBoardEntityContext } from './workBoardEntityDrop';
 import { createWorkBoardAccountStore } from './workBoardAccountStore';
 import { projectDisplayedWorkBoards, type WorkBoardSaveOutcome, type WorkBoardSaveQueue, type WorkBoardSaveState } from './workBoardSaveQueue';
@@ -117,13 +123,27 @@ export function useWorkBoardSaveQueue(context?: Omit<WorkBoardEntityContext, 'sc
             const previousFailure = queue.getState().failure;
             let result: Awaited<ReturnType<typeof executor.execute>>;
             try {
-                result = await executor.execute('boards.apply', { intent }, { serverId: scope.serverId, expectedAccountId: scope.accountId, surface: 'ui' });
+                result = intent.kind === 'widget_size'
+                    ? await executor.execute('widgets.instance.size.set', { ref: intent.ref, size: intent.size }, {
+                        serverId: scope.serverId, expectedAccountId: scope.accountId, surface: 'ui', authority: 'present_user',
+                        actionCaller: { kind: 'host' }, actionRequestId: randomUUID(),
+                    })
+                    : await executor.execute('boards.apply', { intent }, { serverId: scope.serverId, expectedAccountId: scope.accountId, surface: 'ui' });
             } catch {
                 if (isCurrent()) queue.recordFailure(intent, 'unavailable');
                 return { status: 'refused', code: isCurrent() ? 'board_action_unavailable' : 'board_scope_retired' };
             }
-            if (result.ok && WorkBoardActionOutputSchemasV1['boards.apply'].safeParse(result.result).success) return { status: 'applied', boards: store.getBoards() };
-            const code = result.ok ? 'approval_required' : result.errorCode ?? 'board_action_refused';
+            const sizeOutcome = intent.kind === 'widget_size' ? classifyWidgetDefinitionCommandResult('widgets.instance.size.set', result) : null;
+            if (sizeOutcome?.kind === 'approvalPending' && intent.kind === 'widget_size') {
+                queue.dismissFailure();
+                publishPresentationNotice({ key: `${intent.boardId}:${intent.ref.instanceId}:size`, severity: 'info',
+                    message: t('widgetAdd.areaApprovalPending') });
+                // Approval owns the request now; no optimistic or persisted size acknowledgement is fabricated.
+                return { status: 'pending', code: 'approval_required' };
+            }
+            if (sizeOutcome?.kind === 'applied' || !sizeOutcome && result.ok && WorkBoardActionOutputSchemasV1['boards.apply'].safeParse(result.result).success)
+                return { status: 'applied', boards: store.getBoards() };
+            const code = sizeOutcome?.kind === 'refused' ? sizeOutcome.errorCode : result.ok ? 'approval_required' : result.errorCode ?? 'board_action_refused';
             const unknown = code === 'outcome_unknown' || code === 'approval_execution_outcome_unknown';
             if (isCurrent() && queue.getState().failure === previousFailure) queue.recordFailure(intent, code === 'board_not_found' ? 'not_found'
                 : code === 'invalid_parameters' || code === 'widget_inputs_invalid' ? 'invalidValue' : 'unavailable');

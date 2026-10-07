@@ -1,13 +1,15 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createSessionFixture, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createPlainSessionOwnerMetadataEnvelopeV1, projectSessionSharedMetadataV1, SessionCurrentProjectionRecordV1Schema, SessionListQueryResponseV1Schema, SessionOwnerMetadataV1Schema } from '@happier-dev/protocol';
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { installSettingsViewCommonModuleMocks } from '@/components/settings/settingsViewTestHelpers';
 import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 installSettingsViewCommonModuleMocks({ storage: (importOriginal) => importOriginal() });
 installDisconnectedServerSocketBoundary();
@@ -29,6 +31,7 @@ const { useHomeHubLayout } = await import('./useHomeHubLayout');
 const { buildHomeWidgetAddSections } = await import('@/components/widgets/add/HomeWidgetAddPopover');
 const { runWidgetSetupCommand } = await import('@/components/widgets/surface/widgetSurfaceSetup');
 const { useWidgetFrameRename } = await import('@/components/widgets/frame/useWidgetFrameRename');
+const { readWidgetDescriptor } = await import('@/components/widgets/widgetCatalog');
 const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
 const initial = storage.getState();
 let restoreGlobals: (() => void) | undefined;
@@ -43,17 +46,42 @@ function AccountShell({ children }: React.PropsWithChildren) {
         </AppShellPluginUiProjectionValueProvider>
     </InjectedAuthProvider>;
 }
-beforeEach(() => { restoreGlobals = withPopoverWebGlobals(); });
+beforeEach(async () => { restoreGlobals = withPopoverWebGlobals(); await loadSyncSingletonForTests(); });
 afterEach(async () => {
     standardCleanup();
     restoreGlobals?.();
     await connection?.dispose();
     connection = undefined;
     restoreActionLoader?.();
-    storage.setState({ profileScope: initial.profileScope, settings: initial.settings });
+    storage.setState({ profileScope: initial.profileScope, settings: initial.settings, artifacts: initial.artifacts });
 });
 
 describe('Home Customize entity reorder binding', () => {
+    it.each([
+        { sizes: ['wide'], defaultSize: 'wide' },
+        { sizes: ['medium', 'tall'], defaultSize: 'tall' },
+    ])('projects an authored cached header default before grid and body sizing without writing saved placement: $defaultSize', async (sizeDeclaration) => {
+        const { buildWidgetDefinitionArtifactHeaderV1, WidgetDefinitionV1Schema } = await import('@happier-dev/protocol/widgets');
+        const definition = WidgetDefinitionV1Schema.parse({ v: 1, id: 'authored-wide', name: 'Wide checks',
+            provenance: { authorAccountId: 'account-a', source: { kind: 'authored' } },
+            sizeDeclaration,
+            inputs: { fields: [] }, inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+            body: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Checks' } } } });
+        const artifact = createHomeHubArtifactHttpBoundary('account-a');
+        artifact.seed({ v: 1, instances: [{ v: 1, id: 'copy', definition: { kind: 'artifact', artifactId: definition.id }, bindings: {} }], order: [], hidden: [] });
+        connection = await restoreServerAccountForTest({ serverUrl: 'https://home-size-header.test', accountId: 'account-a', request: artifact.request });
+        const scope = { serverId: connection.home.id, accountId: 'account-a' };
+        storage.setState({ isDataReady: true, profileScope: scope, settingsScope: scope, artifacts: { ...storage.getState().artifacts,
+            [definition.id]: { id: definition.id, ownerAccountId: scope.accountId, isDecrypted: true, title: definition.name,
+                rawHeader: buildWidgetDefinitionArtifactHeaderV1(definition), headerVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } } });
+        let layout: ReturnType<typeof useHomeHubLayout> | undefined;
+        function Probe() { layout = useHomeHubLayout(); return null; }
+        await renderScreen(<AccountShell><Probe /></AccountShell>);
+        await flushHookEffects({ cycles: 3 });
+        expect(layout!.sections.find(section => section.id === 'copy')).toMatchObject({ size: sizeDeclaration.defaultSize });
+        expect(artifact.writes).toHaveLength(0);
+        expect(artifact.layout().sections).toBeUndefined();
+    });
     it('rejects failed Customize writes through the real queue and keeps mounted recovery available', async () => {
         const artifact = createHomeHubArtifactHttpBoundary('account-a');
         artifact.seed({ v: 1, instances: [], order: ['setup'], hidden: ['setup'] });
@@ -88,10 +116,42 @@ describe('Home Customize entity reorder binding', () => {
         const instance = { v: 1 as const, id: 'existing', definition: { kind: 'builtin' as const, id: 'session_summary' as const }, bindings: {} };
         artifact.seed({ v: 1, instances: [instance], order: [], hidden: [] });
         let failWrite = true;
+        let rejectedWrites = 0;
+        const requestedPaths: string[] = [];
+        const wireSessions = new Map(['session-1', 'session-2'].map(id => {
+            const session = createSessionFixture({ id });
+            return [id, SessionCurrentProjectionRecordV1Schema.parse({
+                ...session, metadataLayoutVersion: 1,
+                metadata: JSON.stringify(projectSessionSharedMetadataV1({ metadata: session.metadata!, agentState: session.agentState })),
+                ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(SessionOwnerMetadataV1Schema.parse({ v: 1,
+                    workspace: { path: session.metadata!.path, host: session.metadata!.host, machineId: session.metadata!.machineId } })),
+                effectiveAccess: { v: 1, level: session.access!.level, sources: [{ kind: 'owner' }], capabilities: session.access!.capabilities },
+                responsibleAccountId: null, responsibleAccount: null, share: null,
+                archivedAt: null, agentState: null, dataEncryptionKey: null, pendingCount: 0, pendingVersion: 0,
+            })] as const;
+        }));
         await import('@/sync/syncEngine');
         restoreActionLoader = await installRealActionExecutorModuleLoader();
         connection = await restoreServerAccountForTest({ serverUrl: 'https://home-setup-write.test', accountId: 'account-a', request: async (url, init) => {
-            if (failWrite && init?.method === 'POST' && new URL(String(url)).pathname.startsWith('/v1/artifacts')) return Response.json({ error: 'forbidden' }, { status: 403 });
+            const path = new URL(String(url)).pathname;
+            requestedPaths.push(path);
+            // The native Session input admits both exact-record access and membership
+            // in the real Sessions options source before the Artifact write.
+            if (path === '/v2/sessions/query') return Response.json(SessionListQueryResponseV1Schema.parse({
+                sessions: [...wireSessions.values()].map(session => ({ ...session, viewer: {
+                    readState: { state: 'not_started' }, relevance: { relevant: true, reasons: ['owned_by_me'] },
+                    attention: { needsAttention: false, reasons: [], primary: null, presentation: 'full' },
+                    follow: { follows: false, notificationLevel: null, includeInVoice: false },
+                    notification: { level: 'important', source: 'owner' },
+                } })), nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
+            }));
+            if (path === '/v2/sessions/session-1' || path === '/v2/sessions/session-2') {
+                return Response.json({ session: wireSessions.get(path.split('/').at(-1)!) });
+            }
+            if (failWrite && init?.method === 'POST' && path.startsWith('/v1/artifacts')) {
+                rejectedWrites += 1;
+                return Response.json({ error: 'forbidden' }, { status: 403 });
+            }
             return artifact.request(url, init);
         } });
         const scope = { serverId: connection.home.id, accountId: 'account-a', owner: { kind: 'home' as const } };
@@ -105,11 +165,12 @@ describe('Home Customize entity reorder binding', () => {
         }
         const screen = await renderScreen(<AccountShell><Probe /></AccountShell>);
         await flushHookEffects({ cycles: 3 });
-        const candidate = { key: 'builtin:agent_plan', definition: { kind: 'builtin' as const, id: 'agent_plan' as const }, title: 'Plan', pluginName: 'Happier', sharedPluginName: false, icon: 'list-checks' as const, homeDefault: 'available' as const, target: 'session' as const,
-            inputs: { fields: [{ path: 'session', title: 'Session', widget: 'json' as const, required: true }] } };
+        const definition = { kind: 'builtin' as const, id: 'agent_plan' as const };
+        const candidate = readWidgetDescriptor(null, definition)!;
         const setup = buildHomeWidgetAddSections({ candidates: [candidate], instances: [instance], addInstance: layout!.addInstance, scope })[0]!.entries[0]!.setup!();
         const draft = { bindings: { session: { kind: 'value' as const, value: { serverId: scope.serverId, sessionId: 'session-1' } } } };
         await act(async () => { await expect(setup.submit(draft)).resolves.toEqual({ ok: false, message: 'widgetAdd.addFailed' }); });
+        expect(rejectedWrites, JSON.stringify({ errorCode: layout!.errorCode, requestedPaths })).toBeGreaterThan(0);
         expect(layout!.status).toBe('error');
         expect(layout!.canCancelFailedIntent).toBe(true);
         expect(artifact.writes).toHaveLength(0);
@@ -117,7 +178,7 @@ describe('Home Customize entity reorder binding', () => {
         failWrite = false;
         await act(async () => { await layout!.retry(); });
         const added = artifact.layout().instances.find(copy => copy.id !== instance.id)!;
-        expect(added).toMatchObject({ definition: candidate.definition, bindings: draft.bindings });
+        expect(added).toMatchObject({ definition, bindings: draft.bindings });
         expect(layout!.status).toBe('ready');
         failWrite = true;
         const updatedBindings = { session: { kind: 'value' as const, value: { serverId: scope.serverId, sessionId: 'session-2' } } };

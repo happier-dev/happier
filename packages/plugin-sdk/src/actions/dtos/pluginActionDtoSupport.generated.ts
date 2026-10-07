@@ -5637,6 +5637,10 @@ export type EntityDragItemV1 = Readonly<{
                         };
                         authorAccountId?: string | undefined;
                     };
+                    sizeDeclaration: {
+                        sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                        defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+                    };
                     name: string;
                     body: {
                         kind: 'declarative';
@@ -6886,6 +6890,10 @@ export type PluginUiWidgetAreaRequestV1 = {
                         };
                         authorAccountId?: string | undefined;
                     };
+                    sizeDeclaration: {
+                        sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                        defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+                    };
                     name: string;
                     body: {
                         kind: 'declarative';
@@ -6964,6 +6972,7 @@ export type PluginUiWidgetAreaRequestV1 = {
         };
         actionId: 'widgets.instance.add';
         toIndex?: number | undefined;
+        size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
     } | {
         actionId: 'widgets.instance.remove' | 'widgets.instance.inputs.get' | 'widgets.instance.inputs.reset' | 'widgets.instance.refresh';
         instanceId: string;
@@ -6976,8 +6985,8 @@ export type PluginUiWidgetAreaRequestV1 = {
         actionId: 'widgets.instance.rename';
         instanceId: string;
     } | {
-        width: 'half' | 'compact' | 'medium' | 'wide' | 'full';
-        actionId: 'widgets.instance.width.set';
+        size: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+        actionId: 'widgets.instance.size.set';
         instanceId: string;
     } | {
         frameStyle: 'plain' | 'card' | null;
@@ -7096,6 +7105,10 @@ export type PluginUiWidgetAreaResultV1 = {
                             };
                             authorAccountId?: string | undefined;
                         };
+                        sizeDeclaration: {
+                            sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                            defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+                        };
                         name: string;
                         body: {
                             kind: 'declarative';
@@ -7172,7 +7185,7 @@ export type PluginUiWidgetAreaResultV1 = {
                 }>;
                 displayName?: string | undefined;
             };
-            width?: 'half' | 'compact' | 'medium' | 'wide' | 'full' | undefined;
+            size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
             frameStyle?: 'plain' | 'card' | undefined;
         }[];
         canEdit: boolean;
@@ -7232,6 +7245,10 @@ export type PluginUiWidgetAreaResultV1 = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
+                    };
+                    sizeDeclaration: {
+                        sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                        defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
                     };
                     name: string;
                     body: {
@@ -7335,6 +7352,14 @@ export type PluginUiWidgetAreaResultV1 = {
             };
         };
         entries: {
+            sizeDeclaration: {
+                sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+            };
+            presentation: {
+                sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                defaultSize?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
+            };
             definition: {
                 kind: 'installed';
                 surface: {
@@ -7360,6 +7385,10 @@ export type PluginUiWidgetAreaResultV1 = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
+                    };
+                    sizeDeclaration: {
+                        sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                        defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
                     };
                     name: string;
                     body: {
@@ -7454,6 +7483,10 @@ export type PluginUiWidgetAreaResultV1 = {
             availability: 'unavailable' | 'denied' | 'available';
             instanceCount: number;
         }[];
+        presentation: {
+            sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+            defaultSize?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
+        };
     } | {
         ref: {
             surface: {
@@ -7563,6 +7596,10 @@ export type PluginUiWidgetAreaOperationV1 = {
                     };
                     authorAccountId?: string | undefined;
                 };
+                sizeDeclaration: {
+                    sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                    defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+                };
                 name: string;
                 body: {
                     kind: 'declarative';
@@ -7641,6 +7678,7 @@ export type PluginUiWidgetAreaOperationV1 = {
     };
     actionId: 'widgets.instance.add';
     toIndex?: number | undefined;
+    size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
 } | {
     actionId: 'widgets.instance.remove' | 'widgets.instance.inputs.get' | 'widgets.instance.inputs.reset' | 'widgets.instance.refresh';
     instanceId: string;
@@ -7653,8 +7691,8 @@ export type PluginUiWidgetAreaOperationV1 = {
     actionId: 'widgets.instance.rename';
     instanceId: string;
 } | {
-    width: 'half' | 'compact' | 'medium' | 'wide' | 'full';
-    actionId: 'widgets.instance.width.set';
+    size: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+    actionId: 'widgets.instance.size.set';
     instanceId: string;
 } | {
     frameStyle: 'plain' | 'card' | null;

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { HomeHubLayoutIntent } from './homeHubLayoutV1.js';
 import { readBuiltinWidgetDescriptorV1 } from '../widgets/builtinWidgetDescriptorV1.js';
+import type { WidgetSizeDeclarationV1 } from '../widgets/widgetPresentationV1.js';
+import type { WidgetDefinitionV1 } from '../widgets/widgetDefinitionV1.js';
 
 import {
     HOME_HUB_DEFAULT_LAYOUT,
@@ -32,6 +34,55 @@ const SHOWN_ID = homeHubDefaultWidgetInstanceId(SHOWN.key);
 const AVAILABLE_ID = homeHubDefaultWidgetInstanceId(AVAILABLE.key);
 
 describe('configured Home placements', () => {
+    it('projects declared defaults and normalizes stale saved size without changing the personal layout', () => {
+        const widget = { ...SHOWN, sizeDeclaration: { sizes: ['wide'], defaultSize: 'wide' } satisfies WidgetSizeDeclarationV1 };
+        const defaultBefore = structuredClone(HOME_HUB_DEFAULT_LAYOUT);
+        expect(resolveHomeHubLayout(HOME_HUB_DEFAULT_LAYOUT, BUILTINS, [widget]).sections
+            .find(section => section.id === SHOWN_ID)).toMatchObject({ size: 'wide' });
+        expect(HOME_HUB_DEFAULT_LAYOUT).toEqual(defaultBefore);
+        const tallDefault = { ...SHOWN,
+            sizeDeclaration: { sizes: ['medium', 'tall'], defaultSize: 'tall' } satisfies WidgetSizeDeclarationV1 };
+        expect(resolveHomeHubLayout(HOME_HUB_DEFAULT_LAYOUT, BUILTINS, [tallDefault]).sections
+            .find(section => section.id === SHOWN_ID)).toMatchObject({ size: 'tall' });
+        expect(HOME_HUB_DEFAULT_LAYOUT).toEqual(defaultBefore);
+
+        const stored: HomeHubLayoutValue = { ...HOME_HUB_DEFAULT_LAYOUT,
+            sections: { [SHOWN_ID]: { size: 'medium', frameStyle: 'plain' } } };
+        const before = structuredClone(stored);
+        expect(resolveHomeHubLayout(stored, BUILTINS, [widget]).sections
+            .find(section => section.id === SHOWN_ID)).toMatchObject({ size: 'wide', frameStyle: 'plain' });
+        expect(stored).toEqual(before);
+    });
+    it('uses inline declarations and loaded Artifact descriptors without requiring an installed catalog entry', () => {
+        const definition: WidgetDefinitionV1 = { v: 1, id: 'authored', name: 'Authored',
+            sizeDeclaration: { sizes: ['tall'], defaultSize: 'tall' },
+            body: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Hello' } } },
+            inputs: { fields: [] }, inputSchema: { type: 'object', additionalProperties: false },
+            provenance: { source: { kind: 'authored' } } };
+        const inline = { v: 1 as const, id: 'inline', definition: { kind: 'inline' as const, definition }, bindings: {} };
+        const artifact = { v: 1 as const, id: 'artifact', definition: { kind: 'artifact' as const, artifactId: 'authored' }, bindings: {} };
+        const loaded: HomeHubWidgetInput = { key: 'artifact:authored', homeDefault: 'available',
+            definition: artifact.definition, sizeDeclaration: definition.sizeDeclaration };
+        const layout: HomeHubLayoutValue = { ...HOME_HUB_DEFAULT_LAYOUT, instances: [inline, artifact],
+            sections: { inline: { size: 'medium' }, artifact: { size: 'medium' } } };
+        expect(resolveHomeHubLayout(layout, [], [loaded]).sections).toMatchObject([
+            { id: 'inline', size: 'tall' }, { id: 'artifact', size: 'tall', widget: loaded },
+        ]);
+        expect(resolveHomeHubLayout(layout, [], []).sections).toMatchObject([
+            { id: 'inline', size: 'tall' }, { id: 'artifact', size: 'medium' },
+        ]);
+        expect(layout.sections).toEqual({ inline: { size: 'medium' }, artifact: { size: 'medium' } });
+    });
+    it('stores a tall size atomically with Add and keeps an independently sized sibling', () => {
+        const instance = { v: 1 as const, id: 'tall-copy', definition: { kind: 'builtin' as const, id: 'session_summary' }, bindings: {} };
+        const added = applyHomeHubLayoutIntent(HOME_HUB_DEFAULT_LAYOUT, BUILTINS, [],
+            { kind: 'widget_add', instance, size: 'tall' });
+        expect(added.sections?.[instance.id]).toMatchObject({ size: 'tall' });
+        const sibling = { ...instance, id: 'wide-copy' };
+        const copies = applyHomeHubLayoutIntent(added, BUILTINS, [], { kind: 'widget_add', instance: sibling, size: 'full' });
+        const edited = applyHomeHubLayoutIntent(copies, BUILTINS, [], { kind: 'widget_size', instanceId: instance.id, size: 'small' });
+        expect(edited.sections).toMatchObject({ 'tall-copy': { size: 'small' }, 'wide-copy': { size: 'full' } });
+    });
     it('projects a configured native copy through the same catalog identity without creating defaults or changing its sibling', () => {
         const descriptor = readBuiltinWidgetDescriptorV1({ kind: 'builtin', id: 'session_summary' })!;
         const one = { v: 1 as const, id: 'summary-one', definition: descriptor.definition,
@@ -56,8 +107,8 @@ describe('configured Home placements', () => {
         expect(two).toMatchObject({ instances: [instance('one', 'A'), instance('two', 'B')] });
         const edited = apply(two, { kind: 'widget_inputs', instanceId: 'one', bindings: { session: { kind: 'value', value: 'C' } } });
         expect(edited).toMatchObject({ instances: [instance('one', 'C'), instance('two', 'B')] });
-        const wide = apply(edited, { kind: 'widget_width', instanceId: 'one', width: 'full' });
-        expect(wide.sections?.one).toMatchObject({ width: 'full' });
+        const wide = apply(edited, { kind: 'widget_size', instanceId: 'one', size: 'full' });
+        expect(wide.sections?.one).toMatchObject({ size: 'full' });
         const removed = apply(wide, { kind: 'widget_remove', instanceId: 'one' });
         expect(removed).toMatchObject({ instances: [instance('two', 'B')] });
     });

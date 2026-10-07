@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { getWidgetSizeFootprintV1 } from '@happier-dev/protocol/widgets';
 
 import { CardGrid, CardGridCell } from '@/components/ui/cardGrid/CardGrid';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -62,7 +63,8 @@ export function HomeHubSectionList(props: Readonly<{
                     // A sheetless group gives the card row the same column edges as every other section.
                     <ItemGroup key={slot.key} surface="none">
                         <CardGrid testID={`home-hub.${slot.key}`} columns={HOME_HUB_CARD_ROW_COLUMNS}>
-                            {slot.entries.map((entry) => (alone || (entry.section.kind === 'widget' && entry.section.width === 'full') ? (
+                            {slot.entries.map((entry) => (alone || (entry.section.kind === 'widget'
+                                && getWidgetSizeFootprintV1('home', entry.section.size)?.columnSpan === HOME_HUB_CARD_ROW_COLUMNS) ? (
                                 <CardGridCell key={entry.section.id} span="row">
                                     {props.renderSection(entry.section, entry.index)}
                                 </CardGridCell>

@@ -625,6 +625,7 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
                 // the declared renderer chain owns technical fallback.
                 id: 'review-status-widget',
                 container: 'widget',
+                sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' },
                 resources: [{ pluginId: 'examples.public-sdk-review-assistant', localId: 'review-session-status' }],
                 target: { kind: 'session' },
                 inputs: { fields: [

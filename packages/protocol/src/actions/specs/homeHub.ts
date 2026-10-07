@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { HomeHubLayoutV1Schema, HomeHubLayoutIntentSchema } from '../../home/homeHubLayoutV1.js';
 import { WidgetInstanceV1Schema } from '../../widgets/widgetInstanceV1.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
+import { WidgetSizeV1Schema } from '../../widgets/widgetPresentationV1.js';
 
 export const HOME_HUB_LAYOUT_ACTION_IDS = ['home.hub.layout.get', 'home.hub.layout.update', 'home.reachNudge.dismiss'] as const;
 export type HomeHubLayoutActionId = typeof HOME_HUB_LAYOUT_ACTION_IDS[number];
@@ -16,7 +17,7 @@ export const HomeReachNudgeDismissInputSchema = z.object({ homeServerId: z.strin
 export const HomeReachNudgeDismissResultSchema = z.object({ homeIdentityId: z.string().min(1), dismissed: z.literal(true) }).strict();
 export const HomeHubLayoutResultSchema = z.object({
   layout: HomeHubLayoutV1Schema,
-  sections: z.array(z.object({ id: sectionId, kind: z.enum(['builtin', 'widget']), hidden: z.boolean(), hideable: z.boolean(), frameStyle: z.enum(['card', 'plain']).optional(), instance: WidgetInstanceV1Schema.optional(), width: z.enum(['half', 'full']).optional() }).strict()),
+  sections: z.array(z.object({ id: sectionId, kind: z.enum(['builtin', 'widget']), hidden: z.boolean(), hideable: z.boolean(), frameStyle: z.enum(['card', 'plain']).optional(), instance: WidgetInstanceV1Schema.optional(), size: WidgetSizeV1Schema.optional() }).strict()),
   availableWidgetIds: z.array(sectionId),
   hiddenSetupStepIds: z.array(sectionId),
 }).strict();
@@ -50,7 +51,7 @@ export const HOME_HUB_LAYOUT_ACTION_SPECS = [
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
     inputSchema: HomeHubLayoutUpdateInputSchema, outputSchema: HomeHubLayoutResultSchema,
     inputHints: { fields: [{ path: 'intent', title: 'Customization intent', widget: 'json', required: true,
-      description: 'Use move, move_to (sectionId, position: anchorId and before/after placement), reorder, visibility, frameStyle (card/plain/null), setup_visibility (stepId, hidden), restore_setup, reset, widget_add (instance, optional position), widget_remove (instanceId), widget_rename (instanceId, optional displayName), widget_inputs (instanceId, bindings) or widget_width (instanceId, half/full). move_to preserves concurrent additions. Read the current layout first; reorder lists all sections returned by that read.' }] },
+      description: 'Use move, move_to (sectionId, position: anchorId and before/after placement), reorder, visibility, frameStyle (card/plain/null), setup_visibility (stepId, hidden), restore_setup, reset, widget_add (instance, optional size and position), widget_remove (instanceId), widget_rename (instanceId, optional displayName), widget_inputs (instanceId, bindings) or widget_size (instanceId, declared size). move_to preserves concurrent additions. Read the current layout first; reorder lists all sections returned by that read.' }] },
     examples: { voice: { argsExample: '{"intent":{"kind":"visibility","sectionId":"machines","hidden":false}}' } },
   },
 ] as const satisfies readonly PreNormalizedActionSpec[];

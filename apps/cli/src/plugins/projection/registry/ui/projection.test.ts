@@ -196,7 +196,7 @@ describe('plugin UI projection family', () => {
             pluginVersion: '1.2.3',
             identity: createPluginContributionIdentity({ pluginId, localId: id }),
             manifestPath: `/plugins/${pluginId}/.happier-plugin/plugin.json`,
-            definition: PluginUiViewV2Schema.parse(container === 'widget' ? {
+            definition: PluginUiViewV2Schema.parse(container === 'widget' ? { sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' },
                 id,
                 container: 'widget',
                 target: { kind: 'session' },
@@ -2136,6 +2136,7 @@ describe('embedded widget projection', () => {
             definition: PluginUiViewV2Schema.parse({
                 id: 'review-status-widget',
                 container,
+                ...(container === 'widget' ? { sizeDeclaration: { sizes: ['medium', 'tall'], defaultSize: 'medium' } } : {}),
                 target: { kind: targetKind },
                 renderer: 'review-native',
                 title: 'Review status',
@@ -2157,6 +2158,7 @@ describe('embedded widget projection', () => {
         expect(entry).toMatchObject({
             contributionKind: 'surfacePlacement',
             descriptorId: 'review-status-widget',
+            sizeDeclaration: { sizes: ['medium', 'tall'], defaultSize: 'medium' },
             target: { kind: 'session' },
             binding: expect.objectContaining({
                 kind: 'inline',

@@ -38,6 +38,77 @@ describe('ItemRowActions', () => {
     });
     afterEach(() => restoreWebGlobals?.());
 
+    it('routes shortcuts only from the mounted overflow control and renders custom content only while open', async () => {
+        const { ItemRowActions } = await import('./ItemRowActions');
+        const shortcut = vi.fn((key: string) => key === ']');
+        const content = vi.fn(() => React.createElement('View', { testID: 'size-picker' }));
+        const screen = await renderScreen(React.createElement(ItemRowActions, {
+            title: 'Widget', overflowTriggerTestID: 'widget-menu',
+            onOverflowTriggerKeyDown: shortcut,
+            renderOverflowSection: ({ id }: { id: string }) => id === 'size' ? content() : undefined,
+            actions: [{ id: 'size-medium', title: 'Medium', icon: 'square', group: { id: 'size', title: 'Size' } }],
+        }));
+        expect(content).not.toHaveBeenCalled();
+        const target = {};
+        const stopPropagation = vi.fn();
+        const preventDefault = vi.fn();
+        screen.findByTestId('widget-menu')!.props.onKeyDown?.({ key: ']', target, currentTarget: target, stopPropagation, preventDefault });
+        expect(shortcut).toHaveBeenCalledWith(']');
+        expect(preventDefault).toHaveBeenCalledOnce();
+        shortcut.mockClear();
+        screen.findByTestId('widget-menu')!.props.onKeyDown?.({ key: '[', target: {}, currentTarget: target, stopPropagation, preventDefault });
+        expect(shortcut).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('widget-menu');
+        expect(screen.findByTestId('size-picker')).not.toBeNull();
+    });
+
+    it('uses the declared size choices for both the mounted picker and bracket shortcuts', async () => {
+        const { ItemRowActions } = await import('./ItemRowActions');
+        const { resolveWidgetSizeChoicesV1 } = await import('@happier-dev/protocol/widgets');
+        const { renderWidgetSizeMenuSection, stepWidgetSizeControl } = await import('@/components/widgets/frame/WidgetSizeControl');
+        const { buildWidgetSizeActions } = await import('@/components/widgets/frame/widgetFrameMenu');
+        const choices = resolveWidgetSizeChoicesV1('home', { sizes: ['large', 'small', 'medium'], defaultSize: 'medium' });
+        const selected: string[] = [];
+        function WidgetMenu() {
+            const [size, setSize] = React.useState(choices.defaultSize!);
+            const control = { surface: 'home' as const, sizes: choices.sizes, size,
+                onSet: (next: typeof size) => { selected.push(next); setSize(next); } };
+            return React.createElement(ItemRowActions, { title: 'Widget', overflowTriggerTestID: 'size-menu',
+                actions: buildWidgetSizeActions(control), onOverflowTriggerKeyDown: key => stepWidgetSizeControl(control, key),
+                renderOverflowSection: ({ id }) => renderWidgetSizeMenuSection(control, id, 'declared-size') });
+        }
+        const screen = await renderScreen(React.createElement(WidgetMenu));
+        const target = {};
+        await act(async () => screen.findByTestId('size-menu')!.props.onKeyDown({ key: ']', target, currentTarget: target,
+            preventDefault() {}, stopPropagation() {} }));
+        await screen.pressByTestIdAsync('size-menu');
+        expect(screen.findByTestId('declared-size.wide')).toBeNull();
+        expect(screen.findByTestId('declared-size.large')!.props.accessibilityState.checked).toBe(true);
+        await screen.pressByTestIdAsync('declared-size.small');
+        expect(selected).toEqual(['large', 'small']);
+    });
+
+    it('steps an unnamed current rectangle to the first canonical declared size without selecting a default beforehand', async () => {
+        const { ItemRowActions } = await import('./ItemRowActions');
+        const { resolveWidgetSizeChoicesV1 } = await import('@happier-dev/protocol/widgets');
+        const { renderWidgetSizeMenuSection, stepWidgetSizeControl } = await import('@/components/widgets/frame/WidgetSizeControl');
+        const { buildWidgetSizeActions } = await import('@/components/widgets/frame/widgetFrameMenu');
+        const choices = resolveWidgetSizeChoicesV1('sessionBoard', { sizes: ['large', 'medium'], defaultSize: 'large' });
+        const selected: string[] = [];
+        const control = { surface: 'sessionBoard' as const, sizes: choices.sizes, size: undefined,
+            onSet: (size: NonNullable<typeof choices.defaultSize>) => { selected.push(size); } };
+        const screen = await renderScreen(React.createElement(ItemRowActions, { title: 'Widget', overflowTriggerTestID: 'unnamed-menu',
+            actions: buildWidgetSizeActions(control), onOverflowTriggerKeyDown: key => stepWidgetSizeControl(control, key),
+            renderOverflowSection: ({ id }) => renderWidgetSizeMenuSection(control, id, 'unnamed-size') }));
+        await screen.pressByTestIdAsync('unnamed-menu');
+        expect(screen.findByTestId('unnamed-size.medium')!.props.accessibilityState.checked).toBe(false);
+        expect(screen.findByTestId('unnamed-size.large')!.props.accessibilityState.checked).toBe(false);
+        const target = {};
+        await act(async () => screen.findByTestId('unnamed-menu')!.props.onKeyDown({ key: ']', target, currentTarget: target,
+            preventDefault() {}, stopPropagation() {} }));
+        expect(selected).toEqual(['medium']);
+    });
+
     it('forwards the press event to inline actions so modifier-aware navigation stays centralized', async () => {
         const { ItemRowActions } = await import('./ItemRowActions');
         const onPress = vi.fn();
@@ -302,7 +373,7 @@ describe('ItemRowActions', () => {
     it('does not emit raw text nodes under Pressable when the vendor overflow glyph renders text on web', async () => {
         const { getIconFamily, setIconFamily } = await import('@/components/ui/icons/iconFamily');
         const previousFamily = getIconFamily();
-        setIconFamily('phosphor');
+        act(() => setIconFamily('phosphor'));
         vendorIconState.renderText = true;
         const { ItemRowActions } = await import('./ItemRowActions');
 
@@ -318,14 +389,17 @@ describe('ItemRowActions', () => {
 
             expect(screen.findByTestId('row-actions-trigger')).toBeTruthy();
 
-            expect(screen.tree.root.findAllByType('Text' as never).some(node => node.children.includes('.'))).toBe(true);
+            // The vendor component sits inside native Text; test the rendered subtree,
+            // not whether React collapses that component into its parent's direct children.
+            expect(screen.tree.root.findAllByType('Text' as never).some(node =>
+                node.findAll(child => child.children.includes('.')).length > 0)).toBe(true);
 
             expect(collectUnexpectedRawTextNodes(screen?.tree.toJSON())).toEqual([]);
         } finally {
             vendorIconState.renderText = false;
-            setIconFamily(previousFamily);
             act(() => {
                 screen?.tree.unmount();
+                setIconFamily(previousFamily);
             });
         }
     });
@@ -333,7 +407,7 @@ describe('ItemRowActions', () => {
     it('does not emit raw text nodes when the vendor inline glyph renders text on web', async () => {
         const { getIconFamily, setIconFamily } = await import('@/components/ui/icons/iconFamily');
         const previousFamily = getIconFamily();
-        setIconFamily('phosphor');
+        act(() => setIconFamily('phosphor'));
         vendorIconState.renderText = true;
         const { ItemRowActions } = await import('./ItemRowActions');
 
@@ -349,14 +423,15 @@ describe('ItemRowActions', () => {
 
             expect(screen.findByProps({ accessibilityLabel: 'Favorite' })).toBeTruthy();
 
-            expect(screen.tree.root.findAllByType('Text' as never).some(node => node.children.includes('.'))).toBe(true);
+            expect(screen.tree.root.findAllByType('Text' as never).some(node =>
+                node.findAll(child => child.children.includes('.')).length > 0)).toBe(true);
 
             expect(collectUnexpectedRawTextNodes(screen?.tree.toJSON())).toEqual([]);
         } finally {
             vendorIconState.renderText = false;
-            setIconFamily(previousFamily);
             act(() => {
                 screen?.tree.unmount();
+                setIconFamily(previousFamily);
             });
         }
     });

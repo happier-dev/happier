@@ -12,6 +12,7 @@ import { createHomeWidgetActionPortV1 } from './homeWidgetActionPortV1.js';
 import { createWorkBoardWidgetActionPortV1 } from './workBoardWidgetActionPortV1.js';
 import { createSessionBoardWidgetActionPortV1 } from './sessionBoardWidgetActionPortV1.js';
 import { admitWidgetActionSurfaceV1 } from './widgetActionScopeV1.js';
+import { resolveWidgetSizeChoicesV1, normalizeWidgetSizeForSurfaceV1, type WidgetSizeV1 } from './widgetPresentationV1.js';
 
 const failure = (errorCode: string): Extract<ActionExecuteResult, { ok: false }> => ({ ok: false, errorCode, error: errorCode });
 export const readWidgetActionSurfacePortV1 = (deps: ActionExecutorDeps, surface: WidgetSurfaceRefV1): WidgetActionSurfacePortV1 | undefined => deps.widgetSurfaceActions?.[surface.owner.kind]
@@ -33,7 +34,23 @@ export async function admitWidgetInstanceConfigurationV1(
 
 /** A refused owner write is known not to have committed; all other failures stay unknown. */
 const knownRefusal = (code: string) => SessionBoardErrorCodeSchema.safeParse(code).success
-  || /^(widget_(instance_(changed|already_exists|not_found)|placement_(changed|ambiguous|required|unsupported)|index_placement_unsupported|width_unsupported|edit_denied|view_not_found)|widgets_move_conflict|invalid_widget_shared_content|account_target_mismatch|server_target_mismatch)$/.test(code);
+  || /^(widget_(instance_(changed|already_exists|not_found)|placement_(changed|ambiguous|required|unsupported)|index_placement_unsupported|size_unsupported|edit_denied|view_not_found)|widgets_move_conflict|invalid_widget_shared_content|account_target_mismatch|server_target_mismatch)$/.test(code);
+
+async function readSizeChoices(deps: ActionExecutorDeps, ref: WidgetInstanceRefV1, instance: WidgetInstanceV1, context: ActionExecutorContext) {
+  if (!deps.widgetInputs) return null;
+  const declaration = await deps.widgetInputs.readSizeDeclaration({ ref, instance, context, ...(context.signal ? { signal: context.signal } : {}) });
+  context.signal?.throwIfAborted();
+  return declaration ? resolveWidgetSizeChoicesV1(ref.surface.owner.kind, declaration) : null;
+}
+
+/** Universal and native Action frontdoors share exact-definition presentation admission. */
+export async function admitWidgetInstanceSizeV1(deps: ActionExecutorDeps, ref: WidgetInstanceRefV1, instance: WidgetInstanceV1,
+  requested: WidgetSizeV1 | undefined, context: ActionExecutorContext): Promise<Readonly<{ size: WidgetSizeV1 | undefined }> | Extract<ActionExecuteResult, { ok: false }>> {
+  const choices = await readSizeChoices(deps, ref, instance, context);
+  if (!choices) return failure('widget_type_unavailable');
+  if (requested !== undefined && !choices.sizes.includes(requested)) return failure('widget_size_unsupported');
+  return { size: requested ?? choices.defaultSize };
+}
 
 async function transferWidget(
   deps: ActionExecutorDeps, fromRef: WidgetInstanceRefV1, to: Readonly<{ surface: WidgetSurfaceRefV1; tabId?: string; index: number }>,
@@ -84,12 +101,16 @@ async function transferWidget(
     if (!deps.widgetInputs) return refused('widget_inputs_unavailable');
     const validation = await deps.widgetInputs.resolve({ ref: toRef, instance, context, admission: 'configuration', ...(context.signal ? { signal: context.signal } : {}) });
     if (validation.status !== 'ready') return refused(`widget_destination_${validation.status}`);
+    const choices = await readSizeChoices(deps, toRef, instance, context);
+    if (!choices) return refused('widget_type_unavailable');
     context.signal?.throwIfAborted();
     phase = 'destination_add';
     const sourcePresentation = captured.data.expectedPresentation;
+    const normalized = normalizeWidgetSizeForSurfaceV1(to.surface.owner.kind, sourcePresentation?.size);
+    const size = normalized && choices.sizes.includes(normalized) ? normalized : choices.defaultSize;
     const added = await destinationPort.apply(to.surface, { kind: 'add', instance,
       position: { index: to.index, ...(to.tabId ? { tabId: to.tabId } : {}) }, captureForMove: true,
-      ...(sourcePresentation ? { presentation: { ...(sourcePresentation.width && to.surface.owner.kind !== 'companion' ? { width: sourcePresentation.width } : {}), ...(sourcePresentation.frameStyle ? { frameStyle: sourcePresentation.frameStyle } : {}) } } : {}),
+      presentation: { ...(size ? { size } : {}), ...(sourcePresentation?.frameStyle ? { frameStyle: sourcePresentation.frameStyle } : {}) },
     }, context, context.signal);
     if (!added.ok) return await observe(added.errorCode, knownRefusal(added.errorCode));
     const payload = added.result && typeof added.result === 'object' ? added.result : {};
@@ -129,7 +150,7 @@ export async function executeWidgetInstanceActionV1(
     const { intent } = WidgetInstanceActionInputSchemasV1[actionId].parse(args);
     const ref = { surface, instanceId: intent.instanceId };
     if (intent.kind === 'move') return executeWidgetInstanceActionV1(deps, 'widgets.instance.move', { ref, toIndex: intent.toIndex }, context);
-    if (intent.kind === 'width') return executeWidgetInstanceActionV1(deps, 'widgets.instance.width.set', { ref, width: intent.width }, context);
+    if (intent.kind === 'size') return executeWidgetInstanceActionV1(deps, 'widgets.instance.size.set', { ref, size: intent.size }, context);
     return executeWidgetInstanceActionV1(deps, 'widgets.instance.frame.set', { ref, frameStyle: intent.frameStyle }, context);
   }
 
@@ -137,9 +158,12 @@ export async function executeWidgetInstanceActionV1(
     if (!deps.widgetCatalog) return failure('widget_catalog_unavailable');
     const catalog = WidgetInstanceActionInputSchemasV1[actionId].parse(args);
     if (catalog.boundSession && catalog.boundSession.serverId !== surface.serverId) return failure('server_target_mismatch');
-    const entries = await deps.widgetCatalog.list(surface, context, context.signal, catalog.boundSession);
-    const failed = ActionExecuteFailureSchema.safeParse(entries);
-    return failed.success ? failed.data : { ok: true, result: { surface, entries } };
+    const source = await deps.widgetCatalog.list(surface, context, context.signal, catalog.boundSession);
+    const failed = ActionExecuteFailureSchema.safeParse(source);
+    if (failed.success) return failed.data;
+    if (!Array.isArray(source)) return failure('invalid_action_output');
+    const entries = source.map(entry => ({ ...entry, presentation: resolveWidgetSizeChoicesV1(surface.owner.kind, entry.sizeDeclaration) }));
+    return { ok: true, result: { surface, entries, presentation: resolveWidgetSizeChoicesV1(surface.owner.kind) } };
   }
   if (actionId === 'widgets.instance.refresh') {
     return ref && deps.widgetRefresh
@@ -169,7 +193,10 @@ export async function executeWidgetInstanceActionV1(
     case 'widgets.instance.add': {
       const add = WidgetInstanceActionInputSchemasV1[actionId].parse(args);
       if (state.instances.some(entry => entry.instance.id === add.instance.id)) return failure('widget_instance_already_exists');
-      intent = { kind: 'add', instance: add.instance, ...(add.toIndex === undefined ? {} : { toIndex: add.toIndex }), ...(add.placement ? { placement: add.placement } : {}) };
+      const admitted = await admitWidgetInstanceSizeV1(deps, { surface, instanceId: add.instance.id }, add.instance, add.size, context);
+      if ('ok' in admitted) return admitted;
+      const { size } = admitted;
+      intent = { kind: 'add', instance: add.instance, ...(size ? { presentation: { size } } : {}), ...(add.toIndex === undefined ? {} : { toIndex: add.toIndex }), ...(add.placement ? { placement: add.placement } : {}) };
       break;
     }
     case 'widgets.instance.remove': intent = { kind: 'remove', instanceId: ref!.instanceId }; break;
@@ -185,7 +212,13 @@ export async function executeWidgetInstanceActionV1(
       break;
     }
     case 'widgets.instance.rename': intent = { kind: 'rename', instanceId: ref!.instanceId, displayName: WidgetInstanceActionInputSchemasV1[actionId].parse(args).displayName }; break;
-    case 'widgets.instance.width.set': intent = { kind: 'width', instanceId: ref!.instanceId, width: WidgetInstanceActionInputSchemasV1[actionId].parse(args).width }; break;
+    case 'widgets.instance.size.set': {
+      const size = WidgetInstanceActionInputSchemasV1[actionId].parse(args).size;
+      const admitted = await admitWidgetInstanceSizeV1(deps, ref!, existing!, size, context);
+      if ('ok' in admitted) return admitted;
+      intent = { kind: 'size', instanceId: ref!.instanceId, size };
+      break;
+    }
     case 'widgets.instance.frame.set': intent = { kind: 'frame', instanceId: ref!.instanceId, frameStyle: WidgetInstanceActionInputSchemasV1[actionId].parse(args).frameStyle }; break;
     case 'widgets.instance.inputs.set':
     case 'widgets.instance.inputs.reset': {

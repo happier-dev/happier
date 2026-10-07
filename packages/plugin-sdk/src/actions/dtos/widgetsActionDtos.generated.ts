@@ -115,6 +115,10 @@ export type WidgetsActionInputById = {
                         };
                         authorAccountId?: string | undefined;
                     };
+                    sizeDeclaration: {
+                        sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                        defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+                    };
                     name: string;
                     body: {
                         kind: 'declarative';
@@ -186,11 +190,12 @@ export type WidgetsActionInputById = {
             }>;
             displayName?: string | undefined;
         };
+        size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
         toIndex?: number | undefined;
         placement?: {
             tabId?: string | undefined;
             tabTitle?: string | undefined;
-            width?: 'compact' | 'medium' | 'wide' | 'full' | undefined;
+            width?: 'medium' | 'wide' | 'full' | 'compact' | undefined;
             frameStyle?: 'card' | 'plain' | undefined;
             anchor?: {
                 side: 'before' | 'after';
@@ -343,7 +348,7 @@ export type WidgetsActionInputById = {
         };
         displayName: string | null;
     };
-    readonly "widgets.instance.width.set": {
+    readonly "widgets.instance.size.set": {
         ref: {
             surface: {
                 serverId: string;
@@ -371,7 +376,7 @@ export type WidgetsActionInputById = {
             };
             instanceId: string;
         };
-        width: 'compact' | 'medium' | 'wide' | 'full' | 'half';
+        size: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
     };
     readonly "widgets.instance.frame.set": {
         ref: {
@@ -624,9 +629,9 @@ export type WidgetsActionInputById = {
             instanceId: string;
             toIndex: number;
         } | {
-            kind: 'width';
+            kind: 'size';
             instanceId: string;
-            width: 'compact' | 'medium' | 'wide' | 'full' | 'half';
+            size: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
         } | {
             kind: 'frame';
             instanceId: string;
@@ -653,6 +658,10 @@ export type WidgetsActionInputById = {
         };
         artifactId: string;
         definition: {
+            sizeDeclaration: {
+                sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+            };
             name: string;
             body: {
                 kind: 'declarative';
@@ -728,6 +737,10 @@ export type WidgetsActionInputById = {
                 };
                 nativeServicePath?: string | undefined;
             }[] | null | undefined;
+            sizeDeclaration?: {
+                sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+            } | undefined;
             name?: string | undefined;
             body?: {
                 kind: 'declarative';
@@ -842,7 +855,7 @@ export type WidgetsActionInputById = {
         placement: {
             tabId?: string | undefined;
             tabTitle?: string | undefined;
-            width?: 'compact' | 'medium' | 'wide' | 'full' | undefined;
+            width?: 'medium' | 'wide' | 'full' | 'compact' | undefined;
             frameStyle?: 'card' | 'plain' | undefined;
             anchor?: {
                 side: 'before' | 'after';
@@ -879,6 +892,14 @@ export type WidgetsActionResultById = {
             };
         };
         entries: {
+            sizeDeclaration: {
+                sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+            };
+            presentation: {
+                sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                defaultSize?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
+            };
             definition: {
                 kind: 'installed';
                 surface: {
@@ -904,6 +925,10 @@ export type WidgetsActionResultById = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
+                    };
+                    sizeDeclaration: {
+                        sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                        defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
                     };
                     name: string;
                     body: {
@@ -998,6 +1023,10 @@ export type WidgetsActionResultById = {
             availability: 'available' | 'unavailable' | 'denied';
             instanceCount: number;
         }[];
+        presentation: {
+            sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+            defaultSize?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
+        };
     };
     readonly "widgets.instance.list": {
         surface: {
@@ -1053,6 +1082,10 @@ export type WidgetsActionResultById = {
                                 itemId: string;
                             };
                             authorAccountId?: string | undefined;
+                        };
+                        sizeDeclaration: {
+                            sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                            defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
                         };
                         name: string;
                         body: {
@@ -1130,7 +1163,7 @@ export type WidgetsActionResultById = {
                 }>;
                 displayName?: string | undefined;
             };
-            width?: 'compact' | 'medium' | 'wide' | 'full' | 'half' | undefined;
+            size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
             frameStyle?: 'card' | 'plain' | undefined;
         }[];
         canEdit: boolean;
@@ -1191,6 +1224,10 @@ export type WidgetsActionResultById = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
+                    };
+                    sizeDeclaration: {
+                        sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                        defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
                     };
                     name: string;
                     body: {
@@ -1326,6 +1363,10 @@ export type WidgetsActionResultById = {
                         };
                         authorAccountId?: string | undefined;
                     };
+                    sizeDeclaration: {
+                        sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                        defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+                    };
                     name: string;
                     body: {
                         kind: 'declarative';
@@ -1459,6 +1500,10 @@ export type WidgetsActionResultById = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
+                    };
+                    sizeDeclaration: {
+                        sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                        defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
                     };
                     name: string;
                     body: {
@@ -1622,6 +1667,10 @@ export type WidgetsActionResultById = {
                         };
                         authorAccountId?: string | undefined;
                     };
+                    sizeDeclaration: {
+                        sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                        defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+                    };
                     name: string;
                     body: {
                         kind: 'declarative';
@@ -1699,7 +1748,7 @@ export type WidgetsActionResultById = {
             displayName?: string | undefined;
         } | null;
     };
-    readonly "widgets.instance.width.set": {
+    readonly "widgets.instance.size.set": {
         ref: {
             surface: {
                 serverId: string;
@@ -1755,6 +1804,10 @@ export type WidgetsActionResultById = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
+                    };
+                    sizeDeclaration: {
+                        sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                        defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
                     };
                     name: string;
                     body: {
@@ -1889,6 +1942,10 @@ export type WidgetsActionResultById = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
+                    };
+                    sizeDeclaration: {
+                        sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                        defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
                     };
                     name: string;
                     body: {
@@ -2078,6 +2135,10 @@ export type WidgetsActionResultById = {
                         };
                         authorAccountId?: string | undefined;
                     };
+                    sizeDeclaration: {
+                        sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                        defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+                    };
                     name: string;
                     body: {
                         kind: 'declarative';
@@ -2211,6 +2272,10 @@ export type WidgetsActionResultById = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
+                    };
+                    sizeDeclaration: {
+                        sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                        defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
                     };
                     name: string;
                     body: {
@@ -2374,6 +2439,10 @@ export type WidgetsActionResultById = {
                             };
                             authorAccountId?: string | undefined;
                         };
+                        sizeDeclaration: {
+                            sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                            defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+                        };
                         name: string;
                         body: {
                             kind: 'declarative';
@@ -2450,7 +2519,7 @@ export type WidgetsActionResultById = {
                 }>;
                 displayName?: string | undefined;
             };
-            width?: 'compact' | 'medium' | 'wide' | 'full' | 'half' | undefined;
+            size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
             frameStyle?: 'card' | 'plain' | undefined;
         }[];
         canEdit: boolean;
@@ -2511,6 +2580,10 @@ export type WidgetsActionResultById = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
+                    };
+                    sizeDeclaration: {
+                        sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                        defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
                     };
                     name: string;
                     body: {
@@ -2591,6 +2664,10 @@ export type WidgetsActionResultById = {
     };
     readonly "widgets.definition.list": {
         definitions: {
+            sizeDeclaration: {
+                sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+            };
             name: string;
             inputs: {
                 fields: readonly {
@@ -2663,6 +2740,10 @@ export type WidgetsActionResultById = {
                     itemId: string;
                 };
                 authorAccountId?: string | undefined;
+            };
+            sizeDeclaration: {
+                sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
             };
             name: string;
             body: {
@@ -2769,6 +2850,10 @@ export type WidgetsActionResultById = {
                 };
                 authorAccountId?: string | undefined;
             };
+            sizeDeclaration: {
+                sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+            };
             name: string;
             body: {
                 kind: 'declarative';
@@ -2844,6 +2929,10 @@ export type WidgetsActionResultById = {
                 };
                 authorAccountId?: string | undefined;
             };
+            sizeDeclaration: {
+                sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+            };
             name: string;
             body: {
                 kind: 'declarative';
@@ -2918,6 +3007,10 @@ export type WidgetsActionResultById = {
                     itemId: string;
                 };
                 authorAccountId?: string | undefined;
+            };
+            sizeDeclaration: {
+                sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
             };
             name: string;
             body: {
@@ -2997,6 +3090,10 @@ export type WidgetsActionResultById = {
                     itemId: string;
                 };
                 authorAccountId?: string | undefined;
+            };
+            sizeDeclaration: {
+                sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
             };
             name: string;
             body: {
@@ -3094,7 +3191,7 @@ export type WidgetsActionResultById = {
         };
         destination: {
             tabId: string;
-            width: 'compact' | 'medium' | 'wide' | 'full';
+            width: 'medium' | 'wide' | 'full' | 'compact';
             frameStyle?: 'card' | 'plain' | undefined;
         } | null;
         preview?: {

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     ApprovalRequestSchema,
+    FeaturesResponseSchema,
     MACHINE_PLAIN_DATA_KEY_MARKER,
     DIRECT_ROUTE_GRANT_AUDIENCE_V1,
     DIRECT_ROUTE_GRANT_TTL_MS,
@@ -43,6 +44,9 @@ vi.mock('@happier-dev/iroh-native', async (original) => {
 });
 installDisconnectedServerSocketBoundary((socket) => {
     socket.connected = true;
+    // This connected network boundary has no real Socket.IO engine, including
+    // the fire-and-forget human-presence leave emitted during Account disposal.
+    vi.spyOn(socket, 'emit').mockReturnValue(socket);
     vi.spyOn(socket, 'timeout').mockReturnValue(socket);
     vi.spyOn(socket, 'emitWithAck').mockImplementation(async (_event: string, request: { method: string; params: unknown }) => {
         const separator = request.method.indexOf(':');
@@ -103,6 +107,13 @@ function executeModel(input: ReturnType<typeof modelInput>) {
 async function executeRuntime(executor: Executor, args: { actionId: ActionId; input: unknown; context: ActionExecutorContext }) {
     const result = await executor.execute(args.actionId, args.input, { ...args.context, serverId, surface: 'ui' });
     return result.ok ? result.result : result;
+}
+
+async function admitBrowserAutomation() {
+    const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features: FeaturesResponseSchema.parse({ features: {
+        browser: { enabled: true, viewTargets: { enabled: true }, internal: { enabled: true }, automation: { enabled: true } },
+    } }) } });
 }
 
 /** Stateful Home Session HTTP boundary. The real Sync tuple owner handles retries/currentness. */
@@ -687,6 +698,7 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
             errorCode: 'runtime_action_disabled',
             error: 'runtime_action_disabled:localServices:local_services_machine_unavailable',
         });
+        await admitBrowserAutomation();
         await expect(executeRuntime(executor, {
             actionId: 'browser.navigate',
             input: {
@@ -714,6 +726,7 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
     });
 
     it('routes browser.navigate through a registered browser surface adapter', async () => {
+        await admitBrowserAutomation();
         const {
             applyBrowserControlEvent,
             createBrowserControlState,

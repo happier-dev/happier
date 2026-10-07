@@ -444,7 +444,7 @@ describe('HomeHub plugin widgets', () => {
             inputSchema: { type: 'object', properties: { branch: { type: 'string' } }, required: ['branch'], additionalProperties: false },
         }], { 'acme.ci': widgetInstalledPackage('acme.ci', 'CI') });
         settings.layout = { order: ['start', 'attention', 'setup', first.id, second.id, missing.id], hidden: [], instances: [first, second, missing],
-            sections: { [second.id]: { width: 'full' } } };
+            sections: { [second.id]: { size: 'full' } } };
         const screen = await renderHome();
         await lay(screen, { [first.id]: 300, [second.id]: 500, [missing.id]: 700 });
         expect(screen.getTextContent()).toContain('branch:main');
@@ -456,7 +456,7 @@ describe('HomeHub plugin widgets', () => {
 
         settings.viewport = { width: 390, height: 844 };
         await screen.rerender();
-        expect(artifact.layout().sections?.[second.id]?.width).toBe('full');
+        expect(artifact.layout().sections?.[second.id]?.size).toBe('full');
         expect(screen.getTextContent()).toContain('branch:main');
         expect(screen.getTextContent()).toContain('branch:release');
         await act(async () => { screen.pressByTestId('home-hub.customize'); });
@@ -464,7 +464,7 @@ describe('HomeHub plugin widgets', () => {
         await act(async () => { await screen.findByTestId(`home-layout.${missing.id}.shown`)!.props.onValueChange(false); });
         await flushHookEffects({ cycles: 3 });
         expect(artifact.layout().instances).toEqual([first, second]);
-        expect(artifact.layout().sections?.[second.id]?.width).toBe('full');
+        expect(artifact.layout().sections?.[second.id]?.size).toBe('full');
         expect(screen.findByTestId(`home-hub.section.${missing.id}`)).toBeNull();
         expect(screen.getTextContent()).toContain('branch:release');
     });

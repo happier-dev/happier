@@ -57,5 +57,7 @@ function SummaryWidgetBody(props: React.ComponentProps<typeof BuiltinWidgetBody>
             activity={model.needsYou ? 'held' : model.status?.state === 'thinking' ? 'working' : 'idle'}
             presentation="body" testID={props.testID} />
         : <SessionSummaryCard model={model} session={props.session} serverId={props.serverId}
-            density="comfortable" presentation="full" answerPermission={answerPermission} destinations={destinations} testID={props.testID} />;
+            density="comfortable" presentation="full" answerPermission={answerPermission} destinations={destinations}
+            onOpenFullSurface={() => router.push(buildScopedSessionRouteHref({ sessionId: props.session.id,
+                serverId: props.serverId }) as Parameters<typeof router.push>[0])} testID={props.testID} />;
 }

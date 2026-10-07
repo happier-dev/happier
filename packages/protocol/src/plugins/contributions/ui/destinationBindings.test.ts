@@ -25,12 +25,12 @@ import type { PluginUiPageHeaderActionV1Input } from './sessionHeaderActions.js'
 import { PluginSurfaceTargetV1Schema } from './surfaceTargets.js';
 
 if (false) {
-  const acceptedHomeWidget: PluginUiViewV2Input = {
+  const acceptedHomeWidget: PluginUiViewV2Input = { sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' },
     id: 'home', renderer: 'native', container: 'widget', target: { kind: 'app' },
     home: { default: 'shown' },
   };
   // @ts-expect-error Session widget declarations require an exact typed Session input.
-  const rejectedSessionHomeWidget: PluginUiViewV2Input = {
+  const rejectedSessionHomeWidget: PluginUiViewV2Input = { sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' },
     id: 'board', renderer: 'native', container: 'widget', target: { kind: 'session' },
     home: { default: 'shown' },
   };
@@ -702,7 +702,7 @@ describe('V2 destination declarations', () => {
 });
 
 describe('embedded widget role', () => {
-  const widgetView = Object.freeze({
+  const widgetView = Object.freeze({ sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' },
     id: 'review-status-widget',
     container: 'widget',
     target: { kind: 'session' },
@@ -715,7 +715,7 @@ describe('embedded widget role', () => {
   });
 
   it('admits one widget role for Session and App with physical-host-neutral defaults', () => {
-    const session = { ...widgetView, container: 'widget' };
+    const session = { sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' }, ...widgetView, container: 'widget' };
     const { sessionInputPath: _sessionInputPath, ...appInput } = session;
     const app = { ...appInput, target: { kind: 'app' }, home: { default: 'shown' } };
     expect(PluginUiViewV2Schema.safeParse(session).success).toBe(true);
@@ -757,7 +757,7 @@ describe('embedded widget role', () => {
       .toBe(false);
     expect(surfaceRegistry.resolvePluginUiDestinationBindingSlotV1('widget', 'session'))
       .toBeNull();
-    expect(normalizePluginUiDestinationBindingV1({
+    expect(normalizePluginUiDestinationBindingV1({ sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' },
       pluginId: 'examples.public-sdk-review-assistant',
       destinationId: 'review-status-widget',
       rendererId: 'review-native',

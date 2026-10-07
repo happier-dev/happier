@@ -1,11 +1,12 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import {
-    PluginDeclarativeDocumentV1Schema, PluginDeclarativeNodeV2Schema,
-    type PluginDeclarativeDataNodeV1, type PluginDeclarativeDocumentV1, type JsonValue,
-} from '@happier-dev/protocol';
+import { PluginDeclarativeDocumentV1Schema, type PluginDeclarativeDocumentV1 } from '@happier-dev/protocol/plugins/contributions/ui/declarative-document-authoring';
+import { PluginDeclarativeNodeV2Schema } from '@happier-dev/protocol/plugins/contributions/ui/v2';
+import type { PluginDeclarativeDataNodeV1 } from '@happier-dev/protocol/plugins/contributions/ui/declarativeDataV1';
+import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
+import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import { PluginContextualResourceState, PluginContextualResourceStoreProvider, type PluginContextualResourceBinding } from '@/components/plugins/surfaces/PluginContextualResourceStoreProvider';
 import { projectDeclarativeDataResourceSnapshot, resolveDeclarativeDataResourceBinding,
     type DeclarativeDataSourceProjection } from '@/components/plugins/surfaces/declarativeDataSource';
@@ -182,10 +183,11 @@ function DataFreshnessLine(props: Readonly<{ testID: string }>): React.ReactElem
 /** The same source shell accepts Account Artifacts and deliberately copied shared definitions. */
 export function DeclarativeWidgetDocument(props: DeclarativeWidgetDocumentProps): React.ReactElement {
     const { theme } = useUnistyles();
+    const widgetPresentation = useWidgetPresentation();
     const presentationTheme = React.useMemo(() => projectPluginUiTheme(theme), [theme]);
     const [mountInstanceKey] = React.useState(randomUUID);
     const parsed = React.useMemo(() => PluginDeclarativeDocumentV1Schema.safeParse(props.document), [props.document]);
-    const context: DeclarativeNodeRenderContext = { colors: theme.colors, presentationTheme,
+    const context: DeclarativeNodeRenderContext = { colors: theme.colors, presentationTheme, widgetPresentation,
         minimumTouchTarget: resolveMinimumInteractiveTargetSize(Platform.OS), localize: readDeclarativeText,
         markdownProfile: 'widget', resolveAction: () => null, renderField: () => null, renderCollectionList: () => null };
     const [freshness] = React.useState(createDataFreshnessStore);

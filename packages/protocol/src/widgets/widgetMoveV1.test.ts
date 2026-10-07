@@ -79,7 +79,7 @@ async function fixture(candidate: WidgetInstanceV1 = instance, widgetInputs?: Ac
     widgetAccountScope: () => ({ serverId: home.serverId, accountId: home.accountId }),
     // Fixed host descriptor facts; the real neutral schema/binding/options admission remains intact.
     widgetInputs: widgetInputs ?? createWidgetActionInputResolverV1({
-      readDescriptor: async () => ({ inputs: { fields: [{ path: 'count', title: 'Count', widget: 'integer' }] },
+      readDescriptor: async () => ({ sizeDeclaration: { sizes: ['medium', 'full', 'tall'], defaultSize: 'medium' }, inputs: { fields: [{ path: 'count', title: 'Count', widget: 'integer' }] },
         inputSchema: { type: 'object', properties: { count: { type: 'integer' } }, required: ['count'], additionalProperties: false } }),
       readContext: async () => ({}), readViewerValues: async () => ({ values: {} }),
       validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [],
@@ -97,6 +97,7 @@ describe('destination-aware widget move through canonical owners', () => {
   it('adds, edits and transfers declared viewer intent without connecting, then refuses execution', async () => {
     const consumer = { pluginId: 'acme.metrics', localId: 'metrics' };
     const descriptor: WidgetInputDescriptorV1 & { resources: typeof consumer[] } = {
+      sizeDeclaration: { sizes: ['medium', 'full', 'tall'], defaultSize: 'medium' },
       resources: [consumer], connectedAccountPurposeBindings: [{ path: 'connection', purpose: 'read', consumer }],
       inputs: { fields: [{ path: 'connection', title: 'Connection', widget: 'select', required: true, connectedAccountOptions: true },
         { path: 'count', title: 'Count', widget: 'integer', required: true }] },
@@ -137,6 +138,19 @@ describe('destination-aware widget move through canonical owners', () => {
     expect(await f.move()).toMatchObject({ ok: true, result: { status: 'moved' } });
     expect(f.boardItem()?.frame).toBe('card');
     expect(f.document().tabs[0]?.items[0]).toEqual({ itemId: instance.id, width: 'medium', frameStyle: 'plain' });
+  });
+  it('retains full size when the destination supports the declared source size', async () => {
+    const f = await fixture();
+    await f.homeHubArtifacts.apply({ kind: 'widget_size', instanceId: instance.id, size: 'full' });
+    expect(await f.move()).toMatchObject({ ok: true, result: { status: 'moved' } });
+    expect(f.document().tabs[0]?.items[0]).toEqual({ itemId: instance.id, width: 'full' });
+  });
+  it('transfers a tall source size into the existing Board item-height owner in the same Add', async () => {
+    const f = await fixture();
+    await f.homeHubArtifacts.apply({ kind: 'widget_size', instanceId: instance.id, size: 'tall' });
+    expect(await f.move()).toMatchObject({ ok: true, result: { status: 'moved' } });
+    expect(f.upserts).toHaveLength(1);
+    expect(f.upserts[0]).toMatchObject({ item: { height: { mode: 'fixed', size: 'tall' } }, placement: { width: 'medium' } });
   });
   it('leaves the source intact when destination add is refused', async () => {
     const f = await fixture(); f.faults.addRefusal = true;
@@ -224,9 +238,9 @@ describe('destination-aware widget move through canonical owners', () => {
       { surface: 'mcp', bypassApprovals: true })).toMatchObject({ ok: true, result: { instance, status: 'moved' } });
     const layout = await f.homeHubArtifacts.read();
     expect(layout.order[0]).toBe(instance.id);
-    expect(layout.sections?.[instance.id]).toEqual({ frameStyle: 'plain' });
+    expect(layout.sections?.[instance.id]).toEqual({ frameStyle: 'plain', size: 'medium' });
     expect(await f.executor.execute('widgets.instance.list', { surface: home }, { surface: 'mcp', bypassApprovals: true }))
-      .toMatchObject({ ok: true, result: { instances: [{ instance, width: 'half', frameStyle: 'plain' }] } });
+      .toMatchObject({ ok: true, result: { instances: [{ instance, size: 'medium', frameStyle: 'plain' }] } });
     expect(layout.instances).toEqual([instance]);
     expect(f.document().tabs[0]?.items).toEqual([{ itemId: 'read-only', width: 'wide', frameStyle: 'plain' }]);
   });

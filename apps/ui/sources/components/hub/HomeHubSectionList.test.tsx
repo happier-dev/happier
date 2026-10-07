@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
+import type { WidgetSizeV1 } from '@happier-dev/protocol/widgets';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
@@ -12,8 +14,8 @@ vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createT
 afterEach(() => standardCleanup());
 
 const builtin = (id: string) => ({ kind: 'builtin' as const, id, hidden: false, hideable: true });
-const widget = (id: string, width: 'half' | 'full' = 'half') => ({
-    kind: 'widget' as const, id, hidden: false as const, hideable: true as const, width,
+const widget = (id: string, size: WidgetSizeV1 = 'medium') => ({
+    kind: 'widget' as const, id, hidden: false as const, hideable: true as const, size,
     instance: { v: 1 as const, id, definition: { kind: 'installed' as const, surface: { pluginId: 'happier.widget.checks', localId: 'latest' } }, bindings: {} },
 });
 
@@ -55,5 +57,18 @@ describe('HomeHubSectionList (the column contract)', () => {
         const full = grid?.findAll((node) => node.props?.span === 'row');
         expect(full).toHaveLength(1);
         expect(full?.[0]?.props.children).toBe('block:wide');
+    });
+    it('keeps equal-area medium and wide footprints distinct while phone reflow preserves saved intent', async () => {
+        const sections = [widget('medium', 'medium'), widget('wide', 'wide')];
+        const before = JSON.stringify(sections);
+        const screen = await renderList(sections);
+        const grid = screen.findByTestId('home-hub.cards:medium')!;
+        const full = grid.findAll(node => node.props?.span === 'row');
+        expect(full).toHaveLength(1);
+        expect(full[0]!.props.children).toBe('block:wide');
+        const measured = screen.findAll(node => node.props?.testID === 'home-hub.cards:medium' && typeof node.props.onLayout === 'function')[0]!;
+        await act(async () => measured.props.onLayout({ nativeEvent: { layout: { width: 390, height: 600 } } }));
+        expect(screen.getTextContent()).toBe('block:medium block:wide');
+        expect(JSON.stringify(sections)).toBe(before);
     });
 });

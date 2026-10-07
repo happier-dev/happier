@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createActionExecutor, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, ARTIFACT_PLAIN_DATA_KEY_MARKER, ArtifactBlobWriteV1Schema, type ArtifactPublicLinkIssuedV1 } from '@happier-dev/protocol';
 import { buildHomeHubArtifactIdV1, HOME_HUB_ARTIFACT_KIND_V1, HomeHubLayoutV1Schema } from '@happier-dev/protocol/home';
+import { buildWidgetDefinitionArtifactHeaderV1, type WidgetDefinitionV1 } from '@happier-dev/protocol/widgets';
 import * as persistence from '@/persistence';
 import { readCarrierMutation } from '@/api/artifacts/accountArtifactStore.testkit';
 import { createCliActionDeps } from './createCliActionDeps';
@@ -30,6 +31,38 @@ describe('Account Artifact Actions through the real CLI host composition', () =>
       rawSession: { machineId: 'local-machine', path: join(root, 'workspace'),
         metadata: JSON.stringify({ machineId: 'local-machine', path: join(root, 'workspace') }) } });
   }
+  it('projects authored Home size from current scoped definition headers without rewriting stale saved intent', async () => {
+    const accountId = 'authored-home-account';
+    const token = `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+    const homeArtifactId = buildHomeHubArtifactIdV1(accountId);
+    const definition: WidgetDefinitionV1 = { v: 1, id: artifactId, name: 'Authored',
+      sizeDeclaration: { sizes: ['wide'], defaultSize: 'wide' },
+      body: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Hello' } } },
+      inputs: { fields: [] }, inputSchema: { type: 'object', additionalProperties: false },
+      provenance: { source: { kind: 'authored' } } };
+    const instance = { v: 1 as const, id: 'authored-copy', definition: { kind: 'artifact' as const, artifactId }, bindings: {} };
+    const layout = HomeHubLayoutV1Schema.parse({ v: 1, order: [instance.id], hidden: [],
+      instances: [instance], sections: { [instance.id]: { size: 'medium', frameStyle: 'plain' } } });
+    const wireRow = (id: string, header: Readonly<Record<string, unknown>>, body?: string) => ({ id,
+      header: encodePlainArtifactStoredContent(header), ...(body ? { body: encodePlainArtifactStoredContent({ body }) } : {}),
+      dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, ownerAccountId: accountId, access: 'owner', encryptionMode: 'plain',
+      headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+    http.get.mockImplementation(async (url: string) => {
+      if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      if (new URL(url).pathname === '/v1/artifacts') return { status: 200,
+        data: [wireRow(artifactId, buildWidgetDefinitionArtifactHeaderV1(definition))] };
+      if (url.endsWith(`/v1/artifacts/${homeArtifactId}`)) return { status: 200,
+        data: wireRow(homeArtifactId, { kind: HOME_HUB_ARTIFACT_KIND_V1, v: 1 }, JSON.stringify(layout)) };
+      throw new Error(`unexpected_get:${url}`);
+    });
+    const executor = createActionExecutor(createCliActionDeps({ token, credentials: { token, encryption: null },
+      sessionId: 'cli-global', mode: 'plain', ctx: null, serverId: 'authored-home', serverHttpBaseUrl: 'https://authored-home.test' }));
+    expect(await executor.execute('home.hub.layout.get', {}, { surface: 'cli', bypassApprovals: true }))
+      .toMatchObject({ ok: true, result: { layout, sections: expect.arrayContaining([
+        expect.objectContaining({ id: instance.id, size: 'wide', frameStyle: 'plain' }),
+      ]) } });
+    expect(http.post).not.toHaveBeenCalled();
+  });
   it.each(['widget-area-layout.v1', 'home-hub-layout.v1'])('refuses approved agent public publication of %s before transport', async kind => {
     http.get.mockImplementation(async (url: string) => ({ status: 200, data: url.endsWith('/v1/account/encryption')
       ? { mode: 'plain', updatedAt: 1 } : { id: artifactId, header: encodePlainArtifactStoredContent({ kind }),
@@ -54,7 +87,7 @@ describe('Account Artifact Actions through the real CLI host composition', () =>
       definition: { kind: 'builtin' as const, id: 'session_summary' },
       bindings: { session: { kind: 'value' as const, value: { serverId: 'native-home', sessionId } } } });
     let layout = HomeHubLayoutV1Schema.parse({ v: 1, order: ['one', 'two'], hidden: [],
-      instances: [copy('one', 'A'), copy('two', 'B')], sections: { two: { frameStyle: 'plain', width: 'full' } } });
+      instances: [copy('one', 'A'), copy('two', 'B')], sections: { two: { frameStyle: 'plain', size: 'full' } } });
     let version = 1;
     const row = () => ({ id: homeArtifactId,
       header: encodePlainArtifactStoredContent({ kind: HOME_HUB_ARTIFACT_KIND_V1, v: 1, title: 'Home layout' }),
@@ -87,7 +120,7 @@ describe('Account Artifact Actions through the real CLI host composition', () =>
     expect(await executor.execute('home.hub.layout.update', { intent: { kind: 'widget_inputs', instanceId: 'one',
       bindings: copy('one', 'C').bindings } }, context)).toMatchObject({ ok: true });
     expect(layout.instances).toEqual([copy('one', 'C'), copy('two', 'B')]);
-    expect(layout.sections?.two).toEqual({ frameStyle: 'plain', width: 'full' });
+    expect(layout.sections?.two).toEqual({ frameStyle: 'plain', size: 'full' });
     expect(layout.instances).toHaveLength(2);
   });
   it('creates, updates, reads and publishes private HTML previews through approved Artifact Actions', async () => {

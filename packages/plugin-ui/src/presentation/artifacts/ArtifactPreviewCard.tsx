@@ -124,9 +124,9 @@ export const HappierArtifactPreviewCard = React.memo(function HappierArtifactPre
       {text(props.boardLabels.sources, { fontSize: 11, color: colors.secondary }, 2)}
     </View> : null}
     {preview.layout.widgets.slice(0, structure.count).map((widget, index) => <View key={index} onLayout={event => structure.onRowLayout(index, event)} style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
-      <View style={{ width: 16 * widget.width, height: 16, borderRadius: 5, backgroundColor: colors.paper,
+      <View style={{ width: 16 * widget.footprint.columnSpan, height: 16 * widget.footprint.rowSpan, borderRadius: 5, backgroundColor: colors.paper,
         boxShadow: `0 0 0 1px ${colors.paperBorder}` }} />
-      {text([widget.title ?? props.boardLabels?.widget, widget.width === 2 ? props.boardLabels?.widthTwo : props.boardLabels?.widthOne,
+      {text([widget.title ?? props.boardLabels?.widget, widget.footprint.columnSpan === widget.footprint.columns ? props.boardLabels?.widthTwo : props.boardLabels?.widthOne,
         preview.layout.mode === 'canvas' && widget.position ? `(${widget.position.x}, ${widget.position.y})` : null].filter(Boolean).join(' · '),
         { flexShrink: 1, fontSize: 11, color: colors.secondary }, 2)}
     </View>)}

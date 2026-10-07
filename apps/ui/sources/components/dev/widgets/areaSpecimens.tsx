@@ -44,14 +44,13 @@ function useSpecimenAreaPort(surface: WidgetSurfaceRefV1, initial: WidgetAreaLay
             };
             switch (operation.actionId) {
                 case 'widgets.instance.list': return { ok: true, result: { surface, instances: layout.current.instances, canEdit: true } };
-                case 'widgets.instance.add': return apply({ kind: 'add', instance: operation.instance }, operation.instance.id);
+                case 'widgets.instance.add': return apply({ kind: 'add', instance: operation.instance,
+                    ...(operation.size ? { size: operation.size } : {}) }, operation.instance.id);
                 case 'widgets.instance.remove': return apply({ kind: 'remove', instanceId: operation.instanceId }, operation.instanceId);
                 case 'widgets.instance.move': return apply({ kind: 'move', instanceId: operation.instanceId, toIndex: operation.toIndex }, operation.instanceId);
                 case 'widgets.instance.rename': return apply({ kind: 'rename', instanceId: operation.instanceId, displayName: operation.displayName }, operation.instanceId);
-                case 'widgets.instance.width.set':
-                    return operation.width === 'half' || operation.width === 'full'
-                        ? apply({ kind: 'width', instanceId: operation.instanceId, width: operation.width }, operation.instanceId)
-                        : { ok: false, errorCode: 'widget_width_unsupported', error: 'widget_width_unsupported' };
+                case 'widgets.instance.size.set':
+                    return apply({ kind: 'size', instanceId: operation.instanceId, size: operation.size }, operation.instanceId);
                 case 'widgets.instance.frame.set': return apply({ kind: 'frame', instanceId: operation.instanceId, frameStyle: operation.frameStyle }, operation.instanceId);
                 case 'widgets.instance.inputs.set': return apply({ kind: 'inputs', instanceId: operation.instanceId, bindings: operation.bindings }, operation.instanceId);
                 default: return { ok: false, errorCode: 'unsupported_method', error: 'unsupported_method' };
@@ -65,8 +64,8 @@ const PROJECT_SURFACE: WidgetSurfaceRefV1 = { ...SCOPE, owner: { kind: 'project'
 
 function PluginPageAreaSpecimen(props: Readonly<{ phone: boolean }>): React.ReactElement {
     const port = useSpecimenAreaPort(PAGE_SURFACE, [
-        { instance: { v: 1, id: 'summary', definition: SUMMARY, bindings: {} }, width: 'half' },
-        { instance: { v: 1, id: 'changes', definition: CHANGES, bindings: {} }, width: 'half' },
+        { instance: { v: 1, id: 'summary', definition: SUMMARY, bindings: {} }, size: 'medium' },
+        { instance: { v: 1, id: 'changes', definition: CHANGES, bindings: {} }, size: 'medium' },
     ]);
     const context = React.useMemo(() => pluginPageWidgetContext({ repository: 'happier' }), []);
     return (

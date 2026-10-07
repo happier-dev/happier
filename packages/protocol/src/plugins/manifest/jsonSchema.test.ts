@@ -157,7 +157,7 @@ describe('createPluginManifestJsonSchemaV2', () => {
       contributes: {
         ui: {
           renderers: [renderer],
-          views: [{
+          views: [{ sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' },
             id: 'session-status',
             container: 'widget',
             target: { kind: 'session' },
@@ -176,7 +176,7 @@ describe('createPluginManifestJsonSchemaV2', () => {
 
     const homeWidget = {
       ...valid,
-      contributes: { ui: { ...valid.contributes.ui, views: [{
+      contributes: { ui: { ...valid.contributes.ui, views: [{ sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' },
         id: 'home-status',
         container: 'widget',
         target: { kind: 'app' },

@@ -70,6 +70,10 @@ export type BoardsActionInputById = {
                             };
                             authorAccountId?: string | undefined;
                         };
+                        sizeDeclaration: {
+                            sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                            defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+                        };
                         name: string;
                         body: {
                             kind: 'declarative';
@@ -169,7 +173,7 @@ export type BoardsActionInputById = {
                 };
                 instanceId: string;
             };
-            width?: 1 | 2 | undefined;
+            size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
             frameStyle?: 'card' | 'plain' | undefined;
             toIndex?: number | undefined;
             nativeIndex?: number | undefined;
@@ -235,6 +239,10 @@ export type BoardsActionInputById = {
                                 itemId: string;
                             };
                             authorAccountId?: string | undefined;
+                        };
+                        sizeDeclaration: {
+                            sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                            defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
                         };
                         name: string;
                         body: {
@@ -310,7 +318,7 @@ export type BoardsActionInputById = {
             expectedPresentation?: {
                 frameStyle: 'card' | 'plain' | null;
                 nativeIndex: number;
-                width?: 'half' | 'compact' | 'medium' | 'wide' | 'full' | undefined;
+                size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
                 tabId?: string | undefined;
                 hidden?: boolean | undefined;
                 canvasPosition?: [
@@ -319,8 +327,8 @@ export type BoardsActionInputById = {
                 ] | null | undefined;
             } | undefined;
         } | {
-            kind: 'widget_width';
-            width: 1 | 2;
+            kind: 'widget_size';
+            size: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
             boardId: string;
             ref: {
                 surface: {
@@ -644,6 +652,10 @@ export type BoardsActionResultById = {
                                 };
                                 authorAccountId?: string | undefined;
                             };
+                            sizeDeclaration: {
+                                sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                                defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+                            };
                             name: string;
                             body: {
                                 kind: 'declarative';
@@ -720,7 +732,7 @@ export type BoardsActionResultById = {
                     }>;
                     displayName?: string | undefined;
                 };
-                width: 1 | 2;
+                size: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
                 frameStyle?: 'card' | 'plain' | undefined;
             }[] | undefined;
             itemOrder?: readonly string[] | undefined;
@@ -823,6 +835,10 @@ export type BoardsActionResultById = {
                                 };
                                 authorAccountId?: string | undefined;
                             };
+                            sizeDeclaration: {
+                                sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
+                                defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+                            };
                             name: string;
                             body: {
                                 kind: 'declarative';
@@ -899,7 +915,7 @@ export type BoardsActionResultById = {
                     }>;
                     displayName?: string | undefined;
                 };
-                width: 1 | 2;
+                size: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
                 frameStyle?: 'card' | 'plain' | undefined;
             }[] | undefined;
             itemOrder?: readonly string[] | undefined;

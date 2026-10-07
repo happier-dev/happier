@@ -8,6 +8,7 @@ import { PluginDeclarativeDocumentV1Schema, readPluginDeclarativeDataSourcesV1 }
 import { preflightPluginDeclarativeDocumentV1 } from '../plugins/contributions/ui/declarativeDocumentPreflightV1.js';
 import { WidgetConnectedAccountPurposeBindingV1Schema } from './widgetConnectedAccountPurposeBindingV1.js';
 import type { PluginContributionIdentityV1 } from '../plugins/contributionIdentity.js';
+import { WidgetSizeDeclarationV1Schema } from './widgetPresentationV1.js';
 
 const id = z.string().trim().min(1);
 /** Explicit publication inherits resolved widget bindings, never a private static Resource expectation. */
@@ -39,6 +40,7 @@ export const WidgetDefinitionBodyV1Schema = z.discriminatedUnion('kind', [
 ]);
 export type WidgetDefinitionBodyV1 = z.infer<typeof WidgetDefinitionBodyV1Schema>;
 const shape = {
+    sizeDeclaration: WidgetSizeDeclarationV1Schema,
     name: id, description: z.string().optional(), body: WidgetDefinitionBodyV1Schema,
     inputs: InputHintsSchema, inputSchema: PluginJsonSchemaV2Schema,
     sessionInputPath: InputPathSchema.optional(),

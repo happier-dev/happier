@@ -9,6 +9,7 @@ import { InputHintsSchema, InputPathSchema, type InputHints } from '../../../inp
 import { PluginInvocableActionIdSchema } from '../../../actions/pluginActionSurface.js';
 import { hasValidPluginConnectedAccountPurposeBindingsV2 } from '../../actions/v2.js';
 import { WidgetConnectedAccountPurposeBindingV1Schema, type WidgetConnectedAccountPurposeBindingV1 } from '../../../widgets/widgetConnectedAccountPurposeBindingV1.js';
+import { WidgetSizeDeclarationV1Schema, type WidgetSizeDeclarationV1 } from '../../../widgets/widgetPresentationV1.js';
 import { asProtocolZod } from "../../actions/internalProtocolZodAdapter.js";
 
 import { PluginContributionLocalIdSchema, PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 } from '../../contributionIdentity.js';
@@ -508,7 +509,7 @@ function createPluginUiViewBindingSchemaV2() {
       container: z.literal(slot.role),
       target: PluginUiViewTargetSchemaByKindV1[targetKind as keyof typeof PluginUiViewTargetSchemaByKindV1],
       ...(slot.role === 'widget'
-        ? { home: PluginUiWidgetHomeV1Schema.optional() }
+        ? { home: PluginUiWidgetHomeV1Schema.optional(), sizeDeclaration: WidgetSizeDeclarationV1Schema }
         : {}),
       ...(slot.role === 'widget'
         ? { connectedAccountPurposeBindings: z.array(WidgetConnectedAccountPurposeBindingV1Schema).optional(),
@@ -616,7 +617,7 @@ export type PluginUiViewInlineBindingInputV2 = {
       target: z.input<typeof PluginUiViewTargetSchemaByKindV1[TTarget]>;
       home?: TSlot['role'] extends 'widget' ? PluginUiWidgetHomeV1 : never;
       resources?: TSlot['role'] extends 'widget' ? PluginContributionIdentityV1[] : never;
-    }> & (TSlot['role'] extends 'widget'
+    }> & (TSlot['role'] extends 'widget' ? Readonly<{ sizeDeclaration: WidgetSizeDeclarationV1 }> : Readonly<{ sizeDeclaration?: never }>) & (TSlot['role'] extends 'widget'
       ? TTarget extends 'session'
         ? Readonly<{ inputs: InputHints; inputSchema: PluginJsonSchemaV2; sessionInputPath: string; connectedAccountPurposeBindings?: WidgetConnectedAccountPurposeBindingV1[] }>
         : (Readonly<{ inputs?: never; inputSchema?: PluginJsonSchemaV2 }> | Readonly<{ inputs: InputHints; inputSchema: PluginJsonSchemaV2 }>)
@@ -660,7 +661,7 @@ export type PluginUiViewInlineBindingV2 = {
       target: z.output<typeof PluginUiViewTargetSchemaByKindV1[TTarget]>;
       home?: TSlot['role'] extends 'widget' ? PluginUiWidgetHomeV1 : never;
       resources?: TSlot['role'] extends 'widget' ? PluginContributionIdentityV1[] : never;
-    }> & (TSlot['role'] extends 'widget'
+    }> & (TSlot['role'] extends 'widget' ? Readonly<{ sizeDeclaration: WidgetSizeDeclarationV1 }> : Readonly<{ sizeDeclaration?: never }>) & (TSlot['role'] extends 'widget'
       ? TTarget extends 'session'
         ? Readonly<{ inputs: InputHints; inputSchema: PluginJsonSchemaV2; sessionInputPath: string; connectedAccountPurposeBindings?: WidgetConnectedAccountPurposeBindingV1[] }>
         : (Readonly<{ inputs?: never; inputSchema?: PluginJsonSchemaV2 }> | Readonly<{ inputs: InputHints; inputSchema: PluginJsonSchemaV2 }>)

@@ -4,7 +4,7 @@ import { buildWorkBoardWidgetKeyV1, resolveWorkBoardItemOrderV1, WorkBoardWidget
   type WorkBoardWidgetIntentV1, type WorkBoardV1 } from '../boards/workBoardV1.js';
 import type { WidgetActionSurfacePortV1 } from './actionsV1.js';
 import type { WidgetInstanceV1, WidgetSurfaceRefV1 } from './widgetInstanceV1.js';
-import type { WidgetExpectedPresentationV1 } from './widgetPresentationV1.js';
+import { WidgetGridSizeV1Schema, normalizeWidgetSizeForSurfaceV1, type WidgetExpectedPresentationV1 } from './widgetPresentationV1.js';
 
 const failure = (errorCode: string) => ({ ok: false as const, errorCode, error: errorCode });
 const ordered = (board: WorkBoardV1, surface: WidgetSurfaceRefV1) => {
@@ -21,7 +21,7 @@ export function captureWorkBoardWidgetMoveV1(board: WorkBoardV1, surface: Widget
   const position = item ? board.positionsByItemRef[buildWorkBoardWidgetKeyV1(item.ref)] : undefined;
   return item ? { expectedInstance: item.instance, expectedPresentation: {
     nativeIndex: resolveWorkBoardItemOrderV1(board).indexOf(buildWorkBoardWidgetKeyV1(item.ref)),
-    width: item.width === 2 ? 'full' : 'half', frameStyle: item.frameStyle ?? null,
+    size: item.size, frameStyle: item.frameStyle ?? null,
     canvasPosition: position ? [position.x, position.y] : null,
   } } : null;
 }
@@ -40,7 +40,7 @@ export function createWorkBoardWidgetActionPortV1(port: Pick<WorkBoardArtifactPo
     async read(surface, _context, signal) {
       try {
         return { surface, canEdit: true, instances: ordered(await read(surface, signal), surface).map(item => ({
-          instance: item.instance, width: item.width === 2 ? 'full' as const : 'half' as const,
+          instance: item.instance, size: item.size,
           ...(item.frameStyle ? { frameStyle: item.frameStyle } : {}),
         })) };
       } catch (error) {
@@ -62,23 +62,26 @@ export function createWorkBoardWidgetActionPortV1(port: Pick<WorkBoardArtifactPo
         const target = { boardId: surface.owner.boardId, ref: { surface, instanceId } };
         let domain: WorkBoardWidgetIntentV1;
         switch (intent.kind) {
-          case 'add':
+          case 'add': {
             if (intent.placement || intent.position?.tabId) return failure('widget_placement_unsupported');
+            const size = normalizeWidgetSizeForSurfaceV1('workBoard', intent.presentation?.size);
             domain = { ...target, kind: 'widget_add', instance: intent.instance,
               ...(intent.toIndex === undefined ? {} : { toIndex: intent.toIndex }),
               ...(intent.position ? { nativeIndex: intent.position.index } : {}),
-              ...(intent.presentation?.width === 'half' || intent.presentation?.width === 'full'
-                ? { width: intent.presentation.width === 'full' ? 2 : 1 } : {}),
+              size,
               ...(intent.presentation?.frameStyle ? { frameStyle: intent.presentation.frameStyle } : {}) }; break;
+          }
           case 'remove': domain = { ...target, kind: 'widget_remove',
             ...(intent.expectedInstance ? { expectedInstance: intent.expectedInstance } : {}),
             ...(intent.expectedPresentation ? { expectedPresentation: intent.expectedPresentation } : {}) }; break;
           case 'move':
             if ('nativeIndex' in intent && intent.tabId) return failure('widget_placement_unsupported');
             domain = { ...target, kind: 'widget_move', ...('nativeIndex' in intent ? { nativeIndex: intent.nativeIndex } : { toIndex: intent.toIndex }) }; break;
-          case 'width':
-            if (intent.width !== 'half' && intent.width !== 'full') return failure('widget_width_unsupported');
-            domain = { ...target, kind: 'widget_width', width: intent.width === 'full' ? 2 : 1 }; break;
+          case 'size': {
+            const size = WidgetGridSizeV1Schema.safeParse(intent.size);
+            if (!size.success) return failure('widget_size_unsupported');
+            domain = { ...target, kind: 'widget_size', size: size.data }; break;
+          }
           case 'frame': domain = { ...target, kind: 'widget_frame', frameStyle: intent.frameStyle }; break;
           case 'rename': domain = { ...target, kind: 'widget_rename', displayName: intent.displayName }; break;
           case 'inputs': domain = { ...target, kind: 'widget_inputs', bindings: intent.bindings }; break;

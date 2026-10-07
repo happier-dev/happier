@@ -33,11 +33,11 @@ export function createWidgetCompanionActionPortV1(input: Readonly<{
         apply: async (surface, mutation, context, signal) => {
             const preference = readPreference(surface, signal);
             if (!preference) return unavailable;
-            if (mutation.kind === 'width') return { ok: false, errorCode: 'widgets_width_unavailable', error: 'widgets_width_unavailable' };
+            if (mutation.kind === 'size') return { ok: false, errorCode: 'widgets_size_unavailable', error: 'widgets_size_unavailable' };
             if ((mutation.kind === 'add' && (mutation.placement || mutation.position?.tabId !== undefined))
                 || (mutation.kind === 'move' && 'tabId' in mutation && mutation.tabId !== undefined)
                 || (mutation.kind === 'remove' && mutation.boardRevisions)) return { ok: false, errorCode: 'widgets_placement_unavailable', error: 'widgets_placement_unavailable' };
-            if (mutation.kind === 'add' && mutation.presentation?.width !== undefined) return { ok: false, errorCode: 'widgets_width_unavailable', error: 'widgets_width_unavailable' };
+            if (mutation.kind === 'add' && mutation.presentation?.size !== undefined) return { ok: false, errorCode: 'widgets_size_unavailable', error: 'widgets_size_unavailable' };
             if (mutation.kind === 'add' && mutation.captureForMove && preference.items.some(item => item.kind === 'instance' && item.instance.id === mutation.instance.id)) {
                 return { ok: false, errorCode: 'widgets_instance_exists', error: 'widgets_instance_exists' };
             }

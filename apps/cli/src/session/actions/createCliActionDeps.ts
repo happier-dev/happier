@@ -9,6 +9,7 @@ import { createCliWidgetDefinitionActionDepsV1 } from './widgetDefinitionActionD
 import { BUILTIN_WIDGET_DESCRIPTORS_V1, countWidgetInstancesV1, isSameWidgetDefinitionV1, widgetCandidateDefinitionV1 } from '@happier-dev/protocol/widgets/builtinWidgetDescriptorV1';
 import { readWidgetActionSurfacePortV1 } from '@happier-dev/protocol/widgets/executeWidgetInstanceActionV1';
 import { createHomeHubArtifactPortV1 } from '@happier-dev/protocol/home/homeHubArtifactV1';
+import type { HomeHubLayoutValue } from '@happier-dev/protocol/home';
 import { SessionWorkerPublishInputV1Schema, workerDeliverablesBelongToSessionV1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
 import type { SessionWorkerPublishInputV1 } from '@happier-dev/protocol';
 import { SessionAwarenessProjectionV1Schema } from '@happier-dev/protocol/sessions/awareness/projectionV1';
@@ -837,7 +838,7 @@ export function createCliActionDeps(params: Readonly<{
   const todoHomeServerId = params.serverId ?? configuration.activeServerId;
   const todoHomeBaseUrl = params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
   const homeHubArtifactPort = roleArtifactStore && homeAccountId ? createHomeHubArtifactPortV1(createAcknowledgedAccountArtifactTransport(roleArtifactStore), {
-    accountId: homeAccountId, readWidgets: signal => readHomeWidgets(signal),
+    accountId: homeAccountId, readWidgets: (signal, layout) => readHomeWidgets(signal, layout),
   }) : null;
   const artifactAccessAction = roleArtifactStore ? createArtifactAccessActionsV1({
     read: roleArtifactStore.read, transport: roleArtifactStore.accessGrants,
@@ -1233,7 +1234,16 @@ export function createCliActionDeps(params: Readonly<{
     return projection ? readCliWidgetCatalogProjectionV1(projection)
       : BUILTIN_WIDGET_DESCRIPTORS_V1.map(candidate => ({ ...candidate, fields: candidate.inputs?.fields ?? [], connectedAccountPurposeBindings: [] }));
   };
-  const readHomeWidgets = (signal?: AbortSignal) => readWidgetCandidates(signal);
+  const readHomeWidgets = async (signal?: AbortSignal, layout?: HomeHubLayoutValue) => {
+    const candidates = await readWidgetCandidates(signal);
+    const referenced = new Set(layout?.instances.flatMap(instance => instance.definition.kind === 'artifact' ? [instance.definition.artifactId] : []) ?? []);
+    if (referenced.size === 0) return candidates;
+    const definitions = await actionDeps.widgetDefinitionArtifacts?.list(signal) ?? [];
+    return [...candidates, ...definitions.filter(summary => referenced.has(summary.artifactId)).map(summary => ({
+      key: `artifact:${summary.artifactId}`, homeDefault: 'available' as const,
+      definition: { kind: 'artifact' as const, artifactId: summary.artifactId }, sizeDeclaration: summary.sizeDeclaration,
+    }))];
+  };
 
   const inventoryDeps = createCliActionInventoryDeps({ ...params, callMachineAction,
     readCurrentSessionMetadata: () => readCurrentSessionMetadata(),
@@ -2765,6 +2775,7 @@ export function createCliActionDeps(params: Readonly<{
       for (const summary of await actionDeps.widgetDefinitionArtifacts?.list(signal) ?? []) {
         const reference = { kind: 'artifact' as const, artifactId: summary.artifactId };
         entries.push({ definition: reference, title: summary.name, fields: [...summary.inputs.fields],
+          sizeDeclaration: summary.sizeDeclaration,
           availability: summary.bodyKind === 'declarative' || summary.sourceDefinition && candidates.some(candidate => candidate.availability === 'available'
             && isSameWidgetDefinitionV1(widgetCandidateDefinitionV1(candidate), summary.sourceDefinition!)) ? 'available' : 'unavailable',
           instanceCount: countWidgetInstancesV1(instances, reference) });

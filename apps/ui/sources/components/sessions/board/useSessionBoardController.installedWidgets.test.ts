@@ -128,13 +128,15 @@ describe('Board Add: installed plugin widgets', () => {
             kind: 'item.addWidget',
             definition: { kind: 'installed', surface: { pluginId: 'acme.review', localId: 'review-status-widget' } },
             title: 'Review status',
+            size: 'large',
         }); });
 
         expect(actions.upserts).toHaveLength(1);
         const created = actions.upserts[0]!;
         expect(created.expectedItemRevision).toBeNull();
         // Creation without an atomic placement leaves an item no Board view shows.
-        expect(created.placement).toMatchObject({ tabId: 'overview' });
+        expect(created.placement).toMatchObject({ tabId: 'overview', width: 'full' });
+        expect(created.item.height).toEqual({ mode: 'fixed', size: 'tall' });
         expect(created.item.source).toEqual({
             kind: 'widget',
             instance: { v: 1, id: created.itemId, definition: { kind: 'installed', surface: { pluginId: 'acme.review', localId: 'review-status-widget' } }, bindings: {} },

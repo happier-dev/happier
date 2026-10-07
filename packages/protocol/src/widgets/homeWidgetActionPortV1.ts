@@ -1,6 +1,7 @@
 import type { HomeHubArtifactPortV1 } from '../home/homeHubArtifactV1.js';
 import { HomeHubMutationErrorV1, type HomeHubLayoutIntent } from '../home/homeHubLayoutV1.js';
 import type { WidgetActionSurfacePortV1, WidgetMoveCaptureV1 } from './actionsV1.js';
+import { WidgetGridSizeV1Schema, normalizeWidgetSizeForSurfaceV1 } from './widgetPresentationV1.js';
 
 export function createHomeWidgetActionPortV1(port: HomeHubArtifactPortV1): WidgetActionSurfacePortV1 {
   const capture = async (result: Awaited<ReturnType<HomeHubArtifactPortV1['describe']>>, instanceId: string, signal?: AbortSignal): Promise<WidgetMoveCaptureV1 | null> => {
@@ -16,7 +17,7 @@ export function createHomeWidgetActionPortV1(port: HomeHubArtifactPortV1): Widge
     async read(surface, _context, signal) {
       const description = await port.describe(await port.read(signal), signal);
       return { surface, canEdit: true, instances: description.sections.flatMap(section => section.kind === 'widget'
-        ? [{ instance: section.instance, width: section.width, ...(section.frameStyle ? { frameStyle: section.frameStyle } : {}) }]
+        ? [{ instance: section.instance, size: section.size, ...(section.frameStyle ? { frameStyle: section.frameStyle } : {}) }]
         : []) };
     },
     async apply(surface, intent, _context, signal) {
@@ -30,8 +31,9 @@ export function createHomeWidgetActionPortV1(port: HomeHubArtifactPortV1): Widge
             const state = index === undefined ? null : await port.describe(await port.read(signal), signal);
             const widgets = state?.sections.filter(section => section.kind === 'widget') ?? [];
             const anchor = index === undefined ? undefined : widgets[index];
+            const size = intent.presentation ? normalizeWidgetSizeForSurfaceV1('home', intent.presentation.size) : undefined;
             domain = { kind: 'widget_add', instance: intent.instance,
-              ...(intent.presentation?.width === 'half' || intent.presentation?.width === 'full' ? { width: intent.presentation.width } : {}),
+              ...(size ? { size } : {}),
               ...(intent.presentation?.frameStyle ? { frameStyle: intent.presentation.frameStyle } : {}),
               ...(intent.position ? { position: { nativeIndex: intent.position.index } }
                 : state ? { position: { anchorId: anchor?.id ?? widgets.at(-1)?.id ?? null, placement: anchor ? 'before' as const : 'after' as const } } : {}) };
@@ -39,15 +41,17 @@ export function createHomeWidgetActionPortV1(port: HomeHubArtifactPortV1): Widge
           }
           case 'remove': {
             const expected = intent.expectedPresentation;
-            if (expected?.tabId || expected?.width && expected.width !== 'half' && expected.width !== 'full') return { ok: false, errorCode: 'widget_placement_unsupported', error: 'widget_placement_unsupported' };
+            const size = WidgetGridSizeV1Schema.safeParse(expected?.size);
+            if (expected?.tabId || expected?.size && !size.success) return { ok: false, errorCode: 'widget_placement_unsupported', error: 'widget_placement_unsupported' };
             domain = { kind: 'widget_remove', instanceId, ...(intent.expectedInstance ? { expectedInstance: intent.expectedInstance } : {}),
-              ...(expected ? { expectedPresentation: { nativeIndex: expected.nativeIndex, frameStyle: expected.frameStyle, ...(expected.hidden === undefined ? {} : { hidden: expected.hidden }), ...(expected.width === 'half' || expected.width === 'full' ? { width: expected.width } : {}) } } : {}) };
+              ...(expected ? { expectedPresentation: { nativeIndex: expected.nativeIndex, frameStyle: expected.frameStyle, ...(expected.hidden === undefined ? {} : { hidden: expected.hidden }), ...(size.success ? { size: size.data } : {}) } } : {}) };
             break;
           }
           case 'rename': domain = { kind: 'widget_rename', instanceId, ...(intent.displayName ? { displayName: intent.displayName } : {}) }; break;
-          case 'width': {
-            if (intent.width !== 'half' && intent.width !== 'full') return { ok: false, errorCode: 'widget_width_unsupported', error: 'widget_width_unsupported' };
-            domain = { kind: 'widget_width', instanceId, width: intent.width }; break;
+          case 'size': {
+            const size = WidgetGridSizeV1Schema.safeParse(intent.size);
+            if (!size.success) return { ok: false, errorCode: 'widget_size_unsupported', error: 'widget_size_unsupported' };
+            domain = { kind: 'widget_size', instanceId, size: size.data }; break;
           }
           case 'frame': domain = { kind: 'frameStyle', sectionId: instanceId, frameStyle: intent.frameStyle }; break;
           case 'inputs': domain = { kind: 'widget_inputs', instanceId, bindings: intent.bindings }; break;

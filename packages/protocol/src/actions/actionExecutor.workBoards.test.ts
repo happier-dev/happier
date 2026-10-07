@@ -32,7 +32,7 @@ describe('Boards through the canonical Action executor', () => {
     const executor = createActionExecutor({ workBoardArtifacts: createWorkBoardArtifactPortV1(boundary.transport),
       widgetAccountScope: () => ({ serverId: 'home', accountId: 'account' }),
       // The descriptor/current-source facts are the metadata boundary, not schema logic.
-      widgetInputs: createWidgetActionInputResolverV1({ readDescriptor: async () => ({ inputs: { fields: [{ path: 'count', title: 'Count', widget: 'integer' }] }, inputSchema: { type: 'object', properties: { count: { type: 'integer' } }, required: ['count'], additionalProperties: false } }),
+      widgetInputs: createWidgetActionInputResolverV1({ readDescriptor: async () => ({ sizeDeclaration: { sizes: ['medium', 'full'], defaultSize: 'medium' }, inputs: { fields: [{ path: 'count', title: 'Count', widget: 'integer' }] }, inputSchema: { type: 'object', properties: { count: { type: 'integer' } }, required: ['count'], additionalProperties: false } }),
         readContext: async () => ({}), readViewerValues: async () => ({ values: {} }),
         validateValue: async () => sourceAdmitted ? { status: 'valid' } : { status: 'denied', reasonCode: 'source_denied' }, resolveOptions: async () => [] }),
     });
@@ -65,19 +65,19 @@ describe('Boards through the canonical Action executor', () => {
     const executor = createActionExecutor({ workBoardArtifacts: createWorkBoardArtifactPortV1(boundary.transport),
       widgetAccountScope: () => ({ serverId: 'home', accountId: 'account' }),
       // Installed descriptor and source facts are the metadata boundary; admission remains real.
-      widgetInputs: createWidgetActionInputResolverV1({ readDescriptor: async () => ({ inputs: { fields: [{ path: 'count', title: 'Count', widget: 'integer' }] }, inputSchema: { type: 'object', properties: { count: { type: 'integer' } }, additionalProperties: false } }),
+      widgetInputs: createWidgetActionInputResolverV1({ readDescriptor: async () => ({ sizeDeclaration: { sizes: ['medium', 'full'], defaultSize: 'medium' }, inputs: { fields: [{ path: 'count', title: 'Count', widget: 'integer' }] }, inputSchema: { type: 'object', properties: { count: { type: 'integer' } }, additionalProperties: false } }),
         readContext: async () => ({}), readViewerValues: async () => ({ values: {} }), validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [] }),
     } as unknown as ActionExecutorDeps);
     const context = { serverId: 'home', surface: 'mcp', bypassApprovals: true } as const;
     const target = { ref: { surface, instanceId: 'one' } };
     expect(await executor.execute('widgets.instance.add', { surface, instance }, context)).toMatchObject({ ok: true, result: { instance } });
     expect(await executor.execute('widgets.instance.add', { surface, instance: { ...instance, id: 'two' } }, context)).toMatchObject({ ok: true });
-    expect(await executor.execute('widgets.instance.width.set', { ...target, width: 'full' }, context)).toMatchObject({ ok: true });
-    expect(await executor.execute('widgets.instance.width.set', { ...target, width: 'wide' }, context)).toMatchObject({ ok: false, errorCode: 'widget_width_unsupported' });
+    expect(await executor.execute('widgets.instance.size.set', { ...target, size: 'full' }, context)).toMatchObject({ ok: true });
+    expect(await executor.execute('widgets.instance.size.set', { ...target, size: 'wide' }, context)).toMatchObject({ ok: false, errorCode: 'widget_size_unsupported' });
     expect(await executor.execute('widgets.instance.inputs.set', { ...target, bindings: { count: { kind: 'value', value: 9 } } }, context)).toMatchObject({ ok: true });
     expect(await executor.execute('widgets.instance.inputs.get', target, context)).toMatchObject({ ok: true, result: { bindings: { count: { kind: 'value', value: 9 } } } });
     expect(await executor.execute('widgets.instance.move', { ...target, toIndex: 1 }, context)).toMatchObject({ ok: true });
-    expect(await executor.execute('widgets.instance.list', { surface }, context)).toMatchObject({ ok: true, result: { instances: [{ instance: { id: 'two', bindings: instance.bindings } }, { instance: { id: 'one' }, width: 'full' }] } });
+    expect(await executor.execute('widgets.instance.list', { surface }, context)).toMatchObject({ ok: true, result: { instances: [{ instance: { id: 'two', bindings: instance.bindings } }, { instance: { id: 'one' }, size: 'full' }] } });
     expect(await executor.execute('widgets.instance.rename', { ...target, displayName: 'First' }, context)).toMatchObject({ ok: true, result: { instance: { displayName: 'First' } } });
     expect(await executor.execute('widgets.instance.frame.set', { ...target, frameStyle: 'plain' }, context)).toMatchObject({ ok: true });
     expect(await executor.execute('widgets.instance.inputs.reset', target, context)).toMatchObject({ ok: true, result: { instance: { bindings: {} } } });

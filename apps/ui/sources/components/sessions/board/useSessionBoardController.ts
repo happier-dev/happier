@@ -8,12 +8,13 @@ import {
     useSessionBoardContinuity,
 } from './SessionBoardContinuity';
 
-import { editSessionBoardWidgetItemV1, type WidgetDefinitionRefV1, type WidgetInputBindingsV1 } from '@happier-dev/protocol/widgets';
+import { editSessionBoardWidgetItemV1, getWidgetSizeFootprintV1, type WidgetDefinitionRefV1, type WidgetInputBindingsV1, type WidgetSizeV1 } from '@happier-dev/protocol/widgets';
 import {
     readSessionSurfaceNoteTextV1,
     SESSION_BOARD_DEFAULT_ITEM_WIDTH_V1,
     sessionBoardPlacedDestinationRetainsPlacementV1,
     SessionSurfaceItemV1Schema,
+    SessionBoardItemWidthSchema,
     type SessionBoardActionFailureV1,
     type SessionBoardActionRecoveryEvidenceV1,
     type SessionBoardItemWidth,
@@ -95,6 +96,7 @@ export type SessionBoardCommand =
         kind: 'item.addWidget';
         definition: Exclude<WidgetDefinitionRefV1, { kind: 'artifact' }>;
         bindings?: WidgetInputBindingsV1;
+        size?: WidgetSizeV1;
         title: string;
     }>
     | Readonly<{ kind: 'item.edit'; itemId: string }>
@@ -1059,6 +1061,7 @@ export function useSessionBoardController(input: SessionBoardControllerInput): S
                 const title = command.title.trim();
                 const itemId = randomUUID();
                 const target = view;
+                const footprint = command.size ? getWidgetSizeFootprintV1('sessionBoard', command.size) : undefined;
                 return await submit(command, (p) => p.upsertItem({
                     sessionId: current.sessionId,
                     itemId,
@@ -1070,13 +1073,14 @@ export function useSessionBoardController(input: SessionBoardControllerInput): S
                         // must not overwrite an edited title.
                         title,
                         frame: 'card',
-                        height: { mode: 'auto', fallback: 'regular' },
+                        height: footprint ? { mode: 'fixed', size: footprint.height } : { mode: 'auto', fallback: 'regular' },
                         source: { kind: 'widget', instance: { v: 1, id: itemId, definition: command.definition, bindings: command.bindings ?? {} } },
                     },
                     placement: {
                         tabId: !target || target.synthetic ? SESSION_BOARD_OVERVIEW_VIEW_ID : target.id,
                         tabTitle: viewTitle(target),
-                        width: SESSION_BOARD_DEFAULT_ITEM_WIDTH_V1,
+                        // With no selection, creation admission supplies the declaration's default.
+                        ...(footprint ? { width: SessionBoardItemWidthSchema.parse(footprint.width) } : {}),
                     },
                 }));
             }

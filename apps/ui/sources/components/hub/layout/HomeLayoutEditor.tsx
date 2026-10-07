@@ -10,11 +10,13 @@ import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { Text } from '@/components/ui/text/Text';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Typography } from '@/constants/Typography';
-import { resolveAnchoredListMoveV1 } from '@happier-dev/protocol';
+import { resolveAnchoredListMoveV1 } from '@happier-dev/protocol/actions/anchoredListOrderV1';
 import { HomeHubLayoutIntentSchema } from '@happier-dev/protocol/home';
 import { EntityFlatReorderList, EntityFlatReorderRow, settleEntityReorderWrite, entityReorderPreview, entityReorderRefused, type EntityFlatReorderBinding } from '@/components/ui/treeDragDrop/ui/EntityFlatReorder';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
+import { normalizeWidgetSizeForSurfaceV1, resolveWidgetSizeChoicesV1 } from '@happier-dev/protocol/widgets';
+import { WidgetSizeControl } from '@/components/widgets/frame/WidgetSizeControl';
 import { t } from '@/text';
 
 import { findHomeHubBuiltinSection, homeHubSectionTitle } from '../homeHubSections';
@@ -165,6 +167,7 @@ function EditorRowView(props: Readonly<{
     const title = homeHubSectionTitle(row.section);
     const alwaysShown = !row.section.hideable;
     const shown = !row.section.hidden;
+    const sizeChoices = row.section.kind === 'widget' ? resolveWidgetSizeChoicesV1('home', row.section.widget?.sizeDeclaration) : null;
     const content = (renderHandle: (testID?: string) => React.ReactNode) => (
             <View style={styles.row}>
                 <View style={styles.grip}>{renderHandle(`home-layout.${row.id}.grip`)}</View>
@@ -190,6 +193,14 @@ function EditorRowView(props: Readonly<{
                             />
                         )}
                     />
+                    {row.section.kind === 'widget' && row.section.widget && sizeChoices?.defaultSize ? (
+                        <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
+                            <WidgetSizeControl surface="home" sizes={sizeChoices.sizes}
+                                size={normalizeWidgetSizeForSurfaceV1('home', row.section.size, row.section.widget?.sizeDeclaration)!}
+                                onSet={size => { void layout.setSize(row.id, size).catch(() => {}); }}
+                                testID={`home-layout.${row.id}.size`} />
+                        </View>
+                    ) : null}
                 </View>
             </View>
     );

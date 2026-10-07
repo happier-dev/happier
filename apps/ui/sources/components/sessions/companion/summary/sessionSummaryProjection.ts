@@ -327,7 +327,8 @@ export function resolveSessionSummaryVisibleRows(
 
 export type SessionSummaryRowPresentation =
     | Readonly<{ kind: 'full' }>
-    | Readonly<{ kind: 'card'; density: SessionCompanionDensity }>;
+    | Readonly<{ kind: 'card'; density: SessionCompanionDensity }>
+    | Readonly<{ kind: 'widgetSummary' }>;
 
 /** Full Companion is the destination for omitted card rows, so it is uncapped. */
 export function resolveSessionSummaryRows(
@@ -337,5 +338,6 @@ export function resolveSessionSummaryRows(
     if (presentation.kind === 'full') {
         return Object.freeze({ rows: model.rows, hiddenCount: 0 });
     }
+    if (presentation.kind === 'widgetSummary') return Object.freeze({ rows: [], hiddenCount: model.rows.length });
     return resolveSessionSummaryVisibleRows(model, presentation.density);
 }

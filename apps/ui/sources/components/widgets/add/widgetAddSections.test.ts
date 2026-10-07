@@ -7,6 +7,7 @@ import { selectBuiltinWidgetCandidates, type WidgetCandidate } from '@/component
 import { projectSessionBoard } from '@/sync/domains/session/board';
 
 import { buildBoardWidgetAddContent, buildCompanionWidgetAddSections } from './widgetAddSections';
+import { resolveWidgetAddPick } from './widgetAddModel';
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -28,6 +29,7 @@ function candidate(localId: string, title: string): WidgetCandidate {
         icon: 'chat-circle',
         homeDefault: 'available',
         target: 'app',
+        sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' },
     };
 }
 
@@ -52,6 +54,23 @@ const BOARD = projectSessionBoard({
 const ids = (entries: ReadonlyArray<{ id: string }>) => entries.map((entry) => entry.id);
 
 describe('buildBoardWidgetAddContent', () => {
+    it('lets a fully bound Board widget choose its size before the atomic Add', async () => {
+        const run = vi.fn(async () => ({ kind: 'applied' as const }));
+        const content = buildBoardWidgetAddContent({ intents: ['fromPlugins'], candidates: [{
+            ...candidate('summary', 'Summary'), target: 'session', sessionInputPath: 'session',
+            inputs: { fields: [{ path: 'session', title: 'Session', widget: 'json', required: true }] },
+        }], snapshot: BOARD, run, context: SESSION_A,
+            scope: { serverId: 'home', accountId: 'me', owner: { kind: 'sessionBoard', sessionId: 'A' } }, openPlugins: vi.fn() });
+        const entry = content.sections.find(section => section.id === 'plugins')!.entries[0]!;
+        const pick = resolveWidgetAddPick(entry);
+        expect(pick.kind).toBe('setup');
+        if (pick.kind !== 'setup') throw new Error('Size choice must be available before Add');
+        expect(pick.setup.resolve(pick.setup.initial).status).toBe('ready');
+        expect(run).not.toHaveBeenCalled();
+        await pick.setup.submit({ ...pick.setup.initial, size: 'large' });
+        expect(run).toHaveBeenCalledWith(expect.objectContaining({ kind: 'item.addWidget', size: 'large',
+            bindings: { session: { kind: 'context', slot: 'session' } } }));
+    });
     it('keeps required-input gallery tiles inert and previews sufficiently bound candidates lazily', () => {
         const preview = vi.fn((_candidate: WidgetCandidate) => 'admitted preview');
         const content = buildBoardWidgetAddContent({ intents: ['fromPlugins'], candidates: [
@@ -103,7 +122,7 @@ describe('buildBoardWidgetAddContent', () => {
 
         plugins[1]!.onPick();
         expect(run).toHaveBeenCalledTimes(1);
-        expect(run).toHaveBeenCalledWith({ kind: 'item.addWidget', definition: { kind: 'installed', surface: { pluginId: 'happier.channels', localId: 'pr' } }, title: 'This branch’s PR', bindings: {} });
+        expect(run).toHaveBeenCalledWith({ kind: 'item.addWidget', definition: { kind: 'installed', surface: { pluginId: 'happier.channels', localId: 'pr' } }, title: 'This branch’s PR', bindings: {}, size: 'medium' });
         // Previews are lazy: built only when a gallery tile asks for one.
         expect(preview).not.toHaveBeenCalled();
         plugins[1]!.renderPreview?.();
@@ -257,6 +276,7 @@ describe('configurable widgets in the Add popovers', () => {
         expect(run).toHaveBeenCalledWith({
             kind: 'item.addWidget', definition: { kind: 'installed', surface: { pluginId: 'happier.channels', localId: 'summary' } }, title: 'Summary',
             bindings: { session: { kind: 'context', slot: 'session' }, period: { kind: 'value', value: '30d' } },
+            size: 'medium',
         });
     });
 

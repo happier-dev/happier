@@ -50,7 +50,7 @@ describe('WorkBoardV1', () => {
         const instance = { v: 1, id: 'copy', definition: { kind: 'builtin', id: 'summary' },
             bindings: { payload: { kind: 'value', value: { extra: 'meaningful input' } } } } as const;
         const ref = { surface, instanceId: instance.id };
-        const board = { ...createWorkBoardV1({ id: 'b1', name: 'B' }), widgets: [{ kind: 'widget', ref, instance, width: 1 }] };
+        const board = { ...createWorkBoardV1({ id: 'b1', name: 'B' }), widgets: [{ kind: 'widget', ref, instance, size: 'medium' }] };
         const stored = { ...board, widgets: [{ ...board.widgets[0], extra: true,
             ref: { ...ref, extra: true, surface: { ...surface, extra: true, owner: { ...surface.owner, extra: true } } },
             instance: { ...instance, extra: true, definition: { ...instance.definition, extra: true },
@@ -86,7 +86,7 @@ describe('WorkBoardV1', () => {
     it('preserves a Board with a wrong-surface widget as unreadable without breaking neighboring Boards', () => {
         const healthy = createWorkBoardV1({ id: 'healthy', name: 'Healthy' });
         const damaged = { ...createWorkBoardV1({ id: 'damaged', name: 'Damaged' }), widgets: [{
-            kind: 'widget', width: 1,
+            kind: 'widget', size: 'medium',
             ref: { surface: { serverId: 'home', accountId: 'owner', owner: { kind: 'home' } }, instanceId: 'copy' },
             instance: { v: 1, id: 'copy', definition: { kind: 'builtin', id: 'summary' }, bindings: {} },
         }] };
@@ -101,15 +101,15 @@ describe('WorkBoardV1', () => {
         const key = JSON.stringify(['widget', 'home-a', 'owner', 'b1', 'copy-a']);
         let state = boardsWith({ ...createWorkBoardV1({ id: 'b1', name: 'B' }), source: { picked: [session('home-a', 's1')], sections: ['running'] } });
         const edit = (input: unknown) => { state = applied(applyWorkBoardIntentV1(state, WorkBoardIntentV1Schema.parse(input))); };
-        edit({ kind: 'widget_add', boardId: 'b1', ref, instance, width: 2, position: { x: 12, y: 24 } });
+        edit({ kind: 'widget_add', boardId: 'b1', ref, instance, size: 'full', position: { x: 12, y: 24 } });
         edit({ kind: 'widget_add', boardId: 'b1', ref: { surface, instanceId: 'copy-b' }, instance: { ...instance, id: 'copy-b' } });
         edit({ kind: 'widget_inputs', boardId: 'b1', ref, bindings: { session: { kind: 'value', value: 's2' } } });
         edit({ kind: 'set_positions', boardId: 'b1', positionsByItemRef: {}, membership: { liveItemKeys: [], unavailableServerIds: [] } });
         edit({ kind: 'update', boardId: 'b1', patch: { mode: 'by_status' } });
         const board = state.boards[0]!;
         expect(board).toMatchObject({ mode: 'by_status', widgets: [
-            { kind: 'widget', ref, instance: { ...instance, bindings: { session: { kind: 'value', value: 's2' } } }, width: 2 },
-            { kind: 'widget', instance: { id: 'copy-b', bindings: {} }, width: 1 },
+            { kind: 'widget', ref, instance: { ...instance, bindings: { session: { kind: 'value', value: 's2' } } }, size: 'full' },
+            { kind: 'widget', instance: { id: 'copy-b', bindings: {} }, size: 'medium' },
         ], positionsByItemRef: { [key]: { x: 12, y: 24 } } });
         edit({ kind: 'widget_remove', boardId: 'b1', ref });
         expect(state.boards[0]!.positionsByItemRef[key]).toBeUndefined();

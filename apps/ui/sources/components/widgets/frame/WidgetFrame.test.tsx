@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -7,6 +8,7 @@ import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 
 import { WidgetFrame } from './WidgetFrame';
+import { SessionBoardDeclarativeContent } from '@/components/sessions/board/SessionBoardDeclarativeContent';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -45,6 +47,50 @@ async function renderFrame(props: Partial<React.ComponentProps<typeof WidgetFram
 }
 
 describe('WidgetFrame', () => {
+    it('recomposes a retained declarative chart from the measured frame viewport without dropping points', async () => {
+        const document = { version: 1, root: { kind: 'chart', label: 'Checks', style: 'bar', rows: [],
+            data: { kind: 'value', value: [{ x: 'Mon', y: 2 }, { x: 'Tue', y: 4 }, { x: 'Wed', y: 3 }] },
+            x: { path: ['x'], type: 'string' }, y: { path: ['y'], type: 'number' } } };
+        const screen = await renderScreen(<WidgetFrame testID="declarative" frameStyle="card" placement="home" title="Checks"
+            widgetPresentation={{ size: 'tall', footprint: { columns: 2, columnSpan: 1, rowSpan: 4, width: 'half', height: 'tall' } }}
+            body={{ kind: 'content', children: <SessionBoardDeclarativeContent document={document} /> }} />);
+        const viewport = screen.findByTestId('declarative.viewport')!;
+        const plotHeight = () => {
+            const heights = screen.findByTestId('plugin-declarative-chart-bar-1')!.findAll(node =>
+                typeof node.type === 'string' && typeof node.props.style?.height === 'number').map(node => node.props.style.height as number);
+            return Math.max(...heights);
+        };
+        await act(async () => { viewport.props.onLayout({ nativeEvent: { layout: { width: 350, height: 96 } } }); });
+        const compactHeight = plotHeight();
+        const chart = screen.findByTestId('plugin-declarative-chart');
+        await act(async () => { viewport.props.onLayout({ nativeEvent: { layout: { width: 350, height: 384 } } }); });
+        expect(plotHeight()).toBeGreaterThan(compactHeight);
+        expect(screen.findByTestId('plugin-declarative-chart')).toBe(chart);
+        expect(chart?.props.accessibilityLabel).toContain('Mon 2, Tue 4, Wed 3');
+        expect(screen.findByTestId('plugin-declarative-chart-bar-2')).not.toBeNull();
+    });
+    it('delivers the measured viewport to its retained body while preserving the chosen aspect footprint', async () => {
+        let mounts = 0;
+        let observed: ReturnType<typeof useWidgetPresentation>;
+        function Body() {
+            observed = useWidgetPresentation();
+            React.useEffect(() => { mounts += 1; }, []);
+            return <>all retained rows</>;
+        }
+        const widgetPresentation = { size: 'wide' as const,
+            footprint: { columns: 2, columnSpan: 2, rowSpan: 1, height: 'compact' as const, width: 'full' as const } };
+        const render = () => <WidgetFrame testID="measured" frameStyle="card" placement="home" title="Rows"
+            {...{ widgetPresentation }} body={{ kind: 'content', children: <Body /> }} />;
+        const screen = await renderScreen(render());
+        const viewport = screen.findByTestId('measured.viewport');
+        expect(viewport).not.toBeNull();
+        await act(async () => { viewport!.props.onLayout({ nativeEvent: { layout: { width: 620, height: 160 } } }); });
+        expect(observed).toMatchObject({ size: 'wide', footprint: { columnSpan: 2, rowSpan: 1 }, geometry: { width: 620, height: 160 } });
+        await act(async () => { viewport!.props.onLayout({ nativeEvent: { layout: { width: 350, height: 160 } } }); });
+        expect(observed).toMatchObject({ size: 'wide', geometry: { width: 350, height: 160 } });
+        expect(mounts).toBe(1);
+        expect(screen.getTextContent()).toContain('all retained rows');
+    });
     it('draws the header at once — title, source, freshness and the section menu — around the body', async () => {
         const screen = await renderFrame({ meta: 'As of 10:42', menu: 'menu:here' });
         const text = screen.getTextContent();

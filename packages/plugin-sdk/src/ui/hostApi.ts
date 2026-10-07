@@ -1,4 +1,8 @@
 import type { EntityDragItemV1 } from '../entityDragDrop.js';
+import type { WidgetSizeV1 as ProtocolWidgetSizeV1, WidgetSizeFootprintV1 as ProtocolWidgetSizeFootprintV1 } from '@happier-dev/protocol/widgets';
+/** Declaration-only projections; Protocol owns supported sizes and footprint policy. */
+export type WidgetSizeV1 = ProtocolWidgetSizeV1;
+export type WidgetSizeFootprintV1 = ProtocolWidgetSizeFootprintV1;
 import type { PluginUiWidgetAreaRequestV1, PluginUiWidgetAreaResultV1 } from '../actions/dtos/pluginActionDtoSupport.generated.js';
 export type { PluginUiWidgetAreaRequestV1, PluginUiWidgetAreaResultV1, PluginUiWidgetAreaOperationV1 } from '../actions/dtos/pluginActionDtoSupport.generated.js';
 import type {
@@ -748,6 +752,13 @@ export interface RenderContext {
     readonly signal: AbortSignal;
     /** Host-owned mount activity; updates rerender the retained surface without redefining its lifecycle. */
     readonly activity?: Readonly<{ active: boolean }>;
+    /** Resolved host presentation only; geometry never chooses inputs, authority or execution placement. */
+    readonly widgetPresentation?: Readonly<{
+        /** Named intent when the native rectangle has one; custom native width×height remains unnamed. */
+        size?: WidgetSizeV1;
+        footprint: WidgetSizeFootprintV1;
+        geometry?: Readonly<{ width: number; height: number }>;
+    }>;
     /**
      * The bounded, immutable input the opener passed to
      * `hostApi.openSurface(view, input)` when this surface was selected.

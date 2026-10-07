@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import type { PluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
 import { PluginUiHostPresentationScope } from '@happier-dev/plugin-ui/advanced';
 import { useEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropHooks';
@@ -14,20 +15,14 @@ import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useUnistyles } from 'react-native-unistyles';
 
-import {
-    BrowserViewTargetV1Schema,
-    PluginHostedHtmlSourceV1Schema,
-    type PluginHostedHtmlSourceV1,
-    type ComposerRefV1,
-    type ComposerSnapshotV1,
-    type DaemonPluginUiTargetedSurfaceMountV1,
-    type DaemonContributionRegistryProjectionMountedTargetV1,
-    type BrowserViewTargetV1,
-    type PluginDeclarativePreparedTargetedSurfaceInventoryEntryV1,
-    type PluginMachineExecutionOriginV1,
-    type PluginProjectionV2,
-    type SessionExecutionTargetV1,
-} from '@happier-dev/protocol';
+import { BrowserViewTargetV1Schema, type BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
+import { PluginHostedHtmlSourceV1Schema, type PluginHostedHtmlSourceV1 } from '@happier-dev/protocol/plugins/contributions/ui/hostedHtmlSourceV1';
+import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef';
+import type { ComposerSnapshotV1 } from '@happier-dev/protocol/plugins/ui/composer';
+import type { DaemonPluginUiTargetedSurfaceMountV1, DaemonContributionRegistryProjectionMountedTargetV1, PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { PluginDeclarativePreparedTargetedSurfaceInventoryEntryV1 } from '@happier-dev/protocol/plugins/contributions/ui/declarativeDocument';
+import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import type { SessionExecutionTargetV1 } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
 import { qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import {
     buildPluginHostedWebStaticAssetPreviewId,
@@ -1678,6 +1673,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
         canonicalEphemeralSharedScope,
     ]);
     const presented = useLayoutPresentationActive();
+    const widgetPresentation = useWidgetPresentation();
     const canonicalRenderContext = React.useMemo<RenderContext>(() => {
         const identity = canonicalRenderIdentity;
         const context = {
@@ -1692,6 +1688,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
             // undefined }` key would make "opened without input" indistinguishable
             // from "opened with an explicit undefined" for an author reading the key.
             ...(props.launchInput === undefined ? {} : { launchInput: props.launchInput }),
+            ...(widgetPresentation === undefined ? {} : { widgetPresentation }),
             // EU-5b: the page's own location. Absent on every placement that is
             // not a page, and `''` at a page root — the two are different facts.
             ...(props.subPath === undefined ? {} : { subPath: props.subPath }),
@@ -1705,6 +1702,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
         presented,
         props.interactionEnabled,
         props.launchInput,
+        widgetPresentation,
         props.subPath,
     ]);
 

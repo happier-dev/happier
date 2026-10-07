@@ -182,6 +182,29 @@ describe('withDefaultActionExecuteContext', () => {
         }
     });
 
+    it('returns typed unavailability for native navigation on a sidecar-only Home', async () => {
+        const serverId = await addHome();
+        const { FeaturesResponseSchema } = await import('@happier-dev/protocol');
+        const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        const prime = (enabled: boolean) => primeServerFeaturesSnapshot({ serverId, snapshot: {
+            status: 'ready', features: FeaturesResponseSchema.parse({ features: { browser: {
+                enabled: true, viewTargets: { enabled: true }, internal: { enabled: true }, sidecar: { enabled: true }, automation: { enabled },
+            } } }),
+        } });
+        prime(false);
+        const executor = executorModule.createDefaultActionExecutor();
+        const context = { serverId, surface: 'agent' as const, authority: 'account_automation' as const, bypassApprovals: true };
+        for (const kind of ['navigate', 'goBack', 'goForward', 'reload', 'stop'] as const) {
+            expect(await executor.execute(`browser.${kind}`, { kind, commandId: kind, browserSessionId: 'browser', viewId: 'view',
+                ...(kind === 'navigate' ? { url: 'https://example.test/' } : {}) }, context))
+                .toMatchObject({ ok: false, errorCode: 'runtime_action_disabled', error: 'runtime_action_disabled:browser:browser_automation_unavailable' });
+        }
+        prime(true);
+        // Enabled admission reaches the real browser owner, which has no mounted view here.
+        expect(await executor.execute('browser.reload', { kind: 'reload', commandId: 'enabled', browserSessionId: 'browser', viewId: 'view' }, context))
+            .toMatchObject({ ok: false, errorCode: 'runtime_action_disabled', error: 'runtime_action_disabled:browser:browser_control_unavailable' });
+    });
+
     it('refuses preparation for another captured Account before creating an approval or machine effect', async () => {
         const serverId = await addHome();
         const { createDefaultActionExecutor } = await loadExecutor();

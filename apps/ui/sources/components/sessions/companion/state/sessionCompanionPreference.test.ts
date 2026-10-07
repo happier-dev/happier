@@ -126,6 +126,8 @@ describe('session companion mutations', () => {
         const item = { kind: 'instance' as const, instance };
         const original = normalizeSessionCompanionPreference({ ...visible, items: [SESSION_SUMMARY_COMPANION_ITEM, item, widget('shared-item')] });
         const guard = { expectedInstance: instance, expectedPresentation: { frameStyle: null, nativeIndex: 1 } };
+        expect(removeSessionCompanionItem(original, item, { ...guard,
+            expectedPresentation: { ...guard.expectedPresentation, size: 'medium' } })).toBe(original);
         const edited = renameSessionCompanionInstance(original, instance.id, 'Changed while moving');
         expect(removeSessionCompanionItem(edited, item, guard)).toBe(edited);
         const reframed = setSessionCompanionItemFrameStyle(original, item, 'plain');

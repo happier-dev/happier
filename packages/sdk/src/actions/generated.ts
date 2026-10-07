@@ -440,7 +440,7 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "widgets.instance.move",
   "widgets.instance.remove",
   "widgets.instance.rename",
-  "widgets.instance.width.set",
+  "widgets.instance.size.set",
   "widgets.snapshot.post",
   "workflow.authoring.conversation.bind",
   "workflow.definition.create",
@@ -1759,8 +1759,8 @@ export type GeneratedActions = Readonly<{
       readonly refresh: (input: PublicActionInputById["widgets.instance.refresh"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.instance.refresh">>;
       readonly remove: (input: PublicActionInputById["widgets.instance.remove"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.instance.remove">>;
       readonly rename: (input: PublicActionInputById["widgets.instance.rename"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.instance.rename">>;
-      readonly width: Readonly<{
-        readonly set: (input: PublicActionInputById["widgets.instance.width.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.instance.width.set">>;
+      readonly size: Readonly<{
+        readonly set: (input: PublicActionInputById["widgets.instance.size.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.instance.size.set">>;
       }> ;
     }> ;
     readonly snapshot: Readonly<{
@@ -3137,8 +3137,8 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         refresh: (input: PublicActionInputById["widgets.instance.refresh"], options?: ActionExecutionOptions) => execute("widgets.instance.refresh", input, options),
         remove: (input: PublicActionInputById["widgets.instance.remove"], options?: ActionExecutionOptions) => execute("widgets.instance.remove", input, options),
         rename: (input: PublicActionInputById["widgets.instance.rename"], options?: ActionExecutionOptions) => execute("widgets.instance.rename", input, options),
-        width: {
-          set: (input: PublicActionInputById["widgets.instance.width.set"], options?: ActionExecutionOptions) => execute("widgets.instance.width.set", input, options),
+        size: {
+          set: (input: PublicActionInputById["widgets.instance.size.set"], options?: ActionExecutionOptions) => execute("widgets.instance.size.set", input, options),
         },
       },
       snapshot: {

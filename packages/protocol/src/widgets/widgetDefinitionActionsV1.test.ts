@@ -9,7 +9,7 @@ import { resolveConfiguredWidgetInputs } from './widgetInputAdmissionV1.js';
 
 const account = { serverId: 'home', accountId: 'owner' };
 const revision = 'ssr1.AAAACHN5c3JlY18xAAAAAQ';
-const descriptor = { inputs: { fields: [{ path: 'session', title: 'Session', widget: 'json' as const, required: true, optionsSourceId: 'sessions' }] },
+const descriptor = { sizeDeclaration: { sizes: ['medium', 'full'] as ('medium' | 'full')[], defaultSize: 'medium' as const }, inputs: { fields: [{ path: 'session', title: 'Session', widget: 'json' as const, required: true, optionsSourceId: 'sessions' }] },
     inputSchema: { type: 'object' as const, properties: { session: { type: 'object' as const, properties: { serverId: { type: 'string' as const }, sessionId: { type: 'string' as const } }, required: ['serverId', 'sessionId'], additionalProperties: false } }, required: ['session'], additionalProperties: false },
     sessionInputPath: 'session' };
 describe('widget definition semantic Actions', () => {
@@ -72,7 +72,7 @@ describe('widget definition semantic Actions', () => {
         expect(wrongAccount).toMatchObject({ ok: false, errorCode: 'account_target_mismatch' });
     });
     it('admits an explicit shared copy while rejecting private selections inside copied definition bytes', () => {
-        const definition = WidgetDefinitionV1Schema.parse({ v: 1, id: 'original', name: 'Checks', body: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Count' } } },
+        const definition = WidgetDefinitionV1Schema.parse({ sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' }, v: 1, id: 'original', name: 'Checks', body: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Count' } } },
             inputs: { fields: [] }, inputSchema: { type: 'object', additionalProperties: false }, provenance: { source: { kind: 'authored' } } });
         const instance = { v: 1, id: 'copy', definition: { kind: 'inline', definition }, bindings: {} };
         const raw = { v: 1, title: 'Copy', frame: 'card', height: { mode: 'auto', fallback: 'regular' }, source: { kind: 'widget', instance } };

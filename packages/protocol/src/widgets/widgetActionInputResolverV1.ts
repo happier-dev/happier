@@ -9,6 +9,7 @@ import { validateInputTypeValue, type ResolvedInputTypeV1 } from '../inputs/inpu
 import { hasValidPluginConnectedAccountPurposeBindingsV2 } from '../plugins/actions/v2.js';
 import type { PluginJsonSchemaV2 } from '../plugins/contributions/publicTypes.js';
 import { WidgetConnectedAccountPurposeBindingV1Schema } from './widgetConnectedAccountPurposeBindingV1.js';
+import { WidgetSizeDeclarationV1Schema } from './widgetPresentationV1.js';
 
 type Request = Parameters<WidgetActionInputResolverV1['resolve']>[0];
 type Validation = ReturnType<WidgetBindingResolutionInputV1['validateValue']>;
@@ -61,7 +62,13 @@ export type WidgetActionInputResolverPortsV1 = Readonly<{
 
 /** Host ports supply current facts; neutral binding/schema/options rules have one owner. */
 export function createWidgetActionInputResolverV1(ports: WidgetActionInputResolverPortsV1): WidgetActionInputResolverV1 {
-    return { resolve: async request => {
+    return { readSizeDeclaration: async request => {
+        request.signal?.throwIfAborted();
+        const descriptor = await ports.readDescriptor(request);
+        request.signal?.throwIfAborted();
+        const declaration = WidgetSizeDeclarationV1Schema.safeParse(descriptor?.sizeDeclaration);
+        return declaration.success ? declaration.data : null;
+    }, resolve: async request => {
         request.signal?.throwIfAborted();
         const descriptor = await ports.readDescriptor(request);
         request.signal?.throwIfAborted();

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { WidgetInputBindingsV1, WidgetInstanceV1, WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
+import { normalizeWidgetSizeForSurfaceV1, type WidgetInputBindingsV1, type WidgetInstanceV1, type WidgetSurfaceRefV1, type WidgetSizeV1 } from '@happier-dev/protocol/widgets';
 
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { useHomeWidgetCandidates } from '@/components/hub/layout/useHomeWidgetCandidates';
@@ -22,7 +22,7 @@ import { randomUUID } from '@/platform/randomUUID';
 import { t } from '@/text';
 
 import type { WidgetAddEntry, WidgetAddSection } from './widgetAddModel';
-import { proposeWidgetSetupDraft } from './widgetSetupModel';
+import { proposeWidgetSetupDraft, type WidgetSetupDraft } from './widgetSetupModel';
 
 /**
  * Home and a WorkBoard have no Session or page of their own: a Session input is chosen, never
@@ -43,20 +43,20 @@ export type AccountWidgetAddInput = Readonly<{
     /** The surface's current copies; the gallery counts them by definition. */
     instances: readonly WidgetInstanceV1[];
     /** The surface's one add intent: rejects on refusal or returns its explicit acknowledged step result. */
-    addInstance: (instance: WidgetInstanceV1) => Promise<WidgetSetupCommandResult>;
+    addInstance: (instance: WidgetInstanceV1, size?: WidgetSizeV1) => Promise<WidgetSetupCommandResult>;
     scope: WidgetSurfaceRefV1 | null;
     labels: AccountWidgetSurfaceLabels;
     /** What the surface fills on its own ("This page", "This checkout"); none on Home or a WorkBoard. */
     context?: WidgetSurfaceContext;
     renderTilePreview?: (candidate: WidgetCandidate) => React.ReactNode;
-    renderSetupPreview?: (candidate: WidgetCandidate, preview: Readonly<{ draft: { bindings: WidgetInputBindingsV1 } }>) => React.ReactNode;
+    renderSetupPreview?: (candidate: WidgetCandidate, preview: Readonly<{ draft: WidgetSetupDraft }>) => React.ReactNode;
 }>;
 
 /**
  * What a personal surface's gallery offers (lab `dashboards` dbind G, L1): Happier's own widgets
  * (Built in) and every widget a plugin offers, counted by the copies already there. A pick with
- * inputs opens Set up only when something is missing; a widget with no inputs adds at once and stays
- * Added. Every add is the surface's one add intent — the same operation `widgets.instance.add`
+ * inputs opens Set up when something is missing or several sizes are offered; a single-size widget
+ * with no inputs adds at once and stays Added. Every add is the surface's one add intent — the same operation `widgets.instance.add`
  * performs for an agent.
  */
 export function buildAccountWidgetAddSections(input: AccountWidgetAddInput): readonly WidgetAddSection[] {
@@ -65,9 +65,16 @@ export function buildAccountWidgetAddSections(input: AccountWidgetAddInput): rea
         const definition = widgetDefinitionOfCandidate(candidate);
         const copies = countWidgetInstances(input.instances, definition);
         const configurable = isConfigurableWidgetCandidate(candidate);
-        const add = (bindings: WidgetInputBindingsV1) => input.addInstance({ v: 1, id: randomUUID(), definition, bindings });
+        const add = (bindings: WidgetInputBindingsV1, size?: WidgetSizeV1) => input.addInstance({ v: 1, id: randomUUID(), definition, bindings },
+            input.scope ? normalizeWidgetSizeForSurfaceV1(input.scope.owner.kind, size, candidate.sizeDeclaration) : undefined);
         const renderTilePreview = input.renderTilePreview;
         const renderSetupPreview = input.renderSetupPreview;
+        const setup = buildWidgetCandidateSetup({
+            candidate, context, audience: 'personal', mode: { kind: 'add', submitLabel: input.labels.submit },
+            submit: (draft) => runWidgetSetupCommand(() => add(draft.bindings, draft.size), t('widgetAdd.addFailed')),
+            scope: input.scope,
+            ...(renderSetupPreview ? { renderPreview: (preview) => renderSetupPreview(candidate, preview) } : {}),
+        });
         return {
             id: `plugin-${candidate.key}`,
             title: candidate.title,
@@ -79,18 +86,8 @@ export function buildAccountWidgetAddSections(input: AccountWidgetAddInput): rea
             // App widgets draw their real body in the tile; a configurable or Session widget needs its
             // inputs first, so its tile keeps the glyph.
             ...(renderTilePreview && candidate.target === 'app' && !configurable ? { renderPreview: () => renderTilePreview(candidate) } : {}),
-            ...(configurable ? {
-                setup: () => buildWidgetCandidateSetup({
-                    candidate,
-                    context,
-                    audience: 'personal',
-                    mode: { kind: 'add', submitLabel: input.labels.submit },
-                    submit: (draft) => runWidgetSetupCommand(() => add(draft.bindings), t('widgetAdd.addFailed')),
-                    scope: input.scope,
-                    ...(renderSetupPreview ? { renderPreview: (preview) => renderSetupPreview(candidate, preview) } : {}),
-                }),
-            } : {}),
-            onPick: () => { void add(proposeWidgetSetupDraft(widgetSetupFieldsForCandidate(candidate, context, 'personal')).bindings).catch(() => {}); },
+            ...(configurable || (setup.sizeChoices?.sizes.length ?? 0) > 1 ? { setup: () => setup } : {}),
+            onPick: () => runWidgetSetupCommand(() => add(proposeWidgetSetupDraft(widgetSetupFieldsForCandidate(candidate, context, 'personal')).bindings), t('widgetAdd.addFailed')),
         };
     };
     const widgets = partitionWidgetCandidatesBySource(input.candidates);
@@ -111,7 +108,7 @@ export function buildAccountWidgetAddSections(input: AccountWidgetAddInput): rea
 export function useAccountWidgetAddSections(input: Readonly<{
     scope: WidgetSurfaceRefV1 | null;
     instances: readonly WidgetInstanceV1[];
-    addInstance: (instance: WidgetInstanceV1) => Promise<WidgetSetupCommandResult>;
+    addInstance: (instance: WidgetInstanceV1, size?: WidgetSizeV1) => Promise<WidgetSetupCommandResult>;
     labels: AccountWidgetSurfaceLabels;
     context?: WidgetSurfaceContext;
     testID: string;
@@ -134,12 +131,12 @@ export function useAccountWidgetAddSections(input: Readonly<{
                 testID={`${testID}.preview.${candidate.key}`} />
         ) : null,
         ...(scope ? {
-            renderSetupPreview: (candidate: WidgetCandidate, preview: Readonly<{ draft: { bindings: WidgetInputBindingsV1 } }>) => (
+            renderSetupPreview: (candidate: WidgetCandidate, preview: Readonly<{ draft: WidgetSetupDraft }>) => (
                 <WidgetSetupPreview
                     scope={scope}
                     providedContext={context ? widgetProvidedContext(context) : NO_PROVIDED_CONTEXT}
                     candidate={candidate}
-                    draft={{ bindings: preview.draft.bindings }}
+                    draft={preview.draft}
                     testID={`${testID}.setupPreview.${candidate.key}`}
                 />
             ),

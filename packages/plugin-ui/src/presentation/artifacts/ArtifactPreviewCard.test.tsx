@@ -93,7 +93,8 @@ describe('HappierArtifactPreviewCard visible structure', () => {
   it('keeps full Board summary, widths, positions and sources while only mounting visible widgets', async () => {
     const preview: HappierArtifactPreview = { kind: 'board', layout: { mode: 'canvas',
       source: { sections: ['needs_you', 'my_machines'], hasFilter: false, pickedCount: 0 },
-      widgets: Array.from({ length: 1000 }, (_, index) => ({ title: `Widget ${index + 1}`, width: 2 as const, position: { x: index, y: index + 1 } })),
+      widgets: Array.from({ length: 1000 }, (_, index) => ({ title: `Widget ${index + 1}`, size: 'wide' as const,
+        footprint: { columns: 2, columnSpan: 2, rowSpan: 1 }, position: { x: index, y: index + 1 } })),
     } };
     textRenders = 0;
     commits = 0;

@@ -43,7 +43,7 @@ export function createHomeHubArtifactPortV1(transport: HomeHubArtifactTransportV
     accountId: string;
     shouldContinue?: () => boolean;
     builtins?: readonly HomeHubBuiltinDefinition[];
-    readWidgets?: (signal?: AbortSignal) => readonly HomeHubWidgetInput[] | Promise<readonly HomeHubWidgetInput[]>;
+    readWidgets?: (signal?: AbortSignal, layout?: HomeHubLayoutValue) => readonly HomeHubWidgetInput[] | Promise<readonly HomeHubWidgetInput[]>;
     onLayout?: (layout: HomeHubLayoutValue, revision?: WorkBoardArtifactRevisionV1) => void;
 }>): HomeHubArtifactPortV1 {
     const artifactId = buildHomeHubArtifactIdV1(options.accountId);
@@ -51,7 +51,9 @@ export function createHomeHubArtifactPortV1(transport: HomeHubArtifactTransportV
         signal?.throwIfAborted();
         if (options.shouldContinue && !options.shouldContinue()) throw new HomeHubMutationErrorV1('home_hub_scope_retired');
     };
-    const widgets = async (signal?: AbortSignal) => { check(signal); const value = await options.readWidgets?.(signal) ?? []; check(signal); return value; };
+    const widgets = async (layout: HomeHubLayoutValue, signal?: AbortSignal) => {
+        check(signal); const value = await options.readWidgets?.(signal, layout) ?? []; check(signal); return value;
+    };
     const validate = (value: HomeHubArtifactV1 | null) => {
         if (value && (value.artifactId !== artifactId || value.ownerAccountId !== options.accountId)) throw new HomeHubMutationErrorV1('home_hub_account_mismatch');
         return value;
@@ -72,16 +74,16 @@ export function createHomeHubArtifactPortV1(transport: HomeHubArtifactTransportV
             const artifact = await fetch(signal);
             return accept(artifact ? open(artifact) : HOME_HUB_DEFAULT_LAYOUT, artifact?.revision);
         },
-        async describe(layout, signal) { return buildHomeHubLayoutResult(layout, builtins, await widgets(signal)); },
+        async describe(layout, signal) { return buildHomeHubLayoutResult(layout, builtins, await widgets(layout, signal)); },
         async captureWidgetPresentation(layout, instanceId, signal) {
-            return captureHomeHubWidgetPresentationV1(layout, builtins, await widgets(signal), instanceId);
+            return captureHomeHubWidgetPresentationV1(layout, builtins, await widgets(layout, signal), instanceId);
         },
         async apply(rawIntent, signal) {
             const intent = HomeHubLayoutIntentSchema.parse(rawIntent);
             for (;;) {
                 const artifact = await fetch(signal);
                 const current = artifact ? open(artifact) : HOME_HUB_DEFAULT_LAYOUT;
-                const evidence = await widgets(signal);
+                const evidence = await widgets(current, signal);
                 const next = applyHomeHubLayoutIntent(current, builtins, evidence, intent);
                 const complete = (layout: HomeHubLayoutValue, revision?: WorkBoardArtifactRevisionV1) =>
                     buildHomeHubLayoutResult(accept(layout, revision, signal), builtins, evidence);

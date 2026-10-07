@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 
 import { useDestinationPaneScopeId } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useLocalServiceLiveFeeds } from '@/components/sessions/localServices/useLocalServiceLiveFeeds';
@@ -63,6 +64,7 @@ export const LocalServicesGlanceView = React.memo(function LocalServicesGlanceVi
 }>) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
+    const compact = useWidgetPresentation()?.footprint.height === 'compact';
     const state = props.state;
     let body: WidgetFrameBody;
     if (state.kind === 'loading') {
@@ -82,8 +84,10 @@ export const LocalServicesGlanceView = React.memo(function LocalServicesGlanceVi
             children: state.rows.map((row) => {
                 const onOpen = props.onOpen;
                 const openTarget = row.openTarget;
+                const status = row.running ? t('widgetGlances.running') : t('widgetGlances.notRunning');
                 return (
-                    <View key={row.id} style={styles.row} testID={`${props.testID}.row.${row.id}`}>
+                    <View key={row.id} style={styles.row} testID={`${props.testID}.row.${row.id}`}
+                        accessibilityLabel={[row.title, row.detail, status].filter(Boolean).join(', ')}>
                         <View style={styles.dotCell} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
                             <View style={[styles.dot, row.running ? null : styles.dotOff]} />
                         </View>
@@ -91,10 +95,9 @@ export const LocalServicesGlanceView = React.memo(function LocalServicesGlanceVi
                             <Text style={styles.title} numberOfLines={1}>
                                 {row.title}
                                 {row.detail ? <Text style={styles.detail}>{` ${row.detail}`}</Text> : null}
+                                {compact ? <Text style={styles.status}>{` · ${status}`}</Text> : null}
                             </Text>
-                            <Text style={styles.status} numberOfLines={1}>
-                                {row.running ? t('widgetGlances.running') : t('widgetGlances.notRunning')}
-                            </Text>
+                            {compact ? null : <Text testID={`${props.testID}.row.${row.id}.status`} style={styles.status} numberOfLines={1}>{status}</Text>}
                         </View>
                         {openTarget && onOpen ? (
                             <Pressable

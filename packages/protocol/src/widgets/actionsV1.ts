@@ -8,7 +8,7 @@ import { VoiceTrackedSessionAddressV1Schema } from '../sessions/follow/voiceTrac
 import type { ActionExecutorContext } from '../actions/executor/types.js';
 import type { ActionExecuteResult } from '../actions/actionExecutionResult.js';
 import type { WidgetInstanceActionIdV1 } from './actionIdsV1.js';
-import { WidgetExpectedPresentationV1Schema, WidgetWidthV1Schema, WidgetFrameStyleV1Schema, type WidgetExpectedPresentationV1 } from './widgetPresentationV1.js';
+import { WidgetExpectedPresentationV1Schema, WidgetSizeV1Schema, WidgetSizeDeclarationV1Schema, WidgetFrameStyleV1Schema, WidgetSurfacePresentationV1Schema, type WidgetExpectedPresentationV1, type WidgetSizeDeclarationV1 } from './widgetPresentationV1.js';
 import {
   WidgetDefinitionRefV1Schema as DefinitionRefSchema, WidgetInputBindingsV1Schema as BindingsSchema, WidgetInstanceRefV1Schema as InstanceRefSchema,
   WidgetInstanceV1Schema as InstanceSchema, WidgetSurfaceRefV1Schema as SurfaceRefSchema,
@@ -49,7 +49,7 @@ export function readWidgetActionDestinationV1(input: unknown): WidgetSurfaceRefV
 }
 const index = z.number().int().nonnegative().safe().describe('Zero-based configured-widget ordinal in the destination view; omitted destination reorders only the current surface and view.');
 const nativeIndex = z.number().int().nonnegative().safe().describe('Owner-native mixed-content insertion index in the destination view, with the moving item excluded. Session Board requires an existing explicit tab for cross-surface moves.');
-export { WidgetWidthV1Schema, WidgetFrameStyleV1Schema, WidgetExpectedPresentationV1Schema } from './widgetPresentationV1.js';
+export { WidgetSizeV1Schema, WidgetFrameStyleV1Schema, WidgetExpectedPresentationV1Schema } from './widgetPresentationV1.js';
 export type { WidgetExpectedPresentationV1 } from './widgetPresentationV1.js';
 /** Ephemeral native-owner facts, never a persisted receipt or a public Action result. */
 export const WidgetMoveCaptureV1Schema = z.object({
@@ -73,7 +73,7 @@ const bindingsInput = z.object({ ref: WidgetInstanceRefV1Schema, bindings: Widge
 const areaSurface = WidgetSurfaceRefV1Schema.refine(surface => surface.owner.kind === 'project' || surface.owner.kind === 'pluginArea', 'Area surface required');
 export const WidgetAreaPresentationIntentV1Schema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('move'), instanceId: z.string().trim().min(1), toIndex: index }).strict(),
-  z.object({ kind: z.literal('width'), instanceId: z.string().trim().min(1), width: WidgetWidthV1Schema }).strict(),
+  z.object({ kind: z.literal('size'), instanceId: z.string().trim().min(1), size: WidgetSizeV1Schema }).strict(),
   z.object({ kind: z.literal('frame'), instanceId: z.string().trim().min(1), frameStyle: WidgetFrameStyleV1Schema.nullable() }).strict(),
 ]);
 export const WidgetInstanceActionInputSchemasV1 = {
@@ -81,14 +81,14 @@ export const WidgetInstanceActionInputSchemasV1 = {
   'widgets.area.layout.update': z.object({ surface: areaSurface, intent: WidgetAreaPresentationIntentV1Schema }).strict(),
   'widgets.catalog.list': surfaceInput.extend({ boundSession: VoiceTrackedSessionAddressV1Schema.optional() }).strict(),
   'widgets.instance.list': surfaceInput,
-  'widgets.instance.add': z.object({ surface: WidgetSurfaceRefV1Schema, instance: WidgetInstanceV1Schema, toIndex: index.optional(), placement: SessionBoardItemPlacementV1Schema.optional() }).strict(),
+  'widgets.instance.add': z.object({ surface: WidgetSurfaceRefV1Schema, instance: WidgetInstanceV1Schema, size: WidgetSizeV1Schema.optional(), toIndex: index.optional(), placement: SessionBoardItemPlacementV1Schema.optional() }).strict(),
   'widgets.instance.remove': refInput,
   'widgets.instance.move': z.union([
     z.object({ ref: WidgetInstanceRefV1Schema, toIndex: index }).strict(),
     z.object({ ref: WidgetInstanceRefV1Schema, to: WidgetMoveDestinationV1Schema }).strict(),
   ]),
   'widgets.instance.rename': z.object({ ref: WidgetInstanceRefV1Schema, displayName: z.string().trim().min(1).nullable() }).strict(),
-  'widgets.instance.width.set': z.object({ ref: WidgetInstanceRefV1Schema, width: WidgetWidthV1Schema }).strict(),
+  'widgets.instance.size.set': z.object({ ref: WidgetInstanceRefV1Schema, size: WidgetSizeV1Schema }).strict(),
   'widgets.instance.frame.set': z.object({ ref: WidgetInstanceRefV1Schema, frameStyle: WidgetFrameStyleV1Schema.nullable() }).strict(),
   'widgets.instance.inputs.get': refInput,
   'widgets.instance.inputs.validate': bindingsInput,
@@ -98,7 +98,7 @@ export const WidgetInstanceActionInputSchemasV1 = {
 } as const;
 
 export const WidgetPlacementV1Schema = z.object({
-  instance: WidgetInstanceV1Schema, width: WidgetWidthV1Schema.optional(), frameStyle: WidgetFrameStyleV1Schema.optional(),
+  instance: WidgetInstanceV1Schema, size: WidgetSizeV1Schema.optional(), frameStyle: WidgetFrameStyleV1Schema.optional(),
 }).strict();
 export type WidgetPlacementV1 = z.infer<typeof WidgetPlacementV1Schema>;
 export const WidgetSurfaceReadV1Schema = z.object({
@@ -108,11 +108,13 @@ export const WidgetSurfaceReadV1Schema = z.object({
 });
 export type WidgetSurfaceReadV1 = z.infer<typeof WidgetSurfaceReadV1Schema>;
 export const WidgetCatalogEntryV1Schema = z.object({
+  sizeDeclaration: WidgetSizeDeclarationV1Schema, presentation: WidgetSurfacePresentationV1Schema,
   definition: WidgetDefinitionRefV1Schema, title: z.string().trim().min(1),
   fields: z.array(InputFieldHintSchema), availability: z.enum(['available', 'unavailable', 'denied']),
   instanceCount: z.number().int().nonnegative().safe(),
 }).strict();
 export type WidgetCatalogEntryV1 = z.infer<typeof WidgetCatalogEntryV1Schema>;
+export type WidgetCatalogSourceEntryV1 = Omit<WidgetCatalogEntryV1, 'presentation'>;
 export const WidgetBindingResolutionV1Schema = z.discriminatedUnion('status', [
   z.object({ status: z.literal('ready'), input: z.record(z.string(), StrictJsonValueSchema) }).strict(),
   ...(['selection_required', 'invalid', 'unavailable', 'denied'] as const).map(status => z.object({
@@ -126,11 +128,11 @@ const inputsResult = z.object({ ref: WidgetInstanceRefV1Schema, bindings: Widget
 export const WidgetInstanceActionOutputSchemasV1 = {
   'widgets.area.layout.get': WidgetSurfaceReadV1Schema,
   'widgets.area.layout.update': mutationResult,
-  'widgets.catalog.list': z.object({ surface: WidgetSurfaceRefV1Schema, entries: z.array(WidgetCatalogEntryV1Schema) }).strict(),
+  'widgets.catalog.list': z.object({ surface: WidgetSurfaceRefV1Schema, entries: z.array(WidgetCatalogEntryV1Schema), presentation: WidgetSurfacePresentationV1Schema }).strict(),
   'widgets.instance.list': WidgetSurfaceReadV1Schema,
   'widgets.instance.add': mutationResult, 'widgets.instance.remove': mutationResult,
   'widgets.instance.move': mutationResult.extend({ fromRef: WidgetInstanceRefV1Schema.optional(), status: z.literal('moved').optional() }).strict(), 'widgets.instance.rename': mutationResult,
-  'widgets.instance.width.set': mutationResult, 'widgets.instance.frame.set': mutationResult,
+  'widgets.instance.size.set': mutationResult, 'widgets.instance.frame.set': mutationResult,
   'widgets.instance.inputs.get': inputsResult, 'widgets.instance.inputs.validate': WidgetBindingResolutionV1Schema,
   'widgets.instance.inputs.set': mutationResult, 'widgets.instance.inputs.reset': mutationResult,
   'widgets.instance.refresh': z.object({ ref: WidgetInstanceRefV1Schema, status: z.literal('refreshed') }).strict(),
@@ -139,12 +141,12 @@ export const WidgetInstanceActionOutputSchemasV1 = {
 /** Adapters translate into existing domain intents; they do not persist or reduce a parallel layout. */
 export type WidgetSurfaceMutationV1 =
   | Readonly<{ kind: 'add'; instance: WidgetInstanceV1; toIndex?: number; placement?: z.infer<typeof SessionBoardItemPlacementV1Schema>;
-      position?: Readonly<{ tabId?: string; index: number }>; presentation?: Readonly<{ width?: z.infer<typeof WidgetWidthV1Schema>; frameStyle?: 'card' | 'plain' }>; captureForMove?: true }>
+      position?: Readonly<{ tabId?: string; index: number }>; presentation?: Readonly<{ size?: z.infer<typeof WidgetSizeV1Schema>; frameStyle?: 'card' | 'plain' }>; captureForMove?: true }>
   | Readonly<{ kind: 'remove'; instanceId: string; expectedInstance?: WidgetInstanceV1; expectedPresentation?: WidgetExpectedPresentationV1; boardRevisions?: WidgetMoveCaptureV1['boardRevisions'] }>
   | Readonly<{ kind: 'move'; instanceId: string; toIndex: number }>
   | Readonly<{ kind: 'move'; instanceId: string; nativeIndex: number; tabId?: string }>
   | Readonly<{ kind: 'rename'; instanceId: string; displayName: string | null }>
-  | Readonly<{ kind: 'width'; instanceId: string; width: z.infer<typeof WidgetWidthV1Schema> }>
+  | Readonly<{ kind: 'size'; instanceId: string; size: z.infer<typeof WidgetSizeV1Schema> }>
   | Readonly<{ kind: 'frame'; instanceId: string; frameStyle: 'card' | 'plain' | null }>
   | Readonly<{ kind: 'inputs'; instanceId: string; bindings: WidgetInstanceV1['bindings'] }>;
 export type WidgetActionSurfacePortV1 = Readonly<{
@@ -154,4 +156,5 @@ export type WidgetActionSurfacePortV1 = Readonly<{
 }>;
 export type WidgetActionInputResolverV1 = Readonly<{
   resolve(args: Readonly<{ ref: WidgetInstanceRefV1; instance: WidgetInstanceV1; context: ActionExecutorContext; admission?: 'configuration' | 'execution'; signal?: AbortSignal }>): Promise<WidgetBindingResolutionV1>;
+  readSizeDeclaration(args: Readonly<{ ref: WidgetInstanceRefV1; instance: WidgetInstanceV1; context: ActionExecutorContext; signal?: AbortSignal }>): Promise<WidgetSizeDeclarationV1 | null>;
 }>;

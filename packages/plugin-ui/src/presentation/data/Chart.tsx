@@ -21,6 +21,8 @@ export type HappierDataChartProps = Readonly<{
   style: 'bar' | 'line';
   points: readonly HappierDataPoint[];
   theme: HappierUiTheme;
+  /** Available body viewport height, supplied by the widget host rather than intrinsic chart layout. */
+  viewportHeight?: number;
   testID?: string;
 }>;
 
@@ -36,7 +38,10 @@ export function HappierDataChart(props: HappierDataChartProps) {
   const text = useHappierDataTextStyles(props.theme);
   const [width, setWidth] = useState<number | null>(null);
   const [hovered, setHovered] = useState<number | null>(null);
-  const plotHeight = HAPPIER_DATA_METRICS.plotHeightPx;
+  const plotHeight = props.viewportHeight !== undefined && Number.isFinite(props.viewportHeight) && props.viewportHeight > 0
+    ? Math.max(HAPPIER_DATA_METRICS.barStubPx,
+      props.viewportHeight - (text.caption.lineHeight ?? props.theme.typography.caption.lineHeight) - HAPPIER_DATA_METRICS.axisGapPx)
+    : HAPPIER_DATA_METRICS.plotHeightPx;
   const count = props.points.length;
   // Every bar keeps its label while each fits its column; otherwise only the ends say where it starts and stops.
   const labelWidth = (text.caption.fontSize ?? props.theme.typography.caption.fontSize) * HAPPIER_DATA_METRICS.averageCharacterEm * 3;

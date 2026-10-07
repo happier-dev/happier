@@ -1,4 +1,5 @@
-import { VoiceTrackedSessionAddressV1Schema, type JsonValue } from '@happier-dev/protocol';
+import { VoiceTrackedSessionAddressV1Schema } from '@happier-dev/protocol/sessions/follow/voiceTrackedTargetsCompatibilityV1';
+import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readInputPath } from '@happier-dev/protocol/inputs';
 import { projectWidgetBindingInputV1, resolveConfiguredWidgetInputs, widgetCandidateDefinitionV1, isSameWidgetDefinitionV1, countWidgetInstancesV1, type WidgetInstanceV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 
@@ -13,6 +14,7 @@ import {
     type WidgetSetupSubmitResult,
 } from '@/components/widgets/add/widgetSetupModel';
 import { t } from '@/text';
+import { normalizeWidgetSizeForSurfaceV1, resolveWidgetSizeChoicesV1 } from '@happier-dev/protocol/widgets';
 
 /**
  * One named slot a page or area fills (lab `dashboards` PG, P1): "This page" (a plugin page's
@@ -51,7 +53,7 @@ export function widgetProvidedContext(context: WidgetSurfaceContext): Readonly<R
     return provided;
 }
 
-/** Whether a candidate declares inputs at all: only then does it have a step, a count and copies. */
+/** Whether a candidate declares inputs: input-bound copies are counted independently in Add. */
 export function isConfigurableWidgetCandidate(candidate: Pick<WidgetCandidate, 'inputs'>): boolean {
     return (candidate.inputs?.fields.length ?? 0) > 0;
 }
@@ -126,9 +128,13 @@ export function buildWidgetCandidateSetup(input: Readonly<{
 }>): WidgetSetup {
     const { candidate, mode } = input;
     const fields = widgetSetupFieldsForCandidate(candidate, input.context, input.audience);
-    const initial: WidgetSetupDraft = mode.kind === 'edit'
+    const proposed: WidgetSetupDraft = mode.kind === 'edit'
         ? { bindings: mode.instance.bindings }
         : proposeWidgetCandidateSetupDraft(candidate, fields);
+    // Input editing has its own mutation; size editing stays at the layout Action.
+    const choices = mode.kind === 'add' && input.scope
+        ? resolveWidgetSizeChoicesV1(input.scope.owner.kind, candidate.sizeDeclaration) : null;
+    const initial = choices?.defaultSize ? { ...proposed, size: choices.defaultSize } : proposed;
     const definition = mode.kind === 'edit' ? mode.instance.definition : widgetDefinitionOfCandidate(candidate);
     const instanceId = mode.kind === 'edit' ? mode.instance.id : 'draft';
     const providedContext = widgetProvidedContext(input.context);
@@ -139,6 +145,7 @@ export function buildWidgetCandidateSetup(input: Readonly<{
         widget: { title: (mode.kind === 'edit' ? mode.instance.displayName : undefined) ?? candidate.title, mark: candidate.icon },
         fields,
         initial,
+        ...(choices?.sizes.length && input.scope ? { sizeChoices: { surface: input.scope.owner.kind, sizes: choices.sizes } } : {}),
         resolve: (draft) => resolveConfiguredWidgetInputs({
             instance: { v: 1, id: instanceId, definition, bindings: draft.bindings },
             descriptor: candidate,
@@ -157,7 +164,11 @@ export function buildWidgetCandidateSetup(input: Readonly<{
             return { draftInput, ...(input.scope ? { consumer: { kind: 'widget' as const, surface: input.scope, definition,
                 ...(selected?.success ? { selectedSession: selected.data } : {}) } } : {}) };
         },
-        submit: input.submit,
+        submit: (draft) => {
+            if (!input.scope || mode.kind !== 'add') return input.submit(draft);
+            const size = normalizeWidgetSizeForSurfaceV1(input.scope.owner.kind, draft.size, candidate.sizeDeclaration);
+            return input.submit({ bindings: draft.bindings, ...(size ? { size } : {}) });
+        },
     };
 }
 

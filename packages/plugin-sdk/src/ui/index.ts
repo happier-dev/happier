@@ -160,6 +160,8 @@ export type { UiRenderer } from '../ui.js';
 export type { UiResource } from '../ui.js';
 export type { UiTranslationBundle } from '../ui.js';
 export type { UiView } from '../ui.js';
+export type { WidgetSizeFootprintV1 } from './hostApi.js';
+export type { WidgetSizeV1 } from './hostApi.js';
 export type { WorkBoardPreviewLayoutV1 } from './publicContract.js';
 export { defineHostedWebBridgeMessage } from './hostedWeb.js';
 export { definePluginDeclarativeDocumentV1 } from './declarativeDocument.js';

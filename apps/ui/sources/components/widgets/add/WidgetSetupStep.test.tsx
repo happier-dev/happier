@@ -28,6 +28,7 @@ afterEach(() => { standardCleanup(); discovery.requests = []; });
 const scope = { serverId: 'setup-home', accountId: 'me', owner: { kind: 'companion' as const, sessionId: 'A' } };
 const candidate: WidgetCandidate = { key: 'acme.options/checks', title: 'Checks', pluginName: 'Options', sharedPluginName: false,
     icon: 'squares-four', homeDefault: 'available', target: 'session', sessionInputPath: 'session',
+    sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' },
     surface: { pluginId: 'acme.options', localId: 'checks' }, inputs: { fields: [
         { path: 'session', title: 'Session', widget: 'json', required: true },
         { path: 'filter', title: 'Filter', widget: 'text' },
@@ -35,6 +36,39 @@ const candidate: WidgetCandidate = { key: 'acme.options/checks', title: 'Checks'
     ] } };
 
 describe('WidgetSetupStep discovery', () => {
+    it('does not write when a ready size-only setup is cancelled', async () => {
+        const submit = vi.fn(async () => ({ ok: true as const }));
+        const cancel = vi.fn();
+        const setup = buildWidgetCandidateSetup({ candidate: { ...candidate, target: 'app', sessionInputPath: undefined, inputs: { fields: [] } },
+            scope: { ...scope, owner: { kind: 'home' } }, audience: 'personal', context: {},
+            mode: { kind: 'add', submitLabel: 'Add' }, submit });
+        expect(setup.resolve(setup.initial).status).toBe('ready');
+        const screen = await renderScreen(<WidgetSetupStep setup={setup} phone={false}
+            onCancel={cancel} onDone={() => {}} testID="size-only" />);
+        await screen.pressByTestIdAsync('size-only.size.large');
+        await screen.pressByTestIdAsync('size-only.cancel');
+        expect(cancel).toHaveBeenCalledOnce();
+        expect(submit).not.toHaveBeenCalled();
+    });
+    it('previews the chosen declared size and submits it together with the input bindings', async () => {
+        const sized: WidgetCandidate = { ...candidate, target: 'app', sessionInputPath: undefined,
+            inputs: { fields: [{ path: 'filter', title: 'Filter', widget: 'text' as const, required: true }] },
+            sizeDeclaration: { sizes: ['large', 'small', 'medium'], defaultSize: 'medium' } };
+        const previews: unknown[] = [];
+        const submit = vi.fn(async () => ({ ok: true as const }));
+        const setup = buildWidgetCandidateSetup({ candidate: sized, scope: { ...scope, owner: { kind: 'home' } },
+            audience: 'personal', context: {}, mode: { kind: 'add', submitLabel: 'Add' }, submit,
+            renderPreview: ({ draft }) => { previews.push(draft); return null; } });
+        const screen = await renderScreen(<WidgetSetupStep setup={setup} phone={false}
+            onCancel={() => {}} onDone={() => {}} testID="size-setup" />);
+        expect(screen.findByTestId('size-setup.size.small')).not.toBeNull();
+        await screen.pressByTestIdAsync('size-setup.size.large');
+        await act(async () => { screen.changeTextByTestId('size-setup.field.filter.input', 'open'); });
+        await screen.pressByTestIdAsync('size-setup.submit');
+        expect(previews.at(-1)).toEqual({ size: 'large', bindings: { filter: { kind: 'value', value: 'open' } } });
+        expect(submit).toHaveBeenCalledWith({ size: 'large', bindings: { filter: { kind: 'value', value: 'open' } } });
+    });
+
     it('accepts a typed JSON literal without discovery through the public field parser and binder', async () => {
         const literal: WidgetCandidate = { ...candidate, target: 'app', sessionInputPath: undefined,
             inputs: { fields: [{ path: 'filter', title: 'Filter', widget: 'json', required: true,

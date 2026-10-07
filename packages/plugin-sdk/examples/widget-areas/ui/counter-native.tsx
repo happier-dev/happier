@@ -14,7 +14,9 @@ function Counter({ launchInput }: RenderContext) {
     const { resource, refresh } = useLivePluginResource('count');
     const filter = launchInput !== null && typeof launchInput === 'object' && !Array.isArray(launchInput)
         && 'filter' in launchInput && typeof launchInput.filter === 'string' ? launchInput.filter : null;
-    if (filter === null) return <ErrorState layout="line" title="Choose a filter in Edit inputs" />;
+    const directory = launchInput !== null && typeof launchInput === 'object' && !Array.isArray(launchInput)
+        && 'directory' in launchInput && typeof launchInput.directory === 'string' ? launchInput.directory : null;
+    if (directory === null || (filter !== 'files' && filter !== 'folders')) return <ErrorState layout="line" title="Choose a directory and count in Edit inputs" />;
     const retry = <Action.Refresh title="Refresh count" onRefresh={refresh} />;
     if (!resource.value) return resource.error
         ? <ErrorState layout="line" title="Count is unavailable" action={retry} />
@@ -23,8 +25,10 @@ function Counter({ launchInput }: RenderContext) {
     if (count === null) return <ErrorState layout="line" title="Count could not be read" action={retry} />;
     return (
         <Stack gap="small">
-            <Metric label="Registered count" value={count} />
-            <Text value={`Filter: ${filter}`} tone="secondary" />
+            <Metric label={filter === 'files' ? 'Files' : 'Folders'} value={count} />
+            <Text value={`${filter === 'files' ? 'Files' : 'Folders'} · ${directory}`} tone="secondary" />
+            {resource.error ? <Text value="Could not refresh; showing the last count." tone="secondary" /> : null}
+            {retry}
         </Stack>
     );
 }

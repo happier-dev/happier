@@ -4,6 +4,14 @@ import { definePlugin } from '../definePlugin.js';
 import { defineUiSurfaceDefinition } from './surface.js';
 
 describe('defineUiSurfaceDefinition', () => {
+    it('publishes widget sizes from the public author definition into the canonical manifest', () => {
+        const surface = defineUiSurfaceDefinition({ id: 'checks', placement: 'widget', target: { kind: 'app' },
+            sizeDeclaration: { sizes: ['medium', 'tall'], defaultSize: 'tall' },
+            renderer: { kind: 'declarative', root: { kind: 'text', text: 'Checks' } } });
+        const plugin = definePlugin({ id: 'com.acme.sizes', version: '1.0.0', ui: { surfaces: [surface] } });
+        expect(plugin.manifest.contributes.ui?.views?.[0]).toMatchObject({ container: 'widget',
+            sizeDeclaration: { sizes: ['medium', 'tall'], defaultSize: 'tall' } });
+    });
     it('projects executable surface identity without author-owned build metadata', () => {
         const surface = defineUiSurfaceDefinition({
             id: 'home',

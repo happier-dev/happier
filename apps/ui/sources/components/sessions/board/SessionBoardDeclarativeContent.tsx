@@ -1,11 +1,10 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
+import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 
-import {
-    ACTION_IDS,
-    type PluginDeclarativeDocumentNormalizationV1,
-} from '@happier-dev/protocol';
+import { ACTION_IDS } from '@happier-dev/protocol/actions/actionIds';
+import type { PluginDeclarativeDocumentNormalizationV1 } from '@happier-dev/protocol/plugins/contributions/ui/declarativeDocument';
 import { normalizeSessionSurfaceDeclarativeDocumentV1 } from '@happier-dev/protocol/sessions/board';
 
 import {
@@ -60,6 +59,7 @@ export function SessionBoardDeclarativeContent(props: Readonly<{
     testID?: string;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
+    const widgetPresentation = useWidgetPresentation();
     const presentationTheme = React.useMemo(() => projectPluginUiTheme(theme), [theme]);
     const minimumTouchTarget = resolveMinimumInteractiveTargetSize(Platform.OS);
     const actionBinding = props.actionBinding ?? null;
@@ -80,6 +80,7 @@ export function SessionBoardDeclarativeContent(props: Readonly<{
             {renderDeclarativeNode(normalized?.root ?? null, {
                 colors: theme.colors,
                 presentationTheme,
+                widgetPresentation,
                 minimumTouchTarget,
                 localize: readDeclarativeText,
                 useSharedSpinner: true,

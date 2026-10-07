@@ -18,6 +18,7 @@ function sameCandidates(left: readonly WidgetCandidate[], right: readonly Widget
             && candidate.sessionInputPath === other.sessionInputPath
             && stableJsonStringify(candidate.inputSchema) === stableJsonStringify(other.inputSchema)
             && stableJsonStringify(candidate.connectedAccountPurposeBindings) === stableJsonStringify(other.connectedAccountPurposeBindings)
+            && stableJsonStringify(candidate.sizeDeclaration) === stableJsonStringify(other.sizeDeclaration)
             && stableJsonStringify(candidate.inputs) === stableJsonStringify(other.inputs);
     });
 }

@@ -29,9 +29,19 @@ import { QualifiedConnectedAccountRefSchema } from '../../../connect/qualifiedCo
  * from drifting into a general data-binding surface.
  */
 describe('declarative node vocabulary v2', () => {
+  it('admits useful widget sizes only on widget declarations through parser and author schema', () => {
+    const widget = { id: 'sized', container: 'widget', renderer: 'native', target: { kind: 'app' },
+      sizeDeclaration: { sizes: ['medium', 'tall'], defaultSize: 'tall' } };
+    expect(PluginUiViewV2Schema.safeParse(widget).success).toBe(true);
+    expect(PluginUiViewV2Schema.safeParse({ ...widget, sizeDeclaration: undefined }).success).toBe(false);
+    expect(PluginUiViewV2Schema.safeParse({ ...widget, container: 'appPage' }).success).toBe(false);
+    const validate = new Ajv2020({ strict: false, validateFormats: false }).compile(PluginUiViewV2Schema.toJSONSchema({ io: 'input', target: 'draft-2020-12', unrepresentable: 'any' }));
+    expect(validate(widget)).toBe(true);
+    expect(validate({ ...widget, sizeDeclaration: undefined })).toBe(false);
+  });
   it('declares qualified Resource dependencies only on widget Views', () => {
     const resources = [{ pluginId: 'com.acme.fixture', localId: 'live-status' }];
-    const widget = { id: 'status', container: 'widget', renderer: 'native', target: { kind: 'app' }, resources };
+    const widget = { sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' }, id: 'status', container: 'widget', renderer: 'native', target: { kind: 'app' }, resources };
     expect(PluginUiViewV2Schema.parse(widget)).toMatchObject({ resources });
     expect(PluginUiViewV2Schema.safeParse({ ...widget, resources: ['live-status'] }).success).toBe(false);
     expect(PluginUiViewV2Schema.safeParse({ ...widget, container: 'appPage' }).success).toBe(false);
@@ -40,7 +50,7 @@ describe('declarative node vocabulary v2', () => {
   it('emits App widget input value-admission requirements in its public authoring schema', () => {
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
     const validate = ajv.compile(PluginUiViewV2Schema.toJSONSchema({ io: 'input', target: 'draft-2020-12', unrepresentable: 'any' }));
-    const widget = { id: 'app-inputs', container: 'widget', renderer: 'native', target: { kind: 'app' } };
+    const widget = { sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' }, id: 'app-inputs', container: 'widget', renderer: 'native', target: { kind: 'app' } };
     const inputs = { fields: [{ path: 'name', title: 'Name', widget: 'text' }] };
     expect(validate(widget)).toBe(true);
     expect(validate({ ...widget, inputs })).toBe(false);
@@ -49,7 +59,7 @@ describe('declarative node vocabulary v2', () => {
   it('admits widget viewer purposes only for exact declared Connected Account inputs', () => {
     const inputs = { fields: [{ path: 'account', title: 'Account', widget: 'select', connectedAccountOptions: true }] };
     const inputSchema = { type: 'object', properties: { account: QualifiedConnectedAccountRefSchema.jsonSchema }, additionalProperties: false };
-    const widget = { id: 'viewer', container: 'widget', renderer: 'native', target: { kind: 'app' }, inputs, inputSchema,
+    const widget = { sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' }, id: 'viewer', container: 'widget', renderer: 'native', target: { kind: 'app' }, inputs, inputSchema,
       resources: [{ pluginId: 'com.acme.fixture', localId: 'metrics' }],
       connectedAccountPurposeBindings: [{ path: 'account', purpose: 'metrics', consumer: { pluginId: 'com.acme.fixture', localId: 'metrics' } }] };
     expect(PluginUiViewV2Schema.safeParse(widget).success).toBe(true);
@@ -59,7 +69,7 @@ describe('declarative node vocabulary v2', () => {
     expect(PluginUiViewV2Schema.safeParse({ ...widget, resources: [] }).success).toBe(false);
   });
   it('admits universal widget inputs and refuses removed physical placement declarations', () => {
-    const widget = { id: 'glance', container: 'widget', renderer: 'native', target: { kind: 'session' } };
+    const widget = { sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' }, id: 'glance', container: 'widget', renderer: 'native', target: { kind: 'session' } };
     const inputs = { fields: [{ path: 'session', title: 'Session', widget: 'json', required: true }] };
     expect(PluginUiViewV2Schema.safeParse({ ...widget, inputs }).success).toBe(false);
     const inputSchema = { type: 'object', properties: { session: { type: 'object' } }, required: ['session'], additionalProperties: false };

@@ -13,7 +13,7 @@ export const PluginUiWidgetAreaOperationV1Schema = z.discriminatedUnion('actionI
     ...(['widgets.instance.remove', 'widgets.instance.inputs.get', 'widgets.instance.inputs.reset', 'widgets.instance.refresh'] as const).map(actionId => z.object({ actionId: z.literal(actionId), instanceId }).strict()),
     z.object({ actionId: z.literal('widgets.instance.move'), instanceId, toIndex: z.number().int().nonnegative().safe() }).strict(),
     input['widgets.instance.rename'].omit({ ref: true }).extend({ actionId: z.literal('widgets.instance.rename'), instanceId }).strict(),
-    input['widgets.instance.width.set'].omit({ ref: true }).extend({ actionId: z.literal('widgets.instance.width.set'), instanceId }).strict(),
+    input['widgets.instance.size.set'].omit({ ref: true }).extend({ actionId: z.literal('widgets.instance.size.set'), instanceId }).strict(),
     input['widgets.instance.frame.set'].omit({ ref: true }).extend({ actionId: z.literal('widgets.instance.frame.set'), instanceId }).strict(),
     input['widgets.instance.inputs.validate'].omit({ ref: true }).extend({ actionId: z.literal('widgets.instance.inputs.validate'), instanceId }).strict(),
     input['widgets.instance.inputs.set'].omit({ ref: true }).extend({ actionId: z.literal('widgets.instance.inputs.set'), instanceId }).strict(),
@@ -23,7 +23,7 @@ export type PluginUiWidgetAreaOperationV1 = z.infer<typeof PluginUiWidgetAreaOpe
 const outwardEffects = {
     'widgets.catalog.list': false, 'widgets.instance.list': false,
     'widgets.instance.add': true, 'widgets.instance.remove': true, 'widgets.instance.move': true,
-    'widgets.instance.rename': true, 'widgets.instance.width.set': true, 'widgets.instance.frame.set': true,
+    'widgets.instance.rename': true, 'widgets.instance.size.set': true, 'widgets.instance.frame.set': true,
     'widgets.instance.inputs.get': false, 'widgets.instance.inputs.validate': false,
     'widgets.instance.inputs.set': true, 'widgets.instance.inputs.reset': true, 'widgets.instance.refresh': false,
 } satisfies Record<PluginUiWidgetAreaOperationV1['actionId'], boolean>;

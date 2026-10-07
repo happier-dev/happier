@@ -253,6 +253,9 @@ export function createSessionBoardActionAdapter(options: SessionSystemRecordTran
             if (!storedLayout.ok) return storedLayout;
             layout = storedLayout.layout?.document ?? { v: 1, tabs: [] };
             expectedLayoutRevision = storedLayout.layout?.revision ?? null;
+            if (args.expectedLayoutRevision !== undefined && args.expectedLayoutRevision !== expectedLayoutRevision) {
+                return projectSessionBoardActionFailureV1({ error: 'session_board_revision_conflict', currentLayoutRevision: expectedLayoutRevision });
+            }
             const edited = applySessionBoardItemPlacementV1(layout, { itemId: args.itemId, placement: args.placement });
             if (!edited.ok) return createSessionBoardFailureV1(edited.error);
             layout = edited.layout;
