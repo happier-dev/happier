@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 
 import {
   hasObservableDaemonStartProcessExited,
+  hasObservableDaemonStartProcessRunning,
   waitForDaemonRunningWithinBudget,
 } from './waitForDaemonRunningWithinBudget';
 
@@ -18,6 +21,17 @@ describe('waitForDaemonRunningWithinBudget', () => {
     expect(hasObservableDaemonStartProcessExited(exited, 'win32')).toBe(false);
     expect(hasObservableDaemonStartProcessExited({ exitCode: null, signalCode: null }, 'darwin'))
       .toBe(false);
+  });
+
+  it('observes the detached Windows daemon PID instead of the completed PowerShell launcher', () => {
+    const child = { exitCode: 0, signalCode: null, detachedDaemonPid: process.pid };
+    expect(hasObservableDaemonStartProcessExited(child, 'win32')).toBe(false);
+    expect(hasObservableDaemonStartProcessRunning(child, 'win32')).toBe(true);
+    vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw Object.assign(new Error('process is absent'), { code: 'ESRCH' });
+    });
+    expect(hasObservableDaemonStartProcessExited(child, 'win32')).toBe(true);
+    expect(hasObservableDaemonStartProcessRunning(child, 'win32')).toBe(false);
   });
 
   it('checks once more after the final sleep before giving up on the budget', async () => {
@@ -69,5 +83,47 @@ describe('waitForDaemonRunningWithinBudget', () => {
       sleep: async (ms) => { sleeps.push(ms); },
     })).resolves.toBe(false);
     expect(sleeps).toEqual([100, 200, 400, 800, 1_000, 100]);
+  });
+
+  it('keeps waiting for real readiness while the owned startup process survives its budget', async () => {
+    const child = spawn(process.execPath, ['-e', `
+      process.stdout.write('starting');
+      setTimeout(() => process.stdout.write('ready'), 50);
+      setInterval(() => {}, 1000);
+    `], { stdio: ['ignore', 'pipe', 'ignore'] });
+    let ready = false;
+    child.stdout.on('data', (chunk: Buffer) => { if (chunk.toString().includes('ready')) ready = true; });
+    let checkpoints = 0;
+    try {
+      await once(child.stdout, 'data');
+      await expect(waitForDaemonRunningWithinBudget({
+        isRunning: async () => ready,
+        shouldAbort: () => hasObservableDaemonStartProcessExited(child),
+        isStillStarting: () => !hasObservableDaemonStartProcessExited(child),
+        onStillStarting: () => { checkpoints += 1; },
+        timeoutMs: 5,
+        pollMs: 1,
+      })).resolves.toBe(true);
+      expect(checkpoints).toBeGreaterThan(0);
+    } finally {
+      const exited = once(child, 'exit');
+      child.kill();
+      await exited;
+    }
+  });
+
+  it('ends an extended startup wait when its process exits before readiness', async () => {
+    let starting = true;
+    let checkpoints = 0;
+    await expect(waitForDaemonRunningWithinBudget({
+      isRunning: async () => false,
+      shouldAbort: () => !starting,
+      isStillStarting: () => starting,
+      onStillStarting: () => { checkpoints += 1; },
+      timeoutMs: 5,
+      pollMs: 5,
+      sleep: async () => { if (checkpoints > 0) starting = false; },
+    })).resolves.toBe(false);
+    expect(checkpoints).toBe(1);
   });
 });

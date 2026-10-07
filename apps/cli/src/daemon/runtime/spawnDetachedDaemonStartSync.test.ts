@@ -163,6 +163,7 @@ describe('spawnDetachedDaemonStartSync', () => {
     const child = await mod.spawnDetachedDaemonStartSync();
 
     expect(child).toBe(launcherChild);
+    expect(child).toHaveProperty('detachedDaemonPid', 24680);
     expect(spawnMock).toHaveBeenCalledTimes(1);
     const [command, args, options] = spawnMock.mock.calls[0] as any[];
     expect(command.toLowerCase()).toContain('powershell');

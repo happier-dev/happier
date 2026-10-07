@@ -13,6 +13,8 @@ import {
 import { resolveDaemonLaunchSpec } from './resolveDaemonLaunchSpec';
 import { stripDaemonServiceInstallRequestEnv } from '@/utils/processEnv/stripDaemonServiceInstallRequestEnv';
 
+export type DetachedDaemonStartProcess = ChildProcess & { detachedDaemonPid?: number };
+
 function escapePowerShellSingleQuoted(value: string): string {
   return value.replaceAll("'", "''");
 }
@@ -58,7 +60,7 @@ async function spawnWindowsDetachedDaemonStartSync(params: Readonly<{
   args: string[];
   env: NodeJS.ProcessEnv;
   cwd?: string;
-}>): Promise<ChildProcess> {
+}>): Promise<DetachedDaemonStartProcess> {
   const workingDirectory = typeof params.cwd === 'string' && params.cwd.trim().length > 0
     ? params.cwd
     : process.cwd();
@@ -99,7 +101,9 @@ async function spawnWindowsDetachedDaemonStartSync(params: Readonly<{
 
       const pid = parsePowerShellStartProcessPid(stdout);
       if (typeof pid === 'number' && Number.isInteger(pid) && pid > 0) {
-        resolve(child);
+        // Preserve the PID PowerShell already returned: its own completed
+        // launcher is not the process whose startup the caller must observe.
+        resolve(Object.assign(child, { detachedDaemonPid: pid }));
         return;
       }
 
@@ -110,7 +114,7 @@ async function spawnWindowsDetachedDaemonStartSync(params: Readonly<{
 
 export async function spawnDetachedDaemonStartSync(
   options: Readonly<SpawnOptions & { startupSource?: DaemonStartupSource }> = {},
-): Promise<ChildProcess> {
+): Promise<DetachedDaemonStartProcess> {
   const { startupSource, ...spawnOptions } = options;
   const requestedEnv = spawnOptions.env ?? process.env;
   const launchSpec = await resolveDaemonLaunchSpec(['daemon', 'start-sync'], requestedEnv);
