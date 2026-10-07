@@ -14,7 +14,7 @@ export function isWorkspaceBuildInputIgnoredPath(path) {
   const parts = String(path).replaceAll('\\', '/').split('/').filter(Boolean);
   const name = parts.at(-1) ?? '';
   return parts.some(part => TEST_DIRECTORY_NAMES.has(part))
-    || /\.(?:test|spec|testkit)\.[^.]+$/.test(name)
+    || /\.(?:test|spec|testkit|test-support)\.[^.]+$/.test(name)
     || /^vitestSetup\.[cm]?[jt]sx?$/.test(name)
     || name.startsWith('vitest.')
     || name.startsWith('test-setup.');
