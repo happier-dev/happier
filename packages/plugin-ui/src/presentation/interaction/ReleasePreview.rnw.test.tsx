@@ -121,6 +121,19 @@ describe('HappierReleasePreviewCard', () => {
 });
 
 describe('HappierReleaseOutcomePill', () => {
+  it('uses the shared loading mark for a pending release outcome', () => {
+    const mounted = mountThroughReactNativeWeb(
+      <HappierReleaseOutcomePill outcome={{ tone: 'pending', title: 'Moving Review' }} colors={colors} host={host} reducedMotion />,
+    );
+    try {
+      const spinner = mounted.container.querySelector<HTMLElement>('[data-happier-activity-spinner]');
+      expect(spinner).toBeTruthy();
+      expect(spinner!.style.animationName).toBe('happierActivitySpinnerBreath');
+    } finally {
+      mounted.unmount();
+    }
+  });
+
   it('draws only the outcome for an OS drag, whose image the app cannot draw on', () => {
     const mounted = mountThroughReactNativeWeb(
       <HappierReleaseOutcomePill

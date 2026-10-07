@@ -1,5 +1,6 @@
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import * as React from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
@@ -32,7 +33,7 @@ export const MachineAgentStatusLine = React.memo(function MachineAgentStatusLine
             : theme.colors.text.secondary;
     return (
         <View testID={props.testID} style={styles.line} accessible accessibilityLabel={text}>
-            {busy ? <ActivityIndicator size="small" color={theme.colors.text.tertiary} style={styles.spinner} /> : null}
+            {busy ? <ActivitySpinner size={12} color={theme.colors.text.tertiary} style={styles.spinner} /> : null}
             {status.tone !== 'quiet' ? <StatusDot size={6} color={toneColor} /> : null}
             <Text style={[styles.text, { color: toneColor }]} numberOfLines={props.numberOfLines ?? 1}>{text}</Text>
         </View>
@@ -47,7 +48,6 @@ const styles = StyleSheet.create(() => ({
         minWidth: 0,
     },
     spinner: {
-        transform: [{ scale: 0.6 }],
         width: 12,
         height: 12,
     },

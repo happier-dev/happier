@@ -1,7 +1,7 @@
 import {
   DOT_REST_OPACITY,
   DOT_SPINNER_STYLES,
-  H_DOTS,
+  type SpinnerDot,
   HAPPIER_SPINNER_PAUSE_MS,
   HAPPIER_SPINNER_SPEED_RATES,
   type DotSpinnerStyleId,
@@ -23,6 +23,7 @@ export const DOT_SPINNER_STILL_OPACITY = 0.85;
 
 export type DotSpinnerFrames = Readonly<{
   styleId: DotSpinnerStyleId;
+  dots: readonly SpinnerDot[];
   /**
    * Identifies this table among every style and timing: the same key is the same frames. Pauses a
    * style ignores do not change it.
@@ -32,7 +33,7 @@ export type DotSpinnerFrames = Readonly<{
   cycleMs: number;
   frameCount: number;
   ink: 'mono' | 'aurora';
-  /** `frameCount × H_DOTS.length`, frame-major. */
+  /** `frameCount × dots.length`, frame-major. */
   opacity: readonly number[];
   /** Same layout as `opacity`; only for aurora. Position on the looping accent gradient, 0–1. */
   hue: readonly number[] | null;
@@ -66,13 +67,14 @@ export function getDotSpinnerFrames(styleId: DotSpinnerStyleId, timing: HappierS
     const playedMs = (frame * playedCycleMs) / frameCount;
     const resting = playedMs >= playedMotionMs;
     const tMs = playedMs * rate;
-    for (const dot of H_DOTS) {
+    for (const dot of style.dots) {
       opacity.push(round2(resting ? DOT_REST_OPACITY : style.opacity(dot, tMs)));
       if (hue && style.hue) hue.push(round2(style.hue(dot, resting ? style.motionMs : tMs)));
     }
   }
   const frames: DotSpinnerFrames = {
     styleId,
+    dots: style.dots,
     key,
     cycleMs: Math.round(playedCycleMs),
     frameCount,
@@ -85,9 +87,9 @@ export function getDotSpinnerFrames(styleId: DotSpinnerStyleId, timing: HappierS
 }
 
 /** One dot's column of a frame table, in frame order. */
-export function readDotSeries(table: readonly number[], dotIndex: number, frameCount: number): number[] {
+export function readDotSeries(frames: DotSpinnerFrames, table: readonly number[], dotIndex: number): number[] {
   const series: number[] = [];
-  for (let frame = 0; frame < frameCount; frame++) series.push(table[frame * H_DOTS.length + dotIndex]!);
+  for (let frame = 0; frame < frames.frameCount; frame++) series.push(table[frame * frames.dots.length + dotIndex]!);
   return series;
 }
 
@@ -151,9 +153,9 @@ function svgDocument(width: number, ink: DotSpinnerInk, body: string): string {
 export function buildDotSpinnerFilmstripSvg(frames: DotSpinnerFrames, ink: DotSpinnerInk): string {
   let body = '';
   for (let frame = 0; frame < frames.frameCount; frame++) {
-    for (let i = 0; i < H_DOTS.length; i++) {
-      const dot = H_DOTS[i]!;
-      const index = frame * H_DOTS.length + i;
+    for (let i = 0; i < frames.dots.length; i++) {
+      const dot = frames.dots[i]!;
+      const index = frame * frames.dots.length + i;
       body += dotMarkup(frame * 3 + dot.col + 0.5, dot.row + 0.5, frames.opacity[index]!, ink, frames.hue?.[index] ?? null);
     }
   }
@@ -162,8 +164,8 @@ export function buildDotSpinnerFilmstripSvg(frames: DotSpinnerFrames, ink: DotSp
 
 export function buildDotSpinnerStillSvg(frames: DotSpinnerFrames, ink: DotSpinnerInk): string {
   let body = '';
-  for (let i = 0; i < H_DOTS.length; i++) {
-    const dot = H_DOTS[i]!;
+  for (let i = 0; i < frames.dots.length; i++) {
+    const dot = frames.dots[i]!;
     body += dotMarkup(dot.col + 0.5, dot.row + 0.5, DOT_SPINNER_STILL_OPACITY, ink, frames.hue?.[i] ?? null);
   }
   return svgDocument(3, ink, body);

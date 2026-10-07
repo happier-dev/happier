@@ -11,7 +11,7 @@ import {
   type DotSpinnerFrames,
   type DotSpinnerInk,
 } from './dotSpinnerFrames.js';
-import { H_DOTS, type DotSpinnerStyleId, type HappierSpinnerTiming, type HDot } from './spinnerStyles.js';
+import { type DotSpinnerStyleId, type HappierSpinnerTiming, type SpinnerDot } from './spinnerStyles.js';
 
 const BREATH_LOW_OPACITY = 0.45;
 
@@ -43,14 +43,14 @@ function driveDots(
   still: boolean,
 ): readonly DotDrive[] {
   const inputRange = frameInputRange(frames.frameCount);
-  return H_DOTS.map((_, index) => {
+  return frames.dots.map((_, index) => {
     const opacity = still
       ? DOT_SPINNER_STILL_OPACITY
-      : clock.interpolate({ inputRange, outputRange: closedSeries(readDotSeries(frames.opacity, index, frames.frameCount)) });
+      : clock.interpolate({ inputRange, outputRange: closedSeries(readDotSeries(frames, frames.opacity, index)) });
     if ('color' in ink || !frames.hue) {
       return { opacity, color: 'color' in ink ? ink.color : ink.aurora[0] };
     }
-    const hue = unwrapHueSeries(readDotSeries(frames.hue, index, frames.frameCount));
+    const hue = unwrapHueSeries(readDotSeries(frames, frames.hue, index));
     const gradient = { inputRange: HUE_STOP_INDICES.map((k) => k / 3), outputRange: HUE_STOP_INDICES.map((k) => ink.aurora[((k % 3) + 3) % 3]!) };
     if (still) {
       // A still aurora dot holds its nearest accent; blending two arbitrary colours statically
@@ -93,14 +93,14 @@ export const DotSpinnerNative = memo(function DotSpinnerNative(props: Readonly<{
       pointerEvents="none"
       style={{ position: 'absolute', top: 0, left: 0, width: size, height: size, opacity: layerOpacity }}
     >
-      {H_DOTS.map((dot, index) => (
+      {frames.dots.map((dot, index) => (
         <NativeDot key={dot.id} dot={dot} size={size} drive={drives[index]!} />
       ))}
     </Animated.View>
   );
 });
 
-function NativeDot(props: Readonly<{ dot: HDot; size: number; drive: DotDrive }>) {
+function NativeDot(props: Readonly<{ dot: SpinnerDot; size: number; drive: DotDrive }>) {
   const { dot, size, drive } = props;
   const pitch = size / 3;
   const diameter = size / 6;

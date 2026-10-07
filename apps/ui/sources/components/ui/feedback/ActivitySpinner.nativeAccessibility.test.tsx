@@ -29,12 +29,12 @@ vi.mock('react-native-unistyles', async () => {
 });
 
 describe('ActivitySpinner native accessibility', () => {
-    it('defaults the native activity indicator to a progressbar role', async () => {
+    it.each(['wave', 'hWave', 'classicRing'] as const)('gives the native %s indicator a progressbar role', async (variant) => {
         const { ActivitySpinner } = await import('./ActivitySpinner');
-        const screen = await renderScreen(<ActivitySpinner testID="spinner" />);
+        const screen = await renderScreen(<ActivitySpinner testID="spinner" variant={variant} />);
 
         const spinner = screen.findByTestId('spinner');
-        expect(spinner?.type).toBe('ActivityIndicator');
+        expect(spinner?.type).toBe(variant === 'classicRing' ? 'ActivityIndicator' : 'View');
         expect(spinner?.props.accessibilityRole).toBe('progressbar');
     });
 

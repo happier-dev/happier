@@ -20,7 +20,7 @@ export { iconMatchedSpinnerSize };
 
 export type ActivitySpinnerProps = RNActivityIndicatorProps & Readonly<{
     /**
-     * Keep the spinner visible but hold it still: dot styles show the full H at rest, the classic
+     * Keep the spinner visible but hold it still: dot styles show the full chosen mark at rest, the classic
      * ring stops turning. For ambient motion that must pause without the mark disappearing.
      */
     animationEnabled?: boolean;

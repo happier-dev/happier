@@ -23,7 +23,7 @@ function nonDefaultAppearanceState(): Record<string, unknown> {
         uiBackdropBlurEnabled: false,
         detailsPaneTabsBehavior: 'persistent',
         settingsNavSidebarEnabled: false,
-        loadingIndicatorStyle: 'radar',
+        loadingIndicatorStyle: 'hWave',
         loadingIndicatorSpeed: 'fast',
         loadingIndicatorPause: 'none',
         avatarStyle: 'brutalist',
@@ -74,7 +74,7 @@ installSessionSettingsEntryModuleMocks({
         return createModalModuleMock({ spies: { confirm: shared.confirm } }).module;
     },
     storageModule: async (importOriginal) => {
-        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        const { createStorageModuleMock, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
         const mutableSetting = (key: string) => [
             shared.settingsState[key] ?? null,
             (next: unknown) => { shared.settingsState[key] = next; },
@@ -82,6 +82,10 @@ installSessionSettingsEntryModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
+                // Theme selection persists through the store writer; keep it on the same boundary fixture.
+                storage: createStorageStoreMock({
+                    applyLocalSettings: (delta) => { Object.assign(shared.settingsState, delta); },
+                }),
                 useSettingMutable: mutableSetting as unknown as typeof import('@/sync/domains/state/storage')['useSettingMutable'],
                 useLocalSettingMutable: mutableSetting as unknown as typeof import('@/sync/domains/state/storage')['useLocalSettingMutable'],
             },
@@ -128,7 +132,7 @@ describe('Appearance reset', () => {
         expect(state.themeProfiles).toEqual({ activeProfileIds: { light: null, dark: null }, profiles: [CUSTOM_PROFILE] });
         for (const key of [
             'uiFontScale', 'uiContentWidthMode', 'uiItemDensity', 'uiMultiPanePanelsEnabled',
-            'uiBackdropBlurEnabled', 'detailsPaneTabsBehavior', 'settingsNavSidebarEnabled',
+            'detailsPaneTabsBehavior', 'settingsNavSidebarEnabled',
             'loadingIndicatorStyle', 'loadingIndicatorSpeed', 'loadingIndicatorPause',
         ] as const) {
             expect(state[key], key).toEqual(localSettingsDefaults[key]);
@@ -141,6 +145,8 @@ describe('Appearance reset', () => {
         ] as const) {
             expect(state[key], key).toEqual(settingsDefaults[key]);
         }
+        // Legacy backdrop blur is not shown on Appearance; Reset preserves it.
+        expect(state.uiBackdropBlurEnabled).toBe(false);
         // Language has its own page and is not an appearance preference.
         expect(state.preferredLanguage).toBe('fr');
     });
