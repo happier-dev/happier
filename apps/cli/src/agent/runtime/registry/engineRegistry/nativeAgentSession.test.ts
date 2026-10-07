@@ -37,6 +37,7 @@ import {
     redactBugReportSensitiveText,
     SessionTerminalMetadataSchema,
     type AgentProviderRequirementsV1,
+    type CodingPromptBehaviorV1,
     type SessionTurnMutationV1,
 } from '@happier-dev/protocol';
 import type { ProtocolJsonValue } from '@happier-dev/plugin-sdk/protocol';
@@ -91,6 +92,7 @@ import {
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
 import {
+    composeNativeAgentSessionRuntimeContext,
     createNativeAgentSessionHostServices,
     createNativeAgentSessionOperations as createNativeAgentSessionOperationsBase,
     createNativeAgentRuntimeSessionPlan,
@@ -109,6 +111,11 @@ import {
     serializeProviderBindingLaunchHandoffForEnv,
 } from '@/plugins/runtime/providerBindings/handoff';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
+import { createDaemonRuntimeAuthRefreshService } from '@/plugins/runtime/context/runtimeAuthRefresh';
+import { createRunScopedWorkStateService } from '@/agent/runtime/bridges/executionRun/nativeAgentExecutionRun';
+import { createPublicAcpRuntimeProtocols } from '@/agent/acp/runtime/publicSession/createPublicAcpRuntimeProtocols';
+import { createPluginInvocationPresentation } from '@/plugins/runtime/invocation/services/interactions';
+import { createBundledFirstPartyPluginSourceCustody } from '@/plugins/runtime/lifecycle/contributions/runtimeIdentity.testkit';
 import { createPluginInteractionsService } from '@/plugins/runtime/invocation/services/interactions';
 import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
 import type { HostPluginServices } from '@/agent/runtime/state/currentSessionUiTypes';
@@ -137,6 +144,9 @@ import { buildTerminalMetadataFromHostHandle, buildTerminalMetadataFromRuntimeFl
 import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 import { writeTerminalHostAttachmentInfo, readTerminalHostAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
 import type { HostSessionRuntimeFactoryParams } from '@/agent/runtime/session/loop/runHostSessionRuntime';
+import { createNativeAgentSessionPublications } from './nativeAgentSessionPublications';
+import { applySessionRuntimeControls } from '@/api/session/sessionRuntimeControls';
+import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
 import type { PermissionModeQueuedPrompt, PermissionModeQueuedPromptMode } from '@/agent/runtime/permissions/queuedPrompt';
 import { createStablePluginStorageService } from '@/plugins/runtime/context/storage';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
@@ -6939,6 +6949,53 @@ describe('native Agent session host adapter', () => {
         },
     );
 
+    it('advertises title tools from the current prepared parent policy for a retained Run', async () => {
+        const agentId = 'acme-tools-title-agent';
+        const contributions = createExternalContributionFixtures(agentId);
+        const signal = new AbortController().signal;
+        const session = createMutableApiSessionClientFixture({ sessionId: 'tools-title-parent', metadata: createTestMetadata() });
+        const settings = accountSettingsParse({});
+        let behavior: CodingPromptBehaviorV1 = { v: 1, sessionTitleUpdates: 'disabled', responseOptions: 'agent' };
+        const controls: Partial<SessionRuntimeControls> = {};
+        const published = { readCodingPromptBehavior: () => behavior };
+        applySessionRuntimeControls(controls, published);
+        const readCodingPromptBehavior = () => controls.readCodingPromptBehavior?.() ?? null;
+        const permissionHandler = new ProviderEnforcedPermissionHandler(session, {
+            logPrefix: '[retained-tools]', getCodingPromptBehavior: readCodingPromptBehavior,
+        });
+        const owners = createRealNativeHostOwners({
+            runtimeRegistry: null, runtimeAuthority: { runtimeCapabilities: [] },
+            identity: { pluginId: 'acme.agent-plugin', agentId, occurrenceId: 'retained-tools', isCurrent: () => true },
+            backend: contributions.backend, agent: contributions.agent,
+            hostSession: { session, machineId: 'machine', permissionHandler, accountSettings: settings },
+            sessionId: session.sessionId, directory: '/tmp/retained-tools', signal,
+        });
+        const publications = createNativeAgentSessionPublications({
+            agentId, session: null, signal, isCurrent: () => true, supportsInFlightSteer: false,
+        });
+        const params = {
+            owners, agentId, sessionId: session.sessionId, directory: '/tmp/retained-tools',
+            signal, isCurrent: () => true, session, publications: publications.services,
+            readToolExecutionCapability: () => null, toolsDelivery: 'shell_bridge' as const,
+            accountSettings: settings, profileId: 'task', readCodingPromptBehavior,
+        };
+        const services = createNativeAgentSessionHostServices(params);
+        const names = async () => (await services.happierTools?.resolveNativeBridge({ systemPrompt: '' }))?.tools.map(tool => tool.name) ?? [];
+        try {
+            expect(await names()).not.toContain('change_title');
+            settings.codingPromptBehaviorV1 = { ...settings.codingPromptBehaviorV1, sessionTitleUpdates: 'disabled' };
+            behavior = { ...behavior, sessionTitleUpdates: 'ongoing' };
+            expect(await names()).toContain('change_title');
+            applySessionRuntimeControls(controls, null);
+            expect(await names()).not.toContain('change_title');
+            applySessionRuntimeControls(controls, published);
+            expect(await names()).toContain('change_title');
+        } finally {
+            await owners.dispose();
+            await publications.dispose();
+        }
+    });
+
     it('does not advertise feature-gated Action tools when the exact Session Home disables them', async () => {
         const baseOwners = createSessionHostServiceOwners();
         const services = createNativeAgentSessionHostServices({
@@ -6979,6 +7036,65 @@ describe('native Agent session host adapter', () => {
         const names = bridge?.tools.map((tool) => tool.name) ?? [];
         expect(names).not.toContain('session_discussion_list');
         expect(names).toContain('session_board_get');
+    });
+
+    it('uses Run member auth while preserving the genuine parent Session and transcript custody', async () => {
+        const signal = new AbortController().signal;
+        const parentId = 'genuine-parent-session';
+        const parentRequests: unknown[] = [];
+        const runRequests: unknown[] = [];
+        const parentAuth = { services: createDaemonRuntimeAuthRefreshService({
+            refreshViaDaemon: async (request) => {
+                parentRequests.push(request);
+                return { status: 'unavailable', reason: 'parent-member-A' };
+            },
+        }) };
+        const parentServices = createNativeAgentSessionServices({
+            permissionHandler: null,
+            pluginId: 'happier.agent.codex', contributionId: 'codex', runtimeId: 'codex',
+            sessionId: parentId, occurrenceId: 'parent-occurrence', isCurrent: () => true, signal,
+            credentials: { token: 'synthetic-parent-token', encryption: null },
+            sourceCustody: createBundledFirstPartyPluginSourceCustody('test-cli-version'),
+        });
+        if (!parentServices.sessions.current) throw new Error('Expected the real parent Session inventory');
+        const services = { ...parentServices, sessions: { ...parentServices.sessions,
+            current: { ...parentServices.sessions.current, auth: parentAuth } } };
+        const transcriptSession = createNativeSessionClientTestPort(parentId);
+        const sessionServices = createNativeAgentSessionHostServices({
+            owners: createSessionHostServiceOwners(), agentId: 'codex', sessionId: parentId,
+            directory: '/fixture', signal, isCurrent: () => true,
+            session: transcriptSession as never,
+            publications: { models: {}, activeInput: {} } as never,
+            readToolExecutionCapability: () => null,
+        });
+        const request = { serviceId: 'openai-codex', refreshAttemptId: 'run-refresh-attempt',
+            expectedCredentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+            selection: { kind: 'profile', profileId: 'member-B' } };
+        await expect(parentAuth.services.refreshRuntimeAuth({ ...request, selection: { kind: 'profile', profileId: 'member-A' } }))
+            .resolves.toEqual({ status: 'unavailable', reason: 'parent-member-A' });
+        const context = composeNativeAgentSessionRuntimeContext({
+            identity: { pluginId: 'happier.agent.codex', pluginVersion: '1.0.0', agentId: 'codex' },
+            contributionId: 'codex', invokedAtMs: 1, sessionId: parentId, signal, services, sessionServices,
+            ui: createPluginInvocationPresentation({ currentSession: null, signal, isOccurrenceCurrent: () => true }),
+            protocols: createPublicAcpRuntimeProtocols({ pluginId: 'happier.agent.codex', agentId: 'codex',
+                signal, isCurrent: () => true, services }),
+            workState: createRunScopedWorkStateService(signal),
+            refreshRuntimeAuthViaDaemon: async (input) => {
+                runRequests.push(input);
+                return { status: 'unavailable', reason: 'run-member-B' };
+            },
+        });
+
+        await expect(context.services.sessions.current!.auth.services.refreshRuntimeAuth(request))
+            .resolves.toEqual({ status: 'unavailable', reason: 'run-member-B' });
+        expect(context.session.id).toBe(parentId);
+        expect(context.session.services.transcripts).toBe(sessionServices.transcripts);
+        expect(context.services.sessions.current!.summary).toBe(services.sessions.current.summary);
+        expect(parentRequests).toHaveLength(1);
+        expect(runRequests).toEqual([expect.objectContaining({ selection: expect.objectContaining({ profileId: 'member-B' }) })]);
+        await expect(services.sessions.current.auth.services.refreshRuntimeAuth(request))
+            .resolves.toEqual({ status: 'unavailable', reason: 'parent-member-A' });
+        expect(parentRequests).toHaveLength(2);
     });
 
     it('projects declared native-home reads and retires them with the Session scope', async () => {
@@ -12119,6 +12235,40 @@ describe('native Agent session host adapter', () => {
         await expect(runtime.waitForTurnCompletion({ timeoutMs: 10 })).resolves.toBeUndefined();
         await expect(runtime.cancelTurn()).resolves.toBeUndefined();
         expect(cancel).not.toHaveBeenCalled();
+    });
+
+    it('preserves a turn completion deadline beyond the native timer frontier', async () => {
+        const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
+        const session: AgentSessionRuntime = {
+            send: vi.fn(async () => ({ status: 'admitted' as const })),
+            watch(listener) {
+                listeners.add(listener);
+                return { dispose: () => { listeners.delete(listener); } };
+            },
+            dispose: vi.fn(),
+        };
+        const runtime = createNativeAgentSessionOperations(session, 'session-1');
+        runtime.subscribeRuntimeEvents(() => undefined);
+        runtime.beginTurnLifecycle();
+        let outcome = 'pending';
+        const completion = runtime.waitForTurnCompletion({ timeoutMs: 2_147_483_648 }).then(
+            () => { outcome = 'completed'; },
+            () => { outcome = 'timed-out'; },
+        );
+        try {
+            await new Promise((resolve) => setTimeout(resolve, 25));
+            expect(outcome).toBe('pending');
+            for (const listener of listeners) {
+                listener({ sequence: 1, sessionId: 'session-1', emittedAtMs: 1,
+                    kind: 'turn-start', turnId: 'long-deadline-turn', startedBy: 'provider' });
+                listener({ sequence: 2, sessionId: 'session-1', emittedAtMs: 2,
+                    kind: 'turn-complete', turnId: 'long-deadline-turn' });
+            }
+            await completion;
+            expect(outcome).toBe('completed');
+        } finally {
+            await runtime.resetOrDisposeRuntime('session_closed');
+        }
     });
 
     it('treats an explicit completion timeout as a waiter deadline without terminalizing the turn', async () => {

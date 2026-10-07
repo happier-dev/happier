@@ -82,6 +82,7 @@ describe('native prompt loop non-admission recovery', () => {
                 popPendingMessage: async () => false,
                 waitForMetadataUpdate: async () => false,
                 sendAgentMessage: vi.fn(),
+                enqueueAgentMessageCommitted: async () => ({ persisted: true, delivered: false }),
             };
             const loop = runPermissionModePromptLoop({
                 providerName: 'Test Agent', agentMessageType: 'codex', explicitPermissionMode: undefined,

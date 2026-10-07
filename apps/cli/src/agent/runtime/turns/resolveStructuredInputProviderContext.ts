@@ -1,3 +1,4 @@
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { AgentDispatchStructuredInputV1Schema, readStructuredInputMentionSourcesV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import { buildComposerAttachmentDedupeKeyV1, ComposerAttachmentInputV1Schema, ResolvedComposerAttachmentDispatchV1Schema } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
 import { COMPOSER_REFERENCE_MENTION_KIND_V1, readComposerReferenceMentionV1 } from '@happier-dev/protocol/runtime/input/composerReferenceProviderV1';
@@ -12,6 +13,7 @@ import {
   buildSessionReferenceContextBlockForDispatch,
 } from '../prompt/sessionReferenceBlock';
 import { browserMediaToStructuredImageInput } from '@/session/attachments/resolveTrustedSessionAttachmentLocalImagePaths';
+import { logger } from '@/ui/logger';
 
 /**
  * The send-time provider resolver (D-3, INV-9, R-10).
@@ -235,6 +237,7 @@ function buildSkillMentionRecord(item: MetadataRecord): MetadataRecord {
   const name = readString(item.name);
   const origin = readString(item.origin);
   if (!name) return {};
+  const id = readNonBlankOpaqueIdentifier(item.id);
   const path = readString(item.path);
   const displayName = readString(item.displayName);
   const description = readString(item.description);
@@ -244,6 +247,8 @@ function buildSkillMentionRecord(item: MetadataRecord): MetadataRecord {
   const agentId = readString(item.agentId);
   return {
     name,
+    ...(id ? { id } : {}),
+    ...(item.idSource === 'generated' ? { idSource: 'generated' } : {}),
     ...(path ? { path } : {}),
     ...(displayName ? { displayName } : {}),
     ...(description ? { description } : {}),
@@ -306,6 +311,10 @@ async function resolveKind(params: Readonly<{
   if (params.references.length === 0) return [];
   const catalog = await readCatalog(params.read, params.parse);
   if (!catalog.ok) {
+    logger.infoFile(
+      `[PromptDispatch] ${params.catalog} catalog ${catalog.reason}; `
+      + `${params.references.length} composer reference(s) contributed no provider item`,
+    );
     params.onDiagnostic?.({ catalog: params.catalog, reason: catalog.reason, referenceCount: params.references.length });
     return [];
   }

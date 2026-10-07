@@ -2,6 +2,7 @@ import { extractShellCommand } from '@happier-dev/protocol/activity/shellCommand
 import { parseHappierToolsShellBridgeCommand } from '@happier-dev/protocol/tools/happierToolsShellBridge';
 import { resolveEffectiveCodingPromptBehaviorV1 } from '@happier-dev/protocol/prompts/effectiveCodingPromptBehaviorV1';
 import { isChangeTitleToolLikeName } from '@happier-dev/protocol/tools/v2/aliases';
+import type { CodingPromptBehaviorV1 } from '@happier-dev/protocol';
 
 function readActionId(input: unknown): string {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return '';
@@ -45,12 +46,13 @@ export function isAgentSessionTitleToolCall(toolName: string, input: unknown): b
 export function shouldDenyAgentSessionTitleToolCall(params: Readonly<{
   settings: unknown;
   profileId?: string | null | undefined;
+  codingPromptBehavior?: CodingPromptBehaviorV1 | null;
   toolName: string;
   input: unknown;
 }>): boolean {
   if (!isAgentSessionTitleToolCall(params.toolName, params.input)) return false;
-  return resolveEffectiveCodingPromptBehaviorV1({
+  return params.codingPromptBehavior === null || (params.codingPromptBehavior ?? resolveEffectiveCodingPromptBehaviorV1({
     settings: params.settings,
     profileId: params.profileId ?? null,
-  }).sessionTitleUpdates === 'disabled';
+  })).sessionTitleUpdates === 'disabled';
 }

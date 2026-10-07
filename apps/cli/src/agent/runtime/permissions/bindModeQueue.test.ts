@@ -10,6 +10,8 @@ import type {
 import { combinePermissionModeQueuedPrompts } from '@/agent/runtime/permissions/queuedPrompt';
 import {
   ProviderConnectionIdSchema,
+  buildMentionRefForKindV1,
+  MENTION_KIND_V1,
   type ProviderBoundModelRef,
 } from '@happier-dev/protocol';
 
@@ -261,10 +263,10 @@ describe('registerPermissionModeMessageQueueBinding', () => {
     expect(queueCalls).toHaveLength(2);
   });
 
-  it('preserves canonical structured input and never steers it through the text-only path', async () => {
+  it('preserves canonical image input through structured steer', async () => {
     const sessionHarness = createSessionHarness();
     const queueCalls: Array<{ type: 'push' | 'isolate' | 'clear'; message: PermissionModeQueuedPrompt }> = [];
-    const steerText = vi.fn(async () => undefined);
+    const steerText = vi.fn(async (_text: string, _meta?: unknown) => undefined);
     const structuredInput = {
       v: 1 as const,
       imageInputs: [{
@@ -303,36 +305,21 @@ describe('registerPermissionModeMessageQueueBinding', () => {
         happierStructuredInputV1: structuredInput,
       },
     } as UserMessage);
-    await Promise.resolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
 
-    expect(steerText).not.toHaveBeenCalled();
-    expect(queueCalls).toEqual([{
-      type: 'isolate',
-      message: {
-        text: 'inspect this image',
-        localId: 'local-image-1',
-        localIds: ['local-image-1'],
-        structuredInput,
-        inputContextBlock: LEGACY_UNKNOWN_INPUT_CONTEXT_BLOCK,
-      },
-    }]);
+    expect(queueCalls).toEqual([]);
+    expect(steerText.mock.calls[0]?.[1]).toMatchObject({ localId: 'local-image-1', structuredInput });
   });
 
-  // The steer path renders only the provenance block, so it has no place to put the
-  // `@session` reference projection. That is safe only because a mention can exist solely
-  // inside the structured-input envelope, and a message carrying that envelope is never
-  // steerable — it queues and reaches the prompt loop, which does render the reference
-  // block. If the structured-input steer exclusion is ever relaxed, this test fails and the
-  // steer dispatch must start supplying `sessionReferenceBlock` itself.
-  it('queues a Session-mention message instead of steering it, keeping the reference projection reachable', async () => {
+  it('renders a Session reference in structured steer', async () => {
     const sessionHarness = createSessionHarness();
     const queueCalls: Array<{ type: 'push' | 'isolate' | 'clear'; message: PermissionModeQueuedPrompt }> = [];
-    const steerText = vi.fn(async () => undefined);
+    const steerText = vi.fn(async (_text: string, _meta?: unknown) => undefined);
     const structuredInput = {
       v: 1 as const,
       mentions: [{
-        kind: 'session' as const,
-        ref: 'session:source-session',
+        kind: MENTION_KIND_V1.session,
+        ref: buildMentionRefForKindV1(MENTION_KIND_V1.session, 'source-session'),
         token: '@session:source',
         start: 0,
         end: 15,
@@ -364,11 +351,12 @@ describe('registerPermissionModeMessageQueueBinding', () => {
         happierStructuredInputV1: structuredInput,
       },
     } as UserMessage);
-    await Promise.resolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
 
-    expect(steerText).not.toHaveBeenCalled();
-    expect(queueCalls).toHaveLength(1);
-    expect(queueCalls[0]?.message.structuredInput).toEqual(structuredInput);
+    expect(queueCalls).toEqual([]);
+    expect(steerText.mock.calls[0]?.[0]).toContain('source-session');
+    expect(steerText.mock.calls[0]?.[0]).toContain('compare with @session:source');
+    expect(steerText.mock.calls[0]?.[1]).toMatchObject({ localId: 'local-mention-1', structuredInput: { v: 1 } });
   });
 
   it('carries only the exact admitted SessionMedia items alongside their Composer refs', () => {

@@ -84,13 +84,10 @@ import {
   retainExecutionRunState,
   type RetainedExecutionRunWorkerUpdate,
 } from '@/daemon/executionRunRegistry';
-import {
-  fitWorkerUpdateWithinHostContextAllowance,
-  type HostContextOnlySourceInput,
-  type PreparedWorkerContextItem,
+import type {
+  HostContextOnlySourceInput,
+  PreparedWorkerContextItem,
 } from '@/agent/runtime/session/contextOnly/hostContextOnlyInput';
-import { measureSessionFollowUtf8Bytes } from '@/agent/runtime/session/follow/sessionFollowContextBudget';
-import { renderWorkerUpdatePromptBlockV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import { omitExecutionRunRoleCompositionContext, startExecutionRun } from './startExecutionRun';
 import { cancelCurrentExecutionRunTurn } from './cancelCurrentExecutionRunTurn';
 import type { ExecutionRunTranscriptPublisher } from './executionRunTranscriptPublisher';
@@ -1675,18 +1672,14 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     return pending ? this.projectWorkerUpdate(pending) : null;
   }
 
-  async prepareWorkerUpdates(sessionId: string, input: Readonly<{ signal: AbortSignal; maxUtf8Bytes: number }>): Promise<readonly PreparedWorkerContextItem[]> {
+  async prepareWorkerUpdates(sessionId: string, input: Readonly<{ signal: AbortSignal }>): Promise<readonly PreparedWorkerContextItem[]> {
     await this.recoverWorkerUpdates();
     if (input.signal.aborted) return [];
     const prepared: PreparedWorkerContextItem[] = [];
-    let remaining = input.maxUtf8Bytes;
     for (const pending of this.workerUpdates.values()) {
       if (pending.sessionId !== sessionId) continue;
-      const update = fitWorkerUpdateWithinHostContextAllowance(pending.update, remaining);
-      if (!update) continue;
       const source = this.projectWorkerUpdate(pending);
-      prepared.push({ localId: pending.localId, update, recheckAdmission: source.recheckAdmission, acknowledgeAccepted: source.acknowledgeAccepted });
-      remaining -= measureSessionFollowUtf8Bytes(renderWorkerUpdatePromptBlockV1(update));
+      prepared.push({ localId: pending.localId, update: pending.update, recheckAdmission: source.recheckAdmission, acknowledgeAccepted: source.acknowledgeAccepted });
     }
     return prepared;
   }

@@ -21,7 +21,7 @@ import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/per
 import type { ToolTraceProtocol } from '@/agent/tools/trace/toolTrace';
 import { resolveProviderPermissionForHappierAction } from '@/agent/tools/happierTools/resolveHappierActionForMcpToolName';
 import { extractShellCommand } from '@happier-dev/protocol/activity/shellCommand';
-import type { AccountSettings } from '@happier-dev/protocol';
+import type { AccountSettings, CodingPromptBehaviorV1 } from '@happier-dev/protocol';
 import { parseTrustedHappierToolsShellBridgeCommand } from '@/agent/tools/happierTools/runtime/buildHappierToolsShellBridgeCommand';
 import { isDefaultWriteLikeToolName } from './writeLikeToolNameHeuristics';
 import { isSharedHappierShellBridgeToolName, isSharedPermissionSafeToolName } from './permissionTaxonomy';
@@ -53,6 +53,7 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
     isWriteLikeToolName?: (toolName: string) => boolean;
     pushSender?: PermissionRequestPushSender | null;
     getAccountSettings?: (() => AccountSettings | null) | null;
+    getCodingPromptBehavior?: (() => CodingPromptBehaviorV1 | null) | null;
     getWorkspaceWrites?: (() => 'allow' | 'deny' | undefined) | null;
     getAccountSettingsSecretsReadKeys?: (() => ReadonlyArray<Uint8Array | null | undefined>) | null;
     onAbortRequested?: (() => void | Promise<void>) | null;
@@ -67,6 +68,7 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
     super(params.session, {
       pushSender: params.pushSender ?? null,
       getAccountSettings: params.getAccountSettings ?? null,
+      getCodingPromptBehavior: params.getCodingPromptBehavior ?? null,
       getWorkspaceWrites: params.getWorkspaceWrites ?? null,
       getAccountSettingsSecretsReadKeys: params.getAccountSettingsSecretsReadKeys ?? null,
       onAbortRequested: params.onAbortRequested,
@@ -196,6 +198,7 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
 
     if (shouldDenyAgentSessionTitleToolCall({
       settings: this.getAccountSettingsSnapshot(),
+      codingPromptBehavior: this.getCodingPromptBehavior(),
       profileId: this.getSessionProfileId(),
       toolName,
       input,

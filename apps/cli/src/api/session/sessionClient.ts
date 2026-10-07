@@ -3210,7 +3210,7 @@ export class ApiSessionClient extends EventEmitter {
         return await this.executionRunWorkerUpdateSource?.waitForWorkerUpdateChange(this.sessionId, signal) ?? false;
     }
 
-    async prepareExecutionRunWorkerUpdates(input: Readonly<{ signal: AbortSignal; maxUtf8Bytes: number }>): Promise<readonly import('@/agent/runtime/session/contextOnly/hostContextOnlyInput').PreparedWorkerContextItem[]> {
+    async prepareExecutionRunWorkerUpdates(input: Readonly<{ signal: AbortSignal }>): Promise<readonly import('@/agent/runtime/session/contextOnly/hostContextOnlyInput').PreparedWorkerContextItem[]> {
         return await this.executionRunWorkerUpdateSource?.prepareWorkerUpdates(this.sessionId, input) ?? [];
     }
 

@@ -101,12 +101,7 @@ describe('execution-run retained WorkerUpdate inbox custody', () => {
     } });
     expect((await bridge.takeWorkerUpdate('parent_session', signal))?.localId).toBe(input?.localId);
     if (!input) throw new Error('Expected the retained worker input');
-    const [{ renderWorkerUpdatePromptBlockV1 }, { measureSessionFollowUtf8Bytes }] = await Promise.all([
-      import('@happier-dev/protocol'), import('@/agent/runtime/session/follow/sessionFollowContextBudget'),
-    ]);
-    const prepared = await bridge.prepareWorkerUpdates('parent_session', {
-      signal, maxUtf8Bytes: measureSessionFollowUtf8Bytes(renderWorkerUpdatePromptBlockV1(input.update)),
-    });
+    const prepared = await bridge.prepareWorkerUpdates('parent_session', { signal });
     expect(prepared).toHaveLength(1);
     expect(prepared[0]?.localId).toBe(input.localId);
     expect((await bridge.takeWorkerUpdate('parent_session', signal))?.localId).toBe(input.localId);
@@ -148,7 +143,7 @@ describe('execution-run retained WorkerUpdate inbox custody', () => {
     await retainTerminalRun('Second accepted run result');
     const bridge = await createBridge();
     const signal = new AbortController().signal;
-    const prepared = await bridge.prepareWorkerUpdates('parent_session', { signal, maxUtf8Bytes: 32_000 });
+    const prepared = await bridge.prepareWorkerUpdates('parent_session', { signal });
     expect(prepared.map((input) => input.update.result).sort()).toEqual([
       'First accepted run result', 'Second accepted run result',
     ]);
@@ -220,11 +215,11 @@ describe('execution-run retained WorkerUpdate inbox custody', () => {
       const snapshotPaused = await Promise.race([reached.then(() => true), finishing.then(() => false)]);
       pauseRead = false;
       accepted.acknowledgeAccepted();
-      const afterAck = await bridge.prepareWorkerUpdates('parent_session', { signal, maxUtf8Bytes: 32_000 });
+      const afterAck = await bridge.prepareWorkerUpdates('parent_session', { signal });
       expect(afterAck.map((input) => input.update.result)).toEqual(snapshotPaused ? [] : ['Newly completed result']);
       releaseRead();
       await finishing;
-      const pending = await bridge.prepareWorkerUpdates('parent_session', { signal, maxUtf8Bytes: 32_000 });
+      const pending = await bridge.prepareWorkerUpdates('parent_session', { signal });
       expect(pending.map((input) => input.update.result)).toEqual(['Newly completed result']);
     } finally {
       releaseRead();

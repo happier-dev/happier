@@ -86,6 +86,7 @@ import { HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY } from '@/d
 import { createPreparedDeferredStartupBootstrap } from '@/agent/runtime/startup/createPreparedDeferredStartupBootstrap';
 import { adaptAgentSessionRuntimeAuthControl } from './runtimeAuthControlAdapter';
 import type { DeferredStartupBootstrapResult } from '@/agent/runtime/startup/deferredStartupTypes';
+import type { RuntimeTurnPromptMeta } from '@/agent/runtime/turns/runtimeTurnOperations';
 import type { InFlightSteerController } from '@/agent/runtime/permissions/bindModeQueue';
 import {
   runPermissionModePromptLoop,
@@ -448,17 +449,13 @@ export type HostSessionRuntimeHookRuntime = Readonly<{
   }>) => void) | null) => void;
   shouldResumeAfterPermissionModeChange?: () => boolean;
   supportsInFlightSteer?: () => boolean;
+  isProviderNativeCommand?: InFlightSteerController['isProviderNativeCommand'];
   isTurnInFlight?: () => boolean;
   canSteerPrompt?: () => boolean;
   canInterruptForPendingInput?: () => boolean;
   steerPrompt?: (
     prompt: string,
-    options?: Readonly<{
-      localId?: string | null;
-      localIds?: readonly string[];
-      userMessageSeq?: number | null;
-      userMessageSeqs?: readonly number[];
-    }>,
+    options?: RuntimeTurnPromptMeta,
   ) => Promise<void>;
   notifyPromptQueuedDuringTurn?: () => void;
   /**
@@ -1875,7 +1872,7 @@ export async function runHostSessionRuntime(
       ? measureSessionFollowUtf8Bytes(renderWorkerUpdatePromptBlockV1(fittedWake)) + 2
       : 0));
     const workerCandidates = [
-      ...(await currentLifecycleSession.prepareExecutionRunWorkerUpdates?.({ signal, maxUtf8Bytes: remainingBytes }) ?? []),
+      ...(await currentLifecycleSession.prepareExecutionRunWorkerUpdates?.({ signal }) ?? []),
       ...(await readWorkflowInputPort()?.prepareWorkerUpdates?.({ signal, maxUtf8Bytes: remainingBytes }) ?? []),
     ];
     const workerItems = workerCandidates.flatMap((candidate) => {
@@ -1980,11 +1977,13 @@ export async function runHostSessionRuntime(
       if (!prepared.ok) throw Object.assign(new Error(prepared.errorCode), { code: prepared.errorCode });
     }
   };
+  let resolveFreshSessionSystemPrompt: SessionPromptPlanResolver | null = null;
   permissionHandler = createProviderEnforcedPermissionHandlerFn({
     session,
     logPrefix: config.uiLogPrefix,
     pushSender: activityPushSender,
     getAccountSettings: () => runtimeOpts.accountSettingsContext?.settings ?? null,
+    getCodingPromptBehavior: () => resolveFreshSessionSystemPrompt?.readCodingPromptBehavior?.() ?? null,
     getWorkspaceWrites: sessionRoleContext.readWorkspaceWrites,
     getAccountSettingsSecretsReadKeys: () => runtimeOpts.accountSettingsContext?.settingsSecretsReadKeys ?? [],
     onAbortRequested: () => abortRequestedCallback?.(),
@@ -2047,6 +2046,7 @@ export async function runHostSessionRuntime(
     readActiveModelSelection: () =>
       modelTransitionCoordinator?.readActiveTarget().selection ?? null,
     supportsInFlightSteer: () => runtimeForInFlightSteer?.supportsInFlightSteer?.() === true,
+    isProviderNativeCommand: (prompt) => runtimeForInFlightSteer?.isProviderNativeCommand?.(prompt) === true,
     isTurnInFlight: () => runtimeForInFlightSteer?.isTurnInFlight?.() === true,
     canSteerPrompt: () => (
       runtimeForInFlightSteer?.canSteerPrompt?.()
@@ -2063,6 +2063,20 @@ export async function runHostSessionRuntime(
     },
     registerProviderAcceptedEffect,
     prepareHostContext: effectivePrepareHostContext,
+    readStructuredInputDispatchServices: () => ({
+      sessionId: currentLifecycleSession.sessionId,
+      catalogs: {
+        ...(runtimeForInFlightSteer?.listSkills ? { listSkills: () => runtimeForInFlightSteer!.listSkills!() } : {}),
+        ...(runtimeForInFlightSteer?.listVendorPlugins ? { listVendorPlugins: () => runtimeForInFlightSteer!.listVendorPlugins!() } : {}),
+      },
+      ...(daemonTurnContributionsBridge ? {
+        resolveComposerReference: async (input) => await daemonTurnContributionsBridge.resolveComposerReference({
+          sessionId: currentLifecycleSession.sessionId,
+          ...input,
+        }),
+        resolveComposerAttachmentForDispatch: async (input) => await daemonTurnContributionsBridge.resolveComposerAttachment(input),
+      } : {}),
+    }),
     steerText: async (text, options) => {
       const runtime = runtimeForInFlightSteer;
       if (!runtime?.steerPrompt) {
@@ -2076,6 +2090,19 @@ export async function runHostSessionRuntime(
       await runtime.steerPrompt(text, promptMeta);
     },
     rejectPromptBeforeProvider: (info) => {
+      if (info.preparationFailure) {
+        for (const localInputId of info.localIds ?? []) {
+          observeProviderInputOutcome({
+            type: 'input-rejected',
+            localInputId,
+            userMessageSeq: info.userMessageSeq,
+            ...(info.userMessageSeqs ? { userMessageSeqs: info.userMessageSeqs } : {}),
+            diagnostic: { code: info.preparationFailure.code, severity: 'error' },
+            retryable: info.preparationFailure.retryable,
+          });
+        }
+        return;
+      }
       observeProviderInputOutcome({ type: 'rejected_before_write', ...info });
     },
     reportPromptEffectMayHaveOccurred: (info) => {
@@ -2463,7 +2490,7 @@ export async function runHostSessionRuntime(
   if (readSessionRolesV1(currentLifecycleSession.getMetadataSnapshot?.() ?? runtimeMetadata)?.roleId) {
     await sessionRoleContext.resolveRoles();
   }
-  const resolveFreshSessionSystemPrompt = createSessionPromptPlanResolver({
+  resolveFreshSessionSystemPrompt = createSessionPromptPlanResolver({
     opts: runtimeOpts, session: currentLifecycleSession, agentId: policyAgentId,
     machineId, directory: runtimeDirectory, memoryRecallGuidanceEnabled,
     readNativeSessionId: () => runtimeForInFlightSteer?.readSessionIdentity().sessionId ?? null,
@@ -3161,6 +3188,7 @@ export async function runHostSessionRuntime(
         }).dispose;
     }
     currentLifecycleSession.setSessionRuntimeControls({
+      readCodingPromptBehavior: () => resolveFreshSessionSystemPrompt?.readCodingPromptBehavior?.() ?? null,
       readEffectiveInputConfiguration: () => ({
         modelSelection: modelTransitionCoordinator?.readActiveTarget().selection ?? null,
         permissionMode: permissionModeState.getCurrentPermissionMode() ?? initialPermissionMode,
