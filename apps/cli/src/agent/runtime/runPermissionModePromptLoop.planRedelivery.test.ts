@@ -7,6 +7,7 @@ import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { MessageQueue2 } from './modeMessageQueue';
 import { combinePermissionModeQueuedPrompts, type PermissionModeQueuedPrompt, type PermissionModeQueuedPromptMode } from './permissions/queuedPrompt';
 import { runPermissionModePromptLoop } from './runPermissionModePromptLoop';
+import { createSessionProviderInputConsumer } from './session/input/sessionProviderInputConsumer';
 
 type PlanTurn = Readonly<{
   text: string;
@@ -24,6 +25,7 @@ async function dispatchPlans(turns: readonly PlanTurn[], nativePlans?: string[],
   const queue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(
     (mode) => JSON.stringify(mode), { batcher: combinePermissionModeQueuedPrompts },
   );
+  const inputConsumer = createSessionProviderInputConsumer({ messageQueue: queue, session });
   const acceptedEffects = new Map<string, (() => void) | null>();
   const runtimeListeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
   const prompts: string[] = [];
@@ -36,7 +38,7 @@ async function dispatchPlans(turns: readonly PlanTurn[], nativePlans?: string[],
   // prompt composition/dispatch and provider-acceptance custody remain real.
   await runPermissionModePromptLoop({
     providerName: 'Test Agent', agentMessageType: 'qwen', explicitPermissionMode: undefined,
-    session, messageQueue: queue, permissionHandler: { setPermissionMode: () => undefined, reset: () => undefined },
+    session, messageQueue: queue, inputConsumer, permissionHandler: { setPermissionMode: () => undefined, reset: () => undefined },
     runtime: {
       beginTurnLifecycle: () => undefined,
       sendTurnPrompt: async (prompt, meta) => {
@@ -61,13 +63,23 @@ async function dispatchPlans(turns: readonly PlanTurn[], nativePlans?: string[],
       readSessionStartupInstructions: () => nativeInstructions,
       updateSessionRuntimeConfig: async () => undefined,
       resetOrDisposeRuntime: async (reason, intent) => {
+        // Native replacement invokes the host admission lifecycle before opening
+        // the successor. Keep that owner real alongside the native I/O boundary.
+        await inputConsumer.enforceProviderInputAdmission({
+          kind: 'action_required', reason: 'generation_pending',
+          serviceId: 'host-runtime', groupId: 'primary-runtime', epochId: 'replacement',
+        });
         nativeInstructions = intent?.startupInstructions ?? null;
-        if (!intent?.startupInstructions) return;
-        expect(reason).toBe('session_closed');
-        expect(intent).toMatchObject({ kind: 'resume', providerSessionId: 'native-session', importHistory: false });
-        nativePlans?.push(intent.startupInstructions.instructions);
-        const { instructions: _instructions, ...marker } = intent.startupInstructions;
-        nativeMarkers?.push(marker);
+        if (intent?.startupInstructions) {
+          expect(reason).toBe('session_closed');
+          expect(intent).toMatchObject({ kind: 'resume', providerSessionId: 'native-session', importHistory: false });
+          nativePlans?.push(intent.startupInstructions.instructions);
+          const { instructions: _instructions, ...marker } = intent.startupInstructions;
+          nativeMarkers?.push(marker);
+        }
+        await inputConsumer.clearProviderInputAdmission({
+          serviceId: 'host-runtime', groupId: 'primary-runtime', epochId: 'replacement',
+        });
       },
     },
     createOverrideSynchronizer: () => ({ syncFromMetadata: () => undefined, flushPendingAfterStart: async () => undefined }),
