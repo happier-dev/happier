@@ -103,7 +103,7 @@ describe('Work › Roles and Notes', () => {
         previousState = storage.getState();
         previousSnapshot = getAppliedActiveServerSnapshot();
         previousAvailable = isAppliedActiveServerRuntimeAvailable();
-        connection = await restoreServerAccountForTest({
+        const restoredConnection = await restoreServerAccountForTest({
             serverUrl: 'https://session-roles.test', accountId: 'account-1',
             request: async (url) => {
                 const path = new URL(String(url)).pathname;
@@ -113,8 +113,9 @@ describe('Work › Roles and Notes', () => {
                 return Response.json({}, { status: 404 });
             },
         });
+        connection = restoredConnection;
         await act(async () => {
-        storage.getState().activateProfileScope({ serverId: connection.home.id, accountId: 'account-1' });
+        storage.getState().activateProfileScope({ serverId: restoredConnection.home.id, accountId: 'account-1' });
         shared.calls = [];
         shared.refused = new Set();
         shared.alerts = [];

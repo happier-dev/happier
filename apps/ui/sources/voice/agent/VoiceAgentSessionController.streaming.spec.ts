@@ -12,7 +12,6 @@ import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fi
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { getRetainedLocalVoiceEffectOutcomes } from '@/voice/tools/localVoiceEffectOutcomeCustody';
-import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 

@@ -27,7 +27,6 @@ let sessionsState: any[] = [];
 let sessionsByIdState: Record<string, any> = {};
 let resetWorkspaceSyncStatusStoreForTests: typeof import('@/sync/domains/sessionHandoff/workspaceSyncStatusStore')['resetWorkspaceSyncStatusStoreForTests'];
 let setWorkspaceSyncStatus: typeof import('@/sync/domains/sessionHandoff/workspaceSyncStatusStore')['setWorkspaceSyncStatus'];
-let realStorage: typeof import('@/sync/domains/state/storageStore')['storage'];
 
 type CardChrome = Extract<CustomModalChromeConfig, { kind: 'card' }>;
 
@@ -69,7 +68,7 @@ installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
 const { sync } = await import('@/sync/sync');
 const { storage } = await import('@/sync/domains/state/storage');
-const { setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
+const { setActiveServer } = await import('@/sync/domains/server/serverRuntime');
 const { MachineSelector } = await import('@/components/sessions/new/components/MachineSelector');
 const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
 const { ItemList } = await import('@/components/ui/lists/ItemList');
@@ -89,7 +88,7 @@ async function applyFixtureState() {
         await connection?.dispose();
         connection = undefined;
     }
-    await setActiveServerId(activeServerIdState);
+    await setActiveServer({ serverId: activeServerIdState });
     const machines = allMachinesState.map(machine => createMachineFixture({
         ...machine, metadata: { ...createMachineFixture().metadata!, ...machine.metadata },
     }));
@@ -104,9 +103,9 @@ async function applyFixtureState() {
     storage.setState({ sessionListRowsByServerId: { [homeA.id]: Object.fromEntries(sessionsState.map(session => [session.id,
         createSessionListRenderableSessionFixture({ ...session, metadata: session.metadata }),
     ])) } });
-    const { recentMachinePaths = [], ...settings } = settingsState;
+    const { recentMachinePaths, ...settings } = settingsState;
     storage.getState().applySettingsLocal(settings);
-    storage.getState().applyAuthoringMemory({ recentMachinePaths });
+    if (recentMachinePaths !== undefined) storage.getState().applyAuthoringMemory({ recentMachinePaths });
 }
 
 async function renderScreen(element: React.ReactElement) {
@@ -131,6 +130,8 @@ afterAll(() => { refreshMachinesThrottledMock.mockRestore(); listWorkspaceSyncSt
 
 describe('SessionHandoffPickerModal', () => {
     beforeEach(async () => {
+        // The package harness clears persisted profiles before every test.
+        homeB.id = await home.addHome({ name: 'Handoff B', serverUrl: 'https://handoff-b.example.test', accountId: 'account-b', active: false });
         connection = await restoreServerAccountForTest({ serverUrl: 'https://handoff-a.example.test', accountId: 'account-a', request: async (url, init) => {
             const { serverFetch } = await import('@/sync/http/client');
             const target = new URL(String(url));
@@ -211,7 +212,7 @@ describe('SessionHandoffPickerModal', () => {
         ];
         settingsState.favoriteMachines = [];
         settingsState.favoriteDirectories = [];
-        realStorage.getState().resetAuthoringMemory();
+        storage.getState().resetAuthoringMemory();
         settingsState.workspaceRefsV1 = [];
         settingsState.workspaceSyncRelationshipsV1 = [];
         settingsState.sessionHandoffDefaultsV1 = {
@@ -222,6 +223,14 @@ describe('SessionHandoffPickerModal', () => {
             ignoredIncludeGlobs: ['dist/**'],
             directTargetMode: 'convert_to_persisted',
         };
+    });
+
+    it('retains the Account credential while its socket is offline and withdraws it when the runtime retires', async () => {
+        // This harness never connects the socket; offline transport must not retire the Account.
+        expect(sync.getCredentials()).toEqual(connection!.credentials);
+        await connection!.dispose();
+        connection = undefined;
+        expect(sync.getCredentials()).toBeNull();
     });
 
     it('does not load the target path browser until the user asks to choose a directory', async () => {
@@ -319,14 +328,14 @@ describe('SessionHandoffPickerModal', () => {
         expect(onResolve).toHaveBeenCalledWith(expect.objectContaining({ targetMachineId: 'machine_target', targetPath: '/home/target/repo' }));
     });
 
-    it('uses one authoritative machine hydration request without a QA polling timer', async () => {
+    it('does not hydrate machines after the Account runtime retires', async () => {
         machineListByServerIdState = { [homeA.id]: [] };
         allMachinesState = [];
         credentialsReady = false;
-        const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
         const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
+        await applyFixtureState();
 
-        const screen = await renderScreen(<SessionHandoffPickerModal
+        const screen = await renderScreenBase(<SessionHandoffPickerModal
             onClose={vi.fn()}
             setChrome={vi.fn()}
             onResolve={vi.fn()}
@@ -337,9 +346,8 @@ describe('SessionHandoffPickerModal', () => {
         await act(async () => {});
 
         expect(refreshMachinesThrottledMock).not.toHaveBeenCalled();
-        expect(setTimeoutSpy).not.toHaveBeenCalled();
+        expect(screen.tree.findByType(MachineSelector).props.machines).toEqual([]);
         screen.unmount();
-        setTimeoutSpy.mockRestore();
     });
 
     it('returns the selected machine and default handoff options', async () => {
@@ -775,7 +783,7 @@ describe('SessionHandoffPickerModal', () => {
 
         machineListByServerIdState[homeA.id][0]!.metadata.homeDir = '/home/target';
         allMachinesState[0]!.metadata.homeDir = '/home/target';
-        realStorage.getState().applyAuthoringMemory({ recentMachinePaths: [{
+        storage.getState().applyAuthoringMemory({ recentMachinePaths: [{
             machineId: 'machine_target',
             path: '/home/target/recent-project',
         }] });
@@ -812,11 +820,11 @@ describe('SessionHandoffPickerModal', () => {
             return 'browser-modal';
         });
         await screen.pressByTestIdAsync('path-selection-list:open-tree-browser');
-        expect(modalMock.spies.show).toHaveBeenCalledWith(expect.objectContaining({ props: expect.objectContaining({
+        await vi.waitFor(() => expect(modalMock.spies.show).toHaveBeenCalledWith(expect.objectContaining({ props: expect.objectContaining({
             machineId: 'machine_target',
             serverId: homeA.id,
             initialPath: '/home/target/pasted-project',
-        }) }));
+        }) })));
 
         const startButton = findElementByTestId(requireCardChrome(chrome).footer, 'session-handoff-start');
         await act(async () => {

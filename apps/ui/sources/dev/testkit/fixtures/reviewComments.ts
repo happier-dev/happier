@@ -8,8 +8,9 @@ export function buildReviewCommentFixture(overrides: Partial<ReviewCommentV1> = 
     return {
         v: 1,
         id,
-        accountId: 'account-1',
+        accountId: overrides.accountId ?? 'account-1',
         projectId: overrides.projectId ?? 'project-1',
+        workspace: overrides.workspace,
         workspaceId: overrides.workspaceId,
         sessionId: overrides.sessionId,
         runId: overrides.runId,

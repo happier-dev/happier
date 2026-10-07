@@ -141,20 +141,19 @@ function composerReferenceProjection(entries: readonly Readonly<{
                     qualifiedId: `${entry.pluginId}/${entry.localId}`,
                     localId: entry.localId,
                 },
-                occurrenceId: '7',
                 progression: { declared: true, normalized: true, merged: true },
                 registration: {
                     requirement: 'required',
                     state: entry.registrationState ?? 'bound',
                     ...(entry.registrationState === 'bound' || entry.registrationState === undefined
-                        ? { occurrenceId: entry.registrationOccurrenceId ?? '7' }
+                        ? { occurrenceId: entry.registrationOccurrenceId ?? `fixture-occurrence:${entry.pluginId}` }
                         : {}),
                 },
                 activation: entry.activationState === 'dormant'
                     ? { state: 'dormant' }
                     : entry.activationState === 'unavailable'
                         ? { state: 'unavailable', reason: 'test unavailable' }
-                        : { state: 'active', occurrenceId: entry.activationOccurrenceId ?? '7' },
+                        : { state: 'active', occurrenceId: entry.activationOccurrenceId ?? `fixture-occurrence:${entry.pluginId}` },
                 projection: { state: 'projected' },
                 consumer: 'composer-reference-host',
                 platforms: ['cli', 'web'],

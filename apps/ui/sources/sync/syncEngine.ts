@@ -3040,6 +3040,7 @@ class Sync {
     }
 
     private resetServerScopedRuntimeState = (targetToReset?: SyncServerTarget | null) => {
+        this.credentials = { token: '' };
         this.authoringMemoryRuntime = null;
         storage.getState().resetAuthoringMemory();
         apiSocket.invalidateRequests('server-switch');
@@ -7931,8 +7932,8 @@ class Sync {
         return run;
     }
 
-    public getCredentials() {
-        return this.credentials;
+    public getCredentials(): AuthCredentials | null {
+        return this.credentials?.token ? this.credentials : null;
     }
 
     // Artifact methods
