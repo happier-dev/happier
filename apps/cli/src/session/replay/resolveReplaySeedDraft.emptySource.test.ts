@@ -131,14 +131,14 @@ describe('resolveReplaySeedDraft — empty source vs failed retrieval', () => {
     reloadConfiguration();
   });
 
-  async function resolve() {
+  async function resolve(maxSeedChars = 4_000) {
     return await resolveReplaySeedDraft({
       credentials: CREDENTIALS,
       cwd: '/workspace',
       source: { kind: 'fork_chain', previousSessionId: SESSION_ID, upToSeqInclusive: 7 },
       strategy: 'recent_messages',
       recentMessagesCount: 8,
-      maxSeedChars: 4_000,
+      maxSeedChars,
       candidateLimit: 8,
     });
   }
@@ -159,6 +159,14 @@ describe('resolveReplaySeedDraft — empty source vs failed retrieval', () => {
   it('reports rows that yield no usable prompt text as an empty source', async () => {
     sourceMode = 'whitespace';
     expect((await resolve()).status).toBe('no_source_dialog');
+  });
+
+  it('reports unavailable context when the selected total cannot fit a nonempty source and its reservation', async () => {
+    sourceMode = 'dialog';
+    expect((await resolve(1_024)).status).toBe('unavailable');
+    expect((await resolve()).status).toBe('seeded');
+    sourceMode = 'empty';
+    expect((await resolve(1_024)).status).toBe('no_source_dialog');
   });
 
   it('composes the real activation brief as available with no seed for an empty Session', async () => {

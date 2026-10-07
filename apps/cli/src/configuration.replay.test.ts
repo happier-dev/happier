@@ -47,4 +47,15 @@ describe('configuration replay', () => {
     configMod.reloadConfiguration();
     expect(configMod.configuration.replaySeedMaxChars).toBe(120_000);
   });
+
+  it.each([500, 300_000])('retains the explicit machine total %s beyond the old Replay bounds', async (budget) => {
+    const homeDir = createTempDirSync('happier-cli-config-');
+    tempDirs.push(homeDir);
+    process.env.HAPPIER_HOME_DIR = homeDir;
+    const configMod = await import('./configuration');
+
+    process.env.HAPPIER_REPLAY_MAX_SEED_CHARS = String(budget);
+    configMod.reloadConfiguration();
+    expect(configMod.configuration.replaySeedMaxChars).toBe(budget);
+  });
 });
