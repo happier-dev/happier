@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import * as privacyKit from 'privacy-kit';
 import { ArtifactBlobReferenceV1Schema, decodePlainArtifactStoredContent, type ArtifactBlobStoredContentV1, type ArtifactBlobWriteV1 } from '@happier-dev/protocol';
+import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { db } from '@/storage/db';
 import { inTx, type Tx } from '@/storage/inTx';
 import { deletePrivateFile, readPrivateFile, writePrivateFile } from '@/storage/blob/files';
@@ -11,10 +12,10 @@ import { readEncryptionFeatureEnv } from '@/app/features/catalog/readFeatureEnv'
 import { readArtifactForCallerInTx } from './artifactAccessService';
 import { acquireAccountEncryptionTransitionFenceInTx } from '@/app/encryption/accountEncryptionTransition';
 
-const PlainBlobFileSchema = z.discriminatedUnion('t', [
+const PlainBlobFileSchema = createStoredReadSchema(z.discriminatedUnion('t', [
     z.object({ t: z.literal('plain'), v: z.string() }).strict(),
     z.object({ t: z.literal('sealed_v1'), c: z.string() }).strict(),
-]);
+]));
 export type ArtifactBlobRow = Readonly<{ id: string; artifactId: string; storageKey: string; encryptionMode: string; storedSizeBytes: bigint }>;
 export type PreparedArtifactBlobWrite = Readonly<{
     accountId: string; row: ArtifactBlobRow; bytes: Uint8Array; candidate: boolean;
