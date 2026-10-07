@@ -2013,7 +2013,7 @@ while :; do
   if [ ! -d "$dispatch_lock" ]; then
     [ ! -e "$dispatch_lock" ] || break
     case "$dispatch_lock_error" in
-      *'File exists'*) continue ;;
+      *': File exists') continue ;;
       *) break ;;
     esac
   fi

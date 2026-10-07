@@ -3738,6 +3738,50 @@ test('native launcher passively waits for a contended dispatch reservation, canc
     assert.notEqual(blocked.status, 0);
     assert.doesNotMatch(blocked.stdout, /remote:dispatch/);
     assert.equal(await readFile(dispatchLock, 'utf8'), 'non-directory keeper');
+
+    // A real ENOTDIR diagnostic can contain "File exists" in its pathname.
+    // Only the errno suffix may admit a retry, not text owned by the caller.
+    // GNU error_tail and Apple BSD vwarnc append ": " + strerror(errno):
+    // https://github.com/coreutils/gnulib/blob/master/lib/error.c
+    // https://github.com/apple-oss-distributions/Libc/blob/main/gen/FreeBSD/err.c
+    await rm(dispatchLock);
+    const errorParent = join(root, 'File exists');
+    const errorObserved = join(root, 'dispatch-error-observed');
+    const errorRetried = join(root, 'dispatch-error-retried');
+    const errorClaimed = join(root, 'dispatch-error-claimed');
+    const errorDiagnostic = join(root, 'dispatch-error-diagnostic');
+    await writeFile(errorParent, 'error keeper');
+    await executable(join(binDir, 'mkdir'), [
+      '#!/bin/sh',
+      'if [ "$1" = "$DISPATCH_LOCK" ]; then',
+      '  if [ ! -f "$DISPATCH_ERROR_OBSERVED" ]; then',
+      '    /bin/mkdir "$DISPATCH_ERROR_PATH" 2> "$DISPATCH_ERROR_DIAGNOSTIC"; status=$?',
+      '    /bin/cat "$DISPATCH_ERROR_DIAGNOSTIC" >&2',
+      '    : > "$DISPATCH_ERROR_OBSERVED"',
+      '    exit "$status"',
+      '  fi',
+      '  : > "$DISPATCH_ERROR_RETRIED"',
+      'fi',
+      '/bin/mkdir "$@"; status=$?',
+      '[ "$1" != "$DISPATCH_LOCK" ] || [ "$status" != 0 ] || : > "$DISPATCH_RACE_CLAIMED"',
+      'exit "$status"', '',
+    ].join('\n'));
+    const errored = spawnSync('/bin/sh', [launcher, '--', 'probe-command', 'errored'], {
+      cwd: repoRoot, encoding: 'utf8',
+      env: { ...env, DISPATCH_LOCK: dispatchLock, DISPATCH_ERROR_PATH: join(errorParent, 'dispatch.lock'),
+        DISPATCH_ERROR_OBSERVED: errorObserved, DISPATCH_ERROR_RETRIED: errorRetried,
+        DISPATCH_ERROR_DIAGNOSTIC: errorDiagnostic, DISPATCH_RACE_CLAIMED: errorClaimed,
+        DISPATCH_UNOWNED_RELEASE: unownedRelease },
+    });
+    const diagnostic = await readFile(errorDiagnostic, 'utf8');
+    assert.match(diagnostic, /File exists/);
+    assert.doesNotMatch(diagnostic.trimEnd(), /: File exists$/);
+    assert.notEqual(errored.status, 0, `a non-EEXIST filesystem error must fail visibly: ${diagnostic}${errored.stdout}${errored.stderr}`);
+    assert.match(errored.stderr, /command dispatch lock is unavailable/);
+    assert.doesNotMatch(errored.stdout, /remote:dispatch/);
+    await assert.rejects(access(errorRetried), { code: 'ENOENT' }, 'a non-EEXIST filesystem error must not retry');
+    await assert.rejects(access(unownedRelease), { code: 'ENOENT' }, 'a caller that never acquired the lock must not release it');
+    assert.equal(await readFile(errorParent, 'utf8'), 'error keeper');
   } finally {
     if (waiter.exitCode == null) waiter.kill('SIGKILL');
     await waitForExit(waiter);
