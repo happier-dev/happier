@@ -323,6 +323,7 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")(
             });
             const caller = {
                 pluginId: PLUGIN_ID,
+                occurrenceId: `postgres-event-admission-caller-occurrence-${suffix}`,
                 machineId,
                 machineInstallationId,
                 materializationId,
@@ -342,6 +343,8 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")(
                     v: 1,
                     caller: {
                         pluginId: caller.pluginId,
+                        occurrenceId: caller.occurrenceId,
+                        sourceCustody: caller.sourceCustody,
                         materialization: {
                             pluginId: caller.pluginId,
                             machineId: caller.machineId,
@@ -519,6 +522,10 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")(
                     { kind: "rejoined", runId, checkpointSafe: true },
                     { kind: "rejoined", runId: secondRunId, checkpointSafe: true },
                 ],
+                continuation: {
+                    kind: "ready",
+                    accountCurrentness: (await currentness()).accountCurrentness,
+                },
             });
 
             await expect(admit({
@@ -530,6 +537,10 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")(
                     reason: "occurrenceConflict",
                     checkpointSafe: false,
                 }],
+                continuation: {
+                    kind: "ready",
+                    accountCurrentness: (await currentness()).accountCurrentness,
+                },
             });
             expect(await db.automationRun.count({ where: { accountId: account.id } })).toBe(2);
         });
