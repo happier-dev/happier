@@ -1,165 +1,98 @@
-import { describe, expect, it, vi } from 'vitest';
-import { workflowRunRowFromAutomationRun } from '@/sync/store/domains/workflowRuns';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import {
-    AutomationDefinitionDetailSchema,
-    AutomationV3RunListItemSchema,
-    AutomationV3RunDetailSchema,
+    AutomationDefinitionDetailSchema, AutomationV3RunListItemSchema, AutomationV3RunDetailSchema, MachinePoolViewV1Schema,
     type AutomationDefinitionDetail,
-    type AutomationV3Settings,
 } from '@happier-dev/protocol';
-
-import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { workflowRunRowFromAutomationRun } from '@/sync/store/domains/workflowRuns';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { createAutomationDefinitionFromDetail } from '@/sync/domains/automations/automationDefinitionProjection';
-import {
-    useAutomation,
-    useAutomationRunNextCursor,
-    useAutomationRuns,
-    useAutomations,
-} from '@/sync/domains/state/storage';
-
-// Sync imports persistence, which instantiates MMKV. Keep this owner test
-// deterministic without creating a second Account-lifetime fixture.
-const kvStore = vi.hoisted(() => new Map<string, string>());
-vi.mock('react-native-mmkv', () => {
-    class MMKV {
-        getString(key: string) {
-            return kvStore.get(key);
-        }
-        set(key: string, value: string) {
-            kvStore.set(key, value);
-        }
-        delete(key: string) {
-            kvStore.delete(key);
-        }
-        clearAll() {
-            kvStore.clear();
-        }
-    }
-
-    return { MMKV };
-});
-
-const retireLifetime = vi.hoisted(() => vi.fn());
-const getAutomationRunDetail = vi.hoisted(() => vi.fn());
-const fetchAccountEncryptionCurrentness = vi.hoisted(() => vi.fn());
-const cancelAutomationRun = vi.hoisted(() => vi.fn());
-const retryAutomationReplyHandoff = vi.hoisted(() => vi.fn());
-const deleteAutomationDefinition = vi.hoisted(() => vi.fn());
-const runAutomationDefinitionNow = vi.hoisted(() => vi.fn());
-const getAutomationSettings = vi.hoisted(() => vi.fn());
-const updateAutomationSettings = vi.hoisted(() => vi.fn());
-const clearAutomationRunHistory = vi.hoisted(() => vi.fn());
-const pauseAutomationDefinition = vi.hoisted(() => vi.fn());
-const resumeAutomationDefinition = vi.hoisted(() => vi.fn());
-const fetchAndApplyAutomationRuns = vi.hoisted(() => vi.fn());
-vi.mock('./domains/scope/activeServerAccountScope', () => ({
-    getActiveServerAccountScope: () => null,
-    captureActiveServerAccountScopeLifetime: () => null,
-    retireActiveServerAccountScopeLifetime: retireLifetime,
-}));
-
-vi.mock('@/sync/api/account/apiAccountEncryptionMode', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/api/account/apiAccountEncryptionMode')>();
-    return {
-        ...actual,
-        fetchAccountEncryptionCurrentness,
-    };
-});
+import { useAutomation, useAutomationRunNextCursor, useAutomationRuns, useAutomations, storage } from '@/sync/domains/state/storage';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { profileDefaults } from '@/sync/domains/profiles/profile';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        Platform: { OS: 'web' },
-        AppState: {
-            currentState: 'active',
-            addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+    return createReactNativeWebMock({ Platform: { OS: 'web' } });
+});
+vi.mock('@/sync/domains/state/browserRecordStorage', async () => {
+    const { createBrowserRecordStorageModuleMock } = await import('@/dev/testkit/mocks/browserRecordStorage');
+    return createBrowserRecordStorageModuleMock();
+});
+installDisconnectedServerSocketBoundary();
+await loadSyncSingletonForTests();
+const { sync } = await import('./sync');
+
+// Requests are the external Home boundary; lifetime, codecs and caches remain real.
+const requests: Array<{ path: string; method: string; authorization: string | null; body: unknown }> = [];
+const replies = new Map<string, () => Promise<Response> | Response>();
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+const initialStorage = storage.getState();
+
+function answer(path: string, value: unknown, method = 'GET') {
+    replies.set(`${method} ${path}`, () => Response.json(value));
+}
+function hold(path: string, method = 'GET') {
+    let release!: (value: unknown) => void;
+    let reached!: () => void;
+    const started = new Promise<void>(resolve => { reached = resolve; });
+    const response = new Promise<Response>(resolve => { release = value => resolve(Response.json(value)); });
+    replies.set(`${method} ${path}`, () => { reached(); return response; });
+    return { started, release };
+}
+function runPath(automationId = eventRunDetail.automationId) {
+    return `/v3/automations/${automationId}/runs`;
+}
+
+async function restoreAccount(accountId: string) {
+    connection = await restoreServerAccountForTest({
+        serverUrl: 'https://sync-lifetime.example.test', accountId,
+        request: async (url, init) => {
+            const path = new URL(String(url)).pathname;
+            const method = init?.method ?? 'GET';
+            requests.push({ path, method, authorization: new Headers(init?.headers).get('authorization'),
+                body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined });
+            const reply = replies.get(`${method} ${path}`);
+            if (reply) return await reply();
+            if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(
+                createRootLayoutFeaturesResponse({ features: { automations: { enabled: true } } }));
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            if (path === '/v1/account/profile') return Response.json({ ...profileDefaults, id: accountId });
+            if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            if (path === '/v2/sessions') return Response.json({ sessions: [], nextCursor: null, hasNext: false });
+            if (path === '/v1/sessions/active') return Response.json({ sessions: [] });
+            if (path === '/v1/machines' || path === '/v1/artifacts') return Response.json([]);
+            if (path === '/v1/friends') return Response.json({ friends: [] });
+            if (path === '/v1/kv') return Response.json({ items: [] });
+            if (path === '/v2/cursor') return Response.json({ cursor: '0' });
+            if (path === '/v2/changes') return Response.json({ changes: [], nextCursor: '0' });
+            if (path === '/v3/automations') return Response.json({ automations: [], nextCursor: null });
+            if (path.endsWith('/runs')) return Response.json({ runs: [], nextCursor: null });
+            return new Response('{}', { status: 404 });
         },
     });
+    expect(captureActiveServerAccountScopeLifetime()?.isCurrent()).toBe(true);
+}
+async function changeAccount() {
+    await connection!.dispose();
+    await restoreAccount('account-b');
+}
+beforeEach(async () => {
+    replies.clear();
+    await restoreAccount('account-a');
+    requests.length = 0;
 });
-
-vi.mock('@/sync/api/session/apiSocket', () => ({
-    apiSocket: {
-        onMessage: vi.fn(),
-        onError: vi.fn(),
-        onReconnected: vi.fn(),
-        onStatusChange: vi.fn(() => () => {}),
-        onConnectionStateChange: vi.fn(() => () => {}),
-        connect: vi.fn(),
-        disconnect: vi.fn(),
-        initialize: vi.fn(),
-        request: vi.fn(async () => new Response('ok', { status: 200 })),
-        emitWithAck: vi.fn(),
-        send: vi.fn(),
-    },
-}));
-
-vi.mock('@/log', () => ({
-    log: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
-}));
-
-vi.mock('@/voice/context/voiceHooks', () => ({
-    voiceHooks: {
-        onSessionFocus: vi.fn(),
-        onSessionOffline: vi.fn(),
-        onSessionOnline: vi.fn(),
-        onMessages: vi.fn(),
-        reportContextualUpdate: vi.fn(),
-    },
-}));
-
-vi.mock('./api/automations/apiAutomations', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('./api/automations/apiAutomations')>();
-    return {
-        ...actual,
-        getAutomationRunDetail,
-        cancelAutomationRun,
-        retryAutomationReplyHandoff,
-        deleteAutomationDefinition,
-        runAutomationDefinitionNow,
-        getAutomationSettings,
-        updateAutomationSettings,
-        clearAutomationRunHistory,
-        pauseAutomationDefinition,
-        resumeAutomationDefinition,
-    };
+afterEach(async () => {
+    await connection?.dispose();
+    connection = undefined;
+    storage.setState(initialStorage, true);
+    replies.clear();
 });
-
-vi.mock('./engine/automations/syncAutomations', async (importOriginal) => ({
-    ...await importOriginal<typeof import('./engine/automations/syncAutomations')>(),
-    fetchAndApplyAutomationRuns,
-}));
-
-import './syncEngine';
-import { sync } from './sync';
-import { storage } from './domains/state/storage';
-import { getActiveServerSnapshot } from './domains/server/serverRuntime';
-
-/** Test-only view of the incumbent owner; production code never exposes this seam. */
-type SyncResetOwnerTestSeam = {
-    serverScopeGeneration: number;
-    automationRunTraversalTokensByAutomationId: Map<string, number>;
-    resetServerScopedRuntimeState(): void;
-    projectAndUpsertAutomationDefinition(
-        detail: AutomationDefinitionDetail,
-        shouldContinue: () => boolean,
-    ): Promise<unknown>;
-} & {
-    credentials: AuthCredentials | undefined;
-    getAutomationRunDetailInspection(automationId: string, runId: string): Promise<unknown>;
-    cancelAutomationRun(runId: string): Promise<unknown>;
-    retryAutomationReplyHandoff(runId: string): Promise<unknown>;
-    deleteAutomation(automationId: string): Promise<void>;
-    runAutomationNow(automationId: string): Promise<unknown>;
-    getAutomationSettings(): Promise<AutomationV3Settings>;
-    updateAutomationSettings(input: AutomationV3Settings): Promise<AutomationV3Settings>;
-    clearAutomationRunHistory(automationId: string): Promise<unknown>;
-    fetchAutomationRuns(automationId: string, limit?: number, cursor?: string): Promise<unknown>;
-    pauseAutomation(automationId: string): Promise<unknown>;
-    resumeAutomation(automationId: string): Promise<unknown>;
-};
-
 function eventDetail(templateVersion: number): AutomationDefinitionDetail {
     return AutomationDefinitionDetailSchema.parse({
         id: 'automation-event-owner',
@@ -254,494 +187,241 @@ const eventRunDetail = AutomationV3RunDetailSchema.parse({
     events: [],
 });
 
+const runSummary = AutomationV3RunListItemSchema.parse({
+    id: eventRunDetail.id,
+    automationId: eventRunDetail.automationId,
+    revision: eventRunDetail.revision,
+    state: eventRunDetail.state,
+    triggerId: eventRunDetail.triggerId,
+    triggerRetired: eventRunDetail.triggerRetired,
+    cause: eventRunDetail.cause,
+    dueAt: eventRunDetail.dueAt,
+    claimedAt: eventRunDetail.claimedAt,
+    startedAt: eventRunDetail.startedAt,
+    finishedAt: eventRunDetail.finishedAt,
+    claimedByMachineId: eventRunDetail.claimedByMachineId,
+    leaseExpiresAt: eventRunDetail.leaseExpiresAt,
+    attempt: eventRunDetail.attempt,
+    errorCode: eventRunDetail.errorCode,
+    producedSessionId: eventRunDetail.producedSessionId,
+    executionDispatchState: eventRunDetail.executionDispatchState,
+    executionAttempt: eventRunDetail.executionAttempt,
+    replyHandoffState: eventRunDetail.replyHandoffState,
+    replyHandoffAttempt: eventRunDetail.replyHandoffAttempt,
+    replyHandoffDueAt: eventRunDetail.replyHandoffDueAt,
+    createdAt: eventRunDetail.createdAt,
+    updatedAt: eventRunDetail.updatedAt,
+});
+
 describe('Sync Server/Account lifetime reset boundary', () => {
     it('retires synchronously before advancing generation and never waits for consumer cleanup', () => {
-        const owner = sync as unknown as SyncResetOwnerTestSeam;
-        const generationBeforeReset = owner.serverScopeGeneration;
-        const unresolvedCleanup = new Promise<void>(() => {});
-        retireLifetime.mockImplementation(() => {
-            expect(owner.serverScopeGeneration).toBe(generationBeforeReset);
-            // A losing implementation that awaits this thenable leaves the
-            // generation unchanged at the assertion below.
-            return unresolvedCleanup;
+        const lifetime = captureActiveServerAccountScopeLifetime()!;
+        const generation = Reflect.get(sync, 'serverScopeGeneration');
+        const neverSettles = new Promise<void>(() => {});
+        let retired = false;
+        lifetime.onRetire(() => {
+            expect(lifetime.isCurrent()).toBe(false);
+            expect(Reflect.get(sync, 'serverScopeGeneration')).toBe(generation);
+            retired = true;
+            return neverSettles;
         });
-
-        owner.resetServerScopedRuntimeState();
-
-        expect(retireLifetime).toHaveBeenCalledTimes(1);
-        expect(owner.serverScopeGeneration).toBe(generationBeforeReset + 1);
+        sync.disconnectServer();
+        expect(retired).toBe(true);
+        expect(Reflect.get(sync, 'serverScopeGeneration')).toBe(generation + 1);
+        expect(sync.getCredentials()).toBeNull();
     });
 
     it('preserves per-Home Pool rows across active-sync teardown until credential ownership changes', () => {
-        const owner = sync as unknown as SyncResetOwnerTestSeam;
-        retireLifetime.mockReset();
-        const activeServerId = getActiveServerSnapshot().serverId;
+        const activeServerId = connection!.home.id;
         const otherServerId = `${activeServerId}-other`;
-        const row = { pool: { id: 'pool', name: 'Private', members: [] }, availability: { state: 'unknown' } } as never;
+        // Empty membership is a valid cached Pool; transport teardown is not credential replacement.
+        const row = MachinePoolViewV1Schema.parse({ pool: { id: '11111111-1111-4111-8111-111111111111', name: 'Private', description: null,
+            revision: 0, createdAt: 1, updatedAt: 1, members: [] }, availability: { state: 'unknown' } });
         storage.setState({
             machinePoolListByServerId: { [activeServerId]: [row], [otherServerId]: [row] },
             machinePoolListStatusByServerId: { [activeServerId]: 'idle', [otherServerId]: 'idle' },
-            machinePoolAccountIdByServerId: { [activeServerId]: 'active-account', [otherServerId]: 'other-account' },
+            machinePoolAccountIdByServerId: { [activeServerId]: 'account-a', [otherServerId]: 'other-account' },
         });
-
-        owner.resetServerScopedRuntimeState();
-
-        expect(storage.getState().machinePoolListByServerId[activeServerId]).toEqual([row]);
-        expect(storage.getState().machinePoolListStatusByServerId[activeServerId]).toBe('idle');
-        expect(storage.getState().machinePoolAccountIdByServerId[activeServerId]).toBe('active-account');
-        expect(storage.getState().machinePoolListByServerId[otherServerId]).toEqual([row]);
-        expect(storage.getState().machinePoolAccountIdByServerId[otherServerId]).toBe('other-account');
+        sync.disconnectServer();
+        expect(storage.getState().machinePoolListByServerId).toEqual({ [activeServerId]: [row], [otherServerId]: [row] });
+        expect(storage.getState().machinePoolAccountIdByServerId).toEqual({ [activeServerId]: 'account-a', [otherServerId]: 'other-account' });
+        expect(storage.getState().machinePoolListStatusByServerId[otherServerId]).toBe('idle');
     });
 
     it('keeps signed-out Pool rows visible but inert when the active Sync runtime disconnects', () => {
-        const activeServerId = getActiveServerSnapshot().serverId;
-        const row = { pool: { id: 'pool', name: 'Private', members: [] }, availability: { state: 'unknown' } } as never;
+        const serverId = connection!.home.id;
+        const row = MachinePoolViewV1Schema.parse({ pool: { id: '11111111-1111-4111-8111-111111111111', name: 'Private', description: null,
+            revision: 0, createdAt: 1, updatedAt: 1, members: [] }, availability: { state: 'unknown' } });
         storage.setState({
-            machinePoolListByServerId: { [activeServerId]: [row] },
-            machinePoolListStatusByServerId: { [activeServerId]: 'idle' },
-            machinePoolAccountIdByServerId: { [activeServerId]: 'active-account' },
+            machinePoolListByServerId: { [serverId]: [row] },
+            machinePoolListStatusByServerId: { [serverId]: 'idle' },
+            machinePoolAccountIdByServerId: { [serverId]: 'account-a' },
         });
-
         sync.disconnectServer();
-
-        expect(storage.getState().machinePoolListByServerId[activeServerId]).toEqual([row]);
-        expect(storage.getState().machinePoolListStatusByServerId[activeServerId]).toBe('signedOut');
-        expect(storage.getState().machinePoolAccountIdByServerId[activeServerId]).toBe('active-account');
+        expect(storage.getState().machinePoolListByServerId[serverId]).toEqual([row]);
+        expect(storage.getState().machinePoolListStatusByServerId[serverId]).toBe('signedOut');
+        expect(storage.getState().machinePoolAccountIdByServerId[serverId]).toBe('account-a');
     });
 
     it('removes Automation definition, run history, and cursor from a retained route when its Server/Account scope retires', async () => {
-        const owner = sync as unknown as SyncResetOwnerTestSeam;
-        // The preceding synchronous-retirement discriminator deliberately
-        // leaves its never-settling cleanup mock installed. This route-level
-        // projection check needs the normal, synchronous lifecycle boundary.
-        retireLifetime.mockReset();
-        const previousState = storage.getState();
         const definition = createAutomationDefinitionFromDetail(eventDetail(3));
-        const routeAutomationId = definition.id;
-        const run = AutomationV3RunListItemSchema.parse({
-            id: eventRunDetail.id,
-            automationId: eventRunDetail.automationId,
-            revision: eventRunDetail.revision,
-            state: eventRunDetail.state,
-            triggerId: eventRunDetail.triggerId,
-            triggerRetired: eventRunDetail.triggerRetired,
-            cause: eventRunDetail.cause,
-            dueAt: eventRunDetail.dueAt,
-            claimedAt: eventRunDetail.claimedAt,
-            startedAt: eventRunDetail.startedAt,
-            finishedAt: eventRunDetail.finishedAt,
-            claimedByMachineId: eventRunDetail.claimedByMachineId,
-            leaseExpiresAt: eventRunDetail.leaseExpiresAt,
-            attempt: eventRunDetail.attempt,
-            errorCode: eventRunDetail.errorCode,
-            producedSessionId: eventRunDetail.producedSessionId,
-            executionDispatchState: eventRunDetail.executionDispatchState,
-            executionAttempt: eventRunDetail.executionAttempt,
-            replyHandoffState: eventRunDetail.replyHandoffState,
-            replyHandoffAttempt: eventRunDetail.replyHandoffAttempt,
-            replyHandoffDueAt: eventRunDetail.replyHandoffDueAt,
-            createdAt: eventRunDetail.createdAt,
-            updatedAt: eventRunDetail.updatedAt,
+        storage.setState({
+            isDataReady: true,
+            automations: { [definition.id]: definition },
+            workflowRunsById: { [runSummary.id]: workflowRunRowFromAutomationRun(runSummary) },
+            automationRunIdsByAutomationId: { [definition.id]: [runSummary.id] },
+            automationRunNextCursorByAutomationId: { [definition.id]: 'older-runs' },
         });
-
+        const hook = await renderHook(() => ({
+            all: useAutomations().map(automation => automation.id),
+            definition: useAutomation(definition.id)?.id ?? null,
+            runs: useAutomationRuns(definition.id).map(run => run.id),
+            nextCursor: useAutomationRunNextCursor(definition.id),
+        }));
         try {
-            storage.setState({
-                ...previousState,
-                isDataReady: true,
-                automations: { [definition.id]: definition },
-                workflowRunsById: { [run.id]: workflowRunRowFromAutomationRun(run) },
-                automationRunIdsByAutomationId: { [definition.id]: [run.id] },
-                automationRunNextCursorByAutomationId: { [definition.id]: 'older-runs' },
+            expect(hook.getCurrent()).toEqual({ all: [definition.id], definition: definition.id, runs: [runSummary.id], nextCursor: 'older-runs' });
+            await act(async () => { sync.disconnectServer(); });
+            expect(hook.getCurrent()).toEqual({ all: [], definition: null, runs: [], nextCursor: null });
+            expect(storage.getState()).toMatchObject({
+                automations: {}, workflowRunsById: {}, automationRunIdsByAutomationId: {},
+                automationRunNextCursorByAutomationId: {}, automationRunTraversalsByAutomationId: {},
             });
-
-            const hook = await renderHook(() => ({
-                all: useAutomations().map((automation) => automation.id),
-                definition: useAutomation(routeAutomationId)?.id ?? null,
-                runs: useAutomationRuns(routeAutomationId).map((automationRun) => automationRun.id),
-                nextCursor: useAutomationRunNextCursor(routeAutomationId),
-            }));
-            try {
-                expect(hook.getCurrent()).toEqual({
-                    all: [definition.id],
-                    definition: definition.id,
-                    runs: [run.id],
-                    nextCursor: 'older-runs',
-                });
-
-                await act(async () => {
-                    owner.resetServerScopedRuntimeState();
-                });
-
-                expect(hook.getCurrent()).toEqual({
-                    all: [],
-                    definition: null,
-                    runs: [],
-                    nextCursor: null,
-                });
-                expect(storage.getState().automations).toEqual({});
-                expect(storage.getState().workflowRunsById).toEqual({});
-                expect(storage.getState().automationRunIdsByAutomationId).toEqual({});
-                expect(storage.getState().automationRunNextCursorByAutomationId).toEqual({});
-                expect(storage.getState().automationRunTraversalsByAutomationId).toEqual({});
-            } finally {
-                await hook.unmount();
-            }
-        } finally {
-            storage.setState(previousState, true);
-        }
+        } finally { await hook.unmount(); }
     });
 
     it('does not return a direct Automation definition after its server-account scope expires', async () => {
-        const owner = sync as unknown as SyncResetOwnerTestSeam;
-        let scopeCurrent = true;
-        const detail = AutomationDefinitionDetailSchema.parse({
-            id: 'automation-stale-scope',
-            name: 'Stale scope',
-            description: null,
-            enabled: true,
-            triggers: [{
-                id: '33333333-3333-4333-8333-333333333333',
-                revision: 0,
-                enabled: true,
-                createdAt: 1,
-                updatedAt: 1,
-                kind: 'schedule',
-                schedule: {
-                    kind: 'interval',
-                    scheduleExpr: null,
-                    everyMs: 60_000,
-                    timezone: null,
-                },
-                nextRunAt: null,
-                triggerDefinitionEnvelope: null,
-            }],
-            targetType: 'existingSession',
-            existingSessionId: 'session-1',
-            templateVersion: 1,
-            lastRunAt: null,
-            createdAt: 1,
-            updatedAt: 1,
-            assignments: [],
-            executionRecipe: {
-                v: 1,
-                templateVersion: 1,
-                template: { t: 'plain', v: { v: 1, prompt: 'Review work' } },
-                triggerEvidence: null,
-                target: { kind: 'existingSession', sessionId: 'session-1' },
-            },
-        });
-
-        const operation = owner.projectAndUpsertAutomationDefinition(detail, () => scopeCurrent);
-        scopeCurrent = false;
-
-        await expect(operation).rejects.toThrow('Automation server-account scope changed');
+        const pending = hold('/v3/automations/automation-event-owner');
+        const operation = sync.refreshAutomationDefinitionDetail('automation-event-owner');
+        const rejected = expect(operation).rejects.toThrow();
+        await pending.started;
+        sync.disconnectServer();
+        pending.release(eventDetail(1));
+        await rejected;
+        expect(storage.getState().automations).toEqual({});
     });
 
     it('fences a direct Run-detail inspection when its server-account scope changes', async () => {
-        const owner = sync as unknown as SyncResetOwnerTestSeam;
-        const credentials: AuthCredentials = { token: 'token-event-run', secret: 'secret-event-run' };
-        const previousCredentials = owner.credentials;
-        const previousGeneration = owner.serverScopeGeneration;
-        let resolveRead: (value: typeof eventRunDetail) => void = () => {
-            throw new Error('Direct Run detail test promise did not initialize');
-        };
-        const pendingRead = new Promise<typeof eventRunDetail>((resolve) => {
-            resolveRead = resolve;
-        });
-        getAutomationRunDetail.mockReset();
-        getAutomationRunDetail.mockReturnValue(pendingRead);
-        owner.credentials = credentials;
-
-        try {
-            const operation = owner.getAutomationRunDetailInspection(
-                eventRunDetail.automationId,
-                eventRunDetail.id,
-            );
-            owner.serverScopeGeneration = previousGeneration + 1;
-            resolveRead(eventRunDetail);
-
-            await expect(operation).rejects.toThrow('Automation server-account scope changed');
-            expect(getAutomationRunDetail).toHaveBeenCalledWith(
-                credentials,
-                eventRunDetail.automationId,
-                eventRunDetail.id,
-            );
-        } finally {
-            owner.credentials = previousCredentials;
-            owner.serverScopeGeneration = previousGeneration;
-        }
+        const pending = hold(`${runPath()}/${eventRunDetail.id}`);
+        const operation = sync.getAutomationRunDetailInspection(eventRunDetail.automationId, eventRunDetail.id);
+        const rejected = expect(operation).rejects.toThrow();
+        await pending.started;
+        sync.disconnectServer();
+        pending.release(eventRunDetail);
+        await rejected;
+        expect(storage.getState().workflowRunsById[eventRunDetail.id]).toBeUndefined();
     });
 
     it('returns route-local currentness unavailability without writing private Run detail into the cache', async () => {
-        const owner = sync as unknown as SyncResetOwnerTestSeam;
-        const credentials: AuthCredentials = { token: 'token-event-run-inspection', secret: 'secret-event-run-inspection' };
-        const previousCredentials = owner.credentials;
-        getAutomationRunDetail.mockReset();
-        getAutomationRunDetail.mockResolvedValue(eventRunDetail);
-        fetchAccountEncryptionCurrentness.mockReset();
-        fetchAccountEncryptionCurrentness.mockRejectedValue(new Error('currentness unavailable'));
-        owner.credentials = credentials;
-
-        try {
-            await expect(owner.getAutomationRunDetailInspection(
-                eventRunDetail.automationId,
-                eventRunDetail.id,
-            )).resolves.toEqual({
-                detail: eventRunDetail,
-                privateContent: {
-                    recipe: { kind: 'unavailable', reason: 'currentnessUnavailable' },
-                    result: { kind: 'unavailable', reason: 'currentnessUnavailable' },
-                    failureDetail: { kind: 'unavailable', reason: 'currentnessUnavailable' },
-                },
-            });
-            expect(getAutomationRunDetail).toHaveBeenCalledWith(
-                credentials,
-                eventRunDetail.automationId,
-                eventRunDetail.id,
-            );
-            expect(fetchAccountEncryptionCurrentness).toHaveBeenCalledWith(credentials);
-        } finally {
-            owner.credentials = previousCredentials;
-        }
+        answer(`${runPath()}/${eventRunDetail.id}`, eventRunDetail);
+        replies.set('GET /v1/account/encryption/currentness', () => new Response('{}', { status: 503 }));
+        await expect(sync.getAutomationRunDetailInspection(eventRunDetail.automationId, eventRunDetail.id)).resolves.toEqual({
+            detail: eventRunDetail,
+            privateContent: {
+                recipe: { kind: 'unavailable', reason: 'currentnessUnavailable' },
+                result: { kind: 'unavailable', reason: 'currentnessUnavailable' },
+                failureDetail: { kind: 'unavailable', reason: 'currentnessUnavailable' },
+            },
+        });
+        expect(storage.getState().workflowRunsById[eventRunDetail.id]).toBeUndefined();
+        expect(requests.filter(request => request.path === '/v1/account/encryption/currentness')).toEqual([
+            expect.objectContaining({ authorization: `Bearer ${connection!.credentials.token}` }),
+        ]);
     });
 
     it('projects a current cancellation through the incumbent Automation Run cache owner', async () => {
-        const owner = sync as unknown as SyncResetOwnerTestSeam;
-        const credentials: AuthCredentials = { token: 'token-event-run-cancel', secret: 'secret-event-run-cancel' };
-        const previousCredentials = owner.credentials;
-        const cancelledRun = {
-            ...eventRunDetail,
-            state: 'cancelled' as const,
-            finishedAt: 2,
-            updatedAt: 2,
-        };
-        cancelAutomationRun.mockReset();
-        cancelAutomationRun.mockResolvedValue(cancelledRun);
-        owner.credentials = credentials;
-
-        try {
-            await expect(owner.cancelAutomationRun(eventRunDetail.id)).resolves.toMatchObject({
-                id: eventRunDetail.id,
-                state: 'cancelled',
-            });
-            expect(cancelAutomationRun).toHaveBeenCalledWith(credentials, eventRunDetail.id);
-        } finally {
-            owner.credentials = previousCredentials;
-        }
+        answer(`/v3/automations/runs/${eventRunDetail.id}/cancel`, {
+            run: { ...runSummary, state: 'cancelled', finishedAt: 2, updatedAt: 2 },
+        }, 'POST');
+        await expect(sync.cancelAutomationRun(eventRunDetail.id)).resolves.toMatchObject({ id: eventRunDetail.id, state: 'cancelled' });
+        expect(storage.getState().workflowRunsById[eventRunDetail.id]?.automation).toMatchObject({ id: eventRunDetail.id, state: 'cancelled' });
     });
 
     it('projects reply handoff recovery through the incumbent Automation Run cache owner', async () => {
-        const owner = sync as unknown as SyncResetOwnerTestSeam;
-        const credentials: AuthCredentials = { token: 'token-handoff-retry', secret: 'secret-handoff-retry' };
-        const previousCredentials = owner.credentials;
-        const readyRun = {
-            ...eventRunDetail,
-            revision: eventRunDetail.revision + 1,
-            replyHandoffState: 'ready' as const,
-            replyHandoffDueAt: 2,
-            updatedAt: 2,
-        };
-        retryAutomationReplyHandoff.mockReset();
-        retryAutomationReplyHandoff.mockResolvedValue(readyRun);
-        owner.credentials = credentials;
-
-        try {
-            await expect(owner.retryAutomationReplyHandoff(eventRunDetail.id)).resolves.toMatchObject({
-                id: eventRunDetail.id,
-                replyHandoffState: 'ready',
-            });
-            expect(retryAutomationReplyHandoff).toHaveBeenCalledWith(credentials, eventRunDetail.id);
-        } finally {
-            owner.credentials = previousCredentials;
-        }
+        answer(`/v3/automations/runs/${eventRunDetail.id}/retry-reply-handoff`, {
+            run: { ...runSummary, revision: runSummary.revision + 1, replyHandoffState: 'ready', replyHandoffDueAt: 2, updatedAt: 2 },
+        }, 'POST');
+        await expect(sync.retryAutomationReplyHandoff(eventRunDetail.id)).resolves.toMatchObject({ id: eventRunDetail.id, replyHandoffState: 'ready' });
+        expect(storage.getState().workflowRunsById[eventRunDetail.id]?.automation).toMatchObject({ id: eventRunDetail.id, replyHandoffState: 'ready' });
     });
 
     it('keeps account Automation settings direct and refreshes the canonical Run projection after clearing history', async () => {
-        const owner = sync as unknown as SyncResetOwnerTestSeam;
-        const credentials: AuthCredentials = { token: 'token-automation-settings', secret: 'secret-automation-settings' };
-        const previousCredentials = owner.credentials;
-        const settings: AutomationV3Settings = {
-            maxActiveRunsPerMachine: 4,
-            runRetention: 'thirtyDays',
-        };
-        const fetchRuns = vi.spyOn(owner, 'fetchAutomationRuns').mockResolvedValue({ nextCursor: null });
-        getAutomationSettings.mockReset();
-        getAutomationSettings.mockResolvedValue(settings);
-        updateAutomationSettings.mockReset();
-        updateAutomationSettings.mockResolvedValue({
-            maxActiveRunsPerMachine: 2,
-            runRetention: 'keepForever',
-        });
-        clearAutomationRunHistory.mockReset();
-        clearAutomationRunHistory.mockResolvedValue({ clearedRuns: 3 });
-        owner.credentials = credentials;
-
-        try {
-            await expect(owner.getAutomationSettings()).resolves.toEqual(settings);
-            await expect(owner.updateAutomationSettings(settings)).resolves.toEqual({
-                maxActiveRunsPerMachine: 2,
-                runRetention: 'keepForever',
-            });
-            await expect(owner.clearAutomationRunHistory('automation-event-1')).resolves.toEqual({ clearedRuns: 3 });
-
-            expect(getAutomationSettings).toHaveBeenCalledWith(credentials);
-            expect(updateAutomationSettings).toHaveBeenCalledWith(credentials, settings);
-            expect(clearAutomationRunHistory).toHaveBeenCalledWith(credentials, 'automation-event-1');
-            expect(fetchRuns).toHaveBeenCalledWith('automation-event-1');
-        } finally {
-            owner.credentials = previousCredentials;
-            fetchRuns.mockRestore();
-        }
+        const settings = { maxActiveRunsPerMachine: 4, runRetention: 'thirtyDays' as const };
+        answer('/v3/automations/settings', settings);
+        answer('/v3/automations/settings', { maxActiveRunsPerMachine: 2, runRetention: 'keepForever' }, 'PUT');
+        answer(`${runPath()}/clear-history`, { clearedRuns: 3 }, 'POST');
+        answer(runPath(), { runs: [runSummary], nextCursor: null });
+        await expect(sync.getAutomationSettings()).resolves.toEqual(settings);
+        await expect(sync.updateAutomationSettings(settings)).resolves.toEqual({ maxActiveRunsPerMachine: 2, runRetention: 'keepForever' });
+        await expect(sync.clearAutomationRunHistory(eventRunDetail.automationId)).resolves.toEqual({ clearedRuns: 3 });
+        expect(requests).toContainEqual(expect.objectContaining({ path: '/v3/automations/settings', method: 'PUT', body: settings }));
+        expect(storage.getState().automationRunIdsByAutomationId[eventRunDetail.automationId]).toEqual([runSummary.id]);
     });
 
     it('does not refresh a different account Run projection after clear-history loses currentness', async () => {
-        const owner = sync as unknown as SyncResetOwnerTestSeam;
-        const credentials: AuthCredentials = { token: 'token-automation-clear-stale', secret: 'secret-automation-clear-stale' };
-        const previousCredentials = owner.credentials;
-        const previousGeneration = owner.serverScopeGeneration;
-        let resolveClear: (result: { clearedRuns: number }) => void = () => {
-            throw new Error('Clear-history test promise did not initialize');
-        };
-        const pendingClear = new Promise<{ clearedRuns: number }>((resolve) => {
-            resolveClear = resolve;
-        });
-        const fetchRuns = vi.spyOn(owner, 'fetchAutomationRuns').mockResolvedValue({ nextCursor: null });
-        clearAutomationRunHistory.mockReset();
-        clearAutomationRunHistory.mockReturnValue(pendingClear);
-        owner.credentials = credentials;
-
-        try {
-            const operation = owner.clearAutomationRunHistory('automation-event-1');
-            owner.serverScopeGeneration = previousGeneration + 1;
-            resolveClear({ clearedRuns: 3 });
-
-            await expect(operation).rejects.toThrow('Automation server-account scope changed');
-            expect(fetchRuns).not.toHaveBeenCalled();
-        } finally {
-            owner.credentials = previousCredentials;
-            owner.serverScopeGeneration = previousGeneration;
-            fetchRuns.mockRestore();
-        }
+        const pending = hold(`${runPath()}/clear-history`, 'POST');
+        const operation = sync.clearAutomationRunHistory(eventRunDetail.automationId);
+        const rejected = expect(operation).rejects.toThrow();
+        await pending.started;
+        await changeAccount();
+        const currentRun = { ...runSummary, revision: 10 };
+        storage.getState().setAutomationRuns(eventRunDetail.automationId, [currentRun], null);
+        pending.release({ clearedRuns: 3 });
+        await rejected;
+        expect(requests.filter(request => request.path === runPath())).toEqual([]);
+        expect(storage.getState().workflowRunsById[runSummary.id]?.automation).toEqual(currentRun);
     });
 
     it('does not install an equal-version pause response over newer canonical socket truth', async () => {
-        const owner = sync as unknown as SyncResetOwnerTestSeam;
-        const credentials: AuthCredentials = { token: 'token-automation-pause-race', secret: 'secret-automation-pause-race' };
-        const previousCredentials = owner.credentials;
         const initialDetail = eventDetail(4);
-        const initial = createAutomationDefinitionFromDetail(initialDetail);
-        storage.getState().upsertAutomation(initial);
-        let resolvePause: (value: AutomationDefinitionDetail) => void = () => {
-            throw new Error('Pause race promise did not initialize');
-        };
-        pauseAutomationDefinition.mockReset();
-        pauseAutomationDefinition.mockReturnValue(new Promise<AutomationDefinitionDetail>((resolve) => {
-            resolvePause = resolve;
-        }));
-        owner.credentials = credentials;
-
-        try {
-            const operation = owner.pauseAutomation(initial.id);
-            const socketCurrent = createAutomationDefinitionFromDetail({
-                ...initialDetail,
-                name: 'Current socket truth',
-                updatedAt: initialDetail.updatedAt + 1,
-            });
-            storage.getState().upsertAutomation(socketCurrent);
-            resolvePause({ ...initialDetail, enabled: false });
-
-            await expect(operation).resolves.toBe(socketCurrent);
-            expect(storage.getState().automations[initial.id]).toBe(socketCurrent);
-        } finally {
-            owner.credentials = previousCredentials;
-        }
+        storage.getState().upsertAutomation(createAutomationDefinitionFromDetail(initialDetail));
+        const pending = hold(`/v3/automations/${initialDetail.id}/pause`, 'POST');
+        const operation = sync.pauseAutomation(initialDetail.id);
+        await pending.started;
+        const socketCurrent = createAutomationDefinitionFromDetail({ ...initialDetail, name: 'Current socket truth', updatedAt: initialDetail.updatedAt + 1 });
+        storage.getState().upsertAutomation(socketCurrent);
+        pending.release({ ...initialDetail, enabled: false });
+        await expect(operation).resolves.toBe(socketCurrent);
+        expect(storage.getState().automations[initialDetail.id]).toBe(socketCurrent);
     });
 
     it('clears Account-scoped Run traversal tokens and rejects a late prior-Account token mutation', async () => {
-        const owner = sync as unknown as SyncResetOwnerTestSeam;
-        const credentials: AuthCredentials = { token: 'token-automation-run-page', secret: 'secret-automation-run-page' };
-        const previousCredentials = owner.credentials;
-        let resolvePage: (value: { nextCursor: string | null; traversalToken: number | null }) => void = () => {
-            throw new Error('Run page promise did not initialize');
-        };
-        fetchAndApplyAutomationRuns.mockReset();
-        fetchAndApplyAutomationRuns.mockReturnValue(new Promise((resolve) => {
-            resolvePage = resolve;
-        }));
-        owner.credentials = credentials;
-        owner.automationRunTraversalTokensByAutomationId.set('shared-automation-id', 41);
-
-        try {
-            const operation = owner.fetchAutomationRuns('shared-automation-id', 20, 'account-a-cursor');
-            owner.resetServerScopedRuntimeState();
-            expect(owner.automationRunTraversalTokensByAutomationId.has('shared-automation-id')).toBe(false);
-
-            resolvePage({ nextCursor: 'late-account-a-cursor', traversalToken: 42 });
-            await operation;
-
-            expect(owner.automationRunTraversalTokensByAutomationId.has('shared-automation-id')).toBe(false);
-        } finally {
-            owner.credentials = previousCredentials;
-        }
+        answer(runPath(), { runs: [runSummary], nextCursor: 'account-a-cursor' });
+        await sync.fetchAutomationRuns(eventRunDetail.automationId);
+        expect(storage.getState().automationRunNextCursorByAutomationId[eventRunDetail.automationId]).toBe('account-a-cursor');
+        const pending = hold(runPath());
+        const operation = sync.fetchAutomationRuns(eventRunDetail.automationId, 20, 'account-a-cursor');
+        const rejected = expect(operation).rejects.toThrow();
+        await pending.started;
+        sync.disconnectServer();
+        pending.release({ runs: [runSummary], nextCursor: 'late-account-a-cursor' });
+        await rejected;
+        expect(storage.getState().automationRunTraversalsByAutomationId).toEqual({});
+        expect(storage.getState().automationRunNextCursorByAutomationId).toEqual({});
     });
 
     it('does not remove an Automation after the delete request Server/Account scope expires', async () => {
-        const owner = sync as unknown as SyncResetOwnerTestSeam;
-        const credentials: AuthCredentials = { token: 'token-event-delete', secret: 'secret-event-delete' };
-        const previousCredentials = owner.credentials;
-        const previousGeneration = owner.serverScopeGeneration;
-        let resolveDelete: () => void = () => {
-            throw new Error('Automation delete test promise did not initialize');
-        };
-        const pendingDelete = new Promise<void>((resolve) => {
-            resolveDelete = resolve;
-        });
-        const removeAutomation = vi.spyOn(storage.getState(), 'removeAutomation');
-        deleteAutomationDefinition.mockReset();
-        deleteAutomationDefinition.mockReturnValue(pendingDelete);
-        owner.credentials = credentials;
-
-        try {
-            const operation = owner.deleteAutomation('automation-event-owner');
-            owner.serverScopeGeneration = previousGeneration + 1;
-            resolveDelete();
-
-            await expect(operation).rejects.toThrow('Automation server-account scope changed');
-            expect(removeAutomation).not.toHaveBeenCalled();
-        } finally {
-            removeAutomation.mockRestore();
-            owner.credentials = previousCredentials;
-            owner.serverScopeGeneration = previousGeneration;
-        }
+        const pending = hold(`/v3/automations/${eventRunDetail.automationId}`, 'DELETE');
+        const operation = sync.deleteAutomation(eventRunDetail.automationId);
+        const rejected = expect(operation).rejects.toThrow();
+        await pending.started;
+        await changeAccount();
+        const currentDefinition = createAutomationDefinitionFromDetail({ ...eventDetail(9), name: 'Account B definition' });
+        storage.getState().upsertAutomation(currentDefinition);
+        pending.release({ success: true });
+        await rejected;
+        expect(storage.getState().automations[currentDefinition.id]).toBe(currentDefinition);
     });
 
     it('does not cache a run-now response after its Server/Account scope expires', async () => {
-        const owner = sync as unknown as SyncResetOwnerTestSeam;
-        const credentials: AuthCredentials = { token: 'token-event-run-now', secret: 'secret-event-run-now' };
-        const previousCredentials = owner.credentials;
-        const previousGeneration = owner.serverScopeGeneration;
-        let resolveRun: (value: typeof eventRunDetail) => void = () => {
-            throw new Error('Automation run-now test promise did not initialize');
-        };
-        const pendingRun = new Promise<typeof eventRunDetail>((resolve) => {
-            resolveRun = resolve;
-        });
-        const upsertAutomationRun = vi.spyOn(storage.getState(), 'upsertAutomationRun');
-        runAutomationDefinitionNow.mockReset();
-        runAutomationDefinitionNow.mockReturnValue(pendingRun);
-        owner.credentials = credentials;
-
-        try {
-            const operation = owner.runAutomationNow('automation-event-owner');
-            owner.serverScopeGeneration = previousGeneration + 1;
-            resolveRun(eventRunDetail);
-
-            await expect(operation).rejects.toThrow('Automation server-account scope changed');
-            expect(upsertAutomationRun).not.toHaveBeenCalled();
-        } finally {
-            upsertAutomationRun.mockRestore();
-            owner.credentials = previousCredentials;
-            owner.serverScopeGeneration = previousGeneration;
-        }
+        const pending = hold(`/v3/automations/${eventRunDetail.automationId}/run-now`, 'POST');
+        const operation = sync.runAutomationNow(eventRunDetail.automationId);
+        const rejected = expect(operation).rejects.toThrow();
+        await pending.started;
+        await changeAccount();
+        const currentRun = { ...runSummary, revision: 10 };
+        storage.getState().upsertAutomationRun(currentRun);
+        pending.release({ run: runSummary });
+        await rejected;
+        expect(storage.getState().workflowRunsById[currentRun.id]?.automation).toEqual(currentRun);
     });
 });
