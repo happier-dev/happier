@@ -8,6 +8,7 @@ export async function getCommandSuggestions(
     query: string,
     options?: Readonly<{
         limit?: number;
+        nativeCommands?: readonly Pick<CommandItem, 'command' | 'description'>[];
         contributedActions?: readonly PluginContributedActionDescriptor[];
     }>,
 ): Promise<AutocompleteSuggestion[]> {
@@ -21,6 +22,7 @@ export async function getCommandSuggestions(
     const commands = await searchCommands(sessionId, searchTerm, {
         limit: options?.limit ?? 8,
         contributedActions: options?.contributedActions,
+        ...(options?.nativeCommands ? { nativeCommands: options.nativeCommands } : {}),
     });
 
     return commands.map((cmd: CommandItem) => ({

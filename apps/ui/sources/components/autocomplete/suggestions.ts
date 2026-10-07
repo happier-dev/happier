@@ -83,8 +83,10 @@ const EMPTY_CATALOGS: ComposerSuggestionCatalogs = Object.freeze({});
 const KIND_DEADLINE_EXPIRED = Symbol('composer-suggestion-kind-deadline-expired');
 
 export type GetSuggestionsOptions = Readonly<{
-    /** Bypasses the session-metadata catalog read entirely (test seam, SB-8). */
+    /** The host's scoped snapshot; bypasses the session-metadata catalog read. */
     catalogs?: ComposerSuggestionCatalogs;
+    /** Launch-scoped native discovery, demanded only by catalog kinds. */
+    loadCatalogs?: () => Promise<ComposerSuggestionCatalogs>;
     /** The host's eligible-kind subset (R-9). Defaults to every registered kind. */
     kinds?: readonly ComposerSuggestionKindId[];
     /**
@@ -285,6 +287,7 @@ type KindResolveArgs = Readonly<{
     scopedQuery: string;
     scope: string | null;
     catalogOverrides: ComposerSuggestionCatalogs | undefined;
+    loadCatalogs: (() => Promise<ComposerSuggestionCatalogs>) | undefined;
     signal: AbortSignal | undefined;
     composerReferenceHost: ComposerReferenceSearchHost | null | undefined;
     contributedActions: readonly PluginContributedActionDescriptor[] | undefined;
@@ -305,14 +308,21 @@ async function resolveKindCandidates(
     args: KindResolveArgs,
 ): Promise<readonly AutocompleteSuggestion[]> {
     let catalogs = args.catalogOverrides ?? EMPTY_CATALOGS;
-    // A catalog is a SESSION's published snapshot, so a host with no session has none to
-    // hydrate or read. That is not the same as an empty catalog arriving late: the kinds that
-    // declare one contribute nothing here, and the ones that do not are untouched (INV-2).
-    if (definition.catalog && !args.catalogOverrides && args.sessionId) {
+    // Running sessions hydrate their owner metadata; pre-session hosts supply their
+    // launch-scoped native catalog source. Command metadata needs no catalog RPC.
+    if (definition.catalog && definition.catalog !== 'commands' && !args.catalogOverrides && args.sessionId) {
         const catalogRequest: { vendorPlugins?: boolean; skills?: boolean } = {};
         catalogRequest[definition.catalog] = true;
         await ensureSessionSuggestionCatalogs(args.sessionId, catalogRequest);
         catalogs = readComposerSuggestionCatalogs(args.sessionId);
+    }
+    if (definition.catalog && !args.catalogOverrides && !args.sessionId && args.loadCatalogs) {
+        try {
+            catalogs = await args.loadCatalogs();
+        } catch (error: unknown) {
+            if (definition.catalog !== 'commands') throw error;
+            if (!args.signal?.aborted) log.log('[composer-suggestions] pre-session native commands unavailable');
+        }
     }
     return await definition.resolve({
         sessionId: args.sessionId,
@@ -364,6 +374,7 @@ export async function getSuggestions(
         scopedQuery: scope.scopedQuery,
         scope: scope.scope,
         catalogOverrides: options?.catalogs,
+        loadCatalogs: options?.loadCatalogs,
         signal,
         composerReferenceHost: options?.composerReferenceHost,
         contributedActions: options?.contributedActions,

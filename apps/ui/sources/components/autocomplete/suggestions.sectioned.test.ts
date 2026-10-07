@@ -1,3 +1,4 @@
+import type { StorageState } from '@/sync/store/types';
 import * as React from 'react';
 import type { ReactElement } from 'react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -53,9 +54,10 @@ const storageStateMock = vi.hoisted(() => ({
 vi.mock('@/log', () => ({ log: { log: logMock } }));
 
 vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    const { createStorageModuleStub, createLiveStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-        storage: { getState: () => storageStateMock },
+        // This boundary fixture is partial; the canonical live testkit completes its real store shape.
+        storage: createLiveStorageStoreMock(() => storageStateMock as unknown as Partial<StorageState>),
     });
 });
 
@@ -188,6 +190,7 @@ function composerReferenceProjection(entries: readonly Readonly<{
             generation,
             contributions: entries.map((entry): PluginContributionLifecycleRecordV1 => ({
                 version: 1,
+                occurrenceId: entry.registrationOccurrenceId ?? `fixture-occurrence:${entry.pluginId}`,
                 contribution: {
                     kind: 'localId',
                     pluginId: entry.pluginId,
@@ -379,7 +382,7 @@ describe('sectioned composer suggestions (EU-3)', () => {
                 method: RPC_METHODS.DAEMON_PLUGIN_COMPOSER_REFERENCE_SEARCH,
                 payload: {
                     machineId: 'machine-a',
-                    expectedOccurrenceId: '7',
+                    expectedOccurrenceId: 'fixture-occurrence:acme.issues',
                     reference: { pluginId: 'acme.issues', localId: 'issues' },
                     trigger: '$',
                     query: 'issue',
@@ -461,7 +464,7 @@ describe('sectioned composer suggestions (EU-3)', () => {
                 method: RPC_METHODS.DAEMON_PLUGIN_COMPOSER_REFERENCE_SEARCH,
                 payload: {
                     machineId: 'machine-a',
-                    expectedOccurrenceId: '7',
+                    expectedOccurrenceId: 'fixture-occurrence:acme.issues',
                     reference: { pluginId: 'acme.issues', localId: 'issues' },
                     trigger: '@',
                     query: 'issue',

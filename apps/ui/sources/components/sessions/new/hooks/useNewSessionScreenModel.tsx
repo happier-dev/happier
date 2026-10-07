@@ -1,3 +1,11 @@
+import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol';
+import { createPreflightComposerSuggestionCatalogSource, type ComposerSuggestionCatalogs } from '@/components/autocomplete/composerSuggestionCatalogs';
+import { buildSpawnEnvironmentVariablesFromUiState, buildSpawnSessionExtrasFromUiState } from '@/agents/catalog/catalog';
+import { resolveNewSessionBehaviorAgentId } from '@/components/sessions/new/modules/newSessionBehaviorAgent';
+import { resolveStrictV2ProfileSecretReadiness } from '@/components/sessions/new/modules/resolveStrictV2ProfileSecretReadiness';
+import { resolveNewSessionCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
+import { NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS } from '@/components/sessions/new/modules/newSessionCapabilityProbeTimeoutMs';
+import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { useAuthoringMemoryField } from '@/sync/domains/state/storage';
 import { useAiLaunchProfiles, useAiLaunchProfilesForLegacyUi } from '@/sync/store/useAiLaunchProfiles';
 import { canCreateSessionWithInitialAccess, useSessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
@@ -313,6 +321,9 @@ import { machineCollectionHref } from '@/components/settings/machines/collection
 
 
 // Configuration constants
+const readAbsentPreflightCatalogs = (): ComposerSuggestionCatalogs | undefined => undefined;
+const subscribeAbsentPreflightCatalogs = (_listener: () => void): (() => void) => () => {};
+
 const RECENT_PATHS_DEFAULT_VISIBLE = 5;
 const styles = newSessionScreenStyles;
 
@@ -1934,35 +1945,6 @@ export function useNewSessionScreenModel(input?: Readonly<{
         targetServerId, selectedMachineId, selectedMachineHomeDir, selectedPath,
     }), [selectedMachineHomeDir, selectedMachineId, selectedPath, targetServerId]);
 
-    // Routed through the registry like every other composer host: the eligible-kind
-    // subset is the only thing that decides which triggers resolve here (INV-1),
-    // and a hand-rolled `startsWith('/')` would be a second decision-maker.
-    const emptyAutocompleteSuggestions = React.useCallback(
-        (query: string, signal: AbortSignal) => getSuggestions(null, query, {
-            kinds: NEW_SESSION_COMPOSER_SUGGESTION_KINDS,
-            // There is genuinely no session yet, so say so rather than passing a fake id. The
-            // spawn target is the only correct scope for `@session` here (D-8).
-            serverId: targetServerId,
-            // The machine and folder the user has chosen for the session about to be spawned:
-            // the same addressing an existing session resolves for itself.
-            workspace: resolveNewSessionFileSuggestionScope({
-                targetServerId,
-                selectedMachineId,
-                selectedMachineHomeDir,
-                selectedPath,
-            }),
-            signal,
-            composerReferenceHost: newSessionComposerReferenceHost,
-        }),
-        [
-            newSessionComposerReferenceHost,
-            selectedMachineHomeDir,
-            selectedMachineId,
-            selectedPath,
-            targetServerId,
-        ],
-    );
-
     React.useEffect(() => {
         setResumeSessionId(hydratedResumeSessionId);
     }, [hydratedResumeSessionId]);
@@ -2080,6 +2062,99 @@ export function useNewSessionScreenModel(input?: Readonly<{
         secretSessionOnlyId: typeof secretSessionOnlyId === 'string' ? secretSessionOnlyId : undefined,
         secretRequirementResultId: typeof secretRequirementResultId === 'string' ? secretRequirementResultId : undefined,
     });
+
+    const nativeCatalogAgentId = resolveNewSessionBehaviorAgentId({
+        runtimeCarrierAgentId: selectedRuntimeCarrierAgentId,
+        staticAgentId,
+        agentType: selectedUiAgentType,
+    });
+    const nativeCatalogAgentLaunchParams = React.useMemo(() => {
+        if (!nativeCatalogAgentId || effectiveAgentPluginSettingsReadiness?.ready === false) return null;
+        const newSessionOptions = { ...(agentNewSessionOptions ?? {}), targetServerId };
+        const extras = buildSpawnSessionExtrasFromUiState({
+            agentId: nativeCatalogAgentId, settings, pluginSettings: effectiveAgentPluginSettings,
+            machineId: selectedMachineId, resumeSessionId, newSessionOptions, sessionConfigOptionOverrides,
+        });
+        const probeContext = resolveNewSessionCapabilityProbeContext({
+            backendTarget, runtimeCarrierAgentId: selectedRuntimeCarrierAgentId,
+            selectedProfileId: useProfiles ? selectedProfileId : null,
+            settings, pluginSettings: effectiveAgentPluginSettings, machineId: selectedMachineId,
+            runtimeDescriptorV1: extras.runtimeDescriptorV1 === undefined ? undefined : RuntimeDescriptorV1Schema.parse(extras.runtimeDescriptorV1),
+        });
+        return {
+            ...(probeContext?.capabilityParams ?? {}),
+            environmentVariables: buildSpawnEnvironmentVariablesFromUiState({
+                environmentVariables: undefined,
+                agentId: nativeCatalogAgentId, settings, pluginSettings: effectiveAgentPluginSettings,
+                machineId: selectedMachineId, newSessionOptions,
+            }) ?? {},
+            ...(connectedServicesBindingsPayload ? { connectedServices: connectedServicesBindingsPayload } : {}),
+        };
+    }, [agentNewSessionOptions, backendTarget, connectedServicesBindingsPayload, effectiveAgentPluginSettings,
+        effectiveAgentPluginSettingsReadiness?.ready, nativeCatalogAgentId, resumeSessionId, selectedMachineId,
+        selectedProfileId, selectedRuntimeCarrierAgentId, sessionConfigOptionOverrides, settings, targetServerId, useProfiles]);
+    const nativeCatalogProfile = useProfiles ? selectedProfile : null;
+    const nativeCatalogSecretChoices = nativeCatalogProfile
+        ? selectedSecretIdByProfileIdByEnvVarName[nativeCatalogProfile.id] ?? {} : {};
+    const nativeCatalogSessionOnlyValues = nativeCatalogProfile
+        ? sessionOnlySecretValueByProfileIdByEnvVarName[nativeCatalogProfile.id] ?? {} : {};
+    const nativeCatalogDefaultBindings = nativeCatalogProfile ? secretBindingsByProfileId[nativeCatalogProfile.id] ?? null : null;
+    const nativeCatalogMachineEnv = Object.fromEntries(
+        Object.entries(machineEnvPresence.meta ?? {}).map(([name, value]) => [name, Boolean(value?.isSet)]),
+    );
+    const nativeCatalogScopeKey = stableJsonStringify({
+        workspace: newSessionComposerFileScope, agentId: nativeCatalogAgentId, backendTarget: operationalBackendTarget,
+        accountScope: draftScope, launchParams: nativeCatalogAgentLaunchParams,
+        profile: nativeCatalogProfile, selectedSecrets: nativeCatalogSecretChoices,
+        sessionOnlyValues: nativeCatalogSessionOnlyValues, defaultBindings: nativeCatalogDefaultBindings,
+        machineEnv: nativeCatalogMachineEnv, connectedServicesIdentity: connectedServicesModelProbeCacheIdentity,
+        projection: currentProjectionInputs?.pluginProjectionV2?.generation,
+    });
+    const nativeCatalogScope = React.useMemo(() => ({
+        key: nativeCatalogScopeKey, workspace: newSessionComposerFileScope, agentId: nativeCatalogAgentId,
+        backendTarget: operationalBackendTarget, accountScope: draftScope, launchParams: nativeCatalogAgentLaunchParams,
+        profile: nativeCatalogProfile, selectedSecrets: nativeCatalogSecretChoices,
+        sessionOnlyValues: nativeCatalogSessionOnlyValues, defaultBindings: nativeCatalogDefaultBindings,
+        machineEnv: nativeCatalogMachineEnv, resolveSavedSecretReference,
+    }), [nativeCatalogScopeKey, resolveSavedSecretReference]);
+    const preflightComposerCatalogSource = React.useMemo(() => {
+        const scope = nativeCatalogScope;
+        if (!scope.workspace || !scope.agentId || !scope.launchParams) return undefined;
+        return createPreflightComposerSuggestionCatalogSource({
+            machineId: scope.workspace.machineId, serverId: scope.workspace.serverId,
+            accountId: scope.accountScope?.serverId === scope.workspace.serverId ? scope.accountScope.accountId : null,
+            agentId: scope.agentId, backendTarget: scope.backendTarget,
+            capabilityParams: () => {
+                const readiness = scope.profile ? resolveStrictV2ProfileSecretReadiness({
+                    profile: scope.profile, defaultBindings: scope.defaultBindings, selectedSecretIds: scope.selectedSecrets,
+                    sessionOnlyValues: scope.sessionOnlyValues, machineEnvReadyByName: scope.machineEnv,
+                    resolveSavedSecretReference: scope.resolveSavedSecretReference,
+                }) : { ok: true as const };
+                if (!readiness.ok) throw new Error(`Pre-session profile unavailable (${readiness.reason})`);
+                return {
+                    ...scope.launchParams, cwd: scope.workspace!.rootPath, timeoutMs: NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS,
+                    ...('secretReferenceOverlay' in readiness && readiness.secretReferenceOverlay
+                        ? { secretReferenceOverlay: readiness.secretReferenceOverlay } : {}),
+                };
+            },
+        });
+    }, [nativeCatalogScope]);
+    const preflightComposerCatalogs = React.useSyncExternalStore(
+        preflightComposerCatalogSource?.subscribe ?? subscribeAbsentPreflightCatalogs,
+        preflightComposerCatalogSource?.getSnapshot ?? readAbsentPreflightCatalogs,
+        preflightComposerCatalogSource?.getSnapshot ?? readAbsentPreflightCatalogs,
+    );
+    // All triggers continue through the canonical registry, including plugin references.
+    const emptyAutocompleteSuggestions = React.useCallback(
+        (query: string, signal: AbortSignal) => getSuggestions(null, query, {
+            kinds: NEW_SESSION_COMPOSER_SUGGESTION_KINDS, serverId: targetServerId,
+            workspace: newSessionComposerFileScope, signal,
+            composerReferenceHost: newSessionComposerReferenceHost,
+            catalogs: preflightComposerCatalogs, loadCatalogs: preflightComposerCatalogSource?.read,
+        }),
+        [newSessionComposerReferenceHost, newSessionComposerFileScope, preflightComposerCatalogs,
+            preflightComposerCatalogSource, targetServerId],
+    );
 
     // NOTE: we intentionally do NOT clear per-profile secret overrides when profile changes.
     // Users may resolve secrets for multiple profiles and then switch between them before creating a session.

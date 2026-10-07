@@ -1,3 +1,4 @@
+import type { StorageState } from '@/sync/store/types';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -65,9 +66,10 @@ vi.mock('@/text', async () => {
 });
 
 vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    const { createStorageModuleStub, createLiveStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-        storage: { getState: () => storageStateMock },
+        // This boundary fixture is partial; the canonical live testkit completes its real store shape.
+        storage: createLiveStorageStoreMock(() => storageStateMock as unknown as Partial<StorageState>),
     });
 });
 
@@ -140,6 +142,7 @@ function composerReferenceHost(): ComposerReferenceSearchHost {
             generation: 7,
             contributions: [{
                 version: 1,
+                occurrenceId: '7',
                 contribution: {
                     kind: 'localId',
                     pluginId: 'acme.issues',

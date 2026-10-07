@@ -24,6 +24,20 @@ const emptyProjection: PluginProjectionV2 = { v: 2, generation: 1, installedPack
 afterEach(() => { standardCleanup(); rpc.mockReset(); storage.setState(storage.getInitialState(), true); });
 
 describe('machine inventory lifecycle boundary', () => {
+    it('keeps Account agent defaults available when no administration machine is selected', async () => {
+        const { useAgentAdministrationCatalog } = await import('@/components/settings/agents/collection/useAgentAdministrationCatalog');
+        const { useAgentCollection } = await import('@/components/settings/agents/collection/AgentCollectionList');
+        const hook = await renderHook(() => {
+            const catalog = useAgentAdministrationCatalog();
+            return { target: catalog.executionTarget, ...useAgentCollection(catalog, '') };
+        });
+
+        expect(hook.getCurrent().target).toBeNull();
+        expect(hook.getCurrent().detecting).toBe(false);
+        expect(rpc).not.toHaveBeenCalled();
+        await hook.unmount();
+    });
+
     it('accepts an authoritative empty session roster without asking for CLI probes', async () => {
         const server = await upsertServerProfile({ serverUrl: 'https://empty-inventory.example.test' });
         const scope = { serverId: server.id, accountId: 'inventory-account' };

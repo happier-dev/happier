@@ -1,4 +1,8 @@
+import { machineCapabilitiesInvoke } from './capabilities';
 import {
+    PreflightSessionCatalogsV1Schema,
+    type PreflightSessionCatalogsV1,
+    type BackendTargetRefV2,
     SessionSkillCatalogListResponseV1Schema,
     SessionVendorPluginCatalogListResponseV1Schema,
     type SessionSkillCatalogListResponseV1,
@@ -14,6 +18,41 @@ import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverSc
 import { readMachineControlTargetForSession } from './sessionMachineTarget';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
+
+export type MachineSessionCatalogProbeParams = Readonly<{
+    machineId: string;
+    serverId: string;
+    accountId?: string | null;
+    agentId: string;
+    backendTarget: BackendTargetRefV2;
+    capabilityParams: Readonly<Record<string, unknown>>;
+}>;
+
+/** An unsupported older daemon has no native pre-session catalog; transport failures retry. */
+export async function probeMachineSessionCatalogs(
+    params: MachineSessionCatalogProbeParams,
+): Promise<PreflightSessionCatalogsV1 | null> {
+    const result = await machineCapabilitiesInvoke(params.machineId, {
+        id: `cli.${params.agentId}`,
+        method: 'probeCatalogs',
+        params: { ...params.capabilityParams, backendTarget: params.backendTarget },
+    }, {
+        serverId: params.serverId,
+        accountId: params.accountId,
+        ...(typeof params.capabilityParams.timeoutMs === 'number' ? { timeoutMs: params.capabilityParams.timeoutMs } : {}),
+    });
+    if (!result.supported) {
+        if (result.reason === 'not-supported') return null;
+        throw new Error('Pre-session catalog transport unavailable');
+    }
+    if (!result.response.ok) {
+        if (result.response.error.code === 'unsupported-method') return null;
+        throw new Error(`Pre-session catalog discovery failed (${result.response.error.code ?? 'unknown'})`);
+    }
+    const parsed = PreflightSessionCatalogsV1Schema.safeParse(result.response.result);
+    if (!parsed.success) throw new Error('Invalid pre-session catalog response');
+    return parsed.data;
+}
 
 export type SessionSuggestionCatalogRequest = Readonly<{
     vendorPlugins?: boolean;
