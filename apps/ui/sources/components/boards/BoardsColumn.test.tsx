@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, buildWorkBoardArtifactHeaderV1, createWorkBoardV1, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, buildWorkBoardArtifactHeaderV1, createWorkBoardV1, encodePlainArtifactStoredContent, type WorkBoardV1 } from '@happier-dev/protocol';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { createPlainAccountEncryptionCurrentnessFixture, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
@@ -11,6 +11,9 @@ import { getStorage } from '@/sync/domains/state/storage';
 import { BoardsColumn } from './BoardsColumn';
 import { BoardScreen } from './BoardScreen';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { PinnedBoardNeedsYouCount } from './PinnedBoardNeedsYouCount';
+import { createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { act } from 'react-test-renderer';
 
 // Native and navigation adapters are external boundaries; the Board store and collection stay real.
 vi.mock('react-native', async () => {
@@ -39,18 +42,24 @@ const artifacts = boards.map(board => ({
 let home: Awaited<ReturnType<typeof serveActionHomes>> | null = null;
 let credentials: AuthCredentials | null = null;
 let unreadableAlpha: 'malformed_json' | 'content_unavailable' | null = null;
+let liveBoard: WorkBoardV1 | null = null;
 let previousStorageState = getStorage().getState();
 
 describe('BoardsColumn collection search', () => {
     beforeEach(async () => {
         previousStorageState = getStorage().getState();
         unreadableAlpha = null;
+        liveBoard = null;
         home = await serveActionHomes({
             homes: [{ key: 'boards', serverUrl: 'https://boards-column.test', accountId: 'owner' }],
             route: request => {
                 if (request.path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
-                if (request.path === '/v1/artifacts') return Response.json(artifacts);
-                const artifact = artifacts.find(row => request.path === `/v1/artifacts/${row.id}`);
+                const rows = artifacts.map(artifact => liveBoard && artifact.id === liveBoard.id ? {
+                    ...artifact, header: encodePlainArtifactStoredContent(buildWorkBoardArtifactHeaderV1(liveBoard)),
+                    body: encodePlainArtifactStoredContent({ body: JSON.stringify(liveBoard) }),
+                } : artifact);
+                if (request.path === '/v1/artifacts') return Response.json(rows);
+                const artifact = rows.find(row => request.path === `/v1/artifacts/${row.id}`);
                 if (artifact?.id === 'alpha' && unreadableAlpha) return Response.json({ ...artifact,
                     body: encodePlainArtifactStoredContent(unreadableAlpha === 'malformed_json'
                         ? { body: '{ invalid Board JSON' } : { body: 42 }),
@@ -100,6 +109,32 @@ describe('BoardsColumn collection search', () => {
         screen.changeTextByTestId('boards-column:search', '');
         await flushHookEffects();
         expect(screen.findHostByTestId('boards-column:board:beta')).not.toBeNull();
+    });
+
+    it('keeps populated column and pinned chrome free of card title construction while attention stays live', async () => {
+        const serverId = home!.homes.boards!.id;
+        let titleReads = 0;
+        const rows = Object.fromEntries(Array.from({ length: 40 }, (_, index) => {
+            const row = createSessionListRenderableSessionFixture({ id: `chrome-${index}`, active: true, activeAt: Date.now(), metadata: {
+                path: '/repo', host: 'test', homeDir: '/home/test',
+                get name() { titleReads += 1; return `Session ${index}`; },
+            } });
+            return [row.id, row];
+        }));
+        liveBoard = { ...boards[0]!, pinnedInSessions: true, source: { picked: Object.keys(rows).map(id => ({ kind: 'session', qualifiedId: { serverId, id } })) } };
+        getStorage().setState({ sessionListRowsByServerId: { [serverId]: rows } });
+        const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><BoardsColumn />
+            <PinnedBoardNeedsYouCount board={{ id: 'alpha', name: liveBoard.name, pinnedInSessions: true, source: { sections: [] } }} />
+        </InjectedAuthProvider>);
+        await flushHookEffects({ runOnlyPendingTimers: true });
+        await flushHookEffects({ runOnlyPendingTimers: true });
+        expect(screen.findHostByTestId('boards-column:board:alpha')).not.toBeNull();
+        expect(titleReads).toBe(0);
+        const updated = { ...rows['chrome-7']!, hasPendingPermissionRequests: true, pendingRequestObservedAt: Date.now() };
+        act(() => { getStorage().setState({ sessionListRowsByServerId: { [serverId]: { ...rows, [updated.id]: updated } } }); });
+        expect(screen.findHostByTestId('boards-column:board:alpha:need-you')).not.toBeNull();
+        expect(screen.findHostByTestId('pinned-board:alpha:need-you')).not.toBeNull();
+        expect(titleReads).toBe(0);
     });
 
     it.each(['malformed_json', 'content_unavailable'] as const)('opens a named unreadable Board state for %s and keeps the neighboring Board reachable', async failure => {

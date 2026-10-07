@@ -5,13 +5,12 @@ import { StatusPill } from '@/components/ui/status/StatusPill';
 import { WORK_STATUS_PILL_VARIANT } from '@/components/work/status/resolveWorkStatusTone';
 import { t } from '@/text';
 
-import { countBoardCardsNeedingYou } from './model/boardCards';
-import { useBoardLiveCards } from './model/useBoardContent';
+import { useBoardLiveSummary } from './model/useBoardContent';
 import { useWorkBoard } from './model/useWorkBoards';
 
 /**
  * A pinned board's needs-you count in the Sessions column (lab `boards-B6`): the same membership and
- * cards as the open board, counted by the same owner as its header, as the column's own badge (the
+ * status facts as the open board, without constructing its cards, as the column's own badge (the
  * plugin destinations' `StatusPill`). Mounted only for boards the person pinned; healthy boards show
  * nothing. The pinned rows share one Inbox model (`BoardsInboxBoundary` around the column's rows).
  */
@@ -21,8 +20,7 @@ export const PinnedBoardNeedsYouCount = React.memo(function PinnedBoardNeedsYouC
 });
 
 const PinnedBoardLiveCount = React.memo(function PinnedBoardLiveCount(props: Readonly<{ board: WorkBoardV1 }>) {
-    const { cards } = useBoardLiveCards(props.board);
-    const count = countBoardCardsNeedingYou(cards);
+    const { needYou: count } = useBoardLiveSummary(props.board);
     if (count === 0) return null;
     return (
         <StatusPill

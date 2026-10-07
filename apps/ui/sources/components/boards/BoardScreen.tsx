@@ -23,7 +23,6 @@ import { useEntityDropDomBinding, type WindowBounds } from '@/components/ui/tree
 import { entityDragKindV1 } from '@happier-dev/protocol/plugins/ui';
 import { measureWindowBounds, readWindowBounds, toTreeDropMeasurableRef } from '@/components/ui/treeDragDrop/registry/measureWindowBounds';
 import { Typography } from '@/constants/Typography';
-import { InboxModelBoundary } from '@/hooks/inbox/useInboxModel';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { refreshWorkflowRunById } from '@/sync/engine/workflows/refreshWorkflowRun';
 import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
@@ -47,6 +46,7 @@ import { resolveBoardCardOpenTarget } from './model/boardCardOpenTarget';
 import { resolveBoardSaveFailure } from './model/boardSaveFailure';
 import { useDispatchWorkBoardIntent, useWorkBoard, useWorkBoardReadState, useWorkBoardSaveQueue, useWorkBoardSaveState, useWorkBoardSummaries } from './model/useWorkBoards';
 import { BoardReadState } from './BoardReadState';
+import { BoardsInboxBoundary } from './BoardsInboxBoundary';
 import { BOARDS_ROUTE } from './boardsRoutes';
 import { BoardSaveFailureLine, describeBoardSaveFailure } from './BoardSaveFailureLine';
 
@@ -60,7 +60,7 @@ export const BoardScreen = React.memo(function BoardScreen(props: Readonly<{ boa
     if (!board && read.status !== 'ready') return <BoardReadState />;
     if (!board) return <MissingBoard boardId={props.boardId} />;
     // The Needs you section reads the Inbox's own model, mounted once for the open board.
-    return <InboxModelBoundary><BoardBody board={board} /></InboxModelBoundary>;
+    return <BoardsInboxBoundary boards={[board]}><BoardBody board={board} /></BoardsInboxBoundary>;
 });
 
 /**
@@ -152,13 +152,13 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
     const { board } = props;
     const router = useRouter();
     const { theme } = useUnistyles();
-    const { homes, membership, cards, widgets } = useBoardLiveCards(board);
-    const dispatchIntent = useDispatchWorkBoardIntent();
+    const routeFocused = useIsFocused();
+    const { homes, membership, cards, widgets } = useBoardLiveCards(board, { enabled: routeFocused });
+    const dispatchIntent = useDispatchWorkBoardIntent({ board, membership, isHomeMounted: homes.isHomeMounted });
     const dispatch = React.useCallback((intent: WorkBoardIntentV1) => { void dispatchIntent(intent); }, [dispatchIntent]);
     const saveState = useWorkBoardSaveState();
     const phone = useDeviceType() === 'phone';
     const mode = phone ? 'by_status' : board.mode;
-    const routeFocused = useIsFocused();
     const binding = useWorkBoardEntityBinding({ board, membership, isHomeMounted: homes.isHomeMounted }, routeFocused);
     const [addOpen, setAddOpen] = React.useState(false);
     const [settingsOpen, setSettingsOpen] = React.useState(false);
@@ -313,7 +313,7 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
             <BoardReadState retained />
             {failure ? (
                 <View style={styles.failure}>
-                    <BoardSaveFailureLine testID="board-save-failed" failure={failure} />
+                    <BoardSaveFailureLine testID="board-save-failed" failure={failure} context={{ board, membership, isHomeMounted: homes.isHomeMounted }} />
                 </View>
             ) : null}
             {arrivals.pending.length > 0 ? (

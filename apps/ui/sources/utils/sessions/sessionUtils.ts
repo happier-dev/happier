@@ -97,6 +97,7 @@ type SessionStatusColors = Readonly<{
 }>;
 export type SessionWorkingTextMode = 'animated' | 'static';
 type GetSessionStatusOptions = Readonly<{
+    includeTitle?: boolean;
     vibingIndex?: number;
     workingTextMode?: SessionWorkingTextMode;
     statusColors?: SessionStatusColors;
@@ -577,13 +578,16 @@ export function getSessionName(session: SessionDisplayNameSource, serverId?: str
     const ownerMetadata = readDisplayOwnerMetadata(session);
     if (summaryText) {
         return summaryText;
-    } else if (ownerMetadata?.name) {
+    }
+    if (ownerMetadata?.name) {
         const name = ownerMetadata.name.trim();
         if (name.length > 0) return name;
-    } else if (readSessionDirectoryKind(ownerMetadata) === 'managed') {
+    }
+    if (readSessionDirectoryKind(ownerMetadata) === 'managed') {
         // A no-folder session is not named after its private folder.
         return t('session.folderless.untitledChat');
-    } else if (ownerMetadata) {
+    }
+    if (ownerMetadata) {
         const displayMetadata = ownerMetadata;
         const displayPath = readPrivateDisplayMachineTarget(session, ownerMetadata, serverId)?.basePath
             ?? readDisplayPathForSession({

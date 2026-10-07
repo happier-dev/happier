@@ -15,12 +15,14 @@ import { workflowRunRowFromSummary } from '@/sync/store/domains/workflowRuns';
 
 import {
     buildBoardCards,
+    createBoardCardProjection,
     countSessionsByMachine,
     describeBoardColumnLine,
     reconcileBoardCards,
     type BoardCardFacts,
 } from './boardCards';
 import type { BoardMember } from './boardMembership';
+import { readSessionStatusNextRefreshAtMs } from '@/utils/sessions/sessionUtils';
 
 const NOW = 1_000_000;
 
@@ -46,6 +48,19 @@ const workingSession = createSessionListRenderableSessionFixture({
 });
 
 describe('board cards', () => {
+    it('reprojects unchanged Session sources when the canonical status freshness deadline passes', () => {
+        const members = [member({ kind: 'session', qualifiedId: { serverId: 'home-a', id: permissionSession.id } })];
+        const facts: BoardCardFacts = { nowMs: NOW, session: () => permissionSession, workflowRun: () => null,
+            machine: () => null, workflow: () => null, machineSessionCounts: new Map(), accountScopedHome: () => true };
+        const project = createBoardCardProjection();
+        const before = project(members, facts);
+        expect(before[0]?.status.bucket).toBe('needs_you');
+        const refreshAt = readSessionStatusNextRefreshAtMs(permissionSession, NOW);
+        expect(refreshAt).not.toBeNull();
+        const expired = { ...facts, nowMs: refreshAt! };
+        expect(project(members, expired)[0]?.status).toEqual(buildBoardCards(members, expired)[0]?.status);
+        expect(project(members, expired)[0]?.status.bucket).not.toBe('needs_you');
+    });
     it('projects FIN lean authored-step and loop progress without opening full runs', () => {
         const ref = { kind: 'workflow_run', qualifiedId: { serverId: 'home-a', id: 'r1' } } as const;
         const facts: BoardCardFacts = {

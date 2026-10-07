@@ -15,7 +15,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { WorkflowRunRow } from '@/sync/store/domains/workflowRuns';
 import { t } from '@/text';
 import { getMachineDisplayName, isMachineOnline } from '@/utils/sessions/machineUtils';
-import { getSessionName } from '@/utils/sessions/sessionUtils';
+import { getSessionName, readSessionStatusNextRefreshAtMs } from '@/utils/sessions/sessionUtils';
 
 import type { BoardMember } from './boardMembership';
 import { formatTriggerSetSummary } from '@/components/workflows/triggers/formatTriggerSummary';
@@ -120,13 +120,60 @@ function notLoaded(member: BoardMember, availability: Exclude<BoardCardAvailabil
         availability,
         title: t('boards.card.untitled'),
         // Not work state: the item cannot be read here. It sits with Offline and never claims trouble.
-        status: {
-            bucket: availability === 'home_unavailable' ? 'offline' : 'idle',
-            tone: 'neutral',
-            word: availability === 'home_unavailable' ? t('boards.card.unavailable') : t('boards.card.notLoaded'),
-        },
+        status: unavailableStatus(availability),
         body: { kind: 'none' },
     };
+}
+
+function unavailableStatus(availability: Exclude<BoardCardAvailability, 'ready'>): WorkStatusPresentation {
+    return {
+        bucket: availability === 'home_unavailable' ? 'offline' : 'idle', tone: 'neutral',
+        word: availability === 'home_unavailable' ? t('boards.card.unavailable') : t('boards.card.notLoaded'),
+    };
+}
+
+/** Card and chrome classification share this owner; title, trigger and body projections are
+ * independent of the membership/status facts that the count needs. */
+function readBoardWorkStatus(member: BoardMember, facts: BoardCardFacts): WorkStatusPresentation {
+    if (!member.available || ((member.ref.kind === 'workflow_run' || member.ref.kind === 'workflow')
+        && !facts.accountScopedHome(member.ref.qualifiedId.serverId))) return unavailableStatus('home_unavailable');
+    switch (member.ref.kind) {
+        case 'session': {
+            const row = facts.session(member.ref);
+            return row ? resolveWorkStatusTone({ kind: 'session', facts: readSessionWorkStatusFacts(row, facts.nowMs) })
+                : unavailableStatus('not_loaded');
+        }
+        case 'workflow_run': {
+            const row = facts.workflowRun(member.ref);
+            return row?.summary ? resolveWorkStatusTone({ kind: 'workflow_run', facts: {
+                state: row.summary.state, word: describeWorkflowRunState(row.summary.state).label,
+                inAttentionWindow: row.summary.attentionRequired === true,
+            } }) : unavailableStatus('not_loaded');
+        }
+        case 'machine': {
+            const machine = facts.machine(member.ref);
+            if (!machine) return unavailableStatus('not_loaded');
+            const online = isMachineOnline(machine, facts.nowMs);
+            const counts = facts.machineSessionCounts.get(member.key) ?? NO_SESSIONS;
+            return resolveWorkStatusTone({ kind: 'machine', facts: {
+                word: online ? t('boards.card.machine.online') : t('boards.card.machine.offline'),
+                online, needsYouCount: counts.needsYou, runningSessionCount: counts.running,
+            } });
+        }
+        case 'workflow': {
+            const workflow = facts.workflow(member.ref);
+            if (!workflow) return unavailableStatus('not_loaded');
+            if (workflow.unavailableReason) return { bucket: 'idle', tone: 'neutral', word: t('boards.card.unavailable') };
+            const lastRun = workflow.summary?.lastRun ?? null;
+            const lastRunWord = lastRun ? describeWorkflowRunState(lastRun.state).label : null;
+            return resolveWorkStatusTone({ kind: 'workflow', facts: {
+                word: lastRunWord ?? (workflow.summary === null ? t('boards.card.notLoaded') : t('boards.card.workflow.noRuns')),
+                needsYouCount: workflow.summary?.needsYouCount ?? 0,
+                hasActiveRun: lastRun !== null && resolveWorkStatusTone({ kind: 'workflow_run',
+                    facts: { state: lastRun.state, word: lastRunWord ?? '' } }).bucket === 'working',
+            } });
+        }
+    }
 }
 
 function buildCard(member: BoardMember, facts: BoardCardFacts): BoardCard {
@@ -142,7 +189,7 @@ function buildCard(member: BoardMember, facts: BoardCardFacts): BoardCard {
             return {
                 ...base,
                 title: getSessionName(row, serverId),
-                status: resolveWorkStatusTone({ kind: 'session', facts: readSessionWorkStatusFacts(row, facts.nowMs) }),
+                status: readBoardWorkStatus(member, facts),
                 body: { kind: 'session', serverId, sessionId: id },
             };
         }
@@ -153,14 +200,7 @@ function buildCard(member: BoardMember, facts: BoardCardFacts): BoardCard {
             return {
                 ...base,
                 title: formatWorkflowRunDisplayName(resolveWorkflowRunDisplayName(row.metadata)),
-                status: resolveWorkStatusTone({
-                    kind: 'workflow_run',
-                    facts: {
-                        state: row.summary.state,
-                        word: describeWorkflowRunState(row.summary.state).label,
-                        inAttentionWindow: waitingForYou,
-                    },
-                }),
+                status: readBoardWorkStatus(member, facts),
                 body: { kind: 'workflow_run', runId: id, waitingForYou, startedAt: row.summary.createdAt,
                     progress: row.summary.stepProgress ?? null },
             };
@@ -173,15 +213,7 @@ function buildCard(member: BoardMember, facts: BoardCardFacts): BoardCard {
             return {
                 ...base,
                 title: getMachineDisplayName(machine),
-                status: resolveWorkStatusTone({
-                    kind: 'machine',
-                    facts: {
-                        word: online ? t('boards.card.machine.online') : t('boards.card.machine.offline'),
-                        online,
-                        needsYouCount: counts.needsYou,
-                        runningSessionCount: counts.running,
-                    },
-                }),
+                status: readBoardWorkStatus(member, facts),
                 body: { kind: 'machine', online, counts },
             };
         }
@@ -196,23 +228,12 @@ function buildCard(member: BoardMember, facts: BoardCardFacts): BoardCard {
                 status: { bucket: 'idle', tone: 'neutral', word: t('boards.card.unavailable') },
                 body: { kind: 'none' },
             };
-            const needsYouCount = workflow.summary?.needsYouCount ?? 0;
             const lastRun = workflow.summary?.lastRun ?? null;
             const lastRunWord = lastRun ? describeWorkflowRunState(lastRun.state).label : null;
             return {
                 ...base,
                 title: workflow.title,
-                status: resolveWorkStatusTone({
-                    kind: 'workflow',
-                    facts: {
-                        word: lastRunWord ?? (workflow.summary === null ? t('boards.card.notLoaded') : t('boards.card.workflow.noRuns')),
-                        needsYouCount,
-                        hasActiveRun: lastRun !== null && resolveWorkStatusTone({
-                            kind: 'workflow_run',
-                            facts: { state: lastRun.state, word: lastRunWord ?? '' },
-                        }).bucket === 'working',
-                    },
-                }),
+                status: readBoardWorkStatus(member, facts),
                 body: { kind: 'workflow', needsYouCount: workflow.summary?.needsYouCount ?? null,
                     runSummaryAvailable: workflow.summary !== null, lastRunWord, lastRunAt: lastRun?.createdAt ?? null,
                     triggerSummary: workflow.triggers ? formatTriggerSetSummary(workflow.triggers) : null,
@@ -225,6 +246,74 @@ function buildCard(member: BoardMember, facts: BoardCardFacts): BoardCard {
 
 export function buildBoardCards(members: readonly BoardMember[], facts: BoardCardFacts): BoardCard[] {
     return members.map((member) => buildCard(member, facts));
+}
+
+/** Reuse unchanged source inputs before constructing a projection. Session expiry comes from its
+ * status owner; machine online transitions use its presence owner, so reuse cannot freeze freshness. */
+function createBoardProjection<T>(project: (member: BoardMember, facts: BoardCardFacts) => T) {
+    type Entry = { inputs: readonly unknown[]; refreshAt: number | null; value: T };
+    let entries = new Map<string, Entry>();
+    return (members: readonly BoardMember[], facts: BoardCardFacts): readonly T[] => {
+        const next = new Map<string, Entry>();
+        const values = members.map(member => {
+            let source: unknown = null;
+            let refreshAt: number | null = null;
+            let machineOnline: boolean | null = null;
+            switch (member.ref.kind) {
+                case 'session': {
+                    const row = facts.session(member.ref);
+                    source = row;
+                    const prior = entries.get(member.key);
+                    if (row && (!prior || prior.inputs[0] !== row || (prior.refreshAt !== null && facts.nowMs >= prior.refreshAt))) {
+                        refreshAt = readSessionStatusNextRefreshAtMs(row, facts.nowMs);
+                    } else refreshAt = prior?.refreshAt ?? null;
+                    break;
+                }
+                case 'workflow_run': source = facts.workflowRun(member.ref); break;
+                case 'workflow': source = facts.workflow(member.ref); break;
+                case 'machine': {
+                    const machine = facts.machine(member.ref);
+                    source = machine;
+                    machineOnline = machine ? isMachineOnline(machine, facts.nowMs) : null;
+                    break;
+                }
+            }
+            const counts = member.ref.kind === 'machine' ? facts.machineSessionCounts.get(member.key) : undefined;
+            const inputs = [source, member.available, member.picked, facts.accountScopedHome(member.ref.qualifiedId.serverId),
+                machineOnline, counts?.needsYou ?? 0, counts?.running ?? 0];
+            const prior = entries.get(member.key);
+            const entry = prior && inputs.every((input, index) => input === prior.inputs[index])
+                && (prior.refreshAt === null || facts.nowMs < prior.refreshAt)
+                ? prior : { inputs, refreshAt, value: project(member, facts) };
+            next.set(member.key, entry);
+            return entry.value;
+        });
+        entries = next;
+        return values;
+    };
+}
+
+export function createBoardCardProjection() {
+    const project = createBoardProjection(buildCard);
+    let previous: readonly BoardCard[] = [];
+    return (members: readonly BoardMember[], facts: BoardCardFacts) => {
+        previous = reconcileBoardCards(previous, project(members, facts));
+        return previous;
+    };
+}
+
+export type BoardLiveSummary = Readonly<{ itemCount: number; needYou: number }>;
+
+export function createBoardSummaryProjection() {
+    const project = createBoardProjection(readBoardWorkStatus);
+    let previous: BoardLiveSummary = { itemCount: 0, needYou: 0 };
+    return (members: readonly BoardMember[], facts: BoardCardFacts, widgetCount: number): BoardLiveSummary => {
+        const statuses = project(members, facts);
+        const needYou = statuses.reduce((count, status) => count + (status.bucket === 'needs_you' ? 1 : 0), 0);
+        const itemCount = members.length + widgetCount;
+        if (previous.itemCount !== itemCount || previous.needYou !== needYou) previous = { itemCount, needYou };
+        return previous;
+    };
 }
 
 function isSameCard(a: BoardCard, b: BoardCard): boolean {
@@ -270,6 +359,10 @@ export function hasWorkBoardContent(board: WorkBoardV1): boolean {
 /** "3 need you · 9 items": a board's widgets are items too; only work cards can need you. */
 export function describeBoardColumnLine(cards: readonly BoardCard[], widgetCount = 0): Readonly<{ needYou: number; text: string }> {
     const needYou = countBoardCardsNeedingYou(cards);
-    const items = t('boards.meta.items', { count: cards.length + widgetCount });
+    return describeBoardSummaryLine({ needYou, itemCount: cards.length + widgetCount });
+}
+
+export function describeBoardSummaryLine({ needYou, itemCount }: BoardLiveSummary): Readonly<{ needYou: number; text: string }> {
+    const items = t('boards.meta.items', { count: itemCount });
     return { needYou, text: needYou > 0 ? `${t('boards.meta.needYou', { count: needYou })} · ${items}` : items };
 }

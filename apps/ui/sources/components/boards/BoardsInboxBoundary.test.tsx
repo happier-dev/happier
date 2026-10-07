@@ -1,45 +1,76 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import { createWorkBoardV1, type WorkBoardV1 } from '@happier-dev/protocol';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createWorkBoardV1 } from '@happier-dev/protocol';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { installWorkflowActionHttpBoundary } from '@/dev/testkit/fixtures/workflowActionHttpBoundary';
+import { storage } from '@/sync/domains/state/storageStore';
+import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { BoardsInboxBoundary } from '@/components/boards/BoardsInboxBoundary';
 
-import { renderScreen } from '@/dev/testkit';
+// These spies observe actual HTTP Run storage and Automation REST requests.
+const runRequests = vi.fn();
+const automationRequests = vi.fn();
+let boundary: Awaited<ReturnType<typeof installWorkflowActionHttpBoundary>>;
+let serverId: string;
+let previousState = storage.getState();
+let previousApplied = getAppliedActiveServerSnapshot();
+let previousAvailable = isAppliedActiveServerRuntimeAvailable();
+beforeEach(async () => {
+    previousState = storage.getState();
+    previousApplied = getAppliedActiveServerSnapshot();
+    previousAvailable = isAppliedActiveServerRuntimeAvailable();
+    runRequests.mockReset();
+    automationRequests.mockReset();
+    automationRequests.mockImplementation(async () => new Response(JSON.stringify({ runs: [], nextCursor: null }), { status: 200 }));
+    boundary = await installWorkflowActionHttpBoundary({ fixtureResponse: runRequests, automationRuns: automationRequests });
+    const home = await upsertAndActivateServer({ serverUrl: 'https://boards-inbox-boundary.test' });
+    serverId = home.id;
+    publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+    storage.setState({ profileScope: { serverId, accountId: 'account-a' }, settingsScope: { serverId, accountId: 'account-a' },
+        isDataReady: true, sessions: {}, friends: {}, machineListByServerId: {}, workflowRunsById: {}, workflowRunListWindows: {},
+        settings: { ...storage.getState().settings, experiments: true, featureToggles: { ...storage.getState().settings.featureToggles, automations: true } } });
+    boundary.prime();
+});
+afterEach(async () => {
+    await standardCleanup();
+    (await import('@/components/workflows/library/workflowLibraryReads')).resetWorkflowLibraryReadsForTests();
+    (await import('@/sync/domains/scope/activeServerAccountScope')).retireActiveServerAccountScopeLifetime();
+    boundary.dispose();
+    storage.setState(previousState);
+    publishAppliedActiveServerSnapshot(previousApplied, previousAvailable);
+});
 
-(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-// Counts Inbox model instances: each boundary is one full Inbox model (a workflow-attention source and
-// its run-list read). Same counting seam as `InboxPopover.test.tsx`.
-const boundaries = vi.hoisted(() => ({ mounts: 0 }));
-vi.mock('@/hooks/inbox/useInboxModel', () => ({
-    InboxModelBoundary: (props: { children: React.ReactNode }) => {
-        boundaries.mounts += 1;
-        return props.children;
-    },
-}));
-
-const { BoardsInboxBoundary } = await import('./BoardsInboxBoundary');
-
-function pinned(id: string, sections?: WorkBoardV1['source']['sections']): WorkBoardV1 {
-    return { ...createWorkBoardV1({ id, name: id }), source: { ...(sections ? { sections } : {}), picked: [] }, pinnedInSessions: true };
-}
-
-describe('BoardsInboxBoundary (INT §7.3, three pinned boards)', () => {
-    it('mounts one Inbox model for the pinned rows, and none when no pinned board shows Needs you', async () => {
-        boundaries.mounts = 0;
-        const rows = (count: number) => Array.from({ length: count }, (_, index) => <React.Fragment key={index}>row</React.Fragment>);
-        await renderScreen(
-            <BoardsInboxBoundary boards={[pinned('a', ['needs_you']), pinned('b', ['needs_you', 'running']), pinned('c', ['running'])]}>
-                {rows(3)}
-            </BoardsInboxBoundary>,
-        );
-        // Before: one boundary per pinned row, so three models for three boards.
-        expect(boundaries.mounts).toBe(1);
-
-        boundaries.mounts = 0;
-        await renderScreen(
-            <BoardsInboxBoundary boards={[pinned('a', ['running']), pinned('b'), pinned('c', ['my_machines'])]}>
-                {rows(3)}
-            </BoardsInboxBoundary>,
-        );
-        expect(boundaries.mounts).toBe(0);
+describe('Boards Inbox demand over HTTP', () => {
+    it('keeps Board descendants mounted as attention demand opens and closes, reading nothing while closed', async () => {
+        runRequests.mockResolvedValue({ ok: true, result: { runs: [], metadataByRunId: {} } });
+        let mounts = 0;
+        let unmounts = 0;
+        function RetainedChild() {
+            React.useEffect(() => { mounts++; return () => { unmounts++; }; }, []);
+            return null;
+        }
+        const board = createWorkBoardV1({ id: 'manual', name: 'Manual' });
+        const view = (needsYou: boolean) => <BoardsInboxBoundary boards={[
+            { ...board, source: { ...board.source, sections: needsYou ? ['needs_you'] : [] } },
+        ]}><RetainedChild /></BoardsInboxBoundary>;
+        const screen = await renderScreen(view(false));
+        expect(runRequests).not.toHaveBeenCalled();
+        expect(automationRequests).not.toHaveBeenCalled();
+        await act(async () => { screen.tree.update(view(true)); });
+        expect(runRequests).toHaveBeenCalledTimes(1);
+        expect(automationRequests).toHaveBeenCalledTimes(1);
+        expect(mounts).toBe(1);
+        expect(unmounts).toBe(0);
+        await act(async () => { screen.tree.update(view(false)); });
+        expect(mounts).toBe(1);
+        expect(unmounts).toBe(0);
+        const reads = runRequests.mock.calls.length;
+        const automationReads = automationRequests.mock.calls.length;
+        await act(async () => { publishHomeAccountChange(serverId, ['workflow-run:changed']); });
+        expect(runRequests).toHaveBeenCalledTimes(reads);
+        expect(automationRequests).toHaveBeenCalledTimes(automationReads);
     });
 });

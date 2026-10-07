@@ -10,5 +10,5 @@ import { InboxModelBoundary } from '@/hooks/inbox/useInboxModel';
  */
 export function BoardsInboxBoundary(props: Readonly<{ boards: readonly Readonly<{ source: Pick<WorkBoardV1['source'], 'sections'> }>[]; children: React.ReactNode }>) {
     const needed = props.boards.some(board => board.source.sections?.includes('needs_you'));
-    return needed ? <InboxModelBoundary>{props.children}</InboxModelBoundary> : <>{props.children}</>;
+    return <InboxModelBoundary enabled={needed}>{props.children}</InboxModelBoundary>;
 }

@@ -350,10 +350,28 @@ function InboxModelContextProvider(props: Readonly<{ children: React.ReactNode }
  * The creator hook only mounts in the provider branch, so consumers beneath an
  * existing owner never subscribe twice.
  */
-export function InboxModelBoundary(props: Readonly<{ children: React.ReactNode }>) {
+export function InboxModelBoundary(props: Readonly<{ children: React.ReactNode; enabled?: boolean }>) {
     const existing = React.useContext(InboxModelContext);
+    // Optional readers keep their descendants under one provider as demand changes. Only the
+    // model producer mounts/unmounts; it shares the same attention/classification owners.
+    if (props.enabled !== undefined) return <DemandedInboxModelBoundary enabled={props.enabled} existing={existing}>{props.children}</DemandedInboxModelBoundary>;
     if (existing) return <>{props.children}</>;
     return <InboxModelProvider>{props.children}</InboxModelProvider>;
+}
+
+function DemandedInboxModelBoundary(props: Readonly<{ children: React.ReactNode; enabled: boolean; existing: InboxModel | null }>) {
+    const [model, setModel] = React.useState<InboxModel | null>(null);
+    React.useLayoutEffect(() => { if (!props.enabled) setModel(null); }, [props.enabled]);
+    return <InboxModelContext.Provider value={props.existing ?? (props.enabled ? model : null)}>
+        {props.enabled && !props.existing ? <InboxModelProvider><InboxModelPublisher publish={setModel} /></InboxModelProvider> : null}
+        {props.children}
+    </InboxModelContext.Provider>;
+}
+
+function InboxModelPublisher(props: Readonly<{ publish: (model: InboxModel) => void }>) {
+    const model = useInboxModel();
+    React.useLayoutEffect(() => { props.publish(model); }, [model, props.publish]);
+    return null;
 }
 
 export function useInboxModel(): InboxModel {

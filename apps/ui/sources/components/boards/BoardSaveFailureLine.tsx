@@ -5,6 +5,7 @@ import { t } from '@/text';
 
 import type { WorkBoardSaveFailure, WorkBoardSaveFailureReason } from './model/workBoardSaveQueue';
 import { useWorkBoardSaveQueue } from './model/useWorkBoards';
+import type { WorkBoardEntityContext } from './model/workBoardEntityDrop';
 
 export function describeBoardSaveFailure(reason: WorkBoardSaveFailureReason): string {
     if (reason === 'not_found') return t('boards.saveFailed.notFound');
@@ -15,8 +16,9 @@ export function describeBoardSaveFailure(reason: WorkBoardSaveFailureReason): st
 export const BoardSaveFailureLine = React.memo(function BoardSaveFailureLine(props: Readonly<{
     failure: WorkBoardSaveFailure;
     testID: string;
+    context?: Omit<WorkBoardEntityContext, 'scope'>;
 }>) {
-    const saveQueue = useWorkBoardSaveQueue();
+    const saveQueue = useWorkBoardSaveQueue(props.context);
     const { failure } = props;
     return (
         <SurfaceStateCard

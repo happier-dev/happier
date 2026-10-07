@@ -16,6 +16,16 @@ function context(board: WorkBoardV1): WorkBoardEntityContext {
 }
 
 describe('WorkBoard shared entity owner', () => {
+    it('refuses a Canvas edit when the mounted membership context is no longer available', async () => {
+        const board = { ...createWorkBoardV1({ id: 'b1', name: 'Board' }), source: { picked: [ref] } };
+        const persistence = createWorkBoardArtifactBoundary({ v: 1, boards: [board] });
+        const store = createWorkBoardAccountStore(persistence.transport, () => true);
+        await store.refresh();
+        const port = createWorkBoardUiActionPort(() => null, store.queue, store.getBoards);
+        await expect(port.apply({ kind: 'set_positions', boardId: board.id, positionsByItemRef: { [key]: { x: 24, y: 48 } } }))
+            .rejects.toMatchObject({ code: 'board_context_unavailable' });
+        expect(persistence.acknowledged().boards[0]!.positionsByItemRef).toEqual({});
+    });
     it('admits external configured copies through the widget destination DTO, without turning same-Board XY into a transfer', () => {
         const board = { ...createWorkBoardV1({ id: 'b1', name: 'Launch' }), source: { picked: [ref] } };
         for (const item of [
