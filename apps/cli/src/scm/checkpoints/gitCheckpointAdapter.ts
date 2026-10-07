@@ -72,7 +72,6 @@ export async function resolveGitCheckpointBackendContext(input: Readonly<{
         bin: 'git',
         cwd: input.cwd,
         args: ['rev-parse', '--show-toplevel'],
-        timeoutMs: 5000,
     });
     const repoRoot = detectedRoot.success ? detectedRoot.stdout.trim() : '';
     if (!repoRoot) return null;

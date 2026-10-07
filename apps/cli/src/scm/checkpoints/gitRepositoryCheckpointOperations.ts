@@ -112,7 +112,6 @@ export async function captureGitRepositoryCheckpoint(
         const stageAll = await runGitCheckpointCommand({
             cwd: availability.repoRoot,
             args: ['add', '-A', '--', '.'],
-            timeoutMs: 10_000,
             env: temporaryIndex.tempIndex.env,
         });
         if (!stageAll.success) return captureCommandFailure(stageAll, 'Failed to stage checkpoint contents');
@@ -120,7 +119,6 @@ export async function captureGitRepositoryCheckpoint(
         const writeTree = await runGitCheckpointCommand({
             cwd: availability.repoRoot,
             args: ['write-tree'],
-            timeoutMs: 5000,
             env: temporaryIndex.tempIndex.env,
         });
         if (!writeTree.success) return captureCommandFailure(writeTree, 'Failed to write checkpoint tree');
@@ -131,7 +129,6 @@ export async function captureGitRepositoryCheckpoint(
             cwd: availability.repoRoot,
             args: ['commit-tree', treeSha],
             stdin: buildCheckpointCommitMessage(input),
-            timeoutMs: 5000,
             env: {
                 ...temporaryIndex.tempIndex.env,
                 ...CHECKPOINT_COMMIT_AUTHOR_ENV,
@@ -144,7 +141,6 @@ export async function captureGitRepositoryCheckpoint(
         const updateRef = await runGitCheckpointCommand({
             cwd: availability.repoRoot,
             args: ['update-ref', input.checkpointRef.ref, commitSha],
-            timeoutMs: 5000,
         });
         if (!updateRef.success) return captureCommandFailure(updateRef, 'Failed to update checkpoint ref');
 
@@ -222,7 +218,6 @@ export async function aliasGitRepositoryCheckpoint(
     const source = await runGitCheckpointCommand({
         cwd: availability.repoRoot,
         args: ['rev-parse', '--verify', `${input.sourceRef.ref}^{commit}`],
-        timeoutMs: 5000,
     });
     if (!source.success) {
         const stderr = source.stderr.trim();
@@ -259,7 +254,6 @@ export async function aliasGitRepositoryCheckpoint(
     const update = await runGitCheckpointCommand({
         cwd: availability.repoRoot,
         args: ['update-ref', input.targetRef.ref, commitSha],
-        timeoutMs: 5000,
     });
     if (!update.success) {
         const failure = classifyGitCheckpointCommandFailure(update, 'Failed to update checkpoint alias target ref');
