@@ -1,4 +1,4 @@
-import type { BrowserScreenshotMediaReferenceV1 } from '@happier-dev/protocol';
+import { resolveBrowserContextPrivacyDenial, type BrowserScreenshotMediaReferenceV1 } from '@happier-dev/protocol';
 
 import type {
     BrowserAnnotationCaptureProvider,
@@ -21,7 +21,7 @@ export type BrowserAnnotationScreenshotSnapshot = Readonly<{
 
 export type BrowserAnnotationScreenshotSource =
     | Readonly<{ ok: true; snapshot: BrowserAnnotationScreenshotSnapshot }>
-    | Readonly<{ ok: false; reasonCode: 'capture_unavailable' | 'capture_failed' | 'navigation_stale' }>;
+    | Readonly<{ ok: false; reasonCode: 'capture_unavailable' | 'capture_failed' | 'navigation_stale' | 'sensitive_fields_present' }>;
 
 /**
  * Host-supplied media registrar. Registers the captured PNG bytes as an attachable media artifact
@@ -71,8 +71,20 @@ export function createBrowserAnnotationCaptureProvider(input: Readonly<{
                 };
             }
 
+            const initialDenial = request.resolveAdmission?.();
+            if (initialDenial) return { status: 'unavailable', reason: initialDenial };
+
             const captured = await input.captureScreenshot(request);
             if (!captured.ok) {
+                if (captured.reasonCode === 'sensitive_fields_present') {
+                    return {
+                        status: 'unavailable',
+                        reason: {
+                            ...resolveBrowserContextPrivacyDenial('sensitiveFieldsPresent')!,
+                            message: 'Browser context is unavailable while sensitive fields are present.',
+                        },
+                    };
+                }
                 const failed = captured.reasonCode === 'capture_failed';
                 return {
                     status: 'unavailable',
@@ -88,6 +100,9 @@ export function createBrowserAnnotationCaptureProvider(input: Readonly<{
                 };
             }
 
+            const uploadDenial = request.resolveAdmission?.();
+            if (uploadDenial) return { status: 'unavailable', reason: uploadDenial };
+
             const media = await input.registerMedia({
                 snapshot: captured.snapshot,
                 browserSessionId: request.browserSessionId,
@@ -95,6 +110,8 @@ export function createBrowserAnnotationCaptureProvider(input: Readonly<{
                 navigationGeneration: request.navigationGeneration,
                 capturedAtMs: request.capturedAtMs,
             });
+            const resultDenial = request.resolveAdmission?.();
+            if (resultDenial) return { status: 'unavailable', reason: resultDenial };
             if (!media) {
                 return {
                     status: 'unavailable',

@@ -26,6 +26,7 @@ import {
 } from '@/components/browser/annotation/useBrowserAnnotationController';
 import {
     selectBrowserDiagnosticsForView,
+    createBrowserDiagnosticsUiStore,
     type BrowserDiagnosticsPanelProjection,
 } from '@/sync/domains/browser/diagnostics';
 import type { BrowserRecordingState } from '@/sync/domains/browser/recording';
@@ -348,12 +349,13 @@ export function BrowserShell(props: Readonly<{
         props.localServicePreviewState !== undefined
             ? props.localServicePreviewState
             : liveLocalServicePreviewState;
-    const activeDiagnostics = activeView && browserDiagnostics
-        ? selectBrowserDiagnosticsForView(browserDiagnostics.state, {
+    // Only drawer identity/sections live in chrome. Its open body reads the event history.
+    const activeDiagnostics = React.useMemo(() => activeView && browserDiagnostics
+        ? selectBrowserDiagnosticsForView(createBrowserDiagnosticsUiStore(), {
             browserSessionId: activeView.browserSessionId,
             viewId: activeView.viewId,
         })
-        : null;
+        : null, [activeView?.browserSessionId, activeView?.viewId, Boolean(browserDiagnostics)]);
     const diagnosticsBridge = resolveActiveDiagnosticsBridge({
         activeView,
         bridge: browserDiagnostics?.bridge ?? props.browserAutomation?.engineBridge,
@@ -724,6 +726,8 @@ export function BrowserShell(props: Readonly<{
             {activeDiagnostics || props.supplementalDiagnostics ? (
                 <BrowserDiagnosticsDrawer
                     diagnostics={activeDiagnostics ?? props.supplementalDiagnostics!}
+                    state={browserDiagnostics?.eventSource ? undefined : browserDiagnostics?.state}
+                    eventSource={browserDiagnostics?.eventSource}
                     supplemental={activeDiagnostics ? props.supplementalDiagnostics : null}
                     interaction={browserDiagnostics?.interaction}
                     surfaceHeightPx={chromeDensity.containerHeightPx ?? undefined}

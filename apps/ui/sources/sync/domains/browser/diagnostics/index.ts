@@ -19,6 +19,7 @@ export type {
 export {
     applyBrowserDiagnosticEvents,
     createBrowserDiagnosticsUiStore,
+    selectBrowserDiagnosticsEventCount,
     selectBrowserDiagnosticsForView,
 } from './store';
 export type {

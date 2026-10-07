@@ -175,6 +175,8 @@ describe('attachActiveBrowserAnnotationFromCaptureProvider', () => {
 
         const result = await attachActiveBrowserAnnotationFromCaptureProvider({
             state: started.state,
+            resolveBinding: () => ({ state: started.state, browserContextEnabled: true, attachmentsUploadsEnabled: true,
+                browserDiagnosticsEnabled: true, contextCapabilities: annotationContextCapabilities, view }),
             browserContextEnabled: true,
             attachmentsUploadsEnabled: true,
             browserDiagnosticsEnabled: true,
@@ -255,6 +257,8 @@ describe('attachActiveBrowserAnnotationFromCaptureProvider', () => {
 
         const result = await attachActiveBrowserAnnotationFromCaptureProvider({
             state: started.state,
+            resolveBinding: () => ({ state: started.state, browserContextEnabled: true, attachmentsUploadsEnabled: true,
+                contextCapabilities: annotationContextCapabilities, view }),
             browserContextEnabled: true,
             attachmentsUploadsEnabled: true,
             contextCapabilities: annotationContextCapabilities,
@@ -297,6 +301,8 @@ describe('attachActiveBrowserAnnotationFromCaptureProvider', () => {
 
         const result = await attachActiveBrowserAnnotationFromCaptureProvider({
             state: started.state,
+            resolveBinding: () => ({ state: started.state, browserContextEnabled: true, attachmentsUploadsEnabled: true,
+                contextCapabilities: annotationContextCapabilities, view: currentView }),
             browserContextEnabled: true,
             attachmentsUploadsEnabled: true,
             contextCapabilities: annotationContextCapabilities,
@@ -355,6 +361,8 @@ describe('attachActiveBrowserAnnotationFromCaptureProvider', () => {
 
         const result = await attachActiveBrowserAnnotationFromCaptureProvider({
             state: started.state,
+            resolveBinding: () => ({ state: started.state, browserContextEnabled: true, attachmentsUploadsEnabled: true,
+                contextCapabilities: annotationContextCapabilities, view }),
             browserContextEnabled: true,
             attachmentsUploadsEnabled: true,
             contextCapabilities: annotationContextCapabilities,

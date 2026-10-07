@@ -55,7 +55,9 @@ export function createDesktopBrowserAnnotationCaptureProvider(input: Readonly<{
                 const stale = result.errorCode === 'staleNavigation';
                 return {
                     ok: false,
-                    reasonCode: stale
+                    reasonCode: result.errorCode === 'sensitiveFieldsPresent'
+                        ? 'sensitive_fields_present'
+                        : stale
                         ? 'navigation_stale'
                         : result.errorCode === 'captureFailed'
                             ? 'capture_failed'
