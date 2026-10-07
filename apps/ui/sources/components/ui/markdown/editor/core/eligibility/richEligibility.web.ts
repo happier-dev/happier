@@ -1,14 +1,15 @@
 /**
  * Web rich-eligibility resolver.
  *
- * Injects the web HTML round-trip adapter (`core/tiptap/markdownRoundTrip.web`,
- * a throwaway `@tiptap/core` editor) into the pure evaluator so HTML-containing
- * markdown can be admitted when it round-trips losslessly within budget.
+ * Demand-loads the shared web engine payload and injects its HTML round-trip
+ * adapter (a throwaway `@tiptap/core` editor) into the pure evaluator so
+ * HTML-containing markdown can be admitted when it round-trips losslessly
+ * within budget.
  *
- * This is the ONLY `core/eligibility/` file allowed to reach into `core/tiptap/`
+ * This is the ONLY `core/eligibility/` file allowed to demand the web engine
  * (it is resolved by Metro for web only, so `@tiptap/*` never enters the native
- * graph — R18). The signature mirrors `richEligibility.native.ts` exactly so the
- * platform split is type-consistent.
+ * graph — R18). The signature mirrors `richEligibility.native.ts` exactly so
+ * the platform split is type-consistent.
  */
 
 import * as React from 'react';
@@ -24,12 +25,12 @@ export type ResolveRichEligibilityOptions = Readonly<{
     htmlRoundTripMaxBytes: number;
 }>;
 
-type RoundTripModule = typeof import('../tiptap/markdownRoundTrip.web');
+type RoundTripModule = Pick<typeof import('../../markdownEditorEngine.web'), 'getRichMarkdownRoundTripOutput'>;
 let loadedRoundTrip: RoundTripModule | undefined;
 let loadingRoundTrip: Promise<RoundTripModule> | undefined;
 
 function loadRoundTrip(): Promise<RoundTripModule> {
-    loadingRoundTrip ??= import('../tiptap/markdownRoundTrip.web').then((module) => {
+    loadingRoundTrip ??= import('../../markdownEditorEngine.web').then((module) => {
         loadedRoundTrip = module;
         return module;
     }).catch((error: unknown) => {

@@ -4,7 +4,7 @@ import type { MarkdownEditorProps } from './markdownEditorTypes';
 import type { MarkdownEditorSurfaceRef } from './surfaces/TiptapEditorSurface.web';
 
 const TiptapEditorSurface = React.lazy(async () => {
-    const surface = await import('./surfaces/TiptapEditorSurface.web');
+    const surface = await import('./markdownEditorEngine.web');
     return { default: surface.TiptapEditorSurface };
 });
 
