@@ -95,7 +95,6 @@ export function createCliActionExecutor(
   const runtimeAccountId = readAccountIdFromToken(params.token) ?? undefined;
   const transcriptFollowLeaseRegistry = params.transcriptFollowLeaseRegistry
     ?? createSessionTranscriptFollowLeaseRegistry({
-      maxLeases: 16,
       idleTtlMs: DEFAULT_SESSION_TRANSCRIPT_FOLLOW_LEASE_IDLE_TTL_MS,
     });
   const resolveTeamCredentialResourceCatalog = params.resolveTeamCredentialResourceCatalog

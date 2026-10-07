@@ -22,7 +22,7 @@ describe('Home-backed transcript Action waits', () => {
     const address = http.address();
     if (!address || typeof address === 'string') throw new Error('Missing fixture address');
     const endpoint = `http://127.0.0.1:${address.port}`;
-    const registry = createSessionTranscriptFollowLeaseRegistry({ maxLeases: 2, idleTtlMs: 20 });
+    const registry = createSessionTranscriptFollowLeaseRegistry({ idleTtlMs: 20 });
     const controller = new AbortController();
     const follow = (cursor: string) => runWithServerHttpBaseUrl(endpoint, () => followSessionTranscript({
       store: createServerBackedSessionTranscriptStore({ token: 'terminal-test', sessionId: 'session-1', mode: 'plain', ctx: null }),

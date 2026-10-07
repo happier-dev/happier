@@ -23,7 +23,6 @@ import {
   type CurrentGlobalExternalSessionsAuthorService,
 } from './currentGlobalAuthorService';
 import type { CurrentGlobalExternalSessionsPublicAccess } from './currentGlobalRouting';
-import { EXTERNAL_SESSIONS_INVOCATION_POLICY } from './agentExternalSessionsInvocation';
 import {
   deriveExternalSessionPluginOperationDurableKey,
 } from './pluginOperationDurableKey';
@@ -154,6 +153,7 @@ function createAuthorService(
       follow: unavailable,
     }),
     list,
+    closeList: async () => {},
     attach: vi.fn(async () => Object.freeze({ sessionId: 'test-session' })),
     readTranscript: vi.fn(async () => Object.freeze({
       mode: 'page' as const,
@@ -305,7 +305,7 @@ describe('current-global External Sessions author binding', () => {
     }));
     const freshPage = Object.freeze({
       items: Object.freeze([]),
-      nextCursor: 'fresh-cursor',
+      nextCursor: null,
     });
     const freshList = vi.fn(async () => freshPage);
     let current: CurrentGlobalExternalSessionsAuthorService | null =
@@ -329,8 +329,8 @@ describe('current-global External Sessions author binding', () => {
   });
 
   it('uses current-public policy for every call while retaining caller-generation custody', async () => {
-    const hPage = Object.freeze({ items: Object.freeze([]), nextCursor: 'H' });
-    const iPage = Object.freeze({ items: Object.freeze([]), nextCursor: 'I' });
+    const hPage = Object.freeze({ items: Object.freeze([]), nextCursor: null });
+    const iPage = Object.freeze({ items: Object.freeze([]), nextCursor: null });
     const hList = vi.fn(async () => hPage);
     const iList = vi.fn(async () => iPage);
     let current: CurrentGlobalExternalSessionsAuthorService | null =
@@ -696,7 +696,7 @@ describe('current-global External Sessions author binding', () => {
     const activation = deferred();
     const page = Object.freeze({
       items: Object.freeze([]),
-      nextCursor: 'surviving-caller',
+      nextCursor: null,
     });
     const list = vi.fn(async () => page);
     const owner = createCurrentOwner(createAuthorService(list));
@@ -727,7 +727,7 @@ describe('current-global External Sessions author binding', () => {
     expect(list).toHaveBeenCalledOnce();
   });
 
-  it('bounds unresolved activation by the External Sessions deadline and never runs a late effectful attach', async () => {
+  it('allows slow source activation while caller cancellation remains authoritative', async () => {
     vi.useFakeTimers();
     try {
       const activation = deferred();
@@ -745,17 +745,17 @@ describe('current-global External Sessions author binding', () => {
         activateConfiguredSources,
       });
 
-      const pending = binding.attach(externalSessionRef);
+      const caller = new AbortController();
+      const pending = binding.attach(externalSessionRef, { signal: caller.signal });
       await Promise.resolve();
       expect(activateConfiguredSources).toHaveBeenCalledOnce();
-      const rejection = expect(pending).rejects.toMatchObject({
-        code: 'plugin_operation_deadline_exceeded',
-      });
-      await vi.advanceTimersByTimeAsync(EXTERNAL_SESSIONS_INVOCATION_POLICY.deadlineMs);
-
-      await rejection;
+      let settled = false;
+      void pending.then(() => { settled = true; }, () => { settled = true; });
+      await vi.advanceTimersByTimeAsync(46_000);
+      expect(settled).toBe(false);
       expect(service.attach).not.toHaveBeenCalled();
-
+      caller.abort();
+      await expect(pending).rejects.toMatchObject({ code: 'plugin_operation_aborted' });
       activation.resolve();
       await vi.advanceTimersByTimeAsync(0);
       expect(service.attach).not.toHaveBeenCalled();
@@ -793,7 +793,7 @@ describe('current-global External Sessions author binding', () => {
       const rejection = expect(pending).rejects.toMatchObject({
         code: 'plugin_generation_retired',
       });
-      vi.advanceTimersByTime(EXTERNAL_SESSIONS_INVOCATION_POLICY.deadlineMs);
+      vi.advanceTimersByTime(60_000);
       operationController.abort();
       generationCurrent = false;
       generationController.abort();

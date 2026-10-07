@@ -468,7 +468,7 @@ async function resolveCurrentnessInputs(input: Readonly<{
                 manifestPath,
                 daemonEntryPath,
                 sourceSpec,
-                activationEvents: ['startup'],
+                activationEvents: immutableManifest.manifest.activation?.events.map((event) => event.kind) ?? [],
                 manifest: immutableManifest.manifest,
             }],
         }),
@@ -476,6 +476,82 @@ async function resolveCurrentnessInputs(input: Readonly<{
 }
 
 describe('current global External Sessions publication', () => {
+    it('retains default sources beside a refused profile without rereading Account data until its revision changes', async () => {
+        resetActiveAccountSettingsSnapshotForTests();
+        const snapshot = {
+            source: 'network' as const, settings: accountSettingsParse({}), settingsVersion: 1,
+            loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: 'current-global-account',
+        };
+        setActiveAccountSettingsSnapshot(snapshot);
+        let malformed = true;
+        boundaries.fetchAccountProfile.mockClear();
+        boundaries.fetchAccountProfile.mockImplementation(async () => accountProfile([{
+            serviceId: 'openai-codex', profiles: [{
+                profileId: malformed ? ' malformed-profile ' : 'recovered-profile',
+                status: 'connected', kind: 'oauth', providerEmail: null, providerAccountId: null,
+                expiresAt: null, lastUsedAt: null, health: null,
+            }], groups: [],
+        }]));
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-failed-external-home-'));
+        const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-failed-external-plugin-'));
+        let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let reloadController: ReturnType<typeof createPluginReloadController> | null = null;
+        try {
+            await writeExternalSessionsPlugin({ pluginRoot, version: 'H' });
+            await seedCurrentLocalPathPluginFixture({ happyHomeDir, pluginRoot, pluginId: PLUGIN_ID, manifestVersion: '1.0.0' });
+            const inputs = await resolveCurrentnessInputs({ happyHomeDir, pluginRoot });
+            reloadController = createPluginReloadController({ resolveRuntimeRegistry: async () => registry! });
+            registry = await resolveExecutablePluginRuntimeRegistry({
+                happyHomeDir, contributes: inputs.contributes, generation: 1,
+                generationAuthority: inputs.generationAuthority,
+                currentGlobalExternalSessionsRouter: reloadController.currentGlobalExternalSessions,
+                resolveExternalSessionCurrentMachineId: () => 'machine-current-global',
+            });
+            await reloadController.adoptPreparedRuntimeRegistry({
+                registry, changedPluginIds: [PLUGIN_ID], durableRevision: 1,
+                runningSessionDisposition: 'retainRunningSessions',
+            });
+            const demand = [{ pluginId: PLUGIN_ID, family: 'agents' as const, localId: AGENT_ID }];
+            const attemptsAfterInitialPublication = boundaries.fetchAccountProfile.mock.calls.length;
+            expect(attemptsAfterInitialPublication).toBeGreaterThan(0);
+            await registry.activateContributionsOnDemand(demand);
+            await registry.activateContributionsOnDemand(demand);
+            const binding = registry.agentRuntimesByAgentId.get(ROUTING_AGENT_ID)?.sessionRunnerFactoryBinding;
+            const createCurrent = registry.createRetainedRunnerAgentCurrentGlobalExternalSessionsService;
+            if (!binding || !createCurrent) throw new Error('missing current External Sessions binding');
+            const current = await createCurrent({
+                binding, sessionId: SESSION_ID, correlationId: 'failed-publication',
+                signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+            });
+            await expect(current.list({ agentId: ROUTING_AGENT_ID, limit: 1 })).resolves.toMatchObject({
+                items: [expect.objectContaining({ ref: expect.objectContaining({ remoteSessionId: 'current-H' }) })],
+            });
+            expect(registry.pluginDiagnosticsByPluginId?.[PLUGIN_ID]).toEqual(expect.arrayContaining([
+                expect.objectContaining({ code: 'plugin_external_session_source_refused', message: expect.stringContaining('malformed_profile_id') }),
+            ]));
+            expect(boundaries.fetchAccountProfile).toHaveBeenCalledTimes(attemptsAfterInitialPublication);
+
+            malformed = false;
+            configuredExternalSessionSourceRevisions.notifyActiveAccountConnectedServicesProjection(snapshot.scopeKey);
+            await registry.activateContributionsOnDemand(demand);
+            expect(boundaries.fetchAccountProfile).toHaveBeenCalledTimes(attemptsAfterInitialPublication + 1);
+            await registry.activateContributionsOnDemand(demand);
+            expect(boundaries.fetchAccountProfile).toHaveBeenCalledTimes(attemptsAfterInitialPublication + 1);
+            await vi.waitFor(async () => {
+                await expect(current.list({ agentId: ROUTING_AGENT_ID, limit: 1 })).resolves.toMatchObject({
+                    items: [expect.objectContaining({ ref: expect.objectContaining({ remoteSessionId: 'current-H' }) })],
+                });
+            });
+            expect(registry.pluginDiagnosticsByPluginId?.[PLUGIN_ID]?.some((diagnostic) => diagnostic.code === 'plugin_external_session_source_refused')).not.toBe(true);
+        } finally {
+            await reloadController?.shutdown();
+            if (!reloadController) await registry?.dispose();
+            resetActiveAccountSettingsSnapshotForTests();
+            boundaries.fetchAccountProfile.mockImplementation(async () => accountProfile());
+            await Promise.all([rm(happyHomeDir, { recursive: true, force: true }), rm(pluginRoot, { recursive: true, force: true })]);
+        }
+    });
+
     it('retires current-H configured sources on a Connected Services projection while Settings revision stays constant', async () => {
         resetActiveAccountSettingsSnapshotForTests();
         const currentAccountSnapshot = {
@@ -571,14 +647,9 @@ describe('current global External Sessions publication', () => {
             });
             const firstRef = firstPage.items[0]?.ref;
             if (!firstRef || !firstPage.nextCursor) {
-                throw new Error('Expected the first current H page and opaque cursor');
+                throw new Error('Expected the first current H page and continuation');
             }
-            expect(firstPage.nextCursor).toMatch(/^plugin_external_sessions_v1_/);
-            await expect(current.list({
-                agentId: ROUTING_AGENT_ID,
-                cursor: firstPage.nextCursor,
-                limit: 1,
-            })).resolves.toMatchObject({
+            await expect(current.list({ agentId: ROUTING_AGENT_ID, cursor: firstPage.nextCursor, limit: 1 })).resolves.toMatchObject({
                 items: [expect.objectContaining({
                     ref: expect.objectContaining({
                         remoteSessionId: 'current-H-page-2',
@@ -591,7 +662,7 @@ describe('current global External Sessions publication', () => {
                 limit: 1,
             });
             if (!accountAContinuationPage.nextCursor) {
-                throw new Error('Expected an Account A opaque continuation');
+                throw new Error('Expected an Account A page continuation');
             }
             await expect(current.followTranscript(
                 firstRef,
@@ -621,11 +692,7 @@ describe('current global External Sessions publication', () => {
                 });
             });
             expect(boundaries.fetchAccountProfile).toHaveBeenCalledOnce();
-            await expect(current.list({
-                agentId: ROUTING_AGENT_ID,
-                cursor: accountAContinuationPage.nextCursor,
-                limit: 1,
-            })).rejects.toMatchObject({
+            await expect(current.list({ agentId: ROUTING_AGENT_ID, cursor: accountAContinuationPage.nextCursor, limit: 1 })).rejects.toMatchObject({
                 code: 'plugin_external_list_query_invalid',
             });
             const accountBPage = await current.list({
@@ -638,7 +705,6 @@ describe('current global External Sessions publication', () => {
                 throw new Error('Expected the rebuilt Account B current ref');
             }
             expect(accountBPage.nextCursor).toMatch(/^plugin_external_sessions_v1_/);
-            expect(accountBPage.nextCursor).not.toBe(firstPage.nextCursor);
             await expect(current.followTranscript(
                 accountBRef,
                 {},
@@ -1225,7 +1291,6 @@ describe('current global External Sessions publication', () => {
                 contributes: inputs.contributes,
                 generation: 1,
                 generationAuthority: inputs.generationAuthority,
-                pluginIds: [],
                 currentGlobalExternalSessionsRouter:
                     reloadController.currentGlobalExternalSessions,
             });
@@ -1277,22 +1342,25 @@ describe('current global External Sessions publication', () => {
             expect(registry.activatedPluginIds.has(PLUGIN_ID)).toBe(true);
             expect(boundaries.fetchAccountProfile).toHaveBeenCalledTimes(1);
             const firstCursor = firstPage.nextCursor;
-            if (!firstCursor) {
-                throw new Error('Expected the first cold public demand to return a cursor');
+            const secondCursor = secondPage.nextCursor;
+            if (!firstCursor || !secondCursor) {
+                throw new Error('Expected both cold public demands to return continuations');
             }
-            expect(secondPage.nextCursor).toMatch(/^plugin_external_sessions_v1_/);
-            await expect(secondCurrent.list({
-                agentId: ROUTING_AGENT_ID,
-                cursor: firstCursor,
-                limit: 1,
-            })).resolves.toMatchObject({
-                items: [expect.objectContaining({
-                    ref: expect.objectContaining({
-                        remoteSessionId: 'current-H-page-2',
-                    }),
-                })],
-                nextCursor: null,
-            });
+            const continuedPages = await Promise.all([
+                firstCurrent.list({ agentId: ROUTING_AGENT_ID, cursor: firstCursor, limit: 1 }),
+                secondCurrent.list({ agentId: ROUTING_AGENT_ID, cursor: secondCursor, limit: 1 }),
+            ]);
+            for (const page of continuedPages) {
+                expect(page).toMatchObject({
+                    items: [expect.objectContaining({
+                        ref: expect.objectContaining({
+                            remoteSessionId: 'current-H-page-2',
+                        }),
+                    })],
+                    nextCursor: null,
+                });
+            }
+            expect(boundaries.fetchAccountProfile).toHaveBeenCalledTimes(1);
         } finally {
             releaseFirstAccount();
             releaseSecondAccount();

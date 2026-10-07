@@ -7,7 +7,7 @@ import type {
 } from '@/session/external/configuredSourceRegistry';
 
 /**
- * Names the Agents whose own provider leaf refused their configured External
+ * Names the Agents whose configured-source admission or provider refused an External
  * Sessions source, so a dropped candidate is author-visible instead of silent.
  *
  * The configured-source owner already isolated the refusal: every other Agent's
@@ -44,7 +44,7 @@ export function projectExternalSessionSourceRefusalDiagnostics(
             code: 'plugin_external_session_source_refused',
             message:
                 `Configured External Sessions source for Agent '${refusal.agentId}' was refused `
-                + `by its own provider (${refusal.code}): ${refusal.message}`,
+                + `(${refusal.code}): ${refusal.message}`,
             contribution: identity,
         });
         const existing = diagnosticsByPluginId[identity.pluginId] ?? [];

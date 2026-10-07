@@ -117,8 +117,7 @@ export type ExternalSessionProviderOps = Readonly<{
     maxItems: number;
     /**
      * Optional caller-owned absolute ceiling for a larger admission that spans
-     * several provider calls. The generation wrapper applies the earlier of
-     * this value and its ordinary per-call deadline.
+     * several provider calls. The generation wrapper preserves this deadline.
      */
     deadlineAtMs?: number;
     allowProviderFallback?: boolean;

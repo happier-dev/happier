@@ -954,7 +954,7 @@ describe('createExternalSessionFollowHostOperation', () => {
             truncated: false,
         }));
         const leafReadAfterTranscript = vi.fn(async (_request: Readonly<{
-            deadlineAtMs: number;
+            deadlineAtMs?: number;
             signal: AbortSignal;
         }>) => ({
             outcome: 'advanced' as const,
@@ -1041,11 +1041,9 @@ describe('createExternalSessionFollowHostOperation', () => {
             signal: expect.any(AbortSignal),
         });
         expect(leafReadAfterTranscript).toHaveBeenCalledWith({
-            deadlineAtMs: expect.any(Number),
+            deadlineAtMs: undefined,
             signal: expect.any(AbortSignal),
         });
-        expect(leafReadAfterTranscript.mock.calls[0]![0].deadlineAtMs)
-            .toBeGreaterThan(admissionDeadlineAtMs);
         expect(listener).toHaveBeenCalledWith({
             kind: 'data',
             items: [{

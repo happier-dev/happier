@@ -243,6 +243,7 @@ describe('createCliActionExecutorHarness', () => {
       await expect(resolveBlockingDecision({
         artifactId: 'approval_approved_1',
         decision: 'approve',
+        decisionAuthority: 'present_user',
         request: approvedRequest,
         serverId: null,
       })).resolves.toEqual({ resolved: true });

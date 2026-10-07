@@ -22,21 +22,18 @@ import {
     type ExternalSessionExecutionSurface,
 } from '@/session/external/providerOps';
 
-function invocation(
-    maxSerializedBytes: number,
+function invocation<ByteBudget extends number | undefined>(
+    maxSerializedBytes: ByteBudget,
     signal?: AbortSignal,
     admissionDeadlineAtMs?: number,
 ): Readonly<{
     signal: AbortSignal;
-    deadlineAtMs: number;
-    maxSerializedBytes: number;
+    deadlineAtMs?: number;
+    maxSerializedBytes: ByteBudget;
 }> {
     return {
         signal: signal ?? new AbortController().signal,
-        deadlineAtMs: Math.min(
-            Date.now() + EXTERNAL_SESSIONS_INVOCATION_POLICY.deadlineMs,
-            admissionDeadlineAtMs ?? Number.POSITIVE_INFINITY,
-        ),
+        ...(admissionDeadlineAtMs === undefined ? {} : { deadlineAtMs: admissionDeadlineAtMs }),
         maxSerializedBytes,
     };
 }
@@ -153,7 +150,7 @@ export function createAgentExternalSessionsExecutionSurface(
             const result = unwrap('resolveSource', await contribution.resolveSource({
                 source: toAgentSource(request.source, 'resolveSource'),
                 ...invocation(
-                    EXTERNAL_SESSIONS_INVOCATION_POLICY.resolveSource.maxSerializedBytes,
+                    undefined,
                     request.signal,
                 ),
             }));
@@ -170,10 +167,7 @@ export function createAgentExternalSessionsExecutionSurface(
                 source: toAgentSource(request.source, 'listCandidates'),
                 maxItems: request.limit,
                 ...invocation(
-                    Math.min(
-                        request.maxBytes ?? EXTERNAL_SESSIONS_INVOCATION_POLICY.listCandidates.maxSerializedBytes,
-                        EXTERNAL_SESSIONS_INVOCATION_POLICY.listCandidates.maxSerializedBytes,
-                    ),
+                    request.maxBytes ?? EXTERNAL_SESSIONS_INVOCATION_POLICY.listCandidates.maxSerializedBytes,
                     request.signal,
                 ),
                 ...(request.cursor === undefined ? {} : { cursor: request.cursor }),
@@ -203,7 +197,7 @@ export function createAgentExternalSessionsExecutionSurface(
                 source: toAgentSource(request.source, 'resolveLinkIdentity'),
                 remoteSessionId: request.remoteSessionId,
                 ...invocation(
-                    EXTERNAL_SESSIONS_INVOCATION_POLICY.resolveLinkIdentity.maxSerializedBytes,
+                    undefined,
                     request.signal,
                 ),
                 ...(linkData === undefined ? {} : { linkData }),
@@ -228,7 +222,7 @@ export function createAgentExternalSessionsExecutionSurface(
                 remoteSessionId: request.remoteSessionId,
                 linkData: readLinkData(request.metadata, 'resolveLinkedIdentity') ?? {},
                 ...invocation(
-                    EXTERNAL_SESSIONS_INVOCATION_POLICY.resolveLinkedIdentity.maxSerializedBytes,
+                    undefined,
                     request.signal,
                 ),
             }));
@@ -254,10 +248,7 @@ export function createAgentExternalSessionsExecutionSurface(
                 direction: request.direction,
                 maxItems: request.maxItems,
                 ...invocation(
-                    Math.min(
-                        request.maxBytes,
-                        EXTERNAL_SESSIONS_INVOCATION_POLICY.pageTranscript.maxSerializedBytes,
-                    ),
+                    request.maxBytes,
                     request.signal,
                     request.deadlineAtMs,
                 ),
@@ -279,10 +270,7 @@ export function createAgentExternalSessionsExecutionSurface(
                 cursor: request.cursor,
                 maxItems: request.maxItems,
                 ...invocation(
-                    Math.min(
-                        request.maxBytes,
-                        EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript.maxSerializedBytes,
-                    ),
+                    request.maxBytes,
                     request.signal,
                     request.deadlineAtMs,
                 ),

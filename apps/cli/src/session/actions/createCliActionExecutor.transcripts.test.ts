@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { describe, expect, it, vi } from 'vitest';
+import { setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
 
 import { createHttpStatusError } from '@/api/client/httpStatusError';
 import { encodeBase64, encrypt } from '@/api/encryption';
@@ -68,7 +69,7 @@ function createTranscriptExecutor(params: Partial<TranscriptExecutorTestParams>)
 describe('createCliActionExecutor transcript actions', () => {
   it('releases a followed transcript through the canonical Action boundary for abort or iterator cleanup', async () => {
     const unsubscribe = vi.fn();
-    const registry = createSessionTranscriptFollowLeaseRegistry({ maxLeases: 2, idleTtlMs: 1000 });
+    const registry = createSessionTranscriptFollowLeaseRegistry({ idleTtlMs: 1000 });
     const executor = createTranscriptExecutor({
       transcriptStore: createTranscriptStore({
         readAfter: async () => ({ items: [], nextCursor: 'tail', truncated: false }),
@@ -122,7 +123,7 @@ describe('createCliActionExecutor transcript actions', () => {
     const store = createTranscriptStore({ pageOlder, readAfter });
     const executor = createTranscriptExecutor({
       transcriptStore: store,
-      transcriptFollowLeaseRegistry: createSessionTranscriptFollowLeaseRegistry({ maxLeases: 2, idleTtlMs: 1000 }),
+      transcriptFollowLeaseRegistry: createSessionTranscriptFollowLeaseRegistry({ idleTtlMs: 1000 }),
     });
 
     await expect(executor.execute('transcript.page', {
@@ -253,7 +254,14 @@ describe('createCliActionExecutor transcript actions', () => {
       _sessionId: string,
       _items: readonly TranscriptItem[],
     ) => ({ imported: 1, cursor: 'tail-import' }));
-    const executor = createTranscriptExecutor({ writeTranscriptItems });
+    // Host-reviewed settings isolate caller admission from the separate human-confirmation policy.
+    const actionsSettings = setActionApprovalOverride({
+      settings: { v: 1, actions: {} }, actionId: 'transcript.import', surface: 'plugin', approvalRequired: false,
+    });
+    const executor = createTranscriptExecutor({
+      writeTranscriptItems,
+      actionsSettingsProvider: { getActionsSettings: () => actionsSettings },
+    });
     const input = {
       items: [{
         id: 'history-1',
@@ -275,7 +283,7 @@ describe('createCliActionExecutor transcript actions', () => {
       actionCaller: {
         kind: 'plugin',
         pluginId: 'happier.agent.acme',
-        contributionLocalId: 'acme.sample',
+        contributionLocalId: 'acme-sample',
       },
     })).resolves.toMatchObject({
       ok: true,
@@ -364,7 +372,7 @@ describe('createCliActionExecutor transcript actions', () => {
       readAfter: async () => ({ items: [], nextCursor: 'tail-3', truncated: false }),
       subscribe: () => directUnsubscribe,
     });
-    const directRegistry = createSessionTranscriptFollowLeaseRegistry({ maxLeases: 16, idleTtlMs: 600_000 });
+    const directRegistry = createSessionTranscriptFollowLeaseRegistry({ idleTtlMs: 600_000 });
 
     try {
       await expect(executor.execute('transcript.follow', {

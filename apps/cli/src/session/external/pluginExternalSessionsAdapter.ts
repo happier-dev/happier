@@ -17,6 +17,7 @@ import { randomUUID } from 'node:crypto';
 import { clonePluginPlainData } from '../../plugins/runtime/plainData';
 import {
   EXTERNAL_SESSIONS_INVOCATION_POLICY,
+  armExternalSessionsDeadline,
   invokeBoundedExternalSessionsOperation,
 } from './agentExternalSessionsInvocation';
 import type {
@@ -85,33 +86,25 @@ type ListSourceSnapshot = {
   diagnosticCode?: string;
   seenCursors: Set<string>;
   /**
-   * Public refs actually emitted in this source's cursor lineage. This remains
-   * inside the owned continuation snapshot, whose existing byte estimator is
-   * the sole retention ceiling.
+   * Public refs actually emitted in this source's cursor lineage.
    */
   emittedPublicRefKeys: Set<string>;
   publicRefCollision?: true;
 };
 type ListSnapshot = { queryKey: string; sources: readonly ListSourceSnapshot[]; refillStartIndex: number };
-type RetainedListSnapshot = Readonly<{ snapshot: ListSnapshot; retainedBytes: number }>;
+type ListDemand = {
+  controller: AbortController;
+  cursor?: string;
+  snapshot?: ListSnapshot;
+  releaseCaller?: () => void;
+};
 const CURSOR_PREFIX = 'plugin_external_sessions_v1_';
-const MAX_CURSOR_SNAPSHOTS = 128;
 const MAX_CONCURRENT_LIST_HEAD_ACQUISITIONS = 8;
-const LIST_HEAD_ACQUISITION_TIMEOUT_MS = 3_000;
-const MAX_SNAPSHOT_ITEMS = 10_000;
-const MAX_SNAPSHOT_BYTES = 4 * 1024 * 1024;
-// Preserve the existing 128-cursor capacity for ordinary snapshots while limiting
-// worst-case retention to the byte budget of four maximum-size candidate snapshots. The
-// estimate also counts the state omitted by MAX_SNAPSHOT_BYTES: consumed page
-// items, source entries, provider/seen cursors, diagnostics, and the host cursor.
-const MAX_CURSOR_SNAPSHOT_TOTAL_BYTES = 4 * MAX_SNAPSHOT_BYTES;
 const DEFAULT_LIST_MAX_BYTES = 512 * 1024;
 const MAX_LINKED_SESSION_ID_CODE_UNITS = 191;
 const MAX_READ_AFTER_DIAGNOSTICS = 32;
 const MAX_READ_AFTER_DIAGNOSTIC_CODE_UNITS = 128;
 const MAX_READ_AFTER_DIAGNOSTIC_POSITIONS = 200;
-const RETAINED_REFERENCE_BYTES = 8;
-const RETAINED_CONTAINER_BYTES = 16;
 const PUBLIC_REF_COLLISION_DIAGNOSTIC = 'plugin_external_public_ref_collision';
 
 function comparePublicCandidates(
@@ -156,10 +149,10 @@ function serviceFailure(error: unknown, fallbackCode: string): PluginError {
 function assertAvailable(value: PluginOperationAvailability): void {
   if (value.status !== 'available') fail(value.code);
 }
-function boundedInteger(value: number | undefined, fallback: number, max: number, code: string): number {
+function positiveInteger(value: number | undefined, fallback: number, code: string): number {
   if (value === undefined) return fallback;
   if (!Number.isSafeInteger(value) || value <= 0) fail(code);
-  return Math.min(max, value);
+  return value;
 }
 function assertNotAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) fail('plugin_operation_aborted');
@@ -245,78 +238,8 @@ function projectReadAfterDiagnostics(value: unknown): readonly Readonly<{
   }));
 }
 
-type RetainedByteEstimateState = {
-  bytes: number;
-  readonly maxBytes: number;
-  readonly seen: Set<object>;
-};
-
 class MalformedExternalSessionCandidatePageError extends Error {}
 class ExternalSessionSourceValidationUnavailableError extends Error {}
-
-function addRetainedBytes(state: RetainedByteEstimateState, bytes: number): boolean {
-  state.bytes = Math.min(state.maxBytes + 1, state.bytes + bytes);
-  return state.bytes <= state.maxBytes;
-}
-
-function addRetainedUtf8Bytes(state: RetainedByteEstimateState, value: string): void {
-  for (let index = 0; index < value.length && state.bytes <= state.maxBytes; index += 1) {
-    const codeUnit = value.charCodeAt(index);
-    if (codeUnit <= 0x7f) {
-      addRetainedBytes(state, 1);
-    } else if (codeUnit <= 0x7ff) {
-      addRetainedBytes(state, 2);
-    } else if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
-      const next = value.charCodeAt(index + 1);
-      if (next >= 0xdc00 && next <= 0xdfff) {
-        addRetainedBytes(state, 4);
-        index += 1;
-      } else {
-        addRetainedBytes(state, 3);
-      }
-    } else {
-      addRetainedBytes(state, 3);
-    }
-  }
-}
-
-function addRetainedValueBytes(state: RetainedByteEstimateState, value: unknown): void {
-  if (!addRetainedBytes(state, RETAINED_REFERENCE_BYTES)) return;
-  if (typeof value === 'string') {
-    addRetainedUtf8Bytes(state, value);
-    return;
-  }
-  if (value === null || typeof value !== 'object') return;
-  if (state.seen.has(value)) return;
-  state.seen.add(value);
-  if (!addRetainedBytes(state, RETAINED_CONTAINER_BYTES)) return;
-  if (value instanceof Set) {
-    for (const item of value) {
-      addRetainedValueBytes(state, item);
-      if (state.bytes > state.maxBytes) return;
-    }
-    return;
-  }
-  for (const key of Reflect.ownKeys(value)) {
-    if (typeof key === 'string') addRetainedUtf8Bytes(state, key);
-    else addRetainedUtf8Bytes(state, key.description ?? '');
-    if (!addRetainedBytes(state, RETAINED_REFERENCE_BYTES)) return;
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (descriptor && 'value' in descriptor) addRetainedValueBytes(state, descriptor.value);
-    if (state.bytes > state.maxBytes) return;
-  }
-}
-
-function estimateRetainedListSnapshotBytes(cursor: string, snapshot: ListSnapshot): number {
-  const state: RetainedByteEstimateState = {
-    bytes: 0,
-    maxBytes: MAX_CURSOR_SNAPSHOT_TOTAL_BYTES,
-    seen: new Set<object>(),
-  };
-  addRetainedValueBytes(state, cursor);
-  addRetainedValueBytes(state, snapshot);
-  return state.bytes;
-}
 
 function unavailableFollowTarget(code: string): HostExternalSessionFollowTargetResolution {
   return Object.freeze({ status: 'unavailable', code });
@@ -693,43 +616,34 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
   canFollowNow?: () => boolean;
   retirementSignal?: AbortSignal;
 }>): PluginExternalSessionsDomainComposition {
-  const snapshots = new Map<string, RetainedListSnapshot>();
-  let retainedSnapshotBytes = 0;
-  const deleteSnapshot = (cursor: string): boolean => {
-    const retained = snapshots.get(cursor);
-    if (!retained) return false;
-    snapshots.delete(cursor);
-    retainedSnapshotBytes = Math.max(0, retainedSnapshotBytes - retained.retainedBytes);
-    return true;
+  // The cursor carries a stable query identity plus a single-use page identity.
+  // A consumed cursor can still close its demand while a successor is in flight.
+  const demands = new Map<string, ListDemand>();
+  const demandIdForCursor = (cursor: string): string | null => {
+    if (!cursor.startsWith(CURSOR_PREFIX)) return null;
+    const parts = cursor.slice(CURSOR_PREFIX.length).split('.');
+    return parts.length === 2 && parts[0] && parts[1] ? parts[0] : null;
   };
-  const clearSnapshots = (): void => {
-    snapshots.clear();
-    retainedSnapshotBytes = 0;
+  const releaseDemand = (id: string): void => {
+    const demand = demands.get(id);
+    if (!demand) return;
+    demands.delete(id);
+    demand.snapshot = undefined;
+    demand.cursor = undefined;
+    demand.releaseCaller?.();
+    demand.controller.abort();
+  };
+  const clearDemands = (): void => {
+    for (const id of demands.keys()) releaseDemand(id);
   };
   const isCurrent = () => {
     let current = false;
     try { current = params.isCurrent() === true; } catch { current = false; }
-    if (!current) clearSnapshots();
+    if (!current) clearDemands();
     return current;
   };
-  params.retirementSignal?.addEventListener('abort', clearSnapshots, { once: true });
-  if (params.retirementSignal?.aborted) clearSnapshots();
-  const retainSnapshot = (cursor: string, snapshot: ListSnapshot): void => {
-    const retainedBytes = estimateRetainedListSnapshotBytes(cursor, snapshot);
-    if (retainedBytes > MAX_CURSOR_SNAPSHOT_TOTAL_BYTES) {
-      fail('plugin_external_inventory_capacity_exceeded');
-    }
-    while (
-      snapshots.size >= MAX_CURSOR_SNAPSHOTS
-      || retainedSnapshotBytes + retainedBytes > MAX_CURSOR_SNAPSHOT_TOTAL_BYTES
-    ) {
-      const oldestCursor = snapshots.keys().next().value;
-      if (oldestCursor === undefined) fail('plugin_external_inventory_capacity_exceeded');
-      deleteSnapshot(oldestCursor);
-    }
-    snapshots.set(cursor, Object.freeze({ snapshot, retainedBytes }));
-    retainedSnapshotBytes += retainedBytes;
-  };
+  params.retirementSignal?.addEventListener('abort', clearDemands, { once: true });
+  if (params.retirementSignal?.aborted) clearDemands();
   const runBoundedOperation = async <T>(
     callerSignal: AbortSignal | undefined,
     failureCode: string,
@@ -742,17 +656,14 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
     if (!isCurrent() || params.retirementSignal?.aborted) fail('plugin_generation_retired');
     assertNotAborted(callerSignal);
     const nowMs = Date.now();
-    const deadlineAtMs = Math.min(
-      nowMs + EXTERNAL_SESSIONS_INVOCATION_POLICY.deadlineMs,
-      options.deadlineAtMs ?? Number.POSITIVE_INFINITY,
-    );
-    if (deadlineAtMs <= nowMs) {
+    const deadlineAtMs = options.deadlineAtMs;
+    if (deadlineAtMs !== undefined && deadlineAtMs <= nowMs) {
       throw failure('plugin_operation_deadline_exceeded');
     }
     const deadline = new AbortController();
-    const timeout = setTimeout(
+    const cancelDeadline = deadlineAtMs === undefined ? undefined : armExternalSessionsDeadline(
+      deadlineAtMs,
       () => deadline.abort(),
-      Math.max(0, deadlineAtMs - nowMs),
     );
     const operationSignal = AbortSignal.any([
       deadline.signal,
@@ -796,7 +707,7 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
         throw serviceFailure(error, failureCode);
       }
     } finally {
-      clearTimeout(timeout);
+      cancelDeadline?.();
     }
   };
   const sourceFor = (ref: HostExternalSessionRef): SourceEntry => {
@@ -896,27 +807,49 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
     & ExternalSessionsCompositionPort = {
     capabilities: caps,
     async list(query: NonNullable<Parameters<PluginExternalSessionsDomainAuthorService['list']>[0]> = {}) {
-      return await runBoundedOperation(query.signal, 'plugin_external_list_failed', async (operationSignal) => {
+      if (!isCurrent() || params.retirementSignal?.aborted) fail('plugin_generation_retired');
+      assertNotAborted(query.signal);
+      const demandId = query.cursor
+        ? demandIdForCursor(query.cursor) ?? fail('plugin_external_cursor_invalid')
+        : randomUUID();
+      const demand: ListDemand = query.cursor
+        ? demands.get(demandId) ?? fail('plugin_external_cursor_invalid')
+        : { controller: new AbortController() };
+      let snapshotForContinuation: ListSnapshot | undefined;
+      if (query.cursor) {
+        if (demand.cursor !== query.cursor || !demand.snapshot) fail('plugin_external_cursor_invalid');
+        snapshotForContinuation = demand.snapshot;
+        demand.cursor = undefined;
+        demand.snapshot = undefined;
+      } else {
+        demands.set(demandId, demand);
+        if (query.signal) {
+          const signal = query.signal;
+          const onAbort = () => releaseDemand(demandId);
+          signal.addEventListener('abort', onAbort, { once: true });
+          demand.releaseCaller = () => signal.removeEventListener('abort', onAbort);
+        }
+      }
+      return await runBoundedOperation(AbortSignal.any([
+        demand.controller.signal,
+        ...(query.signal ? [query.signal] : []),
+      ]), 'plugin_external_list_failed', async (operationSignal) => {
         assertAvailable(caps().list);
         const queryKey = JSON.stringify([query.agentId ?? null, query.sourceId ?? null]);
         const listPolicy = EXTERNAL_SESSIONS_INVOCATION_POLICY.listCandidates;
-        const limit = boundedInteger(
+        const limit = positiveInteger(
           query.limit,
-          listPolicy.maxItems,
           listPolicy.maxItems,
           'plugin_external_limit_invalid',
         );
-        const maxBytes = boundedInteger(
+        const maxBytes = positiveInteger(
           query.maxBytes,
           DEFAULT_LIST_MAX_BYTES,
-          listPolicy.maxSerializedBytes,
           'plugin_external_max_bytes_invalid',
         );
         let snapshot: ListSnapshot;
         if (query.cursor) {
-          if (!query.cursor.startsWith(CURSOR_PREFIX)) fail('plugin_external_cursor_invalid');
-          snapshot = snapshots.get(query.cursor)?.snapshot ?? fail('plugin_external_cursor_invalid');
-          deleteSnapshot(query.cursor);
+          snapshot = snapshotForContinuation ?? fail('plugin_external_cursor_invalid');
           if (snapshot.queryKey !== queryKey) fail('plugin_external_cursor_invalid');
         } else {
           const entries = params.sources
@@ -1133,8 +1066,7 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
           || error.code === 'plugin_operation_deadline_exceeded'
         )
       );
-      const sourceFailureCode = (error: unknown, timedOut: boolean): string => {
-        if (timedOut) return 'plugin_external_source_timeout';
+      const sourceFailureCode = (error: unknown): string => {
         if (error instanceof ExternalSessionSourceValidationUnavailableError) {
           return 'plugin_external_source_unavailable';
         }
@@ -1142,12 +1074,7 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
       };
       const attemptMissingHead = async (sourceState: ListSourceSnapshot): Promise<void> => {
         if (sourceState.exhausted || sourceState.offset < sourceState.items.length) return;
-        const deadline = new AbortController();
-        const timeout = setTimeout(
-          () => deadline.abort(),
-          LIST_HEAD_ACQUISITION_TIMEOUT_MS,
-        );
-        const sourceSignal = AbortSignal.any([operationSignal, deadline.signal]);
+        const sourceSignal = operationSignal;
         try {
           await new Promise<void>((resolve, reject) => {
             const onAbort = () => reject(new DOMException('Source acquisition aborted', 'AbortError'));
@@ -1164,8 +1091,7 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
           if (operationSignal.aborted) throwOperationAbort();
           if (isCallFatalListFailure(error)) throw error;
           if (
-            !deadline.signal.aborted
-            && !(error instanceof ExternalSessionProviderFailureError)
+            !(error instanceof ExternalSessionProviderFailureError)
             && !(error instanceof MalformedExternalSessionCandidatePageError)
             && !(error instanceof ExternalSessionSourceValidationUnavailableError)
           ) {
@@ -1175,9 +1101,7 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
           sourceState.offset = 0;
           sourceState.providerCursor = undefined;
           sourceState.exhausted = true;
-          setSourceDiagnostic(sourceState, sourceFailureCode(error, deadline.signal.aborted));
-        } finally {
-          clearTimeout(timeout);
+          setSourceDiagnostic(sourceState, sourceFailureCode(error));
         }
       };
       const fillMissingHeads = async (): Promise<void> => {
@@ -1252,23 +1176,12 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
         items.push(selectedCandidate.candidate);
       }
 
-      const retainedItems = snapshot.sources.reduce(
-        (count, sourceState) => count + Math.max(0, sourceState.items.length - sourceState.offset),
-        0,
-      );
-      if (retainedItems > MAX_SNAPSHOT_ITEMS) fail('plugin_external_inventory_capacity_exceeded');
-      const retained = snapshot.sources.flatMap((sourceState) => (
-        sourceState.items
-          .slice(sourceState.offset)
-          .map((candidate) => candidate.candidate)
-      ));
-      if (serializedBytes(retained, MAX_SNAPSHOT_BYTES) > MAX_SNAPSHOT_BYTES) fail('plugin_external_inventory_capacity_exceeded');
       const hasMore = snapshot.sources.some(
         (sourceState) => sourceState.offset < sourceState.items.length || !sourceState.exhausted,
       );
       let nextCursor: string | undefined;
       if (hasMore) {
-        nextCursor = `${CURSOR_PREFIX}${randomUUID()}`;
+        nextCursor = `${CURSOR_PREFIX}${demandId}.${randomUUID()}`;
       }
       const diagnostics = Object.freeze(snapshot.sources.flatMap((sourceState) => {
         const diagnostic = diagnosticBySource.get(diagnosticKey(sourceState));
@@ -1286,9 +1199,18 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
       assertSerializedBytes(result, maxBytes);
       assertNotAborted(operationSignal);
       if (!isCurrent()) fail('plugin_generation_retired');
-      if (nextCursor) retainSnapshot(nextCursor, snapshot);
+      if (nextCursor) {
+        demand.cursor = nextCursor;
+        demand.snapshot = snapshot;
+      }
       return result;
+      }).finally(() => {
+        if (!demand.cursor) releaseDemand(demandId);
       });
+    },
+    async closeList(cursor: string) {
+      const id = demandIdForCursor(cursor);
+      if (id) releaseDemand(id);
     },
     async attach(ref: HostExternalSessionRef, options?: Parameters<PluginExternalSessionsDomainAuthorService['attach']>[1]) {
       return await runBoundedOperation(options?.signal, 'plugin_external_attach_failed', async (operationSignal) => {
@@ -1342,15 +1264,13 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
         const transcriptPolicy = query.mode === 'readAfter'
           ? EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript
           : EXTERNAL_SESSIONS_INVOCATION_POLICY.pageTranscript;
-        const maxBytes = boundedInteger(
+        const maxBytes = positiveInteger(
           query.maxBytes,
-          transcriptPolicy.maxSerializedBytes,
           transcriptPolicy.maxSerializedBytes,
           'plugin_external_max_bytes_invalid',
         );
-        const maxItems = boundedInteger(
+        const maxItems = positiveInteger(
           query.limit,
-          transcriptPolicy.maxItems,
           transcriptPolicy.maxItems,
           'plugin_external_limit_invalid',
         );
@@ -1574,7 +1494,8 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
     }, listener);
   };
   const unwrapListCursor = (cursor: string): string | null => {
-    if (!cursor.startsWith(CURSOR_PREFIX) || !snapshots.has(cursor)) {
+    const id = demandIdForCursor(cursor);
+    if (!id) {
       return null;
     }
     if (!isCurrent() || params.retirementSignal?.aborted) {
@@ -1598,6 +1519,7 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
     authorService: Object.freeze({
       capabilities: service.capabilities,
       list: listAuthor,
+      closeList: service.closeList,
       attach: service.attach,
       readTranscript: service.readTranscript,
       followTranscript: followAuthorTranscript,

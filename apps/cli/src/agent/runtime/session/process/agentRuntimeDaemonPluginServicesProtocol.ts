@@ -764,6 +764,11 @@ export const RUNNER_DAEMON_PLUGIN_SERVICE_OPERATION_V1_SCHEMAS = [
         query: RunnerDaemonPluginServiceWireValueV1Schema.optional(),
     }).strict()),
     lazyZodSchema(() => z.object({
+        kind: z.literal('plugin_sessions.external.close_list_v1'),
+        ...OperationBaseSchema,
+        cursor: CursorSchema,
+    }).strict()),
+    lazyZodSchema(() => z.object({
         kind: z.literal('plugin_sessions.external.attach_v1'),
         ...OperationBaseSchema,
         ...OptionalWitnessSchema,

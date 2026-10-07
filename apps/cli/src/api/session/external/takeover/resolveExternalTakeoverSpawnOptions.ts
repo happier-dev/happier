@@ -20,7 +20,6 @@ import type {
   AgentRuntimeRegistrationLease,
 } from '@/plugins/runtime/lifecycle/contributions/targetAgents';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
-import { EXTERNAL_SESSIONS_INVOCATION_POLICY } from '@/session/external/agentExternalSessionsInvocation';
 import { readStoredCredentials } from '@/persistence';
 import {
   createCredentialsSpawnConnectedServicesTeamResourceCatalogResolver,
@@ -139,11 +138,6 @@ export async function resolveExternalTakeoverSpawnOptionsFromRuntimeRegistry(
         remoteSessionId: params.linked.remoteSessionId,
         linkData: params.linked.linkData ?? {},
         signal: params.signal,
-        deadlineAtMs:
-          Date.now() + EXTERNAL_SESSIONS_INVOCATION_POLICY.deadlineMs,
-        maxSerializedBytes:
-          EXTERNAL_SESSIONS_INVOCATION_POLICY.resolveLinkedIdentity
-            .maxSerializedBytes,
       });
     if (!resolvedIdentity.ok) {
       return {
