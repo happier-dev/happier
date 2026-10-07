@@ -1,6 +1,7 @@
 import { vi } from 'vitest';
 import type { Socket } from 'socket.io-client';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 
 type ConfigureSocketBoundary = (socket: Socket, serverUrl: string | undefined) => void;
 const socketBoundary = vi.hoisted(() => ({ configure: undefined as ConfigureSocketBoundary | undefined }));
@@ -68,7 +69,11 @@ export async function restoreServerAccountForTest(params: Readonly<{
     }
     await setActiveServer({ serverId: home.id });
     const credentials = params.credentials ?? { token: `e30.${Buffer.from(JSON.stringify({ sub: params.accountId ?? 'account-a' })).toString('base64url')}.signature` };
-    const credentialBoundary = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue(credentials);
+    // A restored Account owns credentials for this Home, not every staged Home.
+    const homeUrlKey = createServerUrlComparableKey(home.serverUrl);
+    const credentialBoundary = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async serverUrl => (
+        createServerUrlComparableKey(serverUrl) === homeUrlKey ? credentials : null
+    ));
     await restoreConnectionToActiveServer(credentials);
     return {
         home,

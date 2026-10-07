@@ -41,6 +41,7 @@ export async function createBuiltInQualifiedRefreshHarness(input: Readonly<{
   controller?: PluginReloadController;
   happyHomeDir?: string;
   runtimeRegistry?: ConnectedServiceRuntimeRegistry;
+  readGroup?: NonNullable<ConstructorParameters<typeof ConnectedServiceRefreshCoordinator>[0]['qualifiedConnectedAccountRuntime']>['readGroup'];
   onQualifiedConnectedAccountCredentialUpdated?: NonNullable<ConstructorParameters<typeof ConnectedServiceRefreshCoordinator>[0]['qualifiedConnectedAccountRuntime']>['onCredentialUpdated'];
   createPurposeRuntime?: (resources: Readonly<{
     controller: PluginReloadController;
@@ -248,6 +249,7 @@ export async function createBuiltInQualifiedRefreshHarness(input: Readonly<{
       resolvePeerClass: () => 'advertised_v4',
       establishedRuntimeOwner,
       readCredential,
+      ...(input.readGroup ? { readGroup: input.readGroup } : {}),
       acquireRefreshLease,
       mutateCredential,
       mutateCredentialHealth,
@@ -325,17 +327,27 @@ export async function createBuiltInQualifiedNativeRefreshHarness(
         configurationRevision: null, kind: 'oauth', expiresAt: null, scopes: [],
         providerIdentity: { accountId } })) };
   };
-  let stored = QualifiedConnectedAccountPurposeBindingsV1Schema.parse({ v: 1, bindings: [] });
+  // The real foreground claim compares its exact lease against the Account's
+  // durable selected purpose; an empty store is not a selected Account launch.
+  let stored = QualifiedConnectedAccountPurposeBindingsV1Schema.parse({ v: 1, bindings: [{
+    purpose: { consumer: { pluginId: 'happier.agent.codex', localId: 'codex' }, purpose: 'primary' },
+    target: { kind: 'account', account: { service, accountId: 'work' } },
+  }] });
   const listeners = new Set<() => void>();
   let api!: ApiClient;
   const harness = await createBuiltInQualifiedRefreshHarness({ ...resources,
+    readGroup: async ({ service: requestedService, groupId }) => (
+      requestedService.pluginId === service.pluginId
+      && requestedService.localId === service.localId
+      && groupId === group.ref.groupId ? group : null
+    ),
     createPurposeRuntime(prepared) {
       readCurrentCredential = prepared.readCredential;
-      api = { ...prepared.api,
+      api = Object.assign(prepared.api, {
         listConnectedServiceProfiles: async () => ({ serviceId: 'openai-codex' as const,
           profiles: [{ profileId: 'work', status: 'connected' as const, kind: 'oauth' as const },
             { profileId: 'backup', status: 'connected' as const, kind: 'oauth' as const }] }),
-      };
+      });
       return createDaemonConnectedAccountPurposeBindingRuntime({
         establishedRuntimeOwner: prepared.establishedRuntimeOwner, reloadController: prepared.controller,
         resolveQualifiedConnectedAccountV4Support: () => 'advertised',

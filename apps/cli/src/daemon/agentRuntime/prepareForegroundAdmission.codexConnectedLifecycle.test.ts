@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { once } from 'node:events';
@@ -26,7 +26,10 @@ const claimInput = {
 } as const;
 
 describe('foreground Codex Connected Account lifecycle through real materialization', () => {
-  beforeAll(async () => {
+  beforeEach(async () => {
+    // Each fixture shuts down the process-global daemon controller it owns.
+    // Load a fresh singleton for the next actual foreground lifecycle.
+    vi.resetModules();
     ({ withRealForegroundAdmissionFixture } = await import('./foregroundAdmission.testkit'));
     ({ createCodexForegroundConnectedAccountFixture } = await import('./prepareForegroundAdmission.codexConnectedServices.testkit'));
     ({ createBuiltInQualifiedNativeRefreshHarness: createQualifiedNativeRefreshHarness } = await import('../connectedServices/refresh/ConnectedServiceRefreshCoordinator.qualifiedRefresh.testkit'));
@@ -39,41 +42,43 @@ describe('foreground Codex Connected Account lifecycle through real materializat
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it('keeps a promoted foreground native home and exact purpose alive after its own qualified runtime-auth refresh', async () => {
+  it('registers promoted foreground Sessions for exact native refresh and retires their targets with admission', async () => {
     const registry = new ConnectedServiceRuntimeRegistry();
     let account!: Awaited<ReturnType<typeof createQualifiedNativeRefreshHarness>>;
     await withRealForegroundAdmissionFixture({
       async createRuntime({ home, controller }) {
-        account = await createQualifiedNativeRefreshHarness({ happyHomeDir: home, controller, runtimeRegistry: registry,
-          // This is the actual daemon composition: the canonical coordinator calls
-          // the real purpose runtime, whose real watch owns launch invalidation.
-          onQualifiedConnectedAccountCredentialUpdated: () => account.purposeRuntime.invalidate(),
-        });
+        account = await createQualifiedNativeRefreshHarness({ happyHomeDir: home, controller, runtimeRegistry: registry });
         return account.admittedRuntime;
       },
     }, async (fixture) => {
       const trackedSessions = new Map<number, TrackedSession>();
       const preparedBySession = new Map<string, PreparedForegroundAgentRuntimeAdmission>();
       const authorityBySession = new Map<string, NonNullable<Awaited<ReturnType<typeof readForegroundAuthority>>>>();
+      let connectedServicePreparationError: unknown;
       const connectedServices = { v: 2 as const, bindingsByServiceId: {
         'happier.agent.codex/openai-codex': { source: 'connected' as const, selection: 'profile' as const, profileId: 'work' },
       } };
       const admission = createForegroundAdmission({
+        connectedServiceRuntimeRegistry: registry,
         prepare: async (request) => {
           const result = await fixture.prepare({ connectedServices, sessionId: request.sessionId,
             attemptId: request.attemptId, foregroundPid: request.foregroundPid }, {
           activateSessionPurposeBindings: account.purposeRuntime.activateSessionPurposeBindings,
           connectedServicesMaterializationBaseDir: join(account.happyHomeDir, 'materialized'),
-          resolveConnectedServiceAuthForSpawn: (input) => resolveConnectedServiceAuthForSpawn({
+          resolveConnectedServiceAuthForSpawn: async (input) => {
+            try { return await resolveConnectedServiceAuthForSpawn({
             ...input, credentials: account.credentials, api: account.api,
+            qualifiedConnectedAccountApi: account.qualifiedApi,
+            credentialRefreshService: account.coordinator,
             activeServerDir: configuration.activeServerDir, baseDir: join(account.happyHomeDir, 'materialized'),
             activateQualifiedPurposeBindings: (snapshot) => account.purposeRuntime.activatePurposeBindings({
-              subject: { kind: 'operation', operationId: 'foreground-materialize',
+              subject: { kind: 'operation', operationId: `foreground-materialize:${input.materializationKey}`,
                 consumer: { pluginId: 'happier.agent.codex', localId: 'codex' },
                 isCurrent: () => fixture.runtime.controller.isRuntimeRegistryCurrent(fixture.runtime.registry) },
               purposes: snapshot.purposes, bindings: snapshot.bindings,
             }),
-          }),
+            }); } catch (error) { connectedServicePreparationError = error; throw error; }
+          },
           resolveDaemonSpawnHooks: async (agentId) => {
             const entry = await fixture.runtime.registry.acquireAgentCatalogEntry?.(agentId);
             return await entry?.getDaemonSpawnHooks?.() ?? null;
@@ -90,7 +95,7 @@ describe('foreground Codex Connected Account lifecycle through real materializat
           trackedSessions.set(input.foregroundPid, tracked);
           const markerTime = Date.now();
           await writeSessionMarker({ pid: input.foregroundPid, startedBy: 'terminal',
-            happySessionId: input.canonicalSessionId, happyHomeDir: fixture.home,
+            happySessionId: input.canonicalSessionId,
             createdAt: markerTime, updatedAt: markerTime, processStartTimeMs: input.runner.processStartTimeMs,
             processCommandHash: input.runner.processCommandHash });
           const promoted = await promoteForegroundAuthority({ ...input, trackedSessions, happyHomeDir: fixture.home,
@@ -109,7 +114,7 @@ describe('foreground Codex Connected Account lifecycle through real materializat
       try {
         const claim = async (sessionId: string, foregroundPid: number, attemptId: string) => {
           const admitted = await admission.admit(fixture.request({ connectedServices, sessionId, foregroundPid, attemptId }));
-          expect(admitted.ok, admitted.ok ? undefined : admitted.error.code).toBe(true);
+          expect(admitted.ok, admitted.ok ? undefined : `${admitted.error.code}; ${String(connectedServicePreparationError)}`).toBe(true);
           if (!admitted.ok) throw new Error(admitted.error.code);
           const descriptor = admitted.capability.descriptor;
           const capability = z.object({ capability: z.string() }).passthrough().parse(
@@ -119,12 +124,20 @@ describe('foreground Codex Connected Account lifecycle through real materializat
             provisionalSessionId: sessionId, canonicalSessionId: sessionId,
             foregroundPid, pluginId: descriptor.pluginId, agentId: descriptor.agentId,
             occurrenceId: descriptor.occurrenceId, sourceCustody: descriptor.sourceCustody, capability,
+            ...(admitted.launchPolicy.nativeHomeSourceEnvironmentKey
+              ? { nativeHomeSourceEnvironmentValue: process.env[admitted.launchPolicy.nativeHomeSourceEnvironmentKey] ?? null }
+              : {}),
             foregroundSatisfiedProfileSecretRequirementNames: [] });
           expect(claimed.ok, claimed.ok ? undefined : claimed.error.code).toBe(true);
           if (!claimed.ok) throw new Error(claimed.error.code);
           return claimed;
         };
         const claimed = await claim(claimInput.canonicalSessionId, fixture.foregroundPid, 'attempt-1');
+        expect(registry.getBySessionId(claimInput.canonicalSessionId)).toMatchObject({
+          pid: fixture.foregroundPid, agentId: 'codex',
+          materializationKey: claimInput.canonicalSessionId,
+          exactPurposeBindingSubjectId: `agent-session:${claimInput.canonicalSessionId}`,
+        });
         secondForeground = spawnTestProcess(process.execPath, [join(fixture.directory, 'foreground', 'dist', 'index.mjs')]);
         await once(secondForeground, 'spawn');
         if (!secondForeground.pid) throw new Error('Second real foreground process unavailable');
@@ -154,10 +167,6 @@ describe('foreground Codex Connected Account lifecycle through real materializat
         const authority = authorityBySession.get(claimInput.canonicalSessionId);
         const prepared = preparedBySession.get(claimInput.canonicalSessionId);
         if (!authority || !prepared) throw new Error('Actual promoted native auth source is unavailable');
-        registry.registerTarget({ sessionId: claimInput.canonicalSessionId, pid: fixture.foregroundPid,
-          agentId: 'codex', materializationKey: claimInput.canonicalSessionId,
-          connectedServicesBindingsRaw: connectedServices, connectedServiceSelectionsEnv: claimed.environment,
-          exactPurposeBindingSubjectId: exactPurpose.exactPurposeBindingSubjectId });
         const refresh = createSessionConnectedServiceRuntimeAuthRefreshHandler({ registry,
           captureSessionAuthority: () => ({ identity: authority, isCurrent: () => prepared.isCurrent()
             && fixture.runtime.controller.isRuntimeRegistryCurrent(fixture.runtime.registry)
@@ -180,9 +189,13 @@ describe('foreground Codex Connected Account lifecycle through real materializat
         })).resolves.toMatchObject({ ok: true, result: { status: 'refreshed', result: { credentialRevision: account.secondRevision } } });
         // Real resolution/materialization must reread the rotated credential while
         // preserving the already-promoted launch's exact subject and resources.
+        let materializedRevision: string | null = null;
         const fresh = await account.purposeRuntime.owner.materialize({ ...exactPurpose,
-          expectedAccount: account.account, expectedCredentialRevision: account.secondRevision,
+          expectedAccount: account.account,
+          credentialRevisionBasis: { expectedCredentialRevision: account.secondRevision,
+            captureCredentialRevision: revision => { materializedRevision = revision; } },
           request: { kind: 'files', fileIds: ['auth.json'] } });
+        expect(materializedRevision).toBe(account.secondRevision);
         expect(fresh.kind).toBe('files');
         if (fresh.kind !== 'files') throw new Error('Fresh native auth is not files');
         expect(JSON.parse(new TextDecoder().decode(fresh.files['auth.json']))).toMatchObject({
@@ -191,16 +204,15 @@ describe('foreground Codex Connected Account lifecycle through real materializat
         await expect(stat(nativeHome)).resolves.toBeTruthy();
         expect(restartRequests).not.toContain(claimInput.canonicalSessionId);
         expect(tracked?.agentRuntimeDaemonServiceAuthorityFilePath).toBeTruthy();
-        // The same Account also backs a different live Session whose launch still
-        // holds the predecessor credential. Its established consequence must survive.
-        await expect(account.purposeRuntime.owner.getBinding(secondExactPurpose)).resolves.toBeNull();
+        // Distribution rematerializes both registered Sessions, rather than
+        // invalidating unrelated exact purpose leases through a global callback.
+        expect(registry.getBySessionId(secondSessionId)).toMatchObject({ pid: secondForeground.pid });
+        await expect(account.purposeRuntime.owner.getBinding(secondExactPurpose)).resolves.toMatchObject({ account: account.account });
+        expect(JSON.parse(await readFile(join(secondNativeHome, 'auth.json'), 'utf8'))).toMatchObject({ access_token: 'access-fresh' });
+        await admission.releaseSession(secondSessionId);
+        expect(registry.getBySessionId(secondSessionId)).toBeNull();
         await expect(stat(secondNativeHome)).rejects.toMatchObject({ code: 'ENOENT' });
-        // Non-native request-auth refresh keeps its established invalidation
-        // consequence; suppressing every credential notification is not a fix.
-        await expect(account.coordinator.refreshQualifiedConnectedAccountCredentialForRequestAuth({
-          account: account.account, expectedCredentialRevision: account.secondRevision,
-        })).resolves.toBe(true);
-        await expect(account.purposeRuntime.owner.getBinding(exactPurpose)).resolves.toBeNull();
+        expect(registry.getBySessionId(claimInput.canonicalSessionId)).not.toBeNull();
       } finally {
         try { await admission.dispose(); }
         finally {

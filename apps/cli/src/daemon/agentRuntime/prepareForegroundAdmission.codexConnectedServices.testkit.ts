@@ -2,13 +2,15 @@ import axios, { AxiosHeaders, type AxiosResponse } from 'axios';
 import { join } from 'node:path';
 import { vi } from 'vitest';
 import {
-  buildConnectedServiceCredentialRecord,
+  sealQualifiedConnectedAccountContentEnvelope,
+  openQualifiedConnectedAccountContentEnvelope,
+  parseQualifiedConnectedAccountCredentialPlaintextV1,
   QualifiedConnectedAccountListResponseV4Schema,
   ConnectedServiceBindingsV2IngressSchema,
 } from '@happier-dev/protocol';
 
 import { ApiClient } from '@/api/api';
-import { listQualifiedConnectedAccountsV4 } from '@/api/client/qualifiedConnectedAccountApi';
+import { listQualifiedConnectedAccountsV4, readQualifiedConnectedAccountCredentialV4 } from '@/api/client/qualifiedConnectedAccountApi';
 import { configuration } from '@/configuration';
 import { createConnectedAccountRequestAuthSubjectRegistry } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
 import { resolveConnectedServiceAuthForSpawn } from '@/daemon/connectedServices/resolveConnectedServiceAuthForSpawn';
@@ -21,12 +23,9 @@ import { createForegroundPurposeOwnerFixture } from './prepareForegroundAdmissio
 export async function createCodexForegroundConnectedAccountFixture() {
   const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' } as const;
   const revision = 'csr_0123456789ABCDEFGHJKMNPQRS';
-  const record = buildConnectedServiceCredentialRecord({
-    now: Date.now(), serviceId: 'openai-codex', profileId: 'work', kind: 'oauth', expiresAt: null,
-    oauth: {
-      accessToken: 'work-access', refreshToken: 'work-refresh', idToken: 'work-id',
-      scope: null, tokenType: 'Bearer', providerAccountId: 'work-account', providerEmail: null,
-    },
+  const content = sealQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'plain',
+    payload: { v: 1, values: { accessToken: 'work-access', refreshToken: 'work-refresh', idToken: 'work-id', providerAccountId: 'work-account' } },
+    randomBytes: length => new Uint8Array(length),
   });
   const accounts = QualifiedConnectedAccountListResponseV4Schema.parse({
     service, accounts: [{
@@ -43,9 +42,10 @@ export async function createCodexForegroundConnectedAccountFixture() {
       : path === '/v1/account/encryption' ? { mode: 'plain', updatedAt: 0 }
         : path === '/v2/connect/openai-codex/profiles'
           ? { serviceId: 'openai-codex', profiles: [{ profileId: 'work', status: 'connected', kind: 'oauth' }] }
-          : path === '/v3/connect/openai-codex/profiles/work/credential'
+          : path === '/v4/connect/qualified/credential'
             ? {
-                content: { t: 'plain', v: record },
+                ref: { service, accountId: 'work' }, authenticationModeId: 'oauth', configurationRevision: null,
+                content, metadata: { providerIdentity: { accountId: 'work-account' }, displayName: 'work', scopes: [] },
                 revisionSemantics: 'revisioned', credentialRevision: revision,
               }
             : (() => { throw new Error(`Unexpected Account HTTP request: ${path}`); })();
@@ -55,7 +55,7 @@ export async function createCodexForegroundConnectedAccountFixture() {
   const api = await ApiClient.create(credentials);
   const readAccounts = async () => await listQualifiedConnectedAccountsV4({ token: credentials.token, service });
   const readCredential = async () => {
-    const credential = await api.getConnectedServiceCredentialPlain({ serviceId: 'openai-codex', profileId: 'work' });
+    const credential = await readQualifiedConnectedAccountCredentialV4({ token: credentials.token, ref: { service, accountId: 'work' } });
     if (!credential) throw new Error('Exact Account credential unavailable');
     return credential;
   };
@@ -73,26 +73,24 @@ export async function createCodexForegroundConnectedAccountFixture() {
     },
     materializeAccount: async ({ account, credentialRevisionBasis, request, signal }) => {
       const credential = await readCredential();
-      if (credential.revisionSemantics !== 'revisioned') throw new Error('Ongoing purpose authority requires a credential revision');
-      credentialRevisionBasis?.captureCredentialRevision(credential.credentialRevision);
+      if (credential.revisionSemantics !== 'revisioned' || !credential.credentialRevision) throw new Error('Ongoing purpose authority requires a credential revision');
+      const credentialRevision = credential.credentialRevision;
+      credentialRevisionBasis?.captureCredentialRevision(credentialRevision);
       const invoker = registry?.connectedAccountRuntimeInvoker;
       if (!invoker) throw new Error('Applied Codex materializer unavailable');
-      const oauth = credential.content.v.kind === 'oauth' ? credential.content.v.oauth : null;
-      if (!oauth) throw new Error('Selected Account has no OAuth credential');
-      const values = new Map<string, string | null>([
-        ['accessToken', oauth.accessToken], ['refreshToken', oauth.refreshToken],
-        ['idToken', oauth.idToken], ['providerAccountId', oauth.providerAccountId],
-      ]);
+      const plaintext = openQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'plain', envelope: credential.content });
+      const values = parseQualifiedConnectedAccountCredentialPlaintextV1({ ref: credential.ref,
+        authenticationModeId: credential.authenticationModeId, plaintext, metadata: credential.metadata }).values;
       return await invoker.invokeEstablished({
-        target: { account, expectedCredentialRevision: credential.credentialRevision, expectedRuntimeConfigurationRevision: 'configuration-1' },
+        target: { account, expectedCredentialRevision: credentialRevision, expectedRuntimeConfigurationRevision: 'configuration-1' },
         operation: { kind: 'materialize', request },
         context: {
           account,
           configuration: { target: { kind: 'account', account, modeId: 'oauth' }, revision: 'configuration-1', values: {}, getSecret: async () => null },
-          credentials: { get: async (key) => values.get(key) ?? null },
+          credentials: { get: async (key) => values[key] ?? null },
         },
         isConfigurationCurrent: async () => (await readAccounts()).accounts.some(candidate => candidate.ref.accountId === account.accountId && candidate.configurationRevision === 'configuration-1'),
-        isCredentialRevisionCurrent: async () => (await readCredential()).credentialRevision === credential.credentialRevision,
+        isCredentialRevisionCurrent: async () => (await readCredential()).credentialRevision === credentialRevision,
         signal,
       });
     },

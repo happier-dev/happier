@@ -190,12 +190,20 @@ export async function refreshConnectedServiceRuntimeAuthForTarget(input: Readonl
       if (!failureCode) throw error;
       bridgeSettlement = { status: 'failed', reason: failureCode };
     }
+    const settlement = parseDaemonAuthBridgeRefreshSettlement(bridgeSettlement, request.refreshAttemptId);
+    // Another request may adopt the shared refresh's exact revision between
+    // the bridge settlement and this continuation. Reaccept only that proven
+    // one-service transition through the captured runtime authority.
+    if (!input.isCurrent() && settlement.status === 'refreshed') {
+      const revision = ConnectedServiceCredentialRevisionV1Schema.safeParse(settlement.result.credentialRevision);
+      if (revision.success) input.acceptSettledCredentialRevision?.(revision.data);
+    }
     if (!input.isCurrent()) {
       return { ok: false, errorCode: 'connected_service_session_refresh_forbidden' };
     }
     return {
       ok: true,
-      result: parseDaemonAuthBridgeRefreshSettlement(bridgeSettlement, request.refreshAttemptId),
+      result: settlement,
     };
 }
 

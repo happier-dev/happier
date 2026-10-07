@@ -33,10 +33,20 @@ describe('registered Session native auth refresh through the canonical coordinat
         let materialized: Awaited<ReturnType<typeof resolveConnectedServiceAuthForSpawn>> | null = null;
         try {
             materialized = await resolveConnectedServiceAuthForSpawn({ agentId: 'codex', materializationKey: 'session',
-                connectedServices: bindings, credentials: h.credentials, api: h.api,
+                connectedServicesBindingsRaw: bindings,
+                resolveQualifiedPurposeBindingSnapshot: currentBindings => resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
+                    agentId: 'codex', bindings: currentBindings, contributions: h.registry.contributes,
+                }),
+                credentials: h.credentials, api: h.api,
                 baseDir: join(h.happyHomeDir, 'materialized'), activeServerDir: join(h.happyHomeDir, 'active'),
                 qualifiedConnectedAccountApi: h.qualifiedApi, credentialRefreshService: h.coordinator,
-                purposeBindingSessionId: 'session', nowMs: () => h.now, processEnv: {} });
+                activateQualifiedPurposeBindings: (purposeSnapshot) => h.purposeRuntime.activatePurposeBindings({
+                    subject: { kind: 'operation', operationId: 'session-launch', consumer: { pluginId: 'happier.agent.codex', localId: 'codex' },
+                        isCurrent: () => h.controller.isRuntimeRegistryCurrent(h.registry) },
+                    purposes: purposeSnapshot.purposes, bindings: purposeSnapshot.bindings,
+                }), nowMs: () => h.now, processEnv: {} });
+            if (!materialized) throw new Error('Session native launch materialization unavailable');
+            await materialized.materializationPurposeLease?.dispose();
             registry.registerTarget({ sessionId: 'session', pid: 4242, agentId: 'codex', materializationKey: 'session',
                 connectedServicesBindingsRaw: bindings, connectedServiceSelectionsEnv: materialized.env,
                 exactPurposeBindingSubjectId: lease.subjectId });
@@ -62,7 +72,9 @@ describe('registered Session native auth refresh through the canonical coordinat
             const root = materialized.env.CODEX_HOME;
             if (!root) throw new Error('Native home unavailable');
             expect(JSON.parse(await readFile(join(root, 'auth.json'), 'utf8'))).toMatchObject({ tokens: { access_token: 'access-new', refresh_token: '' } });
-            await expect(refresh({ ...request, refreshAttemptId: 'attempt-2', expectedCredentialRevision: h.secondRevision }))
+            // Session callbacks may retain the launch revision (Claude SDK does); the registered
+            // Session owner forwards its adopted current revision for the next distinct attempt.
+            await expect(refresh({ ...request, refreshAttemptId: 'attempt-2' }))
                 .resolves.toEqual({ ok: true, result: { status: 'refreshed', result: { credentialRevision: h.thirdRevision } } });
             const auth = await readFile(join(root, 'auth.json'), 'utf8');
             expect(JSON.parse(auth)).toMatchObject({ tokens: { access_token: 'access-next', refresh_token: '' } });

@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { once } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
@@ -135,6 +135,10 @@ async function harness() {
                 if (!request) throw new Error('Run fixture activation is not current');
                 return request;
             },
+            get nativeHome() {
+                if (!request) throw new Error('Run fixture activation is not current');
+                return resolveConnectedServiceMaterializedRootDir({ baseDir, materializationKey: request.runId, agentId: 'codex' });
+            },
             async activate() {
                 const runId = `run-${++activationSequence}`;
                 const materialized = await capturedBridge.materialize({ runId, runnerPid, agentId: 'codex', connectedServices: bindings, cwd: directory });
@@ -202,6 +206,51 @@ describe('execution Run runtime auth refresh HTTP authority', () => {
         }
         expect((await h.post({ ...h.request, sessionId: 'invented-session' })).statusCode).toBe(400);
         expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('retains the settlements of distinct concurrent attempt IDs for the same exact Run', async () => {
+        let started!: () => void;
+        const entered = new Promise<void>((resolve) => { started = resolve; });
+        let settle!: (response: Response) => void;
+        const providerResponse = new Promise<Response>((resolve) => { settle = resolve; });
+        const fetch = vi.fn(() => { started(); return providerResponse; });
+        vi.stubGlobal('fetch', fetch);
+        await h.activate();
+        const firstRequest = { ...h.request, refreshAttemptId: h.request.refreshAttemptId + '-first' };
+        const secondRequest = { ...h.request, refreshAttemptId: h.request.refreshAttemptId + '-second' };
+        const first = h.post(firstRequest);
+        await entered;
+        const second = h.post(secondRequest);
+        settle(oauthResponse('concurrent-access'));
+        const [firstReply, secondReply] = await Promise.all([first, second]);
+        expect(firstReply.json()).toMatchObject({ result: { status: 'refreshed' } });
+        expect(secondReply.json()).toEqual(firstReply.json());
+        expect((await h.post(firstRequest)).json()).toEqual(firstReply.json());
+        expect((await h.post(secondRequest)).json()).toEqual(secondReply.json());
+        expect(fetch).toHaveBeenCalledTimes(1);
+        expect(JSON.parse(await readFile(join(h.nativeHome, 'auth.json'), 'utf8')))
+            .toMatchObject({ tokens: { access_token: 'concurrent-access', refresh_token: '' } });
+    });
+
+    it('does not rematerialize or disclose provider material after another credential writer wins the CAS', async () => {
+        let started!: () => void;
+        const entered = new Promise<void>((resolve) => { started = resolve; });
+        let settle!: (response: Response) => void;
+        const providerResponse = new Promise<Response>((resolve) => { settle = resolve; });
+        vi.stubGlobal('fetch', vi.fn(() => { started(); return providerResponse; }));
+        await h.activate();
+        const before = await readFile(join(h.nativeHome, 'auth.json'), 'utf8');
+        const pending = h.post();
+        await entered;
+        const current = await h.readCredential();
+        await h.mutateCredential({ token: 'happier-token', mutation: { ref: h.account, authenticationModeId: 'oauth',
+            expectedCredentialRevision: current.credentialRevision, expectedConfigurationRevision: null,
+            content: current.content, metadata: current.metadata } });
+        settle(oauthResponse('losing-private-access'));
+        const response = await pending;
+        expect(response.json().result.status).not.toBe('refreshed');
+        expect(response.body).not.toContain('losing-private-access');
+        await expect(readFile(join(h.nativeHome, 'auth.json'), 'utf8')).resolves.toBe(before);
     });
 
     // Contribution shutdown is terminal for the suite-owned real singleton and runs last.
