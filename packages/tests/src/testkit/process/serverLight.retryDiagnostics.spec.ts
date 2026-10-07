@@ -5,10 +5,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { repoRootDir } from '../paths';
 
 let healthAttempt = 0;
 let healthFailuresBeforeSuccess = 1;
 let spawnAttempt = 0;
+let sharedDepsBuildFailure: Error | undefined;
+let isolatedLeasesDir: string;
 
 vi.mock('node:net', () => ({
   createServer: () => ({
@@ -19,7 +22,9 @@ vi.mock('node:net', () => ({
 }));
 
 vi.mock('./spawnProcess', () => ({
-  runLoggedCommand: async () => {},
+  runLoggedCommand: async (params: { args: string[] }) => {
+    if (params.args.includes('build:shared') && sharedDepsBuildFailure) throw sharedDepsBuildFailure;
+  },
   spawnLoggedProcess: (params: { stdoutPath: string; stderrPath: string }) => {
     spawnAttempt += 1;
     writeFileSync(params.stdoutPath, `stdout attempt ${spawnAttempt}\n`, 'utf8');
@@ -52,36 +57,61 @@ vi.mock('../http', () => ({
   },
 }));
 
-vi.mock('./processOwnershipLease', () => ({
-  inspectOwnedProcess: () => ({ ok: false as const, reason: 'not_found' as const }),
-  registerProcessOwnershipLease: async () => ({ leasePath: null, removeLease: () => {} }),
-  resolveProcessOwnershipLeasesDir: () => '',
-  sweepProcessOwnershipLeases: async () => {},
-}));
+import { hasServerSharedDepsOutputs, startServerLight } from './serverLight';
 
-import { startServerLight } from './serverLight';
-
-beforeEach(() => {
+beforeEach(async () => {
   healthAttempt = 0;
   healthFailuresBeforeSuccess = 1;
   spawnAttempt = 0;
+  sharedDepsBuildFailure = undefined;
+  isolatedLeasesDir = await mkdtemp(join(tmpdir(), 'happier-retry-diagnostic-leases-'));
+  vi.stubEnv('HAPPIER_E2E_PROCESS_LEASES_DIR', isolatedLeasesDir);
 });
 
-afterEach(() => {
+afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   vi.resetModules();
+  await rm(isolatedLeasesDir, { recursive: true, force: true });
 });
 
 afterAll(() => {
   vi.doUnmock('node:net');
   vi.doUnmock('./spawnProcess');
   vi.doUnmock('../http');
-  vi.doUnmock('./processOwnershipLease');
   vi.resetModules();
 });
 
 describe('startServerLight retry diagnostics', () => {
+  it('refuses startup when canonical shared-dependency freshness validation fails even though outputs exist', async () => {
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-server-dependency-freshness-'));
+    let server: Awaited<ReturnType<typeof startServerLight>> | undefined;
+    try {
+      // Existing output presence is the regression's precondition, not a freshness decision.
+      expect(hasServerSharedDepsOutputs(repoRootDir())).toBe(true);
+      const dataDir = join(testDir, 'server-light-data');
+      await mkdir(dataDir, { recursive: true });
+      await writeFile(join(dataDir, 'reuse.marker'), 'reuse');
+      sharedDepsBuildFailure = new Error('BUILD_INPUTS_CHANGED');
+      healthFailuresBeforeSuccess = 0;
+
+      const startup = startServerLight({
+        testDir, dbProvider: 'sqlite', dataDirMode: 'reuse-existing',
+        extraEnv: {
+          HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: '0',
+          HAPPIER_E2E_PROVIDER_SKIP_SERVER_GENERATE: '1',
+          HAPPIER_E2E_PROVIDER_USE_SERVER_SOURCE_ENTRYPOINT: '0',
+        },
+      }).then((started) => { server = started; return started; });
+      await expect(startup).rejects.toThrow('BUILD_INPUTS_CHANGED');
+      expect(spawnAttempt).toBe(0);
+    } finally {
+      await server?.stop();
+      await rm(testDir, { recursive: true, force: true });
+    }
+  });
+
   it('preserves each retry log while the current paths follow the successful attempt', async () => {
     const testDir = await mkdtemp(join(tmpdir(), 'happier-server-light-retry-diagnostics-'));
     const dataDir = join(testDir, 'server-light-data');
