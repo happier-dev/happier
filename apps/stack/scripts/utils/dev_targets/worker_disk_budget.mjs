@@ -122,15 +122,34 @@ export async function inspectWorkerDiskBudget({ repoDir, cacheBaseDir, commandCl
   for (const fs of filesystems) fs.reservedBytes = 0;
   if (admissionRoot && process.platform === 'linux') {
     const { readWorkerMemoryReservations } = await import('../proc/service_memory.mjs');
-    const { admittedOwners } = readWorkerMemoryReservations({ admissionRoot, includeAdmittedRss: true, includeOwnerProgress: true });
-    for (const owner of admittedOwners) {
-      const ownerPath = join(admissionRoot, 'owners', `${owner.pid}-${owner.token}`);
-      if (ownerPath === ownOwnerPath) continue;
+    const { admittedOwnerRecords } = readWorkerMemoryReservations({ admissionRoot, includeAdmittedRss: true, includeOwnerProgress: true });
+    for (const owner of admittedOwnerRecords) {
+      if (owner.ownerPaths.includes(ownOwnerPath)) continue;
       // Only the existing owner authenticates live PID generations. An old
       // loaded job without a disk envelope is unknown, never free headroom.
-      const disk = JSON.parse(readFileSync(join(ownerPath, 'disk'), 'utf8'));
-      if (!Array.isArray(disk.filesystems) || disk.filesystems.some(fs => typeof fs.device !== 'string' || !Number.isSafeInteger(fs.requiredBytes) || fs.requiredBytes < 0)) throw new Error('live worker disk reservation unavailable');
-      for (const fs of filesystems) fs.reservedBytes += disk.filesystems.filter(peer => peer.device === fs.device).reduce((sum, peer) => sum + peer.requiredBytes, 0);
+      const reservation = new Map();
+      for (const ownerPath of owner.ownerPaths) {
+        let envelope;
+        try { envelope = readFileSync(join(ownerPath, 'disk'), 'utf8'); }
+        catch (error) {
+          if (error.code !== 'ENOENT') throw error;
+          // Release can retire a record after the OS snapshot. Reauthenticate
+          // its exact path; a still-live unpublished envelope must fail closed.
+          const current = readWorkerMemoryReservations({ admissionRoot, includeAdmittedRss: true, includeOwnerProgress: true });
+          const live = current.admittedOwnerRecords.some(peer => peer.pid === owner.pid && peer.token === owner.token && peer.ownerPaths.includes(ownerPath));
+          if (live) throw error;
+          continue;
+        }
+        const disk = JSON.parse(envelope);
+        if (!Array.isArray(disk.filesystems) || disk.filesystems.some(fs => typeof fs.device !== 'string' || !Number.isSafeInteger(fs.requiredBytes) || fs.requiredBytes < 0)) throw new Error('live worker disk reservation unavailable');
+        for (const fs of filesystems) {
+          const bytes = disk.filesystems.filter(peer => peer.device === fs.device).reduce((sum, peer) => sum + peer.requiredBytes, 0);
+          // Canonical and pre-cutover records can describe one incarnation.
+          // Preserve its larger envelope without reserving the process twice.
+          reservation.set(fs.device, Math.max(reservation.get(fs.device) ?? 0, bytes));
+        }
+      }
+      for (const fs of filesystems) fs.reservedBytes += reservation.get(fs.device) ?? 0;
     }
   }
   const requiredBytes = commandClass === 'dependency-install' || commandClass === 'validation' ? installBytes : buildBytes;

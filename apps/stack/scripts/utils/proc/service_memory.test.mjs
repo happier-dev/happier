@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { readdirSync } from 'node:fs';
+import fs from 'node:fs';
+import childProcess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
 import { spawn, spawnSync } from 'node:child_process';
 import { access, chmod, copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -27,6 +30,9 @@ esac
 `);
   await chmod(awkPath, 0o755);
   const env = { ...process.env, PATH: `${fixture.path('bin')}:/usr/bin:/bin`, TMPDIR: fixture.root };
+  // These memory-only physical-worker fixtures have no install/build closure.
+  // An execution host's cache configuration must not enable disk admission.
+  delete env.HAPPIER_STACK_PM_CACHE_BASE_DIR;
   for (const key of Object.keys(env)) {
     if (key.startsWith('HAPPIER_HEAVYWEIGHT_ADMISSION_')) delete env[key];
   }
@@ -444,7 +450,7 @@ test('legacy observation validates the original owner, deduplicates inherited to
   assert.ok([...snapshot.values()].every(Boolean));
   const observe = admissionRoot => readWorkerMemoryReservations({ admissionRoot, readProcesses: () => snapshot });
   assert.deepEqual(observe(fixture.path('current')).legacyOwners, [{
-    pid: owner.child.pid, token: owner.token, className: 'runtime-build',
+    pid: owner.child.pid, token: owner.token, className: 'runtime-build', ownerPath: owner.ownerPath,
   }]);
   assert.deepEqual(observe(owner.root).legacyOwners, []);
   assert.doesNotMatch(renderWorkerMemoryReservationRows(observe(fixture.path('current'))), /^admitted /m,
@@ -456,12 +462,60 @@ test('legacy observation validates the original owner, deduplicates inherited to
   }];
   assert.deepEqual(observeRss(fixture.path('current')).admittedOwners, expected);
   assert.deepEqual(observeRss(owner.root).admittedOwners, expected, 'canonical owners use the same authenticated RSS observation');
+  const expectedRecords = [{ pid: owner.child.pid, token: owner.token, ownerPaths: [owner.ownerPath] }];
+  assert.deepEqual(observeRss(fixture.path('current')).admittedOwnerRecords, expectedRecords);
+  assert.deepEqual(observeRss(owner.root).admittedOwnerRecords, expectedRecords);
   const migrated = fixture.path('current', 'owners', `${owner.child.pid}-${owner.token}`);
   await mkdir(migrated, { recursive: true });
   await writeFile(`${migrated}/process`, `${owner.child.pid} ${owner.token}\n`);
   await writeFile(`${migrated}/class`, 'validation\n');
   assert.deepEqual(observeRss(fixture.path('current')).admittedOwners, expected,
     'canonical and legacy records credit the same process incarnation once');
+  assert.deepEqual(observeRss(fixture.path('current')).admittedOwnerRecords, [{ ...expectedRecords[0], ownerPaths: [migrated, owner.ownerPath] }]);
+
+  const repoDir = fixture.path('repo'), cacheBaseDir = fixture.path('cache');
+  await mkdir(`${repoDir}/node_modules`, { recursive: true });
+  await writeFile(`${repoDir}/node_modules/data`, 'x'.repeat(8192));
+  await mkdir(cacheBaseDir);
+  await writeFile(`${owner.ownerPath}/disk`, JSON.stringify({ filesystems: [{ device: 'fixture', requiredBytes: 1000000 }] }));
+  await writeFile(`${migrated}/disk`, JSON.stringify({ filesystems: [{ device: 'fixture', requiredBytes: 200000 }] }));
+  const spawnAtBoundary = childProcess.spawnSync;
+  // Disk admission sees this fixture's physical worker through real proc
+  // observations, excluding unrelated reservations on the test host.
+  const enumerate = t.mock.method(childProcess, 'spawnSync', (command, ...args) => {
+    const result = spawnAtBoundary(command, ...args);
+    if (command === 'ps') return { ...result, stdout: result.stdout.split('\n').filter(row => snapshot.has(Number(row.trim().split(/\s+/)[0]))).join('\n') };
+    return result;
+  });
+  syncBuiltinESMExports();
+  t.after(() => { enumerate.mock.restore(); syncBuiltinESMExports(); });
+  const { inspectWorkerDiskBudget } = await import('../dev_targets/worker_disk_budget.mjs');
+  const diskOptions = { repoDir, cacheBaseDir, admissionRoot: fixture.path('current'), commandClass: 'validation',
+    observeFilesystem: () => ({ device: 'fixture', availableBytes: 1000000, totalBytes: 2000000 }) };
+  const disk = await inspectWorkerDiskBudget(diskOptions);
+  assert.equal(disk.admitted, false, 'the larger authenticated legacy envelope still reserves headroom');
+  assert.equal(disk.filesystems[0].reservedBytes, 1000000, 'one incarnation is charged once per filesystem');
+  assert.equal((await inspectWorkerDiskBudget({ ...diskOptions, ownOwnerPath: migrated })).admitted, true,
+    'inherited escalation replaces the whole incarnation reservation');
+  await import('node:fs/promises').then(fs => fs.rm(`${owner.ownerPath}/disk`));
+  await assert.rejects(inspectWorkerDiskBudget(diskOptions), { code: 'ENOENT' }, 'a live legacy owner without an envelope fails closed');
+  const readAtBoundary = fs.readFileSync;
+  let reauthenticating = false;
+  const read = t.mock.method(fs, 'readFileSync', (path, ...args) => {
+    if (path === `${owner.ownerPath}/disk`) reauthenticating = true;
+    if (reauthenticating && path === `${owner.ownerPath}/process`) {
+      throw Object.assign(new Error('legacy identity permission denied'), { code: 'EACCES' });
+    }
+    return readAtBoundary(path, ...args);
+  });
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(inspectWorkerDiskBudget(diskOptions), { code: 'EACCES' },
+      'a legacy authentication error during reobservation is not proof of retirement');
+  } finally {
+    read.mock.restore();
+    syncBuiltinESMExports();
+  }
   const fingerprint = snapshot.get(owner.child.pid).fingerprint;
   snapshot.get(owner.child.pid).fingerprint = 'linux-proc:0';
   assert.deepEqual(observeRss(fixture.path('current')).admittedOwners, [], 'reused owner PIDs grant no RSS credit');
@@ -474,6 +528,8 @@ test('legacy observation validates the original owner, deduplicates inherited to
   const rss = snapshot.get(owner.descendantPid).rssKiB;
   snapshot.get(owner.descendantPid).rssKiB = undefined;
   assert.deepEqual(observeRss(owner.root).admittedOwners, [], 'unavailable tree RSS must not release the reservation');
+  assert.deepEqual(observeRss(owner.root).admittedOwnerRecords, [{ pid: owner.child.pid, token: owner.token, ownerPaths: [owner.ownerPath] }],
+    'unavailable RSS does not retire an authenticated disk owner');
   snapshot.get(owner.descendantPid).rssKiB = rss;
   await writeFile(`${owner.ownerPath}/process`, `${owner.child.pid} 0\n`);
   assert.deepEqual(observe(fixture.path('current')).legacyOwners, [], 'a live inherited token cannot authorize a mismatched owner record');

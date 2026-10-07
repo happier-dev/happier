@@ -5,6 +5,9 @@ import { join } from 'node:path';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import fs from 'node:fs';
+import childProcess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
 
 test('disk budget reclaims oldest stale staging before obsolete packages and scratch, preserving newest target and holders', async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-disk-budget-' });
@@ -90,10 +93,50 @@ test('disk admission charges an authenticated live peer reservation on the same 
   await writeFile(join(owner, 'process'), `${process.pid} ${token}\n`);
   await writeFile(join(owner, 'class'), 'validation\n');
   await writeFile(join(owner, 'disk'), JSON.stringify({ filesystems: [{ device: 'fixture', requiredBytes: 1000000 }] }));
+  const spawn = childProcess.spawnSync;
+  // This fixture is its own physical worker. Keep real kernel observations
+  // for its owner without importing unrelated live host reservations.
+  const enumerate = t.mock.method(childProcess, 'spawnSync', (command, ...args) => {
+    const result = spawn(command, ...args);
+    if (command === 'ps') return { ...result, stdout: result.stdout.split('\n').filter(row => Number(row.trim().split(/\s+/)[0]) === process.pid).join('\n') };
+    return result;
+  });
+  syncBuiltinESMExports();
+  t.after(() => { enumerate.mock.restore(); syncBuiltinESMExports(); });
   const { inspectWorkerDiskBudget } = await import('./worker_disk_budget.mjs');
   const options = { repoDir, cacheBaseDir, admissionRoot, commandClass: 'validation', observeFilesystem: () => ({ device: 'fixture', availableBytes: 1000000, totalBytes: 2000000 }) };
   assert.equal((await inspectWorkerDiskBudget(options)).admitted, false);
   assert.equal((await inspectWorkerDiskBudget({ ...options, ownOwnerPath: owner })).admitted, true, 'an inherited owner replaces its existing reservation');
+
+  const diskPath = join(owner, 'disk');
+  await fs.promises.rm(diskPath);
+  await assert.rejects(inspectWorkerDiskBudget(options), { code: 'ENOENT' }, 'a live owner without a published envelope remains unknown');
+  await writeFile(diskPath, '{');
+  await assert.rejects(inspectWorkerDiskBudget(options), SyntaxError, 'a malformed envelope cannot supply headroom');
+  await writeFile(diskPath, JSON.stringify({ filesystems: [{ device: 'fixture', requiredBytes: 1000000 }] }));
+
+  const readFile = fs.readFileSync;
+  let retire = false;
+  // The filesystem boundary reproduces release after the real OS owner
+  // snapshot but before its disk record is read; internal logic stays real.
+  const read = t.mock.method(fs, 'readFileSync', (path, ...args) => {
+    if (path === diskPath) {
+      if (!retire) throw Object.assign(new Error('disk permission denied'), { code: 'EACCES' });
+      fs.rmSync(owner, { recursive: true });
+    }
+    return readFile(path, ...args);
+  });
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(inspectWorkerDiskBudget(options), { code: 'EACCES' });
+    retire = true;
+    const retired = await inspectWorkerDiskBudget(options);
+    assert.equal(retired.admitted, true, 'a retired peer does not prevent admission');
+    assert.equal(retired.filesystems[0].reservedBytes, 0);
+  } finally {
+    read.mock.restore();
+    syncBuiltinESMExports();
+  }
 });
 
 test('loaded admission status observes the disk envelope without a circular observer import', async t => {

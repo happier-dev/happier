@@ -153,6 +153,11 @@ async function runtimeAdmissionTransportFixture(t) {
   const workers = {};
   for (const name of ['starved', 'roomy']) {
     workers[name] = await installNativeAdmissionFixture({ root: join(fixture.root, name) });
+    // A physical runtime worker has an installed dependency footprint; the
+    // real disk owner measures these bytes before its admission can succeed.
+    const dependencies = resolve(workers[name].launcher, '../../../../node_modules');
+    await mkdir(dependencies, { recursive: true });
+    await writeFile(join(dependencies, 'runtime-fixture'), 'installed dependency');
     workers[name].sample = join(fixture.root, `${name}-sample`);
     await writeFile(workers[name].sample, `8 ${name === 'starved' ? '0.1' : '12'} 0.3 22000000 20 0 9437184 28311552 0 0 0 0 0 0 0 linux\n`);
   }
@@ -703,6 +708,8 @@ test('automatic admission re-evaluates the pool after every worker is busy witho
 
 test('hosted CI public compiler scripts execute locally on a small host and preserve nested dispatch and failure', async (t) => {
   const { invocation } = await memoryRoutingFixture(t, { availableKiB: 14680064, totalKiB: 16373452 });
+  const { launcher } = await installNativeAdmissionFixture({ root: invocation.env.HOME });
+  invocation.cwd = resolve(launcher, '../../../..');
   const binDir = invocation.env.PATH.split(':')[0];
   await executable(join(binDir, 'uname'), '#!/bin/sh\nprintf "Linux\\n"\n');
   await executable(join(binDir, 'getconf'), '#!/bin/sh\nprintf "8\\n"\n');
@@ -1356,6 +1363,8 @@ test('explicit local execution is selected per invocation without consulting tar
 
 test('explicit local execution preserves placement while applying the adaptive nested-worker budget', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-explicit-local-budget-'));
+  const { launcher } = await installNativeAdmissionFixture({ root });
+  const repoRoot = resolve(launcher, '../../../..');
   const binDir = join(root, 'bin');
   const storageDir = join(root, 'stacks');
   t.after(async () => await rm(root, { recursive: true, force: true }));
@@ -6385,6 +6394,8 @@ test('native launcher backs off heavyweight lock acquisition under contention', 
 
 test('native launcher scopes admitted Linux work only when the systemd user slice is ready', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-heavyweight-scope-'));
+  const { launcher } = await installNativeAdmissionFixture({ root });
+  const repoRoot = resolve(launcher, '../../../..');
   const readyBin = join(root, 'ready-bin');
   const fallbackBin = join(root, 'fallback-bin');
   const scopedMarker = join(root, 'scoped-command');

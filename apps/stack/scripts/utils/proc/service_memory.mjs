@@ -177,7 +177,7 @@ function readServiceRoots(processes) {
   return roots;
 }
 
-function readLegacyOwners(processes, admissionRoot) {
+function readLegacyOwners(processes, admissionRoot, observationRequired = false) {
   const owners = new Map();
   const currentRoot = canonicalPath(admissionRoot);
   for (const { env } of processes.values()) {
@@ -194,8 +194,9 @@ function readLegacyOwners(processes, admissionRoot) {
       const className = readFileSync(join(ownerPath, 'class'), 'utf8').trim();
       if (recorded !== `${pid} ${start}` || !/^[a-z][a-z-]*$/.test(className)) continue;
       const phase = readAdmissionPhase(ownerPath);
-      owners.set(identity, { pid, token: start, className, ...(phase ? { phase } : {}) });
-    } catch {
+      owners.set(identity, { pid, token: start, className, ownerPath, ...(phase ? { phase } : {}) });
+    } catch (error) {
+      if (observationRequired && error.code !== 'ENOENT') throw error;
       // An inherited token alone is not an admitted owner.
     }
   }
@@ -214,9 +215,9 @@ function processTreePids(roots, children) {
   return pids;
 }
 
-function readAdmittedOwnerRss(processes, admissionRoot, legacyOwners, children, progress) {
+function readAdmittedOwnerRss(processes, admissionRoot, legacyOwners, children, progress, admittedOwnerRecords) {
   const owners = new Map();
-  const accept = (pid, token, className, phase) => {
+  const accept = (pid, token, className, phase, ownerPath) => {
     const current = processes.get(pid);
     if (!current) return;
     current.fingerprint ??= readLinuxProcessFingerprintSync(pid);
@@ -224,6 +225,7 @@ function readAdmittedOwnerRss(processes, admissionRoot, legacyOwners, children, 
     const previous = owners.get(`${pid}:${token}`);
     const observedPhase = previous?.phase ?? phase;
     owners.set(`${pid}:${token}`, { pid, token, className: previous?.className ?? className,
+      ownerPaths: [...new Set([...(previous?.ownerPaths ?? []), ownerPath])],
       ...(observedPhase ? { phase: observedPhase } : {}) });
   };
   let entries = [];
@@ -240,13 +242,15 @@ function readAdmittedOwnerRss(processes, admissionRoot, legacyOwners, children, 
       const recorded = readFileSync(join(admissionRoot, 'owners', entry.name, 'process'), 'utf8').trim();
       const className = readFileSync(join(admissionRoot, 'owners', entry.name, 'class'), 'utf8').trim();
       if (recorded === `${identity[1]} ${identity[2]}` && /^[a-z][a-z-]*$/.test(className)) accept(Number(identity[1]), identity[2], className,
-        progress ? readAdmissionPhase(join(admissionRoot, 'owners', entry.name)) : undefined);
+        progress ? readAdmissionPhase(join(admissionRoot, 'owners', entry.name)) : undefined,
+        join(admissionRoot, 'owners', entry.name));
     } catch (error) {
       if (progress && error.code !== 'ENOENT') throw error;
       // A concurrent exit cannot supply an RSS credit or live diagnostics.
     }
   }
-  for (const owner of legacyOwners) accept(owner.pid, owner.token, owner.className, owner.phase);
+  for (const owner of legacyOwners) accept(owner.pid, owner.token, owner.className, owner.phase, owner.ownerPath);
+  admittedOwnerRecords.push(...[...owners.values()].map(({ pid, token, ownerPaths }) => ({ pid, token, ownerPaths })));
   const result = [];
   for (const [identity, owner] of owners) {
     const roots = new Set([owner.pid]);
@@ -278,7 +282,8 @@ function readAdmittedOwnerRss(processes, admissionRoot, legacyOwners, children, 
       const recentCpuPercent = cpuSeconds !== null && Number.isFinite(previous?.cpuSeconds)
         && cpuSeconds >= previous.cpuSeconds && elapsedMs > 0
         ? (cpuSeconds - previous.cpuSeconds) * 100_000 / elapsedMs : null;
-      progress.sample.owners.push({ ...owner, ageSeconds: processes.get(owner.pid)?.ageSeconds ?? null, cpuSeconds, recentCpuPercent });
+      const { ownerPaths, ...diagnosticOwner } = owner;
+      progress.sample.owners.push({ ...diagnosticOwner, ageSeconds: processes.get(owner.pid)?.ageSeconds ?? null, cpuSeconds, recentCpuPercent });
     }
     // Missing RSS retains the whole class reservation in the shell consumer.
     if (available && Number.isSafeInteger(rssKiB)) result.push({ pid: owner.pid, token: owner.token, rssKiB });
@@ -299,13 +304,15 @@ export function readWorkerMemoryReservations({ admissionRoot, readProcesses = re
   const servicePids = processTreePids(roots, children);
   let serviceRssKiB = 0;
   for (const pid of servicePids) serviceRssKiB += processes.get(pid).rssKiB;
-  const legacyOwners = readLegacyOwners(processes, admissionRoot);
+  const legacyOwners = readLegacyOwners(processes, admissionRoot, includeOwnerProgress);
   const ownerProgress = { sampledAtMs: nowMs, owners: [] };
+  const admittedOwnerRecords = [];
   const admittedOwners = includeAdmittedRss || includeOwnerProgress
     ? readAdmittedOwnerRss(processes, admissionRoot, legacyOwners, children,
-      includeOwnerProgress ? { sample: ownerProgress, previous: previousProgress } : null) : [];
+      includeOwnerProgress ? { sample: ownerProgress, previous: previousProgress } : null, admittedOwnerRecords) : [];
   return {
     serviceRssKiB, servicePids: [...servicePids], legacyOwners,
+    ...(includeAdmittedRss || includeOwnerProgress ? { admittedOwnerRecords } : {}),
     ...(includeAdmittedRss ? { admittedOwners } : {}),
     ...(includeOwnerProgress ? { ownerProgress } : {}),
   };
