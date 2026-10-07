@@ -10,7 +10,7 @@ import { installTransferProjection, resetTransferFixture, transferFeatures, tran
 import { useSessionFileTransferAvailabilityResolver, useSessionFileTransferAvailabilityState } from './useSessionFileTransferAvailability';
 
 vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit');
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock();
 });
 

@@ -4,7 +4,10 @@ Canonical UI-local testing surface for `apps/ui`.
 
 ## Buckets
 
-- `mocks/`: canonical module mock factories for repeated UI boundaries
+- `mocks/`: canonical module mock factories for repeated UI boundaries. Inside a `vi.mock` factory for
+  `react-native` or `react-native-unistyles`, import the factory's own module
+  (`@/dev/testkit/mocks/reactNative`, `@/dev/testkit/mocks/unistyles`), not `@/dev/testkit`. The index's
+  import graph loads the module being mocked, so the factory waits on itself and collection never finishes.
 - `fixtures/`: typed app-state and feature fixture builders
 - `render/`: shared `react-test-renderer` render surfaces
 - `hooks/`: hook render, deferred, and effect-flush helpers

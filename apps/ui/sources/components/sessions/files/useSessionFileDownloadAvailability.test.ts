@@ -8,7 +8,7 @@ import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch'
 import { installTransferProjection, resetTransferFixture, transferMachine } from './sessionFileTransferTestkit';
 
 vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit');
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock();
 });
 

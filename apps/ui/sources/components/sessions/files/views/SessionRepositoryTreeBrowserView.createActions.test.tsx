@@ -20,8 +20,8 @@ const { promptSpy, alertSpy, machineRpcSpy } = vi.hoisted(() => ({
     }),
 }));
 
-vi.mock('react-native', async () => (await import('@/dev/testkit')).createReactNativeWebMock());
-vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit')).createUnistylesMock());
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit')).createExpoVectorIconsMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit')).createTextModuleMock({ translate: key => key }));
 vi.mock('@/modal', async () => {

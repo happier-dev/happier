@@ -9,7 +9,7 @@ import { useSessionImagePreview } from './useSessionImagePreview';
 
 const files = vi.hoisted(() => new Map<string, { exists: boolean; chunks: Uint8Array[]; closed: number; deletes: number }>());
 vi.mock('react-native', async () => {
-    const { createReactNativeNativeMock } = await import('@/dev/testkit');
+    const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeNativeMock({ platformOS: 'ios' });
 });
 // Expo's OS-backed file API is the sink boundary. The real preview source owns custody.
