@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ExecutionRunScmDiffSummaryInputV1Schema, ProviderBoundModelRefSchema, ScmComparisonSchema, ScmDiffSummaryGenerateOutputSchema } from '@happier-dev/protocol';
+import { ExecutionRunScmDiffSummaryInputV1Schema, ProviderBoundModelRefSchema, SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION, ScmComparisonSchema, ScmDiffSummaryGenerateOutputSchema } from '@happier-dev/protocol';
 import type { ExecutionRunProfileStartParams } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
 import { captureScmComparison } from '@/scm/comparisons/captureScmComparison';
 import { ScmDiffSummaryProfile } from './ScmDiffSummaryProfile';
@@ -310,10 +310,11 @@ describe('ScmDiffSummaryProfile', () => {
   });
 
   it('uses only admitted initial or follow-up revision bases on completion', async () => {
-    const initial = await ScmDiffSummaryProfile.onStarted?.({ start: start(input(['walkthrough'])), rawText: '', finishedAtMs: 2 });
+    const requested = { ...input(['walkthrough']), requestedModelId: 'narrator-model', resolvedSelector: { catalogId: 'profile:narrator-model' } };
+    const initial = await ScmDiffSummaryProfile.onStarted?.({ start: start(requested, 'narrator-model'), rawText: '', finishedAtMs: 2 });
     const saved = ScmDiffSummaryGenerateOutputSchema.parse(initial?.toolResultOutput);
     const scope = { cwd: '/repo', sessionId: 'sess-1', resultId: saved.resultId! };
-    const params = start({ ...input(['walkthrough']), ...scope });
+    const params = start({ ...requested, ...scope }, 'narrator-model');
     const rawText = JSON.stringify({ walkthrough: { title: 'First', intro: '', stops: [], otherChangeRefs: ['c1'] } });
     const first = await ScmDiffSummaryProfile.onTurnComplete?.({ start: params, turnId: 'first-native', finishedAtMs: 3,
       previousStructuredMeta: initial?.structuredMeta, rawText });
@@ -324,11 +325,15 @@ describe('ScmDiffSummaryProfile', () => {
     const current = ScmDiffSummaryGenerateOutputSchema.parse(first?.toolResultOutput);
     await scmDiffSummaryResultStore.edit({ ...scope, expectedRevision: current.revision!, edit: { kind: 'renameWalkthrough', title: 'New manual edit' } });
     const conflict = await ScmDiffSummaryProfile.onTurnComplete?.({ start: params, turnId: 'follow-native', inputIds: ['follow-up'],
-      finishedAtMs: 5, previousStructuredMeta: first?.structuredMeta, rawText });
+      finishedAtMs: 5, previousStructuredMeta: first?.structuredMeta,
+      rawText: JSON.stringify({ walkthrough: { title: 'Rejected stale model result', intro: '', stops: [], otherChangeRefs: ['c1'] } }) });
     expect(conflict?.toolResultMeta).toMatchObject({ scmResultUpdate: { status: 'revision_conflict' } });
     expect(await scmDiffSummaryResultStore.read(scope)).toMatchObject({ success: true, result: { output: {
       outputs: { walkthrough: { value: { title: 'New manual edit' } } },
     } } });
+    expect(scmDiffSummaryCacheStore.get({ source: { kind: 'comparison', comparisonId: comparison.id },
+      summarySchemaVersion: SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION, resolvedSelector: requested.resolvedSelector,
+      outputs: ['walkthrough'], scopeKey: 'sess-1' })).toMatchObject({ outputs: { walkthrough: { value: { title: 'First' } } } });
   });
 
   it('keeps the admitted initial revision rather than rebasing model kickoff over an intervening manual edit', async () => {
@@ -419,11 +424,14 @@ describe('ScmDiffSummaryProfile', () => {
   });
 
   it('preserves prior output when later structured turns complete another requested output and ignores invalid discussion', async () => {
-    const params = { ...await admitInitial(start(input(['summary', 'commitPlan']))), turnId: 'turn-1', finishedAtMs: 2 };
+    const requested = { ...input(['summary']), requestedModelId: 'summary-model', resolvedSelector: { catalogId: 'profile:summary-model' } };
+    const params = { ...await admitInitial(start(requested, 'summary-model')), turnId: 'turn-1', finishedAtMs: 2 };
     const first = await ScmDiffSummaryProfile.onTurnComplete?.({ ...params, rawText: '{"summaryMarkdown":"Useful summary"}' });
     const saved = ScmDiffSummaryGenerateOutputSchema.parse(first?.toolResultOutput);
-    const followupStart = start({ ...input(['summary', 'commitPlan']), resultId: saved.resultId });
-    await ScmDiffSummaryProfile.onBeforeRetainedInput?.({ start: followupStart, localId: 'second' });
+    const followupStart = start({ ...requested, resultId: saved.resultId }, 'summary-model');
+    const scope = { cwd: '/repo', sessionId: 'sess-1', resultId: saved.resultId! };
+    const added = await scmDiffSummaryResultStore.beginInput({ ...scope, inputId: 'second', outputs: ['commitPlan'] });
+    if (!added.success) throw new Error(added.error);
     const second = await ScmDiffSummaryProfile.onTurnComplete?.({ ...params, turnId: 'turn-2',
       inputIds: ['second'],
       previousStructuredMeta: first?.structuredMeta, rawText: JSON.stringify({ commitPlan: {
@@ -432,6 +440,12 @@ describe('ScmDiffSummaryProfile', () => {
     expect(second?.toolResultOutput).toMatchObject({ summaryMarkdown: 'Useful summary', outputs: {
       summary: { state: 'complete', value: { summaryMarkdown: 'Useful summary' } }, commitPlan: { state: 'complete' },
     } });
+    const cacheKey = { source: { kind: 'comparison' as const, comparisonId: comparison.id },
+      summarySchemaVersion: SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION, resolvedSelector: requested.resolvedSelector, scopeKey: 'sess-1' };
+    expect(scmDiffSummaryCacheStore.get({ ...cacheKey, outputs: ['summary'] })).toMatchObject({ requestedOutputs: ['summary'] });
+    expect(scmDiffSummaryCacheStore.get({ ...cacheKey, outputs: ['summary', 'commitPlan'] })).toMatchObject({
+      requestedOutputs: ['summary', 'commitPlan'], outputs: { commitPlan: { state: 'complete' } },
+    });
     await ScmDiffSummaryProfile.onBeforeRetainedInput?.({ start: followupStart, localId: 'chat' });
     expect(await ScmDiffSummaryProfile.onTurnComplete?.({ ...params, inputIds: ['chat'], previousStructuredMeta: second?.structuredMeta,
       rawText: 'An ordinary discussion answer.' })).toBeNull();
