@@ -305,7 +305,6 @@ describe('createDaemonPathPluginChangePreparer', () => {
     const service = createService({
       prepare: createDaemonPathPluginChangePreparer({
         happyHomeDir,
-        isRegisteredDevelopmentRoot: () => true,
         runtimeLifecycle: {
           prepare: async () => ({ abort: async () => undefined, adopt: async () => undefined }),
           prepareDevelopment: async () => {
@@ -372,7 +371,6 @@ describe('createDaemonPathPluginChangePreparer', () => {
     }
     const prepare = createBaseDaemonPathPluginChangePreparer({
       happyHomeDir,
-      isRegisteredDevelopmentRoot: () => true,
       runtimeLifecycle: { prepare: async () => ({ abort: async () => undefined, adopt: async () => undefined }) },
       runManagedPluginPnpm: successfulManagedPnpmBoundary,
       runPluginUiArtifactBuild: buildUiWithManagedProcessBoundary,
@@ -416,14 +414,16 @@ describe('createDaemonPathPluginChangePreparer', () => {
     const service = createDaemonPluginChangeService({
       prepare: createDaemonPathPluginChangePreparer({
         happyHomeDir,
-        isRegisteredDevelopmentRoot: () => true,
         runtimeLifecycle: { prepare: async () => ({ abort: async () => undefined, adopt: async () => undefined }) },
         runManagedPluginPnpm: successfulManagedPnpmBoundary,
       }),
     });
     try {
       const result = await service.requestPluginChange({ kind: 'development', sourceRootPath: locator, observedRevision: 1 });
-      expect(result).toMatchObject({ kind: 'committed', pluginId });
+      expect(result).toMatchObject({ kind: 'reviewRequired', reviewKind: 'installation', reason: 'firstInstall', review: { pluginId } });
+      if (result.kind !== 'reviewRequired' || result.reviewKind !== 'installation') throw new Error('Expected installation review');
+      await expect(service.decidePluginChange({ pendingChangeId: result.pendingChangeId, decision: 'installAndTrust' }))
+        .resolves.toMatchObject({ kind: 'committed', pluginId });
       const approved = (await createPluginRegistryStateStore({ happyHomeDir }).readSnapshot()).approvedAuthorityManifestsByPluginId[pluginId]!;
       expect(approved.entrypoints?.development).toBe(sourceKind === 'packageRoot' ? './src/index.ts' : './index.ts');
 
@@ -486,16 +486,12 @@ describe('createDaemonPathPluginChangePreparer', () => {
       runManagedPluginPnpm,
     });
 
-    const approval = await prepare({
+    const candidate = await prepare({
       kind: 'development',
       sourceRootPath: sourcePath,
       observedRevision: 7,
       changedPaths: ['plugin.ts'],
     });
-    expect(approval).toMatchObject({ kind: 'projectTrustApprovalRequired' });
-    if (!('kind' in approval) || approval.kind !== 'projectTrustApprovalRequired') return;
-    const candidate = await approval.continueAfterProjectTrustApproval();
-
     expect(candidate).toMatchObject({
       kind: 'preparedDevelopmentCandidate',
       pluginId: 'acme.source-in-place',
@@ -517,7 +513,7 @@ describe('createDaemonPathPluginChangePreparer', () => {
     await expect(readFile(sourcePath, 'utf8')).resolves.toContain('acme.source-in-place');
   });
 
-  it('delegates already-registered development-root trust to the daemon root owner', async () => {
+  it('requires ordinary installation review for a prepared code-defined development root', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-registered-root-home-'));
     const sourceRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-registered-root-source-'));
     roots.push(happyHomeDir, sourceRoot);
@@ -528,7 +524,6 @@ describe('createDaemonPathPluginChangePreparer', () => {
       'hostAccess: { required: [], optional: [] }, contributes: {} };',
       'export function activate() {}',
     ].join('\n'), 'utf8');
-    const isRegisteredDevelopmentRoot = vi.fn((path: string) => path === sourcePath);
     const prepare = createDaemonPathPluginChangePreparer({
       happyHomeDir,
       runtimeLifecycle: {
@@ -536,7 +531,6 @@ describe('createDaemonPathPluginChangePreparer', () => {
           throw new Error('development preparation must not enter the managed lifecycle');
         },
       },
-      isRegisteredDevelopmentRoot,
       runManagedPluginPnpm: successfulManagedPnpmBoundary,
     });
 
@@ -546,13 +540,14 @@ describe('createDaemonPathPluginChangePreparer', () => {
       observedRevision: 1,
     });
 
-    expect(isRegisteredDevelopmentRoot).toHaveBeenCalledWith(sourcePath);
     expect(candidate).toMatchObject({
       kind: 'preparedDevelopmentCandidate',
       pluginId: 'acme.registered-root',
       sourceAuthority: { observedRevision: 1 },
+      requiresReview: true,
+      reviewReason: 'firstInstall',
+      review: { pluginId: 'acme.registered-root', requiredHostAccess: [], optionalHostAccess: [] },
     });
-    expect(candidate).not.toHaveProperty('kind', 'projectTrustApprovalRequired');
     await candidate.cleanup();
   });
 
@@ -1284,8 +1279,8 @@ describe('createDaemonPathPluginChangePreparer', () => {
       kind: 'development',
       sourceRootPath: sourceRoot,
     });
-    if (initial.kind !== 'reviewRequired' || initial.reviewKind !== 'projectTrust') {
-      throw new Error(`Expected source-root review, received ${initial.kind}`);
+    if (initial.kind !== 'reviewRequired' || initial.reviewKind !== 'installation') {
+      throw new Error(`Expected installation review, received ${initial.kind}`);
     }
     await expect(service.decidePluginChange({
       pendingChangeId: initial.pendingChangeId,
@@ -1387,13 +1382,8 @@ describe('createDaemonPathPluginChangePreparer', () => {
             ? { changedPaths: observation.request.changedPaths }
             : {}),
         });
-        if (result.kind === 'reviewRequired' && result.reviewKind === 'projectTrust') {
-          result = await service.decidePluginChange({
-            pendingChangeId: result.pendingChangeId,
-            decision: 'installAndTrust', optionalSelections: [],
-          });
-        }
         if (result.kind === 'reviewRequired') {
+          if (result.reviewKind !== 'installation') throw new Error('Expected installation review');
           result = await service.decidePluginChange({
             pendingChangeId: result.pendingChangeId,
             decision: 'installAndTrust',
@@ -1451,7 +1441,7 @@ describe('createDaemonPathPluginChangePreparer', () => {
     await expect(readFile(sourcePath, 'utf8')).resolves.toContain("sentinel = 'edit-10'");
   });
 
-  it('requires one remembered project trust confirmation before activating a one-file development plugin', async () => {
+  it('evaluates a one-file development plugin before its single remembered installation review', async () => {
     const approvalWindowStartMs = Date.now();
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-one-file-trust-home-'));
     const sourceRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-one-file-trust-source-'));
@@ -1493,16 +1483,18 @@ describe('createDaemonPathPluginChangePreparer', () => {
     });
     if (cancelled.kind === 'failed') throw new Error(cancelled.message ?? cancelled.code);
     expect(cancelled).toMatchObject({
-      kind: 'reviewRequired', reviewKind: 'projectTrust',
+      kind: 'reviewRequired', reviewKind: 'installation', reason: 'firstInstall',
       review: { source: { kind: 'path', locator: await realpath(sourcePath) } },
     });
-    await expect(readFile(counterPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
-    if (cancelled.kind !== 'reviewRequired' || cancelled.reviewKind !== 'projectTrust') return;
+    await expect(readFile(counterPath, 'utf8')).resolves.toBe('module\n');
+    expect(preparedDevelopmentCandidates).toEqual([]);
+    if (cancelled.kind !== 'reviewRequired' || cancelled.reviewKind !== 'installation') throw new Error('Expected installation review');
     await expect(service.decidePluginChange({
       pendingChangeId: cancelled.pendingChangeId,
       decision: 'cancel',
     })).resolves.toEqual({ kind: 'cancelled' });
-    await expect(readFile(counterPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(counterPath, 'utf8')).resolves.toBe('module\n');
+    expect(preparedDevelopmentCandidates).toEqual([]);
 
     const confirmations = vi.fn(async (_message: string) => true);
     const observedRequests: PluginChangeRequestResult[] = [];
@@ -1532,8 +1524,10 @@ describe('createDaemonPathPluginChangePreparer', () => {
     });
 
     const initial = observedRequests[0];
-    expect(initial).toMatchObject({ kind: 'reviewRequired', reviewKind: 'projectTrust' });
-    if (initial?.kind !== 'reviewRequired' || initial.reviewKind !== 'projectTrust') return;
+    expect(initial).toMatchObject({ kind: 'reviewRequired', reviewKind: 'installation', reason: 'firstInstall' });
+    if (initial?.kind !== 'reviewRequired' || initial.reviewKind !== 'installation') throw new Error('Expected installation review');
+    expect(observedRequests).toHaveLength(1);
+    expect(observedDecisions).toHaveLength(1);
     expect(observedDecisions[0]).toMatchObject({
       kind: 'committed',
       pluginId: 'acme.one-file-trust',
@@ -1542,21 +1536,19 @@ describe('createDaemonPathPluginChangePreparer', () => {
       pendingChangeId: initial.pendingChangeId,
       decision: 'installAndTrust', optionalSelections: [],
     });
-    expect(confirmations.mock.calls.map(([message]) => message)).toEqual([
-      expect.stringContaining('Trust this plugin project source?'),
-    ]);
+    expect(confirmations).toHaveBeenCalledTimes(1);
     // The decision carried no timestamp of its own, so the persisted approval
-    // time can only have come from the daemon clock at apply time.
+    // time comes from the daemon clock.
     const trustedState = await createPluginRegistryStateStore({ happyHomeDir }).read();
     expect(trustedState.plugins['acme.one-file-trust']?.install.trust?.approvedAtMs)
       .toBeGreaterThanOrEqual(approvalWindowStartMs);
-    expect(await readFile(counterPath, 'utf8')).toBe('module\n');
+    expect(await readFile(counterPath, 'utf8')).toBe('module\nmodule\n');
     expect(preparedDevelopmentCandidates).toHaveLength(1);
     expect(preparedDevelopmentCandidates[0]?.preparedActivationGraph.module.activate)
       .toEqual(expect.any(Function));
   });
 
-  it('separates initial project code trust from required authority and undisclosed optional access', async () => {
+  it('discloses required and optional access in the single initial installation review without selecting optional access', async () => {
     const approvalWindowStartMs = Date.now();
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-one-file-optional-home-'));
     const sourceRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-one-file-optional-source-'));
@@ -1603,28 +1595,25 @@ describe('createDaemonPathPluginChangePreparer', () => {
       kind: 'development',
       sourceRootPath: sourcePath,
     });
-    if (requested.kind !== 'reviewRequired' || requested.reviewKind !== 'projectTrust') {
-      throw new Error(`Expected source-root review, received ${requested.kind}`);
-    }
-    const authorityReview = await service.decidePluginChange({
-      pendingChangeId: requested.pendingChangeId,
-      decision: 'installAndTrust', optionalSelections: [],
-    });
-    expect(authorityReview).toMatchObject({
+    expect(requested).toMatchObject({
       kind: 'reviewRequired',
       reviewKind: 'installation',
-      reason: 'authorityExpansion',
+      reason: 'firstInstall',
       authorityExpansion: expect.arrayContaining(['requiredHostAccess']),
-      review: { pluginId: 'acme.one-file-optional' },
+      review: {
+        pluginId: 'acme.one-file-optional',
+        requiredHostAccess: [{ id: 'api', capability: 'network' }],
+        optionalHostAccess: [{ id: 'project-sessions', capability: 'sessions' }],
+      },
     });
-    if (authorityReview.kind !== 'reviewRequired' || authorityReview.reviewKind !== 'installation') return;
+    if (requested.kind !== 'reviewRequired' || requested.reviewKind !== 'installation') throw new Error('Expected installation review');
     await expect(service.decidePluginChange({
-      pendingChangeId: authorityReview.pendingChangeId,
+      pendingChangeId: requested.pendingChangeId,
       decision: 'installAndTrust', optionalSelections: [],
     })).resolves.toMatchObject({ kind: 'committed', pluginId: 'acme.one-file-optional' });
 
-    // Project trust admits the code but does not silently select an optional
-    // host resource that was not part of the project-trust disclosure.
+    // Installation approval does not silently select an optional host resource
+    // disclosed alongside the required access.
     const approvedState = await createPluginRegistryStateStore({ happyHomeDir }).read();
     const approvedInstall = approvedState.plugins['acme.one-file-optional']?.install;
     expect(approvedInstall?.trust?.approvedAtMs).toBeGreaterThanOrEqual(approvalWindowStartMs);
@@ -1725,8 +1714,9 @@ describe('createDaemonPathPluginChangePreparer', () => {
     });
     if (unapproved.kind === 'failed') throw new Error(unapproved.message ?? unapproved.code);
     expect(unapproved.kind).toBe('reviewRequired');
-    await expect(readFile(logPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
-    if (unapproved.kind !== 'reviewRequired' || unapproved.reviewKind !== 'projectTrust') return;
+    await expect(readFile(logPath, 'utf8')).resolves.toBe('leaf\nmodule:initial\n');
+    expect(preparedRoots).toEqual([]);
+    if (unapproved.kind !== 'reviewRequired' || unapproved.reviewKind !== 'installation') throw new Error('Expected installation review');
     await expect(service.decidePluginChange({
       pendingChangeId: unapproved.pendingChangeId,
       decision: 'installAndTrust', optionalSelections: [],
@@ -1883,7 +1873,7 @@ describe('createDaemonPathPluginChangePreparer', () => {
       sourceRootPath: sourceRoot,
     });
     expect(sourceRootReview.kind).toBe('reviewRequired');
-    if (sourceRootReview.kind !== 'reviewRequired' || sourceRootReview.reviewKind !== 'projectTrust') return;
+    if (sourceRootReview.kind !== 'reviewRequired' || sourceRootReview.reviewKind !== 'installation') throw new Error('Expected installation review');
     await expect(service.decidePluginChange({
       pendingChangeId: sourceRootReview.pendingChangeId,
       decision: 'installAndTrust', optionalSelections: [],
@@ -1970,7 +1960,7 @@ describe('createDaemonPathPluginChangePreparer', () => {
     )).resolves.toContain('fixture-retry-dependency');
 
     // A current ordinary generation is not a known complete development
-    // closure. After source-root approval, even a source-only batch must make
+    // closure. After installation approval, even a source-only batch must make
     // one fresh daemon dependency preparation instead of cloning that owner.
     await createPluginRegistryStateStore({ happyHomeDir, runtimeLifecycle }).update(async (state) => ({
       ...state,
@@ -1993,7 +1983,7 @@ describe('createDaemonPathPluginChangePreparer', () => {
       changedPaths: ['src/ui-byte.txt'],
     });
     expect(ordinaryGenerationSourceReview.kind).toBe('reviewRequired');
-    if (ordinaryGenerationSourceReview.kind !== 'reviewRequired' || ordinaryGenerationSourceReview.reviewKind !== 'projectTrust') return;
+    if (ordinaryGenerationSourceReview.kind !== 'reviewRequired' || ordinaryGenerationSourceReview.reviewKind !== 'installation') throw new Error('Expected installation review');
     await expect(service.decidePluginChange({
       pendingChangeId: ordinaryGenerationSourceReview.pendingChangeId,
       decision: 'installAndTrust', optionalSelections: [],
@@ -2057,8 +2047,8 @@ describe('createDaemonPathPluginChangePreparer', () => {
       kind: 'development',
       sourceRootPath: sourceRoot,
     });
-    if (initial.kind !== 'reviewRequired' || initial.reviewKind !== 'projectTrust') {
-      throw new Error(`Expected source-root review, received ${initial.kind}`);
+    if (initial.kind !== 'reviewRequired' || initial.reviewKind !== 'installation') {
+      throw new Error(`Expected installation review, received ${initial.kind}`);
     }
     await expect(service.decidePluginChange({
       pendingChangeId: initial.pendingChangeId,
@@ -2134,8 +2124,8 @@ describe('createDaemonPathPluginChangePreparer', () => {
       kind: 'development',
       sourceRootPath: sourceRoot,
     });
-    if (initial.kind !== 'reviewRequired' || initial.reviewKind !== 'projectTrust') {
-      throw new Error(`Expected source-root review, received ${initial.kind}`);
+    if (initial.kind !== 'reviewRequired' || initial.reviewKind !== 'installation') {
+      throw new Error(`Expected installation review, received ${initial.kind}`);
     }
     await expect(service.decidePluginChange({
       pendingChangeId: initial.pendingChangeId,
@@ -2163,7 +2153,7 @@ describe('createDaemonPathPluginChangePreparer', () => {
       .resolves.toContain('must-not-be-digested');
   });
 
-  it('rejects source-root substitution after approval and before evaluation', async () => {
+  it('adopts the graph evaluated before review without evaluating substituted source again', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-root-substitution-home-'));
     const container = await mkdtemp(join(tmpdir(), 'happier-plugin-root-substitution-source-'));
     roots.push(happyHomeDir, container);
@@ -2174,19 +2164,36 @@ describe('createDaemonPathPluginChangePreparer', () => {
     for (const [root, pluginId] of [[firstRoot, 'acme.first'], [secondRoot, 'acme.second']] as const) {
       await writeFile(root, [
         "import { appendFileSync } from 'node:fs';",
-        `appendFileSync(${JSON.stringify(counterPath)}, 'evaluated\\n');`,
+        `appendFileSync(${JSON.stringify(counterPath)}, 'evaluated:${pluginId}\\n');`,
         `export const manifest = { schemaVersion: 2, id: '${pluginId}', version: '1.0.0', displayName: '${pluginId}', engines: { happier: '>=0.0.0' }, runtime: { apiVersion: 1 }, hostAccess: { required: [], optional: [] }, contributes: {} };`,
-        'export function activate(): void {}',
+        `export function activate(): void { appendFileSync(${JSON.stringify(counterPath)}, 'activated:${pluginId}\\n'); }`,
         '',
       ].join('\n'), 'utf8');
     }
+    let reviewedGraph: PluginDevelopmentRuntimeCandidate['preparedActivationGraph'] | undefined;
+    let adoptedGraph: PluginDevelopmentRuntimeCandidate['preparedActivationGraph'] | undefined;
+    const prepare = createDaemonPathPluginChangePreparer({
+      happyHomeDir,
+      runtimeLifecycle: {
+        prepare: async () => ({ abort: async () => undefined, adopt: async () => undefined }),
+        prepareDevelopment: async (candidate) => ({
+          abort: async () => undefined,
+          adopt: async () => {
+            adoptedGraph = candidate.preparedActivationGraph;
+            const activate = adoptedGraph.module.activate;
+            if (typeof activate !== 'function') throw new Error('Expected captured activation export');
+            activate();
+          },
+        }),
+      },
+      runManagedPluginPnpm: vi.fn(successfulManagedPnpmBoundary),
+    });
     const service = createDaemonPluginChangeService({
-      prepare: createDaemonPathPluginChangePreparer({
-        happyHomeDir,
-        runtimeLifecycle: {
-          prepare: async () => ({ abort: async () => undefined, adopt: async () => undefined }),
-        },
-        runManagedPluginPnpm: vi.fn(successfulManagedPnpmBoundary),
+      prepare: preservePathPreparerOwner(prepare, async (request) => {
+        const candidate = await prepare(request);
+        if (!('kind' in candidate) || candidate.kind !== 'preparedDevelopmentCandidate') throw new Error('Expected development candidate');
+        reviewedGraph = candidate.preparedActivationGraph;
+        return candidate;
       }),
       createPendingChangeId: () => 'pending-root-substitution',
     });
@@ -2194,19 +2201,27 @@ describe('createDaemonPathPluginChangePreparer', () => {
       kind: 'development',
       sourceRootPath: locator,
     });
-    expect(requested.kind).toBe('reviewRequired');
-    if (requested.kind !== 'reviewRequired' || requested.reviewKind !== 'projectTrust') return;
+    expect(requested).toMatchObject({
+      kind: 'reviewRequired', reviewKind: 'installation', reason: 'firstInstall',
+      review: { pluginId: 'acme.first' },
+    });
+    if (requested.kind !== 'reviewRequired' || requested.reviewKind !== 'installation') throw new Error('Expected installation review');
+    await expect(readFile(counterPath, 'utf8')).resolves.toBe('evaluated:acme.first\n');
+    expect(reviewedGraph).toBeDefined();
+    expect(adoptedGraph).toBeUndefined();
     await rm(locator);
     await symlink(secondRoot, locator, 'file');
     await expect(service.decidePluginChange({
       pendingChangeId: requested.pendingChangeId,
       decision: 'installAndTrust', optionalSelections: [],
     })).resolves.toMatchObject({
-      kind: 'failed',
-      code: 'plugin_change_preparation_failed',
-      message: expect.stringMatching(/identity changed|substituted/u),
+      kind: 'committed', pluginId: 'acme.first',
     });
-    await expect(readFile(counterPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(adoptedGraph).toBe(reviewedGraph);
+    await expect(readFile(counterPath, 'utf8')).resolves.toBe('evaluated:acme.first\nactivated:acme.first\n');
+    const snapshot = await createPluginRegistryStateStore({ happyHomeDir }).readSnapshot();
+    expect(snapshot.approvedAuthorityManifestsByPluginId['acme.first']).toMatchObject({ id: 'acme.first' });
+    expect(snapshot.state.plugins).not.toHaveProperty('acme.second');
   });
 
   // Local development remains externally admitted even when its source is also
@@ -2571,23 +2586,16 @@ describe('createDaemonPathPluginChangePreparer', () => {
       }),
       createPendingChangeId: () => 'pending-development',
     });
-    let first: PluginChangeRequestResult | PluginChangeDecisionResult = await service.requestPluginChange({
+    const first = await service.requestPluginChange({
       kind: 'development',
       sourceRootPath: pluginRoot,
     });
-    if (first.kind === 'reviewRequired' && first.reviewKind === 'projectTrust') {
-      first = await service.decidePluginChange({
-        pendingChangeId: first.pendingChangeId,
-        decision: 'installAndTrust', optionalSelections: [],
-      });
-    }
-    if (first.kind === 'reviewRequired') {
-      first = await service.decidePluginChange({
-        pendingChangeId: first.pendingChangeId,
-        decision: 'installAndTrust',
-      });
-    }
-    expect(first).toMatchObject({ kind: 'committed', pluginId: 'acme.descriptor' });
+    expect(first).toMatchObject({ kind: 'reviewRequired', reviewKind: 'installation', reason: 'firstInstall' });
+    if (first.kind !== 'reviewRequired' || first.reviewKind !== 'installation') throw new Error('Expected installation review');
+    await expect(service.decidePluginChange({
+      pendingChangeId: first.pendingChangeId,
+      decision: 'installAndTrust',
+    })).resolves.toMatchObject({ kind: 'committed', pluginId: 'acme.descriptor' });
     await writeFile(join(pluginRoot, 'payload.txt'), 'development edit');
 
     await expect(service.requestPluginChange({
@@ -2609,17 +2617,16 @@ describe('createDaemonPathPluginChangePreparer', () => {
       prepare: createDaemonPathPluginChangePreparer({
         happyHomeDir,
         runtimeLifecycle,
-        isRegisteredDevelopmentRoot: () => true,
         runManagedPluginPnpm: successfulManagedPnpmBoundary,
       }),
     });
-    let initial: PluginChangeRequestResult | PluginChangeDecisionResult = await service.requestPluginChange({
+    const initial = await service.requestPluginChange({
       kind: 'development', sourceRootPath,
     });
-    if (initial.kind === 'reviewRequired') {
-      initial = await service.decidePluginChange({ pendingChangeId: initial.pendingChangeId, decision: 'installAndTrust' });
-    }
-    expect(initial).toMatchObject({ kind: 'committed', pluginId: 'acme.descriptor' });
+    expect(initial).toMatchObject({ kind: 'reviewRequired', reviewKind: 'installation', reason: 'firstInstall' });
+    if (initial.kind !== 'reviewRequired' || initial.reviewKind !== 'installation') throw new Error('Expected installation review');
+    await expect(service.decidePluginChange({ pendingChangeId: initial.pendingChangeId, decision: 'installAndTrust' }))
+      .resolves.toMatchObject({ kind: 'committed', pluginId: 'acme.descriptor' });
     await createPluginRegistryStateStore({ happyHomeDir, runtimeLifecycle })
       .setEnabled('acme.descriptor', false);
     await writeFile(join(pluginRoot, 'src', 'index.ts'), "throw new Error('disabled source was evaluated');", 'utf8');
@@ -2649,21 +2656,15 @@ describe('createDaemonPathPluginChangePreparer', () => {
         runManagedPluginPnpm: successfulManagedPnpmBoundary,
       }),
     });
-    let first: PluginChangeRequestResult | PluginChangeDecisionResult = await service.requestPluginChange({
+    const first = await service.requestPluginChange({
       kind: 'development',
       sourceRootPath: pluginRoot,
     });
-    if (first.kind === 'reviewRequired' && first.reviewKind === 'projectTrust') {
-      first = await service.decidePluginChange({
-        pendingChangeId: first.pendingChangeId,
-        decision: 'installAndTrust', optionalSelections: [],
-      });
-    }
-    if (first.kind !== 'reviewRequired') throw new Error('Expected initial review');
-    await service.decidePluginChange({
+    if (first.kind !== 'reviewRequired' || first.reviewKind !== 'installation') throw new Error('Expected installation review');
+    await expect(service.decidePluginChange({
       pendingChangeId: first.pendingChangeId,
       decision: 'installAndTrust',
-    });
+    })).resolves.toMatchObject({ kind: 'committed', pluginId: 'acme.descriptor' });
 
     const manifestPath = join(pluginRoot, '.happier-plugin', 'plugin.json');
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as Record<string, unknown>;
@@ -2757,36 +2758,22 @@ describe('createDaemonPathPluginChangePreparer', () => {
       prepare,
       createPendingChangeId: () => 'pending-development-conflict',
     });
-    let first: PluginChangeRequestResult | PluginChangeDecisionResult = await service.requestPluginChange({
+    const first = await service.requestPluginChange({
       kind: 'development',
       sourceRootPath: pluginRoot,
     });
-    if (first.kind === 'reviewRequired' && first.reviewKind === 'projectTrust') {
-      first = await service.decidePluginChange({
-        pendingChangeId: first.pendingChangeId,
-        decision: 'installAndTrust', optionalSelections: [],
-      });
-    }
-    if (first.kind !== 'reviewRequired') throw new Error('Expected initial review');
-    await service.decidePluginChange({
+    if (first.kind !== 'reviewRequired' || first.reviewKind !== 'installation') throw new Error('Expected installation review');
+    await expect(service.decidePluginChange({
       pendingChangeId: first.pendingChangeId,
       decision: 'installAndTrust',
-    });
+    })).resolves.toMatchObject({ kind: 'committed', pluginId: 'acme.descriptor' });
 
-    const preparedOrSourceApproval = await prepare({
+    const prepared = await prepare({
       kind: 'development',
       pluginId: 'acme.descriptor',
       sourceRootPath: pluginRoot,
     });
-    const prepared = 'kind' in preparedOrSourceApproval
-      && preparedOrSourceApproval.kind === 'projectTrustApprovalRequired'
-      ? await preparedOrSourceApproval.continueAfterProjectTrustApproval()
-      : preparedOrSourceApproval;
-    if ('kind' in prepared && prepared.kind === 'preparedDevelopmentCandidate') {
-      // Expected current source-in-place candidate.
-    } else if ('kind' in prepared) {
-      throw new Error(`Unexpected prepared change kind: ${prepared.kind}`);
-    }
+    expect(prepared).toMatchObject({ kind: 'preparedDevelopmentCandidate', pluginId: 'acme.descriptor' });
     expect(prepared.requiresReview).toBe(false);
 
     const takeoverStore = createPluginRegistryStateStore({ happyHomeDir, runtimeLifecycle });
@@ -3222,8 +3209,8 @@ describe('createDaemonPathPluginChangePreparer', () => {
     });
     if (result.kind !== 'failed') throw new Error('Expected failed plugin installation');
     expect(result.message).not.toContain('path-preparer-secret');
-    expect(result.message).not.toContain('END_STACK');
-    expect(Buffer.byteLength(result.message ?? '', 'utf8')).toBeLessThanOrEqual(2_048);
+    expect(result.message).toContain('🙂'.repeat(1_200));
+    expect(result.message).toContain('END_STACK');
   });
 
   it('forgets package trust by disabling the plugin through the same daemon mutation owner', async () => {

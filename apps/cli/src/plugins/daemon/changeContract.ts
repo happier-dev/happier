@@ -9,7 +9,6 @@ import {
 import {
   type ExpectedMarketplaceListingV1,
   type PluginChangePendingReviewResult,
-  type PluginDevelopmentProjectTrustReview,
   type PluginInstallationReview,
   type PluginInstallationReviewRequestInterceptor,
 } from '@happier-dev/protocol/marketplace/internal';
@@ -272,17 +271,6 @@ export type PreparedPluginDevelopmentCandidate = Readonly<{
   cleanup: () => Promise<void>;
 }>;
 
-export type PreparedDaemonPluginProjectTrustApproval = Readonly<{
-  kind: 'projectTrustApprovalRequired';
-  pendingKey: string;
-  review: PluginDevelopmentProjectTrustReview;
-  continueAfterProjectTrustApproval: () => Promise<
-    PreparedDaemonPluginChangeCandidate | PreparedPluginDevelopmentCandidate
-  >;
-  cleanup: () => Promise<void>;
-}>;
-
 export type PreparedDaemonPluginChange =
   | PreparedDaemonPluginChangeCandidate
-  | PreparedPluginDevelopmentCandidate
-  | PreparedDaemonPluginProjectTrustApproval;
+  | PreparedPluginDevelopmentCandidate;

@@ -14,7 +14,6 @@ import type {
   PreparedDaemonPluginChange,
   PreparedDaemonPluginChangeCandidate,
   PreparedPluginDevelopmentCandidate,
-  PreparedDaemonPluginProjectTrustApproval,
 } from './changeContract';
 import { PluginRegistryProfileRequiredError } from './changeContract';
 import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
@@ -26,23 +25,11 @@ import type {
 
 type PendingPluginChange = {
   readonly id: string;
-  prepared: PreparedDaemonPluginChange;
-  key: string;
-  readonly expiresAtMs: number;
+  readonly prepared: PreparedDaemonPluginChange;
+  readonly key: string;
   state: 'awaitingDecision' | 'applying';
   applyPromise: Promise<PluginChangeDecisionResult> | null;
 };
-
-type TerminalPluginChange = Readonly<{
-  result: PluginChangeTerminalResult;
-  expiresAtMs: number;
-}>;
-
-function isProjectTrustApproval(
-  prepared: PreparedDaemonPluginChange,
-): prepared is PreparedDaemonPluginProjectTrustApproval {
-  return 'kind' in prepared && prepared.kind === 'projectTrustApprovalRequired';
-}
 
 function isDevelopmentCandidate(
   prepared: PreparedDaemonPluginChange,
@@ -51,13 +38,11 @@ function isDevelopmentCandidate(
 }
 
 function preparedChangeKey(prepared: PreparedDaemonPluginChange): string {
-  return isProjectTrustApproval(prepared)
-    ? `source:${prepared.pendingKey}`
-    : `plugin:${prepared.pluginId}`;
+  return `plugin:${prepared.pluginId}`;
 }
 
 function preparedChangeLabel(prepared: PreparedDaemonPluginChange): string {
-  return isProjectTrustApproval(prepared) ? prepared.review.source.locator : prepared.pluginId;
+  return prepared.pluginId;
 }
 
 type PluginChangeApplyOrBusyResult =
@@ -114,8 +99,6 @@ function failedPluginChange(
 export function createDaemonPluginChangeService(params: Readonly<{
   prepare: (request: PluginChangeRequest) => Promise<PreparedDaemonPluginChange>;
   createPendingChangeId?: () => string;
-  nowMs?: () => number;
-  cleanupTimeoutMs?: number;
   onCleanupFailure?: (pluginId: string, error: unknown) => void;
   applyDevelopment?: (
     prepared: PreparedPluginDevelopmentCandidate,
@@ -124,20 +107,14 @@ export function createDaemonPluginChangeService(params: Readonly<{
 }>): DaemonPluginChangeOwner {
   const pendingById = new Map<string, PendingPluginChange>();
   const pendingIdByPluginId = new Map<string, string>();
-  // This is intentionally an in-memory, bounded service cache rather than an
-  // operation ledger. It makes an interrupted UI/CLI request observable long
-  // enough to rejoin the same daemon-owned change, and disappears on restart.
-  const terminalById = new Map<string, TerminalPluginChange>();
+  // Rejoin results belong to this daemon lifetime, just like pending decisions.
+  const terminalById = new Map<string, PluginChangeTerminalResult>();
   const applyingByPluginId = new Map<string, Readonly<{
     released: Promise<void>;
     release: () => void;
   }>>();
   const activeRequestDrains = new Set<Promise<void>>();
-  const nowMs = params.nowMs ?? Date.now;
   const createPendingChangeId = params.createPendingChangeId ?? randomUUID;
-  const pendingLifetimeMs = 10 * 60_000;
-  const maximumPendingChanges = 64;
-  const cleanupTimeoutMs = Math.max(0, Math.trunc(params.cleanupTimeoutMs ?? 5_000));
   let stopped = false;
   let handoffQuiescenceHolders = 0;
   let handoffQuiescenceDrain: Promise<void> | null = null;
@@ -194,23 +171,12 @@ export function createDaemonPluginChangeService(params: Readonly<{
   }
 
   async function cleanupPrepared(prepared: PreparedDaemonPluginChange): Promise<boolean> {
-    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
     try {
-      await Promise.race([
-        prepared.cleanup(),
-        new Promise<never>((_resolve, reject) => {
-          timeoutHandle = setTimeout(() => {
-            reject(new Error(`Plugin change '${preparedChangeLabel(prepared)}' temporary candidate cleanup timed out`));
-          }, cleanupTimeoutMs);
-          timeoutHandle.unref?.();
-        }),
-      ]);
+      await prepared.cleanup();
       return true;
     } catch (error) {
       params.onCleanupFailure?.(preparedChangeLabel(prepared), error);
       return false;
-    } finally {
-      if (timeoutHandle) clearTimeout(timeoutHandle);
     }
   }
 
@@ -265,15 +231,7 @@ export function createDaemonPluginChangeService(params: Readonly<{
     result: PluginChangeTerminalResult,
   ): void {
     terminalById.delete(pending.id);
-    while (terminalById.size >= maximumPendingChanges) {
-      const oldestId = terminalById.keys().next().value;
-      if (typeof oldestId !== 'string') break;
-      terminalById.delete(oldestId);
-    }
-    terminalById.set(pending.id, Object.freeze({
-      result,
-      expiresAtMs: nowMs() + pendingLifetimeMs,
-    }));
+    terminalById.set(pending.id, result);
   }
 
   /**
@@ -291,14 +249,6 @@ export function createDaemonPluginChangeService(params: Readonly<{
     if (pending.state === 'applying') {
       return { kind: 'applying', pendingChangeId: pending.id };
     }
-    if (isProjectTrustApproval(pending.prepared)) {
-      return {
-        kind: 'reviewRequired',
-        reviewKind: 'projectTrust',
-        pendingChangeId: pending.id,
-        review: pending.prepared.review,
-      };
-    }
     if (pending.prepared.review) {
       return {
         kind: 'reviewRequired',
@@ -311,21 +261,6 @@ export function createDaemonPluginChangeService(params: Readonly<{
       };
     }
     return null;
-  }
-
-  async function expirePendingChanges(): Promise<void> {
-    const expired = [...pendingById.values()].filter((pending) => (
-      pending.state === 'awaitingDecision' && pending.expiresAtMs <= nowMs()
-    ));
-    for (const pending of expired) {
-      removePending(pending);
-      // Expiry is bookkeeping for a different request. Cleanup is bounded and
-      // diagnostic, but must never hold unrelated plugin preparation hostage.
-      void cleanupPrepared(pending.prepared);
-    }
-    for (const [id, terminal] of terminalById) {
-      if (terminal.expiresAtMs <= nowMs()) terminalById.delete(id);
-    }
   }
 
   async function tryApply(
@@ -369,15 +304,6 @@ export function createDaemonPluginChangeService(params: Readonly<{
       if (!acceptsChanges()) return { kind: 'unavailable', code: 'daemon_shutting_down' };
       const finishActiveRequest = beginActiveRequest();
       try {
-        await expirePendingChanges();
-        if (!acceptsChanges()) return { kind: 'unavailable', code: 'daemon_shutting_down' };
-        const pendingConfirmationCount = [...pendingById.values()].filter((pending) => (
-          pending.state === 'awaitingDecision'
-        )).length;
-        if (pendingConfirmationCount + activeRequestDrains.size > maximumPendingChanges) {
-          return { kind: 'unavailable', code: 'pending_confirmation_capacity' };
-        }
-
         let prepared: PreparedDaemonPluginChange;
         try {
           prepared = await params.prepare(request);
@@ -401,30 +327,10 @@ export function createDaemonPluginChangeService(params: Readonly<{
         const key = preparedChangeKey(prepared);
         if (
           pendingIdByPluginId.has(key)
-          || (!isProjectTrustApproval(prepared) && applyingByPluginId.has(prepared.pluginId))
+          || applyingByPluginId.has(prepared.pluginId)
         ) {
           await cleanupPrepared(prepared);
-          return isProjectTrustApproval(prepared)
-            ? { kind: 'unavailable', code: 'plugin_source_root_busy' }
-            : { kind: 'busy', pluginId: prepared.pluginId };
-        }
-        if (isProjectTrustApproval(prepared)) {
-          const id = createPendingChangeId();
-          const pending: PendingPluginChange = {
-            id,
-            prepared,
-            key,
-            expiresAtMs: nowMs() + pendingLifetimeMs,
-            state: 'awaitingDecision',
-            applyPromise: null,
-          };
-          retainPending(pending);
-          return {
-            kind: 'reviewRequired',
-            reviewKind: 'projectTrust',
-            pendingChangeId: id,
-            review: prepared.review,
-          };
+          return { kind: 'busy', pluginId: prepared.pluginId };
         }
         if (prepared.requiresReview === false) {
           const result = await tryApply(prepared);
@@ -441,7 +347,6 @@ export function createDaemonPluginChangeService(params: Readonly<{
           id,
           prepared,
           key,
-          expiresAtMs: nowMs() + pendingLifetimeMs,
           state: 'awaitingDecision',
           applyPromise: null,
         };
@@ -461,114 +366,39 @@ export function createDaemonPluginChangeService(params: Readonly<{
     },
 
     async decidePluginChange(decision) {
-      await expirePendingChanges();
-      const pending = pendingById.get(decision.pendingChangeId);
-      if (!pending) return { kind: 'expired' };
-      if (pending.state === 'applying') {
-        return await pending.applyPromise!;
-      }
-      if (decision.decision === 'cancel') {
-        removePending(pending);
-        const result = { kind: 'cancelled' } as const;
-        recordTerminal(pending, result);
-        await cleanupPrepared(pending.prepared);
-        return result;
-      }
+      const finishActiveRequest = beginActiveRequest();
+      try {
+        const pending = pendingById.get(decision.pendingChangeId);
+        if (!pending) return { kind: 'expired' };
+        if (pending.state === 'applying') {
+          return await pending.applyPromise!;
+        }
+        if (decision.decision === 'cancel') {
+          removePending(pending);
+          const result = { kind: 'cancelled' } as const;
+          recordTerminal(pending, result);
+          await cleanupPrepared(pending.prepared);
+          return result;
+        }
 
-      if (isProjectTrustApproval(pending.prepared)) {
-        const sourceApproval = pending.prepared;
+        const prepared = pending.prepared;
+
         pending.state = 'applying';
         pending.applyPromise = (async () => {
-          let prepared: PreparedDaemonPluginChangeCandidate | PreparedPluginDevelopmentCandidate;
-          try {
-            prepared = await sourceApproval.continueAfterProjectTrustApproval();
-          } catch (error) {
-            const result = failedPluginChange(
-              error instanceof DaemonPluginChangePreparationError
-                ? error.code
-                : 'plugin_change_preparation_failed',
-              error,
-              sourceApproval.review.source.locator,
-            );
-            releasePendingChangeKey(pending);
-            await cleanupPrepared(sourceApproval);
-            removePending(pending);
-            recordTerminal(pending, result);
-            return result;
-          }
-          await cleanupPrepared(sourceApproval);
-          const nextKey = preparedChangeKey(prepared);
-          const occupiedPendingId = pendingIdByPluginId.get(nextKey);
-          if (
-            (occupiedPendingId && occupiedPendingId !== pending.id)
-            || applyingByPluginId.has(prepared.pluginId)
-          ) {
-            const result = { kind: 'busy' as const, pluginId: prepared.pluginId };
-            releasePendingChangeKey(pending);
-            await cleanupPrepared(prepared);
-            removePending(pending);
-            recordTerminal(pending, result);
-            return result;
-          }
-          if (pendingIdByPluginId.get(pending.key) === pending.id) {
-            pendingIdByPluginId.delete(pending.key);
-          }
-          pending.prepared = prepared;
-          pending.key = nextKey;
-          pendingIdByPluginId.set(nextKey, pending.id);
-          if (prepared.requiresReview === false) {
-            pending.state = 'applying';
-            releasePendingChangeKey(pending);
-            pending.applyPromise = (async () => {
-              const result = await tryApply(prepared);
-              const settled = await cleanupAfterApply(prepared, result);
-              removePending(pending);
-              recordTerminal(pending, settled);
-              return settled;
-            })();
-            return await pending.applyPromise;
-          }
-          if (!prepared.review) {
-            pending.state = 'applying';
-            const result = { kind: 'failed' as const, code: 'plugin_change_review_missing' };
-            releasePendingChangeKey(pending);
-            await cleanupPrepared(prepared);
-            removePending(pending);
-            recordTerminal(pending, result);
-            return result;
-          }
-          pending.state = 'awaitingDecision';
-          pending.applyPromise = null;
-          return {
-            kind: 'reviewRequired' as const,
-            reviewKind: 'installation' as const,
-            pendingChangeId: pending.id,
-            reason: prepared.reviewReason ?? 'firstInstall',
-            currentVersion: prepared.currentVersion ?? null,
-            authorityExpansion: [...(prepared.authorityExpansion ?? [])],
-            review: prepared.review,
-          };
+          const result = await tryApply(prepared, decision);
+          releasePendingChangeKey(pending);
+          const settled = await cleanupAfterApply(prepared, result);
+          removePending(pending);
+          recordTerminal(pending, settled);
+          return settled;
         })();
         return await pending.applyPromise;
+      } finally {
+        finishActiveRequest();
       }
-
-      const prepared = pending.prepared;
-
-      pending.state = 'applying';
-      pending.applyPromise = (async () => {
-        const result = await tryApply(prepared, decision);
-        releasePendingChangeKey(pending);
-        const settled = await cleanupAfterApply(prepared, result);
-        removePending(pending);
-        recordTerminal(pending, settled);
-        return settled;
-      })();
-      return await pending.applyPromise;
     },
 
     async statusPluginChange(request) {
-      if (!acceptsChanges()) return { kind: 'daemonUnavailable' };
-      await expirePendingChanges();
       if (!acceptsChanges()) return { kind: 'daemonUnavailable' };
       const pending = pendingById.get(request.pendingChangeId);
       if (pending) {
@@ -580,7 +410,7 @@ export function createDaemonPluginChangeService(params: Readonly<{
         return {
           kind: 'terminal',
           pendingChangeId: request.pendingChangeId,
-          result: terminal.result,
+          result: terminal,
         };
       }
       return { kind: 'expired' };
@@ -594,8 +424,6 @@ export function createDaemonPluginChangeService(params: Readonly<{
      * successor could honour.
      */
     async listPendingPluginChanges() {
-      if (!acceptsChanges()) return { changes: [] };
-      await expirePendingChanges();
       if (!acceptsChanges()) return { changes: [] };
       return {
         changes: [...pendingById.values()].flatMap((pending) => {

@@ -309,9 +309,6 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
   const preparePath = createDaemonPathPluginChangePreparer({
     happyHomeDir: params.happyHomeDir,
     runtimeLifecycle,
-    isRegisteredDevelopmentRoot: (canonicalRootPath) => (
-      developmentRoots?.isDevelopmentSourceRegistered(canonicalRootPath) === true
-    ),
     onRegistryApplied,
     ...(params.generationCustodyRetirement
       ? { generationCustodyRetirement: params.generationCustodyRetirement }

@@ -6,10 +6,7 @@ import { expect, it } from 'vitest';
 
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { createSpawnHappyCliEnvScope } from '@/testkit/process/spawnHappyCliHarness';
-import {
-  PLUGIN_FAILURE_TEXT_MAX_UTF8_BYTES,
-  projectPluginFailureText,
-} from '@/plugins/runtime/lifecycle/utils';
+import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
 
 import { runPackedPluginTest } from './packedTest';
 
@@ -21,8 +18,8 @@ it('preserves a typed daemon failure before packed install-and-trust review', as
   const daemonFailureMessage = [
     'Fixture daemon rejected the archive',
     'client_secret=packed-daemon-secret',
-    'at /Users/fixture/private/archive.tgz',
-    'x'.repeat(PLUGIN_FAILURE_TEXT_MAX_UTF8_BYTES * 2),
+    'at /Users/fixture/private/archive.tgz;',
+    'x'.repeat(4_096),
   ].join(' ');
   const projectedDaemonFailureMessage = projectPluginFailureText(
     new Error(daemonFailureMessage),
@@ -127,9 +124,7 @@ it('preserves a typed daemon failure before packed install-and-trust review', as
     expect(diagnostic.message).not.toContain('packed-daemon-secret');
     expect(diagnostic.message).not.toContain('/Users/fixture/private/archive.tgz');
     expect(diagnostic.message).not.toContain('/Users/fixture/private/candidate.tgz');
-    expect(Buffer.byteLength(projectedDaemonFailureMessage, 'utf8')).toBeLessThanOrEqual(
-      PLUGIN_FAILURE_TEXT_MAX_UTF8_BYTES,
-    );
+    expect(projectedDaemonFailureMessage).toMatch(/x{4096}$/u);
   } finally {
     envScope.restore();
     await rm(sourceRoot, { recursive: true, force: true });
@@ -144,8 +139,8 @@ it('redacts a daemon startup failure emitted before packed readiness', async () 
   const daemonStartupFailure = [
     'Fixture daemon could not start',
     'client_secret=packed-startup-secret',
-    'at /Users/fixture/private/startup.mjs:12:3',
-    'x'.repeat(PLUGIN_FAILURE_TEXT_MAX_UTF8_BYTES * 2),
+    'at /Users/fixture/private/startup.mjs:12:3;',
+    'x'.repeat(4_096),
   ].join(' ');
   const projectedDaemonStartupFailure = projectPluginFailureText(
     new Error(`Disposable plugin daemon exited before readiness: ${daemonStartupFailure}`),
@@ -213,9 +208,7 @@ it('redacts a daemon startup failure emitted before packed readiness', async () 
     expect(diagnostic.message).toBe(projectedDaemonStartupFailure);
     expect(diagnostic.message).not.toContain('packed-startup-secret');
     expect(diagnostic.message).not.toContain('/Users/fixture/private/startup.mjs');
-    expect(Buffer.byteLength(diagnostic.message, 'utf8')).toBeLessThanOrEqual(
-      PLUGIN_FAILURE_TEXT_MAX_UTF8_BYTES,
-    );
+    expect(diagnostic.message).toMatch(/x{4096}$/u);
   } finally {
     envScope.restore();
     await rm(sourceRoot, { recursive: true, force: true });
