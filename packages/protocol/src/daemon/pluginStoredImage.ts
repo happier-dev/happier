@@ -1,12 +1,11 @@
 import { z } from 'zod';
-import { SessionImageMediaReferenceV1Schema } from '../sessions/media/imageReferenceV1.js';
-import { PluginUiReadStoredImageResultV1Schema } from '../plugins/ui/storedImage.js';
+import { StoredImageRefV1Schema, PluginUiReadStoredImageResultV1Schema } from '../plugins/ui/storedImage.js';
 
-/** Host-stamped request; renderer requests contain only the mounted opaque media identity. */
+/** Host-stamped caller identity with the same strict native image facts as renderer requests. */
 export const DaemonPluginStoredImageReadRequestSchema = z.object({
   callerPluginId: z.string().trim().min(1),
   expectedCallerOccurrenceId: z.string().trim().min(1),
-  media: SessionImageMediaReferenceV1Schema.required({ file: true }),
+  media: StoredImageRefV1Schema,
 }).strict();
 export type DaemonPluginStoredImageReadRequest = z.infer<typeof DaemonPluginStoredImageReadRequestSchema>;
 export const DaemonPluginStoredImageReadResponseSchema = z.discriminatedUnion('ok', [
