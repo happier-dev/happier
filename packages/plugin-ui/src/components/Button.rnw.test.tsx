@@ -52,6 +52,13 @@ function resolveRenderedBorderColor(value: string): string {
   return rendered;
 }
 
+/** The painted focus ring, or null when none shows (no outline style, or a zero-width one). */
+function readFocusRing(element: HTMLElement): Readonly<{ color: string; width: string; offset: string }> | null {
+  const style = getComputedStyle(element);
+  if (style.outlineStyle !== 'solid' || style.outlineWidth === '' || style.outlineWidth === '0px') return null;
+  return { color: style.outlineColor, width: style.outlineWidth, offset: style.outlineOffset };
+}
+
 async function activateWithEnter(button: HTMLElement): Promise<void> {
   await act(async () => {
     button.dispatchEvent(new KeyboardEvent('keydown', {
@@ -144,7 +151,7 @@ describe('plugin-ui Button renders real React Native pressable semantics', () =>
 
     await act(async () => { button.focus(); });
 
-    expect(getComputedStyle(button).borderTopColor).toBe(
+    expect(getComputedStyle(button).outlineColor).toBe(
       resolveRenderedBorderColor(context.theme.colors.text),
     );
     mount.unmount();
@@ -163,12 +170,15 @@ describe('plugin-ui Button renders real React Native pressable semantics', () =>
     ));
 
     await act(async () => { button.focus(); });
-    expect(getComputedStyle(button).borderTopColor).not.toBe(ring);
+    expect(readFocusRing(button)).toBeNull();
 
     await act(async () => { button.blur(); });
     matchesSpy.mockRestore();
     await act(async () => { button.focus(); });
-    expect(getComputedStyle(button).borderTopColor).toBe(ring);
+    // One ring: 2px of the focus colour, held 2px off the control so the page shows through
+    // as the gap, and never a border-colour swap that merges with the control's own edge.
+    expect(readFocusRing(button)).toEqual({ color: ring, width: '2px', offset: '2px' });
+    expect(getComputedStyle(button).borderTopColor).not.toBe(ring);
     mount.unmount();
   });
 

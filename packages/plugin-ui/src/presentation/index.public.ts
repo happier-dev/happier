@@ -11,7 +11,7 @@
  *   adapters     → presentation + plugin-sdk/ui
  */
 export type { HappierLayoutChangeEvent, HappierTextSelection } from './portableTypes.js';
-export { WidgetSizePicker, type WidgetSizePickerProps, type WidgetSizePickerChoice } from './layout/WidgetSizePicker.js';
+export { WidgetSizePicker, type WidgetSizePickerProps, type WidgetSizePickerChoice, type WidgetSizePickerCompactInput } from './layout/WidgetSizePicker.js';
 export type { CollectionVirtualizer, CollectionVirtualizerHandle, CollectionVirtualizerRequest } from './collection/collectionVirtualizer.js';
 export { HappierDropTargetOutline } from './interaction/DropTargetOutline.js';
 export { HappierArtifactPreviewCard, type HappierArtifactPreview, type HappierArtifactPreviewCardProps, type HappierArtifactPreviewCardHost } from './artifacts/ArtifactPreviewCard.js';
@@ -196,6 +196,7 @@ export {
   type HappierTextPresentationInput,
   type HappierTextSelectabilityScopeProps,
 } from './text/Text.js';
+export { HAPPIER_META_COLUMN_STYLE, HAPPIER_META_COLUMN_V1 } from './text/metaColumn.js';
 export {
   resolveHappierDiffViewerRequest,
   type HappierDiffViewerRequest,
@@ -391,7 +392,14 @@ export {
   type HappierPressableState,
   type HappierPressableStyleState,
 } from './interaction/Pressable.js';
-export { isHappierFocusVisible, resolveHappierFocusRingVisible } from './interaction/focusVisible.js';
+export {
+  HAPPIER_FOCUS_RING_DELEGATED_STYLE,
+  HAPPIER_FOCUS_RING_V1,
+  happierFocusRingStyle,
+  isHappierFocusVisible,
+  resolveHappierFocusRingVisible,
+  type HappierFocusRingPlacement,
+} from './interaction/focusVisible.js';
 export {
   resolveHappierMenuKeyAction,
   resolveHappierMenuContent,

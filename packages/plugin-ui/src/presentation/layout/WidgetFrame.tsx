@@ -25,15 +25,15 @@ export const HAPPIER_WIDGET_FRAME_STYLES: readonly HappierWidgetFrameStyle[] = O
 export const HAPPIER_WIDGET_FRAME_METRICS = Object.freeze({
   /** A card's corner: the page sheet's radius, so a Board card and a page sheet read as one family. */
   cardRadiusPx: HAPPIER_PAGE_METRICS.sheetRadiusPx,
-  /** From a card's edge to its mark, title, body and footer text. */
-  cardInsetPx: 14,
+  /**
+   * From a card's edge to its mark, title, body and footer text, in every placement: a step of the
+   * spacing rhythm (DESIGN.md → "Spacing runs on one rhythm"; lab `ui-refine` R2).
+   */
+  cardInsetPx: 12,
   /** A plain widget sits on the page: its text keeps only an optical inset from the column's edge. */
   plainInsetPx: 2,
-  /** The Companion's column is narrow; its card inset is a step tighter than the Board's. */
-  companionCardInsetPx: 12,
-  /** One header height in every placement (a touch row); the Companion's is a step lower. */
-  headerMinHeightPx: 44,
-  companionHeaderMinHeightPx: 40,
+  /** One header height in every placement; the menu inside it keeps its own touch target. */
+  headerMinHeightPx: 40,
   /** Between the header's mark, title block, meta and controls. */
   headerGapPx: 8,
   /** The menu's own hit area supplies the card's right inset. */
@@ -53,15 +53,9 @@ export function isHappierWidgetFrameSourceShown(widthPx: number | null): boolean
   return widthPx === null || widthPx >= HAPPIER_WIDGET_FRAME_METRICS.sourceHiddenBelowPx;
 }
 
-/** From the frame's edge to its header and body content, for this style and placement. */
-export function resolveHappierWidgetFrameInsetPx(
-  frameStyle: HappierWidgetFrameStyle,
-  placement: HappierWidgetFramePlacement,
-): number {
-  if (frameStyle === 'plain') return HAPPIER_WIDGET_FRAME_METRICS.plainInsetPx;
-  return placement === 'companion'
-    ? HAPPIER_WIDGET_FRAME_METRICS.companionCardInsetPx
-    : HAPPIER_WIDGET_FRAME_METRICS.cardInsetPx;
+/** From the frame's edge to its header and body content, for this style (the same in every placement). */
+export function resolveHappierWidgetFrameInsetPx(frameStyle: HappierWidgetFrameStyle): number {
+  return frameStyle === 'plain' ? HAPPIER_WIDGET_FRAME_METRICS.plainInsetPx : HAPPIER_WIDGET_FRAME_METRICS.cardInsetPx;
 }
 
 export type HappierWidgetFrameTextRole = 'title' | 'source';
@@ -155,8 +149,7 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
   }, []);
   const testID = props.testID ?? 'widget-frame';
   const plain = props.frameStyle === 'plain';
-  const companion = props.placement === 'companion';
-  const inset = resolveHappierWidgetFrameInsetPx(props.frameStyle, props.placement);
+  const inset = resolveHappierWidgetFrameInsetPx(props.frameStyle);
   const renderText = props.renderText ?? renderDefaultFrameText;
   const below = props.sourcePlacement === 'below';
   // Stacked under the title, the source never competes for the title's width.
@@ -184,9 +177,7 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
           flexDirection: 'row',
           alignItems: 'center',
           gap: HAPPIER_WIDGET_FRAME_METRICS.headerGapPx,
-          minHeight: companion
-            ? HAPPIER_WIDGET_FRAME_METRICS.companionHeaderMinHeightPx
-            : HAPPIER_WIDGET_FRAME_METRICS.headerMinHeightPx,
+          minHeight: HAPPIER_WIDGET_FRAME_METRICS.headerMinHeightPx,
           paddingLeft: inset,
           paddingRight: plain ? 0 : HAPPIER_WIDGET_FRAME_METRICS.headerTrailingInsetPx,
           paddingVertical: below ? 8 : 0,

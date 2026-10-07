@@ -159,6 +159,13 @@ export type HappierPortableStyle = Readonly<{
   zIndex?: number;
 }>;
 
+/**
+ * A style a shared owner layers onto a host's own style (a raised edge and its lift, a focus ring). It
+ * never decides the element's overflow, so it spreads into any host stylesheet whose overflow vocabulary
+ * is narrower than the portable one.
+ */
+export type HappierPortableLayerStyle = Omit<HappierPortableStyle, 'overflow'>;
+
 export type HappierStyleProp =
   | HappierPortableStyle
   | false

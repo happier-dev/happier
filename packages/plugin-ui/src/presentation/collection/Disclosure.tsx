@@ -15,6 +15,7 @@ import { StyleSheet, View, type ViewStyle } from 'react-native';
 
 import type { HappierLayoutChangeEvent, HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
 import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
+import { HAPPIER_MOTION_V1 } from '../interaction/motion.js';
 
 /**
  * The disclosure (peek) contract: the Collection's `peek` detail and every shallow accordion row.
@@ -87,7 +88,7 @@ export type HappierDisclosureProps<Motion extends HappierDisclosureMotion = Happ
   onSettled?: (expanded: boolean) => void;
 }>;
 
-export const HAPPIER_DISCLOSURE_DURATION_MS = 220;
+export const HAPPIER_DISCLOSURE_DURATION_MS = HAPPIER_MOTION_V1.baseMs;
 
 /** The lifted row frame shared by public expansions and core attention rows; callers own only colour and body inset. */
 export function resolveHappierDisclosureFrameStyle(input: Readonly<{

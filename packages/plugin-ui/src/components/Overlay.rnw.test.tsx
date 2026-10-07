@@ -161,9 +161,10 @@ describe('controlled overlay presentation', () => {
     await act(async () => { button.focus(); });
     // The environment projects high-contrast focus through the existing text token.
     const ring = resolveRenderedColor('borderTopColor', context.theme.colors.text);
+    // The shared ring: an outline held off the drawn circle, never the circle's border recoloured.
     expect([button, ...button.querySelectorAll<HTMLElement>('*')].some((element) => {
       const style = getComputedStyle(element);
-      return Number.parseFloat(style.borderTopWidth) > 0 && style.borderTopColor === ring;
+      return style.outlineStyle === 'solid' && style.outlineColor === ring && style.outlineOffset === '2px';
     })).toBe(true);
     mount.unmount();
   });
@@ -476,8 +477,11 @@ describe('controlled overlay presentation', () => {
 
     expect(hasProjectedSurfaceChrome(row)).toBe(true);
     const style = row ? getComputedStyle(row) : null;
-    expect(style?.borderTopWidth).toBe('2px');
-    expect(style?.borderTopColor).toBe(resolveRenderedColor('borderTopColor', SURFACE_THEME_FIXTURE.colors.focus));
+    // Inset: menu rows span the floating surface, which clips anything outside them.
+    expect(style?.outlineStyle).toBe('solid');
+    expect(style?.outlineWidth).toBe('2px');
+    expect(style?.outlineOffset).toBe('-2px');
+    expect(style?.outlineColor).toBe(resolveRenderedColor('borderTopColor', SURFACE_THEME_FIXTURE.colors.focus));
     mount.unmount();
   });
 

@@ -2,7 +2,7 @@ import { Fragment, memo, type ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { HappierSpinner } from '../feedback/Spinner.js';
-import { resolveHappierFocusRingVisible } from '../interaction/focusVisible.js';
+import { happierFocusRingStyle } from '../interaction/focusVisible.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import { HAPPIER_PRESS_FEEDBACK_V1 } from '../interaction/pressFeedback.js';
 import type { HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
@@ -100,7 +100,7 @@ export const HappierWorkRowShell = memo(function HappierWorkRowShell(props: Happ
           ROW_STYLE,
           hovered ? { backgroundColor: theme.colors.hover } : null,
           selected ? { backgroundColor: theme.colors.selected } : null,
-          resolveHappierFocusRingVisible(focused) ? { borderColor: theme.colors.focus } : null,
+          happierFocusRingStyle({ visible: focused, color: theme.colors.focus }),
           { opacity: pressed ? HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle : 1 },
         ]}
       >

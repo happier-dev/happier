@@ -25,4 +25,35 @@ describe('WidgetSizePicker', () => {
     expect(selected).toEqual(['large', 'small']);
     view.unmount();
   });
+
+  it('never wraps: one track while it fits, the host’s compact picker when the room is narrower', async () => {
+    const compact: string[] = [];
+    const choices = ['small', 'medium', 'wide', 'full', 'tall', 'large'].map((key, index) => ({
+      key, label: key[0]!.toUpperCase() + key.slice(1), footprint: { columnSpan: index % 2 + 1, columns: 2, rowSpan: index < 4 ? 1 : 4 },
+    }));
+    const view = mountThroughReactNativeWeb(<WidgetSizePicker
+      accessibilityLabel="Widget size" value="medium" testID="size" choices={choices}
+      colors={{ track: 'gray', thumb: 'white', label: 'black', activeLabel: 'black', focusRing: 'blue' }}
+      renderCompact={(input) => { compact.push(`${input.value}:${input.choices.length}`); return <span data-testid="size.compact" />; }}
+      onChange={() => {}}
+    />);
+    const layout = (testID: string, width: number) => {
+      const node = view.container.querySelector(`[data-testid="${testID}"]`) as unknown as
+        { __reactLayoutHandler: (event: { nativeEvent: { layout: { x: number; y: number; width: number; height: number } } }) => void };
+      act(() => node.__reactLayoutHandler({ nativeEvent: { layout: { x: 0, y: 0, width, height: 34 } } }));
+    };
+    const track = () => view.container.querySelector<HTMLElement>('[data-testid="size"][role="radiogroup"]');
+    expect(track()?.style.flexWrap).not.toBe('wrap');
+    layout('size.track', 520);
+    layout('size.room', 600);
+    expect(view.container.querySelectorAll('[role="radio"]')).toHaveLength(6);
+    expect(view.container.querySelector('[data-testid="size.compact"]')).toBeNull();
+    layout('size.room', 300);
+    expect(view.container.querySelectorAll('[role="radio"]')).toHaveLength(0);
+    expect(view.container.querySelector('[data-testid="size.compact"]')).not.toBeNull();
+    expect(compact.at(-1)).toBe('medium:6');
+    layout('size.room', 600);
+    expect(view.container.querySelectorAll('[role="radio"]')).toHaveLength(6);
+    view.unmount();
+  });
 });

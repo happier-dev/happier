@@ -31,6 +31,7 @@ import {
   HappierItemGroupBehavior,
   useHappierItemGroupItemBehavior,
 } from '../collection/ItemGroup.js';
+import { happierFocusRingStyle } from '../interaction/focusVisible.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import { settleHappierRaisedEdge } from '../layout/raisedEdge.js';
 import type {
@@ -705,7 +706,8 @@ function HappierSelectOptionControl<Value>(props: HappierSelectOptionControlProp
         minWidth: props.minimumTouchTarget,
         minHeight: props.minimumTouchTarget,
         borderWidth: 1,
-        borderColor: state.focused ? props.theme.colors.focus : (props.selected ? props.theme.colors.accent : props.theme.colors.border),
+        borderColor: props.selected ? props.theme.colors.accent : props.theme.colors.border,
+        ...happierFocusRingStyle({ visible: state.focused, color: props.theme.colors.focus }),
         borderRadius: props.theme.radii.control,
         paddingHorizontal: props.theme.spacing.medium,
         paddingVertical: props.theme.spacing.small,

@@ -3,6 +3,7 @@ import { Animated, Easing, View } from 'react-native';
 import type { EntityDropPreviewV1 } from '@happier-dev/plugin-sdk';
 
 import { useOptionalHappierUiAccessibility } from '../../environment/context.js';
+import { HAPPIER_RADIUS_V1 } from '../../environment/radius.js';
 import type { HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
 import { HappierSpinner } from '../feedback/Spinner.js';
 import { HAPPIER_MOTION_V1 } from './motion.js';
@@ -78,7 +79,7 @@ export type HappierReleasePreviewDensity = 'pointer' | 'touch';
  * (the floating-overlay radius), so the three never read as three different surfaces. The phone card
  * keeps the phone list's larger corner.
  */
-const FLOATING_RADIUS = 12;
+const FLOATING_RADIUS = HAPPIER_RADIUS_V1.lg;
 
 const METRICS = {
   pointer: {

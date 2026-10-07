@@ -3,6 +3,8 @@ import { I18nManager, View } from 'react-native';
 
 import { useOptionalHappierUiLocalization } from '../../environment/context.js';
 import { HappierPressable } from '../interaction/Pressable.js';
+import { happierFocusRingStyle } from '../interaction/focusVisible.js';
+import { HAPPIER_RADIUS_V1, happierInnerRadius } from '../../environment/radius.js';
 import { HAPPIER_PRESS_FEEDBACK_V1 } from '../interaction/pressFeedback.js';
 import { resolveHappierTabKeySelection } from '../navigation/Tabs.js';
 import type { HappierFocusable, HappierPortableStyle } from '../portableTypes.js';
@@ -23,11 +25,17 @@ import { HappierText } from '../text/Text.js';
  * siblings in one track, so a 44/48 floor multiplies across them. A dense
  * pointer layout meets WCAG 2.2 SC 2.5.8 (24 CSS px) instead.
  */
+const SEGMENTED_TRACK_PADDING_PX = 2;
+
 export const HAPPIER_SEGMENTED_METRICS = Object.freeze({
   /** The track's inset: the gap around the segments and the thumb's inset. */
-  trackPaddingPx: 2,
-  trackRadiusPx: Object.freeze({ default: 9, compact: 7 }),
-  segmentRadiusPx: Object.freeze({ default: 7, compact: 5 }),
+  trackPaddingPx: SEGMENTED_TRACK_PADDING_PX,
+  /** A control (`md`); the compact track one step smaller (`sm`). Segments sit concentric inside it. */
+  trackRadiusPx: Object.freeze({ default: HAPPIER_RADIUS_V1.md, compact: HAPPIER_RADIUS_V1.sm }),
+  segmentRadiusPx: Object.freeze({
+    default: happierInnerRadius(HAPPIER_RADIUS_V1.md, SEGMENTED_TRACK_PADDING_PX),
+    compact: happierInnerRadius(HAPPIER_RADIUS_V1.sm, SEGMENTED_TRACK_PADDING_PX),
+  }),
   segmentPaddingVerticalPx: Object.freeze({ default: 7, compact: 4 }),
   /** A content-sized segment's side padding (a segment hugging its label). */
   segmentPaddingHorizontalPx: 12,
@@ -78,9 +86,6 @@ export type HappierSegmentedChoiceProps = Readonly<{
   wrap?: boolean;
 }>;
 
-/** A segment's focus ring is a border, so it keeps its box; the padding gives the ring its room. */
-const FOCUS_RING_WIDTH_PX = 2;
-
 /**
  * A single-choice radio group drawn as a segmented control: content-sized
  * segments on one track, the chosen one on a raised surface. Arrow keys move
@@ -98,8 +103,8 @@ export function HappierSegmentedChoice(props: HappierSegmentedChoiceProps) {
   const tabStopIndex = groupDisabled
     ? -1
     : selectedIndex >= 0 ? selectedIndex : props.segments.findIndex((segment) => !segment.disabled);
-  const verticalPadding = HAPPIER_SEGMENTED_METRICS.segmentPaddingVerticalPx[size] - FOCUS_RING_WIDTH_PX;
-  const horizontalPadding = HAPPIER_SEGMENTED_METRICS.segmentPaddingHorizontalPx - FOCUS_RING_WIDTH_PX;
+  const verticalPadding = HAPPIER_SEGMENTED_METRICS.segmentPaddingVerticalPx[size];
+  const horizontalPadding = HAPPIER_SEGMENTED_METRICS.segmentPaddingHorizontalPx;
 
   return (
     <View
@@ -160,8 +165,7 @@ export function HappierSegmentedChoice(props: HappierSegmentedChoiceProps) {
               paddingVertical: verticalPadding,
               paddingHorizontal: horizontalPadding,
               borderRadius: HAPPIER_SEGMENTED_METRICS.segmentRadiusPx[size],
-              borderWidth: FOCUS_RING_WIDTH_PX,
-              borderColor: state.focused ? props.colors.focusRing : 'transparent',
+              ...happierFocusRingStyle({ visible: state.focused, color: props.colors.focusRing }),
               backgroundColor: segment.selected ? props.colors.thumb : 'transparent',
               ...(segment.selected && !state.pressed ? props.colors.thumbLift : undefined),
               opacity: !groupDisabled && segment.disabled

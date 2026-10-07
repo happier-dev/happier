@@ -11,7 +11,7 @@
  * disabled, focused or invalid control loses both at once.
  */
 
-import type { HappierPortableStyle } from '../portableTypes.js';
+import type { HappierPortableLayerStyle } from '../portableTypes.js';
 
 /** Which side of a raised element carries its edge. */
 export type HappierRaisedEdgeSide = 'top' | 'bottom';
@@ -29,7 +29,7 @@ export type HappierRaisedEdge = Readonly<{
   side: HappierRaisedEdgeSide;
   color: string;
   /** The host's low elevation (shadow) a raised control stands on; surfaces carry their own elevation. */
-  lift?: HappierPortableStyle;
+  lift?: HappierPortableLayerStyle;
 }>;
 
 /**
@@ -55,7 +55,7 @@ export function resolveHappierRaisedEdge(input: Readonly<{
   colorScheme: 'light' | 'dark';
   /** The raised colour of the element's border role (the host theme's `edge.*`). */
   color: string;
-  lift?: HappierPortableStyle;
+  lift?: HappierPortableLayerStyle;
   state?: HappierRaisedEdgeState;
 }>): HappierRaisedEdge | null {
   if (isFlat(input.state)) return null;
@@ -70,7 +70,7 @@ export function resolveHappierRaisedEdge(input: Readonly<{
  */
 export function resolveHappierGloss(input: Readonly<{
   color: string;
-  lift?: HappierPortableStyle;
+  lift?: HappierPortableLayerStyle;
   state?: HappierRaisedEdgeState;
 }>): HappierRaisedEdge | null {
   if (isFlat(input.state)) return null;
@@ -92,7 +92,7 @@ export function settleHappierRaisedEdge(
  * The style an edge (or gloss) contributes — that side's border colour, plus its lift — to spread after
  * the element's own border colour.
  */
-export function happierRaisedEdgeStyle(edge: HappierRaisedEdge | null | undefined): HappierPortableStyle | null {
+export function happierRaisedEdgeStyle(edge: HappierRaisedEdge | null | undefined): HappierPortableLayerStyle | null {
   if (!edge) return null;
   const side = edge.side === 'top' ? { borderTopColor: edge.color } : { borderBottomColor: edge.color };
   return edge.lift ? { ...edge.lift, ...side } : side;

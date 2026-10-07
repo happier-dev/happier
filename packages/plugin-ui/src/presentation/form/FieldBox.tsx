@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
+import { HAPPIER_RADIUS_V1 } from '../../environment/radius.js';
+import { happierFocusRingStyle } from '../interaction/focusVisible.js';
 import { happierRaisedEdgeStyle, type HappierRaisedEdge } from '../layout/raisedEdge.js';
 import type { HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
 
@@ -34,7 +36,8 @@ export function HappierSearchFieldBox(props: Readonly<{
  */
 export const HAPPIER_FIELD_BOX_METRICS = Object.freeze({
   minHeightPx: 32,
-  radiusPx: 9,
+  /** A control: the `md` step of the one radius base. */
+  radiusPx: HAPPIER_RADIUS_V1.md,
   borderWidthPx: 1,
   paddingLeftPx: 12,
   paddingRightPx: 8,
@@ -59,6 +62,11 @@ export type HappierFieldBoxColors = Readonly<{
    * absent or `null` draws it flat, as an invalid field does.
    */
   edge?: HappierRaisedEdge | null;
+  /**
+   * The keyboard focus ring's colour while a select trigger's box carries it; absent or `null` draws
+   * none. Never set for a text field: its caret is its focus cue.
+   */
+  focusRing?: string | null;
 }>;
 
 /** The value text a select trigger shows, and how it is drawn. */
@@ -102,7 +110,7 @@ export const HAPPIER_FIELD_BOX_SHAPE: HappierPortableStyle = Object.freeze({
 });
 
 export type HappierFieldBoxTriggerProps = Readonly<{
-  colors: Pick<HappierFieldBoxColors, 'borderColor' | 'backgroundColor' | 'edge'>;
+  colors: Pick<HappierFieldBoxColors, 'borderColor' | 'backgroundColor' | 'edge' | 'focusRing'>;
   /** A mark before the value (a selected agent's brand mark). */
   leading?: ReactNode;
   /** The value text, drawn by the adapter's text host from {@link resolveHappierFieldBoxLabel}. */
@@ -119,7 +127,8 @@ export type HappierFieldBoxTriggerProps = Readonly<{
 /**
  * A select's field-box trigger visual: the bordered box, an optional leading
  * mark, the value (or placeholder) and a trailing chevron. Not itself
- * pressable — the row or trigger around it owns the interaction and focus.
+ * pressable — the row or trigger around it owns the interaction and focus; that
+ * trigger takes `HAPPIER_FOCUS_RING_DELEGATED_STYLE` when the box draws the ring.
  */
 export function HappierFieldBoxTrigger({ colors, leading, children, trailing, span }: HappierFieldBoxTriggerProps) {
   return (
@@ -132,7 +141,7 @@ export function HappierFieldBoxTrigger({ colors, leading, children, trailing, sp
         ...(span === 'row' ? { alignSelf: 'stretch' as const } : { maxWidth: HAPPIER_FIELD_BOX_METRICS.triggerMaxWidthPx }),
         borderColor: colors.borderColor,
         backgroundColor: colors.backgroundColor,
-      }, happierRaisedEdgeStyle(colors.edge)]}
+      }, happierRaisedEdgeStyle(colors.edge), colors.focusRing ? happierFocusRingStyle({ visible: true, color: colors.focusRing }) : null]}
     >
       {leading ?? null}
       {children}

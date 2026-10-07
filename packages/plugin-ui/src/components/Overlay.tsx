@@ -21,6 +21,7 @@ import {
 } from '../presentation/interaction/Menu.js';
 import type { HappierTextVariant, HappierTone } from '../presentation/semantics.js';
 import { HAPPIER_PRESS_FEEDBACK_V1, happierPressTransitionStyle } from '../presentation/interaction/pressFeedback.js';
+import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, happierFocusRingStyle } from '../presentation/interaction/focusVisible.js';
 import { resolveHappierButtonChrome } from '../presentation/interaction/buttonChrome.js';
 import { settleHappierRaisedEdge } from '../presentation/layout/raisedEdge.js';
 import { HAPPIER_ICON_BUTTON_SIZE, resolveHappierIconButtonChrome } from '../presentation/interaction/iconButtonChrome.js';
@@ -204,7 +205,8 @@ function PopoverPresentation({
           justifyContent: 'center',
           // Like Happier's page field trigger: it hugs its choice beside a label, and under a label
           // on a narrow row it takes the row's width up to the field box's own maximum.
-          ...(fieldTrigger ? { alignSelf: 'stretch', alignItems: 'stretch' } : {}),
+          // The field box inside draws the ring.
+          ...(fieldTrigger ? { alignSelf: 'stretch', alignItems: 'stretch', ...HAPPIER_FOCUS_RING_DELEGATED_STYLE } : {}),
           ...(!fieldTrigger && triggerIcon !== undefined ? iconChrome(state).frame : {}),
           ...(!fieldTrigger && triggerIcon !== undefined ? { borderRadius: HAPPIER_ICON_BUTTON_SIZE / 2 } : {}),
           ...(!fieldTrigger && triggerIcon === undefined && triggerAppearance === 'primary'
@@ -224,8 +226,9 @@ function PopoverPresentation({
                 paddingHorizontal: theme.spacing.medium,
                 borderRadius: theme.radii.control,
                 borderWidth: 1,
-                borderColor: state.focused ? theme.colors.focus : 'transparent',
+                borderColor: 'transparent',
                 backgroundColor: theme.colors.control,
+                ...happierFocusRingStyle({ visible: state.focused, color: theme.colors.focus }),
               }
             : {}),
           opacity: state.disabled ? 0.45 : state.pressed ? HAPPIER_PRESS_FEEDBACK_V1.opacity : 1,
@@ -242,7 +245,8 @@ function PopoverPresentation({
           return (
             <HappierFieldBoxTrigger
               colors={{
-                borderColor: state.focused ? theme.colors.focus : palette.controlBorder,
+                borderColor: palette.controlBorder,
+                focusRing: state.focused ? theme.colors.focus : null,
                 backgroundColor: palette.fieldBackground,
                 edge: settleHappierRaisedEdge(palette.controlEdge, { focused: state.focused }),
               }}
@@ -508,7 +512,9 @@ function MenuRows({
           paddingHorizontal: theme.spacing.medium,
           borderRadius: theme.radii.control,
           borderWidth: 2,
-          borderColor: state.focused ? theme.colors.focus : 'transparent',
+          borderColor: 'transparent',
+          // Inset: menu rows span the floating surface, whose scroll area clips anything outside it.
+          ...happierFocusRingStyle({ visible: state.focused, color: theme.colors.focus, placement: 'inset' }),
           backgroundColor: state.highlighted || state.hovered ? theme.colors.control : 'transparent',
           flexDirection: 'row',
           alignItems: 'center',

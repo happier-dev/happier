@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { View } from 'react-native';
 
 import { useHappierNativeMinimumInteractiveTargetSize } from '../../environment/interactiveTarget.js';
+import { happierFocusRingStyle } from '../interaction/focusVisible.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import { HAPPIER_FIELD_BOX_METRICS, type HappierFieldBoxColors } from './FieldBox.js';
 
@@ -9,6 +10,8 @@ import { HAPPIER_FIELD_BOX_METRICS, type HappierFieldBoxColors } from './FieldBo
 export function HappierFieldStepper(props: Readonly<{
   children: ReactNode;
   colors: HappierFieldBoxColors;
+  /** The keyboard focus ring around a step button (the host's focus colour). */
+  focusColor: string;
   decreaseLabel: string;
   increaseLabel: string;
   disabled?: boolean;
@@ -32,7 +35,8 @@ export function HappierFieldStepper(props: Readonly<{
           paddingLeft: 0, paddingRight: 0, minWidth: size, minHeight: size,
           alignItems: 'center', justifyContent: 'center',
           backgroundColor: props.colors.backgroundColor,
-          borderColor: focused ? props.colors.valueColor : props.colors.borderColor,
+          borderColor: props.colors.borderColor,
+          ...happierFocusRingStyle({ visible: focused, color: props.focusColor }),
           opacity: disabled ? 0.4 : pressed ? 0.7 : 1,
         })}>{props.renderSymbol(direction === -1 ? '−' : '+')}</HappierPressable>;
       return direction === -1 ? button : <View key={direction} style={{ flexDirection: 'row', alignItems: 'center', flexShrink: 1 }}>

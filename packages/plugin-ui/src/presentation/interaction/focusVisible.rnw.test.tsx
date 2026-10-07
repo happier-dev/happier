@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { isHappierFocusVisible } from './focusVisible.js';
+import { HAPPIER_FOCUS_RING_V1, happierFocusRingStyle, isHappierFocusVisible } from './focusVisible.js';
 
 /**
  * The focused element as an engine reports it. WebKit (Safari, the macOS desktop webview) does not
@@ -43,5 +43,29 @@ describe('isHappierFocusVisible', () => {
     expect(document.documentElement.getAttribute('data-happier-input-modality')).toBe('pointer');
     press('keyboard', 'Tab');
     expect(document.documentElement.getAttribute('data-happier-input-modality')).toBe('keyboard');
+  });
+});
+
+describe('happierFocusRingStyle', () => {
+  it('draws the one ring outside the control: the focus colour, separated by a gap the page shows through', () => {
+    expect(happierFocusRingStyle({ visible: true, color: '#0a84ff' })).toEqual({
+      outlineStyle: 'solid',
+      outlineWidth: HAPPIER_FOCUS_RING_V1.widthPx,
+      outlineColor: '#0a84ff',
+      outlineOffset: HAPPIER_FOCUS_RING_V1.gapPx,
+    });
+    expect(HAPPIER_FOCUS_RING_V1).toEqual({ widthPx: 2, gapPx: 2 });
+  });
+
+  it('paints nothing while the ring is not visible', () => {
+    expect(happierFocusRingStyle({ visible: false, color: '#0a84ff' })).toBeNull();
+  });
+
+  it('draws the inset placement inside the box, with no gap, for a full-bleed row a container clips', () => {
+    expect(happierFocusRingStyle({ visible: true, color: '#0a84ff', placement: 'inset' })).toMatchObject({
+      outlineWidth: 2,
+      outlineColor: '#0a84ff',
+      outlineOffset: -2,
+    });
   });
 });
