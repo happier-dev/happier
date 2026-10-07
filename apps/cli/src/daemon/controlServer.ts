@@ -34,6 +34,10 @@ import {
   CONNECTED_SERVICE_RUN_GENERATION_CURRENT_PATH,
   CONNECTED_SERVICE_RUN_RELEASE_PATH,
   CONNECTED_SERVICE_RUN_REJECTED_START_PATH,
+  CONNECTED_SERVICE_RUN_RUNTIME_AUTH_REFRESH_PATH,
+  ConnectedServiceRunRuntimeAuthRefreshRequestSchema,
+  ConnectedServiceRunRuntimeAuthRefreshResultSchema,
+  type ConnectedServiceRunRuntimeAuthRefreshHandler,
   ConnectedServiceRunRejectedStartRequestSchema,
   ConnectedServiceRunRejectedStartResultSchema,
   type ConnectedServiceRunRejectedStartHandler,
@@ -67,6 +71,8 @@ import { SessionConnectedServiceAuthSwitchRpcParamsSchema } from '@happier-dev/p
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { ConnectedServiceCredentialRevisionV1Schema, ConnectedServiceUsageSourceV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { ConnectedServiceAuthGroupIdSchema, ConnectedServiceIdSchema, ConnectedServiceProfileIdSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { ConnectedAccountServiceKeyIngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { ConnectedServiceRuntimeAuthRefreshSelectionSchema } from './connectedServices/runtimeAuthRefreshAuthorization';
 import { CONNECTED_ACCOUNT_REQUEST_AUTH_FAILURE_PATH, CONNECTED_ACCOUNT_REQUEST_AUTH_ERROR_HTTP_STATUS_V1, CONNECTED_ACCOUNT_REQUEST_AUTH_LOOKUP_PATH, CONNECTED_ACCOUNT_REQUEST_AUTH_QUOTA_FAILURE_PATH, ConnectedAccountAuthFailureRequestV1Schema, ConnectedAccountQuotaFailureRequestV1Schema, ConnectedAccountRequestAuthErrorResponseV1Schema, ConnectedAccountRequestAuthFailureSuccessResponseV1Schema, ConnectedAccountRequestAuthLookupRequestV1Schema, ConnectedAccountRequestAuthLookupSuccessResponseV1Schema, getConnectedAccountRequestAuthErrorHttpStatusV1 } from '@happier-dev/protocol/connect/connected-account-request-auth';
 import { DaemonLocalServicePublicPreviewStatusRequestV1Schema, LocalServicePublicPreviewSnapshotV1Schema } from '@happier-dev/protocol/local/services/public/v1';
 import { DaemonSimulatorPreviewActionRequestV1Schema, SimulatorPreviewActionResultV1Schema, SimulatorPreviewSnapshotV1Schema } from '@happier-dev/protocol/devices/simulator/runtimeV1';
@@ -260,22 +266,6 @@ function resolveDaemonControlListenPort(env: NodeJS.ProcessEnv): number {
   }
   return port;
 }
-
-const ConnectedServiceRuntimeAuthRefreshSelectionSchema = z.discriminatedUnion('kind', [
-  z.object({
-    kind: z.literal('profile'),
-    serviceId: ConnectedServiceIdSchema,
-    profileId: ConnectedServiceProfileIdSchema,
-  }),
-  z.object({
-    kind: z.literal('group'),
-    serviceId: ConnectedServiceIdSchema,
-    groupId: ConnectedServiceAuthGroupIdSchema,
-    activeProfileId: ConnectedServiceProfileIdSchema,
-    fallbackProfileId: ConnectedServiceProfileIdSchema,
-    generation: z.number().int().nonnegative(),
-  }),
-]);
 
 
 function resolveThrownSpawnSessionErrorCode(error: unknown): string {
@@ -653,6 +643,7 @@ export function createDaemonControlApp({
   verifyRunMaterializeToken,
   materializeConnectedServicesForExecutionRun,
   recoverConnectedServicesRejectedStartForExecutionRun,
+  refreshConnectedServiceRuntimeAuthForExecutionRun,
   checkConnectedServicesGenerationForExecutionRun,
   releaseConnectedServicesForExecutionRun,
   sshTunnels,
@@ -740,6 +731,7 @@ export function createDaemonControlApp({
    */
   materializeConnectedServicesForExecutionRun?: ConnectedServiceRunMaterializationHandler;
   recoverConnectedServicesRejectedStartForExecutionRun?: ConnectedServiceRunRejectedStartHandler;
+  refreshConnectedServiceRuntimeAuthForExecutionRun?: ConnectedServiceRunRuntimeAuthRefreshHandler;
   checkConnectedServicesGenerationForExecutionRun?: ConnectedServiceRunGenerationCurrentHandler;
   /**
    * Unregisters the run from the canonical runtime registry and runs the retained materialization
@@ -1548,7 +1540,7 @@ export function createDaemonControlApp({
     schema: {
       body: z.object({
         sessionId: z.string().trim().min(1),
-        serviceId: ConnectedServiceIdSchema,
+        serviceId: ConnectedAccountServiceKeyIngressSchema,
         refreshAttemptId: z.string().trim().min(1),
         selection: ConnectedServiceRuntimeAuthRefreshSelectionSchema,
         planType: z.string().trim().min(1).nullable().optional(),
@@ -2519,6 +2511,20 @@ export function createDaemonControlApp({
       return { ok: false as const, errorCode: CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.unavailable };
     }
     return await recoverConnectedServicesRejectedStartForExecutionRun(request.body);
+  });
+
+  typed.post(CONNECTED_SERVICE_RUN_RUNTIME_AUTH_REFRESH_PATH, {
+    schema: {
+      body: ConnectedServiceRunRuntimeAuthRefreshRequestSchema,
+      response: { 200: ConnectedServiceRunRuntimeAuthRefreshResultSchema, 401: authSchema401 },
+    },
+    preHandler: requireRunMaterializeAuth,
+  }, async (request) => {
+    if (!refreshConnectedServiceRuntimeAuthForExecutionRun || isDaemonQuiescing()) {
+      return { ok: true as const, result: { status: 'unavailable' as const,
+        reason: CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.unavailable } };
+    }
+    return await refreshConnectedServiceRuntimeAuthForExecutionRun(request.body);
   });
 
   typed.post(CONNECTED_SERVICE_RUN_GENERATION_CURRENT_PATH, {
@@ -3983,6 +3989,7 @@ export function startDaemonControlServer({
   verifyRunMaterializeToken,
   materializeConnectedServicesForExecutionRun,
   recoverConnectedServicesRejectedStartForExecutionRun,
+  refreshConnectedServiceRuntimeAuthForExecutionRun,
   checkConnectedServicesGenerationForExecutionRun,
   releaseConnectedServicesForExecutionRun,
   requestSelfRestart,
@@ -4029,6 +4036,7 @@ export function startDaemonControlServer({
   /** Execution-run connected-services materialization handler (see createDaemonControlApp). */
   materializeConnectedServicesForExecutionRun?: ConnectedServiceRunMaterializationHandler;
   recoverConnectedServicesRejectedStartForExecutionRun?: ConnectedServiceRunRejectedStartHandler;
+  refreshConnectedServiceRuntimeAuthForExecutionRun?: ConnectedServiceRunRuntimeAuthRefreshHandler;
   /** Exact run-key current-generation admission check before provider Send/Steer. */
   checkConnectedServicesGenerationForExecutionRun?: ConnectedServiceRunGenerationCurrentHandler;
   /** Execution-run connected-services release handler (see createDaemonControlApp). */
@@ -4133,6 +4141,7 @@ export function startDaemonControlServer({
       verifyRunMaterializeToken,
       materializeConnectedServicesForExecutionRun,
       recoverConnectedServicesRejectedStartForExecutionRun,
+      refreshConnectedServiceRuntimeAuthForExecutionRun,
       checkConnectedServicesGenerationForExecutionRun,
       releaseConnectedServicesForExecutionRun,
       sshTunnels,

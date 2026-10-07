@@ -2532,6 +2532,7 @@ async function publishPreparedBundledWorkspaceDependenciesForCli(prepared, opts 
   const publicationEnv = opts.publishBundledPluginArtifactsEnv ?? opts.env ?? process.env;
 
   let bundledPluginPublicationAttempted = false;
+  let bundledPluginPublicationFailed = false;
   try {
     bundledPluginPublicationAttempted = await publishBundledPluginArtifactsAfterWorkspaceBuild({
       repoRoot: resolvedRepoRoot,
@@ -2557,6 +2558,7 @@ async function publishPreparedBundledWorkspaceDependenciesForCli(prepared, opts 
     });
   } catch (error) {
     if (typeof opts.onBundledPluginPublicationError !== 'function') throw error;
+    bundledPluginPublicationFailed = true;
     bundledPluginPublicationAttempted = rebuiltPluginWorkspaceNames.length > 0;
     opts.onBundledPluginPublicationError(error);
   }
@@ -2570,6 +2572,16 @@ async function publishPreparedBundledWorkspaceDependenciesForCli(prepared, opts 
       includeDevDependencies: false,
       syncId: opts.syncId ?? `build-shared-generated.${process.pid}`,
       ensureWorkspacePackagesBuiltByNameImpl: ensureWorkspacePackagesBuilt,
+    });
+  }
+  if (isArtifactPublicationMode(prepared.publicationMode) && !bundledPluginPublicationFailed) {
+    // Settle the existing physical artifact publication before a caller captures
+    // its runtime identity or compiles against package-private import scopes.
+    const { bundleWorkspaceDeps } = await import('./bundleWorkspaceDeps.mjs');
+    await bundleWorkspaceDeps({
+      repoRoot: resolvedRepoRoot,
+      publicationMode: 'artifact',
+      env: opts.env ?? process.env,
     });
   }
 

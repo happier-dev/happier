@@ -246,11 +246,17 @@ export function createCodexNativeAppServerExecutionRunRuntimeHost(params: Readon
   processEnv: Readonly<Record<string, string>>;
   sharedAppServer?: CodexSharedAppServer | null;
 }>): CodexAppServerRuntimeHost {
+  const auth = params.context.executionRun.services.auth;
   return {
     baseProcessEnv: params.processEnv,
     ...(params.context.executionRun.services.nativeHome
       ? { nativeHome: params.context.executionRun.services.nativeHome }
       : {}),
+    ...(auth ? {
+      refreshRuntimeAuth: async (request) => await auth.services.refreshRuntimeAuth(
+        request, { signal: params.context.signal },
+      ),
+    } : {}),
     logger: params.context.services.logger,
     ui: params.context.services.interactions,
     createClient: async (clientRequest) => params.sharedAppServer

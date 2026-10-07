@@ -1765,6 +1765,7 @@ export async function startDaemon(
       resolveCurrentRequestAuthBinding:
         connectedAccountPurposeBindingRuntime
           .resolveCurrentRequestAuthBinding,
+      materializeConnectedAccountPurpose: connectedAccountPurposeBindingRuntime.owner.materialize,
       materializeRequestAuthBearer:
         connectedAccountPurposeBindingRuntime.materializeRequestAuthBearer,
       activatePurposeBindings:

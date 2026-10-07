@@ -13,6 +13,9 @@ import {
 import type { ConnectedServiceRuntimeRegistry } from './runtimeRegistry/registry';
 import type { ConnectedServiceRuntimeTarget } from './runtimeRegistry/target';
 import type { ConnectedServiceCredentialRefreshFailureCode } from './refresh/ConnectedServiceRefreshCoordinator';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
+import { isCatalogAgentId } from '@/agent/catalog/resolution';
+import type { NativeAuthRuntimeRefreshScope } from './nativeAuthRuntimeRefresh';
 
 export type SessionConnectedServiceRuntimeAuthRefreshInput = Readonly<{
   sessionId: string;
@@ -62,7 +65,7 @@ export const ConnectedServiceDaemonAuthBridgeRefreshResultSchema:
     }).strict(),
   ]);
 
-function parseDaemonAuthBridgeRefreshSettlement(
+export function parseDaemonAuthBridgeRefreshSettlement(
   value: unknown,
   expectedRefreshAttemptId: string,
 ): ConnectedServiceDaemonAuthBridgeRefreshResult {
@@ -91,14 +94,20 @@ export type SessionConnectedServiceRuntimeAuthRefreshHandler = (
   input: SessionConnectedServiceRuntimeAuthRefreshInput,
 ) => Promise<SessionConnectedServiceRuntimeAuthRefreshResult>;
 
-type ResolveDaemonAuthBridge = (
+export type ResolveDaemonAuthBridge = (
   serviceId: ConnectedServiceRuntimeAuthRefreshSelection['serviceId'],
+  context?: Readonly<{
+    agentId: CatalogAgentId;
+    sessionId?: string;
+    nativeScope?: NativeAuthRuntimeRefreshScope;
+    isCurrent(): boolean;
+  }>,
 ) => Promise<Readonly<{
   pluginId?: string;
   registration: ConnectedServiceDaemonAuthBridgeRegistration;
 }> | ConnectedServiceDaemonAuthBridgeRegistration | null>;
 
-function readBridgeRegistration(
+export function readBridgeRegistration(
   value: Awaited<ReturnType<ResolveDaemonAuthBridge>>,
 ): ConnectedServiceDaemonAuthBridgeRegistration | null {
   if (!value || typeof value !== 'object') return null;
@@ -148,20 +157,25 @@ export function createSessionConnectedServiceRuntimeAuthRefreshHandler(input: Re
       target,
       serviceId: request.selection.serviceId,
     }) : null;
-    if (!target || !current || !runtimeTargetOwnsConnectedServiceRuntimeAuthRefreshSelection({
+    if (!target || !target.agentId || !isCatalogAgentId(target.agentId) || !current
+      || current.selection.kind !== request.selection.kind || !runtimeTargetOwnsConnectedServiceRuntimeAuthRefreshSelection({
       target,
       selection: current.selection,
     })) {
       return { ok: false, errorCode: 'connected_service_session_refresh_forbidden' };
     }
 
-    const resolvedBridge = await input.resolveDaemonAuthBridge(current.selection.serviceId);
-    if (input.registry.getBySessionId(request.sessionId) !== target) {
-      return { ok: false, errorCode: 'connected_service_session_refresh_forbidden' };
-    }
+    const isCurrent = () => input.registry.getBySessionId(request.sessionId) === target;
+    const resolvedBridge = await input.resolveDaemonAuthBridge(current.selection.serviceId, {
+      agentId: target.agentId, sessionId: request.sessionId, isCurrent,
+    });
     const bridge = readBridgeRegistration(resolvedBridge);
     if (!bridge) {
       return { ok: false, errorCode: 'connected_service_daemon_auth_bridge_unavailable' };
+    }
+    try {
+    if (!isCurrent() || !runtimeTargetOwnsConnectedServiceRuntimeAuthRefreshSelection({ target, selection: request.selection })) {
+      return { ok: false, errorCode: 'connected_service_session_refresh_forbidden' };
     }
 
     let bridgeSettlement: ConnectedServiceDaemonAuthBridgeRefreshResult;
@@ -174,7 +188,7 @@ export function createSessionConnectedServiceRuntimeAuthRefreshHandler(input: Re
         ...(request.failingAccessTokenFingerprint === undefined
           ? {}
           : { failingAccessTokenFingerprint: request.failingAccessTokenFingerprint }),
-        expectedCredentialRevision: current.credentialRevision,
+        expectedCredentialRevision: request.expectedCredentialRevision,
         ...(request.reason === undefined ? {} : { reason: request.reason }),
         forceRefresh: true,
       });
@@ -190,5 +204,8 @@ export function createSessionConnectedServiceRuntimeAuthRefreshHandler(input: Re
       ok: true,
       result: parseDaemonAuthBridgeRefreshSettlement(bridgeSettlement, request.refreshAttemptId),
     };
+    } finally {
+      await bridge.release?.();
+    }
   };
 }

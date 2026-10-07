@@ -497,7 +497,7 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
     type AgentsBackendsListArgs = Readonly<{ includeDisabled?: boolean; limit?: number; machineId?: string }>;
     type AgentsModelsListArgs = Readonly<{ agentId?: string; machineId?: string; serverId?: string; limit?: number; backendTargetKey?: string }>;
 
-  const resolveSessionMachineId = (sessionId: string, serverId?: string): string => {
+  const resolveSessionMachineId = (sessionId: string, serverId?: string | null): string => {
     const exactServerId = String(serverId ?? '').trim();
     return readMachineControlTargetForSession(exactServerId
       ? { sessionId, serverId: exactServerId }

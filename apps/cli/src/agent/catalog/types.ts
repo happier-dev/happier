@@ -39,6 +39,7 @@ import type {
   AgentConnectedAccountStateSharingDescriptorTransformV1,
   AgentConnectedAccountStateSharingDescriptorV1,
   AgentConnectedAccountStateSharingDynamicEntryPatternV1,
+  AgentConnectedAccountNativeAuthCodecV1,
   AgentConnectedAccountResumeReachabilityInputV1,
   AgentConnectedAccountResumeReachabilityResultV1,
   AgentDeferredStartupEligibilityInputV1,
@@ -53,13 +54,8 @@ import type {
   ConnectedServiceMaterializedHomeFreshness,
   ConnectedServiceMaterializedHomeRootResolver,
 } from '@/daemon/connectedServices/materialization/materializedHomeFreshness';
-import type { ConnectedServiceRefreshCoordinator } from '@/daemon/connectedServices/refresh/ConnectedServiceRefreshCoordinator';
 import type { ConnectedServiceQuotaFetcherDescriptor } from '@/daemon/connectedServices/quotas/types';
 import type { ConnectedServiceProviderRuntimeAuthAdapter } from '@/daemon/connectedServices/runtimeAuth/types';
-import type {
-  ConnectedServiceDaemonAuthBridgeRefreshRequest,
-  ConnectedServiceDaemonAuthBridgeRefreshResult,
-} from '@/daemon/connectedServices/daemonAuthBridgeTypes';
 import type {
   CliAuthMethod,
   CliAuthReason,
@@ -189,12 +185,6 @@ export type ConnectedServiceSwitchContinuityParams = Readonly<{
   runtimeAuthSelection?: unknown;
 }>;
 
-export type ConnectedServiceDaemonAuthBridgeRefresh = (input: Readonly<{
-  serviceId: ConnectedServiceId;
-  request: ConnectedServiceDaemonAuthBridgeRefreshRequest;
-  refreshCoordinator: ConnectedServiceRefreshCoordinator;
-}>) => Promise<ConnectedServiceDaemonAuthBridgeRefreshResult> | ConnectedServiceDaemonAuthBridgeRefreshResult;
-
 export type CliDetectSpec = Readonly<{
   /**
    * Candidate argv lists to try for `--version` probing.
@@ -293,15 +283,8 @@ export type AgentCatalogEntry = Readonly<{
    * lives in provider-owned leaves while daemon orchestration stays provider-agnostic.
    */
   getConnectedServiceRuntimeAuthAdapter?: () => Promise<ConnectedServiceProviderRuntimeAuthAdapter | null>;
-  /**
-   * Optional provider-owned daemon auth bridge binder.
-   *
-   * The daemon owns credential storage and refresh orchestration; executable-agent
-   * leaves own service-specific request projection and response semantics.
-   */
-  getConnectedServiceDaemonAuthBridgeRefresh?: (
-    serviceId: ConnectedServiceId,
-  ) => Promise<ConnectedServiceDaemonAuthBridgeRefresh | null>;
+  /** Captured pure codec for the Agent's declared purpose-bound access-only native material. */
+  getConnectedAccountNativeAuthRefreshCodec?: () => Promise<NonNullable<AgentConnectedAccountNativeAuthCodecV1['runtimeAuthRefresh']> | null>;
   /**
    * Optional provider-owned quota fetcher descriptor.
    *

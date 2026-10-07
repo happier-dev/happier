@@ -3,6 +3,7 @@ import type {
   StructuredImageInputV1,
   SubagentSummary,
   WorkStateService,
+  SessionAuthService,
 } from '../services/sessions.js';
 import type {
   AgentModelDescriptor,
@@ -654,6 +655,8 @@ export type AgentExecutionRunHostServicesV1 = Readonly<{
   mcp: AgentSessionMcpService;
   toolExecution: AgentToolExecutionService;
   nativeHome?: AgentSessionNativeHomeService;
+  /** Host-bound Run authentication; the caller cannot supply a Session or Run identity. */
+  auth?: SessionAuthService;
 }>;
 
 export type AgentSessionRuntimeContext = AgentRuntimeContext & Readonly<{

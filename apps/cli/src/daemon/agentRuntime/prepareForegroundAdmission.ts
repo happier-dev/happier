@@ -9,6 +9,7 @@ import {
 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import { registerSensitiveDiagnosticValues } from '@happier-dev/protocol/bugs/reports/redaction';
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
@@ -73,9 +74,6 @@ import {
   resolveQualifiedRequestAuthPurposeBindingsFromSnapshot,
   type AgentSpawnQualifiedPurposeBindingSnapshot,
 } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
-import {
-  resolveFirstPartyConnectedAccountServiceId,
-} from '@/daemon/connectedServices/requestAuth/firstPartyConnectedAccountRequestAuthAdapter';
 import {
   scopeConnectedAccountSessionPurposeBindingLease,
   type ConnectedAccountPurposeAuthorizationScope,
@@ -280,19 +278,18 @@ function hasCompleteConnectedServiceProjection(
   >,
   snapshot: AgentSpawnQualifiedPurposeBindingSnapshot,
 ): boolean {
-  const projectedConnectedServiceIds = new Set<string>(
-    snapshot.bindings.flatMap((binding) => {
+  const projectedConnectedServiceKeys = new Set<string>(
+    snapshot.bindings.map((binding) => {
       const service = binding.target.kind === 'account'
         ? binding.target.account.service
         : binding.target.service;
-      const serviceId = resolveFirstPartyConnectedAccountServiceId(service);
-      return serviceId ? [serviceId] : [];
+      return buildQualifiedPluginContributionKey(service);
     }),
   );
   return Object.entries(connectedServices.bindingsByServiceId).every(
-    ([serviceId, binding]) =>
+    ([serviceKey, binding]) =>
       binding.source !== 'connected'
-      || projectedConnectedServiceIds.has(serviceId),
+      || projectedConnectedServiceKeys.has(serviceKey),
   );
 }
 

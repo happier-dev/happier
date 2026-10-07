@@ -463,7 +463,7 @@ export async function evaluatePluginAuthorStagingSource(input: Readonly<{
 }
 
 export async function resolvePluginAuthorStagingModule(input: Readonly<{
-  graph: PreparedPluginAuthorStagingGraph;
+  graph: Pick<PreparedPluginAuthorStagingGraph, 'rootPath' | 'entryPath' | 'generationScope'>;
   module: string;
 }>): Promise<PluginRelativeModuleResolution<Record<string, unknown>>> {
   const rootPath = await realpath(resolve(input.graph.rootPath));

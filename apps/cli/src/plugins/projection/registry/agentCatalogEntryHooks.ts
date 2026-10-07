@@ -150,6 +150,7 @@ export function projectAgentConnectedAccountLaunchCatalogEntry(params: Readonly<
     | 'connectedAccountSwitchContinuity'
     | 'getConnectedServiceStateSharingDescriptor'
     | 'getConnectedServiceRuntimeAuthAdapter'
+    | 'getConnectedAccountNativeAuthRefreshCodec'
     | 'verifyResumeReachable'
 > {
     const requestAuthUses = params.connectedAccountLaunch.requestAuthUses;
@@ -382,6 +383,21 @@ export function projectAgentConnectedAccountLaunchCatalogEntry(params: Readonly<
         ...(runtimeAuthAdapter === null
             ? {}
             : { getConnectedServiceRuntimeAuthAdapter: async () => runtimeAuthAdapter }),
+        ...(nativeAuthCodec?.runtimeAuthRefresh === undefined ? {} : {
+            getConnectedAccountNativeAuthRefreshCodec: async () => {
+                if (!params.isCurrent()) return null;
+                const refresh = nativeAuthCodec.runtimeAuthRefresh!;
+                return Object.freeze({
+                    ...refresh,
+                    decode: (input: Parameters<typeof refresh.decode>[0]) => {
+                        if (!params.isCurrent()) throw new Error('plugin_generation_retired');
+                        const result = refresh.decode(input);
+                        if (!params.isCurrent()) throw new Error('plugin_generation_retired');
+                        return result;
+                    },
+                });
+            },
+        }),
         ...(continuity?.verifyResumeReachable === undefined
             ? {}
             : {

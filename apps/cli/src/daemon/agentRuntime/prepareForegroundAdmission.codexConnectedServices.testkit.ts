@@ -5,6 +5,7 @@ import {
   buildConnectedServiceCredentialRecord,
   FeaturesResponseSchema,
   QualifiedConnectedAccountListResponseV4Schema,
+  ConnectedServiceBindingsV2IngressSchema,
 } from '@happier-dev/protocol';
 
 import { ApiClient } from '@/api/api';
@@ -103,7 +104,9 @@ export async function createCodexForegroundConnectedAccountFixture(options: Read
   const materializations: NonNullable<Awaited<ReturnType<typeof resolveConnectedServiceAuthForSpawn>>>[] = [];
   return {
     ...account, service, revision, requestPaths, requestAuthRegistry,
-    connectedServices: { v: 1 as const, bindingsByServiceId: { 'openai-codex': { source: 'connected' as const, selection: 'profile' as const, profileId: 'work' } } },
+    connectedServices: ConnectedServiceBindingsV2IngressSchema.parse({ v: 2, bindingsByServiceId: {
+      'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
+    } }),
     runtimeOptions: {
       pluginIds: ['happier.agent.codex'], connectedAccounts: account.owner,
       networkDependencies: { resolveNetworkAddresses: async () => ['1.1.1.1'] },

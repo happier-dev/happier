@@ -258,7 +258,7 @@ describe('ProjectRightPanel right-sidebar registry tabs', () => {
         const machine = storage.getState().machines.m1;
         const qualification = {
             endpointStatus: storage.getState().endpointStatus,
-            endpointStatusReason: storage.getState().endpointStatusReason,
+            endpointReason: storage.getState().endpointReason,
             machinePresent: !!machine,
             machineOnline: !!machine && isMachineOnline(machine),
             accountScope: lifetime?.scope ?? null,

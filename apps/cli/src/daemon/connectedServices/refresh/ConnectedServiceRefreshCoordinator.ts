@@ -189,6 +189,14 @@ type CodexChatGptAuthTokensRefreshResponse = Readonly<{
   chatgptPlanType: string | null;
   credentialRevision: ConnectedServiceCredentialRevisionV1;
 }>;
+
+export type QualifiedConnectedAccountRuntimeAuthRefreshResult =
+  | Readonly<{ status: 'refreshed'; credentialRevision: ConnectedServiceCredentialRevisionV1 }>
+  | Readonly<{ status: 'unavailable'; reason: string }>;
+
+type CredentialRefreshAttemptResult =
+  | Readonly<{ kind: 'bridge'; value: CodexChatGptAuthTokensRefreshResponse }>
+  | Readonly<{ kind: 'qualified_runtime_auth'; value: QualifiedConnectedAccountRuntimeAuthRefreshResult }>;
 type ClaudeSubscriptionAuthTokensRefreshSelection = RuntimeAuthRefreshSelection<'claude-subscription'>;
 type ClaudeSubscriptionAuthTokensRefreshResponse = Readonly<{
   accessToken: string;
@@ -312,7 +320,7 @@ type RematerializedTargetsResult = Readonly<{
   failedTargets: ReadonlyArray<RematerializedTargetFailure>;
 }>;
 type CanonicalGroupStateForRefresh = Readonly<{ activeProfileId: string | null; generation: number }>;
-const MAX_RETAINED_BRIDGE_REFRESH_ATTEMPTS = 256;
+const MAX_RETAINED_CREDENTIAL_REFRESH_ATTEMPTS = 256;
 
 function bindingKey(binding: BoundProfile): string {
   return `${binding.serviceId}/${binding.profileId}`;
@@ -766,10 +774,10 @@ export class ConnectedServiceRefreshCoordinator {
     group: CanonicalGroupStateForRefresh | null;
   }>>();
   private readonly credentialHealthReprobeState = new Map<string, CredentialHealthReprobeState>();
-  private readonly bridgeRefreshAttemptByBinding = new Map<string, {
+  private readonly credentialRefreshAttemptByAccount = new Map<string, {
     refreshAttemptId: string;
-    expectedCredentialRevision?: ConnectedServiceCredentialRevisionV1;
-    promise: Promise<CodexChatGptAuthTokensRefreshResponse>;
+    expectedCredentialRevision: ConnectedServiceCredentialRevisionV1;
+    promise: Promise<CredentialRefreshAttemptResult>;
     settlement: 'pending' | 'fulfilled' | 'rejected';
   }>();
 
@@ -1421,15 +1429,53 @@ export class ConnectedServiceRefreshCoordinator {
     account: QualifiedConnectedAccountRef;
     expectedCredentialRevision: ConnectedServiceCredentialRevisionV1;
   }>): Promise<boolean> {
+    return (await this.performQualifiedConnectedAccountCredentialRefresh(input)).status === 'refreshed';
+  }
+
+  async refreshQualifiedConnectedAccountCredentialForRuntimeAuth(input: Readonly<{
+    account: QualifiedConnectedAccountRef;
+    expectedCredentialRevision: ConnectedServiceCredentialRevisionV1;
+    refreshAttemptId: string;
+  }>): Promise<QualifiedConnectedAccountRuntimeAuthRefreshResult> {
+    if (!this.canRefreshQualifiedConnectedAccount(input.account)) {
+      return { status: 'unavailable', reason: 'connected_account_refresh_not_available' };
+    }
+    try {
+      const result = await this.admitCredentialRefreshAttempt({
+        key: qualifiedAccountKey(input.account),
+        refreshAttemptId: input.refreshAttemptId,
+        expectedCredentialRevision: input.expectedCredentialRevision,
+        requireCurrentRevisionForNewAttempt: true,
+        readCurrentCredentialRevision: async () => {
+          const snapshot = await this.params.qualifiedConnectedAccountRuntime?.readCredential({
+            token: this.params.credentials.token,
+            ref: input.account,
+          });
+          return snapshot?.revisionSemantics === 'revisioned'
+            && qualifiedAccountKey(snapshot.ref) === qualifiedAccountKey(input.account)
+            ? snapshot.credentialRevision : null;
+        },
+        perform: async () => ({
+          kind: 'qualified_runtime_auth',
+          value: await this.performQualifiedConnectedAccountCredentialRefresh(input),
+        }),
+      });
+      if (result.kind !== 'qualified_runtime_auth') {
+        throw new Error('connected_service_refresh_attempt_identity_conflict');
+      }
+      return result.value;
+    } catch {
+      return { status: 'unavailable', reason: 'connected_account_runtime_auth_refresh_unavailable' };
+    }
+  }
+
+  private async performQualifiedConnectedAccountCredentialRefresh(input: Readonly<{
+    account: QualifiedConnectedAccountRef;
+    expectedCredentialRevision: ConnectedServiceCredentialRevisionV1;
+  }>): Promise<QualifiedConnectedAccountRuntimeAuthRefreshResult> {
     const runtime = this.params.qualifiedConnectedAccountRuntime;
-    if (
-      !runtime
-      || !this.shouldRunQualifiedOperation(input.account, 'credential_read')
-      || !this.shouldRunQualifiedOperation(input.account, 'oauth_refresh')
-      || !this.shouldRunQualifiedOperation(input.account, 'refresh_lease')
-      || !this.shouldRunQualifiedOperation(input.account, 'credential_write')
-    ) {
-      return false;
+    if (!runtime || !this.canRefreshQualifiedConnectedAccount(input.account)) {
+      return { status: 'unavailable', reason: 'connected_account_refresh_not_available' };
     }
     const expectedCredential = await runtime.readCredential({
       token: this.params.credentials.token,
@@ -1443,12 +1489,12 @@ export class ConnectedServiceRefreshCoordinator {
       || expectedCredential.credentialRevision
         !== input.expectedCredentialRevision
     ) {
-      return false;
+      return { status: 'unavailable', reason: 'connected_account_credential_revision_mismatch' };
     }
     const ownerId =
       this.params.ownerIdProvider?.()?.trim()
       || this.params.machineIdProvider().trim();
-    if (!ownerId) return false;
+    if (!ownerId) return { status: 'unavailable', reason: 'connected_account_refresh_owner_unavailable' };
     try {
       const settlement = await refreshQualifiedConnectedAccount({
         account: input.account,
@@ -1468,16 +1514,16 @@ export class ConnectedServiceRefreshCoordinator {
           !== input.expectedCredentialRevision
         || !settlement.basis.isCurrent()
       ) {
-        return false;
+        return { status: 'unavailable', reason: 'connected_account_credential_revision_mismatch' };
       }
       if (settlement.status === 'refreshed') {
         this.resetQualifiedConnectedAccountHealthBackoff(input.account);
         await runtime.onCredentialUpdated?.(input.account);
-        return true;
+        return { status: 'refreshed', credentialRevision: settlement.credentialRevision };
       }
       if (settlement.status === 'unchanged') {
         this.resetQualifiedConnectedAccountHealthBackoff(input.account);
-        return false;
+        return { status: 'unavailable', reason: 'connected_account_refresh_unchanged' };
       }
       const health = settlement.status === 'outcome_unknown'
         ? {
@@ -1494,7 +1540,12 @@ export class ConnectedServiceRefreshCoordinator {
         health,
       });
       this.armQualifiedConnectedAccountHealthBackoff(input.account);
-      return false;
+      return {
+        status: 'unavailable',
+        reason: settlement.status === 'outcome_unknown'
+          ? 'connected_account_refresh_outcome_unknown'
+          : 'connected_account_refresh_not_connected',
+      };
     } catch (error) {
       this.armQualifiedConnectedAccountHealthBackoff(input.account);
       logger.warn(
@@ -1506,8 +1557,16 @@ export class ConnectedServiceRefreshCoordinator {
           }),
         },
       );
-      return false;
+      return { status: 'unavailable', reason: 'connected_account_refresh_failed' };
     }
+  }
+
+  private canRefreshQualifiedConnectedAccount(account: QualifiedConnectedAccountRef): boolean {
+    return Boolean(this.params.qualifiedConnectedAccountRuntime)
+      && this.shouldRunQualifiedOperation(account, 'credential_read')
+      && this.shouldRunQualifiedOperation(account, 'oauth_refresh')
+      && this.shouldRunQualifiedOperation(account, 'refresh_lease')
+      && this.shouldRunQualifiedOperation(account, 'credential_write');
   }
 
   private async didRegisteredRuntimeAuthSessionAdvanceToAnotherGroupMember(input: Readonly<{
@@ -1540,46 +1599,85 @@ export class ConnectedServiceRefreshCoordinator {
       ? input.selection.profileId
       : input.selection.activeProfileId;
     const binding: BoundProfile = { serviceId: 'openai-codex', profileId };
-    const key = bindingKey(binding);
+    const result = await this.admitCredentialRefreshAttempt({
+      key: bindingKey(binding),
+      refreshAttemptId: input.refreshAttemptId,
+      expectedCredentialRevision: input.expectedCredentialRevision,
+      readCurrentCredentialRevision: async () => (await readCredentialForRefresh({
+        api: this.params.api,
+        credentials: this.params.credentials,
+        binding,
+      }))?.credentialRevision ?? null,
+      perform: async () => ({ kind: 'bridge', value: await this.performOpenAiCodexChatGptTokensBridgeRefresh(input, binding) }),
+    });
+    if (result.kind !== 'bridge') throw new Error('connected_service_refresh_attempt_identity_conflict');
+    return result.value;
+  }
+
+  private async admitCredentialRefreshAttempt(input: Readonly<{
+    key: string;
+    refreshAttemptId: string;
+    expectedCredentialRevision: ConnectedServiceCredentialRevisionV1;
+    requireCurrentRevisionForNewAttempt?: boolean;
+    readCurrentCredentialRevision(): Promise<ConnectedServiceCredentialRevisionV1 | null>;
+    perform(): Promise<CredentialRefreshAttemptResult>;
+  }>): Promise<CredentialRefreshAttemptResult> {
+    const key = input.key;
     const refreshAttemptId = input.refreshAttemptId.trim();
     if (!refreshAttemptId) {
       throw new Error('connected_service_refresh_attempt_identity_unavailable');
     }
-    const existing = this.bridgeRefreshAttemptByBinding.get(key);
+    const existing = this.credentialRefreshAttemptByAccount.get(key);
     if (existing) {
       if (existing.refreshAttemptId === refreshAttemptId
         && existing.expectedCredentialRevision !== input.expectedCredentialRevision) {
         throw new Error('connected_service_refresh_attempt_identity_conflict');
       }
       if (existing.expectedCredentialRevision === input.expectedCredentialRevision) {
+        if (existing.refreshAttemptId !== refreshAttemptId && input.requireCurrentRevisionForNewAttempt) {
+          if (await input.readCurrentCredentialRevision() !== input.expectedCredentialRevision) {
+            throw new Error('connected_service_credential_revision_mismatch');
+          }
+          if (this.credentialRefreshAttemptByAccount.get(key) !== existing) {
+            return await this.admitCredentialRefreshAttempt(input);
+          }
+          // Only the retained runtime attempt can acknowledge a rotation: another id
+          // would receive success without owning a settlement it can replay after CAS.
+          if (existing.settlement !== 'rejected') {
+            throw new Error('connected_service_refresh_attempt_identity_conflict');
+          }
+        }
         if (existing.settlement === 'rejected' && existing.refreshAttemptId !== refreshAttemptId) {
-          this.bridgeRefreshAttemptByBinding.delete(key);
-          return await this.refreshOpenAiCodexChatGptTokensForBridge(input);
+          this.credentialRefreshAttemptByAccount.delete(key);
+          return await this.admitCredentialRefreshAttempt(input);
         }
         return await existing.promise;
       }
       // A different revision is not inherently newer. Fence the caller against current
       // authoritative storage before it is allowed to wait on, replace, or delete the retained
       // settlement. This prevents delayed rev1 replay from evicting a pending/fulfilled rev3 owner.
-      const currentSource = await readCredentialForRefresh({
-        api: this.params.api,
-        credentials: this.params.credentials,
-        binding,
-      });
-      if (!currentSource || currentSource.credentialRevision !== input.expectedCredentialRevision) {
+      if (await input.readCurrentCredentialRevision() !== input.expectedCredentialRevision) {
         throw new Error('connected_service_credential_revision_mismatch');
       }
       await existing.promise.catch(() => undefined);
-      if (this.bridgeRefreshAttemptByBinding.get(key) === existing) {
-        this.bridgeRefreshAttemptByBinding.delete(key);
+      if (this.credentialRefreshAttemptByAccount.get(key) === existing) {
+        this.credentialRefreshAttemptByAccount.delete(key);
       }
-      return await this.refreshOpenAiCodexChatGptTokensForBridge(input);
+      return await this.admitCredentialRefreshAttempt(input);
     }
-    const promise = this.performOpenAiCodexChatGptTokensBridgeRefresh(input, binding);
+    if (input.requireCurrentRevisionForNewAttempt) {
+      if (await input.readCurrentCredentialRevision() !== input.expectedCredentialRevision) {
+        throw new Error('connected_service_credential_revision_mismatch');
+      }
+      if (this.credentialRefreshAttemptByAccount.has(key)) {
+        return await this.admitCredentialRefreshAttempt(input);
+      }
+    }
+    const promise = input.perform();
     const attempt: {
       refreshAttemptId: string;
       expectedCredentialRevision: ConnectedServiceCredentialRevisionV1;
-      promise: Promise<CodexChatGptAuthTokensRefreshResponse>;
+      promise: Promise<CredentialRefreshAttemptResult>;
       settlement: 'pending' | 'fulfilled' | 'rejected';
     } = {
       refreshAttemptId,
@@ -1587,25 +1685,26 @@ export class ConnectedServiceRefreshCoordinator {
       promise,
       settlement: 'pending',
     };
-    this.bridgeRefreshAttemptByBinding.set(key, attempt);
+    this.credentialRefreshAttemptByAccount.set(key, attempt);
     void promise.then(
-      () => {
-        attempt.settlement = 'fulfilled';
-        this.pruneSettledBridgeRefreshAttempts();
+      (result) => {
+        attempt.settlement = result.kind === 'qualified_runtime_auth' && result.value.status !== 'refreshed'
+          ? 'rejected' : 'fulfilled';
+        this.pruneSettledCredentialRefreshAttempts();
       },
       () => {
         attempt.settlement = 'rejected';
-        this.pruneSettledBridgeRefreshAttempts();
+        this.pruneSettledCredentialRefreshAttempts();
       },
     );
     return await promise;
   }
 
-  private pruneSettledBridgeRefreshAttempts(): void {
-    if (this.bridgeRefreshAttemptByBinding.size <= MAX_RETAINED_BRIDGE_REFRESH_ATTEMPTS) return;
-    for (const [key, attempt] of this.bridgeRefreshAttemptByBinding) {
-      if (this.bridgeRefreshAttemptByBinding.size <= MAX_RETAINED_BRIDGE_REFRESH_ATTEMPTS) return;
-      if (attempt.settlement !== 'pending') this.bridgeRefreshAttemptByBinding.delete(key);
+  private pruneSettledCredentialRefreshAttempts(): void {
+    if (this.credentialRefreshAttemptByAccount.size <= MAX_RETAINED_CREDENTIAL_REFRESH_ATTEMPTS) return;
+    for (const [key, attempt] of this.credentialRefreshAttemptByAccount) {
+      if (this.credentialRefreshAttemptByAccount.size <= MAX_RETAINED_CREDENTIAL_REFRESH_ATTEMPTS) return;
+      if (attempt.settlement !== 'pending') this.credentialRefreshAttemptByAccount.delete(key);
     }
   }
 

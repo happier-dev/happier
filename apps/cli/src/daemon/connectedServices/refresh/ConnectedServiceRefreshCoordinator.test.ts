@@ -4552,7 +4552,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
 
       expect(resolveQualifiedPurposeBindingSnapshot).toHaveBeenCalledWith({
         agentId,
-        connectedServicesBindingsRaw,
+        connectedServicesBindingsRaw: ConnectedServiceBindingsV2IngressSchema.parse(connectedServicesBindingsRaw),
       });
       expect(onAuthUpdated).toHaveBeenCalledWith({
         binding: { serviceId: 'openai-codex', profileId: 'work' },

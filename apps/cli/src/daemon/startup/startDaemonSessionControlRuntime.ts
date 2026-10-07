@@ -92,7 +92,6 @@ import { resolveConnectedServiceTargetMaterializedRoot } from '@/daemon/connecte
 import { createConnectedServiceRuntimeAuthNativeHome } from '@/daemon/connectedServices/runtimeAuth/createRuntimeAuthNativeHome';
 import type {
     CatalogAgentId,
-    ConnectedServiceDaemonAuthBridgeRefresh,
     ConnectedServiceSwitchEffectiveBinding,
 } from '@/agent/catalog/types';
 import {
@@ -131,9 +130,6 @@ import type { CurrentMachineExecutionOriginContext } from '@/api/machine/resolve
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { readStoredCredentialsForServerId } from '@/persistence';
 
-import type {
-    ConnectedServiceDaemonAuthBridgeRegistration,
-} from '../connectedServices/daemonAuthBridgeTypes';
 import type { DeviceLocalSecretStorage } from '../deviceLocalSecretStorage';
 
 import { startDaemonControlServer, resolveTrackedAgentRuntimeDaemonServiceAuthority } from '../controlServer';
@@ -183,7 +179,7 @@ import {
     type ConnectedServiceQualifiedAuthGroupApi,
 } from '../connectedServices/resolveConnectedServiceAuthForSpawn';
 import { isValidConnectedServiceRunMaterializeToken } from '../connectedServices/runs/capabilityToken';
-import { createExecutionRunConnectedServicesBridge } from '../connectedServices/runs/executionRunMaterialization';
+import { createExecutionRunConnectedServicesBridge, captureTrackedExecutionRunRunnerIdentity } from '../connectedServices/runs/executionRunMaterialization';
 import { isExecutionRunConnectedServiceGenerationCurrent } from '../connectedServices/runs/executionRunGenerationAdmission';
 import {
     reattestRunningExecutionRunConnectedServices,
@@ -445,7 +441,9 @@ import {
 } from '../connectedServices/runtimeRegistry/registry';
 import { applyConnectedServiceProjectionCredentialUpdate } from '../connectedServices/refresh/applyConnectedServiceProjectionCredentialUpdate';
 import { computeConnectedServiceAccessTokenFingerprint } from '../connectedServices/refresh/credentialFreshness/tokenFingerprint';
-import { createSessionConnectedServiceRuntimeAuthRefreshHandler } from '../connectedServices/sessionRuntimeAuthRefresh';
+import { createSessionConnectedServiceRuntimeAuthRefreshHandler, type ResolveDaemonAuthBridge } from '../connectedServices/sessionRuntimeAuthRefresh';
+import { createNativeAuthRuntimeRefreshBridge, captureSessionNativeAuthRuntimeRefreshScope,
+    type NativeAuthRuntimeRefreshScope, type NativeAuthRuntimeRefreshAgentAuthority } from '../connectedServices/nativeAuthRuntimeRefresh';
 import type {
     SpawnSessionOptions,
     SpawnSessionResult,
@@ -2161,6 +2159,7 @@ export async function startDaemonSessionControlRuntime(
         resolveCurrentRequestAuthBinding?: ConnectedAccountPurposeBindingOwner[
             'resolveCurrentRequestAuthBinding'
         ];
+        materializeConnectedAccountPurpose?: ConnectedAccountPurposeBindingOwner['materialize'];
         materializeRequestAuthBearer?: ConnectedAccountPurposeBindingOwner[
             'materializeRequestAuthBearer'
         ];
@@ -9746,55 +9745,76 @@ export async function startDaemonSessionControlRuntime(
             logger.debug('[DAEMON RUN] Failed to release daemon auth bridge runtime registry lease', error);
         });
     }
-    const resolveDaemonAuthBridge = async (serviceId: ConnectedAccountServiceKey): Promise<Readonly<{
-        pluginId: string;
-        registration: ConnectedServiceDaemonAuthBridgeRegistration;
-    }> | null> => {
-        const legacyServiceId =
-            resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(serviceId);
-        if (!legacyServiceId) return null;
+    const resolveDaemonAuthBridge: ResolveDaemonAuthBridge = async (serviceId, context) => {
+        const refreshCoordinator = params.getConnectedServiceRefreshCoordinator();
+        const resolveCurrentRequestAuthBinding = params.resolveCurrentRequestAuthBinding;
+        const materialize = params.materializeConnectedAccountPurpose;
+        if (!context || !context.isCurrent() || !refreshCoordinator
+            || !resolveCurrentRequestAuthBinding || !materialize) return null;
         let lease: Awaited<ReturnType<typeof acquireAuthoritativePluginRuntimeRegistryLease>> | null = null;
+        let transferred = false;
         try {
-            lease = await acquireAuthoritativePluginRuntimeRegistryLease({
-                happyHomeDir: configuration.happyHomeDir,
+            let scope: NativeAuthRuntimeRefreshScope | undefined = context.nativeScope;
+            if (!scope) {
+                if (!context.sessionId) return null;
+                const sessionId = context.sessionId;
+                const target = connectedServiceRuntimeRegistry.getBySessionId(sessionId);
+                const parsedBindings = ConnectedServiceBindingsV2IngressSchema.safeParse(target?.connectedServicesBindingsRaw);
+                if (!target || target.agentId !== context.agentId || !parsedBindings.success) return null;
+                const tracked = findTrackedSessionByHappySessionId(params.pidToTrackedSession.values(), sessionId);
+                let retainedAgentAuthority: NativeAuthRuntimeRefreshAgentAuthority | null;
+                if (tracked) {
+                    // Reuse the verified retained runner authority, not the Agent current today.
+                    const authority = await resolveTrackedAgentRuntimeDaemonServiceAuthority(tracked, sessionId);
+                    if (!authority || !context.isCurrent()) return null;
+                    retainedAgentAuthority = Object.freeze({ retainedAgent: authority.retainedAgent,
+                        isCurrent: () => findTrackedSessionByHappySessionId(params.pidToTrackedSession.values(), sessionId) === tracked
+                            && tracked.agentRuntimeRunnerRestartDisposition !== 'runner_authority_unavailable'
+                            && tracked.agentRuntimeDaemonServiceAuthorityFilePath?.trim() === authority.authorityPath
+                            && tracked.agentRuntimeDaemonServiceCapabilityHash === authority.capabilityHash
+                            && tracked.runnerAgentInvocationContext === authority.invocationContext
+                            && (tracked.sessionRunnerPid ?? tracked.pid) === authority.runner.pid
+                            && tracked.processStartTimeMs === authority.runner.processStartTimeMs
+                            && tracked.processCommandHash === authority.runner.processCommandHash
+                            && Boolean(tracked.runnerAgentSourceCustodyV1
+                                && pluginSourceCustodyV1Equal(tracked.runnerAgentSourceCustodyV1, authority.retainedAgent.sourceCustody)),
+                    });
+                } else {
+                    retainedAgentAuthority = foregroundAgentRuntimeAdmission.readCurrentSessionAgentAuthority(sessionId);
+                }
+                if (!retainedAgentAuthority?.isCurrent()) return null;
+                lease = await acquireAuthoritativePluginRuntimeRegistryLease({ happyHomeDir: configuration.happyHomeDir });
+                const capturedRegistry = lease.registry;
+                const codec = await (await capturedRegistry.acquireAgentCatalogEntry?.(context.agentId))
+                    ?.getConnectedAccountNativeAuthRefreshCodec?.();
+                if (!codec) return null;
+                scope = captureSessionNativeAuthRuntimeRefreshScope({
+                    sessionId, agentId: context.agentId, bindings: parsedBindings.data,
+                    registry: capturedRegistry, codec, retainedAgentAuthority,
+                    isCurrent: () => context.isCurrent()
+                        && pluginReloadController.isRuntimeRegistryCurrent(capturedRegistry),
+                }) ?? undefined;
+            }
+            if (!scope || !scope.isCurrent() || !context.isCurrent()) return null;
+            const registration = createNativeAuthRuntimeRefreshBridge({ serviceId, scope,
+                purposeBindingOwner: { resolveCurrentRequestAuthBinding, materialize }, refreshCoordinator,
+                signal: shutdownCancellationDomains.daemonWorkSignal,
             });
-            const candidates = await Promise.all(
-                Object.entries(lease.registry.contributes.catalogEntriesById)
-                    .filter(([, entry]) => entry.connectedServiceIds?.includes(legacyServiceId) === true)
-                    .map(async ([pluginId, entry]) => {
-                        const refresh: ConnectedServiceDaemonAuthBridgeRefresh | null = await (
-                            entry.getConnectedServiceDaemonAuthBridgeRefresh?.(legacyServiceId) ?? null
-                        );
-                        return refresh ? Object.freeze({ pluginId, refresh }) : null;
-                    }),
-            );
-            const bridges = candidates.filter((candidate): candidate is NonNullable<typeof candidate> => (
-                candidate !== null
-            ));
-            if (bridges.length !== 1) return null;
-            const bridge = bridges[0]!;
-            return Object.freeze({
-                pluginId: bridge.pluginId,
-                registration: Object.freeze({
-                    serviceId,
-                    refresh: async (request: Parameters<ConnectedServiceDaemonAuthBridgeRegistration['refresh']>[0]) => {
-                        const refreshCoordinator = params.getConnectedServiceRefreshCoordinator();
-                        if (!refreshCoordinator) {
-                            throw new Error('connected_service_daemon_auth_bridge_refresh_handler_unavailable');
-                        }
-                        return await bridge.refresh({
-                            serviceId: legacyServiceId,
-                            request,
-                            refreshCoordinator,
-                        });
-                    },
-                }),
+            const capturedLease = lease;
+            let released = false;
+            transferred = true;
+            return Object.freeze({ ...registration,
+                async release() {
+                    if (released) return;
+                    released = true;
+                    if (capturedLease) await releaseDaemonAuthBridgeRegistryLease(capturedLease);
+                },
             });
         } catch (error) {
             logger.debug('[DAEMON RUN] Failed to resolve daemon auth bridge from plugin runtime registry', error);
             return null;
         } finally {
-            if (lease) {
+            if (lease && !transferred) {
                 await releaseDaemonAuthBridgeRegistryLease(lease);
             }
         }
@@ -9809,6 +9829,8 @@ export async function startDaemonSessionControlRuntime(
     // materialization key, and the run registers into the canonical runtime registry so its
     // refresh/quota views cover materialized run homes without either coordinator owning writes.
     const executionRunConnectedServicesBridge = createExecutionRunConnectedServicesBridge({
+        getRunRuntimeTarget: (runKey) => connectedServiceRuntimeRegistry.getRunTargetByRunKey(runKey),
+        resolveDaemonAuthBridge,
         recoverRejectedStart: async ({ selection, modelId, isCurrent }) => {
             const service = resolveQualifiedConnectedAccountServiceForIngressServiceId(selection.serviceId);
             if (!service || !selection.credentialRevision || !isCurrent()
@@ -9877,27 +9899,8 @@ export async function startDaemonSessionControlRuntime(
             materializedRoot,
             removeRoot: async (root) => { await rm(root, { recursive: true, force: true }); },
         }),
-        captureRunnerIdentity: ({ runnerPid, expectedParentSessionId }) => {
-            const tracked = params.pidToTrackedSession.get(runnerPid);
-            if (!tracked) return null;
-            const parentSessionId =
-                normalizeOptionalString(tracked.happySessionId);
-            if (
-                !parentSessionId
-                || (
-                    expectedParentSessionId !== undefined
-                    && parentSessionId !== expectedParentSessionId
-                )
-            ) {
-                return null;
-            }
-            return Object.freeze({
-                identity: tracked,
-                parentSessionId,
-                isCurrent: () =>
-                    params.pidToTrackedSession.get(runnerPid) === tracked,
-            });
-        },
+        captureRunnerIdentity: (input) => captureTrackedExecutionRunRunnerIdentity({
+            ...input, trackedSessions: params.pidToTrackedSession }),
         acquireAgentPurposeContributions: async ({ agentId }) => {
             const lease =
                 await acquireAuthoritativePluginRuntimeRegistryLease({
@@ -14024,6 +14027,7 @@ export async function startDaemonSessionControlRuntime(
         // Execution-run bridge endpoints accept only the scoped run-materialize capability token.
         verifyRunMaterializeToken: (provided) => isValidConnectedServiceRunMaterializeToken(provided, controlToken),
         materializeConnectedServicesForExecutionRun: executionRunConnectedServicesBridge.materialize,
+        refreshConnectedServiceRuntimeAuthForExecutionRun: executionRunConnectedServicesBridge.refreshRuntimeAuth,
         recoverConnectedServicesRejectedStartForExecutionRun: executionRunConnectedServicesBridge.recoverRejectedStart,
         checkConnectedServicesGenerationForExecutionRun: async ({
             runId,

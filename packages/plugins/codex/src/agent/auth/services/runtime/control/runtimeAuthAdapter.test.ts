@@ -273,4 +273,20 @@ describe('Codex runtime auth adapter', () => {
       providerAccountId: 'acct-work',
     });
   });
+
+  it('decodes refreshed declared native files into the existing access-only runtime-auth payload', () => {
+    const codec = createCodexConnectedAccountNativeAuthCodec();
+    const refresh = codec.runtimeAuthRefresh;
+    expect(refresh).toBeDefined();
+    if (!refresh) throw new Error('The native codec has no runtime-auth refresh projection');
+    expect(refresh.purpose).toBe('primary');
+    expect(refresh.materialization).toEqual({ kind: 'files', fileIds: ['auth.json'] });
+    const files = codec.materialize({ credential: buildCodexCredential(), selection: {} }).files;
+    const result = refresh.decode({ files, credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', planType: 'plus' });
+    expect(result).toEqual({ accessToken: 'access', chatgptAccountId: 'acct-work', chatgptPlanType: 'plus',
+      credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS' });
+    expect(JSON.stringify(result)).not.toContain('refresh');
+    expect(() => refresh.decode({ files: {}, credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS' }))
+      .toThrow();
+  });
 });

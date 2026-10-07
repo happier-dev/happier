@@ -19,7 +19,8 @@ import {
     resolveExecutionRunConnectedServicesSelection,
     resolveExecutionRunConnectedServicesEnv,
 } from './connectedServicesEnv';
-import type { ConnectedServiceRunRejectedStartRequest, ConnectedServiceRunRejectedStartResult } from '@/daemon/connectedServices/runs/materializeContract';
+import { ConnectedServiceRunRuntimeAuthRefreshRequestSchema,
+    type ConnectedServiceRunRejectedStartRequest, type ConnectedServiceRunRejectedStartResult } from '@/daemon/connectedServices/runs/materializeContract';
 
 const CONNECTED_BINDINGS = {
     v: 2,
@@ -61,6 +62,7 @@ function createDeps(overrides: Partial<{
     readCredentials: ReturnType<typeof vi.fn>;
     resolveSessionSpawnDefaults: ReturnType<typeof vi.fn>;
     recoverRejectedStart: ReturnType<typeof vi.fn>;
+    refreshRuntimeAuth: ReturnType<typeof vi.fn>;
 }> = {}) {
     const requestMaterialization = overrides.requestMaterialization ?? vi.fn(async () => ({
         ok: true as const,
@@ -75,10 +77,31 @@ function createDeps(overrides: Partial<{
     const readCredentials = overrides.readCredentials ?? vi.fn(async () => CREDENTIALS);
     const resolveSessionSpawnDefaults = overrides.resolveSessionSpawnDefaults ?? vi.fn(async () => null);
     return { requestMaterialization, release, readCredentials, resolveSessionSpawnDefaults,
+        ...(overrides.refreshRuntimeAuth ? { refreshRuntimeAuth: overrides.refreshRuntimeAuth } : {}),
         ...(overrides.recoverRejectedStart ? { recoverRejectedStart: overrides.recoverRejectedStart } : {}), runnerPid: 777 };
 }
 
 describe('resolveExecutionRunConnectedServicesEnv', () => {
+    it('cannot replace the host-bound Run activation with caller-supplied scope during auth refresh', async () => {
+        const refreshRuntimeAuth = vi.fn(async (raw: unknown) => {
+            const request = ConnectedServiceRunRuntimeAuthRefreshRequestSchema.parse(raw);
+            return request.runId === 'run_1' && request.runnerPid === 777 && request.activationId === ACTIVATION_ID
+                ? { status: 'refreshed' as const, result: { accessToken: 'access-only' } }
+                : { status: 'unavailable' as const, reason: 'wrong_activation' };
+        });
+        const resolved = await resolveExecutionRunConnectedServicesEnv({
+            runId: 'run_1', backendId: 'codex', backendSourceKind: 'built_in',
+            connectedServices: CONNECTED_BINDINGS, cwd: '/tmp/project',
+            deps: { ...createDeps(), refreshRuntimeAuth },
+        });
+        const callerRequest = { runId: 'parent-session', runnerPid: 1,
+            activationId: '22222222-2222-4222-8222-222222222222',
+            serviceId: OPENAI_CODEX_ACCOUNT_SERVICE_ID, refreshAttemptId: 'attempt',
+            selection: { kind: 'profile', serviceId: OPENAI_CODEX_ACCOUNT_SERVICE_ID, profileId: 'profile_1' },
+            expectedCredentialRevision: 'csr_abcdefghijklmnopqrstuv' };
+        await expect(resolved?.refreshRuntimeAuth(callerRequest, { timeoutMs: 120_000 }))
+            .resolves.toEqual({ status: 'refreshed', result: { accessToken: 'access-only' } });
+    });
     it('binds rejected-start recovery to its exact Run activation and requested model', async () => {
         const classification = {
             serviceId: OPENAI_CODEX_ACCOUNT_SERVICE_ID, profileId: 'profile_1', groupId: 'pool', groupGeneration: 1,

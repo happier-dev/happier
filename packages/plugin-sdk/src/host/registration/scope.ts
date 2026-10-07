@@ -60,6 +60,7 @@ import type {
     AgentSessionRunnerFactoryLocatorV1,
 } from '../../agentRuntime/index.js';
 import { ConnectedAccountRequestAuthUsesV1Schema } from '@happier-dev/protocol/connect/connected-account-request-auth';
+import { ConnectedAccountMaterializationRequestSchema, ConnectedAccountPurposeIdSchema } from '@happier-dev/protocol/connect/connected-account-purposes';
 import type {
     ConnectedAccountRequestAuthUse,
 } from '../../connectedAccounts.js';
@@ -741,7 +742,24 @@ function snapshotAgentConnectedAccountLaunchContribution(
                 if (typeof inspect !== 'function') {
                     throw new TypeError('Agent connected-account launch continuity.nativeAuthCodec.inspect must be a function');
                 }
+                let runtimeAuthRefresh: NonNullable<AgentConnectedAccountContinuityV1['nativeAuthCodec']>['runtimeAuthRefresh'];
+                if (codec.runtimeAuthRefresh !== undefined) {
+                    const refresh = readAgentRegistrationObject(codec.runtimeAuthRefresh,
+                        'Agent connected-account launch continuity.nativeAuthCodec.runtimeAuthRefresh');
+                    const purpose = ConnectedAccountPurposeIdSchema.parse(refresh.purpose);
+                    const materialization = ConnectedAccountMaterializationRequestSchema.parse(refresh.materialization);
+                    if (materialization.kind !== 'files' || typeof refresh.decode !== 'function') {
+                        throw new TypeError('Agent native runtime-auth refresh requires declared files and a decoder');
+                    }
+                    runtimeAuthRefresh = Object.freeze({ purpose,
+                        materialization: Object.freeze({ kind: 'files' as const,
+                            fileIds: Object.freeze([...materialization.fileIds]) }),
+                        decode: bindAgentRegistrationCallback<NonNullable<NonNullable<AgentConnectedAccountContinuityV1['nativeAuthCodec']>['runtimeAuthRefresh']>['decode']>(
+                            refresh, refresh.decode, 'Agent native runtime-auth refresh decode'),
+                    });
+                }
                 capturedNativeAuthCodec = Object.freeze({
+                    ...(runtimeAuthRefresh === undefined ? {} : { runtimeAuthRefresh }),
                     materialize: bindAgentRegistrationCallback<NonNullable<AgentConnectedAccountContinuityV1['nativeAuthCodec']>['materialize']>(
                         codec,
                         materialize,

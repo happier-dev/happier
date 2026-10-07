@@ -388,6 +388,34 @@ describe('Agent runner-factory registration transaction', () => {
     expect(verifyResumeReachable).toHaveBeenCalledTimes(1);
   });
 
+  it('captures the native-file runtime-auth projection without retaining mutable registration fields', () => {
+    const scope = scopeFor(['factory']);
+    const refresh = {
+      purpose: 'primary',
+      materialization: { kind: 'files' as const, fileIds: ['auth.json'] },
+      decode: (_input: { files: Readonly<Record<string, Uint8Array>>; credentialRevision: string }) => ({
+        accessToken: 'fresh', credentialRevision: _input.credentialRevision,
+      }),
+    };
+    scope.api.agents.register('assistant', factory, { connectedAccountLaunch: { continuity: { nativeAuthCodec: {
+      materialize: () => ({ files: {} }),
+      inspect: () => ({ status: 'unavailable' as const, retryable: false, reason: 'unused' }),
+      runtimeAuthRefresh: refresh,
+    } } } });
+    const [registration] = scope.commit();
+    const captured = (registration?.value as {
+      connectedAccountLaunch?: { continuity?: { nativeAuthCodec?: { runtimeAuthRefresh?: typeof refresh } } };
+    }).connectedAccountLaunch?.continuity?.nativeAuthCodec?.runtimeAuthRefresh;
+    expect(captured).toBeDefined();
+    refresh.purpose = 'invented';
+    refresh.materialization.fileIds.push('refresh-secret.json');
+    expect(captured?.purpose).toBe('primary');
+    expect(captured?.materialization).toEqual({ kind: 'files', fileIds: ['auth.json'] });
+    expect(captured?.decode({ files: {}, credentialRevision: 'revision' })).toEqual({
+      accessToken: 'fresh', credentialRevision: 'revision',
+    });
+  });
+
   it('rejects resume reachability without a host-owned state-sharing descriptor', () => {
     const scope = scopeFor(['factory']);
     scope.api.agents.register('assistant', factory, {

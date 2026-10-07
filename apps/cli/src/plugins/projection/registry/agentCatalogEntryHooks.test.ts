@@ -220,6 +220,27 @@ describe('Agent registration catalog projections', () => {
     expect(verifyResumeReachable).toHaveBeenCalledTimes(1);
   });
 
+  it('retires native-file runtime-auth projection with its captured Agent generation', async () => {
+    let current = true;
+    const projected = projectAgentConnectedAccountLaunchCatalogEntry({
+      pluginId: 'acme.plugin', agentId: 'acme.external' as never, isCurrent: () => current,
+      connectedAccountLaunch: { continuity: { nativeAuthCodec: {
+        materialize: () => ({ files: {} }),
+        inspect: () => ({ status: 'unavailable', retryable: false, reason: 'unused' }),
+        runtimeAuthRefresh: { purpose: 'primary', materialization: { kind: 'files', fileIds: ['auth.json'] },
+          decode: ({ credentialRevision }) => ({ accessToken: 'fresh', credentialRevision }) },
+      } } },
+    });
+    const refresh = await projected.getConnectedAccountNativeAuthRefreshCodec?.();
+    expect(refresh).toBeDefined();
+    expect(refresh?.decode({ files: {}, credentialRevision: 'revision' })).toEqual({
+      accessToken: 'fresh', credentialRevision: 'revision',
+    });
+    current = false;
+    expect(await projected.getConnectedAccountNativeAuthRefreshCodec?.()).toBeNull();
+    expect(() => refresh?.decode({ files: {}, credentialRevision: 'revision' })).toThrow();
+  });
+
   it('keeps credential, declared-file, and currentness custody behind typed native-auth operations', async () => {
     const materialize = vi.fn(({ credential, selection }) => ({
       files: {

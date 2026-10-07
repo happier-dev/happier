@@ -8,6 +8,7 @@ import { buildAgentAccountUsageRecordId } from '@happier-dev/plugin-sdk/agents/r
 import type {
   AgentAccountUsageSnapshot,
   AgentExecutionRunConversationEventV1,
+  AgentExecutionRunRuntimeContextV1,
   AgentSessionConversationRollbackRequest,
   AgentSessionRuntimeEvent,
 } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -410,6 +411,7 @@ import {
 } from './runtime.js';
 import {
   createCodexNativeAppServerExecutionRunConversationRuntime,
+  createCodexNativeAppServerExecutionRunRuntimeHost,
   createCodexNativeAppServerSessionRuntime,
 } from './native.js';
 import {
@@ -3747,6 +3749,46 @@ describe('Codex app-server temporary recoverable turn failures', () => {
       await expect(startCodexAppServerRuntime(runtime)).resolves.toBe('thread-1');
     } finally {
       await rm(codexHome, { recursive: true, force: true });
+    }
+  });
+
+  it('consumes the native Run auth service for provider token refresh without consulting the parent Session', async () => {
+    const firstRevision = 'csr_abcdefghijklmnopqrstuv';
+    const secondRevision = 'csr_bcdefghijklmnopqrstuvw';
+    const selection = { kind: 'profile', serviceId: 'happier.agent.codex/openai-codex',
+      profileId: 'target', credentialRevision: firstRevision };
+    const runRefresh = vi.fn(async (_request: unknown) => ({ status: 'refreshed' as const,
+      result: { accessToken: 'run-access-new', chatgptAccountId: 'acct_target',
+        chatgptPlanType: 'plus', credentialRevision: secondRevision } }));
+    const parentRefresh = vi.fn(async () => { throw new Error('Parent Session authority must not be used'); });
+    const bytes = new TextEncoder().encode(JSON.stringify({ auth_mode: 'chatgptAuthTokens',
+      tokens: { access_token: buildJwt({ exp: 4_000_000_000 }), account_id: 'acct_target', refresh_token: '' } }));
+    // Fixture supplies only consumed SDK services; external app-server RPC is the existing
+    // controlled client boundary in this suite, while native Run host/runtime remain real.
+    const context = { signal: new AbortController().signal,
+      executionRun: { services: { auth: { services: { refreshRuntimeAuth: runRefresh } },
+        nativeHome: { root: '/fixture', readFiles: async () => ({ 'auth.json': bytes }) } } },
+      services: { logger: { debug: vi.fn(), warn: vi.fn() }, interactions: {}, exec: {},
+        sessions: { current: { auth: { services: { refreshRuntimeAuth: parentRefresh } } } } },
+    } as unknown as AgentExecutionRunRuntimeContextV1;
+    const processEnv = { HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([selection]) };
+    const host = createCodexNativeAppServerExecutionRunRuntimeHost({ context, processEnv,
+      sharedAppServer: { endpoint: 'fixture', dispose: async () => undefined,
+        createClient: async (request) => await createCodexAppServerClient({ exec: context.services.exec,
+          cwd: request.cwd, processEnv: request.processEnv, configOverrides: request.configOverrides,
+          disableUserMcpServers: request.disableUserMcpServers }) } });
+    const runtime = createCodexAppServerRuntime({ directory: '/workspace', executionRunId: 'run-native-auth', host, processEnv });
+    try {
+      await startCodexAppServerRuntime(runtime);
+      await expect(clientState.invokeRequestHandler('account/chatgptAuthTokens/refresh', {
+        chatgptPlanType: 'plus',
+      })).resolves.toEqual({ accessToken: 'run-access-new', chatgptAccountId: 'acct_target', chatgptPlanType: 'plus' });
+      expect(runRefresh.mock.calls[0]?.[0]).toMatchObject({ serviceId: selection.serviceId,
+        selection: { kind: 'profile', serviceId: selection.serviceId, profileId: 'target' },
+        expectedCredentialRevision: firstRevision });
+      expect(parentRefresh).not.toHaveBeenCalled();
+    } finally {
+      await runtime.dispose();
     }
   });
 

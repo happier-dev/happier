@@ -1,12 +1,14 @@
 import type { ConnectedAccountServiceKey, ConnectedServiceCredentialRevisionV1 } from '@happier-dev/protocol';
 
 export type ConnectedServiceDaemonAuthBridgeRefreshRequest = Readonly<{
-  sessionId: string;
   refreshAttemptId?: string;
   selection: unknown;
   forceRefresh: boolean;
   expectedCredentialRevision?: ConnectedServiceCredentialRevisionV1 | null;
-}> & Readonly<Record<string, unknown>>;
+}> & Readonly<
+  | { sessionId: string; runId?: never }
+  | { runId: string; sessionId?: never }
+> & Readonly<Record<string, unknown>>;
 
 export type ConnectedServiceDaemonAuthBridgeRefreshResult = Readonly<
   | { status: 'refreshed'; result: Readonly<Record<string, unknown>> }
@@ -17,6 +19,8 @@ export type ConnectedServiceDaemonAuthBridgeRefreshResult = Readonly<
 
 export type ConnectedServiceDaemonAuthBridgeRegistration = Readonly<{
   serviceId: ConnectedAccountServiceKey;
+  /** Releases the existing captured plugin-registry lease after caller settlement or rejection. */
+  release?(): Promise<void>;
   refresh: (
     request: ConnectedServiceDaemonAuthBridgeRefreshRequest,
   ) => Promise<ConnectedServiceDaemonAuthBridgeRefreshResult>;

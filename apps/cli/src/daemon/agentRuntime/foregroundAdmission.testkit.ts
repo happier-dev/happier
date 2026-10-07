@@ -2,6 +2,7 @@ import { once } from 'node:events';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import type { z } from 'zod';
+import { resolveAgentCliOverrideEnvKey } from '@happier-dev/cli-common/agents/resolution';
 
 import { reloadConfiguration } from '@/configuration';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
@@ -11,8 +12,10 @@ import {
 } from '@/plugins/testkit/admittedRuntime';
 import { resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { writeExecutableShim } from '@/testkit/fs/executableShim';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { spawnTestProcess, waitForProcessExit } from '@/testkit/process/spawn';
+import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import type { PreparedForegroundAgentRuntimeAdmission } from './foregroundAdmission';
 import {
   ForegroundAgentRuntimeAdmissionRequestV1Schema,
@@ -29,6 +32,10 @@ type RequestOverrides = Partial<z.input<typeof ForegroundAgentRuntimeAdmissionRe
 type FixtureOptions = Readonly<{
   plugins?: Parameters<typeof createAuthoredAdmittedPluginRuntimeFixture>[0]['plugins'];
   runtimeOptions?: NonNullable<Parameters<typeof createAdmittedPluginRuntimeFixture>[0]>['runtimeOptions'];
+  createRuntime?: (resources: Readonly<{
+    home: string;
+    controller: typeof pluginReloadController;
+  }>) => Promise<Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>>;
 }>;
 
 type FixtureContext = Readonly<{
@@ -43,6 +50,37 @@ type FixtureContext = Readonly<{
   ): ReturnType<typeof prepareForegroundAgentRuntimeAdmission>;
 }>;
 
+/** A physical Agent CLI boundary; catalog resolution and auth probing stay real. */
+export async function installForegroundAgentCliFixture(
+  registry: ResolvedExecutablePluginRuntimeRegistry,
+  directory: string,
+): Promise<() => void> {
+  const agentCliSpecs = [...registry.contributes.agentDefinitionsById.values()].flatMap(agent => (
+    agent.runtimeSpec
+    && agent.pluginId
+    && registry.readPluginSourceCustody?.(agent.pluginId)
+      ? [agent.runtimeSpec]
+      : []
+  ));
+  const environment = createEnvKeyScope(agentCliSpecs.map(spec => resolveAgentCliOverrideEnvKey(spec.id)));
+  try {
+    for (const [index, spec] of agentCliSpecs.entries()) {
+      const command = await writeExecutableShim({
+        dir: directory,
+        fileName: process.platform === 'win32' ? `agent-cli-${index}.cmd` : `agent-cli-${index}`,
+        contents: process.platform === 'win32'
+          ? '@echo off\r\nif "%1"=="--version" (echo 1.0.0 & exit /b 0)\r\nif "%1"=="login" if "%2"=="status" (exit /b 0)\r\nexit /b 1\r\n'
+          : '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 1.0.0; exit 0; fi\nif [ "$1" = "login" ] && [ "$2" = "status" ]; then exit 0; fi\nexit 1\n',
+      });
+      environment.patch({ [resolveAgentCliOverrideEnvKey(spec.id)]: command });
+    }
+    return () => environment.restore();
+  } catch (error) {
+    environment.restore();
+    throw error;
+  }
+}
+
 /** Real daemon-applied source custody and a real, inspectable foreground process. */
 export async function withRealForegroundAdmissionFixture<T>(
   options: FixtureOptions,
@@ -56,6 +94,7 @@ export async function withRealForegroundAdmissionFixture<T>(
     ]);
     let runtime: FixtureContext['runtime'] | null = null;
     let foreground: ReturnType<typeof spawnTestProcess> | null = null;
+    let restoreAgentCliEnvironment: (() => void) | null = null;
     const prepared: PreparedForegroundAgentRuntimeAdmission[] = [];
     resetActiveAccountSettingsSnapshotForTests();
     try {
@@ -75,7 +114,9 @@ export async function withRealForegroundAdmissionFixture<T>(
       foreground = spawnTestProcess(process.execPath, [entrypoint]);
       await once(foreground, 'spawn');
       if (!foreground.pid) throw new Error('Foreground fixture process has no OS identity');
-      runtime = options.plugins
+      runtime = options.createRuntime
+        ? await options.createRuntime({ home, controller: pluginReloadController })
+        : options.plugins
         ? await createAuthoredAdmittedPluginRuntimeFixture({
             plugins: options.plugins, happyHomeDir: home, controller: pluginReloadController,
             runtimeOptions: options.runtimeOptions,
@@ -84,6 +125,7 @@ export async function withRealForegroundAdmissionFixture<T>(
             happyHomeDir: home, controller: pluginReloadController,
             runtimeOptions: options.runtimeOptions ?? { pluginIds: ['happier.agent.codex'] },
           });
+      restoreAgentCliEnvironment = await installForegroundAgentCliFixture(runtime.registry, directory);
       const request = (overrides: RequestOverrides = {}): ForegroundAgentRuntimeAdmissionOwnerRequestV1 => {
         const { machineId = 'machine-1', ...wireOverrides } = overrides;
         return {
@@ -124,6 +166,7 @@ export async function withRealForegroundAdmissionFixture<T>(
         }
       } finally {
         resetActiveAccountSettingsSnapshotForTests();
+        restoreAgentCliEnvironment?.();
         env.restore();
         reloadConfiguration();
       }

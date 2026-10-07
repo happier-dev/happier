@@ -209,6 +209,11 @@ export type ConnectedAccountPurposeBindingLease = Readonly<{
 export type ConnectedAccountSessionPurposeBindingLease =
   ConnectedAccountPurposeBindingLease;
 
+/** Existing exact Session subject identity; callers never fall back to durable purpose defaults. */
+export function connectedAccountSessionPurposeBindingSubjectId(sessionId: string): string {
+  return `agent-session:${sessionId.trim()}`;
+}
+
 export type ConnectedAccountSessionPurposeBindingSnapshot = Readonly<{
   purposes: readonly QualifiedConnectedAccountPurposeV1[];
   bindings: readonly QualifiedConnectedAccountPurposeBindingV1[];
@@ -861,7 +866,7 @@ export function createConnectedAccountPurposeBindingOwner(
         }
         return {
           subjectKey: sessionSubjectKey(sessionId),
-          subjectId: `agent-session:${sessionId}`,
+          subjectId: connectedAccountSessionPurposeBindingSubjectId(sessionId),
           isSubjectCurrent: () => true,
           sessionId,
           errorPrefix: 'connected_account_session_binding',

@@ -5,8 +5,6 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildConnectedServiceCredentialRecord,
-  openQualifiedConnectedAccountContentEnvelope,
-  parseQualifiedConnectedAccountCredentialPlaintextV1,
   QualifiedConnectedAccountCredentialSnapshotV4Schema,
   QualifiedConnectedAccountCredentialMutationV4Schema,
   QualifiedConnectedAccountRefreshLeaseV4Schema,
@@ -17,11 +15,10 @@ import {
 
 import type { ApiClient } from '@/api/api';
 import type { Credentials } from '@/persistence';
-import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
 import type {
   ConnectedAccountConfigurationRecord,
 } from '@/plugins/runtime/connectedAccounts/configurationOwner';
-import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { writeCommittedLocalPathPluginFixture } from '@/plugins/store/state.testkit';
 import {
   createLocalPathPluginDistributionIdentity,
@@ -38,6 +35,7 @@ import {
   type QualifiedConnectedAccountRefreshRuntime,
 } from './ConnectedServiceRefreshCoordinator';
 import { ConnectedServiceQuotasCoordinator } from '../quotas/ConnectedServiceQuotasCoordinator';
+import { createBuiltInQualifiedRefreshHarness } from './ConnectedServiceRefreshCoordinator.qualifiedRefresh.testkit';
 
 const service = Object.freeze({
   pluginId: 'happier.agent.codex',
@@ -207,6 +205,12 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
     expect(mutateCredential).not.toHaveBeenCalled();
   });
 
+  async function createBuiltInRefreshHarness() {
+    const harness = await createBuiltInQualifiedRefreshHarness();
+    createdRegistries.push(harness);
+    return harness;
+  }
+
   it('routes a forced built-in compatibility target through the current plugin leaf and exact K settlement', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
       access_token: 'access-new',
@@ -217,176 +221,7 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
       status: 200,
       headers: { 'content-type': 'application/json' },
     })));
-    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-qualified-refresh-coordinator-'));
-    createdDirectories.push(happyHomeDir);
-    const registry = await resolveExecutablePluginRuntimeRegistry({
-      happyHomeDir,
-      pluginIds: [service.pluginId],
-    });
-    createdRegistries.push(registry);
-    const credentials: Credentials = {
-      token: 'happier-token',
-      encryption: {
-        type: 'legacy',
-        secret: new Uint8Array(32).fill(8),
-      },
-    };
-    let qualifiedRevision = firstRevision;
-    let qualifiedContent = sealQualifiedConnectedAccountContentEnvelope({
-      kind: 'credential',
-      accountMode: 'plain',
-      payload: {
-        v: 1,
-        values: {
-          accessToken: 'access-old',
-          refreshToken: 'refresh-old',
-          idToken: 'id-old',
-          providerAccountId: 'work',
-        },
-      },
-      randomBytes: (length) => new Uint8Array(length),
-    });
-    let legacyRecord = buildConnectedServiceCredentialRecord({
-      now,
-      serviceId: 'openai-codex',
-      profileId: 'work',
-      kind: 'oauth',
-      expiresAt: now + 1,
-      oauth: {
-        accessToken: 'access-old',
-        refreshToken: 'refresh-old',
-        idToken: 'id-old',
-        providerAccountId: 'work',
-        providerEmail: null,
-        scope: null,
-        tokenType: 'Bearer',
-      },
-    });
-    const readCredential = vi.fn(async () => ({
-      ref: account,
-      authenticationModeId: 'oauth',
-      revisionSemantics: 'revisioned' as const,
-      credentialRevision: qualifiedRevision,
-      configurationRevision: null,
-      content: qualifiedContent,
-      metadata: {
-        providerIdentity: { accountId: 'work' },
-        displayName: 'work',
-        scopes: ['openid'],
-      },
-    }));
-    const establishedRuntimeOwner =
-      createQualifiedConnectedAccountEstablishedRuntimeOwner({
-        reloadController: {
-          async acquireRuntimeRegistry() {
-            return {
-              registry,
-              source: 'active' as const,
-              durableRevision: registry.durableRevision ?? -1,
-              release: vi.fn(async () => undefined),
-            };
-          },
-          isRuntimeRegistryCurrent(candidate: typeof registry) {
-            return candidate === registry;
-          },
-        },
-        credentials,
-        getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
-        readCredential,
-        readConfiguration: vi.fn(async () => null),
-        configuration: {
-          read: vi.fn(async () => null),
-          secrets: {
-            admit: vi.fn(async () => undefined),
-            has: vi.fn(async () => false),
-            read: vi.fn(async () => null),
-          },
-        },
-      });
-    const api = {
-      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
-      getConnectedServiceCredentialPlain: vi.fn(async () => ({
-        content: { t: 'plain' as const, v: legacyRecord },
-        revisionSemantics: 'revisioned' as const,
-        credentialRevision: qualifiedRevision,
-      })),
-      getConnectedServiceCredentialSealed: vi.fn(async () => null),
-      updateConnectedServiceCredentialHealth: vi.fn(async () => undefined),
-    } as unknown as ApiClient;
-    const acquireRefreshLease = vi.fn(async () => ({
-      acquired: true,
-      leaseUntil: now + 60_000,
-      ownerId: 'machine-1:runtime-1',
-      credentialRevision: qualifiedRevision,
-    }));
-    const mutateCredentialHealth = vi.fn(async () => ({
-      success: true as const,
-      credentialRevision: qualifiedRevision,
-      configurationRevision: null,
-    }));
-    const mutateCredential = vi.fn(async (input: Readonly<{
-      token: string;
-      mutation: unknown;
-    }>) => {
-      const mutation =
-        QualifiedConnectedAccountCredentialMutationV4Schema.parse(
-          input.mutation,
-        );
-      const plaintext = openQualifiedConnectedAccountContentEnvelope({
-        kind: 'credential',
-        accountMode: 'plain',
-        envelope: mutation.content,
-      });
-      const opened =
-        parseQualifiedConnectedAccountCredentialPlaintextV1({
-          ref: mutation.ref,
-          authenticationModeId: mutation.authenticationModeId,
-          plaintext,
-          metadata: mutation.metadata,
-        });
-      qualifiedContent = mutation.content;
-      qualifiedRevision = secondRevision;
-      legacyRecord = buildConnectedServiceCredentialRecord({
-        now,
-        serviceId: 'openai-codex',
-        profileId: 'work',
-        kind: 'oauth',
-        expiresAt: Number(opened.values.expiresAtMs),
-        oauth: {
-          accessToken: opened.values.accessToken!,
-          refreshToken: opened.values.refreshToken!,
-          idToken: opened.values.idToken!,
-          providerAccountId: opened.values.providerAccountId!,
-          providerEmail: null,
-          scope: null,
-          tokenType: 'Bearer',
-        },
-      });
-      return {
-        success: true as const,
-        credentialRevision: secondRevision,
-        configurationRevision: null,
-      };
-    });
-    const coordinator = new ConnectedServiceRefreshCoordinator({
-      api,
-      credentials,
-      machineIdProvider: () => 'machine-1',
-      ownerIdProvider: () => 'machine-1:runtime-1',
-      activeServerDir: join(happyHomeDir, 'active'),
-      baseDir: join(happyHomeDir, 'materialized'),
-      refreshWindowMs: 60_000,
-      refreshLeaseMs: 30_000,
-      now: () => now,
-      qualifiedConnectedAccountRuntime: {
-        resolvePeerClass: () => 'advertised_v4',
-        establishedRuntimeOwner,
-        readCredential,
-        acquireRefreshLease,
-        mutateCredential,
-        mutateCredentialHealth,
-      },
-    });
+    const { coordinator, acquireRefreshLease, mutateCredential, mutateCredentialHealth } = await createBuiltInRefreshHarness();
 
     await expect(coordinator.refreshConnectedServiceCredentialForQuota({
       serviceId: 'openai-codex',
@@ -413,6 +248,115 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
         refreshLeaseOwnerId: 'machine-1:runtime-1',
       },
     });
+  });
+
+  it('replays the same admitted qualified runtime-auth attempt without rerotating or disclosing credentials', async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify({
+      access_token: 'access-new', refresh_token: 'refresh-new', id_token: 'id-new', expires_in: 3600,
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetch);
+    const { coordinator, mutateCredential, readCredential } = await createBuiltInRefreshHarness();
+    const request = { account, expectedCredentialRevision: firstRevision, refreshAttemptId: 'attempt-1' };
+
+    const result = await coordinator.refreshQualifiedConnectedAccountCredentialForRuntimeAuth(request);
+    expect(result).toEqual({ status: 'refreshed', credentialRevision: secondRevision });
+    expect((await readCredential()).credentialRevision).toBe(secondRevision);
+    await expect(coordinator.refreshQualifiedConnectedAccountCredentialForRuntimeAuth(request)).resolves.toEqual(result);
+    await expect(coordinator.refreshQualifiedConnectedAccountCredentialForRuntimeAuth({ ...request, refreshAttemptId: 'unowned-stale-attempt' })).resolves.toMatchObject({ status: 'unavailable' });
+    await expect(coordinator.refreshQualifiedConnectedAccountCredentialForRuntimeAuth({ ...request, expectedCredentialRevision: secondRevision })).resolves.toMatchObject({ status: 'unavailable' });
+    const otherAccount = { ...request, account: { ...account, accountId: 'another-account' } };
+    await expect(coordinator.refreshQualifiedConnectedAccountCredentialForRuntimeAuth(otherAccount)).resolves.toMatchObject({ status: 'unavailable' });
+    expect(mutateCredential).toHaveBeenCalledOnce();
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it('rejects stale and conflicting attempts without replacing a newer pending qualified refresh', async () => {
+    let releaseRefresh: (() => void) | undefined;
+    let signalRefreshStarted: (() => void) | undefined;
+    const refreshStarted = new Promise<void>((resolve) => { signalRefreshStarted = resolve; });
+    const continueRefresh = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+    const fetch = vi.fn(async () => {
+      if (fetch.mock.calls.length === 2) {
+        signalRefreshStarted?.();
+        await continueRefresh;
+      }
+      return new Response(JSON.stringify({
+        access_token: 'access-new', refresh_token: 'refresh-new', id_token: 'id-new', expires_in: 3600,
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetch);
+    const { coordinator, mutateCredential } = await createBuiltInRefreshHarness();
+    await expect(coordinator.refreshQualifiedConnectedAccountCredentialForRuntimeAuth({ account, expectedCredentialRevision: firstRevision, refreshAttemptId: 'attempt-1' })).resolves.toEqual({ status: 'refreshed', credentialRevision: secondRevision });
+    const request = { account, expectedCredentialRevision: secondRevision, refreshAttemptId: 'attempt-2' };
+    const pending = coordinator.refreshQualifiedConnectedAccountCredentialForRuntimeAuth(request);
+    try {
+      expect(await Promise.race([
+        refreshStarted.then(() => ({ status: 'provider_started' })),
+        pending.then((result) => ({ status: 'settled_before_provider', result })),
+      ])).toEqual({ status: 'provider_started' });
+      await expect(coordinator.refreshQualifiedConnectedAccountCredentialForRuntimeAuth({ account, expectedCredentialRevision: firstRevision, refreshAttemptId: 'stale-attempt' })).resolves.toMatchObject({ status: 'unavailable' });
+      await expect(coordinator.refreshQualifiedConnectedAccountCredentialForRuntimeAuth({ ...request, expectedCredentialRevision: firstRevision })).resolves.toMatchObject({ status: 'unavailable' });
+      const replay = coordinator.refreshQualifiedConnectedAccountCredentialForRuntimeAuth(request);
+      releaseRefresh?.();
+      await expect(pending).resolves.toEqual({ status: 'refreshed', credentialRevision: thirdRevision });
+      await expect(replay).resolves.toEqual({ status: 'refreshed', credentialRevision: thirdRevision });
+      await expect(coordinator.refreshQualifiedConnectedAccountCredentialForRuntimeAuth(request)).resolves.toEqual({ status: 'refreshed', credentialRevision: thirdRevision });
+      expect(mutateCredential).toHaveBeenCalledTimes(2);
+      expect(fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      releaseRefresh?.();
+      await pending;
+    }
+  });
+
+  it('does not acknowledge a different qualified runtime-auth attempt while another attempt owns its revision', async () => {
+    let releaseRefresh: (() => void) | undefined;
+    let signalRefreshStarted: (() => void) | undefined;
+    const refreshStarted = new Promise<void>((resolve) => { signalRefreshStarted = resolve; });
+    const continueRefresh = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      signalRefreshStarted?.();
+      await continueRefresh;
+      return new Response(JSON.stringify({
+        access_token: 'access-new', refresh_token: 'refresh-new', id_token: 'id-new', expires_in: 3600,
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }));
+    const { coordinator, mutateCredential, mutateCredentialHealth } = await createBuiltInRefreshHarness();
+    const request = { account, expectedCredentialRevision: firstRevision, refreshAttemptId: 'attempt-a' };
+    const owner = coordinator.refreshQualifiedConnectedAccountCredentialForRuntimeAuth(request);
+    try {
+      const arrival = await Promise.race([
+        refreshStarted.then(() => ({ status: 'provider_started' })),
+        owner.then((result) => ({ status: 'settled_before_provider', result,
+          health: mutateCredentialHealth.mock.calls })),
+      ]);
+      expect(arrival).toEqual({ status: 'provider_started' });
+      const otherRequest = { ...request, refreshAttemptId: 'attempt-b' };
+      const other = coordinator.refreshQualifiedConnectedAccountCredentialForRuntimeAuth(otherRequest);
+      releaseRefresh?.();
+      const [ownerResult, otherResult] = await Promise.all([owner, other]);
+      expect(ownerResult).toEqual({ status: 'refreshed', credentialRevision: secondRevision });
+      await expect(coordinator.refreshQualifiedConnectedAccountCredentialForRuntimeAuth(otherRequest)).resolves.toMatchObject({ status: 'unavailable' });
+      expect(otherResult).toMatchObject({ status: 'unavailable' });
+      await expect(coordinator.refreshQualifiedConnectedAccountCredentialForRuntimeAuth(request)).resolves.toEqual(ownerResult);
+      expect(mutateCredential).toHaveBeenCalledOnce();
+    } finally {
+      releaseRefresh?.();
+      await owner;
+    }
+  });
+
+  it.each([401, 500])('fails closed after a provider %i without retaining disclosure admission', async (status) => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'invalid_grant' }), {
+      status, headers: { 'content-type': 'application/json' },
+    })));
+    const { coordinator, mutateCredential } = await createBuiltInRefreshHarness();
+    const request = { account, expectedCredentialRevision: firstRevision, refreshAttemptId: 'failed-attempt' };
+    const result = await coordinator.refreshQualifiedConnectedAccountCredentialForRuntimeAuth(request);
+    expect(result).toMatchObject({ status: 'unavailable' });
+    expect(Object.keys(result).sort()).toEqual(['reason', 'status']);
+    await expect(coordinator.refreshQualifiedConnectedAccountCredentialForRuntimeAuth(request)).resolves.toEqual(result);
+    expect(mutateCredential).not.toHaveBeenCalled();
   });
 
   it('schedules a novel qualified service through the real coordinator and current plugin runtime without a legacy enum id', async () => {
@@ -469,7 +413,8 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
     );
     await writeFile(
       join(pluginRoot, 'daemon.mjs'),
-      `export function activate(api) {
+      `let refreshCount = 0;
+      export function activate(api) {
         api.connectedAccounts.register('novel-service', {
           authentication: {
             modes: {
@@ -490,7 +435,9 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
             return { status: 'connected', displayName: 'Novel account', scopes: [] };
           },
           async refresh(context) {
-            await context.stagedCredentials.set('token', 'novel-token-refreshed');
+            if (++refreshCount <= 2) {
+              await context.stagedCredentials.set('token', 'novel-token-refreshed');
+            }
             return { status: 'connected', displayName: 'Novel account', scopes: [] };
           },
           async quota() {
@@ -541,10 +488,12 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
         state: { enabled: true },
       },
     });
-    const registry = await resolveExecutablePluginRuntimeRegistry({
+    const admittedRuntime = await createAdmittedPluginRuntimeFixture({
       happyHomeDir,
+      runtimeOptions: { pluginIds: ['acme.novel.refresh'] },
     });
-    createdRegistries.push(registry);
+    const { controller: reloadController } = admittedRuntime;
+    createdRegistries.push(admittedRuntime);
     const novelService = Object.freeze({
       pluginId: 'acme.novel.refresh',
       localId: 'novel-service',
@@ -586,19 +535,7 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
     }));
     const establishedRuntimeOwner =
       createQualifiedConnectedAccountEstablishedRuntimeOwner({
-        reloadController: {
-          async acquireRuntimeRegistry() {
-            return {
-              registry,
-              source: 'active' as const,
-              durableRevision: registry.durableRevision ?? -1,
-              release: vi.fn(async () => undefined),
-            };
-          },
-          isRuntimeRegistryCurrent(candidate: typeof registry) {
-            return candidate === registry;
-          },
-        },
+        reloadController,
         credentials,
         getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
         readCredential,
@@ -769,18 +706,6 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
         settlement: { settle: vi.fn() },
       },
     };
-    const lease = () => ({
-      registry,
-      source: 'active' as const,
-      release: vi.fn(async () => undefined),
-    });
-    const reloadController = {
-      acquireRuntimeRegistry: vi.fn(async () => lease()),
-      tryAcquireRuntimeRegistry: vi.fn(() => lease()),
-      isRuntimeRegistryCurrent: vi.fn(
-        (candidate: typeof registry) => candidate === registry,
-      ),
-    } as unknown as PluginReloadController;
     const controlRuntime = createConnectedAccountDaemonRuntime({
       reloadController,
       persistence,
@@ -946,5 +871,10 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
         }),
       }),
     );
+
+    const unchangedRequest = { account: novelAccount, expectedCredentialRevision: thirdRevision, refreshAttemptId: 'unchanged-attempt' };
+    await expect(coordinator.refreshQualifiedConnectedAccountCredentialForRuntimeAuth(unchangedRequest)).resolves.toMatchObject({ status: 'unavailable' });
+    expect(mutateCredential).toHaveBeenCalledTimes(2);
+    expect(onCredentialUpdated).toHaveBeenCalledTimes(3);
   });
 });

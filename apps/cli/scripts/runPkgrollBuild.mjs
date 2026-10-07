@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -146,17 +147,19 @@ function prepareRuntimeGenerationManifest(manifest, outputDir) {
   // Bundled internals are inlined into the host, except the packages plugins
   // also import at runtime: those stay external so host and plugins share one
   // module instance from the packaged closure.
-  const bundledInternalPackages = new Set(
+  // Sodium's public CommonJS export must also stay inlined: externalizing its
+  // require rewrites it to an ESM import whose 0.7.16 entry has a missing sibling.
+  const bundledRuntimePackages = new Set(
     (Array.isArray(manifest?.bundledDependencies) ? manifest.bundledDependencies : [])
       .map((name) => String(name))
-      .filter((name) => name.startsWith('@happier-dev/'))
+      .filter((name) => name.startsWith('@happier-dev/') || name === 'libsodium-wrappers-sumo')
       .filter((name) => !PLUGIN_HOST_SHARED_RUNTIME_PACKAGES.includes(name)),
   );
-  if (bundledInternalPackages.size === 0) return prepared;
+  if (bundledRuntimePackages.size === 0) return prepared;
 
   const dependencies = { ...(prepared.dependencies ?? {}) };
   const devDependencies = { ...(prepared.devDependencies ?? {}) };
-  for (const packageName of bundledInternalPackages) {
+  for (const packageName of bundledRuntimePackages) {
     if (!Object.prototype.hasOwnProperty.call(dependencies, packageName)) continue;
     devDependencies[packageName] = dependencies[packageName];
     delete dependencies[packageName];
@@ -214,6 +217,33 @@ function rebasePkgrollInputPathToStage(inputPath, outputDir) {
 
 function isDeclarationOutputPath(inputPath) {
   return /\.d\.(?:c|m)?ts$/i.test(inputPath);
+}
+
+function supplyEsmCommonJsDirname(outputDirectory, includeJs) {
+  const prelude = [
+    "import { dirname as __happierPkgrollPathDirname } from 'node:path';",
+    "import { fileURLToPath as __happierPkgrollFileURLToPath } from 'node:url';",
+    'const __happierPkgrollDirname = __happierPkgrollPathDirname(__happierPkgrollFileURLToPath(import.meta.url));',
+    '',
+  ].join('\n');
+  for (const entry of readdirSync(outputDirectory, { withFileTypes: true })) {
+    const outputPath = join(outputDirectory, entry.name);
+    if (entry.isDirectory()) {
+      supplyEsmCommonJsDirname(outputPath, includeJs);
+      continue;
+    }
+    if (!entry.isFile() || !(entry.name.endsWith('.mjs') || (includeJs && entry.name.endsWith('.js')))) continue;
+    const source = readFileSync(outputPath, 'utf8');
+    if (!source.includes('__happierPkgrollDirname')) continue;
+    const newline = source.indexOf('\n');
+    const headerEnd = source.startsWith('#!') ? (newline < 0 ? source.length : newline + 1) : 0;
+    const header = source.slice(0, headerEnd);
+    if (source.slice(headerEnd).startsWith(prelude)) continue;
+    // Pkgroll shares code across entries: supply the binding in the actual
+    // generated chunks, not just the declared entry modules. Keep hashbangs
+    // first and retain the documented Node 20.0 floor.
+    writeFileSync(outputPath, header + (header && !header.endsWith('\n') ? '\n' : '') + prelude + source.slice(headerEnd));
+  }
 }
 
 export function resolvePkgrollCliPath() {
@@ -289,8 +319,17 @@ async function runPkgrollBuildInStage(options = {}) {
   const physicalStagingDir = realpathSync.native(stagingDir);
   const stageManifestPath = join(physicalStagingDir, 'package.json');
   const srcdist = `${toSlashNormalizedRelativePath(physicalStagingDir, sourceDir)}:.`;
+  const runtimeInputs = inputPaths.filter((inputPath) => !isDeclarationOutputPath(inputPath));
+  const bundlesPasswordSodium = Object.prototype.hasOwnProperty.call(
+    buildManifest.devDependencies ?? {}, 'libsodium-wrappers-sumo',
+  );
+  const esmInputs = bundlesPasswordSodium ? runtimeInputs.filter((inputPath) =>
+    inputPath.endsWith('.mjs') || (inputPath.endsWith('.js') && buildManifest.type === 'module'),
+  ) : [];
   const inputGroups = [
-    inputPaths.filter((inputPath) => !isDeclarationOutputPath(inputPath)),
+    ...(bundlesPasswordSodium
+      ? [esmInputs, runtimeInputs.filter((inputPath) => !esmInputs.includes(inputPath))]
+      : [runtimeInputs]),
     inputPaths.filter(isDeclarationOutputPath),
   ].filter((group) => group.length > 0);
 
@@ -300,6 +339,12 @@ async function runPkgrollBuildInStage(options = {}) {
     manifestWritten = true;
     for (const inputGroup of inputGroups) {
       const pkgrollArgs = [pkgrollCliPath, '--packagejson=false', '--srcdist', srcdist];
+      if (inputGroup === esmInputs) {
+        // Inlined sodium uses CommonJS's module-local directory. Pkgroll
+        // already shims require, but leaves this global unresolved in ESM.
+        // Keep CJS's native directory semantics untouched.
+        pkgrollArgs.push('--define.__dirname=__happierPkgrollDirname');
+      }
       for (const inputPath of inputGroup) {
         pkgrollArgs.push('--input', inputPath);
       }
@@ -323,6 +368,9 @@ async function runPkgrollBuildInStage(options = {}) {
       }
       if (result.status !== 0) {
         throw new Error(`pkgroll exited without success (status=${result.status ?? 'null'})`);
+      }
+      if (inputGroup === esmInputs) {
+        supplyEsmCommonJsDirname(physicalStagingDir, buildManifest.type === 'module');
       }
     }
   } finally {

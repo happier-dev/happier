@@ -78,6 +78,9 @@ import {
   CONNECTED_SERVICE_RUN_GENERATION_CURRENT_PATH,
   CONNECTED_SERVICE_RUN_RELEASE_PATH,
   CONNECTED_SERVICE_RUN_REJECTED_START_PATH,
+  CONNECTED_SERVICE_RUN_RUNTIME_AUTH_REFRESH_PATH,
+  ConnectedServiceRunRuntimeAuthRefreshRequestSchema,
+  ConnectedServiceRunRuntimeAuthRefreshResultSchema,
   type ConnectedServiceRunRejectedStartRequest,
   type ConnectedServiceRunRejectedStartResult,
   type ConnectedServiceRunMaterializeRequest,
@@ -1133,6 +1136,24 @@ export async function recoverExecutionRunConnectedServicesRejectedStart(
     authScope: 'connected-service-run-materialize',
     timeoutMs: resolveExecutionRunConnectedServiceMaterializeTimeoutMs(),
   });
+}
+
+export async function requestExecutionRunConnectedServiceRuntimeAuthRefresh(
+  request: unknown,
+  options: DaemonControlRequestOptions = {},
+): Promise<ConnectedServiceDaemonAuthBridgeRefreshResult> {
+  const body = ConnectedServiceRunRuntimeAuthRefreshRequestSchema.parse(request);
+  const result: unknown = await daemonPost(CONNECTED_SERVICE_RUN_RUNTIME_AUTH_REFRESH_PATH, body, {
+    ...options, authScope: 'connected-service-run-materialize',
+  });
+  const parsed = ConnectedServiceRunRuntimeAuthRefreshResultSchema.safeParse(result);
+  if (parsed.success) return parsed.data.result;
+  if (result && typeof result === 'object' && 'error' in result
+    && !('errorCode' in result) && typeof result.error === 'string'
+    && /abort|timed?\s*out|timeout/iu.test(result.error)) {
+    return { status: 'pending', refreshAttemptId: body.refreshAttemptId };
+  }
+  return { status: 'unavailable', reason: 'connected_service_run_materialization_unavailable' };
 }
 
 export async function checkExecutionRunConnectedServicesGenerationCurrent(
