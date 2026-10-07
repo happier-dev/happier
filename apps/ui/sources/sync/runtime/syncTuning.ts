@@ -109,7 +109,6 @@ export type SyncTuning = Readonly<{
     jsThreadLagTelemetryThresholdMs: number;
     jsThreadLagTelemetryMaxSamples: number;
     feedItemsMaxEntries: number;
-    artifactHeadsMaxEntries: number;
     automationRunsMaxEntriesPerAutomation: number;
 }>;
 
@@ -285,7 +284,6 @@ export function loadSyncTuning(opts?: {
         jsThreadLagTelemetryThresholdMs: 50,
         jsThreadLagTelemetryMaxSamples: 512,
         feedItemsMaxEntries: 500,
-        artifactHeadsMaxEntries: 500,
         automationRunsMaxEntriesPerAutomation: 200,
     };
 
@@ -387,7 +385,6 @@ export function loadSyncTuning(opts?: {
         jsThreadLagTelemetryThresholdMs: readNumber(merged, 'jsThreadLagTelemetryThresholdMs', { min: 1, max: 60_000 }) ?? defaults.jsThreadLagTelemetryThresholdMs,
         jsThreadLagTelemetryMaxSamples: readNumber(merged, 'jsThreadLagTelemetryMaxSamples', { min: 1, max: 100_000 }) ?? defaults.jsThreadLagTelemetryMaxSamples,
         feedItemsMaxEntries: readNumber(merged, 'feedItemsMaxEntries', { min: 1, max: 100_000 }) ?? defaults.feedItemsMaxEntries,
-        artifactHeadsMaxEntries: readNumber(merged, 'artifactHeadsMaxEntries', { min: 1, max: 100_000 }) ?? defaults.artifactHeadsMaxEntries,
         automationRunsMaxEntriesPerAutomation: readNumber(merged, 'automationRunsMaxEntriesPerAutomation', { min: 1, max: 100_000 }) ?? defaults.automationRunsMaxEntriesPerAutomation,
     };
 

@@ -3,6 +3,7 @@ import { ScrollView, View, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierArtifactRevisionList, type HappierArtifactRevisionListProps } from '@happier-dev/plugin-ui/presentation';
 
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -10,15 +11,16 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { formatRelativeTimeShort } from '@/components/ui/selectionList/formatRelativeTimeShort';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
 import type { CustomModalInjectedProps } from '@/modal/types';
-import { storage, useArtifact } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope, useArtifact } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
 import { formatByteSize } from '@/utils/files/formatByteSize';
 
-import { useArtifactActionsClient } from './artifactActionsClient';
+import { useArtifactActionsClient, type ArtifactActionsClient } from './artifactActionsClient';
 import type { ArtifactBodyV1, ArtifactRevisionProvenanceV1 } from '@happier-dev/protocol';
 import { ArtifactBinaryBody } from './ArtifactBinaryBody';
 
@@ -35,10 +37,15 @@ function revisionSubtitle(createdAt: number, provenance?: ArtifactRevisionProven
     return labels.join(' · ');
 }
 
-type HistoryState =
-    | Readonly<{ phase: 'loading' }>
-    | Readonly<{ phase: 'ready'; revisions: readonly Revision[]; retentionCount: number }>
-    | Readonly<{ phase: 'failed' }>;
+type HistoryData = Readonly<{ revisions: readonly Revision[]; retentionCount: number }>;
+type HistoryState = Readonly<{
+    client: ArtifactActionsClient;
+    artifactId: string;
+    data: HistoryData | null;
+    loading: boolean;
+    failed: boolean;
+}>;
+type HistorySelection = Readonly<{ client: ArtifactActionsClient; artifactId: string; bodyVersion: number }>;
 
 /** Two columns (versions beside the preview) from this width; narrower, the preview replaces the list. */
 const SIDE_BY_SIDE_MIN_WIDTH_PX = 640;
@@ -55,24 +62,46 @@ function ArtifactHistoryContent(props: Readonly<{ artifactId: string; canRestore
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const client = useArtifactActionsClient();
+    const scope = useActiveServerAccountScope();
+    const router = useRouter();
     const artifact = useArtifact(props.artifactId);
     const { width } = useWindowDimensions();
     const sideBySide = width >= SIDE_BY_SIDE_MIN_WIDTH_PX;
-    const [state, setState] = React.useState<HistoryState>({ phase: 'loading' });
-    const [selected, setSelected] = React.useState<number | null>(null);
+    const sideBySideRef = React.useRef(sideBySide);
+    sideBySideRef.current = sideBySide;
+    const [state, setState] = React.useState<HistoryState | null>(null);
+    const [selection, setSelection] = React.useState<HistorySelection | null>(null);
     const [restoring, setRestoring] = React.useState(false);
     const [restoreFailed, setRestoreFailed] = React.useState(false);
+    const [refreshIntent, requestRefresh] = React.useReducer((intent: number) => intent + 1, 0);
+    const artifactId = props.artifactId;
+    const current = artifact?.bodyVersion;
+    const history = state?.client === client && state.artifactId === artifactId ? state : null;
+    const selected = selection?.client === client && selection.artifactId === artifactId ? selection.bodyVersion : null;
 
-    const load = React.useCallback(async () => {
+    React.useEffect(() => {
         if (!client) return;
-        setState({ phase: 'loading' });
-        const outcome = await client.listRevisions(props.artifactId);
-        if (!outcome.ok) { setState({ phase: 'failed' }); return; }
-        const revisions = [...outcome.value.revisions].sort((a, b) => b.bodyVersion - a.bodyVersion);
-        setState({ phase: 'ready', revisions, retentionCount: outcome.value.retentionCount });
-        if (sideBySide && revisions[0]) setSelected(revisions[0].bodyVersion);
-    }, [client, props.artifactId, sideBySide]);
-    React.useEffect(() => { void load(); }, [load]);
+        let active = true;
+        setState(previous => ({ client, artifactId,
+            data: previous?.client === client && previous.artifactId === artifactId ? previous.data : null,
+            loading: true, failed: false }));
+        void client.listRevisions(artifactId).then(outcome => {
+            if (!active) return;
+            if (!outcome.ok) {
+                setState(previous => previous ? { ...previous, loading: false, failed: true } : previous);
+                return;
+            }
+            const revisions = [...outcome.value.revisions].sort((a, b) => b.bodyVersion - a.bodyVersion);
+            setState({ client, artifactId, data: { revisions, retentionCount: outcome.value.retentionCount }, loading: false, failed: false });
+            const earlier = revisions.filter(revision => revision.bodyVersion !== current);
+            setSelection(previous => {
+                if (previous?.client === client && previous.artifactId === artifactId
+                    && earlier.some(revision => revision.bodyVersion === previous.bodyVersion)) return previous;
+                return sideBySideRef.current && earlier[0] ? { client, artifactId, bodyVersion: earlier[0].bodyVersion } : null;
+            });
+        });
+        return () => { active = false; };
+    }, [client, artifactId, current, refreshIntent]);
 
     const restore = React.useCallback(async (bodyVersion: number) => {
         if (!client || !artifact || artifact.bodyVersion === undefined) return;
@@ -83,35 +112,40 @@ function ArtifactHistoryContent(props: Readonly<{ artifactId: string; canRestore
             bodyVersion,
             expectedRevision: { headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion },
         });
+        if ('approvalId' in outcome) {
+            props.onClose();
+            if (scope) router.push(`/inbox/approvals/${encodeURIComponent(outcome.approvalId)}?serverId=${encodeURIComponent(scope.serverId)}` as never);
+            return;
+        }
         if (outcome.ok) {
-            const full = await sync.fetchArtifactWithBody(props.artifactId).catch(() => null);
-            if (full) storage.getState().updateArtifact(full);
+            // The captured Account Action has already published its acknowledged head.
             props.onClose();
             return;
         }
         setRestoring(false);
         setRestoreFailed(true);
-    }, [artifact, client, props]);
+    }, [artifact, client, props, router, scope]);
 
-    if (state.phase === 'loading' || client === null) {
-        return <View style={styles.placeholder} testID="artifact-history:loading" />;
-    }
-    if (state.phase === 'failed') {
+    if (!history?.data && history?.failed) {
         return (
             <SurfaceStateCard
                 testID="artifact-history:failed"
                 kind="error"
                 title={t('artifacts.browser.history.loadFailed')}
-                action={{ label: t('common.retry'), onPress: load }}
+                action={{ label: t('common.retry'), onPress: requestRefresh }}
                 accessibilitySemantics="alert"
             />
         );
     }
+    if (!history?.data || client === null) {
+        return <View style={styles.placeholder}>
+            <SurfaceStateCard testID="artifact-history:loading" kind="loading" title={t('common.loading')} accessibilitySemantics="status" />
+        </View>;
+    }
 
-    const current = artifact?.bodyVersion;
-    const currentProvenance = state.revisions.find(revision => revision.bodyVersion === current)?.provenance ?? artifact?.provenance;
-    const earlier = state.revisions.filter((revision) => revision.bodyVersion !== current);
-    const chosen = earlier.find((revision) => revision.bodyVersion === selected) ?? null;
+    const currentProvenance = history.data.revisions.find(revision => revision.bodyVersion === current)?.provenance ?? artifact?.provenance;
+    const earlier = history.data.revisions.filter((revision) => revision.bodyVersion !== current);
+    const chosen = earlier.find((revision) => revision.bodyVersion === selected) ?? (sideBySide ? earlier[0] ?? null : null);
     const versionNumber = (revision: Revision) => revision.bodyVersion;
 
     const list = (
@@ -121,15 +155,15 @@ function ArtifactHistoryContent(props: Readonly<{ artifactId: string; canRestore
             currentTitle={t('artifacts.browser.history.current')}
             currentSubtitle={artifact ? revisionSubtitle(artifact.updatedAt, currentProvenance) : undefined}
             currentLabel={t('artifacts.browser.history.now')}
-            retentionLabel={earlier.length === 0 ? t('artifacts.browser.history.empty') : t('artifacts.browser.history.keeps', { count: state.retentionCount })}
+            retentionLabel={earlier.length === 0 ? t('artifacts.browser.history.empty') : t('artifacts.browser.history.keeps', { count: history.data.retentionCount })}
             revisions={earlier.map(revision => ({
                 bodyVersion: revision.bodyVersion,
                 title: t('artifacts.browser.history.version', { n: versionNumber(revision) }),
                 subtitle: revisionSubtitle(revision.createdAt, revision.provenance),
                 detail: formatByteSize(revision.sizeBytes),
             }))}
-            selectedVersion={selected}
-            onSelectVersion={setSelected}
+            selectedVersion={chosen?.bodyVersion ?? null}
+            onSelectVersion={bodyVersion => setSelection({ client, artifactId, bodyVersion })}
             colors={{ secondary: theme.colors.text.secondary, tertiary: theme.colors.text.tertiary }}
             host={{ Item, ItemGroup: ArtifactHistoryItemGroup, Text }}
         />
@@ -144,7 +178,7 @@ function ArtifactHistoryContent(props: Readonly<{ artifactId: string; canRestore
                     title={t('artifacts.browser.history.versionsLabel')}
                     leading={<Icon name="caret-left" size={14} color={theme.colors.text.secondary} />}
                     textStyle={{ color: theme.colors.text.secondary }}
-                    onPress={() => setSelected(null)}
+                    onPress={() => setSelection(null)}
                 />
             ) : null}
             <Text style={styles.caption}>
@@ -160,6 +194,15 @@ function ArtifactHistoryContent(props: Readonly<{ artifactId: string; canRestore
 
     return (
         <View style={styles.root} testID="artifact-history">
+            {history.loading || history.failed ? (
+                <SurfaceFreshnessLine
+                    testID={history.loading ? 'artifact-history:refreshing' : 'artifact-history:stale'}
+                    reason={history.loading ? t('common.loading') : t('artifacts.browser.history.loadFailed')}
+                    busy={history.loading}
+                    tone={history.failed ? 'warning' : 'neutral'}
+                    action={history.failed ? { label: t('common.retry'), onPress: requestRefresh } : undefined}
+                />
+            ) : null}
             <View style={sideBySide ? styles.columns : styles.stack}>
                 {sideBySide || chosen === null ? list : null}
                 {preview}

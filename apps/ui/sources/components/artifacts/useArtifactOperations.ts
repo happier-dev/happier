@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { getArtifactUseTargetV1 } from '@happier-dev/protocol';
+import { getArtifactKindPolicyV1 } from '@happier-dev/protocol';
 
 import { showDocumentShareSheet } from '@/components/sharing/documents/showDocumentShareSheet';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -24,7 +24,9 @@ export function useArtifactOperations(artifact: DecryptedArtifact, onDeleted: ()
     const canEdit = canRead && (artifact.access === undefined || artifact.access === 'owner' || artifact.access === 'edit' || artifact.access === 'admin');
     const canManage = canRead && (artifact.access === undefined || artifact.access === 'owner' || artifact.access === 'admin');
     const header = artifact.rawHeader ?? artifact.header ?? {};
-    const canShare = canManage && getArtifactUseTargetV1({ artifactId: artifact.id, header, body: null }).canShare;
+    const sharing = getArtifactKindPolicyV1(header.kind);
+    const canShare = canRead && (artifact.access === 'owner' || artifact.access === 'admin')
+        && (sharing.peopleSharingAllowed || sharing.publicLinkAllowed);
     const name = artifact.title || t('artifacts.untitled');
     const share = () => {
         if (!canShare) return;

@@ -1,21 +1,45 @@
 import type { DecryptedArtifact } from '../../domains/artifacts/artifactTypes';
-import { loadSyncTuning } from '../../runtime/syncTuning';
+import { sameStrictJsonValue } from '@happier-dev/protocol';
 import type { StoreGet, StoreSet } from './_shared';
 
-const ARTIFACT_HEADS_MAX_ENTRIES = loadSyncTuning().artifactHeadsMaxEntries;
+function retainOpenedContent(previous: DecryptedArtifact | undefined, incoming: DecryptedArtifact): DecryptedArtifact {
+  if (!previous?.isDecrypted || !incoming.isDecrypted || incoming.body !== undefined || previous.body === undefined
+    || incoming.bodyVersion === undefined || incoming.bodyVersion !== previous.bodyVersion
+    || incoming.headerVersion !== previous.headerVersion || incoming.storageMode !== previous.storageMode
+    || incoming.access === undefined || incoming.access !== previous.access
+    || !incoming.ownerAccountId || incoming.ownerAccountId !== previous.ownerAccountId
+    || !sameStrictJsonValue(incoming.rawHeader, previous.rawHeader)) return incoming;
 
-function retainNewestArtifacts(
-  artifacts: Record<string, DecryptedArtifact>,
-): Record<string, DecryptedArtifact> {
-  const entries = Object.values(artifacts)
-    .sort((left, right) => right.updatedAt - left.updatedAt)
-    .slice(0, ARTIFACT_HEADS_MAX_ENTRIES);
-  return Object.fromEntries(entries.map((artifact) => [artifact.id, artifact]));
+  const sameCustody = incoming.storageMode === 'plain' || (incoming.storageMode === 'e2ee'
+    && incoming.storageIdentity !== undefined && previous.storageIdentity !== undefined
+    && sameStrictJsonValue(incoming.storageIdentity, previous.storageIdentity));
+  if (!sameCustody) return incoming;
+  return { ...incoming, body: previous.body };
+}
+
+function reconcileArtifacts(
+  previous: Record<string, DecryptedArtifact>,
+  incoming: readonly DecryptedArtifact[],
+): Readonly<{ artifacts: Record<string, DecryptedArtifact>; storageChanged: boolean }> {
+  let next = previous;
+  let storageChanged = false;
+  for (const incomingArtifact of incoming) {
+    const before = next[incomingArtifact.id];
+    const artifact = retainOpenedContent(before, incomingArtifact);
+    if (sameStrictJsonValue(before, artifact)) continue;
+    if (!before || before.headerVersion !== artifact.headerVersion || before.bodyVersion !== artifact.bodyVersion
+      || before.storageMode !== artifact.storageMode) storageChanged = true;
+    if (next === previous) next = { ...previous };
+    next[artifact.id] = artifact;
+  }
+  return { artifacts: next, storageChanged };
 }
 
 export type ArtifactsDomain = {
   artifacts: Record<string, DecryptedArtifact>;
   artifactsLoaded: boolean;
+  /** Invalidates the storage projection, not local hydration or grant-only changes. */
+  artifactsStorageRevision: number;
   applyArtifacts: (artifacts: DecryptedArtifact[]) => void;
   addArtifact: (artifact: DecryptedArtifact) => void;
   updateArtifact: (artifact: DecryptedArtifact) => void;
@@ -31,50 +55,47 @@ export function createArtifactsDomain<S extends ArtifactsDomain>({
   return {
     artifacts: {},
     artifactsLoaded: false,
+    artifactsStorageRevision: 0,
     applyArtifacts: (artifacts) =>
       set((state) => {
-        const mergedArtifacts = { ...state.artifacts };
-        artifacts.forEach((artifact) => {
-          mergedArtifacts[artifact.id] = artifact;
-        });
-
+        const merged = reconcileArtifacts(state.artifacts, artifacts);
+        if (merged.artifacts === state.artifacts && state.artifactsLoaded) return state;
         return {
           ...state,
-          artifacts: retainNewestArtifacts(mergedArtifacts),
+          artifacts: merged.artifacts,
           artifactsLoaded: true,
+          artifactsStorageRevision: state.artifactsStorageRevision + Number(merged.storageChanged),
         };
       }),
     addArtifact: (artifact) =>
       set((state) => {
-        const updatedArtifacts = {
-          ...state.artifacts,
-          [artifact.id]: artifact,
-        };
-
+        const updated = reconcileArtifacts(state.artifacts, [artifact]);
+        if (updated.artifacts === state.artifacts) return state;
         return {
           ...state,
-          artifacts: retainNewestArtifacts(updatedArtifacts),
+          artifacts: updated.artifacts,
+          artifactsStorageRevision: state.artifactsStorageRevision + Number(updated.storageChanged),
         };
       }),
     updateArtifact: (artifact) =>
       set((state) => {
-        const updatedArtifacts = {
-          ...state.artifacts,
-          [artifact.id]: artifact,
-        };
-
+        const updated = reconcileArtifacts(state.artifacts, [artifact]);
+        if (updated.artifacts === state.artifacts) return state;
         return {
           ...state,
-          artifacts: retainNewestArtifacts(updatedArtifacts),
+          artifacts: updated.artifacts,
+          artifactsStorageRevision: state.artifactsStorageRevision + Number(updated.storageChanged),
         };
       }),
     deleteArtifact: (artifactId) =>
       set((state) => {
+        if (!Object.prototype.hasOwnProperty.call(state.artifacts, artifactId)) return state;
         const { [artifactId]: _, ...remainingArtifacts } = state.artifacts;
 
         return {
           ...state,
           artifacts: remainingArtifacts,
+          artifactsStorageRevision: state.artifactsStorageRevision + 1,
         };
       }),
   };

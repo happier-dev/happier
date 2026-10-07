@@ -178,7 +178,8 @@ describe('decryptArtifactListItem (artifact headers)', () => {
     const socket = await decryptSocketNewArtifactUpdate({ artifactId: artifact.id, ...artifact, encryption, artifactDataKeys });
     for (const row of [list, full, socket]) {
       expect(row?.rawHeader).toEqual(metadata);
-      expect(row?.header).toMatchObject({ title: null, v: 1 });
+      expect(row?.header).toMatchObject({ title: 'Workflow', v: 1 });
+      expect(row?.title).toBe('Workflow');
     }
     if (!full) throw new Error('Fixture must open');
     const nextMetadata = { ...metadata, revision: { headerVersion: 2, bodyVersion: 1 } };
@@ -186,6 +187,7 @@ describe('decryptArtifactListItem (artifact headers)', () => {
     const updated = await applySocketArtifactUpdate({ existingArtifact: full, createdAt: 2,
       dataEncryptionKey: mode === 'plain' ? null : key, header: { version: 2, value: nextHeader } });
     expect(updated.rawHeader).toEqual(nextMetadata);
+    expect(updated.title).toBe('Workflow');
     expect(updated.body).toBe('body');
   });
 });

@@ -25,6 +25,9 @@ export function ArtifactHtmlBody(props: Readonly<{
     body: ArtifactBodyV1 | null | undefined;
     name: string;
     readPreviewUrl: (artifactId: string, signal?: AbortSignal) => Promise<string>;
+    /** Isolated shell URL prepared with this body in the parent view's finite operation. */
+    previewUrl?: string;
+    onRetry?: () => void;
 }>) {
     const { theme } = useUnistyles();
     const key = `${props.artifactId}:${props.headerVersion}:${props.bodyVersion ?? ''}`;
@@ -34,7 +37,7 @@ export function ArtifactHtmlBody(props: Readonly<{
         const controller = new AbortController();
         const body = props.body;
         setPreview({ key, body, phase: 'loading' });
-        void props.readPreviewUrl(props.artifactId, controller.signal).then(value => {
+        void (props.previewUrl ? Promise.resolve(props.previewUrl) : props.readPreviewUrl(props.artifactId, controller.signal)).then(value => {
             if (controller.signal.aborted) return;
             const url = new URL(value);
             if (url.protocol !== 'https:' || url.username || url.password
@@ -46,7 +49,7 @@ export function ArtifactHtmlBody(props: Readonly<{
             if (!controller.signal.aborted) setPreview({ key, body, phase: 'failed' });
         });
         return () => controller.abort();
-    }, [key, props.artifactId, props.body, props.readPreviewUrl, attempt]);
+    }, [key, props.artifactId, props.body, props.readPreviewUrl, props.previewUrl, attempt]);
 
     const current = preview.key === key && preview.body === props.body ? preview : null;
     const fail = () => setPreview(value => value === current ? { key, body: props.body, phase: 'failed' } : value);
@@ -59,7 +62,7 @@ export function ArtifactHtmlBody(props: Readonly<{
             kind="error"
             title={t('artifacts.error')}
             reason={t('artifacts.browser.loadFailedBody')}
-            action={{ label: t('common.retry'), testID: 'artifact:htmlPreviewRetry', onPress: () => setAttempt(value => value + 1) }}
+            action={{ label: t('common.retry'), testID: 'artifact:htmlPreviewRetry', onPress: props.onRetry ?? (() => setAttempt(value => value + 1)) }}
             accessibilitySemantics="alert"
         />}
         loading={<SurfaceStateCard

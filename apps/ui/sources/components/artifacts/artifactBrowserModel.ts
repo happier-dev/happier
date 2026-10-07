@@ -1,5 +1,5 @@
 import { deriveArtifactExcerptV1, getArtifactUseTargetV1, isArtifactHtmlHeaderV1, type ArtifactWorkspaceSourceV1 } from '@happier-dev/protocol';
-import { WorkflowDefinitionArtifactBodyV1Schema, WorkflowDefinitionArtifactHeaderV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
+import { WorkflowDefinitionArtifactBodyV1ReadSchema, WorkflowDefinitionArtifactHeaderV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { workflowDefinitionPreviewStepsV1 } from '@happier-dev/protocol/workflows';
 import { buildWorkBoardPreviewLayoutV1, WorkBoardPreviewLayoutV1Schema, readWorkBoardArtifactV1 } from '@happier-dev/protocol';
 import type { HappierArtifactPreview } from '@happier-dev/plugin-ui/presentation';
@@ -22,34 +22,17 @@ export type ArtifactBrowserKind = 'document' | 'prompt' | 'board' | 'workflow' |
 
 export const ARTIFACT_BROWSER_KINDS: readonly ArtifactBrowserKind[] = ['document', 'prompt', 'board', 'workflow', 'role', 'launchProfile'];
 
-/**
- * Header kinds the browser deliberately leaves out: approvals are Inbox items with their own
- * lifecycle, not documents (plugin-owned rows never reach the generic list at all).
- */
-const EXCLUDED_HEADER_KINDS: ReadonlySet<string> = new Set([
-    'approval_request.v1',
-    'target_action_approval.v1',
-    'execution_run_host_action_approval.v1',
-]);
-
 const USE_TARGET_TO_BROWSER_KIND = {
     open: 'document', prompt_doc: 'prompt', prompt_bundle: 'prompt', board: 'board',
     workflow: 'workflow', role: 'role', launch_profile: 'launchProfile',
 } as const satisfies Readonly<Record<ReturnType<typeof getArtifactUseTargetV1>['kind'], ArtifactBrowserKind>>;
 
-function readHeaderKind(artifact: Pick<DecryptedArtifact, 'header' | 'rawHeader'>): string | null {
-    const kind = (artifact.rawHeader ?? artifact.header)?.kind;
-    return typeof kind === 'string' && kind.length > 0 ? kind : null;
-}
-
 /** The browser kind, or `null` for a row the browser does not list. Locked rows stay listed as documents. */
 export function classifyArtifactBrowserKind(artifact: Pick<DecryptedArtifact, 'id' | 'header' | 'rawHeader' | 'draft'>): ArtifactBrowserKind | null {
     if (artifact.draft === true) return null;
-    const kind = readHeaderKind(artifact);
-    if (kind === null) return 'document';
-    if (EXCLUDED_HEADER_KINDS.has(kind)) return null;
-    return USE_TARGET_TO_BROWSER_KIND[getArtifactUseTargetV1({ artifactId: artifact.id,
-        header: artifact.rawHeader ?? artifact.header ?? {}, body: null }).kind];
+    const target = getArtifactUseTargetV1({ artifactId: artifact.id,
+        header: artifact.rawHeader ?? artifact.header ?? {}, body: null });
+    return target.browserListed ? USE_TARGET_TO_BROWSER_KIND[target.kind] : null;
 }
 
 /** Where opening an artifact goes: its kind's own page, else the Artifacts view. */
@@ -130,7 +113,7 @@ export function readArtifactPreview(artifact: Pick<DecryptedArtifact, 'id' | 'he
         let labels: readonly string[] | undefined;
         if (typeof artifact.body === 'string') {
             try {
-                const parsed = WorkflowDefinitionArtifactBodyV1Schema.safeParse(JSON.parse(artifact.body));
+                const parsed = WorkflowDefinitionArtifactBodyV1ReadSchema.safeParse(JSON.parse(artifact.body));
                 if (!parsed.success) return { kind: 'none' };
                 labels = workflowDefinitionPreviewStepsV1(parsed.data.definition.blocks);
             } catch { return { kind: 'none' }; }

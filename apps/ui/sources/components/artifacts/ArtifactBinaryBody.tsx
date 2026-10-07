@@ -21,6 +21,9 @@ type Preview = Readonly<{ key: string }> & (
 /** Binary transport stays with Sync; this view owns only its temporary preview lifetime. */
 export function ArtifactBinaryBody(props: Readonly<{ artifactId: string; name: string; reference: ArtifactBlobReferenceV1;
     readBytes: (artifactId: string, reference: ArtifactBlobReferenceV1, signal?: AbortSignal) => Promise<Uint8Array>;
+    /** Bytes opened by the parent view's completed finite Account operation. */
+    initialBytes?: Uint8Array;
+    onRetry?: () => void;
 }>) {
     const { theme } = useUnistyles();
     const reference = props.reference;
@@ -45,7 +48,7 @@ export function ArtifactBinaryBody(props: Readonly<{ artifactId: string; name: s
         let cleanup: (() => void | Promise<void>) | null = null;
         setPreview({ key, phase: 'loading' });
         void (async () => {
-            const bytes = await props.readBytes(props.artifactId, reference, controller.signal);
+            const bytes = props.initialBytes ?? await props.readBytes(props.artifactId, reference, controller.signal);
             controller.signal.throwIfAborted();
             let uri: string;
             if (Platform.OS === 'web') {
@@ -71,7 +74,7 @@ export function ArtifactBinaryBody(props: Readonly<{ artifactId: string; name: s
             imagePreviewModal.current = null;
             void cleanup?.(); cleanup = null;
         };
-    }, [props.artifactId, props.name, props.readBytes, reference.blobId, reference.mime, reference.sha256, reference.sizeBytes, previewable, key, attempt]);
+    }, [props.artifactId, props.name, props.readBytes, props.initialBytes, reference.blobId, reference.mime, reference.sha256, reference.sizeBytes, previewable, key, attempt]);
     const ready = preview.key === key && preview.phase === 'ready' ? preview : null;
     const download = async () => {
         if (downloadController.current) return;
@@ -119,7 +122,7 @@ export function ArtifactBinaryBody(props: Readonly<{ artifactId: string; name: s
             }} />
             : previewable && preview.key === key && preview.phase === 'failed' ? <SurfaceStateCard testID="artifact:previewFailed" kind="error"
                 title={t('artifacts.error')} reason={t('artifacts.browser.loadFailedBody')}
-                action={{ label: t('common.retry'), onPress: () => setAttempt(value => value + 1) }} /> : card}
+                action={{ label: t('common.retry'), onPress: props.onRetry ?? (() => setAttempt(value => value + 1)) }} /> : card}
         <RoundButton testID="artifact:download" title={t('files.repositoryTree.actions.download')} size="small" display="secondary" loading={downloading} onPress={() => { void download(); }} />
         {downloadFailed ? <Text accessibilityRole="alert" testID="artifact:downloadFailed">{t('artifacts.browser.loadFailedBody')}</Text> : null}
     </View>;

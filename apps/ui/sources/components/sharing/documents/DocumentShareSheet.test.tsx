@@ -167,6 +167,32 @@ describe('DocumentShareSheet', () => {
         vi.restoreAllMocks();
     });
 
+    it('keeps people sharing available for a widget layout without offering or loading public links', async () => {
+        host.document = { header: { kind: 'widget-area-layout.v1' }, body: '{}' };
+        const screen = await renderScreen(<DocumentShareSheet artifactId="wf-1" kind="widget-area-layout.v1" />);
+        await settle();
+        expect(screen.findByTestId('document-share-grant-account:ana')).not.toBeNull();
+        expect(renderedTestIds(screen, 'document-share-public-link')).toEqual([]);
+        expect(host.publicRequests).toEqual([]);
+    });
+
+    it.each(['work-board.v1', 'prompt_doc.v2'])('refuses malformed opened %s content through the Action owner', async kind => {
+        host.document = { header: { v: 1, kind, title: 'Unreadable document' }, body: '{' };
+        const hook = await renderHook(() => useDocumentShareController({ artifactId: 'invalid-document',
+            scope: { serverId: host.serverId, accountId: 'owner' } }));
+        await settle();
+        // Retained grants remain inspectable/revocable; only new sharing requires content admission.
+        expect(hook.getCurrent().grants).toHaveLength(2);
+        await React.act(async () => { hook.getCurrent().actions.setAccessLevel({ kind: 'account', accountId: 'ana' }, 'view'); });
+        await settle();
+        const anaRow = hook.getCurrent().model.grants.find(row => row.principal.ref.kind === 'account'
+            && row.principal.ref.accountId === 'ana');
+        expect(anaRow?.operation).toMatchObject({ kind: 'error' });
+        expect(anaRow?.level).toMatchObject({ value: 'edit' });
+        expect(host.requests).toEqual([{ method: 'GET' }]);
+        await hook.unmount();
+    });
+
     it('lists a workflow\'s grants with the document labels and the Team-run rule', async () => {
         const screen = await renderScreen(<DocumentShareSheet artifactId="wf-1" kind="workflow-definition.v1" />);
         await settle();

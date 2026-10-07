@@ -15,6 +15,7 @@ import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
 import { formatByteSize } from '@/utils/files/formatByteSize';
+import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 
 import { artifactViewRoute } from './artifactBrowserModel';
 import type { ArtifactQuota } from './artifactActionsClient';
@@ -51,7 +52,7 @@ export function ArtifactEditor(props: Readonly<{ artifact: DecryptedArtifact | n
                 router.replace(artifactViewRoute(artifactId) as never);
             } else if (artifact) {
                 await sync.updateArtifact(artifact.id, title.trim() || null, body.trim() || null);
-                router.back();
+                safeRouterBack({ router, fallbackHref: '/artifacts' });
             }
         } catch (error) {
             setSaving(false);
@@ -62,7 +63,7 @@ export function ArtifactEditor(props: Readonly<{ artifact: DecryptedArtifact | n
 
     const cancel = React.useCallback(async () => {
         if (changed && !(await Modal.confirm(t('artifacts.discardChanges'), t('artifacts.discardChangesDescription'), { destructive: true }))) return;
-        router.back();
+        safeRouterBack({ router, fallbackHref: '/artifacts' });
     }, [changed, router]);
 
     // A direct edit URL must not reinterpret a binary body as an empty Markdown document.
