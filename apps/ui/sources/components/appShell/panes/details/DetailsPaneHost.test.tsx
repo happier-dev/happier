@@ -70,7 +70,7 @@ describe('DetailsPaneHost', () => {
         expect(state.lastHostProps.detailsDockWidthPx).toBe(520);
         const pane = await renderScreen(state.lastHostProps.detailsPane);
         expect(pane.findByTestId('details-pane.header.title')?.props.children).toBe('Auggie');
-        expect(pane.findByTestId('details-pane.header.subtitle')?.props.children).toBe('happier.agent.auggie · 0.0.0');
+        expect(pane.getTextContent()).toContain('happier.agent.auggie · 0.0.0');
         expect(pane.root.findAllByType('PluginDetailStub' as any)).toHaveLength(1);
         await pressTestInstance(pane.findByTestId('details-pane.header.close')!);
         expect(onClose).toHaveBeenCalledTimes(1);

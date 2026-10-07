@@ -141,6 +141,44 @@ describe('MultiPaneHost (docked main region)', () => {
             expect(tracker.mounts.main).toBe(1);
         }
     });
+
+    it('preserves both drafts when a narrow layout parks one pane behind the other', async () => {
+        const tracker = createMountTracker();
+        const tree = (layout: ResolvedPaneLayout) => <MultiPaneHost
+            main={<Tracked tracker={tracker} name="main" />}
+            rightPane={<DraftEditor tracker={tracker} name="right" />}
+            detailsPane={<DraftEditor tracker={tracker} name="details" />}
+            layout={layout}
+            rightDockWidthPx={360}
+            detailsDockWidthPx={390}
+            onCloseRight={() => {}}
+            onCloseDetails={() => {}}
+            onCommitRightDockWidthPx={() => {}}
+            onCommitDetailsDockWidthPx={() => {}}
+        />;
+        const screen = await renderScreen(tree({ kind: 'threePane', right: 'docked', details: 'docked' }));
+        const editor = (name: string) => screen.root.findAllByType('DraftEditor').find((node) => node.props.name === name)!;
+        for (const pane of ['right', 'details']) {
+            await act(async () => { editor(pane).props.onChangeText(`${pane} draft`); });
+        }
+        for (const layout of [
+            { kind: 'twoPane', right: 'docked', details: 'overlay' },
+            { kind: 'overlayStack', right: 'hidden', details: 'overlay' },
+            { kind: 'overlayStack', right: 'overlay', details: 'hidden' },
+            { kind: 'threePane', right: 'docked', details: 'docked' },
+        ] satisfies ResolvedPaneLayout[]) {
+            await screen.update(tree(layout));
+            for (const pane of ['right', 'details'] as const) {
+                expect(editor(pane).props.value).toBe(`${pane} draft`);
+                expect(tracker.mounts[pane]).toBe(1);
+                expect(tracker.unmounts[pane] ?? 0).toBe(0);
+                if (layout[pane] === 'hidden') {
+                    expect(screen.findByTestId(`multi-pane-${pane}-parked`)?.props.pointerEvents).toBe('none');
+                }
+            }
+            expect(tracker.mounts.main).toBe(1);
+        }
+    });
 });
 
 function Main() {
@@ -178,7 +216,7 @@ function DraftEditor(props: Readonly<{ tracker: MountTracker; name: string }>) {
             props.tracker.unmounts[props.name] = (props.tracker.unmounts[props.name] ?? 0) + 1;
         };
     }, [props.name, props.tracker]);
-    return React.createElement('DraftEditor', { value, onChangeText });
+    return React.createElement('DraftEditor', { name: props.name, value, onChangeText });
 }
 
 function findAncestorWithStyle(
