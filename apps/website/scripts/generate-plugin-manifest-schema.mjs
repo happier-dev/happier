@@ -8,6 +8,7 @@ const defaultPublicDir = fileURLToPath(new URL('../public', import.meta.url));
 
 export async function generatePluginManifestSchema({
   publicDir = defaultPublicDir,
+  createSchema = createPluginManifestJsonSchemaV2,
 } = {}) {
   const outputPath = join(publicDir, 'schemas', 'plugin-manifest-v2.json');
   await mkdir(join(publicDir, 'schemas'), { recursive: true });
@@ -28,7 +29,7 @@ export async function generatePluginManifestSchema({
    */
   await writeFile(
     outputPath,
-    `${JSON.stringify(createPluginManifestJsonSchemaV2())}\n`,
+    `${JSON.stringify(createSchema())}\n`,
     'utf8',
   );
   return outputPath;

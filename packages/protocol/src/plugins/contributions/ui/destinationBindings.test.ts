@@ -1,7 +1,10 @@
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
-import ts from 'typescript';
 
 import * as surfaceRegistry from './surfaceRegistry.js';
 import * as tokens from './tokens.js';
@@ -98,41 +101,33 @@ if (false) {
  * grammar that stops rejecting an unadmitted declaration reports it too.
  */
 function typeCheckThisFile(): readonly string[] {
+  const repositoryRoot = fileURLToPath(new URL('../../../../../../', import.meta.url));
   const configPath = fileURLToPath(new URL('../../../../tsconfig.json', import.meta.url));
   const sourcePath = fileURLToPath(new URL('./destinationBindings.test.ts', import.meta.url));
-  const parsed = ts.getParsedCommandLineOfConfigFile(configPath, {}, {
-    ...ts.sys,
-    onUnRecoverableConfigFileDiagnostic(diagnostic) {
-      throw new Error(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
-    },
-  });
-  if (!parsed) throw new Error(`Unable to parse ${configPath}`);
-
-  const program = ts.createProgram({
-    rootNames: [sourcePath],
-    options: {
-      ...parsed.options,
-      noEmit: true,
-      declaration: false,
-      declarationMap: false,
-      composite: false,
-      incremental: false,
-      tsBuildInfoFile: undefined,
-    },
-    projectReferences: parsed.projectReferences,
-  });
-  const sourceFile = program.getSourceFile(sourcePath);
-  if (!sourceFile) throw new Error(`Missing ${sourcePath}`);
-
-  return [
-    ...program.getSyntacticDiagnostics(sourceFile),
-    ...program.getSemanticDiagnostics(sourceFile),
-  ].map((diagnostic) => {
-    const position = diagnostic.file?.getLineAndCharacterOfPosition(diagnostic.start ?? 0);
-    return `${(position?.line ?? 0) + 1}: TS${diagnostic.code} ${
-      ts.flattenDiagnosticMessageText(diagnostic.messageText, ' ')
-    }`;
-  });
+  const scratch = mkdtempSync(join(tmpdir(), 'happier-destination-declarations-'));
+  try {
+    symlinkSync(join(repositoryRoot, 'node_modules'), join(scratch, 'node_modules'),
+      process.platform === 'win32' ? 'junction' : 'dir');
+    const projectPath = join(scratch, 'tsconfig.json');
+    writeFileSync(projectPath, JSON.stringify({
+      extends: configPath,
+      compilerOptions: {
+        noEmit: true, declaration: false, declarationMap: false,
+        composite: false, incremental: false,
+      },
+      files: [sourcePath, fileURLToPath(new URL('../../../auth/tr46.d.ts', import.meta.url))],
+      include: [],
+    }));
+    const result = spawnSync(process.execPath, [
+      join(repositoryRoot, 'scripts/workspaces/runTypeScriptCli.mjs'),
+      '--project', projectPath, '--pretty', 'false',
+    ], { cwd: repositoryRoot, encoding: 'utf8' });
+    if (result.error) throw result.error;
+    if (result.status === 0) return [];
+    return [result.stdout, result.stderr, `Compiler exit: ${result.status ?? result.signal}`];
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
 }
 
 describe('plugin UI destination declaration grammar', () => {
@@ -715,7 +710,7 @@ describe('embedded widget role', () => {
   });
 
   it('admits one widget role for Session and App with physical-host-neutral defaults', () => {
-    const session = { sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' }, ...widgetView, container: 'widget' };
+    const session = { ...widgetView, container: 'widget' };
     const { sessionInputPath: _sessionInputPath, ...appInput } = session;
     const app = { ...appInput, target: { kind: 'app' }, home: { default: 'shown' } };
     expect(PluginUiViewV2Schema.safeParse(session).success).toBe(true);

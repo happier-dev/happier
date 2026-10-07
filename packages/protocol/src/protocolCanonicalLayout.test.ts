@@ -190,16 +190,29 @@ function collectSourceFiles(relativeRoot: string): string[] {
 }
 
 describe('protocol canonical layout', () => {
-    it('keeps external Action response limits under one browser-safe owner', () => {
+    it('keeps external Action response limits under one browser-safe owner', async () => {
         const exports = readProtocolExports();
 
         expect(exports['./actions/externalActionLimits']).toEqual({
             types: './dist/actions/externalActionLimits.d.ts',
             default: './dist/actions/externalActionLimits.js',
         });
-        expect(exports).not.toHaveProperty('./actions/externalActionApi');
+        expect(exports['./actions/externalActionApi']).toEqual({
+            types: './dist/actions/externalActionApi.d.ts',
+            default: './dist/actions/externalActionApi.js',
+        });
         expect(exports).not.toHaveProperty('./actions/externalActionResultLimits');
         expect(existsSync(resolve(srcDir, 'actions/externalActionResultLimits.ts'))).toBe(false);
+        const [api, limits] = await Promise.all([
+            import('@happier-dev/protocol/actions/externalActionApi'),
+            import('@happier-dev/protocol/actions/externalActionLimits'),
+        ]);
+        expect(api.EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES)
+            .toBe(limits.EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
+        expect(api.measureExternalActionResultResponseEnvelopeUtf8BytesV1)
+            .toBe(limits.measureExternalActionResultResponseEnvelopeUtf8BytesV1);
+        expect(api.isExternalActionResultWithinResponseEnvelopeLimitV1)
+            .toBe(limits.isExternalActionResultWithinResponseEnvelopeLimitV1);
     });
 
     it('keeps A.17-owned flat protocol root entries folded into canonical domains', () => {
@@ -220,7 +233,9 @@ describe('protocol canonical layout', () => {
     it('keeps published package subpath specifiers mapped to source entrypoints', () => {
         const protocolExports = readProtocolExports();
 
-        expect(Object.keys(protocolExports)).toEqual([
+        // Preserve established entrypoints without duplicating the expanding
+        // package catalog; every current export is resolved and checked below.
+        expect(Object.keys(protocolExports)).toEqual(expect.arrayContaining([
             './profiles/v2/profileId',
             '.',
             './tools/v2',
@@ -399,7 +414,7 @@ describe('protocol canonical layout', () => {
             './workflows/workflowDefinitionV1',
             './workflows/workflowDocumentV1',
             './workflows/actionsV1',
-        ]);
+        ]));
 
         for (const [specifier, target] of Object.entries(protocolExports)) {
             expect(target.default, specifier).toMatch(/^\.\/dist\/.*\.js$/);

@@ -3776,6 +3776,20 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `machineId` (text): Machine id
 - `agentId` (text): Agent id
 
+## `machines.command.run`
+
+**Run a command** — Run literal shell syntax on the selected Machine in its project workspace. Dynamic values belong only in env. Retains exit code, stdout and stderr.
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `command` (textarea, required): Command
+- `env` (json): Environment
+
 ## `machines.list`
 
 **List machines** — List machines available on the active server scope.
@@ -10176,6 +10190,20 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `target` (json, required): Home-qualified work handle
 - `condition` (json, required): Observation condition
 - `timeout.durationMs` (text): Observation timeout in milliseconds
+
+## `webhooks.call`
+
+**Call a webhook** — POST typed JSON through the host webhook destination policy. Retains the response; status 300 or higher fails.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `url` (text, required): Webhook URL
+- `body` (json, required): JSON body
 
 ## `widgets.area.layout.get`
 

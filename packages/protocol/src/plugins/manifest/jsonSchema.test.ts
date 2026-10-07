@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import Ajv2020 from 'ajv/dist/2020.js';
+
+import { generatePluginManifestSchema } from '../../../../../apps/website/scripts/generate-plugin-manifest-schema.mjs';
 
 import { PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1 } from '../contributions/ui/surfaceRegistry.js';
 import { createPluginManifestJsonSchemaV2 } from './jsonSchema.js';
@@ -93,6 +97,22 @@ function manifestForDestinationBindingSlot(slot: typeof PLUGIN_UI_DESTINATION_BI
 }
 
 describe('createPluginManifestJsonSchemaV2', () => {
+  it('publishes the supplied current source producer through the canonical website writer', async () => {
+    const publicDir = await mkdtemp(join(tmpdir(), 'happier-plugin-manifest-source-schema-'));
+    try {
+      const outputPath = await generatePluginManifestSchema({
+        publicDir, createSchema: createPluginManifestJsonSchemaV2,
+      });
+      const bytes = await readFile(outputPath, 'utf8');
+      const schema = createPluginManifestJsonSchemaV2();
+      expect(outputPath).toBe(join(publicDir, 'schemas', 'plugin-manifest-v2.json'));
+      expect(JSON.parse(bytes)).toEqual(schema);
+      expect(bytes).toBe(`${JSON.stringify(schema)}\n`);
+    } finally {
+      await rm(publicDir, { recursive: true, force: true });
+    }
+  });
+
   it('deterministically derives the external schema from the canonical host schema', () => {
     const first = createPluginManifestJsonSchemaV2();
     const second = createPluginManifestJsonSchemaV2();

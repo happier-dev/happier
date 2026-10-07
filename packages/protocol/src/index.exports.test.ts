@@ -670,8 +670,10 @@ describe('protocol package root exports', () => {
     });
 
     it('exports the canonical action id family catalog', () => {
-        expect((protocol as any).ACTION_ID_FAMILIES_V1.intent_start).toEqual([
+        expect(protocol.ACTION_ID_FAMILIES_V1.intent_start).toEqual([
             'review.start',
+            'review.walkthrough',
+            'review.explain_findings',
             'subagents.plan.start',
             'subagents.delegate.start',
             'voice_agent.start',
