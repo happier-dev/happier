@@ -1,14 +1,18 @@
 import * as React from 'react';
+import 'fake-indexeddb/auto';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPartialStorageModuleMock, renderScreen } from '@/dev/testkit';
-import type { Session } from '@/sync/domains/state/storageTypes';
-import type { ReviewCommentV1 } from '@happier-dev/protocol';
+import type { Machine, Session } from '@/sync/domains/state/storageTypes';
+import { ReviewCommentCreateRequestV1Schema, ReviewCommentListRequestV1Schema, ReviewCommentWorkspaceV1Schema, matchesReviewCommentListFilters, type ReviewCommentV1, type PluginPermissionGrantV1, type WorkspaceRefV1 } from '@happier-dev/protocol';
+import { projectManager } from '@/sync/runtime/orchestration/projectManager';
+import { getStorage } from '@/sync/domains/state/storage';
 import { installSessionFilesViewCommonModuleMocks } from './sessionFilesViewsTestHelpers';
 import { serveActionHomes, type ServedHomeRequest } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { storePlainReviewCommentFixture } from '@/dev/testkit/fixtures/reviewComments';
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { prepareSessionDraftPersistenceStorage } from '@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage';
 
 // Loaded at the assertion, not at the top: an eager import would evaluate the spinner's module
 // graph before this file's mocks and per-test setup have run.
@@ -27,11 +31,13 @@ const invalidateFromAutoRefreshSpy = vi.hoisted(() => vi.fn());
 const invalidateFromAutoRefreshAndAwaitSpy = vi.hoisted(() => vi.fn());
 const invalidateFromMutationAndAwaitSpy = vi.hoisted(() => vi.fn());
 const invalidateFromUserSpy = vi.hoisted(() => vi.fn());
-const reviewCommentsSurfaceSpy = vi.hoisted(() => vi.fn());
 let homeRequests: ServedHomeRequest[] = [];
 let servedReviewComments: readonly ReviewCommentV1[] = [];
 let disposeHome: (() => void) | null = null;
 let servedHomeId = '';
+let workspaceRefs: WorkspaceRefV1[] = [];
+let servedGrants: PluginPermissionGrantV1[] = [];
+let useManagedProject = false;
 
 const mockSession = {
     id: 'session-1',
@@ -62,9 +68,9 @@ installSessionFilesViewCommonModuleMocks({
             useSessionProjectScmOperationLog: () => [],
             useSessionProjectScmCommitSelectionPaths: () => [],
             useSessionProjectScmCommitSelectionPatches: () => [],
-            useProjectForSession: () => mockProject,
+            useProjectForSession: () => useManagedProject ? projectManager.getProjectForSession('s1') : mockProject,
             useProjectSessions: () => [],
-            useSetting: (key: string) => key === 'scmCommitStrategy' ? mockScmCommitStrategy : 25,
+            useSetting: (key: string) => key === 'workspaceRefsV1' ? workspaceRefs : key === 'scmCommitStrategy' ? mockScmCommitStrategy : 25,
             useWorkspaceReviewCommentsDrafts: () => [{ id: 'draft-1' }],
         }),
 });
@@ -79,13 +85,6 @@ vi.mock('@/components/ui/text/Text', () => ({
 
 vi.mock('@/agents/registry/generatedBundledPluginEntries.uiBehaviorOverrides', () => ({
     BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: {},
-}));
-
-vi.mock('@/components/reviews/ReviewCommentsSessionSurface', () => ({
-    ReviewCommentsSessionSurface: (props: any) => {
-        reviewCommentsSurfaceSpy(props);
-        return React.createElement('ReviewCommentsSessionSurface', props);
-    },
 }));
 
 const mockPaneScope = {
@@ -104,14 +103,6 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
         if (featureId === 'scm.writeOperations') return scmWriteOperationsFeatureEnabled;
         return false;
     },
-}));
-
-vi.mock('@/sync/domains/session/resolveWorkspaceScopeForSession', () => ({
-    useWorkspaceScopeForSession: (sessionId?: string | null) => (
-        sessionId === 's1'
-            ? { serverId: 'server-1', machineId: 'machine-1', rootPath: '/tmp/repo' }
-            : null
-    ),
 }));
 
 const reviewDraftHandlers = {
@@ -227,16 +218,68 @@ function reviewComment(overrides: Partial<ReviewCommentV1> = {}): ReviewCommentV
 
 describe('SessionScmReviewDetailsView (snapshot SWR)', () => {
     beforeEach(async () => {
+        await prepareSessionDraftPersistenceStorage();
         servedReviewComments = [];
         const served = await serveActionHomes({
             homes: [{ key: 'scm', serverUrl: 'https://scm-review.test', accountId: 'account-1' }],
-            route: (request) => request.path === '/v1/reviews/comments'
-                ? Response.json({ items: servedReviewComments.map(storePlainReviewCommentFixture), cursor: null })
-                : undefined,
+            route: (request) => {
+                if (request.path === '/v1/reviews/comments') {
+                    if (request.method === 'POST') {
+                        // The HTTP boundary returns a plain comment; request validation, Account
+                        // binding, event sealing and query matching all remain production logic.
+                        const { eventEnvelope: _envelope, ...input } = request.body as Record<string, unknown>;
+                        const created = ReviewCommentCreateRequestV1Schema.parse(input);
+                        const comment = reviewComment({
+                            projectId: created.projectId, workspace: created.workspace, sessionId: created.sessionId,
+                            anchor: created.anchor, snapshot: created.snapshot, body: created.body,
+                            author: { kind: 'user', userId: 'account-1' }, state: 'proposed',
+                        });
+                        servedReviewComments = [...servedReviewComments, comment];
+                        return Response.json({ comment });
+                    }
+                    const workspace = request.url.searchParams.get('workspace');
+                    const filters = ReviewCommentListRequestV1Schema.parse({
+                        projectId: request.url.searchParams.get('projectId') ?? undefined,
+                        workspace: workspace ? ReviewCommentWorkspaceV1Schema.parse(JSON.parse(workspace)) : undefined,
+                        includeHistory: true,
+                    });
+                    return Response.json({ items: servedReviewComments.filter((comment) => matchesReviewCommentListFilters(comment, filters)).map(storePlainReviewCommentFixture), cursor: null });
+                }
+                if (request.path === '/v1/plugins/permissions/grants/list') {
+                    // Transport fixture deliberately returns all Account grants: the real host must
+                    // refuse a grant for another checkout even if the response includes it.
+                    return Response.json({ grants: servedGrants, pendingRequests: [] });
+                }
+                return undefined;
+            },
         });
         homeRequests = served.requests;
         servedHomeId = served.homes.scm!.id;
         disposeHome = served.dispose;
+        workspaceRefs = [];
+        servedGrants = [];
+        useManagedProject = false;
+        projectManager.clear();
+        const machine = {
+            id: 'machine-1', seq: 0, createdAt: 0, updatedAt: 0, active: true, activeAt: 0,
+            metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+        } satisfies Machine;
+        getStorage().setState({
+            sessions: { s1: { ...mockSession, id: 's1', serverId: servedHomeId, metadata: { path: '/tmp/repo', machineId: 'machine-1', host: '' } } },
+            machines: { [machine.id]: machine },
+            machineListByServerId: { [servedHomeId]: [machine] },
+            sessionListRowsByServerId: {},
+            ordinarySessionListMembershipByServerId: {},
+            sessionListIndexByServerId: {},
+        });
+        mockSnapshot = {
+            fetchedAt: 1, projectKey: 'm1:/repo',
+            repo: { isRepo: true, rootPath: '/tmp/repo', backendId: 'git', mode: '.git' },
+            capabilities: { readLog: true },
+            branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
+            stashCount: 0, hasConflicts: false, entries: [],
+            totals: { includedFiles: 0, pendingFiles: 0, untrackedFiles: 0, includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 },
+        };
         mockProject = null;
         reviewCommentsFeatureEnabled = false;
         scmWriteOperationsFeatureEnabled = false;
@@ -250,10 +293,36 @@ describe('SessionScmReviewDetailsView (snapshot SWR)', () => {
         invalidateFromAutoRefreshAndAwaitSpy.mockClear();
         invalidateFromMutationAndAwaitSpy.mockClear();
         invalidateFromUserSpy.mockClear();
-        reviewCommentsSurfaceSpy.mockClear();
         reviewDraftHandlers.onUpsertReviewCommentDraft.mockClear();
         reviewDraftHandlers.onDeleteReviewCommentDraft.mockClear();
         reviewDraftHandlers.onReviewCommentError.mockClear();
+    });
+
+    it('creates a Session-scoped comment without a counter and lists it from the Project workspace scope', async () => {
+        reviewCommentsFeatureEnabled = true;
+        mockProject = { id: 'project_1' };
+        const { SessionScmReviewDetailsView } = await import('./SessionScmReviewDetailsView');
+        const { ReviewCommentsSessionSurface } = await import('@/components/reviews/ReviewCommentsSessionSurface');
+        const screen = await renderScreen(<SessionScmReviewDetailsView serverId={servedHomeId} sessionId="s1" scopeId="session:s1:0" />);
+        // ReactTestInstance erases props; restore the concrete mounted component's contract.
+        const surfaceProps = screen.findByType(ReviewCommentsSessionSurface).props as React.ComponentProps<typeof ReviewCommentsSessionSurface>;
+        const response = await surfaceProps.execute('reviews.comments.create', {
+            projectId: surfaceProps.projectId,
+            workspace: surfaceProps.workspace,
+            sessionId: surfaceProps.sessionId,
+            anchor: { kind: 'file', filePath: 'src/a.ts' },
+            snapshot: { kind: 'none', capturedAt: 1 },
+            body: 'Visible from the Project host.', clientMutationId: 'session-create',
+        });
+        const createRequest = homeRequests.find((request) => request.path === '/v1/reviews/comments' && request.method === 'POST');
+        expect(createRequest?.body).not.toHaveProperty('projectId');
+        expect(response).not.toHaveProperty('comment.projectId');
+        const projectPanel = await renderScreen(<ReviewCommentsSessionSurface
+            workspaceId="wr_stable" workspace={surfaceProps.workspace} execute={surfaceProps.execute}
+        />);
+        expect(projectPanel.getTextContent()).toContain('Visible from the Project host.');
+        expect(homeRequests.at(-1)?.url.searchParams.get('projectId')).toBeNull();
+        expect(JSON.parse(homeRequests.at(-1)?.url.searchParams.get('workspace') ?? 'null')).toEqual({ machineId: 'machine-1', path: '/tmp/repo' });
     });
 
     afterEach(() => {
@@ -409,8 +478,11 @@ describe('SessionScmReviewDetailsView (snapshot SWR)', () => {
         const screen = await renderScreen(<SessionScmReviewDetailsView serverId={servedHomeId} sessionId="s1" scopeId="session:s1:0" />);
         expect(screen.getTextContent()).not.toContain('Durable session review comment.');
 
-        expect(reviewCommentsSurfaceSpy).toHaveBeenCalledWith(expect.objectContaining({
-            projectId: selectedProject?.id,
+        const { ReviewCommentsSessionSurface } = await import('@/components/reviews/ReviewCommentsSessionSurface');
+        // ReactTestInstance erases props; restore the concrete mounted component's contract.
+        const surfaceProps = screen.findByType(ReviewCommentsSessionSurface).props as React.ComponentProps<typeof ReviewCommentsSessionSurface>;
+        expect(surfaceProps.projectId).toBeUndefined();
+        expect(surfaceProps).toEqual(expect.objectContaining({
             workspace: { machineId: 'machine-1', path: '/tmp/repo' },
             sessionId: 's1',
             directWriteGrants: [],
@@ -420,7 +492,6 @@ describe('SessionScmReviewDetailsView (snapshot SWR)', () => {
             execute: expect.any(Function),
         }));
 
-        const surfaceProps = reviewCommentsSurfaceSpy.mock.calls.at(-1)?.[0];
         await expect(surfaceProps.execute('reviews.comments.list', {
             projectId: surfaceProps.projectId,
             workspace: surfaceProps.workspace,
@@ -432,6 +503,54 @@ describe('SessionScmReviewDetailsView (snapshot SWR)', () => {
         expect(homeRequests.filter((request) => request.path === '/v1/reviews/comments')).toEqual([
             expect.objectContaining({ home: 'scm', accountId: 'account-1', method: 'GET' }),
         ]);
+    });
+
+    it('finds a Project grant after counter reassignment and refuses another checkout or a missing ref', async () => {
+        reviewCommentsFeatureEnabled = true;
+        useManagedProject = true;
+        const workspaceRef: WorkspaceRefV1 = {
+            id: 'wr_stable', serverId: servedHomeId, machineId: 'machine-1', rootPath: '/tmp/repo',
+            label: null, createdAtMs: 1, lastOpenedAtMs: null,
+        };
+        workspaceRefs = [workspaceRef];
+        servedGrants = [{
+            v: 1, id: 'grant-project', accountId: 'account-1', grantedByUserId: 'account-1',
+            pluginId: 'review-coderabbit', capability: 'reviews.comments.write.direct',
+            targetScope: { kind: 'project', projectId: workspaceRef.id }, authoritySource: { kind: 'bundled' },
+            subject: { kind: 'general' }, status: 'active',
+            grantedAt: 1, createdAt: 1, updatedAt: 1,
+        }];
+        const session = { ...mockSession, id: 's1', metadata: { path: '/tmp/repo', machineId: 'machine-1', host: '' } } satisfies Session;
+        projectManager.addSession(session, { serverId: servedHomeId });
+        const firstCounter = projectManager.getProjectForSession('s1')?.id;
+        const { SessionScmReviewDetailsView } = await import('./SessionScmReviewDetailsView');
+        const { ReviewCommentsSessionSurface } = await import('@/components/reviews/ReviewCommentsSessionSurface');
+        const screen = await renderScreen(<SessionScmReviewDetailsView serverId={servedHomeId} sessionId="s1" scopeId="session:s1:0" />);
+        expect(screen.findByType(ReviewCommentsSessionSurface).props.permissionGrantError).toBeNull();
+        await screen.pressByTestIdAsync('review-comments-session-header');
+        expect(screen.findHostByTestId('review-comments-session-direct-write-grant-grant-project')).not.toBeNull();
+        expect(homeRequests.find((request) => request.path === '/v1/plugins/permissions/grants/list')?.body).toMatchObject({
+            targetScope: { kind: 'project', projectId: 'wr_stable' },
+        });
+
+        projectManager.clear();
+        projectManager.addSession({ ...session, id: 'other', metadata: { ...session.metadata, path: '/tmp/other' } }, { serverId: servedHomeId });
+        projectManager.addSession(session, { serverId: servedHomeId });
+        expect(projectManager.getProjectForSession('s1')?.id).not.toBe(firstCounter);
+        await screen.update(<SessionScmReviewDetailsView serverId={servedHomeId} sessionId="s1" scopeId="session:s1:restart" />);
+        expect(screen.findHostByTestId('review-comments-session-direct-write-grant-grant-project')).not.toBeNull();
+
+        workspaceRefs = [workspaceRef, { ...workspaceRef, id: 'wr_other', rootPath: '/tmp/other' }];
+        const otherCheckoutSession = { ...session, serverId: servedHomeId, metadata: { ...session.metadata, path: '/tmp/other' } };
+        projectManager.addSession(otherCheckoutSession, { serverId: servedHomeId });
+        await act(async () => { getStorage().setState({ sessions: { s1: otherCheckoutSession } }); });
+        await screen.update(<SessionScmReviewDetailsView serverId={servedHomeId} sessionId="s1" scopeId="session:s1:other" />);
+        expect(screen.findHostByTestId('review-comments-session-direct-write-grant-grant-project')).toBeNull();
+        workspaceRefs = [];
+        const requestCount = homeRequests.filter((request) => request.path === '/v1/plugins/permissions/grants/list').length;
+        await screen.update(<SessionScmReviewDetailsView serverId={servedHomeId} sessionId="s1" scopeId="session:s1:no-ref" />);
+        expect(screen.findHostByTestId('review-comments-session-direct-write-grant-grant-project')).toBeNull();
+        expect(homeRequests.filter((request) => request.path === '/v1/plugins/permissions/grants/list')).toHaveLength(requestCount);
     });
 
     it('keeps review callbacks stable across unrelated parent rerenders', async () => {

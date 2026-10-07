@@ -4,7 +4,6 @@ import {
     listUiFeatureToggleDefinitions,
     resolveUiFeatureToggleEnabled,
 } from './uiFeatureToggles';
-import { settingsDefaults } from '@/sync/domains/settings/settings';
 import type { FeatureId } from '@happier-dev/protocol';
 
 const promotedFeatureIds = [
@@ -12,6 +11,7 @@ const promotedFeatureIds = [
     'automations',
     'files.reviewComments',
     'files.syntaxHighlighting.advanced',
+    'scm.writeOperations',
     'sessions.direct',
     'sessions.folders',
     'terminal.embeddedPty',
@@ -38,7 +38,6 @@ describe('UI promoted feature registry', () => {
     it('enables promoted features without the experiments master switch', () => {
         for (const featureId of promotedFeatureIds) {
             expect(resolveUiFeatureToggleEnabled({
-                ...settingsDefaults,
                 experiments: false,
                 featureToggles: {},
             }, featureId)).toBe(true);
@@ -47,9 +46,15 @@ describe('UI promoted feature registry', () => {
 
     it('preserves an explicit Voice off choice over its standard default', () => {
         expect(resolveUiFeatureToggleEnabled({
-            ...settingsDefaults,
             experiments: false,
             featureToggles: { voice: false },
         }, 'voice')).toBe(false);
+    });
+
+    it('preserves an explicit source-control read-only choice over its standard default', () => {
+        expect(resolveUiFeatureToggleEnabled({
+            experiments: false,
+            featureToggles: { 'scm.writeOperations': false },
+        }, 'scm.writeOperations')).toBe(false);
     });
 });

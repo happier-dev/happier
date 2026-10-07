@@ -239,11 +239,16 @@ describe('featureLocalPolicy', () => {
         })).toBe(false);
     });
 
-    it('keeps scm.writeOperations disabled by default even when experiments are on', () => {
+    it('enables source control operations without experiments while preserving an explicit read-only preference', () => {
         expect(resolveLocalFeaturePolicyEnabled('scm.writeOperations', {
             ...settingsDefaults,
-            experiments: true,
+            experiments: false,
             featureToggles: {},
+        })).toBe(true);
+        expect(resolveLocalFeaturePolicyEnabled('scm.writeOperations', {
+            ...settingsDefaults,
+            experiments: false,
+            featureToggles: { 'scm.writeOperations': false },
         })).toBe(false);
     });
 

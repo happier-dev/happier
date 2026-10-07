@@ -29,34 +29,6 @@ export type RunScmRemoteOperationOptions = Readonly<{
     pushAfterPull?: boolean;
 }>;
 
-const SCM_REMOTE_POST_OPERATION_REFRESH_TIMEOUT_MS = 5_000;
-
-async function awaitScmRemotePostOperationRefresh(refresh: () => Promise<void>): Promise<void> {
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
-    let timedOut = false;
-    const refreshPromise = refresh();
-
-    try {
-        await Promise.race([
-            refreshPromise,
-            new Promise<void>((resolve) => {
-                timeoutId = setTimeout(() => {
-                    timedOut = true;
-                    resolve();
-                }, SCM_REMOTE_POST_OPERATION_REFRESH_TIMEOUT_MS);
-            }),
-        ]);
-    } finally {
-        if (timeoutId) {
-            clearTimeout(timeoutId);
-        }
-    }
-
-    if (timedOut) {
-        void refreshPromise.catch(() => {});
-    }
-}
-
 export function useScmRemoteOperations(input: {
     sessionId: string;
     serverId?: string;
@@ -188,16 +160,14 @@ export function useScmRemoteOperations(input: {
             },
             refreshAfterSuccess: async (operation) => {
                 if (operation === 'pull' || operation === 'push') {
-                    await awaitScmRemotePostOperationRefresh(async () => {
-                        await scmStatusSync.invalidateFromMutationAndAwait(sessionId, serverId);
-                        if (mountedRef.current) {
-                            await loadCommitHistory({ reset: true });
-                        }
-                    });
+                    await scmStatusSync.invalidateFromMutationAndAwait(sessionId, serverId);
+                    if (mountedRef.current) {
+                        await loadCommitHistory({ reset: true });
+                    }
                     return;
                 }
                 if (mountedRef.current) {
-                    await awaitScmRemotePostOperationRefresh(refreshScmData);
+                    await refreshScmData();
                 }
             },
             shouldContinue: () => mountedRef.current,
