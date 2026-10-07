@@ -12,6 +12,12 @@ import { DEV_TARGET_MUTAGEN_IGNORE_PATHS, renderMutagenProject } from './mutagen
 import { renderNativeCommandPolicy, resolveRemoteCommandPolicy } from './remote_commands.mjs';
 import { classifyCleanMutagenReadiness, renderNativeSyncReadinessPolicy } from './mutagen_runtime.mjs';
 
+test('dependency-backed commands without another class still enter dependency-install admission', () => {
+  const policy = resolveRemoteCommandPolicy(['corepack', 'yarn', '-s', 'custom-command']);
+  assert.equal(policy.bootstrap, '1');
+  assert.equal(policy.heavyClass, 'dependency-install');
+});
+
 test('native sync readiness artifact executes the same canonical first-cycle and recovery policy', {
   skip: process.platform === 'win32',
 }, () => {
@@ -133,6 +139,7 @@ test('native command decision artifact is current and executes the canonical cla
   assert.equal(readFileSync(artifact, 'utf8'), renderNativeCommandPolicy());
   const root = fileURLToPath(new URL('../../../../../', import.meta.url)).replace(/\/$/, '');
   const cases = [
+    { args: ['corepack', 'yarn', '-s', 'custom-command'], expectedHeavyClass: 'dependency-install' },
     { args: ['node', '--test', 'packages/plugin-sdk/scripts/generateActionTypeMap.test.mjs'] },
     { args: ['node', '--test', 'scripts/generateActionTypeMap.test.mjs'], cwd: 'packages/plugin-sdk' },
     { args: ['node', '--test', 'apps/ui/scripts/generateBundledPluginUiArtifacts.test.mjs'] },

@@ -13,6 +13,7 @@ import { parseQualifiedPluginActionId } from '@happier-dev/protocol/actions';
 import type { EffectiveActionInputField } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import type { WorkflowActionFieldBindingV1, WorkflowActionLeafV1 } from '@happier-dev/protocol/workflows/workflowLeafV1';
 import type { WorkflowValueReference } from '@happier-dev/protocol/workflows/workflowReferenceV1';
+import { isWorkflowActionLiteralFieldV1 } from '@happier-dev/protocol/workflows/stepActionsV1';
 
 import { ActionInputFields } from '@/components/sessions/actions/ActionInputFields';
 import { findWorkflowActionSpec } from '@/components/workflows/presentation/workflowActionCatalog';
@@ -146,10 +147,12 @@ export function WorkflowActionBlockEditor(props: Readonly<{
             ) : rows.map((row) => {
                 const binding = block.input[row.key];
                 const fieldId = `${rowPrefix}-field-${row.key}`;
+                const literalOnly = isWorkflowActionLiteralFieldV1(block.actionId, row.key);
                 return (
                     <View key={row.key} testID={fieldId} style={workflowEditorStyles.actionFieldRow}>
                         <View style={workflowEditorStyles.actionFieldLabelColumn}>
                             <Text style={workflowEditorStyles.actionFieldLabel}>{row.label}</Text>
+                            {literalOnly ? <Text style={workflowEditorStyles.groupSummary}>{t('workflows.actionTitles.commandValuesInEnv')}</Text> : null}
                             {row.required && binding === undefined ? (
                                 <Text style={workflowEditorStyles.groupSummary}>{t('workflows.page.blocks.required')}</Text>
                             ) : null}
@@ -198,6 +201,7 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                                     index={index}
                                     draft={props.draft}
                                     stepId={block.id}
+                                    literalOnly={literalOnly}
                                     onChange={(next) => setBinding(row.key, {
                                         kind: 'list',
                                         items: binding.items.map((current, at) => (at === index ? next : current)),
@@ -225,6 +229,7 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                                 index={0}
                                 draft={props.draft}
                                 stepId={block.id}
+                                literalOnly={literalOnly}
                                 onChange={(next) => setBinding(row.key, next)}
                                 {...(row.hint === null || row.hint.widget === 'json' ? {} : {
                                     renderLiteral: (value: unknown, onChange: (next: unknown) => void) => (

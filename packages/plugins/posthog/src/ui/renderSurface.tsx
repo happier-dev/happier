@@ -60,6 +60,7 @@ import {
 // could start meaning two things in one list. They are aliased to this file's local
 // vocabulary so the call sites read as the panel language they already are.
 import {
+  resolveTriageRowFactStatusToneV1,
   formatTriageCountV1 as formatNumber,
   formatTriageTimestampV1 as formatTimestamp,
   projectTriageDetailFieldTextV1 as fieldValueText,
@@ -393,7 +394,7 @@ function OverviewPanel({
                     ? null
                     : (
                         <Banner
-                            tone="info"
+                            tone="secondary"
                             title="PostHog reports a different status"
                             titleKey="plugins.posthog.ui.differentStatus"
                             description={model.nativeStateNow.nativeLabel
@@ -407,7 +408,7 @@ function OverviewPanel({
                             {projected.statusFields.map((field) => (
                                 <Status
                                     key={field.id}
-                                    tone={field.tone}
+                                    tone={resolveTriageRowFactStatusToneV1(field.tone)}
                                     label={`${posthogFactLabel(field, text)}: ${field.value}`}
                                 />
                             ))}
@@ -812,7 +813,7 @@ function StackTracePanel({
                 <Item
                     title={frame.label}
                     {...(frame.location === null ? {} : { subtitle: frame.location })}
-                    {...(frame.inApp ? { accessory: <Badge value="app" tone="info" /> } : {})}
+                    {...(frame.inApp ? { accessory: <Badge value="app" tone="secondary" /> } : {})}
                 />
             )}
         />

@@ -10,6 +10,7 @@ import {
 } from '../../environment/interactiveTarget.js';
 import { useOptionalHappierUiTheme, useOptionalHappierUiTypography } from '../../environment/context.js';
 import type { HappierUiTheme } from '../../environment/types.js';
+import { happierFocusRingStyle } from '../interaction/focusVisible.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import type { HappierFocusable, HappierLayoutChangeEvent, HappierStyleProp } from '../portableTypes.js';
 import { HAPPIER_TONE_COLOR_TOKEN, type HappierTone } from '../semantics.js';
@@ -177,8 +178,9 @@ export function HappierLink(props: Readonly<{
           minHeight: nativeMinimumTouchTarget,
           minWidth: nativeMinimumTouchTarget,
         }),
-        borderBottomWidth: state.focused ? 2 : 1,
-        borderBottomColor: state.focused ? props.theme.colors.focus : props.theme.colors.accent,
+        borderBottomWidth: 1,
+        borderBottomColor: props.theme.colors.accent,
+        ...happierFocusRingStyle({ visible: state.focused, color: props.theme.colors.focus }),
         opacity: state.disabled ? 0.4 : state.pressed ? HAPPIER_PRESS_FEEDBACK_V1.opacity : 1,
       })}
     >

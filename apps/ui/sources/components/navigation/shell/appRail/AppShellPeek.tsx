@@ -1,11 +1,12 @@
 import * as React from 'react';
 import { Animated, Platform, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { resolveOverlayMotionPreset, useOverlayPanelMotion, useOverlayPresence } from '@/components/ui/overlays/motion/overlayMotion';
 import { resolveOverlayPointerEvents } from '@/components/ui/overlays/resolveOverlayPointerEvents';
 import { useHoverPreviewPopover, type HoverPreviewHandlers } from '@/components/ui/popover/useHoverPreviewPopover';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 
 import type { AppShellShownColumn } from './appRailModel';
 import { appShellColumnSurface } from './appShellColumnSurface';
@@ -94,6 +95,7 @@ export function AppShellPeekLayer(props: Readonly<{
     renderColumn: (column: AppShellShownColumn) => React.ReactNode;
 }>) {
     const styles = stylesheet;
+    const { theme } = useUnistyles();
     const context = useAppShellPeek();
     const layerRef = React.useRef<View>(null);
     const peek = context?.peek ?? null;
@@ -130,7 +132,7 @@ export function AppShellPeekLayer(props: Readonly<{
             pointerEvents={pointerEvents.nativePointerEvents}
             {...(leaving ? null : context.panelProps)}
             style={[
-                appShellColumnSurface.column,
+                appShellColumnSurface.peekEdge,
                 appShellColumnSurface.peekLift,
                 styles.layer,
                 { width: props.widthPx },
@@ -138,15 +140,23 @@ export function AppShellPeekLayer(props: Readonly<{
                 pointerEvents.webStyle,
             ]}
         >
-            <PluginSurfaceFocusEligibilityProvider active={focusReady}
-                presentationActive={peek !== null && columnKind === peek.kind} currentUiContextActive={false}>
-                {column ? props.renderColumn(column) : null}
-            </PluginSurfaceFocusEligibilityProvider>
+            {/* Native keeps the opaque column plane; web blurs the page under the peek when its group does. */}
+            <GlassSurface surfaceGroup="sidebar" solidColor={theme.colors.surface.inset} enabled={Platform.OS === 'web'}
+                style={styles.material}>
+                <PluginSurfaceFocusEligibilityProvider active={focusReady}
+                    presentationActive={peek !== null && columnKind === peek.kind} currentUiContextActive={false}>
+                    {column ? props.renderColumn(column) : null}
+                </PluginSurfaceFocusEligibilityProvider>
+            </GlassSurface>
         </Animated.View>
     );
 }
 
 const stylesheet = StyleSheet.create(() => ({
+    material: {
+        flex: 1,
+        minHeight: 0,
+    },
     layer: {
         position: 'absolute',
         left: 0,

@@ -12,7 +12,6 @@ import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createWorkBoardArtifactBoundary } from '@/dev/testkit/harness/workBoardArtifactBoundary';
 import { createEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropRuntime';
 import { buildAccountWidgetAddSections } from '@/components/widgets/add/accountWidgetAddSections';
-import { resolveWidgetAddPick } from '@/components/widgets/add/widgetAddModel';
 import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { UniversalSearchRuntimeProvider } from '@/components/appShell/search/UniversalSearchRuntimeContext';
@@ -253,7 +252,7 @@ describe('WorkBoard widgets', () => {
         expect(b.board().source.picked).toEqual([work]);
     });
 
-    it('adds from the shared gallery through the Board intent: another copy at once, Set up only for a missing input', async () => {
+    it('adds from the shared Add surface through the Board intent: another copy from its pane, a Session asked for, never borrowed', async () => {
         const b = boardStore(boardWith([placement(copy('c1', CHECKS, 'main'))]));
         await b.store.refresh();
         const added: WidgetInstanceV1[] = [];
@@ -261,7 +260,7 @@ describe('WorkBoard widgets', () => {
             candidates: [CHECKS, NOTES, SUMMARY],
             instances: (b.board().widgets ?? []).map(widget => widget.instance),
             scope: surface,
-            labels: { count: count => `on the board ×${count}`, submit: 'Add to board', fromPluginsHint: '' },
+            labels: { count: count => `on the board ×${count}`, submit: 'Add to board' },
             addInstance: async (instance) => {
                 added.push(instance);
                 const outcome = await b.store.queue.dispatch({ kind: 'widget_add', boardId: 'b1', ref: { surface, instanceId: instance.id }, instance });
@@ -271,18 +270,17 @@ describe('WorkBoard widgets', () => {
         const entry = (key: string) => sections.flatMap(section => section.entries).find(candidate => candidate.id === `plugin-${key}`)!;
         // A copy is already here: counted, and still offered for another.
         expect(entry(CHECKS.key).count).toBe('on the board ×1');
-        const checks = resolveWidgetAddPick(entry(CHECKS.key));
-        expect(checks.kind).toBe('setup');
-        if (checks.kind !== 'setup') return;
-        await expect(checks.setup.submit(checks.setup.initial)).resolves.toEqual({ ok: true });
+        const checks = entry(CHECKS.key).setup!();
+        await expect(checks.submit(checks.initial)).resolves.toEqual({ ok: true });
         expect(b.board().widgets?.map(widget => widget.instance.id)).toEqual(['c1', added[0]!.id]);
         expect(added[0]!.id).not.toBe('c1');
         expect(b.board().source.picked).toEqual([work]);
 
         // A Board has no Session of its own: Summary asks for one instead of borrowing.
-        expect(resolveWidgetAddPick(entry(SUMMARY.key)).kind).toBe('setup');
-        // Even without inputs, useful size variants are chosen in the shared setup step.
-        expect(resolveWidgetAddPick(entry(NOTES.key)).kind).toBe('setup');
+        const summary = entry(SUMMARY.key).setup!();
+        expect(summary.resolve(summary.initial).status).toBe('selection_required');
+        // Even without inputs, useful size variants are chosen in the same pane.
+        expect(entry(NOTES.key).setup!().sizeChoices?.sizes.length).toBeGreaterThan(1);
     });
 
     it('By status leads with the Board’s widgets, in Board order, before the work status groups', async () => {

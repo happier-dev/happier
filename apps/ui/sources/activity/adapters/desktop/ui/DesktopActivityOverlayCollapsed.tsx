@@ -333,7 +333,7 @@ export function DesktopActivityOverlayCollapsed(props: Readonly<{
                     containerStyle,
                     hovered ? { opacity: 0.985 } : null,
                     pressed ? { opacity: motionTokens.press.opacitySubtle } : null,
-                    interaction.focused === true ? createDesktopActivityOverlayFocusRingStyle(theme) : null,
+                    createDesktopActivityOverlayFocusRingStyle(theme, interaction.focused),
                 ];
             }}
             {...({

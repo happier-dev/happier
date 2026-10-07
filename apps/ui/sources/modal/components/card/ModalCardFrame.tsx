@@ -41,18 +41,17 @@ type ModalCardFrameProps = Readonly<{
     sheetBottomInset?: number;
 }>;
 
-const MODAL_CARD_BORDER_RADIUS = 14;
 
 const stylesheet = StyleSheet.create((theme) => ({
     shadowFrame: {
         backgroundColor: 'transparent',
-        borderRadius: MODAL_CARD_BORDER_RADIUS,
+        borderRadius: theme.borderRadius.modalCard,
         ...shadowLevelStyle(theme.colors.shadowLevels[4]),
         alignSelf: 'center',
         minHeight: 0,
     },
     clipSurface: {
-        borderRadius: MODAL_CARD_BORDER_RADIUS,
+        borderRadius: theme.borderRadius.modalCard,
         ...resolveThemeSurfaceBorderStyle({
             borderColor: theme.colors.border.modal,
             edge: resolveThemeRaisedEdge(theme, 'modal'),
@@ -85,7 +84,7 @@ const stylesheet = StyleSheet.create((theme) => ({
 }));
 
 export function ModalCardFrame(props: ModalCardFrameProps) {
-    useUnistyles();
+    const { theme } = useUnistyles();
     const styles = stylesheet;
     const scrollHost = props.scrollHost ?? 'overlay';
     const sheet = props.presentation === 'sheet';
@@ -165,7 +164,7 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
                         <RoundButtonSizeScope size="small">{props.footer}</RoundButtonSizeScope>
                     </View>
                 ) : null}
-                <SurfaceRim role="floating" radius={MODAL_CARD_BORDER_RADIUS} border="modal" />
+                <SurfaceRim role="floating" radius={theme.borderRadius.modalCard} border="modal" />
             </GlassSurface>
         </View>
     );

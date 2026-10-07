@@ -4,6 +4,14 @@ import { describe, expect, it } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { ArtifactCardPreview } from './ArtifactCardPreview';
 import type { ArtifactPreview } from './artifactBrowserModel';
+import { getWidgetSizeFootprintV1, type WidgetSizeV1 } from '@happier-dev/protocol/widgets';
+
+function boardWidgetPreview(title: string, size: WidgetSizeV1, position?: { x: number; y: number }) {
+    const footprint = getWidgetSizeFootprintV1('workBoard', size);
+    if (!footprint) throw new Error('WorkBoard preview requires a supported footprint');
+    return { title, size, footprint: { columns: footprint.columns, columnSpan: footprint.columnSpan, rowSpan: footprint.rowSpan },
+        ...(position ? { position } : {}) };
+}
 
 async function measurePreview(screen: Awaited<ReturnType<typeof renderScreen>>, summaryHeight?: number) {
     const band = screen.tree.findByTestId('preview');
@@ -27,7 +35,7 @@ describe('ArtifactCardPreview', () => {
     it('reuses unchanged palette, translated labels and host bindings when a saved preview is reprojected', async () => {
         const preview: Extract<ArtifactPreview, { kind: 'board' }> = { kind: 'board', layout: { mode: 'canvas',
             source: { sections: ['needs_you'], hasFilter: false, pickedCount: 0 },
-            widgets: [{ title: 'Notes', width: 2 }],
+            widgets: [boardWidgetPreview('Notes', 'full')],
         } };
         const screen = await renderScreen(<ArtifactCardPreview kind="board" preview={preview} />);
         try {
@@ -39,7 +47,7 @@ describe('ArtifactCardPreview', () => {
             expect(next.boardLabels).toBe(first.boardLabels);
             expect(next.host).toBe(first.host);
             await screen.update(<ArtifactCardPreview kind="board" preview={{ ...preview, layout: {
-                ...preview.layout, widgets: [...preview.layout.widgets, { title: 'Links', width: 1 }],
+                ...preview.layout, widgets: [...preview.layout.widgets, boardWidgetPreview('Links', 'medium')],
             } }} />);
             expect(JSON.stringify(screen.tree.toJSON())).toContain('2 widgets');
         } finally { await screen.unmount(); }
@@ -47,7 +55,7 @@ describe('ArtifactCardPreview', () => {
     it('shows the saved Board source names, widget count and layout without widget execution', async () => {
         const screen = await renderScreen(<ArtifactCardPreview testID="preview" kind="board" preview={{ kind: 'board', layout: {
             mode: 'canvas', source: { sections: ['needs_you', 'my_machines'], hasFilter: true, pickedCount: 7 },
-            widgets: [{ title: 'Notes', width: 2, position: { x: 24, y: 48 } }, { title: 'Links', width: 1 }],
+            widgets: [boardWidgetPreview('Notes', 'full', { x: 24, y: 48 }), boardWidgetPreview('Links', 'medium')],
         } }} />);
         try {
             await measurePreview(screen, 36);

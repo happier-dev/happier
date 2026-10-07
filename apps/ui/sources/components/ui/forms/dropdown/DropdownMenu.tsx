@@ -96,6 +96,8 @@ export type DropdownMenuItemTriggerConfig = Readonly<{
      * quieter second half, a quieter value, and the invalid border for a value that no longer resolves.
      */
     field?: Readonly<{ leading?: React.ReactNode; secondary?: string | null; quietValue?: boolean; invalid?: boolean }>;
+    /** Page field only: what an empty choice asks for when the row knows its noun ("Choose the session"). */
+    placeholder?: string;
     /**
      * Pass-through props for the underlying `Item` trigger (excluding computed fields).
      */
@@ -420,7 +422,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                         chevronColor: theme.colors.text.secondary,
                         detailDensity: resolvedTriggerDensity,
                         field: fieldColors,
-                        placeholder: pageTrigger ? t('common.choose') : undefined,
+                        placeholder: pageTrigger ? cfg.placeholder ?? t('common.choose') : undefined,
                         placeholderColor: theme.colors.input.placeholder,
                         ...(pageTrigger === 'field' && cfg.field ? {
                             leading: cfg.field.leading,
@@ -658,7 +660,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                                         autoCapitalize="none"
                                         onKeyPress={handleKeyDown}
                                         style={{
-                                            borderRadius: rowVariant === 'slim' ? 8 : 10,
+                                            borderRadius: theme.borderRadius.md,
                                             borderWidth: 1,
                                             borderColor: theme.colors.border.default,
                                             paddingHorizontal: rowVariant === 'slim' ? 10 : 12,

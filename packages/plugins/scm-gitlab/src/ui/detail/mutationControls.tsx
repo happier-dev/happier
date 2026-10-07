@@ -192,16 +192,16 @@ function describeApplied(
   switch (effect) {
     case 'merged':
       return {
-        tone: 'success',
+        tone: 'secondary',
         title: text(
           'plugins.gitlab.ui.mutations.merge.merged',
           'Merged. GitLab confirmed this merge request is merged.',
         ),
       };
     case 'scheduled':
-      // Deliberately NOT success. Nothing has merged yet.
+      // Deliberately NOT done. Nothing has merged yet: it is in progress.
       return {
-        tone: 'warning',
+        tone: 'neutral',
         title: text(
           'plugins.gitlab.ui.mutations.merge.scheduled',
           'GitLab accepted this and will merge it later — it is queued, not merged.',
@@ -209,7 +209,7 @@ function describeApplied(
       };
     case 'ready':
       return {
-        tone: 'success',
+        tone: 'secondary',
         title: text(
           'plugins.gitlab.ui.mutations.markReady.ready',
           'Ready for review. GitLab cleared the draft flag and notified the reviewers.',
@@ -217,7 +217,7 @@ function describeApplied(
       };
     case 'reopened':
       return {
-        tone: 'success',
+        tone: 'secondary',
         title: text(
           'plugins.gitlab.ui.mutations.reopen.reopened',
           'Reopened. GitLab confirmed this entry is open.',
@@ -225,7 +225,7 @@ function describeApplied(
       };
     case 'reviewersChanged':
       return {
-        tone: 'success',
+        tone: 'secondary',
         title: text(
           'plugins.gitlab.ui.mutations.reviewers.updated',
           'Reviewers updated. GitLab confirmed the new reviewer set.',
@@ -233,7 +233,7 @@ function describeApplied(
       };
     case 'discussionStateChanged':
       return {
-        tone: 'success',
+        tone: 'secondary',
         title: text(
           'plugins.gitlab.ui.mutations.discussion.updated',
           'Discussion updated. GitLab confirmed its resolution state.',
@@ -241,7 +241,7 @@ function describeApplied(
       };
     case 'assigneesChanged':
       return {
-        tone: 'success',
+        tone: 'secondary',
         title: text(
           'plugins.gitlab.ui.mutations.assignees.updated',
           'Assignees updated. GitLab confirmed the new assignee set.',
@@ -249,7 +249,7 @@ function describeApplied(
       };
     case 'labelsChanged':
       return {
-        tone: 'success',
+        tone: 'secondary',
         title: text(
           'plugins.gitlab.ui.mutations.labels.updated',
           'Labels updated. GitLab confirmed the new label set.',
@@ -258,7 +258,7 @@ function describeApplied(
     default:
       if (issueWrite) {
         return {
-          tone: 'success',
+          tone: 'secondary',
           title: text(
             'plugins.gitlab.ui.mutations.issue.closed',
             'Closed. GitLab confirmed this issue is closed.',
@@ -266,7 +266,7 @@ function describeApplied(
         };
       }
       return {
-        tone: 'success',
+        tone: 'secondary',
         title: text(
           'plugins.gitlab.ui.mutations.close.closed',
           'Closed. GitLab confirmed this merge request is closed.',
@@ -288,7 +288,7 @@ function projectSettledWrite(
       return describeApplied(outcome.effect, text, issueWrite);
     case 'reconfirmationRequired':
       return {
-        tone: 'warning',
+        tone: 'attention',
         title: issueWrite
           ? text(
             'plugins.gitlab.ui.mutations.issue.reconfirm',

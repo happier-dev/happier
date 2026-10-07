@@ -124,6 +124,24 @@ only when the user asks with `dev-targets sync-service stop`.
 
 ## Exact-target execution and barriers
 
+### Worker disk headroom and lane scratch (0.3 development)
+
+Linux admission measures the worker's allocated dependency, shared-cache and retained-build closure
+against available bytes on the containing filesystems. Peer disk envelopes share the existing
+admission records and lock. Insufficient headroom triggers ordered reclamation: old staging across
+stacks, unneeded Yarn entries, then scratch older than 24 hours. Unknown process visibility retains
+data. AUTO excludes the worker for that invocation's class; pins fail with the disk diagnostic.
+Status exposes measured envelopes and free bytes. Resident measurements are not temporal build
+peaks; unobserved install/build growth and filesystem quotas still require live measurement.
+
+Lane scripts use a unique `happier-*`, `hstack-*` or `docs-check-*` scratch directory beneath the
+worker's temporary directory, for example `mktemp -d "${TMPDIR:-/tmp}/happier-lane-disk-budget.XXXXXX"`.
+Keep scratch outside the source mirror. The existing historical custody reaper covers these names;
+24 hours since the newest descendant change and a successful all-process cwd/fd/mapping check are
+required before reclamation. A failed holder query is unknown, never "no holder". If a worker's
+`/tmp` quota prevents allocation, `/var/tmp` may be selected explicitly with `TMPDIR`; run the same
+reaper against that parent for maintenance. Never relocate or delete a live lane's scratch.
+
 Use explicit transport for required platform evidence or target-specific cwd/env/TTY. It uses the
 same mandatory pre-launch synchronization barrier as automatic routing:
 

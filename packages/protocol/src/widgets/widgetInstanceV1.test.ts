@@ -47,7 +47,7 @@ describe('configured widget bindings', () => {
   });
   it('counts an explicit shared copy by its saved identity without weakening exact inline equality', () => {
     const copy = WidgetInstanceV1Schema.parse({ v: 1, id: 'copy', bindings: {}, definition: { kind: 'inline', definition: {
-      v: 1, id: 'saved', name: 'Checks', inputs: { fields: [] }, inputSchema: { type: 'object', additionalProperties: false },
+      v: 1, id: 'saved', name: 'Checks', sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' }, inputs: { fields: [] }, inputSchema: { type: 'object', additionalProperties: false },
       provenance: { source: { kind: 'authored' } }, body: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Checks' } } },
     } } });
     if (copy.definition.kind !== 'inline') throw new Error('fixture_not_inline');

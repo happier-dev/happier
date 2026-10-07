@@ -57,6 +57,18 @@ vi.mock('@/components/ui/icons/Icon', async (importOriginal) => ({
 }));
 
 describe('workflow Add Action picker', () => {
+    it.each([
+        ['webhook', 'webhooks.call'],
+        ['command', 'machines.command.run'],
+    ] as const)('inserts the %s preset through the existing Action leaf', async (preset, actionId) => {
+        appliedSnapshot = (await import('@/sync/domains/server/serverRuntime')).getActiveServerSnapshot;
+        const onAdd = vi.fn();
+        const screen = await renderScreen(<WorkflowAddBlockMenu scopeLabel="Workflow" testID="add" onAdd={onAdd} />);
+        await screen.pressByTestIdAsync('add');
+        await screen.pressByTestIdAsync(`selection-list:add-root:option:add-${preset}`);
+        expect(onAdd).toHaveBeenCalledWith({ kind: 'action', actionId });
+        expect(screen.findByType(SelectionList)).toBeNull();
+    });
     it('preserves unavailable reasons through trigger options and refuses picking that source', async () => {
         const previous = storage.getState();
         const runtime = await import('@/sync/domains/server/serverRuntime');

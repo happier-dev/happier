@@ -222,6 +222,13 @@ function WorkflowAddBlockMenuPopover(props: Readonly<{
                 }] : []),
             ],
         };
+        const effectPresets = [
+            { actionId: 'webhooks.call', suffix: 'webhook' },
+            { actionId: 'machines.command.run', suffix: 'command' },
+        ].flatMap(({ actionId, suffix }) => {
+            const spec = catalog.specs.find((candidate) => candidate.id === actionId);
+            return spec === undefined ? [] : [{ ...actionOption(spec), id: optionId(suffix) }];
+        });
         return {
             id: 'add-root',
             title: t('workflows.editor.add'),
@@ -235,6 +242,7 @@ function WorkflowAddBlockMenuPopover(props: Readonly<{
                         { id: optionId('step'), label: t('workflows.editor.addStep'), icon: () => <Icon name="robot" size={16} color={theme.colors.text.secondary} />, onSelect: add({ kind: 'step' }) },
                         { id: optionId('workflow'), label: t('workflows.page.blocks.menuRun'), subtitle: t('workflows.page.blocks.workflowSub'), icon: () => <Icon name="play" size={16} color={theme.colors.text.secondary} />, openStep: workflowsStep },
                         { id: optionId('action'), label: t('workflows.page.blocks.menuAction'), subtitle: t('workflows.page.blocks.noAgentTurn'), icon: () => <Icon name="lightning" size={16} color={theme.colors.text.secondary} />, openStep: actionsStep },
+                        ...effectPresets,
                         { id: optionId('wait'), label: t('workflows.page.blocks.menuWait'), subtitle: t('workflows.page.blocks.waitSub'), icon: () => <Icon name="hand" size={16} color={theme.colors.text.secondary} />, onSelect: add({ kind: 'wait' }) },
                     ],
                 },

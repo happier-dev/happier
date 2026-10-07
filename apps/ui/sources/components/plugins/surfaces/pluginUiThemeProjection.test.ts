@@ -42,6 +42,15 @@ describe('plugin UI semantic theme projection (§3.3, UI-D12)', () => {
         }
     });
 
+    it('projects the "needs you" attention ink — Brand\'s amber, not the system warning — to plugin surfaces', () => {
+        for (const mode of ['light', 'dark'] as const) {
+            const theme = themeFor(null, mode);
+            const projected = projectPluginUiTheme(theme).colors as Record<string, string>;
+            expect(projected.attention).toBe(theme.colors.state.attention.foreground);
+        }
+        expect(PLUGIN_UI_THEME_COLOR_TOKEN_IDS).toMatchObject({ attention: 'state.attention.foreground' });
+    });
+
     it('follows the ACTIVE theme profile, not only the light/dark base', () => {
         // Two real built-in profiles resolved in the SAME mode: a projection
         // wired to a static generated default — or keyed on `theme.dark` alone —

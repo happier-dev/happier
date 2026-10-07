@@ -13,14 +13,14 @@ import { runWidgetDefinitionCommand } from '@/components/widgets/definitions/wid
 import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
-import { widgetProvidedContext, widgetSetupFieldsForCandidate } from '@/components/widgets/surface/widgetSurfaceSetup';
+import { widgetProvidedContext } from '@/components/widgets/surface/widgetSurfaceSetup';
 import { WidgetSetupPreview } from '@/components/widgets/surface/WidgetSetupPreview';
 import { useSessionWidgetSurface } from '@/components/widgets/surface/useWidgetInputsEditor';
 import { SESSION_BOARD_OVERVIEW_VIEW_ID } from '@/sync/domains/session/board';
 
-import { WidgetAddPopover } from './WidgetAddPopover';
+import { WidgetAddSurface } from './WidgetAddSurface';
 import { buildBoardWidgetAddContent } from './widgetAddSections';
-import { proposeWidgetSetupDraft, type WidgetSetupDraft, type WidgetSetupSubmitResult } from './widgetSetupModel';
+import type { WidgetSetupDraft, WidgetSetupSubmitResult } from './widgetSetupModel';
 
 const PLUGINS_ROUTE = '/plugins';
 
@@ -32,7 +32,7 @@ async function publishSavedBoardWidget(input: PublicActionInputById['widgets.ins
 }
 
 /**
- * The Board's Add popover: the shared Gallery | List popover filled with what this Board can add
+ * The Board's Add: the shared Add surface filled with what this Board can add
  * (`buildBoardWidgetAddContent`). Mounted only while open, so nothing here reads or previews while
  * it is closed.
  */
@@ -82,14 +82,8 @@ function OpenBoardWidgetAddPopover(props: React.ComponentProps<typeof BoardWidge
                 },
             }),
         } : {}),
-        // Gallery and setup both enter configured admission, which selects the actual App/Session
-        // target before any installed body mounts. Missing-input tiles keep their glyph.
-        renderPluginPreview: (candidate: WidgetCandidate) => scope ? (
-            <WidgetSetupPreview scope={scope} providedContext={widgetProvidedContext(context)} candidate={candidate}
-                draft={proposeWidgetSetupDraft(widgetSetupFieldsForCandidate(candidate, context, 'shared'))}
-                testID={`${testID}.preview.${candidate.key}`} />
-        ) : null,
-        // The step's live preview, mounted through the configured-target owner (exact authority).
+        // The selected widget's live preview, mounted through the configured-target owner, which
+        // selects the actual App/Session target (exact authority) before any installed body mounts.
         ...(scope ? {
             renderSetupPreview: (candidate: WidgetCandidate, preview: Readonly<{ draft: WidgetSetupDraft }>) => (
                 <WidgetSetupPreview
@@ -105,7 +99,7 @@ function OpenBoardWidgetAddPopover(props: React.ComponentProps<typeof BoardWidge
     }), [allCandidates, canPublish, context, controller.activeView, intents, router, run, scope, snapshot, testID]);
 
     return (
-        <WidgetAddPopover
+        <WidgetAddSurface
             open
             anchorRef={props.anchorRef}
             {...(props.placement ? { placement: props.placement } : {})}
@@ -113,6 +107,7 @@ function OpenBoardWidgetAddPopover(props: React.ComponentProps<typeof BoardWidge
             title={t('widgetAdd.boardTitle')}
             hint={t('widgetAdd.boardHint')}
             searchPlaceholder={t('widgetAdd.searchWidgets')}
+            addLabel={t('widgetAdd.addToBoard')}
             sections={content.sections}
             {...(content.ask ? { ask: content.ask } : {})}
             {...(serverId ? { serverId } : {})}

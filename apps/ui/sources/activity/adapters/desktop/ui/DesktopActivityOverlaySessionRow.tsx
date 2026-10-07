@@ -47,7 +47,7 @@ export function DesktopActivityOverlaySessionRow(props: Readonly<{
                     styles.container,
                     hovered ? [styles.hoveredSurface, { backgroundColor: theme.colors.overlay.scrimStrong }] : null,
                     pressed ? { opacity: motionTokens.press.opacitySubtle } : null,
-                    interaction.focused === true ? createDesktopActivityOverlayFocusRingStyle(theme) : null,
+                    createDesktopActivityOverlayFocusRingStyle(theme, interaction.focused),
                 ];
             }}
         >

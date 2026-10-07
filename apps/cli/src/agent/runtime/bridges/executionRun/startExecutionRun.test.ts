@@ -18,6 +18,8 @@ import { VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
 import { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
 import { BUILT_IN_ROLES_V1, resolveRoleSelectionV1 } from '@happier-dev/protocol';
 import { TaskProfile } from '@/agent/executionRuns/profiles/task/TaskProfile';
+import { projectRetainedExecutionRunState, projectExecutionRunHostLoss } from './retainedState';
+import { projectExecutionRunPublicState } from './publicState';
 
 const TEST_BACKEND_ID = `${'summary'}.${'backend'}` as never;
 
@@ -110,6 +112,26 @@ describe('startExecutionRun', () => {
     vi.stubEnv('HAPPIER_CLAUDE_DYNAMIC_MODEL_PROBE_ENABLED', '0');
   });
   afterEach(() => vi.unstubAllEnvs());
+  it('retains an admitted Workflow origin through host loss and public terminal observation', async () => {
+    const runs = new Map<string, ExecutionRunState>();
+    const voiceAgentManager = new VoiceAgentManager({ createRuntime: () => { throw new Error('unused'); } });
+    try {
+      const started = await startExecutionRun({
+        params: { sessionId: 'parent_session_1', workflowRunId: 'origin-workflow', intent: 'task',
+          backendTarget: { kind: 'builtInAgent', agentId: TEST_BACKEND_ID }, instructions: 'Continue.',
+          permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response' },
+        parentProvider: TEST_BACKEND_ID, sendAcp: async () => {}, streamedTranscriptSession: null,
+        createRuntime: () => createProvisioningRuntime(), getNowMs: () => 1, budgetRegistry: null,
+        runs, controllers: new Map(), enqueueMarkerWrite: async () => {}, writeActivityMarker: async () => {},
+        finishRun: async () => {}, executeBoundedRun: async () => {}, send: async () => ({ ok: true }), voiceAgentManager,
+      });
+      const retained = projectRetainedExecutionRunState(runs.get(started.runId)!);
+      const terminal = projectExecutionRunHostLoss({ ownerPid: 1, state: retained }, 2);
+      expect(projectExecutionRunPublicState(terminal.state)).toMatchObject({
+        runId: started.runId, status: 'failed', originWorkflowRunId: 'origin-workflow',
+      });
+    } finally { await voiceAgentManager.dispose(); }
+  });
   it('refuses a role start without a target-host admission snapshot before creating a run', async () => {
     const runs = new Map<string, ExecutionRunState>();
     const voiceAgentManager = new VoiceAgentManager({ createRuntime: () => { throw new Error('unused'); } });

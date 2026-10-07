@@ -695,6 +695,12 @@ export function providerReadinessLabel(
   return t('plugins.channels.surface.providerConfigurationInvalid', 'Provider configuration needs attention');
 }
 
+/**
+ * The bot's one status line, in the shared status vocabulary: what the reader must act on is
+ * `attention`, a failure `danger`, healthy is quiet. `warning` stays only for system-owned
+ * in-flight or retrying states and disclosures (deletion cleanup, a pending retry, best-effort
+ * admission): cautions, not requests of the reader.
+ */
 export function connectionStatus(connection: ChannelsConnection, t: Translate) {
   if (connection.deletionState === 'pendingStopReconciliation') {
     return { tone: 'warning' as const, label: t('plugins.channels.surface.stopPending', 'Stop reconciliation pending') };
@@ -709,16 +715,16 @@ export function connectionStatus(connection: ChannelsConnection, t: Translate) {
     return { tone: 'danger' as const, label: t('plugins.channels.surface.ingressOccurrenceConflict', 'Incoming occurrence conflict needs attention') };
   }
   if (connection.attention.providerReadiness !== null) {
-    return { tone: 'warning' as const, label: providerReadinessLabel(connection.attention.providerReadiness, t) };
+    return { tone: 'attention' as const, label: providerReadinessLabel(connection.attention.providerReadiness, t) };
   }
   if (connection.attention.endpointRetargetOwed) {
-    return { tone: 'warning' as const, label: t('plugins.channels.surface.endpointRetargetOwed', 'Delivery target needs repair') };
+    return { tone: 'attention' as const, label: t('plugins.channels.surface.endpointRetargetOwed', 'Delivery target needs repair') };
   }
   if (connection.attention.oldTransportStopUnconfirmed) {
     return { tone: 'warning' as const, label: t('plugins.channels.surface.oldTransportStopUnconfirmed', 'Old transport stop is unconfirmed') };
   }
   if (connection.attention.pollFailure?.phase === 'blocked') {
-    return { tone: 'warning' as const, label: t('plugins.channels.surface.pollBlocked', 'Polling needs attention') };
+    return { tone: 'attention' as const, label: t('plugins.channels.surface.pollBlocked', 'Polling needs attention') };
   }
   if (connection.attention.pollFailure?.phase === 'retryDue') {
     return { tone: 'warning' as const, label: t('plugins.channels.surface.pollRetryDue', 'Polling will retry') };
@@ -730,7 +736,7 @@ export function connectionStatus(connection: ChannelsConnection, t: Translate) {
     return { tone: 'danger' as const, label: t('plugins.channels.surface.deliveryPartial', 'Delivery was only partly sent') };
   }
   if (connection.attention.outwardDelivery.notDelivered) {
-    return { tone: 'warning' as const, label: t('plugins.channels.surface.deliveryNotDelivered', 'Delivery was not sent') };
+    return { tone: 'attention' as const, label: t('plugins.channels.surface.deliveryNotDelivered', 'Delivery was not sent') };
   }
   if (connection.attention.outwardDelivery.retryDue) {
     return { tone: 'warning' as const, label: t('plugins.channels.surface.deliveryRetryDue', 'Delivery is waiting to retry') };
@@ -747,9 +753,14 @@ export function connectionStatus(connection: ChannelsConnection, t: Translate) {
     return { tone: 'warning' as const, label: t('plugins.channels.surface.bestEffort', 'Best effort before durable admission') };
   }
   return {
-    tone: 'success' as const,
+    tone: 'secondary' as const,
     label: t('plugins.channels.surface.connectionNoAttention', 'Nothing needs attention'),
   };
+}
+
+/** Whether a status tone asks the reader to look: needs-you, a caution or a failure. */
+export function channelsStatusNeedsYou(tone: string): boolean {
+  return tone === 'attention' || tone === 'warning' || tone === 'danger';
 }
 
 export function bindingEndpointLabel(binding: ChannelsBinding, t: Translate): string {
@@ -832,7 +843,7 @@ export type ChannelsConversationIndexGroup = Readonly<{
 
 function connectionNeedsAttention(connection: ChannelsConnection, t: Translate): Readonly<{ label: string }> | undefined {
   const status = connectionStatus(connection, t);
-  return status.tone === 'warning' || status.tone === 'danger' ? { label: status.label } : undefined;
+  return channelsStatusNeedsYou(status.tone) ? { label: status.label } : undefined;
 }
 
 function conversationRowStatus(binding: ChannelsBinding): ChannelsConversationRowStatus | undefined {

@@ -34,7 +34,7 @@ function byTestId(root: Element, testID: string): HTMLElement | null {
   return root.querySelector<HTMLElement>(`[data-testid="${testID}"]`);
 }
 
-const WARNING = SURFACE_THEME_FIXTURE.colors.warning;
+const ATTENTION = SURFACE_THEME_FIXTURE.colors.attention;
 
 describe('Work primitives for plugin authors', () => {
   it('publishes the status language: bucket order, localized labels, and a ring with no coloured edge only off neutral', () => {
@@ -52,6 +52,13 @@ describe('Work primitives for plugin authors', () => {
       expect(surface).not.toHaveProperty('borderLeftWidth');
       expect(surface).not.toHaveProperty('borderLeftColor');
     }
+  });
+
+  it('draws "needs you" in the host\'s attention ink, distinct from its warning', () => {
+    const theme = { ...SURFACE_THEME_FIXTURE, colors: { ...SURFACE_THEME_FIXTURE.colors, attention: '#945200', warning: '#ff9500' } };
+    const { colors } = resolveHappierWorkTheme(theme);
+    expect(authorBarrel.resolveHappierWorkStatusGlyphColor('attention', colors)).toBe('#945200');
+    expect(authorBarrel.HAPPIER_TONE_COLOR_TOKEN.attention).toBe('attention');
   });
 
   it('draws a Work section from the mounted environment: title, quiet count, and its rows', () => {
@@ -112,8 +119,8 @@ describe('Work primitives for plugin authors', () => {
 
       const needs = byTestId(mounted.container, 'map-node-check')!;
       const healthy = byTestId(mounted.container, 'map-node-lead')!;
-      // The fixture's warning hue at half strength as a full ring; healthy cards keep the plain edge.
-      expect(needs.style.borderTopColor).toBe('rgba(255, 149, 0, 0.55)');
+      // The fixture's attention hue at half strength as a full ring; healthy cards keep the plain edge.
+      expect(needs.style.borderTopColor).toBe('rgba(148, 82, 0, 0.55)');
       expect(needs.style.borderLeftColor).toBe(needs.style.borderTopColor);
       expect(healthy.style.borderTopColor).not.toBe(needs.style.borderTopColor);
 
@@ -142,8 +149,8 @@ describe('Work primitives for plugin authors', () => {
       expect(byTestId(mounted.container, 'summary:facts')?.textContent).toBe('Workflow run · 7 of 12');
       const word = byTestId(mounted.container, 'summary:state:label')!;
       expect(word.textContent).toBe('Waiting for you');
-      expect(word.style.color).toBe('rgb(255, 149, 0)');
-      expect(WARNING).toBe('#ff9500');
+      expect(word.style.color).toBe('rgb(148, 82, 0)');
+      expect(ATTENTION).toBe('#945200');
     } finally {
       mounted.unmount();
     }

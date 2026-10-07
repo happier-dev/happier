@@ -97,6 +97,94 @@ function createPresentation(input: Readonly<{
   };
 }
 
+export type ConnectedAccountNamePresentation = Readonly<{
+  /** The name people read: the user's label, the provider display name or email, else "<Service> account". */
+  primaryLabel: string;
+  primaryLabelKind?: ConnectedAccountIdentityLabelKind;
+  /** The account has neither a name nor an email: `primaryLabel` already names its service. */
+  serviceFallback: boolean;
+  /** Identity beside the name: its email when that is not the name, else a short provider id hint. */
+  identityLabel: string | null;
+  /** The email as the privacy policy shows it. */
+  email: string | null;
+}>;
+
+/**
+ * The one connected-account naming rule. The canonical `accountId` is routing identity and is never
+ * presented: a stored display name that is that id (or the provider id, or the service title, as earlier
+ * producers wrote) reads as no name, and an account with neither name nor email reads as its service's
+ * account. A provider id is only a short secondary hint.
+ */
+export function presentConnectedAccountName(input: Readonly<{
+  serviceTitle: string;
+  userLabel?: string | null;
+  displayName?: string | null;
+  email?: string | null;
+  providerAccountId?: string | null;
+  accountId?: string | null;
+  presentIdentity?: ConnectedAccountIdentityPresenter;
+}>): ConnectedAccountNamePresentation {
+  const serviceTitle = input.serviceTitle;
+  const userLabel = nonEmptyText(input.userLabel);
+  const email = nonEmptyText(input.email);
+  const providerAccountId = nonEmptyText(input.providerAccountId);
+  const storedDisplayName = nonEmptyText(input.displayName);
+  // Earlier producers used the provider id as displayName. Read those stored
+  // facts without requiring an Account write or a reconnect to fix the title.
+  const displayName = storedDisplayName === providerAccountId || storedDisplayName === nonEmptyText(input.accountId) || storedDisplayName === serviceTitle
+    ? null : storedDisplayName;
+  const fallbackLabel = t('connectedServicesCollection.accountLabel', { service: serviceTitle });
+  const primaryLabel = userLabel ?? displayName ?? email ?? fallbackLabel;
+  const primaryLabelKind = !userLabel && !displayName && email ? 'email' : undefined;
+  const shown = input.presentIdentity?.({ label: primaryLabel, labelKind: primaryLabelKind, email, accountId: providerAccountId })
+    ?? { label: primaryLabel, email, accountId: providerAccountId };
+  const shownPrimaryLabel = shown.label ?? fallbackLabel;
+  const identityLabel = shown.email && shown.email !== shownPrimaryLabel
+    ? shown.email
+    : !email && !displayName && !userLabel ? abbreviateConnectedAccountId(shown.accountId) : null;
+  return {
+    primaryLabel: shownPrimaryLabel,
+    ...(primaryLabelKind ? { primaryLabelKind } : {}),
+    serviceFallback: primaryLabel === fallbackLabel,
+    identityLabel,
+    email: shown.email,
+  };
+}
+
+export type ConnectedAccountNameEntry = Parameters<typeof presentConnectedAccountName>[0] & Readonly<{
+  /** The account's stable list key (service and account), used only to order same-named accounts. */
+  key: string;
+}>;
+
+/**
+ * The naming rule over a list shown together: accounts of one service that would all read as that
+ * service's account are told apart by number ("Claude account", "Claude account 2"). The number follows
+ * the stable key order, so it does not move when the list reorders (by usage left, say); creation time
+ * is not in the client projection. Never an id.
+ */
+export function presentConnectedAccountNames(entries: readonly ConnectedAccountNameEntry[]): ReadonlyMap<string, ConnectedAccountNamePresentation> {
+  const names = new Map<string, ConnectedAccountNamePresentation>();
+  const fallbacksByService = new Map<string, string[]>();
+  for (const entry of entries) {
+    if (names.has(entry.key)) continue;
+    const name = presentConnectedAccountName(entry);
+    names.set(entry.key, name);
+    if (!name.serviceFallback) continue;
+    const keys = fallbacksByService.get(entry.serviceTitle) ?? [];
+    keys.push(entry.key);
+    fallbacksByService.set(entry.serviceTitle, keys);
+  }
+  for (const [service, keys] of fallbacksByService) {
+    if (keys.length < 2) continue;
+    [...keys].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0)).forEach((key, index) => {
+      if (index === 0) return;
+      const name = names.get(key)!;
+      names.set(key, { ...name, primaryLabel: t('connectedServicesCollection.accountLabelNumbered', { service, number: index + 1 }) });
+    });
+  }
+  return names;
+}
+
 /**
  * Present a target owned by Qualified Connected Accounts. The caller supplies
  * the daemon-projected author title for its service; this owner only combines
@@ -152,31 +240,24 @@ export function presentQualifiedConnectedAccountTarget(input: Readonly<{
         legacyServiceId: input.legacyServiceId ?? null,
         accountId: account.ref.accountId,
       });
-    const email = nonEmptyText(account.providerIdentity?.email);
-    const providerAccountId = nonEmptyText(account.providerIdentity?.accountId);
-    const storedDisplayName = nonEmptyText(account.displayName);
-    // Earlier producers used the provider id as displayName. Read those stored
-    // facts without requiring an Account write or a reconnect to fix the title.
-    const displayName = storedDisplayName === providerAccountId || storedDisplayName === account.ref.accountId || storedDisplayName === serviceTitle
-      ? null : storedDisplayName;
-    const fallbackLabel = t('connectedServicesCollection.accountLabel', { service: serviceTitle });
-    const primaryLabel = userLabel ?? displayName ?? email ?? fallbackLabel;
-    const primaryLabelKind = !userLabel && !displayName && email ? 'email' : undefined;
-    const shown = input.presentIdentity?.({ label: primaryLabel, labelKind: primaryLabelKind, email, accountId: providerAccountId })
-      ?? { label: primaryLabel, email, accountId: providerAccountId };
-    const shownPrimaryLabel = shown.label ?? fallbackLabel;
-    const identityLabel = shown.email && shown.email !== shownPrimaryLabel
-      ? shown.email
-      : !email && !displayName && !userLabel ? abbreviateConnectedAccountId(shown.accountId) : null;
+    const name = presentConnectedAccountName({
+      serviceTitle,
+      userLabel,
+      displayName: account.displayName ?? null,
+      email: account.providerIdentity?.email ?? null,
+      providerAccountId: account.providerIdentity?.accountId ?? null,
+      accountId: account.ref.accountId,
+      presentIdentity: input.presentIdentity,
+    });
     return createPresentation({
       serviceTitle,
-      primaryLabel: shownPrimaryLabel,
-      primaryLabelKind,
-      identityLabel,
+      primaryLabel: name.primaryLabel,
+      primaryLabelKind: name.primaryLabelKind,
+      identityLabel: name.identityLabel,
       secondaryParts: [
-        primaryLabel === fallbackLabel ? null : serviceTitle,
-        shown.email,
-        identityLabel,
+        name.serviceFallback ? null : serviceTitle,
+        name.email,
+        name.identityLabel,
       ],
     });
   }

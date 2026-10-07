@@ -2,62 +2,65 @@ import type * as React from 'react';
 
 import type { IconName } from '@/components/ui/icons/Icon';
 
-import { widgetSetupNeedsStep, type WidgetSetup, type WidgetSetupSubmitResult } from './widgetSetupModel';
+import type { WidgetSetup, WidgetSetupSubmitResult } from './widgetSetupModel';
 
 /**
- * The one Add popover's content model (lab `cwidgets` G1, round 2). Every placement — the Board, the
- * Companion — describes what can be added as sections of entries; the popover only draws them, in its
- * Gallery or List view, and hands each choice back to the placement's existing add path.
+ * The one Add surface's content model (lab `widget-add` wsplit A). Every placement — Home, a
+ * WorkBoard, a Session Board, the Companion, a plugin area — describes what can be added as sections
+ * of entries; the surface lists them, shows the selected one beside the list, and hands its Add back
+ * to the placement's existing add path.
  */
+export type WidgetAddEntry = WidgetAddEntryBase & (
+    /** A widget: its pane is its setup, and its Add is the setup's canonical Action. */
+    | Readonly<{ setup: () => WidgetSetup; onPick?: never; renderPreview?: never; actionLabel?: never; closesOnPick?: never }>
+    | WidgetAddPickEntry
+);
 
-/** Gallery shows each entry as a tile (with a live preview when it has one); List as a menu row. */
-export type WidgetAddView = 'gallery' | 'list';
-
-export type WidgetAddEntry = Readonly<{
+type WidgetAddEntryBase = Readonly<{
     id: string;
     title: string;
-    /** Where it comes from ("Channels", "Built in", "Note"). */
+    /** One line of purpose ("New people per day, against last week"). */
     subtitle?: string;
     icon: IconName;
     /**
      * Already on this surface and a second copy would be the same thing (a widget with no inputs):
-     * stays in place, marked Added, and cannot be picked again.
+     * stays listed, marked Added, and its Add cannot add it again.
      */
     added?: boolean;
     /**
-     * A widget with inputs that is already here ("2 on Home"): picking it adds another copy, which
-     * its binding names (lab `dashboards` dbind G). Replaces Added for configurable widgets.
+     * A widget with inputs that is already here ("2 on Home"): Add adds another copy, which its
+     * binding names (lab `dashboards` dbind G). Replaces Added for configurable widgets.
      */
     count?: string;
+}>;
+
+/** Something else to add (a note, a pane link, a Board item): its pane shows it, and its Add runs `onPick`. */
+type WidgetAddPickEntry = Readonly<{
+    setup?: never;
     /**
-     * The existing Set up step. The panel shows it when an input is missing or ambiguous or when
-     * several admitted sizes need a choice; a ready single-size choice submits with scoped feedback.
-     */
-    setup?: () => WidgetSetup;
-    /**
-     * Gallery only: the real widget body at this placement's data. Mounted only while the gallery is
-     * open; the List view never mounts it.
+     * An entry without a setup (a note, a pane link, a Board item): what its pane shows. Mounted only
+     * while the entry is selected.
      */
     renderPreview?: () => React.ReactNode;
+    /** An entry without a setup: its primary's words when they are not the surface's Add. */
+    actionLabel?: string;
     /**
-     * Picking opens something that needs the focus (a note editor, the composer), so the popover
+     * Its Add opens something that needs the focus (a note editor, the composer), so the surface
      * closes. Otherwise it stays open so another widget can be added.
      */
     closesOnPick?: boolean;
-    /** Actual Adds acknowledge their result; navigation/Make choices return nothing. */
+    /** An entry without a setup: its Add. Actual Adds acknowledge their result; navigation returns nothing. */
     onPick: () => void | Promise<WidgetSetupSubmitResult>;
 }>;
 
-/** A quick picker can hand its completed Add to the same gallery without submitting it again. */
-export type WidgetAddOutcome = Readonly<{ entryId: string; title: string; result: WidgetSetupSubmitResult }>;
-
 export type WidgetAddSection = Readonly<{
     id: string;
+    /** Where its widgets come from: Built in, a plugin's own name, Your widgets. */
     title: string;
-    /** A quiet note at the section's right ("live, with this session's data"). */
+    /** A quiet note after the title ("plugin", "by you or your agents"). */
     hint?: string;
-    /** `preview`: tiles with previews; `make`: glyph tiles; `chips`: one-line chips (panes). */
-    kind: 'preview' | 'make' | 'chips';
+    /** A plugin's own section: its installed mark leads the title. */
+    pluginId?: string;
     entries: readonly WidgetAddEntry[];
 }>;
 
@@ -94,31 +97,13 @@ export function matchesWidgetAddAsk(ask: WidgetAddAsk, query: string): boolean {
     return needle.length === 0 || ask.title.toLocaleLowerCase().includes(needle) || ask.draft.toLocaleLowerCase().includes(needle);
 }
 
-/** The remembered setting stores the Collection's words (`grid` | `list`); the popover says Gallery. */
-export function widgetAddViewFromSetting(value: 'grid' | 'list' | undefined | null): WidgetAddView {
-    return value === 'list' ? 'list' : 'gallery';
-}
-
-export function widgetAddViewToSetting(view: WidgetAddView): 'grid' | 'list' {
-    return view === 'list' ? 'list' : 'grid';
-}
-
 /**
- * What picking an entry does, decided once for the Gallery and for any list that offers widgets (a
- * Board's Add to board): nothing for an Added widget; the Set up step only when an input is missing
- * or ambiguous or there are several admitted sizes; a fully bound single-size widget submits its
- * proposed inputs at once; anything else is the entry's own pick.
+ * The selection after an arrow key, in reading order across the visible sections: the first entry
+ * when nothing is selected (or the selection was filtered away), clamped at either end.
  */
-export type WidgetAddPick =
-    | Readonly<{ kind: 'added' }>
-    | Readonly<{ kind: 'setup'; setup: WidgetSetup }>
-    | Readonly<{ kind: 'submit'; setup: WidgetSetup }>
-    | Readonly<{ kind: 'pick' }>;
-
-export function resolveWidgetAddPick(entry: WidgetAddEntry): WidgetAddPick {
-    if (entry.added) return { kind: 'added' };
-    if (!entry.setup) return { kind: 'pick' };
-    const setup = entry.setup();
-    return (setup.sizeChoices?.sizes.length ?? 0) > 1 || widgetSetupNeedsStep(setup.fields, setup.resolve(setup.initial))
-        ? { kind: 'setup', setup } : { kind: 'submit', setup };
+export function stepWidgetAddSelection(ids: readonly string[], current: string | null, step: -1 | 1): string | null {
+    if (ids.length === 0) return null;
+    const index = current === null ? -1 : ids.indexOf(current);
+    if (index < 0) return step > 0 ? ids[0]! : ids[ids.length - 1]!;
+    return ids[Math.max(0, Math.min(ids.length - 1, index + step))]!;
 }

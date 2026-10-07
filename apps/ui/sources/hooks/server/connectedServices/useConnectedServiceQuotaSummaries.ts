@@ -43,6 +43,7 @@ import type {
 } from '@/sync/domains/connectedServices/connectedServiceQuotaProfileRefs';
 import {
     resolveConnectedServiceRegistryEntryDisplayName,
+    resolveQualifiedConnectedServiceRegistryEntry,
 } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
 import {
     type PluginLocalizedTextResolver,
@@ -112,10 +113,7 @@ function resolveQualifiedSummaryService(params: Readonly<{
     profileId: string;
     profileLabel: string | null;
 }> {
-    const entry = params.registryEntries.find((candidate) => (
-        candidate.service?.pluginId === params.ref.service.pluginId
-        && candidate.service.localId === params.ref.service.localId
-    )) ?? null;
+    const entry = resolveQualifiedConnectedServiceRegistryEntry({ entries: params.registryEntries }, params.ref.service);
     const legacyServiceId = entry?.legacyServiceId ?? null;
     return {
         service: params.ref.service,

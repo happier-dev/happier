@@ -75,6 +75,7 @@ import {
 // could start meaning two things in one list. They are aliased to this file's local
 // vocabulary so the call sites read as the panel language they already are.
 import {
+  resolveTriageRowFactStatusToneV1,
   describeTriageSourceFailureV1 as failureDescription,
   formatTriageTimestampV1 as formatTimestamp,
   projectTriageDetailFieldTextV1 as fieldValueText,
@@ -393,7 +394,7 @@ function OverviewPanel({
         {statusFields.length === 0 ? null : (
           <Row gap="small">
             {statusFields.map((field) => (
-              <Status key={field.id} tone={field.tone} label={`${azureFactLabel(field, text)}: ${field.value}`} />
+              <Status key={field.id} tone={resolveTriageRowFactStatusToneV1(field.tone)} label={`${azureFactLabel(field, text)}: ${field.value}`} />
             ))}
           </Row>
         )}

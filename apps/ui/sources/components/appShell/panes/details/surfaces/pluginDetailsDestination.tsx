@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { I18nManager, Platform, Pressable, ScrollView, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
-import { resolveHappierTabKeySelection, resolveHappierFocusRingVisible } from '@happier-dev/plugin-ui/presentation';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { resolveHappierFocusRingVisible, resolveHappierTabKeySelection } from '@happier-dev/plugin-ui/presentation';
 import {
     isPluginUiDestinationBindingAdmittedAtRuntimeV1,
     PluginUiLaunchInputV1Schema,
@@ -11,6 +11,7 @@ import {
     type PluginUiTargetKindV1,
 } from '@happier-dev/protocol/plugins/ui';
 
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { Text } from '@/components/ui/text/Text';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { Typography } from '@/constants/Typography';
@@ -967,17 +968,6 @@ const viewerChoiceStylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: 10,
         paddingVertical: 5,
     },
-    choiceFocused: {
-        ...(Platform.select({
-            web: {
-                outlineStyle: 'solid',
-                outlineWidth: 2,
-                outlineColor: theme.colors.border.focus,
-                outlineOffset: -2,
-            },
-            default: {},
-        }) as object),
-    },
     choicePressed: {
         opacity: motionTokens.press.opacitySubtle,
     },
@@ -1015,6 +1005,7 @@ export function PluginDetailsViewerChoiceChrome(props: Readonly<{
     model: PluginDetailsViewerChoiceModel;
 }>): React.ReactElement | null {
     const styles = viewerChoiceStylesheet;
+    const { theme } = useUnistyles();
     const [pending, setPending] = React.useState(false);
     const tabRefs = React.useRef(new Map<string, React.ElementRef<typeof Pressable> | null>());
     const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
@@ -1101,7 +1092,8 @@ export function PluginDetailsViewerChoiceChrome(props: Readonly<{
                                     candidate.selected ? styles.choiceSelected : null,
                                     disabled ? styles.choiceDisabled : null,
                                     !disabled && interactionState.pressed ? styles.choicePressed : null,
-                                    resolveHappierFocusRingVisible(webState.focused) ? styles.choiceFocused : null,
+                                    // Inset: a choice fills its horizontal scroller's height, which clips outside it.
+                                    focusRingStyle({ focused: resolveHappierFocusRingVisible(webState.focused), color: theme.colors.border.focus, placement: 'inset' }),
                                 ];
                             }}
                         >

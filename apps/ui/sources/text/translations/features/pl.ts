@@ -1593,6 +1593,7 @@ const en = Shared_connectedServicesCollectionTranslations.en;
 
 const pl: ConnectedServicesCollectionCopy = {
     accountLabel: ({ service }) => `Konto ${service}`,
+    accountLabelNumbered: ({ service, number }) => `Konto ${service} ${number}`,
     meterResetsIn: ({ time }) => `za ${time}`,
     meterNextResetIn: ({ time }) => `następny za ${time}`,
     meterResetsAt: ({ countdown, time }) => `${countdown} · ${time}`,
@@ -10795,9 +10796,6 @@ type WidgetAddTranslation = Shared_widgetAddTranslations.WidgetAddTranslation;
 const inSentence = Shared_widgetAddTranslations.inSentence;
 
 const widgetAddTranslations = { pl: {
-        viewGallery: 'Galeria',
-        viewList: 'Lista',
-        viewLabel: 'Widok',
         added: 'Dodano',
         boardTitle: 'Dodaj do tablicy',
         boardHint: 'Wszyscy tutaj zobaczą, co dodasz',
@@ -10805,8 +10803,6 @@ const widgetAddTranslations = { pl: {
         companionHint: 'Tylko ty widzisz swojego towarzysza',
         searchWidgets: 'Szukaj widżetów',
         searchCompanion: 'Szukaj podglądów i paneli',
-        fromPlugins: 'Z wtyczek',
-        fromPluginsHint: 'na żywo, z danymi tej sesji',
         makeOne: 'Utwórz własny',
         noteSubtitle: 'Markdown',
         interactiveViewSubtitle: 'HTML',
@@ -10828,14 +10824,27 @@ const widgetAddTranslations = { pl: {
             local_services: 'Otwórz lokalne usługi wybranej sesji.',
         },
         noMatch: ({ query }) => `Brak widżetów pasujących do „${query}”`,
-        setupTitle: ({ widget }) => `Skonfiguruj: ${widget}`,
+        pickTitle: 'Wybierz widżet, aby zobaczyć go tutaj',
+        pickHint: 'Pokazuje twoje własne dane w wybranym rozmiarze, zanim cokolwiek zostanie dodane.',
+        pickNote: 'Wybierz widżet, aby go dodać',
+        askAction: 'Napisz prośbę',
+        pluginTag: 'wtyczka',
+        pluginProvenance: ({ plugin }) => `Wtyczka ${plugin}`,
+        readsChosenSession: 'odczytuje wybraną sesję tam, gdzie działa',
+        readsFrom: ({ source }) => `odczytuje ${source}`,
+        savedQueryOn: ({ source }) => `zapisane zapytanie w ${source}`,
+        madeByYou: ({ date }) => `utworzone przez ciebie ${date}`,
+        madeByAgent: ({ date }) => `utworzone przez twojego agenta ${date}`,
+        madeByPlugin: ({ date }) => `utworzone przez wtyczkę ${date}`,
+        previewLiveData: 'Na żywo, z twoimi danymi',
+        addsAtSize: ({ size }) => `Dodaje w rozmiarze ${size}. Rozmiar możesz później zmienić.`,
+        backToWidgets: 'Widżety',
         editTitle: ({ widget }) => `${widget} · dane wejściowe`,
         editHint: 'Zmienia się tylko ta kopia. Pozostałe zachowują swoje dane.',
         preview: 'Podgląd',
         previewLive: 'Podgląd · na żywo',
         previewWaiting: ({ field }) => `Wybierz: ${field}, aby zobaczyć to tutaj`,
         previewAfterAdd: 'Pojawi się tutaj po dodaniu',
-        backToGallery: 'Wróć do galerii',
         needed: 'Wymagane',
         stillNeeded: ({ field }) => `Nadal brakuje: ${field}`,
         followGroup: 'Śledź',
@@ -10863,7 +10872,6 @@ const widgetAddTranslations = { pl: {
         saveFailed: 'Nie udało się zapisać. Spróbuj ponownie.',
         homeTitle: 'Dodaj do strony głównej',
         homeHint: 'Tylko ty widzisz swoją stronę główną · na każdym urządzeniu',
-        homeFromPluginsHint: 'na żywo, z twoimi danymi',
         addWidgets: 'Dodaj widżety',
         addToHome: 'Dodaj do strony głównej',
         addToBoard: 'Dodaj do tablicy',
@@ -11004,8 +11012,6 @@ const widgetFrameTranslations = { pl: {
         appearanceDescription: 'Jak widżety są obramowane na tym urządzeniu. Aby zmienić jeden widżet, użyj jego menu ⋯.',
         previewLabel: ({ surface, style }) => `${surface} · ${style}`,
         noticeChanged: 'Zmieniono ramkę',
-        addViewTitle: 'Dodawanie widżetów',
-        addViewDescription: 'Jak otwiera się menu Dodaj. Zmiana tam zmienia też to ustawienie.',
         newChip: 'Nowy',
     } } satisfies Pick<Readonly<Record<string, WidgetFrameTranslation>>, "pl">;
 
@@ -11067,6 +11073,9 @@ const en = Shared_workflowActionTranslations.en;
 const workflowActionTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy>, "pl"> = { pl: {
         host: "Happier",
         structure: "Struktura",
+        callWebhook: "Wywołaj webhook",
+        runCommand: "Uruchom polecenie",
+        commandValuesInEnv: "Przekazuj wartości przepływu pracy przez zmienne środowiskowe. Tekst polecenia pozostaje zgodny z zapisem.",
         artifactCreate: "Utwórz dokument",
         artifactGet: "Odczytaj dokument",
         artifactList: "Wyświetl dokumenty",
@@ -11178,6 +11187,10 @@ const workflowFieldTranslations = { pl: {
         secondOpinion: "Druga opinia",
         useJudge: "Sędzia",
         diffFingerprint: "Sprawdzone zmiany",
+        url: "URL",
+        body: "Treść JSON",
+        command: "Polecenie",
+        env: "Zmienne środowiskowe",
     } };
 
 return { workflowFieldTranslations };

@@ -276,7 +276,8 @@ export const SessionTranscriptSample = React.memo(function SessionTranscriptSamp
     thinking: ThinkingDisplayPreviewMode;
     toolChrome: ToolChromeMode;
     toolDetail: ToolViewDisplaySettings['toolViewDetailLevelDefault'];
-    width: number;
+    /** Omit to use the stage's native content width. */
+    width?: number;
 }>) {
     const thinking = React.useMemo<ThinkingDisplay>(() => ({ ...thinkingFieldsForChoice(props.thinking), sessionThinkingInlineChrome: 'plain' }), [props.thinking]);
     const display = React.useMemo(() => messageDisplayCommon(thinking), [thinking]);
@@ -332,7 +333,7 @@ export const SessionTranscriptSample = React.memo(function SessionTranscriptSamp
 type ChipLabels = 'all' | 'core' | 'none';
 
 /** The composer panel with the real action chips, as `AgentInput` lays them out. */
-export function SessionComposerSample(props: Readonly<{ layout: 'wrap' | 'scroll' | 'collapsed'; labels: ChipLabels; width?: number }>) {
+export function SessionComposerSample(props: Readonly<{ layout: 'wrap' | 'scroll' | 'collapsed'; labels: ChipLabels; width?: number | '100%' }>) {
     const { theme } = useUnistyles();
     const tint = theme.colors.composer.chipTint;
     const textStyle = React.useMemo(() => resolveAgentInputActionChipTextStyle(theme), [theme]);

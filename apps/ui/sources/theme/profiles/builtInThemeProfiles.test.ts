@@ -525,6 +525,6 @@ describe('built-in theme profiles', () => {
         const clone = createThemeProfileDraft({ id: 'clone', name: 'My Crisp Dark', now: '2026-05-11T00:00:00.000Z', sourceProfile: builtIn });
         const reset = resetThemeProfileDraftToken(clone, 'dark', 'background.canvas', '2026-05-11T00:01:00.000Z');
 
-        expect(resolveThemeProfile({ mode: 'dark', profile: reset }).colors.background.canvas).toBe('#131111');
+        expect(resolveThemeProfile({ mode: 'dark', profile: reset }).colors.background.canvas).toBe('#141212');
     });
 });

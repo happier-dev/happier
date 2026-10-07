@@ -2,12 +2,14 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
     AutomationRunStateChangedHostEventV1Schema,
+    AutomationRunCauseSchema,
     type ParsedPluginEventContributionV1,
 } from '@happier-dev/protocol';
 import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { type PluginContributionRef } from '@happier-dev/plugin-sdk';
 
 import type { PluginInvocationServicesSeed } from './types';
+import { resolvePluginActionCaller } from './actionCaller';
 import {
     bindDeclaredEventSubscriptions,
     createStablePluginEventsBroker,
@@ -60,6 +62,30 @@ function services(params: Readonly<{
 }
 
 describe('stable invocation events service', () => {
+    it('carries host event origin into nested Actions without trusting payload claims or leaking it to later events', async () => {
+        const broker = createStablePluginEventsBroker();
+        const declarationsByPluginId = new Map([
+            ['acme.publisher', publisherDeclarations], ['acme.subscriber', subscriberDeclarations],
+        ]);
+        const host = { broker, declarationsByPluginId, activePluginIds: new Set(['acme.publisher', 'acme.subscriber']) };
+        const origin = { kind: 'automationRun' as const, runId: 'host-origin', automationId: 'automation',
+            cause: AutomationRunCauseSchema.parse({ kind: 'manual', invokedAt: 1 }) };
+        const publisher = createPluginInvocationPluginEventsService({ ...host,
+            seed: { ...seed('acme.publisher'), initiatingActionCaller: origin } });
+        const independent = createPluginInvocationPluginEventsService({ ...host, seed: seed('acme.publisher') });
+        const subscriberSeed = seed('acme.subscriber');
+        const subscriber = createPluginInvocationPluginEventsService({ ...host, seed: subscriberSeed });
+        const callers: unknown[] = [];
+        const subscription = subscriber.subscribe({ pluginId: 'acme.publisher', localId: 'changed' }, () => {
+            callers.push(resolvePluginActionCaller(subscriberSeed)?.initiatingCaller);
+        });
+        await publisher.emit('changed', { originRunId: 'payload-is-not-provenance' });
+        await independent.emit('changed', { originRunId: 'host-origin' });
+        await vi.waitFor(() => expect(callers).toHaveLength(2));
+        expect(callers).toEqual([origin, undefined]);
+        expect(resolvePluginActionCaller(subscriberSeed)?.initiatingCaller).toBeUndefined();
+        subscription.dispose();
+    });
     it('measures the selected queue limits against representative settings, notification, and runtime publications', () => {
         const identity = {
             pluginId: 'acme.notifications',

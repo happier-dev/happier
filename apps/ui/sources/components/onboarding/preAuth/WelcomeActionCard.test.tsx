@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { motionTokens } from '@/components/ui/motion/motionTokens';
 
 // Load the real UI owner graph before the interaction deadline begins.
 await import('./WelcomeActionCard');
@@ -48,7 +49,7 @@ describe('WelcomeActionCard', () => {
             screen.findByTestId('welcome-action')!.props.onPressIn();
         });
         await screen.update(scene());
-        expect(card()).toMatchObject({ borderRadius: 14, transform: [{ scale: 0.96 }] });
+        expect(card()).toMatchObject({ borderRadius: 14, transform: [{ scale: motionTokens.press.scale }] });
 
         await act(async () => {
             screen.findByTestId('welcome-action')!.props.onPressOut();

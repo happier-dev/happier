@@ -295,6 +295,7 @@ Art-directed imagery and narrative surfaces may need locally owned visual tokens
 ### Typography
 
 - Inter is the default interface typeface on every platform, including native iOS and Apple web. Theme-held font choices continue to override the default; monospace keeps its own canonical family.
+- Inter ships as static faces — Regular 400, Medium 500, SemiBold 600 — chosen by face through the one font owner (`constants/Typography.ts`). React Native exposes no variable-axis control and Android selects a weight by face, so in-between weights from a lab snap to the nearest shipped face, ties to the lighter: 450 → 400; 560, 620, 640, 650 and 660 → 600.
 - Use Happier’s canonical text primitives and typography tokens so scaling, platform rendering, theme, and localization continue to work.
 - Build hierarchy from size, weight, leading, tracking, color, and spacing as a coherent set.
 - Large display text may use tighter leading and tracking; body and dense UI text prioritize legibility.

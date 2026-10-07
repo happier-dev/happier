@@ -2,26 +2,31 @@ import type { AutomationRunStateV3 } from '@happier-dev/protocol';
 
 import type { AutomationDefinition, AutomationDefinitionRun } from '@/sync/domains/automations/automationTypes';
 import { getAutomationDefinitionRunCauseAt } from '@/sync/domains/automations/automationRunCause';
+import { resolveWorkStatusTone, type WorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 
-/** How a Run reads at a glance: done well, under way, went wrong, unknown outcome, or nothing to act on. */
-export type LatestAutomationRunTone = 'succeeded' | 'active' | 'failed' | 'uncertain' | 'neutral';
+/**
+ * How a Run reads at a glance, which picks its glyph: done well, under way, went wrong, one the person
+ * should look at (its outcome is uncertain, or it expired or was missed), or nothing to act on.
+ */
+export type LatestAutomationRunTone = 'succeeded' | 'active' | 'failed' | 'attention' | 'neutral';
 
-const RUN_TONE: Readonly<Record<AutomationRunStateV3, LatestAutomationRunTone>> = Object.freeze({
-    queued: 'active',
-    claimed: 'active',
-    running: 'active',
-    succeeded: 'succeeded',
-    failed: 'failed',
-    dispatch_failed: 'failed',
-    expired: 'failed',
-    outcome_uncertain: 'uncertain',
-    cancelled: 'neutral',
-    skipped: 'neutral',
-    missed: 'neutral',
-});
-
+/**
+ * The glance follows the shared work status vocabulary (`resolveWorkStatusTone`, which owns how a Run
+ * state reads); only the glyph split — a success apart from the other quiet ends — is this list's own.
+ */
 export function automationRunTone(state: AutomationRunStateV3): LatestAutomationRunTone {
-    return RUN_TONE[state];
+    const status = resolveWorkStatusTone({ kind: 'workflow_run', facts: { state, word: state } });
+    if (status.bucket === 'working') return 'active';
+    if (status.tone === 'danger') return 'failed';
+    if (status.tone === 'attention') return 'attention';
+    return state === 'succeeded' ? 'succeeded' : 'neutral';
+}
+
+/** The status tone a glance is drawn in: only failure and what the person should look at carry colour. */
+export function automationRunStatusTone(tone: LatestAutomationRunTone): WorkStatusTone {
+    if (tone === 'failed') return 'danger';
+    if (tone === 'attention') return 'attention';
+    return 'neutral';
 }
 
 export type LatestAutomationRunRow = Readonly<{

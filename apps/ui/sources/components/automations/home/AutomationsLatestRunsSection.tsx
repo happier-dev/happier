@@ -10,6 +10,7 @@ import { HOME_WIDGET_BODY_ROWS, WidgetFrame, type WidgetFrameBody, type WidgetFr
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
+import { workStatusGlyphColor } from '@/components/work/status/workStatusTreatment';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import type { AutomationDefinitionRun } from '@/sync/domains/automations/automationTypes';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -21,6 +22,7 @@ import { t } from '@/text';
 import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
 
 import {
+    automationRunStatusTone,
     projectLatestAutomationRuns,
     selectLatestRunAutomationIds,
     type LatestAutomationRunRow,
@@ -173,34 +175,32 @@ function AutomationsLatestRunsWidget(props: HubSectionProps) {
 const TONE_ICON: Readonly<Record<Exclude<LatestAutomationRunTone, 'active'>, IconName>> = Object.freeze({
     succeeded: 'check-circle',
     failed: 'x-circle',
-    uncertain: 'warning-circle',
+    attention: 'warning-circle',
     neutral: 'minus-circle',
 });
 
-/** One run row (status glyph in its semantic tone, failed reason in red); the `/dev/home` fixture draws it too. */
+/** One run row (status glyph in its work status tone, a failed or to-look-at line in that tone, when it ran in the meta column); the `/dev/home` fixture draws it too. */
 export const LatestRunRow = React.memo(function LatestRunRow(props: Readonly<{
     row: LatestAutomationRunRow;
     onOpen: (row: LatestAutomationRunRow) => void;
 }>) {
     const { theme } = useUnistyles();
     const { row, onOpen } = props;
-    const toneColor = row.tone === 'succeeded'
-        ? theme.colors.state.success.foreground
-        : row.tone === 'failed'
-            ? theme.colors.state.danger.foreground
-            : row.tone === 'uncertain'
-                ? theme.colors.state.warning.foreground
-                : theme.colors.text.secondary;
+    // The shared status vocabulary: done is quiet ink, failure rose, a Run to look at the attention amber.
+    const statusTone = automationRunStatusTone(row.tone);
+    const toneColor = workStatusGlyphColor(theme.colors, statusTone);
     return (
         <Item
             testID={`home-automations.run.${row.run.id}`}
             title={row.automationName}
             titleLines={1}
-            subtitle={`${formatAutomationRunStateLabel(row.run.state)} · ${formatShortRelativeTime(row.at)}`}
+            subtitle={formatAutomationRunStateLabel(row.run.state)}
             subtitleLines={1}
-            {...(row.tone === 'failed' ? { subtitleStyle: { color: toneColor } } : {})}
+            // When it ran is the row's meta: the shared right-aligned tabular column.
+            detail={formatShortRelativeTime(row.at)}
+            {...(statusTone !== 'neutral' ? { subtitleStyle: { color: toneColor } } : {})}
             icon={row.tone === 'active'
-                ? <ActivitySpinner size={ICON_SIZE.sm} color={theme.colors.text.secondary} />
+                ? <ActivitySpinner size={ICON_SIZE.sm} color={toneColor} />
                 : <Icon name={TONE_ICON[row.tone]} size={ICON_SIZE.sm} color={toneColor} />}
             // A widget's rows are a compact list's rows.
             density="compact"

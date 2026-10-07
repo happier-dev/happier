@@ -41,3 +41,11 @@ export {
   useHappierNativeMinimumInteractiveTargetSize,
 } from './interactiveTarget.js';
 export { projectHappierUiEnvironment } from './projectEnvironment.js';
+export {
+  HAPPIER_RADIUS_BASE_PX,
+  HAPPIER_RADIUS_V1,
+  deriveHappierRadiusScale,
+  happierInnerRadius,
+  type HappierRadiusScale,
+  type HappierRadiusStep,
+} from './radius.js';

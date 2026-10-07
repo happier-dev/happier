@@ -380,7 +380,11 @@ retain their existing lifecycle and retention owners.
 In current 0.3 development, target-specific incremental worker checkouts share the worker CLI
 home's package-manager cache and Iroh Cargo target directory. Separate target checkouts remain
 necessary for concurrent target builds and their generated outputs. Linux runtime requests reuse
-the custody scanner to reclaim other staging targets and historical temporary roots only after
+the worker disk owner to nominate stale staging across every retained stack, protecting the current
+workspace and newest requested-target workspace. Admission compares each worker's measured resident
+install/build closure with its actual available filesystem bytes and peer envelopes; a worker still
+short after ordered reclamation is excluded for that class before bootstrap/compilation. Resident
+closure measurements do not prove temporal build peaks. The custody scanner reclaims staging only after
 24 hours without modification and with no live cwd, descriptor or mapping holder. Unknown process
 visibility retains them. After export, the worker store uses canonical artifact count/reference
 retention with the same additional live-holder protection. Yarn Classic v6 cache entries are

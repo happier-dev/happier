@@ -1,6 +1,7 @@
 import type {
   TerminalInjectionDuplicateRisk,
   TerminalInjectionFailurePhase,
+  TerminalPromptInput,
 } from '@happier-dev/agents';
 
 import type { TmuxCommandResult } from './types';
@@ -148,6 +149,8 @@ export async function pasteTextViaTmuxBuffer(params: Readonly<{
   target: string;
   text: string;
   bufferName: string;
+  signal?: AbortSignal;
+  resolveDeliveryState?: TerminalPromptInput['resolveDeliveryState'];
   submitDelayMs?: number;
   postSubmitSettleMs?: number;
   timeoutMs?: number;
@@ -239,6 +242,8 @@ export async function pasteTextViaTmuxBuffer(params: Readonly<{
 
   const submission = await runTerminalPromptSubmission({
     promptText: normalizedText,
+    signal: params.signal,
+    resolveDeliveryState: params.resolveDeliveryState,
     ...(params.verifyStagedBeforeSubmit
       ? {
         verifyStagedBeforeSubmit: async ({ promptText, remainingTimeoutMs }) => params.verifyStagedBeforeSubmit?.({

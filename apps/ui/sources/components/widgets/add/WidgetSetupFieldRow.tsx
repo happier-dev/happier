@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierInputField, happierPageTextMetrics, resolveHappierActionFieldPresentation, useHappierInputPicker } from '@happier-dev/plugin-ui/presentation';
 import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -59,6 +59,11 @@ export function WidgetSetupFieldRow(props: Readonly<{
     phone: boolean;
     /** A repair opened the step at this input: its choices start open. */
     autoOpen?: boolean;
+    /**
+     * Each new value asks this input for the focus (the Add surface's ↵ while it is still needed):
+     * a chosen-value input opens its choices, a typed one takes the keyboard.
+     */
+    focusRequest?: number;
     disabled?: boolean;
     onChange: (change: WidgetSetupFieldChange) => void;
     testID: string;
@@ -85,6 +90,7 @@ function BindingFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>
     const { entry, row, options } = props;
     const [open, setOpen] = React.useState(props.autoOpen === true);
     const [searching, setSearching] = React.useState(false);
+    React.useEffect(() => { if (props.focusRequest) setOpen(true); }, [props.focusRequest]);
     const follow = entry.follow;
     // A few likely values sit in the menu; the rest wait behind Another… (lab IN "Follow or pin").
     const shortlist = options.length > AMBIGUOUS_INLINE_LIMIT && !searching ? options.slice(0, AMBIGUOUS_INLINE_LIMIT) : options;
@@ -219,6 +225,8 @@ function BindingFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>
                 showSelectedSubtitle: false,
                 detailFormatter: () => trigger.detail,
                 field: trigger.field,
+                // An empty choice names what it asks for, in the field's own words.
+                placeholder: t('widgetAdd.chooseField', { field: entry.field.title }),
                 itemProps: {
                     testID: `${props.testID}.trigger`,
                     titleAccessory: row.kind === 'needed' && entry.field.required ? <NeededTag /> : undefined,
@@ -362,6 +370,14 @@ function LiteralFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>
         testID: `${props.testID}.option.${index}`,
     })), [props.options, props.testID]);
     const presentation = resolveHappierActionFieldPresentation(field, value, selection);
+    // The shared field exposes no focus handle, so the row hands the keyboard to the first control
+    // the field drew (web only; a native keyboard arrives with the person's own tap).
+    const controlHost = React.useRef<View>(null);
+    React.useEffect(() => {
+        if (!props.focusRequest || Platform.OS !== 'web') return;
+        const host = controlHost.current as unknown as { querySelector?: (selector: string) => { focus?: () => void } | null } | null;
+        host?.querySelector?.('input, textarea, [role="radio"], [role="checkbox"], [role="switch"], button')?.focus?.();
+    }, [props.focusRequest]);
     // A switch or a short field sits beside its title; choices and multi-line text go beneath it.
     const stacked = props.phone || presentation.kind === 'select' || (presentation.kind === 'text' && presentation.multiline);
     return (
@@ -376,6 +392,7 @@ function LiteralFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>
             showChevron={false}
             accessoryLayout={stacked ? 'stacked' : 'inline'}
             rightElement={(
+                <View ref={controlHost} collapsable={false}>
                 <HappierInputField<JsonValue>
                     frame="none"
                     field={field}
@@ -395,6 +412,7 @@ function LiteralFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>
                     theme={presentationTheme}
                     onChange={(next) => props.onChange(next === undefined ? { kind: 'clear' } : { kind: 'pin', value: next as JsonValue })}
                 />
+                </View>
             )}
         />
     );

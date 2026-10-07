@@ -37,8 +37,8 @@ describe('WorkBoard Account Artifact save queue', () => {
         const instance = { v: 1, id: 'copy', definition: { kind: 'builtin', id: 'changes' }, bindings: {} } as const;
         const ref = { surface, instanceId: instance.id };
         const release = b.hold();
-        const saving = b.store.queue.dispatch({ kind: 'widget_add', boardId: 'b1', ref, instance, width: 2 });
-        expect(projectDisplayedWorkBoards(b.store.getBoards(), b.store.queue.getState().pending).boards[0]?.widgets).toMatchObject([{ instance, width: 2 }]);
+        const saving = b.store.queue.dispatch({ kind: 'widget_add', boardId: 'b1', ref, instance, size: 'full' });
+        expect(projectDisplayedWorkBoards(b.store.getBoards(), b.store.queue.getState().pending).boards[0]?.widgets).toMatchObject([{ instance, size: 'full' }]);
         release(); expect(await saving).toMatchObject({ status: 'applied' });
         b.offline(true);
         expect(await b.store.queue.dispatch({ kind: 'widget_inputs', boardId: 'b1', ref, bindings: { session: { kind: 'value', value: 's2' } } })).toMatchObject({ status: 'unknown' });
@@ -46,7 +46,7 @@ describe('WorkBoard Account Artifact save queue', () => {
         b.offline(false); await b.store.queue.retry();
         const loaded = createWorkBoardAccountStore(b.transport, () => true);
         await loaded.refresh();
-        expect(loaded.getBoards().boards[0]?.widgets).toMatchObject([{ instance: { id: 'copy', bindings: { session: { kind: 'value', value: 's2' } } }, width: 2 }]);
+        expect(loaded.getBoards().boards[0]?.widgets).toMatchObject([{ instance: { id: 'copy', bindings: { session: { kind: 'value', value: 's2' } } }, size: 'full' }]);
         expect(loaded.getBoards().boards[0]?.source.picked).toEqual(base.boards[0]?.source.picked);
         expect(await b.store.queue.dispatch({ kind: 'widget_add', boardId: 'b1', ref, instance })).toMatchObject({ status: 'refused', code: 'widget_instance_already_exists' });
     });

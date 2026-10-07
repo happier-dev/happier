@@ -11,9 +11,10 @@ installSessionHandoffCommonModuleMocks({ storage: async importOriginal => import
 vi.doUnmock('@/components/ui/text/Text');
 const network = await installSessionOpsNetworkBoundary();
 await loadSyncSingletonForTests();
-const home = await network.addHome('https://handoff-progress.example.test', 'account-1');
+let home: Awaited<ReturnType<typeof network.addHome>>;
 const { renderScreen, standardCleanup } = await import('@/dev/testkit');
-beforeEach(() => {
+beforeEach(async () => {
+    home = await network.addHome('https://handoff-progress.example.test', 'account-1');
     network.resetRequests();
     network.respond(ACTION_OPERATION_RPC_METHODS_V1.cancel, { kind: 'requested' });
 });
@@ -115,7 +116,17 @@ describe('SessionHandoffProgressModal', () => {
         expect(React.isValidElement(chrome?.footer)).toBe(true);
         const footer = await renderScreen(chrome.footer);
         await footer.pressByTestIdAsync('action-operation-cancel');
-        expect(network.requests).toContainEqual(expect.objectContaining({ serverUrl: home.serverUrl, targetId: 'source-machine', method: ACTION_OPERATION_RPC_METHODS_V1.cancel, payload: { operationId: operation.operationId } }));
+        await act(async () => {
+            await vi.waitFor(() => {
+                expect(network.requests).toContainEqual(expect.objectContaining({
+                    serverUrl: home.serverUrl,
+                    targetId: 'source-machine',
+                    method: ACTION_OPERATION_RPC_METHODS_V1.cancel,
+                    payload: { operationId: operation.operationId },
+                }));
+            });
+        });
+        expect(footer.getTextContent()).toContain('inbox.actionOperations.cancel.requested');
         await footer.pressByTestIdAsync('action-operation-collapse');
         expect(onClose).toHaveBeenCalledTimes(1);
     });
@@ -154,14 +165,14 @@ describe('SessionHandoffProgressModal', () => {
             .toEqual({ min: 0, max: 100, now: 25 });
         expect(screen.getTextContent()).not.toContain('Packaging session state');
 
-        const detailsToggle = screen.findByTestId('session-handoff-progress-details-toggle');
-        expect(detailsToggle?.props.accessibilityRole).toBe('button');
-        expect(detailsToggle?.props.accessibilityState).toEqual({ expanded: false });
+        const detailsToggle = screen.findHostByTestId('session-handoff-progress-details-toggle');
+        expect(detailsToggle?.props.role).toBe('button');
+        expect(detailsToggle?.props.accessibilityState?.expanded).toBe(false);
         await screen.pressByTestIdAsync('session-handoff-progress-details-toggle');
 
         expect(screen.getTextContent()).toContain('Packaging session state');
         expect(screen.getTextContent()).toContain('1.0 KB / 4.0 KB');
-        expect(screen.findByTestId('session-handoff-progress-details')?.props.expanded).toBe(true);
+        expect(screen.findHostByTestId('session-handoff-progress-details-toggle')?.props.accessibilityState?.expanded).toBe(true);
     });
 
     it('shows a spinner while the modal is waiting for the first status update', async () => {

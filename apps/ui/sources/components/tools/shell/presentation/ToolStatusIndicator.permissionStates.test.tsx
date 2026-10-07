@@ -100,4 +100,31 @@ describe('ToolStatusIndicator (permission states)', () => {
         // user's loading indicator style.
         expect(screen.findByType(ActivitySpinner).props.color).toBe('#555555');
     });
+
+    it('draws a finished tool quietly in the ink, a failed one in rose and one waiting on permission in attention amber', async () => {
+        const { ToolStatusIndicator } = await import('./ToolStatusIndicator');
+        const { lightTheme } = await import('@/theme');
+        const glyph = async (tool: Record<string, unknown>, name: string) => {
+            const screen = await renderScreen(
+                <ToolStatusIndicator
+                    tool={{
+                        name: 'edit',
+                        input: {},
+                        createdAt: 1,
+                        startedAt: 1,
+                        completedAt: 2,
+                        description: null,
+                        result: null,
+                        ...tool,
+                    } as any}
+                />,
+            );
+            return screen.tree.root.findAllByType('Icon' as any).find((node) => node.props.name === name)?.props.color;
+        };
+
+        expect(await glyph({ state: 'completed', result: 'ok' }, 'check-circle')).toBe('#555555');
+        expect(await glyph({ state: 'error' }, 'x-circle')).toBe(lightTheme.colors.state.danger.foreground);
+        expect(await glyph({ state: 'running', completedAt: null, permission: { status: 'pending' } }, 'lock'))
+            .toBe(lightTheme.colors.state.attention.foreground);
+    });
 });

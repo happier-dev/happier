@@ -1025,6 +1025,43 @@ describe('shared Account workflow run owner', () => {
       .resolves.toMatchObject({ runs: [{ startedBy: 'user' }] });
   });
 
+  it('finds destination writes after nonmatching pages for both Account and Session triggers', async () => {
+    const snapshot = runSnapshot();
+    const scoped = await materializeWorkflowAcceptedSnapshotV1({ definition: { ...definition,
+      defaults: { ...definition.defaults, conversation: { kind: 'origin_session' } } },
+      context: {
+        source: { kind: 'automation', automationId: 'habit' }, inputs: {}, machineId: 'machine-a',
+        executionTarget: { kind: 'session' }, workspaceTarget: { project: { machineId: 'machine-a', directory: '/repo', checkoutRootPath: '/repo' } },
+        origin: { kind: 'direct', originSessionId: 'destination' }, authorization: { principal: { kind: 'host' } } },
+      admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true } });
+    const account = await materializeWorkflowAcceptedSnapshotV1({ definition: { ...definition,
+      defaults: { ...definition.defaults, conversation: { kind: 'existing_session', sessionId: 'destination', machineId: 'machine-a' } } },
+      context: { source: { kind: 'automation', automationId: 'account-trigger' }, inputs: {}, machineId: 'machine-a',
+        executionTarget: { kind: 'session' }, workspaceTarget: { project: { machineId: 'machine-a', directory: '/repo', checkoutRootPath: '/repo' } },
+        authorization: { principal: { kind: 'host' } } },
+      admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true } });
+    if (!scoped.ok || !account.ok) throw new Error('destination_fixture_failed');
+    // Accepted 0.3 snapshots before HB did not carry the stored projection.
+    const beforeHb = { ...account.snapshot };
+    delete beforeHb.targetSessionIds;
+    const envelope = (acceptedSnapshot: typeof scoped.snapshot, id: string) => serializeWorkflowStoredContentEnvelopeV1(
+      sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId: id }, acceptedSnapshot }));
+    const requested: unknown[] = [];
+    const owner = createWorkflowAccountRunActionOwner(ownerDeps({ execute: async operation => {
+      if (operation.operation !== 'list') throw new Error('destination_filter_must_stay_lean');
+      requested.push(operation.request);
+      if (requested.length === 1) return { runs: [snapshot.run],
+        acceptedEnvelopesByRunId: { [runId]: snapshot.acceptedEnvelope },
+        keyCensusByRunId: { [runId]: snapshot.keyCensus }, nextCursor: 'next-page' };
+      return { runs: ['habit-run', 'account-run'].map(id => ({ ...snapshot.run, id })),
+        acceptedEnvelopesByRunId: { 'habit-run': envelope(scoped.snapshot, 'habit-run'), 'account-run': envelope(beforeHb, 'account-run') },
+        keyCensusByRunId: Object.fromEntries(['habit-run', 'account-run'].map(id => [id, { ...snapshot.keyCensus, runId: id }])) };
+    } }));
+    const result = await owner.execute({ actionId: 'workflow.run.list', input: { targetSessionId: 'destination' }, context: {} });
+    expect(result).toMatchObject({ runs: [{ id: 'habit-run' }, { id: 'account-run' }] });
+    expect(requested).toEqual([{ targetSessionId: 'destination' }, { targetSessionId: 'destination', cursor: 'next-page' }]);
+  });
+
   it('opens completed authored progress in the lean list without reading Run detail', async () => {
     const snapshot = runSnapshot();
     const unreadableId = '22222222-2222-4222-8222-222222222222';

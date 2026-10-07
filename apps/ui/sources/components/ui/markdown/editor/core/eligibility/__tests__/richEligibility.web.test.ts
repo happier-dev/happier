@@ -47,7 +47,7 @@ it('keeps cheap gates synchronous and resolves lossless HTML through the deferre
     expect(latest).toEqual({ eligible: false, reason: 'html-or-jsx', pending: true });
     tiptap.release();
     await act(async () => {
-        await import('../../tiptap/markdownRoundTrip.web');
+        await import('../../../markdownEditorEngine.web');
     });
     expect(tiptap.loaded).toBe(true);
     expect(latest).toEqual({ eligible: true });

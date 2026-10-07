@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { serializeAutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol';
+import { serializeAutomationStoredWorkflowDefinitionRecipeV2, AutomationRunCauseSchema,
+  deriveAutomationManualOccurrenceKeyV1 } from '@happier-dev/protocol';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { admitExecutionRunLifecycleAutomationRunsTx, catchUpAutomationRunLifecycleSourcesTx,
   validateAutomationRunLifecycleSourceTx } from './automationRunLifecycleAdmission';
-import { decodeAutomationRunCause } from './automationRunCauseCodec';
+import { decodeAutomationRunCause, encodeAutomationRunCause } from './automationRunCauseCodec';
 import { automationRunCauseSelect } from './automationPersistenceSelect';
 import { cancelWorkflowRun } from '@/app/workflows/workflowRunService';
 import { applyMachineReplacement, clearMachineReplacement } from '@/app/machines/applyMachineReplacement';
@@ -63,6 +64,27 @@ describe('Run lifecycle source admission (retained SQLite owners)', () => {
     await inTx(tx => catchUpAutomationRunLifecycleSourcesTx(tx, f.automationId));
     await inTx(tx => catchUpAutomationRunLifecycleSourcesTx(tx, f.automationId));
     expect(await db.automationRun.count({ where: { automationId: f.automationId } })).toBe(1);
+  });
+
+  it('suppresses the originating trigger on its own retained run event before reserving its occurrence', async () => {
+    const f = await fixture();
+    const run = await db.automationRun.create({ data: { accountId: f.accountId, originKind: 'direct', causeKind: null,
+      state: 'succeeded', scheduledAt: new Date(), dueAt: new Date(), workflowCustodyState: 'settled',
+      workflowAcceptedSnapshotEnvelope: '{}', revision: 4 } });
+    const definition = { kind: 'runLifecycle', source: { kind: 'workflow_run', runId: run.id }, condition: 'terminal' };
+    const own = await db.automationTrigger.create({ data: { automationId: f.automationId, kind: 'runLifecycle', enabled: true,
+      sourceRunId: run.id, remainingOccurrences: 1, runLifecycleConfigurationJson: JSON.stringify(definition) } });
+    const unrelated = await db.automationTrigger.create({ data: { automationId: f.automationId, kind: 'runLifecycle', enabled: true,
+      sourceRunId: run.id, remainingOccurrences: 1, runLifecycleConfigurationJson: JSON.stringify(definition) } });
+    // A trigger may be edited after its earlier firing; the Run keeps that earlier immutable cause.
+    await db.automationRun.update({ where: { id: run.id }, data: { originKind: 'automation', automationId: f.automationId,
+      ...encodeAutomationRunCause(AutomationRunCauseSchema.parse({ kind: 'trigger', triggerKind: 'schedule',
+        triggerId: own.id, triggerRevision: 1, occurredAt: 100, evidence: { scheduledFor: 100 },
+        occurrenceKey: deriveAutomationManualOccurrenceKeyV1({ automationId: f.automationId, idempotencyKey: run.id }) })) } });
+    await inTx(tx => catchUpAutomationRunLifecycleSourcesTx(tx, f.automationId));
+    expect(await db.automationRun.count({ where: { triggerId: own.id } })).toBe(1);
+    expect((await db.automationTrigger.findUniqueOrThrow({ where: { id: own.id } })).remainingOccurrences).toBe(1);
+    expect(await db.automationRun.count({ where: { triggerId: unrelated.id } })).toBe(1);
   });
 
   it('consumes the actual FIN terminal producer and catches up a later registration, while deletion stays cancelled', async () => {

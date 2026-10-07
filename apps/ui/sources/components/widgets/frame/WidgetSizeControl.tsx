@@ -1,8 +1,9 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { WidgetSizePicker } from '@happier-dev/plugin-ui/presentation';
+import { WidgetSizePicker, type WidgetSizePickerCompactInput } from '@happier-dev/plugin-ui/presentation';
 import { getWidgetSizeFootprintV1, stepWidgetSizeV1, type WidgetSizeV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
@@ -14,14 +15,19 @@ export type WidgetSizeControl = Readonly<{
     disabled?: boolean;
 }>;
 
-/** Core supplies labels and theme; app and plugins render the same presentation primitive. */
+/** Core supplies labels, theme and its field menu; app and plugins render the same presentation primitive. */
 export function WidgetSizeControl(props: WidgetSizeControl & Readonly<{ testID: string; showLabel?: boolean }>) {
     const { theme } = useUnistyles();
+    const testID = props.testID;
+    const renderCompact = React.useCallback((input: WidgetSizePickerCompactInput) => (
+        <WidgetSizeMenu input={input} testID={`${testID}.compact`} />
+    ), [testID]);
     if (props.sizes.length === 0) return null;
     return <View style={{ gap: 6 }}>
         {props.showLabel ? <Text>{t('widgetAdd.size')}</Text> : null}
         <WidgetSizePicker testID={props.testID} accessibilityLabel={t('widgetAdd.size')} value={props.size}
             disabled={props.disabled}
+            renderCompact={renderCompact}
             choices={props.sizes.flatMap(size => {
                 const footprint = getWidgetSizeFootprintV1(props.surface, size);
                 return footprint ? [{ key: size, label: t(`widgetAdd.sizes.${size}`), footprint }] : [];
@@ -33,6 +39,33 @@ export function WidgetSizeControl(props: WidgetSizeControl & Readonly<{ testID: 
                 if (size) props.onSet(size);
             }} />
     </View>;
+}
+
+/**
+ * The size choice when its segments do not fit the room (a phone's sheet): the app's one field
+ * select, "Size · Medium", opening the same choices in the shared menu.
+ */
+function WidgetSizeMenu(props: Readonly<{ input: WidgetSizePickerCompactInput; testID: string }>): React.ReactElement {
+    const [open, setOpen] = React.useState(false);
+    const { input } = props;
+    const selected = input.choices.find((choice) => choice.key === input.value) ?? null;
+    return (
+        <DropdownMenu
+            testID={props.testID}
+            open={open}
+            onOpenChange={setOpen}
+            items={input.choices.map((choice) => ({ id: choice.key, testID: `${props.testID}.${choice.key}`, title: choice.label }))}
+            selectedId={selected?.key ?? null}
+            onSelect={(id) => { input.onChange(id); setOpen(false); }}
+            variant="default"
+            matchTriggerWidth={false}
+            itemTrigger={{
+                title: input.accessibilityLabel,
+                detailFormatter: () => selected?.label ?? null,
+                itemProps: { testID: `${props.testID}.trigger`, disabled: input.disabled === true, showDivider: false },
+            }}
+        />
+    );
 }
 
 /** Keyboard and pointer selection share the Protocol order and the same caller mutation. */

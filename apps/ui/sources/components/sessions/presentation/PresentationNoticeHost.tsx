@@ -17,6 +17,7 @@ import { surfaceUsesRim } from '@/components/ui/surfaces/surfaceEdgeTreatment';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { resolveOverlayPointerEvents } from '@/components/ui/overlays/resolveOverlayPointerEvents';
 import { useOptionalSafeAreaInsets } from '@/hooks/ui/useOptionalSafeAreaInsets';
+import { FLOATING_OVERLAY_METRICS } from '@/components/ui/overlays/floatingOverlayMetrics';
 
 import {
     readPresentationNotice,
@@ -43,7 +44,8 @@ const NOTICE_TOP_MARGIN_PX = 12;
 const NOTICE_MOTION = resolveOverlayMotionPreset({ kind: 'popover', direction: 'bottom' });
 
 /** A notice is a floating surface (toast): the floating hairline and its rim, at the toast's radius. */
-const NOTICE_RADIUS_PX = 12;
+// A floating surface: the `lg` step of the one radius base (the floating-overlay radius).
+const NOTICE_RADIUS_PX = FLOATING_OVERLAY_METRICS.radiusPx;
 
 const stylesheet = StyleSheet.create((theme) => ({
     noticeHost: {
@@ -61,7 +63,7 @@ const stylesheet = StyleSheet.create((theme) => ({
             edge: resolveThemeRaisedEdge(theme, 'modal'),
             rim: surfaceUsesRim('floating', theme.dark),
         }),
-        backgroundColor: theme.colors.surface.elevated,
+        backgroundColor: theme.colors.edge.floatingFill,
         paddingHorizontal: 14,
         paddingVertical: 10,
         flexDirection: 'row',

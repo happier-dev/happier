@@ -294,7 +294,7 @@ function ChannelsHomeWidget(props: Readonly<{ snapshot: ChannelsConversationSnap
           titleNumberOfLines={1}
           subtitle={row.subtitle}
           subtitleNumberOfLines={1}
-          {...(row.attention ? { icon: <Icon name="warning" size="small" tone="warning" />, tone: 'warning' as const } : {})}
+          {...(row.attention ? { icon: <Icon name="warning" size="small" tone="attention" />, tone: 'attention' as const } : {})}
           density="compact"
           onPress={() => navigation.openConversation(row.bindingId)}
         />

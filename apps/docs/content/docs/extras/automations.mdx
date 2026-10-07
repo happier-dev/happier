@@ -37,6 +37,14 @@ changes what future claims execute. An admitted Run keeps its frozen definition.
 It can start a new Session, continue an existing Session, or run detached work,
 depending on the authored target.
 
+For Workflow-backed Automations in current 0.3 development source,
+**Runs in: existing session** writes into
+that conversation rather than starting another Agent. These writes do not use
+machine start capacity, whether the Automation belongs to the Account or is
+attached to a Session. Session-attached triggers keep their Session scope.
+Run queries can select the destination Session separately from the Session that
+started the Run; both kinds of Automation use that same destination relation.
+
 The same Automation can own no automatic triggers, one trigger, or several.
 Every enabled trigger is independent: if any one of them fires, the recipe
 runs. There is no ordering or requirement that several triggers fire together.
@@ -276,6 +284,23 @@ Definitions have four leaf kinds:
   the same Run. Its inputs and child definition are frozen at admission.
 - **Wait for you** waits for a human response without starting an Agent. If it
   declares a result contract, the response must satisfy it.
+
+In current 0.3 development source, **Call a webhook** and **Run a command** are
+presets of the same Action leaf, also available through Action discovery and MCP.
+The webhook posts JSON from typed bindings, sends a run/step/attempt idempotency
+key, and retains the response body and status. A status of 300 or higher fails
+the step without following a redirect. It uses the notification webhook
+destination policy: public destinations require HTTPS, explicitly named local
+destinations are permitted, and metadata addresses or public-looking names that
+resolve to private addresses are refused.
+
+A command runs on the Run's Machine in the step workspace, with the Machine's
+normal user permissions. Write shell syntax as literal text and pass dynamic
+values through the `env` field; reference those variables using your shell's
+syntax. Input or event values cannot become command text. The result retains
+`exitCode`, `stdout`, and `stderr`, including output from a failed command.
+These are trusted-user operations, not a sandbox, and add no default step
+deadline or output truncation limit.
 
 In unreleased 0.3 development source, each block can have its own optional name,
 separate from its prompt, Role or selected Action. Rename it inline in the block

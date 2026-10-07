@@ -8,11 +8,12 @@ import {
 } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { useItemRowAccessibleName } from '@/components/ui/lists/ItemRowAccessibleName';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { shadowLevelStyle } from '@/shadowElevation';
-import { isHappierFocusVisible } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, isHappierFocusVisible } from '@happier-dev/plugin-ui/presentation';
 
 export type SliderProps = Readonly<{
     value: number;
@@ -210,8 +211,7 @@ export function Slider(props: SliderProps) {
                             backgroundColor: theme.colors.text.primary,
                             borderColor: theme.colors.surface.base,
                         },
-                        focused ? { outlineColor: theme.colors.border.focus } : null,
-                        focused ? styles.thumbFocused : null,
+                        focusRingStyle({ focused, color: theme.colors.border.focus }),
                         motion ? THUMB_TRANSITION_STYLE : null,
                     ]}
                 />
@@ -243,7 +243,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: 10,
         borderRadius: 8,
-        ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : null),
+        // The thumb draws the ring.
+        ...HAPPIER_FOCUS_RING_DELEGATED_STYLE,
     },
     rootFill: {
         alignSelf: 'stretch',
@@ -285,8 +286,5 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: THUMB_SIZE_PX / 2,
         borderWidth: 2,
         ...shadowLevelStyle(theme.colors.shadowLevels[1]),
-    },
-    thumbFocused: {
-        ...(Platform.OS === 'web' ? ({ outlineStyle: 'solid', outlineWidth: 2, outlineOffset: 2 } as object) : null),
     },
 }));

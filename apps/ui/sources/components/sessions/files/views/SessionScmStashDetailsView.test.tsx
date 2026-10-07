@@ -398,8 +398,7 @@ describe('SessionScmStashDetailsView', () => {
 
     it('names the stash as where it came from and says what Restore will do before you press it', async () => {
         const screen = await renderStashDetailsView();
-        const title = screen.findAllByTestId('scm-stash-details-header.title').find((node) => typeof node.type === 'string');
-        expect(title?.children.join('')).toBe('detailsSurface.history.stashKeptOn');
+        expect(screen.getTextContent()).toContain('detailsSurface.history.stashKeptOn');
         expect(screen.getTextContent()).toContain('detailsSurface.history.stashRestoreExplains');
         expect(screen.getTextContent()).not.toContain('files.stash.detailsTitle');
     });

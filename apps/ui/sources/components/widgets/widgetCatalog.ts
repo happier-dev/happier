@@ -1,5 +1,5 @@
 import type { ConnectedAccountUiProjectionEntryV1, PluginContributionIdentityV1, PluginJsonSchemaV2, PluginProjectedResourceV2 } from '@happier-dev/protocol';
-import { WidgetConnectedAccountPurposeBindingV1Schema, WidgetSizeDeclarationV1Schema, type WidgetSizeDeclarationV1, type WidgetConnectedAccountPurposeBindingV1, type WidgetDefinitionSummaryV1 } from '@happier-dev/protocol/widgets';
+import { WidgetConnectedAccountPurposeBindingV1Schema, WidgetSizeDeclarationV1Schema, type WidgetSizeDeclarationV1, type WidgetConnectedAccountPurposeBindingV1, type WidgetDefinitionAuthorV1, type WidgetDefinitionSummaryV1 } from '@happier-dev/protocol/widgets';
 import { buildQualifiedPluginContributionKey, PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { PluginJsonSchemaV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { InputHintsSchema, InputPathSchema, type InputHints } from '@happier-dev/protocol/inputs';
@@ -63,6 +63,8 @@ export type WidgetCandidate = WidgetCandidateIdentityV1 & Readonly<{
     authoredDefinition?: WidgetDefinitionV1;
     sourceDefinition?: Extract<WidgetDefinitionRefV1, { kind: 'installed' }>;
     bodyKind?: WidgetDefinitionSummaryV1['bodyKind'];
+    /** An Account definition's maker and creation time, as its provenance recorded them. */
+    madeBy?: Readonly<{ author: WidgetDefinitionAuthorV1; createdAt?: number }>;
 }>;
 
 /** The header supplies setup and frame metadata; the demanded mount opens the executable body. */
@@ -71,6 +73,7 @@ export function describeWidgetDefinitionSummaryV1(summary: WidgetDefinitionSumma
         title: summary.name, pluginName: installed?.pluginName ?? summary.name, sharedPluginName: false,
         icon: installed?.icon ?? 'stack', homeDefault: 'available', target: summary.sessionInputPath ? 'session' : 'app',
         inputs: summary.inputs, inputSchema: summary.inputSchema, bodyKind: summary.bodyKind, sizeDeclaration: summary.sizeDeclaration,
+        ...(summary.author ? { madeBy: { author: summary.author, ...(summary.createdAt !== undefined ? { createdAt: summary.createdAt } : {}) } } : {}),
         ...(summary.sessionInputPath ? { sessionInputPath: summary.sessionInputPath } : {}),
         ...(summary.connectedAccountPurposeBindings ? { connectedAccountPurposeBindings: summary.connectedAccountPurposeBindings } : {}),
         resources: installed?.resources ?? summary.resources,
@@ -90,6 +93,9 @@ export function describeAuthoredWidgetDefinitionV1(definition: WidgetDefinitionV
         ...(definition.sessionInputPath ? { sessionInputPath: definition.sessionInputPath } : {}),
         ...(definition.connectedAccountPurposeBindings ? { connectedAccountPurposeBindings: definition.connectedAccountPurposeBindings } : {}),
         resources: installed?.resources ?? readWidgetDefinitionResourcesV1(definition), authoredDefinition: definition,
+        bodyKind: definition.body.kind,
+        ...(definition.provenance.author ? { madeBy: { author: definition.provenance.author,
+            ...(definition.provenance.createdAt !== undefined ? { createdAt: definition.provenance.createdAt } : {}) } } : {}),
         ...(installed?.resourceDeclarations ? { resourceDeclarations: installed.resourceDeclarations } : {}),
         ...(installed?.connectedAccountDescriptors ? { connectedAccountDescriptors: installed.connectedAccountDescriptors } : {}),
         ...(definition.body.kind === 'installed' ? { sourceDefinition: definition.body } : {}),

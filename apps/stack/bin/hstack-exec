@@ -128,7 +128,7 @@ score_load_sample() {
   # eligible for admission; AUTO can retry the pool while pins wait there.
   printf '%s\n' "$1" | awk -v heavy="${2-0}" -v minimum_capacity="${3-0}" '
     {
-      if ($1 <= 0 || $2 < 0 || ($4 != "" && $4 < 1048576)) exit
+      if ($1 <= 0 || $2 < 0 || ($4 != "" && $4 <= 0)) exit
       if (minimum_capacity > 0 && $8 < minimum_capacity) exit
       ratio = $3
       if ($8 > 0) ratio = $7 / $8
@@ -303,7 +303,7 @@ heavyweight_count_reserved_memory() {
     [ -d "$heavyweight_reserved_entry" ] || continue
     IFS=' ' read -r heavyweight_reserved_pid heavyweight_reserved_token < "$heavyweight_reserved_entry/process" 2>/dev/null || continue
     if ! heavyweight_process_is_current "$heavyweight_reserved_pid" "$heavyweight_reserved_token"; then
-      rm -f -- "$heavyweight_reserved_entry/process" "$heavyweight_reserved_entry/class" "$heavyweight_reserved_entry/machine" 2>/dev/null || true
+      rm -f -- "$heavyweight_reserved_entry/process" "$heavyweight_reserved_entry/class" "$heavyweight_reserved_entry/machine" "$heavyweight_reserved_entry/phase" 2>/dev/null || true
       rmdir -- "$heavyweight_reserved_entry" 2>/dev/null || true
       continue
     fi
@@ -375,7 +375,7 @@ heavyweight_cleanup_records() {
     [ -d "$heavyweight_entry" ] || continue
     IFS=' ' read -r heavyweight_entry_pid heavyweight_entry_token < "$heavyweight_entry/process" 2>/dev/null || continue
     if ! heavyweight_process_is_current "$heavyweight_entry_pid" "$heavyweight_entry_token"; then
-      rm -f -- "$heavyweight_entry/process" "$heavyweight_entry/class" "$heavyweight_entry/machine" 2>/dev/null || true
+      rm -f -- "$heavyweight_entry/process" "$heavyweight_entry/class" "$heavyweight_entry/machine" "$heavyweight_entry/phase" "$heavyweight_entry/disk" 2>/dev/null || true
       rmdir -- "$heavyweight_entry" 2>/dev/null || true
     fi
   done
@@ -459,6 +459,14 @@ EOF
       fi
       ;;
   esac
+  if [ -n "${HAPPIER_STACK_PM_CACHE_BASE_DIR-}" ]; then
+    if ! heavyweight_disk_snapshot=$(node "$script_dir/../scripts/utils/dev_targets/worker_disk_budget.mjs" --admit \
+      "--repo=$repo_root" "--class=$heavyweight_admission_class" "--target=${HAPPIER_RUNTIME_BUILD_DISK_TARGET-}" \
+      "--admission-root=$heavyweight_admission_root" "--own-owner-path=${heavyweight_owner_path-}"); then
+      heavyweight_declined_disk=1
+      exit 75
+    fi
+  fi
   return 0
 }
 
@@ -479,7 +487,9 @@ heavyweight_report_pre_dispatch_failure() {
   if [ "$heavyweight_exit_status" -ne 0 ] && [ "$heavyweight_exit_status" -ne 130 ] \
     && [ "$heavyweight_exit_status" -ne 129 ] && [ "${heavyweight_payload_started-0}" = 0 ] \
     && [ -n "${heavyweight_failure_id-}" ]; then
-    if [ "${heavyweight_declined_busy-0}" = 1 ]; then
+    if [ "${heavyweight_declined_disk-0}" = 1 ]; then
+      printf 'HSTACK_ADMISSION_DISK:%s\n' "$heavyweight_failure_id" >&2
+    elif [ "${heavyweight_declined_busy-0}" = 1 ]; then
       printf 'HSTACK_ADMISSION_BUSY:%s\n' "$heavyweight_failure_id" >&2
     else
       printf 'HSTACK_ADMISSION_UNAVAILABLE:%s\n' "$heavyweight_failure_id" >&2
@@ -618,8 +628,15 @@ run_heavyweight_admission() {
     heavyweight_recorded_class=$(sed -n '1p' "$heavyweight_owner_path/class" 2>/dev/null || true)
     heavyweight_inherited_floor=$(heavyweight_memory_floor_kib "$heavyweight_recorded_class")
     heavyweight_requested_floor=$(heavyweight_memory_floor_kib "$heavyweight_admission_class")
-    if [ "$heavyweight_requested_floor" -gt "$heavyweight_inherited_floor" ]; then
-      # A focused parent's admission cannot establish compilation headroom.
+    heavyweight_disk_escalation=0
+    if [ -n "${HAPPIER_STACK_PM_CACHE_BASE_DIR-}" ]; then
+      case "$heavyweight_recorded_class:$heavyweight_admission_class" in
+        validation:package-dist|validation:runtime-build|validation:compilation|dependency-install:package-dist|dependency-install:runtime-build|dependency-install:compilation)
+          heavyweight_disk_escalation=1 ;;
+      esac
+    fi
+    if [ "$heavyweight_requested_floor" -gt "$heavyweight_inherited_floor" ] || [ "$heavyweight_disk_escalation" = 1 ]; then
+      # Equal memory classes can still require a larger build disk envelope.
       # Escalate through the same resource owner while retaining its record;
       # descendants must never queue for a second owner behind their parent.
       heavyweight_last_wait_state=
@@ -632,6 +649,7 @@ run_heavyweight_admission() {
         fi
         if heavyweight_resource_is_ready; then
           printf '%s\n' "$heavyweight_admission_class" > "$heavyweight_owner_path/class" || exit 1
+          [ -z "${heavyweight_disk_snapshot-}" ] || printf '%s\n' "$heavyweight_disk_snapshot" > "$heavyweight_owner_path/disk" || exit 1
           flock -u 9
           break
         fi
@@ -699,7 +717,7 @@ run_heavyweight_admission() {
 
   heavyweight_release_admission() {
     rm -f -- "$heavyweight_waiter_path" 2>/dev/null || true
-    rm -f -- "$heavyweight_owner_path/process" "$heavyweight_owner_path/class" "$heavyweight_owner_path/machine" 2>/dev/null || true
+    rm -f -- "$heavyweight_owner_path/process" "$heavyweight_owner_path/class" "$heavyweight_owner_path/machine" "$heavyweight_owner_path/phase" "$heavyweight_owner_path/disk" 2>/dev/null || true
     rmdir -- "$heavyweight_owner_path" 2>/dev/null || true
     heavyweight_release_lock
   }
@@ -757,6 +775,8 @@ run_heavyweight_admission() {
       printf '%s %s\n' "$heavyweight_pid" "$heavyweight_token" > "$heavyweight_owner_path/process" || exit 1
       printf '%s\n' "$heavyweight_admission_class" > "$heavyweight_owner_path/class" || exit 1
       printf '%s\n' "$heavyweight_admission_machine" > "$heavyweight_owner_path/machine" || exit 1
+      printf '%s\n' 'admitted' > "$heavyweight_owner_path/phase" || exit 1
+      [ -z "${heavyweight_disk_snapshot-}" ] || printf '%s\n' "$heavyweight_disk_snapshot" > "$heavyweight_owner_path/disk" || exit 1
       if ! heavyweight_charge_backfill; then
         printf '[preferred-execution] could not record heavyweight backfill on %s\n' "$heavyweight_admission_machine" >&2
         exit 1
@@ -1687,18 +1707,6 @@ remote_command_probe() {
     capability_script='const { getComponentArtifactBuildTargetUnavailableReason } = await import(process.argv[1]); const [os,arch] = process.argv[2].split("-"); const components = Object.fromEntries(process.argv[3].split(",").map(component => [component,true])); const reason = getComponentArtifactBuildTargetUnavailableReason({target:{os,arch},components}); if(reason){console.error(reason);process.exit(77)} console.log((process.platform === "win32" ? "windows" : process.platform) + "-" + process.arch)'
     remote_command="$remote_command && node --input-type=module -e $(quote_remote "$capability_script") $(quote_remote "$remote_repo/packages/cli-common/componentArtifactTarget.mjs") $(quote_remote "$runtime_build_target") $(quote_remote "$runtime_build_components")"
   fi
-  if [ "$requires_remote_dependencies" -eq 1 ]; then
-    # Dependency refresh waiting and stale-owner recovery belong to the
-    # bootstrap's existing workspace lock, beneath target-side admission.
-    dependency_integrity=$(quote_remote "$remote_repo/node_modules/.yarn-integrity")
-    # The current workspace's cold Yarn v1 install materializes an approximately
-    # 12 GiB exploded cache before linking the approximately 4 GiB dependency
-    # tree. We measured 13 GiB free failing with ENOSPC. Keep cold automatic
-    # admission above that real boundary; already-prepared targets only need the
-    # generic routed-command scratch floor from the load probe.
-    cold_install_min_free_kib=16777216
-    remote_command="$remote_command && { if [ ! -f $dependency_integrity ]; then dependency_free_kib=\$(df -Pk $(quote_remote "$remote_repo") 2>/dev/null | awk 'NR==2 {print \$4}'); case \"\$dependency_free_kib\" in ''|*[!0-9]*) exit 76 ;; esac; [ \"\$dependency_free_kib\" -ge $cold_install_min_free_kib ] || exit 76; fi; }"
-  fi
   if [ -n "$runtime_build_target" ]; then
     run_remote_ssh_probe "$remote_command"
   else
@@ -1808,6 +1816,9 @@ probe_target() {
   esac
   case " ${HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS-} " in
     *" $name "*)
+      case " ${HSTACK_EXEC_PRE_DISPATCH_DISK_TARGETS-} " in
+        *" $name "*) printf '%s %s 0 - 1 disk\n' "$number" "$name"; return ;;
+      esac
       case " ${HSTACK_EXEC_PRE_DISPATCH_BUSY_TARGETS-} " in
         *" $name "*) excluded_reason=admission-busy ;;
         *) if [ "${HSTACK_EXEC_PRE_DISPATCH_SYNC_FAILED-0}" = 1 ]; then excluded_reason=prerequisite; else excluded_reason=unreachable; fi ;;
@@ -1979,7 +1990,7 @@ EOF
       [ "$local_runtime_target" = "$runtime_build_target" ] || local_native_preference=1 ;;
   esac
   local_disk_free=$(df -Pk "$repo_root" 2>/dev/null | awk 'NR==2 {print $4}')
-  local_score=$(score_load_sample "$cpu $load_value $free ${local_disk_free:-1048576} 0 0 ${local_mem_available:-0} ${local_mem_total:-0}" "$heavyweight_admission_required" "$minimum_memory_capacity_kib")
+  local_score=$(score_load_sample "$cpu $load_value $free ${local_disk_free:-0} 0 0 ${local_mem_available:-0} ${local_mem_total:-0}" "$heavyweight_admission_required" "$minimum_memory_capacity_kib")
   if [ -z "$local_score" ]; then
     printf '0 local 0 - %s local\n' "$cpu" > "$probe_tmp/local"
   else
@@ -2370,7 +2381,7 @@ remote_cwd=$remote_repo
 [ -n "$relative_cwd" ] && remote_cwd="$remote_repo/$relative_cwd"
 
 pid_file="$remote_home/remote-exec/$execution_id.pid"
-remote_script="set -euo pipefail; export HAPPIER_DEV_TARGET_EXECUTION=1;"
+remote_script="set -euo pipefail; export HAPPIER_DEV_TARGET_EXECUTION=1; export HAPPIER_STACK_PM_CACHE_BASE_DIR=$(quote_remote "$remote_home/cache"); export HAPPIER_RUNTIME_BUILD_DISK_TARGET=$(quote_remote "$runtime_build_target");"
 if [ -n "$remote_path" ]; then remote_script="$remote_script PATH=$(quote_remote "$remote_path"):\$PATH; export PATH;"; fi
 remote_setup_script=
 if [ "$requires_remote_dependencies" -eq 1 ]; then
@@ -2865,7 +2876,19 @@ if [ "$status" -eq 137 ]; then
 fi
 admission_result=
 if [ "$status" -eq 75 ] && [ -n "$admission_error_log" ]; then
-  admission_result=$(grep -Ex "HSTACK_ADMISSION_(BUSY|UNAVAILABLE):$execution_id" "$admission_error_log" | head -n 1)
+  admission_result=$(grep -Ex "HSTACK_ADMISSION_(BUSY|UNAVAILABLE|DISK):$execution_id" "$admission_error_log" | head -n 1)
+fi
+if [ "$admission_result" = "HSTACK_ADMISSION_DISK:$execution_id" ]; then
+  close_selected_control
+  release_reservation
+  release_custody_pipe
+  [ -z "$authoritative_ssh_error_log" ] || rm -f -- "$authoritative_ssh_error_log"
+  HSTACK_EXEC_PRE_DISPATCH_DISK_TARGETS="${HSTACK_EXEC_PRE_DISPATCH_DISK_TARGETS-} $selected_name"
+  export HSTACK_EXEC_PRE_DISPATCH_DISK_TARGETS
+  printf '[preferred-execution] %s disk budget rejected %s before dispatch; selecting another worker for this class\n' "$selected_name" "$heavyweight_remote_class" >&2
+  retry_other_target_before_dispatch "$@"
+  printf '%s\n' '[preferred-execution] no configured worker has measured disk headroom for this class; inspect dev-targets status' >&2
+  exit 1
 fi
 if [ "$admission_result" = "HSTACK_ADMISSION_BUSY:$execution_id" ] && [ -z "$explicit_target_number" ]; then
   close_selected_control

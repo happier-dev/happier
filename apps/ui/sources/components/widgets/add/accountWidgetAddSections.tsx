@@ -7,22 +7,22 @@ import { useYourWidgetCandidates } from '@/components/widgets/definitions/useYou
 import {
     buildWidgetCandidateSetup,
     countWidgetInstances,
+    groupWidgetCandidatesByPlugin,
     isConfigurableWidgetCandidate,
     partitionWidgetCandidatesBySource,
     runWidgetSetupCommand,
     widgetDefinitionOfCandidate,
     widgetProvidedContext,
-    widgetSetupFieldsForCandidate,
     type WidgetSurfaceContext,
     type WidgetSetupCommandResult,
 } from '@/components/widgets/surface/widgetSurfaceSetup';
 import { WidgetSetupPreview } from '@/components/widgets/surface/WidgetSetupPreview';
-import { describeWidgetCandidatePurpose, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
+import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { randomUUID } from '@/platform/randomUUID';
 import { t } from '@/text';
 
 import type { WidgetAddEntry, WidgetAddSection } from './widgetAddModel';
-import { proposeWidgetSetupDraft, type WidgetSetupDraft } from './widgetSetupModel';
+import type { WidgetSetupDraft } from './widgetSetupModel';
 
 /**
  * Home and a WorkBoard have no Session or page of their own: a Session input is chosen, never
@@ -35,7 +35,6 @@ const NO_PROVIDED_CONTEXT = Object.freeze({});
 export type AccountWidgetSurfaceLabels = Readonly<{
     count: (count: number) => string;
     submit: string;
-    fromPluginsHint: string;
 }>;
 
 export type AccountWidgetAddInput = Readonly<{
@@ -48,16 +47,15 @@ export type AccountWidgetAddInput = Readonly<{
     labels: AccountWidgetSurfaceLabels;
     /** What the surface fills on its own ("This page", "This checkout"); none on Home or a WorkBoard. */
     context?: WidgetSurfaceContext;
-    renderTilePreview?: (candidate: WidgetCandidate) => React.ReactNode;
     renderSetupPreview?: (candidate: WidgetCandidate, preview: Readonly<{ draft: WidgetSetupDraft }>) => React.ReactNode;
 }>;
 
 /**
- * What a personal surface's gallery offers (lab `dashboards` dbind G, L1): Happier's own widgets
- * (Built in) and every widget a plugin offers, counted by the copies already there. A pick with
- * inputs opens Set up when something is missing or several sizes are offered; a single-size widget
- * with no inputs adds at once and stays Added. Every add is the surface's one add intent — the same operation `widgets.instance.add`
- * performs for an agent.
+ * What a personal surface's Add offers (lab `widget-add` wsplit A): Happier's own widgets (Built in),
+ * each plugin's widgets under its name, and Your widgets, counted by the copies already there. Every
+ * widget is added from its pane — inputs first, its live body at the chosen size, then Add — and a
+ * widget without inputs that is already here stays Added. Every add is the surface's one add intent,
+ * the same operation `widgets.instance.add` performs for an agent.
  */
 export function buildAccountWidgetAddSections(input: AccountWidgetAddInput): readonly WidgetAddSection[] {
     const context = input.context ?? NO_CONTEXT;
@@ -67,7 +65,6 @@ export function buildAccountWidgetAddSections(input: AccountWidgetAddInput): rea
         const configurable = isConfigurableWidgetCandidate(candidate);
         const add = (bindings: WidgetInputBindingsV1, size?: WidgetSizeV1) => input.addInstance({ v: 1, id: randomUUID(), definition, bindings },
             input.scope ? normalizeWidgetSizeForSurfaceV1(input.scope.owner.kind, size, candidate.sizeDeclaration) : undefined);
-        const renderTilePreview = input.renderTilePreview;
         const renderSetupPreview = input.renderSetupPreview;
         const setup = buildWidgetCandidateSetup({
             candidate, context, audience: 'personal', mode: { kind: 'add', submitLabel: input.labels.submit },
@@ -78,32 +75,31 @@ export function buildAccountWidgetAddSections(input: AccountWidgetAddInput): rea
         return {
             id: `plugin-${candidate.key}`,
             title: candidate.title,
-            subtitle: describeWidgetCandidatePurpose(candidate),
+            // Its sections already name where it comes from, so the row's line is its purpose.
+            ...(candidate.description ? { subtitle: candidate.description } : {}),
             icon: candidate.icon,
             ...(configurable
                 ? (copies > 0 ? { count: input.labels.count(copies) } : {})
                 : { added: copies > 0 }),
-            // App widgets draw their real body in the tile; a configurable or Session widget needs its
-            // inputs first, so its tile keeps the glyph.
-            ...(renderTilePreview && candidate.target === 'app' && !configurable ? { renderPreview: () => renderTilePreview(candidate) } : {}),
-            ...(configurable || (setup.sizeChoices?.sizes.length ?? 0) > 1 ? { setup: () => setup } : {}),
-            onPick: () => runWidgetSetupCommand(() => add(proposeWidgetSetupDraft(widgetSetupFieldsForCandidate(candidate, context, 'personal')).bindings), t('widgetAdd.addFailed')),
+            setup: () => setup,
         };
     };
     const widgets = partitionWidgetCandidatesBySource(input.candidates);
     return [
-        { id: 'builtins', title: t('widgetAdd.builtIn'), kind: 'preview', entries: widgets.builtIn.map(entry) },
-        { id: 'plugins', title: t('widgetAdd.fromPlugins'), hint: input.labels.fromPluginsHint, kind: 'preview', entries: widgets.fromPlugins.map(entry) },
+        { id: 'builtins', title: t('widgetAdd.builtIn'), entries: widgets.builtIn.map(entry) },
+        ...groupWidgetCandidatesByPlugin(widgets.fromPlugins).map((group) => ({
+            id: `plugin:${group.id}`, title: group.title, hint: t('widgetAdd.pluginTag'), pluginId: group.id, entries: group.candidates.map(entry),
+        })),
         // Definitions the person or their agents made (lab dbind G), only when there are any.
         ...(widgets.yours.length > 0 ? [{ id: 'yours', title: t('widgetDefinition.yourWidgets'), hint: t('widgetDefinition.yourWidgetsHint'),
-            kind: 'preview' as const, entries: widgets.yours.map(entry) }] : []),
+            entries: widgets.yours.map(entry) }] : []),
     ];
 }
 
 /**
- * The live sections for a personal surface's Add: the app shell's widget candidates, real tile
- * bodies and the Set up step's exact-authority preview. Mount it only while the Add is open, so a
- * closed control reads and previews nothing.
+ * The live sections for a personal surface's Add: the app shell's widget candidates and the selected
+ * widget's exact-authority preview. Mount it only while the Add is open, so a closed control reads
+ * and previews nothing.
  */
 export function useAccountWidgetAddSections(input: Readonly<{
     scope: WidgetSurfaceRefV1 | null;
@@ -125,11 +121,6 @@ export function useAccountWidgetAddSections(input: Readonly<{
         scope,
         labels,
         ...(context ? { context } : {}),
-        renderTilePreview: (candidate) => scope ? (
-            <WidgetSetupPreview scope={scope} providedContext={context ? widgetProvidedContext(context) : NO_PROVIDED_CONTEXT}
-                candidate={candidate} draft={proposeWidgetSetupDraft(widgetSetupFieldsForCandidate(candidate, context ?? NO_CONTEXT, 'personal'))}
-                testID={`${testID}.preview.${candidate.key}`} />
-        ) : null,
         ...(scope ? {
             renderSetupPreview: (candidate: WidgetCandidate, preview: Readonly<{ draft: WidgetSetupDraft }>) => (
                 <WidgetSetupPreview

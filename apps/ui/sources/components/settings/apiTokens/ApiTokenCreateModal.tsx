@@ -1,8 +1,10 @@
 import * as React from 'react';
 import { Platform, Pressable, ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+
 import { resolveHappierFocusRingVisible } from '@happier-dev/plugin-ui/presentation';
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -87,17 +89,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: 4,
         borderRadius: 8,
     },
-    webFocusRing: {
-        ...(Platform.select({
-            web: {
-                outlineStyle: 'solid',
-                outlineWidth: 2,
-                outlineColor: theme.colors.border.focus,
-                outlineOffset: -2,
-            },
-            default: {},
-        })),
-    },
     link: {
         color: theme.colors.text.link,
         textDecorationLine: 'underline',
@@ -135,6 +126,7 @@ export function ApiTokenCreateModal(props: Readonly<{
 
 function ApiTokenCreateContent(props: Readonly<{ controller: ApiTokenSettingsController; revealAccessory?: React.ReactNode }> & CustomModalInjectedProps) {
     const styles = stylesheet;
+    const { theme } = useUnistyles();
     const router = useRouter();
     const activeServerAccountScope = useActiveServerAccountScope();
     const state = useApiTokenSettingsControllerState(props.controller);
@@ -344,7 +336,7 @@ function ApiTokenCreateContent(props: Readonly<{ controller: ApiTokenSettingsCon
                                         return [
                                             styles.actionSettingsLink,
                                             { minWidth: minimumInteractiveTargetSize, minHeight: minimumInteractiveTargetSize },
-                                            resolveHappierFocusRingVisible(webState.focused) ? styles.webFocusRing : null,
+                                            focusRingStyle({ focused: resolveHappierFocusRingVisible(webState.focused), color: theme.colors.border.focus }),
                                             { opacity: interactionState.pressed ? motionTokens.press.opacity : 1 },
                                         ];
                                     }}

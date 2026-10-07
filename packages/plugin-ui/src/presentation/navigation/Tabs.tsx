@@ -24,6 +24,7 @@ import {
 } from '../../environment/interactiveTarget.js';
 import type { HappierUiTheme } from '../../environment/types.js';
 import { HappierScrollArea } from '../layout/Layout.js';
+import { happierFocusRingStyle } from '../interaction/focusVisible.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import { HappierText } from '../text/Text.js';
 import { HAPPIER_PRESS_FEEDBACK_V1 } from '../interaction/pressFeedback.js';
@@ -421,8 +422,10 @@ export function HappierTabs(props: Readonly<{
                   flexShrink: 0,
                   gap: props.theme.spacing.xsmall,
                   minHeight: Math.max(TAB_STRIP_HEIGHT, nativeMinimumTouchTarget ?? 0),
-                  borderBottomWidth: state.focused ? 3 : 2,
-                  borderBottomColor: state.focused ? props.theme.colors.focus : (isSelected ? props.theme.colors.accent : 'transparent'),
+                  borderBottomWidth: 2,
+                  borderBottomColor: isSelected ? props.theme.colors.accent : 'transparent',
+                  // Inset: the strip scrolls, and its scroller clips anything drawn outside a tab.
+                  ...happierFocusRingStyle({ visible: state.focused, color: props.theme.colors.focus, placement: 'inset' }),
                   opacity: state.disabled ? 0.4 : state.pressed ? HAPPIER_PRESS_FEEDBACK_V1.opacity : 1,
                 })}
               >

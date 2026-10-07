@@ -21,8 +21,14 @@ export function projectWidgetDefinitionForSharedPublicationV1(definition: Widget
     }
     return WidgetDefinitionV1Schema.parse(copy);
 }
+/** Who made a definition: the person, their agent, or a trusted plugin acting for the Account. */
+export const WidgetDefinitionAuthorV1Schema = z.object({ kind: z.enum(['person', 'agent', 'plugin']) }).strict();
+export type WidgetDefinitionAuthorV1 = z.infer<typeof WidgetDefinitionAuthorV1Schema>;
 export const WidgetDefinitionProvenanceV1Schema = z.object({
     authorAccountId: id.optional(),
+    /** Written when the definition is made; a definition saved before these facts existed has neither. */
+    author: WidgetDefinitionAuthorV1Schema.optional(),
+    createdAt: z.number().int().nonnegative().optional(),
     source: z.discriminatedUnion('kind', [
         z.object({ kind: z.literal('authored') }).strict(),
         z.object({ kind: z.literal('session'), serverId: id, sessionId: id, itemId: id }).strict(),

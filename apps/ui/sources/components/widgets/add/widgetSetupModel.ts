@@ -67,8 +67,10 @@ export type WidgetSetupSubmitResult = Readonly<{ ok: true; approvalPending?: tru
 export type WidgetSetup = Readonly<{
     /** "Set up Checks" or "Checks · inputs". */
     title: string;
-    /** One line under the title: where it comes from and what it shows, or what an edit changes. */
+    /** One line under the title: what it shows, or what an edit changes. */
     hint?: string;
+    /** Who made it and where it comes from ("Built in", a plugin's name, "Your widget"). */
+    provenance?: string;
     /** Says where it goes ("Add to Home") or "Save". */
     submitLabel: string;
     /** The widget being set up, for the preview card's header (its mark and name). */
@@ -128,17 +130,6 @@ export function widgetSetupBlockingIssues(
 }
 
 const NO_ISSUES: readonly WidgetInputIssueV1[] = Object.freeze([]);
-
-/**
- * The step is shown only when something is missing or ambiguous. A fully bound choice adds at once.
- */
-export function widgetSetupNeedsStep(
-    fields: readonly WidgetSetupField[],
-    resolution: WidgetBindingResolutionV1,
-): boolean {
-    if (widgetSetupBlockingIssues(fields, resolution).length > 0) return true;
-    return fields.some((entry) => !entry.viewer && (entry.follow?.values.length ?? 0) > 1);
-}
 
 /** How one input row reads. Follows and pinned never mix: the follow glyph, or the thing's own mark. */
 export type WidgetSetupRow =

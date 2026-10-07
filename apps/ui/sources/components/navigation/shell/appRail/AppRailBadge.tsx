@@ -9,7 +9,10 @@ import { Typography } from '@/constants/Typography';
 
 import { APP_RAIL_BADGE } from './appRailMetrics';
 
-/** `attention`: something needs the person's action. `accent`: news worth a look. `neutral`: a quiet fact. */
+/**
+ * `attention`: something needs the person's action (the attention amber). `accent`: news worth a look
+ * (strong ink). `neutral`: a quiet fact (muted ink). Blue is reserved for focus and links, rose for failure.
+ */
 export type AppRailBadgeTone = 'attention' | 'accent' | 'neutral';
 
 export type AppRailBadgeSignal =
@@ -17,7 +20,7 @@ export type AppRailBadgeSignal =
     /** Attention (or news) without a number. */
     | Readonly<{ kind: 'dot'; tone: AppRailBadgeTone }>;
 
-/** The one tone mapping for rail badges: red only for what needs action. */
+/** The one tone mapping for rail badges: amber only for what needs action. */
 export function resolveAppRailBadgeTone(
     source:
         | Readonly<{ source: 'inbox' }>
@@ -54,7 +57,7 @@ export const AppRailBadge = React.memo(function AppRailBadge(props: Readonly<{ s
     }
     return (
         <View pointerEvents="none" testID={props.testID} style={[styles.anchor, styles.count, tone]}>
-            <Text style={[styles.countText, props.signal.tone === 'neutral' ? styles.countTextNeutral : null]} numberOfLines={1}>
+            <Text style={styles.countText} numberOfLines={1}>
                 {formatBadgeCount(props.signal.value)}
             </Text>
         </View>
@@ -87,10 +90,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: RINGED_DOT_PX / 2,
     },
     attention: {
-        backgroundColor: theme.colors.status.error,
+        backgroundColor: theme.colors.state.attention.foreground,
     },
     accent: {
-        backgroundColor: theme.colors.accent.blue,
+        backgroundColor: theme.colors.text.primary,
     },
     neutral: {
         backgroundColor: theme.colors.text.tertiary,
@@ -100,9 +103,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: APP_RAIL_BADGE.countFontSizePx,
         lineHeight: APP_RAIL_BADGE.countSizePx,
         fontVariant: ['tabular-nums'],
-        color: theme.colors.button.primary.tint,
-    },
-    countTextNeutral: {
+        // Knocked out of the fill in the surface colour (the attention amber is asserted AA under it).
         color: theme.colors.surface.base,
     },
 }));

@@ -1577,6 +1577,7 @@ const en = Shared_connectedServicesCollectionTranslations.en;
 
 const zhHant: ConnectedServicesCollectionCopy = {
     accountLabel: ({ service }) => `${service} 帳戶`,
+    accountLabelNumbered: ({ service, number }) => `${service} 帳戶 ${number}`,
     meterResetsIn: ({ time }) => `${time}後`,
     meterNextResetIn: ({ time }) => `下次在${time}後`,
     meterResetsAt: ({ countdown, time }) => `${countdown} · ${time}`,
@@ -10767,9 +10768,6 @@ type WidgetAddTranslation = Shared_widgetAddTranslations.WidgetAddTranslation;
 const inSentence = Shared_widgetAddTranslations.inSentence;
 
 const widgetAddTranslations = { 'zh-Hant': {
-        viewGallery: '圖庫',
-        viewList: '列表',
-        viewLabel: '檢視',
         added: '已新增',
         boardTitle: '新增到看板',
         boardHint: '這裡的每個人都能看到你新增的內容',
@@ -10777,8 +10775,6 @@ const widgetAddTranslations = { 'zh-Hant': {
         companionHint: '只有你能看到你的伴隨欄',
         searchWidgets: '搜尋小工具',
         searchCompanion: '搜尋速覽和面板',
-        fromPlugins: '來自外掛',
-        fromPluginsHint: '即時，使用此工作階段的資料',
         makeOne: '新建一個',
         noteSubtitle: 'Markdown',
         interactiveViewSubtitle: 'HTML',
@@ -10800,14 +10796,27 @@ const widgetAddTranslations = { 'zh-Hant': {
             local_services: '開啟所選工作階段執行的本機服務。',
         },
         noMatch: ({ query }) => `沒有與「${query}」相符的小工具`,
-        setupTitle: ({ widget }) => `設定 ${widget}`,
+        pickTitle: '選擇一個小工具，在這裡查看',
+        pickHint: '在加入之前，按你選擇的尺寸顯示你自己的資料。',
+        pickNote: '選擇一個小工具來加入',
+        askAction: '起草請求',
+        pluginTag: '外掛',
+        pluginProvenance: ({ plugin }) => `${plugin} 外掛`,
+        readsChosenSession: '在工作階段執行的位置讀取你選擇的工作階段',
+        readsFrom: ({ source }) => `讀取 ${source}`,
+        savedQueryOn: ({ source }) => `${source} 上的已儲存查詢`,
+        madeByYou: ({ date }) => `由你於 ${date} 建立`,
+        madeByAgent: ({ date }) => `由你的代理於 ${date} 建立`,
+        madeByPlugin: ({ date }) => `由外掛於 ${date} 建立`,
+        previewLiveData: '即時，使用你的資料',
+        addsAtSize: ({ size }) => `以${size}尺寸加入。之後可以變更尺寸。`,
+        backToWidgets: '小工具',
         editTitle: ({ widget }) => `${widget} · 輸入`,
         editHint: '只有這個副本會改變。其他副本保留各自的輸入。',
         preview: '預覽',
         previewLive: '預覽 · 即時',
         previewWaiting: ({ field }) => `選擇${field}後會在這裡顯示`,
         previewAfterAdd: '新增後會在這裡顯示',
-        backToGallery: '返回圖庫',
         needed: '必填',
         stillNeeded: ({ field }) => `仍需要 ${field}`,
         followGroup: '跟隨',
@@ -10835,7 +10844,6 @@ const widgetAddTranslations = { 'zh-Hant': {
         saveFailed: '無法儲存。請重試。',
         homeTitle: '新增到首頁',
         homeHint: '只有你能看到你的首頁 · 在所有裝置上',
-        homeFromPluginsHint: '即時，使用你的資料',
         addWidgets: '新增小工具',
         addToHome: '新增到首頁',
         addToBoard: '新增到看板',
@@ -10976,8 +10984,6 @@ const widgetFrameTranslations = { 'zh-Hant': {
         appearanceDescription: '此裝置上小工具的邊框樣式。要單獨變更某個小工具，請使用它的 ⋯ 選單。',
         previewLabel: ({ surface, style }) => `${surface} · ${style}`,
         noticeChanged: '邊框已變更',
-        addViewTitle: '新增小工具',
-        addViewDescription: '「新增」彈出視窗的顯示方式。在彈出視窗中切換也會變更此處。',
         newChip: '新',
     } } satisfies Pick<Readonly<Record<string, WidgetFrameTranslation>>, "zh-Hant">;
 
@@ -11039,6 +11045,9 @@ const en = Shared_workflowActionTranslations.en;
 const workflowActionTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy>, "zhHant"> = { zhHant: {
         host: "Happier",
         structure: "結構",
+        callWebhook: "呼叫 Webhook",
+        runCommand: "執行命令",
+        commandValuesInEnv: "透過環境變數傳遞工作流程的值。命令文字按原樣執行。",
         artifactCreate: "建立文件",
         artifactGet: "讀取文件",
         artifactList: "列出文件",
@@ -11150,6 +11159,10 @@ const workflowFieldTranslations = { zhHant: {
         secondOpinion: "第二意見",
         useJudge: "評判者",
         diffFingerprint: "已審查的變更",
+        url: "URL",
+        body: "JSON 本文",
+        command: "命令",
+        env: "環境變數",
     } };
 
 return { workflowFieldTranslations };

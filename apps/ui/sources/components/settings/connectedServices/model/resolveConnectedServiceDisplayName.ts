@@ -30,21 +30,29 @@ export function resolveConnectedServiceRegistryEntryDisplayName(
 }
 
 /**
- * Resolve a qualified service from the daemon-published, currently applied
- * descriptor projection. Callers must not infer a presentation title from an
- * installed plugin manifest: it may not be current or executable for this
+ * A qualified service's entry in the daemon-published, currently applied descriptor projection, else
+ * (before that projection arrives) a built-in service's generated entry. Callers must not infer a
+ * presentation title from an installed plugin manifest: it may not be current or executable for this
  * server scope.
  */
+export function resolveQualifiedConnectedServiceRegistryEntry(
+    registry: Pick<ConnectedServiceRegistrySnapshot, 'entries'>,
+    service: Readonly<{ pluginId: string; localId: string }>,
+): ConnectedServiceRegistryEntry | null {
+    return registry.entries.find((candidate) => (
+        candidate.service?.pluginId === service.pluginId
+        && candidate.service.localId === service.localId
+    )) ?? getGeneratedLegacyConnectedServiceRegistryFallback(service);
+}
+
+/** A qualified service's name, through `resolveQualifiedConnectedServiceRegistryEntry`. */
 export function resolveQualifiedConnectedServiceRegistryDisplayName(
     registry: Pick<ConnectedServiceRegistrySnapshot, 'entries'>,
     service: Readonly<{ pluginId: string; localId: string }>,
     translate: (key: ConnectedServiceDisplayNameKey) => string,
     localizePluginText?: PluginLocalizedTextResolver,
 ): string {
-    const entry = registry.entries.find((candidate) => (
-        candidate.service?.pluginId === service.pluginId
-        && candidate.service.localId === service.localId
-    )) ?? getGeneratedLegacyConnectedServiceRegistryFallback(service);
+    const entry = resolveQualifiedConnectedServiceRegistryEntry(registry, service);
     return entry
         ? resolveConnectedServiceRegistryEntryDisplayName(entry, translate, localizePluginText)
         : translate('connectedServices.fallbackName');

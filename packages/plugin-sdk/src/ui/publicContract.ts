@@ -202,6 +202,7 @@ export type PluginUiHostApiSurfaceThemeV1 = {
         onAccent: string;
         success: string;
         warning: string;
+        attention: string;
         danger: string;
         info: string;
         control: string;

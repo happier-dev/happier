@@ -1,4 +1,6 @@
-import { Platform } from 'react-native';
+import { Platform, type ViewStyle } from 'react-native';
+
+import type { HappierPortableLayerStyle } from '../portableTypes.js';
 
 type FocusVisibleTarget = Readonly<{ matches?: (selector: string) => boolean }>;
 type InputModality = 'keyboard' | 'pointer';
@@ -77,3 +79,47 @@ export function isHappierFocusVisible(target?: unknown): boolean {
 export function resolveHappierFocusRingVisible(focused: boolean | undefined): boolean {
   return focused === true && isHappierFocusVisible();
 }
+
+/**
+ * The one focus ring (DESIGN.md, Accessibility): 2px of the focus colour, held 2px off the control so
+ * the page shows through as the gap. An outline follows the control's radius on the web and on React
+ * Native's native outline props, never takes layout space, and never merges with the control's own
+ * border, so it reads on every surface.
+ */
+export const HAPPIER_FOCUS_RING_V1 = Object.freeze({ widthPx: 2, gapPx: 2 });
+
+/**
+ * Where the ring sits. `outset` is every control. `inset` draws it inside the box with no gap, and is
+ * only for a full-bleed row or tab whose container clips anything drawn outside it.
+ */
+export type HappierFocusRingPlacement = 'outset' | 'inset';
+
+/**
+ * The focus ring's style, or null while it does not show. `visible` is the ring decision
+ * ({@link resolveHappierFocusRingVisible}, or a `HappierPressable`'s `focused`, which already is it).
+ * Outline keys are outside the portable author vocabulary on purpose; this owner is the one place
+ * shared controls ask for them.
+ */
+export function happierFocusRingStyle(input: Readonly<{
+  visible: boolean;
+  color: string;
+  placement?: HappierFocusRingPlacement;
+}>): HappierPortableLayerStyle | null {
+  if (!input.visible) return null;
+  const ring: ViewStyle = {
+    outlineStyle: 'solid',
+    outlineWidth: HAPPIER_FOCUS_RING_V1.widthPx,
+    outlineColor: input.color,
+    outlineOffset: input.placement === 'inset' ? -HAPPIER_FOCUS_RING_V1.widthPx : HAPPIER_FOCUS_RING_V1.gapPx,
+  };
+  return ring as HappierPortableLayerStyle;
+}
+
+/**
+ * For a focusable that draws its ring on a child — the visible control inside a larger hit box — so
+ * the browser's own ring on the focusable does not draw a second ring around the hit box. Web only:
+ * native focusables paint no ring of their own.
+ */
+export const HAPPIER_FOCUS_RING_DELEGATED_STYLE: HappierPortableLayerStyle | null = Platform.OS === 'web'
+  ? ({ outlineStyle: 'none' } as unknown as HappierPortableLayerStyle)
+  : null;

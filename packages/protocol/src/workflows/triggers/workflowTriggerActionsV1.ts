@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { WorkflowDestinationsV1Schema } from '../workflowDestinationsV1.js';
 import { AutomationTriggerDefinitionInputSchema, AutomationTriggerDefinitionSchema } from '../../automations/automationTriggerDefinition.js';
 import { AutomationTriggerIdSchema } from '../../automations/automationTriggerIdentity.js';
 import { AutomationIdV1Schema } from '../../automations/automationIdV1.js';
@@ -82,6 +83,7 @@ export const WorkflowTriggerSetV1Schema = z.object({
   target: TriggerTargetV1Schema.optional(),
   project: WorkflowProjectTargetV1Schema.optional(),
   context: AutomationStoredWorkflowDefinitionV2Schema.optional(),
+  destinations: WorkflowDestinationsV1Schema.optional(),
   triggers: z.array(z.union([
     AutomationTriggerDetailSchema.options[2], AutomationTriggerDetailSchema.options[3],
     AutomationTriggerDetailSchema.options[4], AutomationTriggerDetailSchema.options[5],

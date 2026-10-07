@@ -1,8 +1,11 @@
 import * as React from 'react';
-import { Platform, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { UnistylesThemes } from 'react-native-unistyles';
 import Svg, { Path } from 'react-native-svg';
+
+import { resolveHappierFocusRingVisible } from '@happier-dev/plugin-ui/presentation';
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 
 import { interpolateDesktopOverlayCorners } from '../motion/desktopOverlayCornerInterpolation';
 import type { DesktopActivityOverlayVisualMode } from './DesktopActivityOverlayVisualMode';
@@ -267,20 +270,13 @@ export function createDesktopActivityOverlayInteriorSurfaceStyle(
 }
 
 /**
- * The canonical keyboard focus ring, matching `components/ui/lists/ItemRowActions`: an inset web
- * outline in `border.focus`. The island chrome is a fixed near-black surface in both themes, and the
- * light (`#007AFF`) and dark (`#9EB9FF`) rings both clear the 3:1 non-text contrast ratio against it.
+ * The overlay's keyboard focus ring: the shared ring (`focusRingStyle`) in `border.focus`, inset
+ * because the island fills its own window, whose edge clips anything drawn outside a control. The
+ * island chrome is a fixed near-black surface in both themes, and the light (`#007AFF`) and dark
+ * (`#9EB9FF`) rings both clear the 3:1 non-text contrast ratio against it.
  */
-export function createDesktopActivityOverlayFocusRingStyle(theme: Theme): Record<string, unknown> {
-    return Platform.select({
-        web: {
-            outlineStyle: 'solid',
-            outlineWidth: 2,
-            outlineColor: theme.colors.border.focus,
-            outlineOffset: -2,
-        },
-        default: {},
-    }) as Record<string, unknown>;
+export function createDesktopActivityOverlayFocusRingStyle(theme: Theme, focused: boolean | undefined) {
+    return focusRingStyle({ focused: resolveHappierFocusRingVisible(focused), color: theme.colors.border.focus, placement: 'inset' });
 }
 
 export function DesktopActivityOverlayChromeHighlights(props: Readonly<{

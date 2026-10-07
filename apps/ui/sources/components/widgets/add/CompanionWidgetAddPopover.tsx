@@ -19,7 +19,7 @@ import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useYourWidgetCandidates } from '@/components/widgets/definitions/useYourWidgetCandidates';
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 
-import { WidgetAddPopover } from './WidgetAddPopover';
+import { WidgetAddSurface } from './WidgetAddSurface';
 import { buildCompanionWidgetAddSections } from './widgetAddSections';
 import type { WidgetSetupDraft } from './widgetSetupModel';
 
@@ -45,7 +45,7 @@ export type CompanionWidgetAddSource = Readonly<{
 }>;
 
 /**
- * Add to Companion (lab `cwidgets` WC3, round 2): the shared Gallery | List popover with the
+ * Add to Companion (lab `cwidgets` WC3, round 2): the shared Add surface with the
  * Companion's three sources — Glances (built-ins and plugin views that declare the `companion`
  * placement), what is On this board, and Panes, added as a link row that opens in Details. Every
  * choice is one reference through the Companion's one add path; nothing is created on the Board.
@@ -106,7 +106,7 @@ function OpenCompanionWidgetAddPopover(props: React.ComponentProps<typeof Compan
     }), [addItem, candidates, context, pluginProjection, props.testID, refs, renderGlancePreview, scope, snapshot]);
 
     return (
-        <WidgetAddPopover
+        <WidgetAddSurface
             open
             anchorRef={props.anchorRef}
             {...(props.placement ? { placement: props.placement } : {})}
@@ -114,6 +114,7 @@ function OpenCompanionWidgetAddPopover(props: React.ComponentProps<typeof Compan
             title={t('widgetAdd.companionTitle')}
             hint={t('widgetAdd.companionHint')}
             searchPlaceholder={t('widgetAdd.searchCompanion')}
+            addLabel={t('widgetAdd.addToCompanion')}
             sections={sections}
             {...(context?.session ? { serverId: context.session.ref.serverId, sessionId: context.session.ref.sessionId } : {})}
             testID={props.testID}

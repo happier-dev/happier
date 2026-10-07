@@ -138,7 +138,7 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
     const widgetPresentation = React.useMemo(() => props.widgetPresentation
         ? { ...props.widgetPresentation, ...(geometry ? { geometry } : {}) } : inheritedPresentation,
         [props.widgetPresentation, geometry, inheritedPresentation]);
-    const inset = resolveHappierWidgetFrameInsetPx(props.frameStyle, props.placement);
+    const inset = resolveHappierWidgetFrameInsetPx(props.frameStyle);
     const footer = props.footer ?? null;
     const [refreshingResources, setRefreshingResources] = React.useState<ReadonlySet<symbol>>(() => new Set());
     const reportResourceActivity = React.useCallback((key: symbol, refreshing: boolean) => {
@@ -367,7 +367,7 @@ const stylesheet = StyleSheet.create((theme) => {
         // The card is the app's surface card: base surface, hairline with its raised edge and the first
         // elevation step.
         card: {
-            backgroundColor: theme.colors.surface.base,
+            backgroundColor: theme.colors.edge.cardFill,
             ...resolveThemeSurfaceChromeStyle({
                 borderColor: theme.colors.border.default,
                 edge: resolveThemeRaisedEdge(theme, 'default'),

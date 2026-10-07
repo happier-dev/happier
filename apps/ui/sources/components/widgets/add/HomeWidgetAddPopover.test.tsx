@@ -1,11 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { widgetCandidateDefinitionV1, type WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
+import { WIDGET_SIZE_POLICY_V1, widgetCandidateDefinitionV1, type WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
 
 import { describeAuthoredWidgetDefinitionV1, selectBuiltinWidgetCandidates, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
 
 import { buildHomeWidgetAddSections } from './HomeWidgetAddPopover';
 import { buildAccountWidgetAddSections } from './accountWidgetAddSections';
-import { resolveWidgetAddPick } from './widgetAddModel';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -55,29 +54,28 @@ const copy = (id: string, candidate: WidgetCandidate, sessionId?: string): Widge
 });
 
 describe('Add to Home', () => {
-    it('offers size choice for an inputless grid widget while single-size and linear widgets keep fast Add', () => {
+    it('offers an inputless grid widget’s declared sizes in its pane, and none on a linear surface', () => {
         const addInstance = vi.fn(async () => {});
-        const labels = { submit: 'Add', count: () => '', fromPluginsHint: '' };
+        const labels = { submit: 'Add', count: () => '' };
         const grid = { serverId: 'home', accountId: 'me', owner: { kind: 'home' as const } };
-        const entry = (scope: Parameters<typeof buildAccountWidgetAddSections>[0]['scope'], widget = LATEST) =>
+        const setup = (scope: Parameters<typeof buildAccountWidgetAddSections>[0]['scope'], widget = LATEST) =>
             buildAccountWidgetAddSections({ candidates: [widget], instances: [], addInstance, scope, labels })
-                .find(section => section.id === 'plugins')!.entries[0]!;
-        const choice = resolveWidgetAddPick(entry(grid));
-        expect(choice.kind).toBe('setup');
-        if (choice.kind !== 'setup') throw new Error('Size choice must be available before Add');
-        expect(choice.setup.resolve(choice.setup.initial).status).toBe('ready');
-        expect(choice.setup.initial.size).toBe('medium');
+                .find(section => section.id === 'plugin:happier.triage')!.entries[0]!.setup!();
+        const choice = setup(grid);
+        expect(choice.resolve(choice.initial).status).toBe('ready');
+        expect(choice.initial.size).toBe('medium');
+        expect(choice.sizeChoices?.sizes).toEqual(['small', 'medium', 'wide', 'full', 'tall', 'large']);
         expect(addInstance).not.toHaveBeenCalled();
-        expect(resolveWidgetAddPick(entry(grid, { ...LATEST, sizeDeclaration: { sizes: ['small'], defaultSize: 'small' } })).kind).not.toBe('setup');
-        expect(resolveWidgetAddPick(entry({ ...grid, owner: { kind: 'project', projectId: 'p' } })).kind).not.toBe('setup');
-        expect(resolveWidgetAddPick(entry({ ...grid, owner: { kind: 'companion', sessionId: 's' } })).kind).not.toBe('setup');
+        expect(setup(grid, { ...LATEST, sizeDeclaration: { sizes: ['small', 'wide'], defaultSize: 'wide' } }).sizeChoices?.sizes).toEqual(['small', 'wide']);
+        expect(setup({ ...grid, owner: { kind: 'project', projectId: 'p' } }).sizeChoices).toBeUndefined();
+        expect(setup({ ...grid, owner: { kind: 'companion', sessionId: 's' } }).sizeChoices).toBeUndefined();
     });
     it('adds selected size atomically through the existing add intent', async () => {
         const addInstance = vi.fn(async (_instance: WidgetInstanceV1, _size?: string) => {});
         const entry = buildHomeWidgetAddSections({ candidates: [{ ...SUMMARY,
             sizeDeclaration: { sizes: ['small', 'medium', 'large'], defaultSize: 'medium' } }], instances: [], addInstance,
             scope: { serverId: 'home', accountId: 'me', owner: { kind: 'home' } },
-        }).find(section => section.id === 'plugins')!.entries[0]!;
+        }).find(section => section.id === 'plugin:happier.sessions')!.entries[0]!;
         const setup = entry.setup!();
         await setup.submit({ bindings: { session: { kind: 'value', value: { serverId: 'home', sessionId: 'C' } } }, size: 'large' });
         expect(addInstance).toHaveBeenCalledWith(expect.objectContaining({ bindings: { session: { kind: 'value',
@@ -86,16 +84,15 @@ describe('Add to Home', () => {
 
     it('counts configured copies, keeps a widget without inputs Added, and asks Home for the Session', async () => {
         const addInstance = vi.fn(async (_instance: WidgetInstanceV1) => {});
-        const plugins = buildHomeWidgetAddSections({
+        const entries = buildHomeWidgetAddSections({
             candidates: [LATEST, SUMMARY],
             instances: [copy('default:happier.triage/latest', LATEST), copy('a', SUMMARY, 'A'), copy('b', SUMMARY, 'B')],
             addInstance,
             scope: { serverId: 'home', accountId: 'me', owner: { kind: 'home' } },
-        }).find((section) => section.id === 'plugins');
-        const latest = plugins!.entries.find((entry) => entry.id === 'plugin-happier.triage/latest')!;
-        const summary = plugins!.entries.find((entry) => entry.id === 'plugin-happier.sessions/summary')!;
+        }).flatMap((section) => section.entries);
+        const latest = entries.find((entry) => entry.id === 'plugin-happier.triage/latest')!;
+        const summary = entries.find((entry) => entry.id === 'plugin-happier.sessions/summary')!;
         expect(latest.added).toBe(true);
-        expect(resolveWidgetAddPick(latest).kind).toBe('added');
         expect(summary.added).toBeUndefined();
         expect(summary.count).toBe('widgetAdd.countOnHome(count=2)');
 
@@ -120,32 +117,35 @@ describe('Add to Home', () => {
             instances: [],
             addInstance: vi.fn(async () => { throw new Error('home_hub_scope_retired'); }),
             scope: null,
-        }).find((section) => section.id === 'plugins');
+        }).find((section) => section.id === 'plugin:happier.sessions');
         const setup = plugins!.entries[0]!.setup!();
         await expect(setup.submit({ bindings: { session: { kind: 'value', value: { serverId: 'home', sessionId: 'C' } } } }))
             .resolves.toEqual({ ok: false, message: 'widgetAdd.addFailed' });
     });
 
-    it('offers Happier’s own widgets in a Built in section ahead of plugin widgets, each asking Home for its Session', () => {
+    it('offers Happier’s own widgets in a Built in section ahead of each plugin’s widgets under its name, each asking Home for its Session', () => {
         const sections = buildHomeWidgetAddSections({
             candidates: [...selectBuiltinWidgetCandidates(), LATEST],
             instances: [],
             addInstance: vi.fn(async () => {}),
             scope: { serverId: 'home', accountId: 'me', owner: { kind: 'home' } },
         });
-        expect(sections.map((section) => section.id)).toEqual(['builtins', 'plugins']);
+        expect(sections.map((section) => [section.id, section.title])).toEqual([['builtins', 'widgetAdd.builtIn'], ['plugin:happier.triage', 'PRs & Issues']]);
         const builtIn = sections[0]!.entries;
         expect(builtIn.map((entry) => entry.id)).toEqual([
             'plugin-builtin:session_summary', 'plugin-builtin:agent_plan', 'plugin-builtin:changes', 'plugin-builtin:local_services',
         ]);
         expect(sections[1]!.entries.map((entry) => entry.id)).toEqual(['plugin-happier.triage/latest']);
         const setup = builtIn[0]!.setup!();
+        expect(setup.provenance).toBe('widgetAdd.builtIn · widgetAdd.readsChosenSession');
         expect(setup.fields[0]!.field.optionsSourceId).toBe('sessions');
         expect(setup.resolve(setup.initial).status).toBe('selection_required');
     });
 
     it('offers the Account’s own definitions under Your widgets and adds a copy that references the one definition', async () => {
-        const definition = { v: 1 as const, id: 'signups', name: 'Signups this week', provenance: { source: { kind: 'authored' as const } },
+        const definition = { v: 1 as const, id: 'signups', name: 'Signups this week',
+            provenance: { author: { kind: 'agent' as const }, createdAt: Date.UTC(2026, 9, 3, 12), source: { kind: 'authored' as const } },
+            sizeDeclaration: { sizes: [...WIDGET_SIZE_POLICY_V1.home.sizes], defaultSize: WIDGET_SIZE_POLICY_V1.home.defaultSize },
             body: { kind: 'declarative' as const, document: { version: 1 as const, root: { kind: 'text' as const, text: 'Signups' } } },
             inputs: { fields: [] }, inputSchema: { type: 'object' as const, additionalProperties: false } };
         const yours = { ...describeAuthoredWidgetDefinitionV1(definition, { kind: 'artifact', artifactId: 'signups-artifact' }), pluginName: 'analytics replica' };
@@ -156,13 +156,17 @@ describe('Add to Home', () => {
             addInstance,
             scope: { serverId: 'home', accountId: 'me', owner: { kind: 'home' } },
         });
-        expect(sections.map((section) => section.id)).toEqual(['builtins', 'plugins', 'yours']);
-        const plugins = sections.find((section) => section.id === 'plugins')!;
+        expect(sections.map((section) => section.id)).toEqual(['builtins', 'plugin:happier.triage', 'yours']);
+        const plugins = sections.find((section) => section.id === 'plugin:happier.triage')!;
         expect(plugins.entries.map((entry) => entry.title)).toEqual(['New for you']);
         const entry = sections.find((section) => section.id === 'yours')!.entries[0]!;
-        expect(entry).toMatchObject({ title: 'Signups this week', subtitle: 'analytics replica', added: false });
-        entry.onPick();
-        await Promise.resolve();
+        // The row says what it is for; where it comes from is the section and the pane's provenance.
+        expect(entry).toMatchObject({ title: 'Signups this week', added: false });
+        expect(entry.subtitle).toBeUndefined();
+        const setup = entry.setup!();
+        // Who made it and when come from the definition itself; its saved read names its source.
+        expect(setup.provenance).toBe('widgetDefinition.yourWidget · widgetAdd.savedQueryOn(source=analytics replica), widgetAdd.madeByAgent(date=Oct 3)');
+        await setup.submit(setup.initial);
         expect(addInstance).toHaveBeenCalledTimes(1);
         expect(addInstance.mock.calls[0]![0]).toMatchObject({ v: 1, definition: { kind: 'artifact', artifactId: 'signups-artifact' }, bindings: {} });
     });

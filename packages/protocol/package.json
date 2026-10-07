@@ -5063,6 +5063,10 @@
       "types": "./dist/workflows/workflowV1.d.ts",
       "default": "./dist/workflows/workflowV1.js"
     },
+    "./workflows/stepActionsV1": {
+      "types": "./dist/workflows/stepActionsV1.d.ts",
+      "default": "./dist/workflows/stepActionsV1.js"
+    },
     "./workflows/workflowLeafV1": {
       "types": "./dist/workflows/workflowLeafV1.d.ts",
       "default": "./dist/workflows/workflowLeafV1.js"

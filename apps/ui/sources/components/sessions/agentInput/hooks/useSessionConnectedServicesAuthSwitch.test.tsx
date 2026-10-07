@@ -411,6 +411,40 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         );
     });
 
+    it.each(['work', 'missing-profile', null])('previews the armed qualified Agent purpose default without offering source auth changes (%s)', async (profileId) => {
+        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
+        const consumer = { pluginId: 'happier.agent.claude', localId: 'claude' };
+        const service = { pluginId: 'happier.agent.claude', localId: 'anthropic' };
+        const hook = await renderHook(() => useSessionConnectedServicesAuthSwitch({
+            sessionId: 'session-1', agentId: 'happier.agent.codex/codex', machineId: 'machine-1',
+            connectedAccounts: CODEX_CONNECTED_ACCOUNTS,
+            sessionMetadata: { connectedServices: { v: 2, bindingsByServiceId: {
+                [CODEX_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'happier' },
+            } } },
+            armedContinuationAgent: {
+                agentId: 'happier.agent.claude/claude', agentIdentity: consumer,
+                connectedAccounts: [{ purpose: 'primary', service }],
+            },
+            settings: {
+                connectedServicesProfileLabelByKey: {}, connectedServicesDefaultProfileByServiceId: {},
+                connectedAccountPurposeBindingsV1: { v: 1, bindings: profileId === null ? [] : [{
+                    purpose: { consumer, purpose: 'primary' },
+                    target: { kind: 'account', account: { service, accountId: profileId } },
+                }] },
+            },
+            switchingDisabledReason: null,
+        }));
+        const chip = hook.getCurrent().connectedServicesAuthChip;
+        expect(chip?.collapsedContentPopover?.label).toBe(profileId === null
+            ? 'Native' : `Anthropic API key: ${profileId === 'work' ? 'Work' : profileId}`);
+        const content = chip?.collapsedContentPopover?.renderContent({ requestClose: vi.fn(), maxHeight: 320 }) as {
+            props: { actions: readonly { disabled?: boolean; onPress?: () => void }[] };
+        };
+        expect(content.props.actions).toEqual([expect.objectContaining({ disabled: true })]);
+        expect(content.props.actions[0].onPress).toBeUndefined();
+        expect(setSessionConnectedServiceAuthBindingMock).not.toHaveBeenCalled();
+    });
+
     it('disables changed auth options when no reachable machine target is available', async () => {
         const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
 

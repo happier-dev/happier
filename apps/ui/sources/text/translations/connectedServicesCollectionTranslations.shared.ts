@@ -6,6 +6,8 @@ export type ConnectedServicesCollectionCopy = typeof en;
 
 export const en = {
     accountLabel: ({ service }: { service: string }) => `${service} account`,
+    /** Another account of the same service with no name or email, told apart by number. */
+    accountLabelNumbered: ({ service, number }: { service: string; number: number }) => `${service} account ${number}`,
     meterResetsIn: ({ time }: { time: string }) => `in ${time}`,
     meterNextResetIn: ({ time }: { time: string }) => `next in ${time}`,
     meterResetsAt: ({ countdown, time }: { countdown: string; time: string }) => `${countdown} · ${time}`,

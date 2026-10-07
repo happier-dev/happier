@@ -632,6 +632,8 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
         );
         const submission = await runTerminalPromptSubmission({
           promptText: textToWrite,
+          signal: input.signal,
+          resolveDeliveryState: input.resolveDeliveryState,
           ...(params.promptSubmitVerification?.shouldVerifyAfterSubmit(textToWrite)
             ? {
               verifyStagedBeforeSubmit: async ({ promptText, remainingTimeoutMs }) => {

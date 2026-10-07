@@ -40,6 +40,7 @@ import {
   INSPECTOR_PLUGIN_ID,
   INSPECTOR_SELF_CHECK_ACTION_ID,
 } from '../manifest';
+import { readInspectorSelfCheckStatus, type InspectorSelfCheckSettlement } from './selfCheckStatus.js';
 
 /**
  * RN-DOGFOOD: the inspector's one RN-authored surface is compiled once as
@@ -162,7 +163,7 @@ export function InspectorSurface({ hostApi, surface, subPath }: InspectorRenderS
   const [reloadingPluginId, setReloadingPluginId] = React.useState<string | null>(null);
   const [lastReload, setLastReload] = React.useState<InspectorReloadSummary | null>(null);
   const [quickActionsMenuOpen, setQuickActionsMenuOpen] = React.useState(false);
-  const [selfCheckSettlement, setSelfCheckSettlement] = React.useState<'not-run' | 'success' | 'failed'>('not-run');
+  const [selfCheckSettlement, setSelfCheckSettlement] = React.useState<InspectorSelfCheckSettlement>('not-run');
   const [quickActionsContextMenuOpen, setQuickActionsContextMenuOpen] = React.useState(false);
   const surfaceContext = useSurfaceContext();
   const theme = usePluginTheme();
@@ -272,20 +273,7 @@ export function InspectorSurface({ hostApi, surface, subPath }: InspectorRenderS
             retry: text('plugins.inspector.surface.retryReload', 'Try reload again'),
           }
     : null;
-  const selfCheckStatus = selfCheckSettlement === 'not-run'
-    ? {
-        label: text('plugins.inspector.surface.selfCheckNotRun', 'Self-check not run yet'),
-        tone: 'secondary' as const,
-      }
-    : selfCheckSettlement === 'success'
-      ? {
-          label: text('plugins.inspector.surface.selfCheckPassed', 'Self-check passed'),
-          tone: 'success' as const,
-        }
-      : {
-          label: text('plugins.inspector.surface.selfCheckFailed', 'Self-check failed'),
-          tone: 'danger' as const,
-        };
+  const selfCheckStatus = readInspectorSelfCheckStatus(selfCheckSettlement, text);
   const renderPluginRow = React.useCallback((plugin: InspectorPluginSummary) => (
     <List.Item
       testID={`inspector-plugin-${plugin.pluginId}`}
@@ -517,7 +505,7 @@ export function InspectorSurface({ hostApi, surface, subPath }: InspectorRenderS
         {lastReload ? (
           <Stack testID="inspector-last-reload" gap="small">
             <Status
-              tone={lastReload.ok ? 'success' : 'danger'}
+              tone={lastReload.ok ? 'secondary' : 'danger'}
               label={lastReload.ok
                 ? text('plugins.inspector.surface.reloadSucceeded', 'Last reload succeeded')
                 : text('plugins.inspector.surface.reloadFailed', 'Last reload failed')}

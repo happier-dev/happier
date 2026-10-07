@@ -62,7 +62,7 @@ export function resolveOverlayMotionPreset(params: Readonly<{
             fromScale: motionTokens.overlay.modal.fromScale,
             fromTranslateX: 0,
             fromTranslateY: motionTokens.overlay.modal.fromTranslateY,
-            reducedMotionFadeMs: motionTokens.durationMs.instant,
+            reducedMotionFadeMs: motionTokens.durationMs.fast,
         };
     }
 
@@ -85,7 +85,7 @@ export function resolveOverlayMotionPreset(params: Readonly<{
                 : direction === 'bottom'
                     ? -fromDistance
                     : 0,
-        reducedMotionFadeMs: motionTokens.durationMs.instant,
+        reducedMotionFadeMs: motionTokens.durationMs.fast,
     };
 }
 

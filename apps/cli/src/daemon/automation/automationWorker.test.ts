@@ -7,7 +7,13 @@ import {
   AutomationV3WorkerStartResponseSchema,
   type SessionServerStartDispatchResultV1,
   type SessionServerStartIngressRequestV1,
+  materializeWorkflowAcceptedSnapshotV1,
+  serializeWorkflowStoredContentEnvelopeV1,
+  sealWorkflowAcceptedSnapshotStoredEnvelopeV1,
+  deriveWorkflowSessionInputLocalIdV2,
 } from '@happier-dev/protocol';
+import { createProductionWorkflowRunCoordinator } from '@/daemon/workflows/production';
+import { createWorkflowRunStorageTestkit, createPlainWorkflowRunKeyCensusFixture } from '@/daemon/workflows/workflowRunStorage.testkit';
 import type { Update } from '@/api/types';
 import { reloadConfiguration as reloadCapacityConfiguration } from '@/configuration';
 import { startAutomationWorker as startCapacityAutomationWorker } from './automationWorker';
@@ -871,7 +877,130 @@ describe('automationWorker', () => {
     }
   });
 
-  it('runs scoped Automations alongside a full ordinary budget without consuming ordinary slots', async () => {
+  it.each(['settle', 'cancel_waiter'] as const)('admits Account and Session destination writes at full start capacity (%s)', async ending => {
+    const now = Date.now();
+    process.env.HAPPIER_SERVER_URL = 'https://api.example.test';
+    process.env.HAPPIER_WEBAPP_URL = 'https://app.example.test';
+    process.env.HAPPIER_HOME_DIR = join(os.tmpdir(), `happier-destination-capacity-${now}-${Math.random()}`);
+    reloadCapacityConfiguration();
+    const machineId = 'machine-1';
+    const accountId = 'account-1';
+    const ids = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222',
+      '33333333-3333-4333-8333-333333333333', '44444444-4444-4444-8444-444444444444'];
+    const kinds = ['fresh', 'origin_session', 'existing_session', 'fresh'] as const;
+    const accepted = await Promise.all(kinds.map(async (kind, index) => {
+      const result = await materializeWorkflowAcceptedSnapshotV1({
+        definition: { version: 1, defaults: {
+          agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+          conversation: kind === 'existing_session' ? { kind, sessionId: 'destination', machineId } : { kind },
+        }, blocks: [{ kind: 'step', id: 'write', document: { text: 'Write', references: [], attachments: [] } }] },
+        context: { source: { kind: 'automation', automationId: `automation-${index}` }, inputs: {}, machineId,
+          executionTarget: { kind: 'session' },
+          workspaceTarget: { project: { machineId, directory: '/repo', checkoutRootPath: '/repo' } },
+          ...(kind === 'origin_session' ? { origin: { kind: 'direct', originSessionId: 'destination' } } : {}),
+          authorization: { principal: { kind: 'host' } } },
+        admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true },
+      });
+      if (!result.ok) throw new Error(result.error.code);
+      return serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+        mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId: ids[index]! }, acceptedSnapshot: result.snapshot,
+      }));
+    }));
+    const stores = ids.map((id, index) => createWorkflowRunStorageTestkit({ runId: id, machineId,
+      origin: { kind: 'automation', automationId: `automation-${index}` }, acceptedEnvelope: accepted[index], state: 'claimed',
+      keyCensus: { ...createPlainWorkflowRunKeyCensusFixture({ runId: id, accountId }), ownerAccountCurrentness: V3_CLAIM_CURRENTNESS } }));
+    const claims: Array<string | undefined> = [];
+    let ordinal = 0;
+    mockGet.mockImplementation(async (url: string) => url.endsWith('/v1/account/encryption/currentness')
+      ? { status: 200, data: createAccountCurrentnessResponse(V3_CLAIM_CURRENTNESS, now) }
+      : { data: { assignments: [{ machineId, automationId: 'automation-0', nextClaimAt: now + 60_000 }],
+        settings: { maxActiveRunsPerMachine: 1 } } });
+    mockPost.mockImplementation(async (url: string, body: { scope?: string }) => {
+      if (url.endsWith('/start')) return { data: { ...createV3StartResponse({ runId: ids[0]!, now, attempt: 1 }), accountCurrentness: V3_CLAIM_CURRENTNESS } };
+      if (!url.endsWith('/v3/automations/runs/claim')) return { data: { ok: true } };
+      claims.push(body.scope);
+      const index = ordinal++;
+      const legacyEnvelope = JSON.stringify({ v: 1, templateVersion: 1, assignmentMachineIds: [machineId],
+        template: { t: 'plain', v: { v: 1, prompt: 'Start' } }, triggerEvidence: null,
+        target: { kind: 'newSession', spawn: { executionTarget: { serverId: 'server-1', machineId },
+          directory: { kind: 'path', path: '/repo' },
+          agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } } } });
+      return { data: index >= ids.length ? { run: null, automation: null, accountCurrentness: null } : {
+        run: { id: ids[index], automationId: `automation-${index}`, attempt: 1, revision: 0, recipeKind: index === 0 ? 'legacy' : 'workflow-v2',
+          triggerId: null, triggerRetired: false, cause: { kind: 'manual', invokedAt: now },
+          ...(index === 0 ? { executionInputEnvelope: legacyEnvelope }
+            : { executionInputEnvelope: '{}', automationEvidenceEnvelope: null, workflowAcceptedSnapshotEnvelope: accepted[index] }) },
+        automation: { id: `automation-${index}`, name: 'Capacity', enabled: true,
+          ...(index === 1 ? { scopeSessionId: 'destination' } : {}) }, accountCurrentness: V3_CLAIM_CURRENTNESS,
+      } };
+    });
+    const starts: Array<() => void> = [];
+    const writes: string[] = [];
+    const coordinationErrors: unknown[] = [];
+    const coordinationResults: unknown[] = [];
+    const coordinators = stores.map((storage, index) => createProductionWorkflowRunCoordinator({
+      token: 'token', accountId, machineId, storage,
+      resolveControllerContext: async () => ({ surface: 'cli', authority: 'account_automation', callerPermissionMode: 'yolo' }),
+      resolveAccountEncryption: async () => ({ kind: 'available', witness: V3_CLAIM_CURRENTNESS }),
+      isAcceptedAuthorizationCurrent: async () => true,
+      workspaceScm: { realizeWorktree: async () => { throw new Error('unexpected_worktree'); },
+        inspectLocation: async () => null, verifyRecordedWorkspace: async () => 'available' },
+      execution: { credentials: { token: 'token', encryption: null }, serverId: 'server-1',
+        machineAdmissionTransport: async () => {
+          await new Promise<void>(resolve => starts.push(resolve));
+          throw new Error('start_boundary_stopped');
+        },
+        resolveExistingSessionConversation: async () => ({ sessionId: 'destination', machineId, directory: '/repo' }),
+        sessionInput: { enqueue: async request => ({ status: 'accepted', localId: deriveWorkflowSessionInputLocalIdV2(request.workflow) }),
+          observe: async ({ sessionId, localId }) => { writes.push(ids[index]!);
+            return { ok: true, sessionId, localId, result: { kind: 'final_text', text: 'Written' } }; } },
+        detachedRun: { actionExecutor: { execute: async () => { throw new Error('unexpected_detached'); } },
+          buildActionContext: () => ({ surface: 'cli', authority: 'account_automation' }) },
+      },
+    }));
+    const worker = startCapacityAutomationWorker({ token: 'token', machineId,
+      spawnSession: async () => { throw new Error('unexpected_legacy_start'); },
+      dispatchSessionServerStart: async () => {
+        await new Promise<void>(resolve => starts.push(resolve));
+        return { type: 'error', code: 'spawn_failed', retryable: false };
+      },
+      coordinateWorkflowRun: async claim => {
+        try { const result = await coordinators[ids.indexOf(claim.runId)]!(claim); coordinationResults.push(result); return result; }
+        catch (error) { coordinationErrors.push(error); throw error; }
+      },
+    });
+    try {
+      await worker.refreshAssignments();
+      worker.handleServerUpdate({ id: 'wake', seq: 1, createdAt: now, body: { t: 'automation-run-updated',
+        runId: ids[0]!, automationId: 'automation-0', state: 'queued', scheduledAt: now, startedAt: null,
+        finishedAt: null, updatedAt: now, machineId: null, targetMachineId: machineId } } satisfies Update);
+      await waitForCondition(() => (starts.length === 1 && writes.length === 2 && ordinal >= 5 && stores[3]!.rows().length > 0) || coordinationErrors.length > 0 || coordinationResults.length >= 4).catch(error => {
+        throw new Error(JSON.stringify({ claims, ordinal, starts: starts.length, writes, coordinationResults,
+          states: stores.map(store => store.run().state), operations: stores.map(store => store.operations()) }), { cause: error });
+      });
+      expect(coordinationErrors).toEqual([]);
+      expect({ starts: starts.length, writes: writes.length }).toEqual({ starts: 1, writes: 2 });
+      expect(new Set(writes)).toEqual(new Set([ids[1], ids[2]]));
+      expect(claims).toContain('workflow');
+      expect(stores[1]!.run().state).toBe('succeeded');
+      expect(stores[2]!.run().state).toBe('succeeded');
+      expect(stores[3]!.rows()).toHaveLength(1); // Accepted root, no Agent leaf admitted while full.
+      if (ending === 'settle') {
+        starts[0]!();
+        await waitForCondition(() => stores[3]!.rows().length > 1);
+      } else {
+        worker.stop();
+        await waitForCondition(() => coordinationErrors.length === 1);
+        starts[0]!();
+        expect(stores[3]!.rows()).toHaveLength(1);
+      }
+    } finally {
+      worker.stop();
+      for (const release of starts) release();
+    }
+  });
+
+  it('charges new Agents even when their trigger has Session scope', async () => {
     const now = Date.now();
     process.env.HAPPIER_SERVER_URL = 'https://api.example.test';
     process.env.HAPPIER_WEBAPP_URL = 'https://app.example.test';
@@ -898,6 +1027,7 @@ describe('automationWorker', () => {
     mockPost.mockImplementation(async (url: string, body: { scope?: string }) => {
       if (url.endsWith('/v3/automations/runs/claim')) {
         claims.push(body);
+        if (body.scope === 'workflow') return { data: { run: null, automation: null, accountCurrentness: null } };
         const ordinal = claims.length;
         if (ordinal > 3 && !(ordinaryRefillReady && body.scope === undefined)) {
           return { data: { run: null, automation: null, accountCurrentness: null } };
@@ -931,15 +1061,13 @@ describe('automationWorker', () => {
     try {
       await worker.refreshAssignments();
       wake();
-      await waitForCondition(() => ingressResolvers.length === 3);
-      expect(claims.slice(0, 3).map((claim) => claim.scope)).toEqual([undefined, undefined, 'session_scoped']);
-      expect(dispatchSessionServerStart).toHaveBeenCalledTimes(3);
-      await waitForCondition(() => claims.length >= 4);
-      expect(claims.at(-1)?.scope).toBe('session_scoped');
+      await waitForCondition(() => ingressResolvers.length === 1 && claims.length >= 2);
+      expect(claims.slice(0, 2).map((claim) => claim.scope)).toEqual([undefined, 'workflow']);
+      expect(dispatchSessionServerStart).toHaveBeenCalledTimes(1);
       ordinaryRefillReady = true;
-      ingressResolvers[1]!({ type: 'error', code: 'spawn_failed', retryable: false });
-      await waitForCondition(() => ingressResolvers.length === 4);
-      expect(claims.slice(4).some((claim) => claim.scope === undefined)).toBe(true);
+      ingressResolvers[0]!({ type: 'error', code: 'spawn_failed', retryable: false });
+      await waitForCondition(() => ingressResolvers.length === 2);
+      expect(claims.slice(2).some((claim) => claim.scope === undefined)).toBe(true);
     } finally {
       worker.stop();
     }
@@ -1006,7 +1134,7 @@ describe('automationWorker', () => {
     let claimCount = 0;
     mockPost.mockImplementation(async (url: string, body?: { scope?: string }) => {
       if (url.endsWith('/v3/automations/runs/claim')) {
-        if (body?.scope === 'session_scoped') return { data: { run: null, automation: null, accountCurrentness: null } };
+        if (body?.scope === 'workflow') return { data: { run: null, automation: null, accountCurrentness: null } };
         claimCount += 1;
         return {
           data: {

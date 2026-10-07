@@ -7,6 +7,9 @@ export type Copy = typeof en;
 export const en = {
     host: "Happier",
     structure: "Structure",
+    callWebhook: "Call a webhook",
+    runCommand: "Run a command",
+    commandValuesInEnv: "Pass workflow values through environment variables. Command text stays as written.",
     artifactCreate: "Create a document",
     artifactGet: "Read a document",
     artifactList: "List documents",

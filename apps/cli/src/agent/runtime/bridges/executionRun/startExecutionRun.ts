@@ -499,6 +499,7 @@ export async function startExecutionRun(args: Readonly<{
       callId,
       sidechainId,
       sessionId: args.params.sessionId,
+      ...(args.params.workflowRunId ? { originWorkflowRunId: args.params.workflowRunId } : {}),
       depth,
       intent: args.params.intent,
       ...(args.params.roleId ? { roleId: args.params.roleId } : {}),

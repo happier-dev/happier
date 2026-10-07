@@ -1576,6 +1576,7 @@ const en = Shared_connectedServicesCollectionTranslations.en;
 
 const de: ConnectedServicesCollectionCopy = {
     accountLabel: ({ service }) => `${service}-Konto`,
+    accountLabelNumbered: ({ service, number }) => `${service}-Konto ${number}`,
     meterResetsIn: ({ time }) => `in ${time}`,
     meterNextResetIn: ({ time }) => `nächster in ${time}`,
     meterResetsAt: ({ countdown, time }) => `${countdown} · ${time}`,
@@ -10277,9 +10278,6 @@ type WidgetAddTranslation = Shared_widgetAddTranslations.WidgetAddTranslation;
 const inSentence = Shared_widgetAddTranslations.inSentence;
 
 const widgetAddTranslations = { de: {
-        viewGallery: 'Galerie',
-        viewList: 'Liste',
-        viewLabel: 'Ansicht',
         added: 'Hinzugefügt',
         boardTitle: 'Zum Board hinzufügen',
         boardHint: 'Alle hier sehen, was du hinzufügst',
@@ -10287,8 +10285,6 @@ const widgetAddTranslations = { de: {
         companionHint: 'Nur du siehst deinen Begleiter',
         searchWidgets: 'Widgets durchsuchen',
         searchCompanion: 'Übersichten und Bereiche durchsuchen',
-        fromPlugins: 'Aus Plugins',
-        fromPluginsHint: 'live, mit den Daten dieser Sitzung',
         makeOne: 'Selbst erstellen',
         noteSubtitle: 'Markdown',
         interactiveViewSubtitle: 'HTML',
@@ -10310,14 +10306,27 @@ const widgetAddTranslations = { de: {
             local_services: 'Öffne lokale Dienste der gewählten Sitzung.',
         },
         noMatch: ({ query }) => `Keine Widgets passen zu „${query}“`,
-        setupTitle: ({ widget }) => `${widget} einrichten`,
+        pickTitle: 'Wähle ein Widget, um es hier zu sehen',
+        pickHint: 'Es zeigt deine eigenen Daten in der gewählten Größe, bevor etwas hinzugefügt wird.',
+        pickNote: 'Wähle ein Widget, um es hinzuzufügen',
+        askAction: 'Anfrage entwerfen',
+        pluginTag: 'Plugin',
+        pluginProvenance: ({ plugin }) => `Plugin ${plugin}`,
+        readsChosenSession: 'liest die gewählte Sitzung, dort wo sie läuft',
+        readsFrom: ({ source }) => `liest ${source}`,
+        savedQueryOn: ({ source }) => `eine gespeicherte Abfrage auf ${source}`,
+        madeByYou: ({ date }) => `von dir erstellt am ${date}`,
+        madeByAgent: ({ date }) => `von deinem Agenten erstellt am ${date}`,
+        madeByPlugin: ({ date }) => `von einem Plugin erstellt am ${date}`,
+        previewLiveData: 'Live, mit deinen Daten',
+        addsAtSize: ({ size }) => `Wird in ${size} hinzugefügt. Die Größe kannst du später ändern.`,
+        backToWidgets: 'Widgets',
         editTitle: ({ widget }) => `${widget} · Eingaben`,
         editHint: 'Nur diese Kopie ändert sich. Andere Kopien behalten ihre Eingaben.',
         preview: 'Vorschau',
         previewLive: 'Vorschau · live',
         previewWaiting: ({ field }) => `Wähle ${field}, um es hier zu sehen`,
         previewAfterAdd: 'Nach dem Hinzufügen erscheint es hier',
-        backToGallery: 'Zurück zur Galerie',
         needed: 'Erforderlich',
         stillNeeded: ({ field }) => `${field} fehlt noch`,
         followGroup: 'Folgen',
@@ -10345,7 +10354,6 @@ const widgetAddTranslations = { de: {
         saveFailed: 'Konnte nicht gespeichert werden. Versuche es erneut.',
         homeTitle: 'Zur Startseite hinzufügen',
         homeHint: 'Nur du siehst deine Startseite · auf jedem Gerät',
-        homeFromPluginsHint: 'live, mit deinen Daten',
         addWidgets: 'Widgets hinzufügen',
         addToHome: 'Zur Startseite hinzufügen',
         addToBoard: 'Zum Board hinzufügen',
@@ -10486,8 +10494,6 @@ const widgetFrameTranslations = { de: {
         appearanceDescription: 'Wie Widgets auf diesem Gerät gerahmt werden. Ein einzelnes Widget änderst du über sein ⋯-Menü.',
         previewLabel: ({ surface, style }) => `${surface} · ${style}`,
         noticeChanged: 'Rahmen geändert',
-        addViewTitle: 'Widgets hinzufügen',
-        addViewDescription: 'Wie sich „Hinzufügen“ öffnet. Wenn du es dort umstellst, ändert sich das auch hier.',
         newChip: 'Neu',
     } } satisfies Pick<Readonly<Record<string, WidgetFrameTranslation>>, "de">;
 
@@ -10549,6 +10555,9 @@ const en = Shared_workflowActionTranslations.en;
 const workflowActionTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy>, "de"> = { de: {
         host: "Happier",
         structure: "Struktur",
+        callWebhook: "Webhook aufrufen",
+        runCommand: "Befehl ausführen",
+        commandValuesInEnv: "Workflow-Werte werden als Umgebungsvariablen übergeben. Der Befehlstext bleibt wie geschrieben.",
         artifactCreate: "Dokument erstellen",
         artifactGet: "Dokument lesen",
         artifactList: "Dokumente auflisten",
@@ -10660,6 +10669,10 @@ const workflowFieldTranslations = { de: {
         secondOpinion: "Zweitmeinung",
         useJudge: "Beurteiler",
         diffFingerprint: "Geprüfte Änderungen",
+        url: "URL",
+        body: "JSON-Inhalt",
+        command: "Befehl",
+        env: "Umgebungsvariablen",
     } };
 
 return { workflowFieldTranslations };

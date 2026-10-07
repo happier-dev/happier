@@ -1,10 +1,10 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
-import { socketRpcCodec } from '@happier-dev/sync-client';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { installSessionOpsNetworkBoundary, type SessionOpsRpcRequest } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 
 const boundary = await installSessionOpsNetworkBoundary();
+const { socketRpcCodec } = await import('@happier-dev/sync-client');
 const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
 await loadSyncSingletonForTests();
 const { Encryption } = await import('@/sync/encryption/encryption');

@@ -3657,6 +3657,52 @@ describe('sync.sendMessage rejection and auth through the applied Account', () =
         });
     }
 
+    it('leaves a newer permission choice pending when an earlier prompt is admitted', async () => {
+        const sessionId = 's_account_permission_frozen';
+        state.getState().applySessions([createSessionFixture({
+            id: sessionId, serverId: restored!.home.id, active: true,
+            metadata: { path: '/repo', host: 'test-host', permissionMode: 'default', permissionModeUpdatedAt: 1 },
+        })]);
+        state.getState().applySettingsLocal({ sessionPermissionModeApplyTiming: 'next_prompt' });
+        state.getState().updateSessionPermissionMode(sessionId, 'yolo');
+        accountTransport.ack.mockImplementation(async (event: string, payload: unknown) => {
+            if (event === 'message') {
+                state.getState().updateSessionPermissionMode(sessionId, 'read-only');
+                return { ok: true, id: 'admitted-message', seq: 1, localId: 'frozen-permission', didWrite: true };
+            }
+            if (event === 'update-metadata') {
+                return { result: 'success', version: 2, metadata: (payload as { metadata: string }).metadata };
+            }
+            throw new Error(`Unexpected socket event: ${event}`);
+        });
+
+        await runtime.sendMessage(sessionId, 'hello', undefined, {}, { localId: 'frozen-permission' });
+
+        expect(accountTransport.ack.mock.calls.filter(([event]) => event === 'update-metadata')).toHaveLength(0);
+        expect(state.getState().sessions[sessionId].permissionMode).toBe('read-only');
+        expect(state.getState().sessions[sessionId].metadata?.permissionMode).toBe('default');
+    });
+
+    it('publishes the admitted next-prompt permission through the real Account metadata writer', async () => {
+        const sessionId = 's_account_permission_admitted';
+        state.getState().applySessions([createSessionFixture({
+            id: sessionId, serverId: restored!.home.id, active: true,
+            metadata: { path: '/repo', host: 'test-host', permissionMode: 'default', permissionModeUpdatedAt: 1 },
+        })]);
+        state.getState().applySettingsLocal({ sessionPermissionModeApplyTiming: 'next_prompt' });
+        state.getState().updateSessionPermissionMode(sessionId, 'yolo');
+        accountTransport.ack.mockImplementation(async (event: string, payload: unknown) => {
+            if (event === 'message') return { ok: true, id: 'admitted-message', seq: 1, localId: 'admitted-permission', didWrite: true };
+            if (event === 'update-metadata') return { result: 'success', version: 2, metadata: (payload as { metadata: string }).metadata };
+            throw new Error(`Unexpected socket event: ${event}`);
+        });
+
+        await runtime.sendMessage(sessionId, 'hello', undefined, {}, { localId: 'admitted-permission' });
+
+        expect(accountTransport.ack.mock.calls.filter(([event]) => event === 'update-metadata')).toHaveLength(1);
+        expect(state.getState().sessions[sessionId].metadata?.permissionMode).toBe('yolo');
+    });
+
     it('removes the direct-send local pending row when the server rejects the message', async () => {
         const sessionId = 's_pending_rejected';
         installSession(sessionId);

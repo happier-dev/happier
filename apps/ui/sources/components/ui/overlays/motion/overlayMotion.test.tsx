@@ -129,3 +129,28 @@ describe('panel motion', () => {
         }
     });
 });
+
+describe('popover and dialog motion under reduced motion', () => {
+    it('becomes a short cross-fade instead of a snap or a scale', async () => {
+        const { resolveOverlayMotionPreset, useOverlayMotionAnimation } = await import('./overlayMotion');
+        for (const kind of ['popover', 'modal'] as const) {
+            const preset = resolveOverlayMotionPreset({ kind, direction: 'bottom' });
+            let style: any = null;
+            function Probe() {
+                style = useOverlayMotionAnimation({ visible: true, preset }).style;
+                return null;
+            }
+            timingSpy.mockClear();
+            reduceMotionSpy.mockReturnValue(true);
+            try {
+                await renderScreen(<Probe />);
+                const lastCall = timingSpy.mock.calls.at(-1) as unknown as [unknown, { duration: number }];
+                expect(lastCall[1].duration, kind).toBeGreaterThan(0);
+                expect(lastCall[1].duration, kind).toBeLessThanOrEqual(motionTokens.durationMs.fast);
+                expect(style.transform, kind).toBeUndefined();
+            } finally {
+                reduceMotionSpy.mockReturnValue(false);
+            }
+        }
+    });
+});

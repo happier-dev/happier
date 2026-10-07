@@ -13,6 +13,7 @@ export function projectExecutionRunPublicState(run: ExecutionRunState, controlle
   });
   return ExecutionRunPublicStateSchema.parse({
     runId: run.runId, callId: run.callId, sidechainId: run.sidechainId, intent: run.intent,
+    ...(run.originWorkflowRunId ? { originWorkflowRunId: run.originWorkflowRunId } : {}),
     backendTarget: run.backendTarget, ...(run.display ? { display: run.display } : {}),
     ...(run.launch?.launchOrigin ? { launchOrigin: run.launch.launchOrigin } : {}),
     ...(requestedConfiguration ? { requestedConfiguration } : {}),

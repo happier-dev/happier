@@ -143,6 +143,8 @@ export const PluginUiHostApiSurfaceThemeV1Schema = z.object({
     onAccent: PluginUiHostApiSurfaceNonBlankStringV1Schema,
     success: PluginUiHostApiSurfaceNonBlankStringV1Schema,
     warning: PluginUiHostApiSurfaceNonBlankStringV1Schema,
+    /** "Needs you": the host's one attention ink (its Brand amber), distinct from a caution warning. */
+    attention: PluginUiHostApiSurfaceNonBlankStringV1Schema,
     danger: PluginUiHostApiSurfaceNonBlankStringV1Schema,
     info: PluginUiHostApiSurfaceNonBlankStringV1Schema,
     control: PluginUiHostApiSurfaceNonBlankStringV1Schema,

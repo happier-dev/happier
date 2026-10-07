@@ -65,7 +65,7 @@ vi.mock('@/agent/catalog/snapshot', async (importOriginal) => {
   };
 });
 
-import { runHostSessionRuntime, type HostSessionRuntimeConfig, type HostSessionRuntimeRunOptions } from './runHostSessionRuntime';
+import { runHostSessionRuntime, type HostRuntimeReplacementLifecycle, type HostSessionRuntimeConfig, type HostSessionRuntimeRunOptions } from './runHostSessionRuntime';
 import type { CreateSessionMetadataOptions } from '@/agent/runtime/createSessionMetadata';
 import type { InitializeBackendRunSessionOptions } from '@/agent/runtime/initializeBackendRunSession';
 import type { Metadata } from '@/api/types';
@@ -6796,6 +6796,64 @@ describe('runHostSessionRuntime', () => {
     }
   });
 
+  it('delivers a reply after dispatch-initiated replacement through the public host owner', async () => {
+    const harness = createHarness();
+    harness.session.enqueueAgentMessageCommitted = vi.fn(async () => ({ persisted: true, delivered: true }));
+    let replacementLifecycle: HostRuntimeReplacementLifecycle | undefined;
+    harness.runtime.setRuntimeReplacementLifecycle = (lifecycle: typeof replacementLifecycle) => {
+      replacementLifecycle = lifecycle;
+    };
+    harness.deps.runPermissionModePromptLoopFn = async (params: Parameters<typeof runPermissionModePromptLoop>[0]) => {
+      const consumer = params.inputConsumer!;
+      await expect(consumer.runProviderInputDispatch({
+        abortSignal: new AbortController().signal,
+        dispatch: async () => {
+          await replacementLifecycle!.beforeReplacement();
+          expect(consumer.readProviderInputAdmission()).toMatchObject({ groupId: 'primary-runtime' });
+          await replacementLifecycle!.onSuccessorBound();
+          await replacementLifecycle!.onSuccessorUsable();
+          harness.runtime.emitRuntimeMessage({
+            kind: 'transcript-message-committed', sequence: 1, sessionId: 'session-1', emittedAtMs: 1,
+            turnId: 'turn-1', messageId: 'reply-1', role: 'assistant', text: 'replacement reply',
+          });
+        },
+      })).resolves.toMatchObject({ status: 'dispatched' });
+      expect(consumer.readProviderInputAdmission()).toEqual({ kind: 'admitted' });
+    };
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+    expect(harness.session.enqueueAgentMessageCommitted).toHaveBeenCalledWith(
+      'qwen', expect.objectContaining({ message: 'replacement reply' }), expect.anything(),
+    );
+  });
+
+  it('keeps external replacement waiting for an in-flight dispatch through the public host owner', async () => {
+    const harness = createHarness();
+    let replacementLifecycle: HostRuntimeReplacementLifecycle | undefined;
+    harness.runtime.setRuntimeReplacementLifecycle = (lifecycle: typeof replacementLifecycle) => {
+      replacementLifecycle = lifecycle;
+    };
+    harness.deps.runPermissionModePromptLoopFn = async (params: Parameters<typeof runPermissionModePromptLoop>[0]) => {
+      const release = createDeferred<void>();
+      const consumer = params.inputConsumer!;
+      const dispatch = consumer.runProviderInputDispatch({
+        abortSignal: new AbortController().signal,
+        dispatch: async () => await release.promise,
+      });
+      let replaced = false;
+      const replacing = replacementLifecycle!.beforeReplacement().then(() => { replaced = true; });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(consumer.readProviderInputAdmission()).toMatchObject({ groupId: 'primary-runtime' });
+      expect(replaced).toBe(false);
+      release.resolve();
+      await Promise.all([dispatch, replacing]);
+      expect(replaced).toBe(true);
+      await replacementLifecycle!.onSuccessorBound();
+      await replacementLifecycle!.onSuccessorUsable();
+      expect(consumer.readProviderInputAdmission()).toEqual({ kind: 'admitted' });
+    };
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+  });
+
   it('starts a same-session runtime replacement with a fenced empty Activity scope', async () => {
     const harness = createHarness();
     harness.config.runtimeActivityApplicability = 'supported';
@@ -8155,7 +8213,7 @@ describe('runHostSessionRuntime', () => {
       });
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(runtime.steerPrompt).toHaveBeenCalledTimes(1);
-      expect(runtime.steerPrompt).toHaveBeenCalledWith('direct steer after clear', {
+      expect(runtime.steerPrompt).toHaveBeenCalledWith(expect.stringContaining('direct steer after clear'), {
         localId: 'local-direct-steer',
         localIds: ['local-direct-steer'],
       });

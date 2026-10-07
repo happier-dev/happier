@@ -36,7 +36,7 @@ import {
 } from './itemGroupSpacing';
 import { Text } from '@/components/ui/text/Text';
 import { useListPresentation, usePageListInsets } from './listPresentation';
-import { PAGE_LIST_METRICS } from './pageListMetrics';
+import { GROUPED_SURFACE_RADIUS_PX, PAGE_LIST_METRICS } from './pageListMetrics';
 import { SectionItemDensityProvider, type ResolvedItemDensity } from './useResolvedItemDensity';
 import { SectionLeadingColumnProvider } from './sectionLeadingColumn';
 import {
@@ -128,8 +128,9 @@ const stylesheet = StyleSheet.create((theme) => {
     // ONE card-chrome definition, shared by the single shared card and by each
     // standalone card in the multi-column layout, so the two can never drift.
     const cardChrome = {
-        backgroundColor: theme.colors.surface.base,
-        borderRadius: Platform.select({ ios: 10, default: 16 }),
+        // A card: one step of the dark surface ladder above the page (the page itself on light).
+        backgroundColor: theme.colors.edge.cardFill,
+        borderRadius: GROUPED_SURFACE_RADIUS_PX,
         ...surfaceChromeStyle,
         // IMPORTANT: allow popovers to overflow this rounded container.
         overflow: 'visible' as const,
@@ -181,7 +182,7 @@ const stylesheet = StyleSheet.create((theme) => {
             marginHorizontal: Platform.select(ITEM_GROUP_CONTENT_MARGIN_HORIZONTAL_PX),
         },
         contentContainerInner: {
-            borderRadius: Platform.select({ ios: 10, default: 16 }),
+            borderRadius: GROUPED_SURFACE_RADIUS_PX,
         },
         contentContainerInnerClipped: {
             overflow: 'hidden',

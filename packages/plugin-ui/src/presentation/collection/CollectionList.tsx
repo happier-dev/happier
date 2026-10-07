@@ -3,6 +3,7 @@ import { Platform, View, type ViewStyle } from 'react-native';
 
 import { useHappierPageSection } from '../layout/PageSection.js';
 import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
+import { HAPPIER_RADIUS_V1 } from '../../environment/radius.js';
 import type { HappierPageTextStep } from '../layout/pageText.js';
 import type { HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
 import {
@@ -98,13 +99,15 @@ export const HAPPIER_COLLECTION_LIST_METRICS = Object.freeze({
    * glyph start here, so a row's own horizontal padding is `contentInset - rowInset`.
    */
   contentInset: 22,
-  rowRadius: 8,
+  /** A row: the `md` step of the one radius base. */
+  rowRadius: HAPPIER_RADIUS_V1.md,
   /**
    * A navigation row: one line on the compact list step, its glyph in a fixed leading column so
-   * titles align whatever the glyph's shape. These are core's compact `Item` values (34 tall; glyph
-   * box 20 on the web, 18 on iOS; 10 to the title), which core navigation rows draw with.
+   * titles align whatever the glyph's shape. These are core's compact `Item` values (36 tall on pointer
+   * platforms, the dense row of the spacing rhythm; glyph box 20 on the web, 18 on iOS; 10 to the
+   * title), which core navigation rows draw with.
    */
-  rowMinHeight: 34,
+  rowMinHeight: 36,
   rowGlyphBox: Platform.OS === 'ios' ? 18 : 20,
   rowGlyphGap: 10,
   /** The header's title row (title, count, the header action's 30px icon buttons). */

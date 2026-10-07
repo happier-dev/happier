@@ -7,7 +7,6 @@ import { selectBuiltinWidgetCandidates, type WidgetCandidate } from '@/component
 import { projectSessionBoard } from '@/sync/domains/session/board';
 
 import { buildBoardWidgetAddContent, buildCompanionWidgetAddSections } from './widgetAddSections';
-import { resolveWidgetAddPick } from './widgetAddModel';
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -61,24 +60,23 @@ describe('buildBoardWidgetAddContent', () => {
             inputs: { fields: [{ path: 'session', title: 'Session', widget: 'json', required: true }] },
         }], snapshot: BOARD, run, context: SESSION_A,
             scope: { serverId: 'home', accountId: 'me', owner: { kind: 'sessionBoard', sessionId: 'A' } }, openPlugins: vi.fn() });
-        const entry = content.sections.find(section => section.id === 'plugins')!.entries[0]!;
-        const pick = resolveWidgetAddPick(entry);
-        expect(pick.kind).toBe('setup');
-        if (pick.kind !== 'setup') throw new Error('Size choice must be available before Add');
-        expect(pick.setup.resolve(pick.setup.initial).status).toBe('ready');
+        const setup = content.sections.find(section => section.id === 'plugin:happier.channels')!.entries[0]!.setup!();
+        expect(setup.resolve(setup.initial).status).toBe('ready');
         expect(run).not.toHaveBeenCalled();
-        await pick.setup.submit({ ...pick.setup.initial, size: 'large' });
+        await setup.submit({ ...setup.initial, size: 'large' });
         expect(run).toHaveBeenCalledWith(expect.objectContaining({ kind: 'item.addWidget', size: 'large',
             bindings: { session: { kind: 'context', slot: 'session' } } }));
     });
-    it('keeps required-input gallery tiles inert and previews sufficiently bound candidates lazily', () => {
+    it('previews a widget only through its pane, lazily, at the draft its inputs resolve to', () => {
         const preview = vi.fn((_candidate: WidgetCandidate) => 'admitted preview');
         const content = buildBoardWidgetAddContent({ intents: ['fromPlugins'], candidates: [
             candidate('app', 'App widget'), configurable('missing', 'Needs period'),
-        ], snapshot: BOARD, run: vi.fn(), context: SESSION_A, renderPluginPreview: preview, openPlugins: vi.fn() });
+        ], snapshot: BOARD, run: vi.fn(), context: SESSION_A, renderSetupPreview: preview, openPlugins: vi.fn() });
         const entries = content.sections.flatMap(section => section.entries);
-        expect(entries.find(entry => entry.title === 'Needs period')?.renderPreview).toBeUndefined();
-        entries.find(entry => entry.title === 'App widget')!.renderPreview!();
+        expect(entries.every(entry => entry.renderPreview === undefined)).toBe(true);
+        expect(preview).not.toHaveBeenCalled();
+        const setup = entries.find(entry => entry.title === 'App widget')!.setup!();
+        setup.renderPreview!({ input: {}, draft: setup.initial });
         expect(preview.mock.calls[0]?.[0]).toMatchObject({ target: 'app' });
     });
     it('adds a live walkthrough through the Board controller rather than saving preview counts', () => {
@@ -86,7 +84,7 @@ describe('buildBoardWidgetAddContent', () => {
         const content = buildBoardWidgetAddContent({ intents: ['walkthrough'], candidates: [], snapshot: BOARD, run, openPlugins: vi.fn() });
         const entry = content.sections.flatMap((section) => section.entries).find((entry) => entry.id === 'walkthrough');
         expect(entry).toBeDefined();
-        entry!.onPick();
+        entry!.onPick!();
         expect(run).toHaveBeenCalledWith({ kind: 'add', intent: 'walkthrough' });
     });
     it('offers only the sources this Board has a producer for', () => {
@@ -101,18 +99,16 @@ describe('buildBoardWidgetAddContent', () => {
         expect(content.ask).toBeDefined();
     });
 
-    it('keeps a plugin widget with no inputs in place, marked Added, and adds another widget through the one command', () => {
-        const run = vi.fn();
-        const preview = vi.fn(() => 'preview');
+    it('keeps a plugin widget with no inputs in place, marked Added, and adds another widget through the one command', async () => {
+        const run = vi.fn(async () => ({ kind: 'applied' as const }));
         const content = buildBoardWidgetAddContent({
             intents: ['note', 'interactiveView', 'fromPlugins'],
             candidates: [candidate('conversations', 'External conversations'), candidate('pr', 'This branch’s PR')],
             snapshot: BOARD,
             run,
-            renderPluginPreview: preview,
             openPlugins: vi.fn(),
         });
-        const plugins = content.sections.find((section) => section.id === 'plugins')!.entries;
+        const plugins = content.sections.find((section) => section.id === 'plugin:happier.channels')!.entries;
         expect(plugins.map((entry) => [entry.id, entry.added === true])).toEqual([
             ['plugin-happier.channels/conversations', true],
             ['plugin-happier.channels/pr', false],
@@ -120,13 +116,10 @@ describe('buildBoardWidgetAddContent', () => {
         expect(ids(content.sections.find((section) => section.id === 'make')!.entries)).toEqual(['note', 'interactiveView', 'findMore']);
         expect(content.ask).toBeUndefined();
 
-        plugins[1]!.onPick();
+        const setup = plugins[1]!.setup!();
+        await setup.submit(setup.initial);
         expect(run).toHaveBeenCalledTimes(1);
         expect(run).toHaveBeenCalledWith({ kind: 'item.addWidget', definition: { kind: 'installed', surface: { pluginId: 'happier.channels', localId: 'pr' } }, title: 'This branch’s PR', bindings: {}, size: 'medium' });
-        // Previews are lazy: built only when a gallery tile asks for one.
-        expect(preview).not.toHaveBeenCalled();
-        plugins[1]!.renderPreview?.();
-        expect(preview).toHaveBeenCalledTimes(1);
     });
 });
 
@@ -145,7 +138,7 @@ describe('buildCompanionWidgetAddSections', () => {
             bindings: { period: { kind: 'value', value: '7d' } } } });
         expect(sections.find(section => section.id === 'board')!.entries.find(entry => entry.id === 'board-note')?.added).toBe(true);
     });
-    it('counts native configured copies only on this surface and creates an independent followed copy', () => {
+    it('counts native configured copies only on this surface and creates an independent followed copy', async () => {
         const addItem = vi.fn();
         const native = selectBuiltinWidgetCandidates().find(row => row.definition?.kind === 'builtin' && row.definition.id === 'changes')!;
         const refs = ['A', 'B'].map(sessionId => ({ kind: 'instance' as const, instance: { v: 1 as const, id: sessionId,
@@ -155,7 +148,8 @@ describe('buildCompanionWidgetAddSections', () => {
         const entry = sections.find(row => row.id === 'glances')!.entries[0]!;
         expect(entry.count).toBe('widgetAdd.countInCompanion(count=2)');
         expect(entry.added).not.toBe(true);
-        entry.onPick();
+        const setup = entry.setup!();
+        await setup.submit(setup.initial);
         const result = addItem.mock.calls[0]![0];
         expect(result).toMatchObject({ kind: 'instance', instance: { definition: { kind: 'builtin', id: 'changes' }, bindings: { session: { kind: 'context', slot: 'session' } } } });
         expect(refs.some(ref => ref.instance.id === result.instance.id)).toBe(false);
@@ -193,8 +187,8 @@ describe('buildCompanionWidgetAddSections', () => {
         expect(panes.find((entry) => entry.id === 'pane-terminal')?.added).toBe(true);
 
         // A compact plugin glance is a Companion reference; nothing is created on the Board.
-        glances.find((entry) => entry.id === 'plugin-happier.channels/pr')!.onPick();
-        panes.find((entry) => entry.id === 'pane-files')?.onPick();
+        glances.find((entry) => entry.id === 'plugin-happier.channels/pr')!.onPick!();
+        panes.find((entry) => entry.id === 'pane-files')?.onPick?.();
         expect(addItem.mock.calls).toMatchObject([
             [{ kind: 'instance', instance: { v: 1, definition: { kind: 'installed', surface: { pluginId: 'happier.channels', localId: 'pr' } }, bindings: {} } }],
             [{ kind: 'pane', paneId: 'files' }],
@@ -262,7 +256,7 @@ describe('configurable widgets in the Add popovers', () => {
             context: SESSION_A,
             openPlugins: vi.fn(),
         });
-        const entry = content.sections.find((section) => section.id === 'plugins')!.entries[0]!;
+        const entry = content.sections.find((section) => section.id === 'plugin:happier.channels')!.entries[0]!;
         expect(entry.added).toBeUndefined();
         expect(entry.count).toBe('widgetAdd.countOnBoard(count=2)');
         const setup = entry.setup!();
@@ -289,7 +283,7 @@ describe('configurable widgets in the Add popovers', () => {
             context: SESSION_A,
             openPlugins: vi.fn(),
         });
-        const entry = content.sections.find((section) => section.id === 'plugins')!.entries[0]!;
+        const entry = content.sections.find((section) => section.id === 'plugin:happier.channels')!.entries[0]!;
         expect(entry.count).toBeUndefined();
         const setup = entry.setup!();
         await expect(setup.submit(setup.initial)).resolves.toEqual({ ok: false, message: 'widgetAdd.addFailed' });
@@ -305,7 +299,7 @@ describe('configurable widgets in the Add popovers', () => {
                 context: SESSION_A,
                 openPlugins: vi.fn(),
             });
-            const setup = content.sections.find((section) => section.id === 'plugins')!.entries[0]!.setup!();
+            const setup = content.sections.find((section) => section.id === 'plugin:happier.channels')!.entries[0]!.setup!();
             const chosen = { bindings: { ...setup.initial.bindings, period: { kind: 'value' as const, value: '30d' } } };
             await expect(setup.submit(chosen)).resolves.toEqual({ ok: false, message: 'widgetAdd.addFailed' });
         }
@@ -323,7 +317,7 @@ describe('configurable widgets in the Add popovers', () => {
         expect(ids(content.sections.find((section) => section.id === 'builtins')!.entries)).toEqual([
             'plugin-builtin:session_summary', 'plugin-builtin:agent_plan', 'plugin-builtin:changes', 'plugin-builtin:local_services',
         ]);
-        expect(ids(content.sections.find((section) => section.id === 'plugins')!.entries)).toEqual(['plugin-happier.channels/summary']);
+        expect(ids(content.sections.find((section) => section.id === 'plugin:happier.channels')!.entries)).toEqual(['plugin-happier.channels/summary']);
     });
 
     it('adds a direct personal Companion copy with its own instance id and bindings, counted by definition', async () => {

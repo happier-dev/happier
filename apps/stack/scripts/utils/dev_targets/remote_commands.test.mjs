@@ -116,6 +116,9 @@ test('whole-operation admission covers preparation children, preserves cwd/env a
   const { launcher } = await installNativeAdmissionFixture({ root });
   const checkout = join(root, 'native-owner');
   installRemoteCustody(checkout);
+  mkdirSync(join(checkout, 'node_modules'), { recursive: true });
+  writeFileSync(join(checkout, 'node_modules', 'data'), 'installed dependencies');
+  mkdirSync(join(root, 'cli-home/cache/yarn/v6'), { recursive: true });
   const bin = join(root, 'bin');
   mkdirSync(bin, { recursive: true });
   mkdirSync(join(checkout, 'apps/cli'), { recursive: true });
@@ -126,7 +129,7 @@ test('whole-operation admission covers preparation children, preserves cwd/env a
   executable('getconf', 'printf "8\\n"');
   executable('systemctl', 'exit 1');
   executable('awk', 'case "$*" in */proc/meminfo*) printf "25480397 28311552\\n" ;; */proc/loadavg*|*/proc/pressure/*) printf "0\\n" ;; *) exec /usr/bin/awk "$@" ;; esac');
-  executable('node', 'case "$*" in *service_memory.mjs*) printf "service 0\\n"; exit 0 ;; esac\n[ -n "$HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN" ] || exit 99\ncase "$*" in *remote_dependency_bootstrap*) stage=bootstrap ;; *) stage=prepare ;; esac\nprintf "%s\\n" "$stage" >> "$TRACE"\n[ "$FAIL_STAGE" != "$stage" ] || exit 42');
+  executable('node', `case "$*" in *service_memory.mjs*) printf "service 0\\n"; exit 0 ;; *worker_disk_budget.mjs*) exec '${process.execPath}' "$@" ;; esac\n[ -n "$HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN" ] || exit 99\ncase "$*" in *remote_dependency_bootstrap*) stage=bootstrap ;; *) stage=prepare ;; esac\nprintf "%s\\n" "$stage" >> "$TRACE"\n[ "$FAIL_STAGE" != "$stage" ] || exit 42`);
   executable('probe-command', '[ -n "$HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN" ] || exit 99\nprintf "payload:%s:%s\\n" "$PWD" "$VALUE" >> "$TRACE"');
   const localTarget = { ...posix, repoDir: checkout, cliHomeDir: join(root, 'cli-home'), remotePath: [bin, '/usr/bin', '/bin'] };
   const trace = join(root, 'trace');

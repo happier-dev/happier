@@ -479,7 +479,7 @@ export const AutomationV3WorkerClaimRequestSchema = lazyZodSchema(() => z.object
   machineId: IDENTIFIER_SCHEMA,
   leaseDurationMs: z.number().int().min(5_000).max(15 * 60_000).optional(),
   /** At ordinary worker capacity, admit only session-scoped trigger runs. */
-  scope: z.literal('session_scoped').optional(),
+  scope: z.enum(['session_scoped', 'workflow']).optional(),
 }).strict());
 export type AutomationV3WorkerClaimRequest = z.infer<typeof AutomationV3WorkerClaimRequestSchema>;
 

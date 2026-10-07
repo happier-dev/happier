@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HAPPIER_WIDGET_FRAME_METRICS, HappierPressable, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
@@ -20,6 +21,8 @@ export type WidgetFlowPrimary = Readonly<{
     busy?: boolean;
     /** Why the primary is off, said beside it and read with it. */
     blockedReason?: string | null;
+    /** A glyph before the words (Add's "+"). */
+    icon?: IconName;
     testID?: string;
 }>;
 
@@ -36,10 +39,17 @@ export type WidgetFlowPrimary = Readonly<{
 export function WidgetFlowPanel(props: Readonly<{
     title: string;
     hint?: string | null;
-    /** The widget's own mark, for a flow about one widget (About). */
+    /** Who made it and where it comes from, a quiet third line (the Add pane). */
+    provenance?: string | null;
+    /** The widget's own mark, for a flow about one widget (About, the Add pane). */
     mark?: IconName | React.ReactElement;
     onBack?: () => void;
-    /** Phones: the caret closes the sheet when there is no step to go back to. */
+    /** Names where Back goes ("Widgets"), beside its caret, on a phone's pushed step. */
+    backLabel?: string;
+    /**
+     * Phones: the caret closes the sheet when there is no step to go back to. On desktop a flow
+     * without Cancel (the Add pane) closes from an × at the header's end.
+     */
     onClose?: () => void;
     /** Quiet words in the footer ("Saved to your account · only you"). */
     note?: string | null;
@@ -49,6 +59,10 @@ export function WidgetFlowPanel(props: Readonly<{
     primary?: WidgetFlowPrimary;
     /** Secondary actions that sit in the footer start instead of a note (About's Change and Duplicate). */
     footerStart?: React.ReactNode;
+    /** Quiet help just before the primary (the Add pane's ⌘↵). */
+    footerAccessory?: React.ReactNode;
+    /** The flow fills its surface: the body takes the room between header and footer (the Add pane). */
+    fill?: boolean;
     /** The host already knows it is a phone sheet (Set up); otherwise the device decides. */
     phone?: boolean;
     testID: string;
@@ -60,6 +74,7 @@ export function WidgetFlowPanel(props: Readonly<{
     const phone = props.phone ?? devicePhone;
     const message = props.error ?? props.primary?.blockedReason ?? props.note ?? null;
     const caret = props.onBack ?? (phone ? props.onClose ?? props.onCancel : undefined);
+    const closeInHeader = !phone && !props.onBack && !props.onCancel ? props.onClose : undefined;
     const mark = props.mark === undefined ? null
         : typeof props.mark === 'string' ? <Icon name={props.mark} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />
         : props.mark;
@@ -79,6 +94,8 @@ export function WidgetFlowPanel(props: Readonly<{
                 testID={props.primary.testID ?? `${props.testID}.primary`}
                 size={phone ? 'normal' : 'small'}
                 title={props.primary.label}
+                {...(props.primary.icon ? { leading: <Icon name={props.primary.icon} size={ICON_SIZE.xs}
+                    color={props.primary.disabled === true ? theme.colors.text.tertiary : theme.colors.button.primary.tint} /> } : {})}
                 disabled={props.primary.disabled === true || props.primary.busy === true}
                 loading={props.primary.busy === true}
                 {...(props.primary.blockedReason ? { accessibilityHint: props.primary.blockedReason } : {})}
@@ -88,9 +105,21 @@ export function WidgetFlowPanel(props: Readonly<{
     ) : null;
     const hasFooter = props.primary || props.onCancel || props.footerStart || message;
     return (
-        <View testID={props.testID} accessibilityLabel={props.title} style={styles.root}>
+        <View testID={props.testID} accessibilityLabel={props.title} style={[styles.root, props.fill ? styles.rootFill : null]}>
+            {phone && props.onBack && props.backLabel ? (
+                <HappierPressable
+                    testID={`${props.testID}.back`}
+                    accessibilityRole="button"
+                    accessibilityLabel={props.backLabel}
+                    onPress={props.onBack}
+                    style={(state) => [styles.backRow, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
+                >
+                    <Icon name="caret-left" size={ICON_SIZE.sm} color={theme.colors.text.link} />
+                    <Text style={styles.backLabel}>{props.backLabel}</Text>
+                </HappierPressable>
+            ) : null}
             <View style={styles.header}>
-                {caret ? (
+                {caret && !(phone && props.onBack && props.backLabel) ? (
                     <HappierPressable
                         testID={`${props.testID}.${props.onBack ? 'back' : 'close'}`}
                         accessibilityRole="button"
@@ -105,9 +134,13 @@ export function WidgetFlowPanel(props: Readonly<{
                 <View style={styles.titleBlock}>
                     <Text style={styles.title} accessibilityRole="header" numberOfLines={2}>{props.title}</Text>
                     {props.hint ? <Text style={styles.hint} numberOfLines={2}>{props.hint}</Text> : null}
+                    {props.provenance ? <Text testID={`${props.testID}.provenance`} style={styles.provenance} numberOfLines={1}>{props.provenance}</Text> : null}
                 </View>
+                {closeInHeader ? (
+                    <IconButton testID={`${props.testID}.close`} iconName="x" variant="plain" accessibilityLabel={t('common.close')} onPress={closeInHeader} />
+                ) : null}
             </View>
-            <View style={styles.body}>{props.children}</View>
+            <View style={[styles.body, props.fill ? styles.bodyFill : null]}>{props.children}</View>
             {hasFooter ? (
                 phone ? (
                     <View style={[styles.footer, styles.footerPhone]}>
@@ -117,6 +150,7 @@ export function WidgetFlowPanel(props: Readonly<{
                 ) : (
                     <View style={styles.footer}>
                         {note}
+                        {props.footerAccessory ?? null}
                         {props.onCancel ? (
                             <RoundButton testID={`${props.testID}.cancel`} size="small" display="secondary" title={t('common.cancel')} onPress={props.onCancel} />
                         ) : null}
@@ -217,6 +251,10 @@ export const widgetFlowText = StyleSheet.create((theme) => ({
 
 const stylesheet = StyleSheet.create((theme) => ({
     root: { paddingHorizontal: 6, paddingTop: 6, paddingBottom: 8 },
+    // A phone's pushed step: "‹ Widgets" on its own line, as the navigation bar would draw it.
+    backRow: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 2, paddingVertical: 6, paddingRight: 8, marginLeft: -2, marginBottom: 4, borderRadius: MENU_ROW_METRICS.radiusPx },
+    backLabel: { ...Typography.default(), ...happierPageTextMetrics('rowTitle'), color: theme.colors.text.link },
+    rootFill: { flex: 1, minHeight: 0 },
     header: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, paddingHorizontal: 4, paddingTop: 2, paddingBottom: 10 },
     caret: {
         width: 28,
@@ -232,7 +270,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     titleBlock: { flex: 1, minWidth: 0, gap: 2 },
     title: { ...Typography.default('semiBold'), ...happierPageTextMetrics('sectionTitle'), color: theme.colors.text.primary },
     hint: { ...Typography.default(), ...happierPageTextMetrics('meta'), color: theme.colors.text.tertiary },
+    provenance: { ...Typography.default(), ...happierPageTextMetrics('meta'), color: theme.colors.text.tertiary, marginTop: 2 },
     body: { paddingHorizontal: 4 },
+    bodyFill: { flex: 1, minHeight: 0 },
     footer: {
         flexDirection: 'row',
         alignItems: 'center',

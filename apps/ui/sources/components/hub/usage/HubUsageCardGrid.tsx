@@ -16,6 +16,7 @@ import { Typography } from '@/constants/Typography';
 import type { ConnectedServiceAccountNeedingSignIn } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSummaries';
 import { useConnectedAccountIdentityPrivacy, type ConnectedAccountIdentityPresenter } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import { resolveQuotaTone } from '@/sync/domains/connectedServices/resolveQuotaTone';
+import { presentConnectedAccountName } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 import { t } from '@/text';
 
 import type { UsageSummaryEntry } from './useUsageSummary';
@@ -69,17 +70,18 @@ function identityOf(
     present: ConnectedAccountIdentityPresenter,
     input: Readonly<{ serviceLabel: string; accountLabel?: string | null; profileLabel?: string | null; accountEmail?: string | null; accountId?: string | null; planLabel?: string | null }>,
 ): Readonly<{ title: string; qualifier: string }> {
-    const shown = present({
-        label: input.accountLabel ?? input.profileLabel ?? null,
+    // The one naming rule: a name, else the email, else the service's account; never a raw id. A name
+    // that is the email already says who it is; the line under it then carries the plan alone.
+    const name = presentConnectedAccountName({
+        serviceTitle: input.serviceLabel,
+        displayName: input.accountLabel ?? input.profileLabel ?? null,
         email: input.accountEmail ?? null,
         accountId: input.accountId ?? null,
+        presentIdentity: present,
     });
-    // A name that is the email already says who it is; the line under it then carries the plan alone.
-    const name = shown.label ?? shown.email ?? shown.accountId;
-    const email = shown.email && shown.email !== name ? shown.email : null;
     return {
-        title: name ? `${input.serviceLabel} · ${name}` : input.serviceLabel,
-        qualifier: [email, input.planLabel].filter(Boolean).join(' · '),
+        title: name.serviceFallback ? name.primaryLabel : `${input.serviceLabel} · ${name.primaryLabel}`,
+        qualifier: [name.identityLabel, input.planLabel].filter(Boolean).join(' · '),
     };
 }
 

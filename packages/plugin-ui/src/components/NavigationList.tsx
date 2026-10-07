@@ -221,7 +221,7 @@ function NavigationListGroupStatus(props: Readonly<{ status: NavigationListStatu
         numberOfLines={1}
         style={{
           ...resolveHappierTextStepStyle(HAPPIER_COLLECTION_LIST_TEXT.groupCount, typography),
-          color: props.status.kind === 'attention' ? theme.colors.warning : theme.colors.mutedText,
+          color: props.status.kind === 'attention' ? theme.colors.attention : theme.colors.mutedText,
         }}
       >
         {props.status.label}

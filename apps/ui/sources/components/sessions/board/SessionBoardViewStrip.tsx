@@ -4,8 +4,9 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 // The app's ONE RTL-aware tab-key owner. A Board-local Arrow algorithm would move
 // the wrong way in a right-to-left locale; importing this is the contract.
-import { resolveHappierTabKeySelection, resolveHappierFocusRingVisible } from '@happier-dev/plugin-ui/presentation';
+import { resolveHappierFocusRingVisible, resolveHappierTabKeySelection } from '@happier-dev/plugin-ui/presentation';
 
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
@@ -52,19 +53,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     labelActive: {
         ...Typography.default('semiBold'),
         color: theme.colors.text.primary,
-    },
-    // The same ring the incumbent tab bar and row-action controls draw, so one
-    // keyboard journey through a Session does not change its focus vocabulary.
-    viewFocused: {
-        ...Platform.select({
-            web: {
-                outlineWidth: 2,
-                outlineColor: theme.colors.border.focus,
-                outlineStyle: 'solid',
-                outlineOffset: -2,
-            },
-            default: {},
-        }),
     },
     renameInput: {
         ...Typography.default('semiBold'),
@@ -285,7 +273,7 @@ export function SessionBoardViewStrip(props: Readonly<{
                                 styles.view,
                                 selected ? styles.viewActive : null,
                                 { minHeight: minimumTarget, opacity: webState.pressed ? motionTokens.press.opacity : 1 },
-                                resolveHappierFocusRingVisible(webState.focused) ? styles.viewFocused : null,
+                                focusRingStyle({ focused: resolveHappierFocusRingVisible(webState.focused), color: theme.colors.border.focus }),
                             ];
                         }}
                     >

@@ -1279,6 +1279,7 @@ export async function createCliCapabilitiesService(dependencies: Readonly<{
     activatePurposeBindings?: CliProbeDependencies['activatePurposeBindings'];
     isAgentRegistryCurrent?: () => boolean;
     resolveNativeCatalogBearer?: CliProbeDependencies['resolveNativeCatalogBearer'];
+    hasSessionAgentTransition?: () => boolean;
 }> = {}): Promise<ReturnType<typeof createCapabilitiesService>> {
     // Explicit ephemeral merged snapshot for this service's probes only. It is
     // never written back into a shared registry authority; currentness is
@@ -1307,7 +1308,13 @@ export async function createCliCapabilitiesService(dependencies: Readonly<{
             })),
     );
 
+    const hasSessionAgentTransition = dependencies.hasSessionAgentTransition;
+    const daemonCapabilities: Capability[] = hasSessionAgentTransition ? [{
+        descriptor: { id: 'tool.sessionAgentTransition', kind: 'tool', title: 'Agent transitions' },
+        detect: async () => ({ supportsInputPermissionIntent: hasSessionAgentTransition() }),
+    }] : [];
     const explicitCapabilities: Capability[] = [
+        ...daemonCapabilities,
         tmuxCapability,
         windowsTerminalCapability,
         createPluginMarketplaceCapability(

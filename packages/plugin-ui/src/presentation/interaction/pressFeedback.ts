@@ -19,11 +19,11 @@ import { HAPPIER_MOTION_V1 } from './motion.js';
  *   finger; release is slower so a cancelled press eases back.
  */
 export const HAPPIER_PRESS_FEEDBACK_V1 = Object.freeze({
-  scale: 0.96,
+  scale: 0.97,
   opacity: 0.7,
   opacitySubtle: 0.85,
   opacitySurface: 0.985,
-  pressMs: 90,
+  pressMs: 120,
   releaseMs: 180,
   easingCss: HAPPIER_MOTION_V1.standardEasingCss,
 });

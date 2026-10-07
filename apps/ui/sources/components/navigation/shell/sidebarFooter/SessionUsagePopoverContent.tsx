@@ -11,6 +11,9 @@ import type { ConnectedServiceQuotaGaugeViewModel } from '@/sync/domains/connect
 import { resolveQuotaTone } from '@/sync/domains/connectedServices/resolveQuotaTone';
 import { resolveSessionUsageAccount } from '@/sync/domains/connectedServices/resolveSessionUsageAccount';
 import { useProfile } from '@/sync/store/hooks';
+import { presentConnectedAccountName } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
+import { getConnectedServiceRegistrySnapshot } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { resolveQualifiedConnectedServiceRegistryDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
 import { t } from '@/text';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { AccountProfile } from '@happier-dev/protocol/account/profile';
@@ -74,8 +77,15 @@ export function buildUsagePopoverSession(params: Readonly<{
         const group = account.groupId ? findGroup(account.account.service, account.groupId) : null;
         const pool = group?.displayName ?? t('sidebarFooter.usagePoolFallback');
         const row = params.usage.accounts.find((candidate) => candidate.key === accountKey) ?? null;
-        const shown = params.present({ label: row?.accountLabel ?? null, email: row?.accountEmail ?? null, accountId: account.account.accountId });
-        const name = shown.label ?? shown.email ?? shown.accountId ?? account.account.accountId;
+        // The one naming rule: never the account's raw id.
+        const name = presentConnectedAccountName({
+            serviceTitle: row?.serviceLabel
+                ?? resolveQualifiedConnectedServiceRegistryDisplayName(getConnectedServiceRegistrySnapshot(), account.account.service, t),
+            displayName: row?.accountLabel ?? null,
+            email: row?.accountEmail ?? null,
+            accountId: account.account.accountId,
+            presentIdentity: params.present,
+        }).primaryLabel;
         return {
             scopeLine: agent === null
                 ? null

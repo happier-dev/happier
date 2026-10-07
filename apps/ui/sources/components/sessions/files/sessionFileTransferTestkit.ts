@@ -1,7 +1,7 @@
 import { FeaturesResponseSchema, type FeaturesResponse } from '@happier-dev/protocol';
 import { createMachineFixture, createSessionFixture } from '@/dev/testkit';
 import { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
-import { setServerProfileIdentityForUrl, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { setActiveServer } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
@@ -39,9 +39,10 @@ export function transferMachine(overrides: Partial<Machine> = {}): Machine {
 export async function resetTransferFixture(): Promise<void> {
     resetServerFeaturesClientForTests();
     for (const serverId of ['server-1', 'server-a', 'server-b', 'server-explicit']) {
-        const serverUrl = `https://${serverId}.transfer.example.test`;
-        await upsertServerProfile({ serverUrl });
-        await setServerProfileIdentityForUrl(serverUrl, serverId);
+        // A profile's id is derived from its host, so `https://server-1` is the profile `server-1` that the
+        // sessions, machine lists and active selection below name. (A stable identity must be `srv_…`, so
+        // it cannot stand in for these ids.)
+        await upsertServerProfile({ serverUrl: `https://${serverId}` });
         invalidateCachedTransferRoutesForServer({ serverId });
         primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features: transferFeatures() } });
     }

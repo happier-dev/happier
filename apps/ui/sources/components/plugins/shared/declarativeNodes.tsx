@@ -8,6 +8,7 @@ import {
     HappierDataMetric,
     HappierDataRows,
     HappierDataTable,
+    happierFocusRingStyle,
     HappierHeading,
     HappierInfoState,
     HappierInfoTile,
@@ -359,7 +360,8 @@ function renderActionAffordance(
                 borderRadius: 10,
                 borderWidth: 1,
                 backgroundColor: variantColors.background,
-                borderColor: state.focused ? context.presentationTheme.colors.focus : variantColors.border,
+                borderColor: variantColors.border,
+                ...happierFocusRingStyle({ visible: state.focused, color: context.presentationTheme.colors.focus }),
                 opacity: state.disabled ? 0.5 : state.pressed ? motionTokens.press.opacitySubtle : 1,
             })}
         >

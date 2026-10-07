@@ -84,6 +84,61 @@ test('language lookup and tokenization defer the highlighter runtime and themes'
     }
 });
 
+test('web markdown consumers keep their shared engine outside required production chunks', async () => {
+    const fixture = mkdtempSync(path.join(tmpdir(), 'happier-markdown-chunks-'));
+    let server;
+    try {
+        const preparation = await import('./ensureWorkspacePackagesBuilt.mjs');
+        if (!(await preparation.hasUsableUiWorkspaceLastGreen({ uiPackageDir: uiRoot }))) {
+            await preparation.ensureUiWorkspacePackagesBuilt({ uiPackageDir: uiRoot });
+        }
+        writeFileSync(path.join(fixture, 'index.js'), `import { MarkdownEditor } from ${JSON.stringify(path.join(uiRoot, 'sources/components/ui/markdown/editor/MarkdownEditor.web.tsx'))};
+import { useRichEligibility } from ${JSON.stringify(path.join(uiRoot, 'sources/components/ui/markdown/editor/core/eligibility/richEligibility.web.ts'))};
+globalThis.markdownConsumers = [MarkdownEditor, useRichEligibility];`);
+        delete require.cache[require.resolve(path.join(uiRoot, 'metro.config.js'))];
+        const config = require(path.join(uiRoot, 'metro.config.js'));
+        config.watchFolders = [...config.watchFolders, fixture];
+        config.maxWorkers = 2;
+        config.cacheStores = [new (require('metro-cache').FileStore)({ root: path.join(fixture, 'transforms') })];
+        config.fileMapCacheDirectory = path.join(fixture, 'filemap');
+        mkdirSync(config.fileMapCacheDirectory, { recursive: true });
+        config.reporter = { update() {} };
+        const originalSerializer = config.serializer.customSerializer;
+        let artifacts;
+        config.serializer.customSerializer = async (entry, prepend, graph, options) => {
+            const result = await originalSerializer(entry, prepend, graph, {
+                ...options,
+                serializerOptions: { output: 'static', splitChunks: true, exporting: true, includeSourceMaps: false },
+            });
+            artifacts = (typeof result === 'string' ? JSON.parse(result) : result).artifacts;
+            return { code: '', map: '{}' };
+        };
+        const Server = require('metro/private/Server').default;
+        server = new Server(config, { watch: false });
+        await server.build({ ...Server.DEFAULT_BUNDLE_OPTIONS,
+            entryFile: path.join(fixture, 'index.js'), platform: 'web', dev: false, minify: false, lazy: false,
+            customTransformOptions: { engine: 'hermes', routerRoot: './sources/app' },
+            unstable_transformProfile: 'hermes-stable',
+        });
+        assert.ok(Array.isArray(artifacts), 'inspect the actual production serializer artifacts');
+        const javascript = artifacts.filter((artifact) => artifact.type === 'js');
+        const required = javascript.filter((artifact) => artifact.metadata.isAsync !== true);
+        const engines = (artifact) => artifact.metadata.modulePaths.filter((file) =>
+            /\/node_modules\/(?:@tiptap|prosemirror-[^/]+)\//.test(file.replaceAll('\\', '/')));
+        assert.ok(required.length > 0, 'the real entry chunk must be serialized');
+        assert.ok(javascript.some((artifact) => artifact.metadata.isAsync === true && engines(artifact).length > 0),
+            'the demanded engine must remain present in an async chunk');
+        const eager = required.flatMap((artifact) => engines(artifact));
+        console.log(JSON.stringify({ entry: 'markdown surface and HTML eligibility',
+            requiredChunks: required.map((artifact) => ({ file: artifact.filename, bytes: Buffer.byteLength(artifact.source) })),
+            eagerEngineModules: eager.length }));
+        assert.deepEqual(eager, [], 'two demand consumers must not hoist their shared engine into required startup chunks');
+    } finally {
+        if (server) await server.end();
+        rmSync(fixture, { recursive: true, force: true });
+    }
+});
+
 test('optional web renderers stay outside their entry static closures', async () => {
     const cache = mkdtempSync(path.join(tmpdir(), 'happier-optional-renderers-'));
     let server;

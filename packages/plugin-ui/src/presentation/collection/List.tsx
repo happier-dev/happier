@@ -19,6 +19,7 @@ import type {
   HappierStyleProp,
 } from '../portableTypes.js';
 import { HappierSpinner } from '../feedback/Spinner.js';
+import { happierFocusRingStyle } from '../interaction/focusVisible.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import { HAPPIER_PRESS_FEEDBACK_V1, happierPressTransitionStyle } from '../interaction/pressFeedback.js';
 import { HAPPIER_MOTION_V1 } from '../interaction/motion.js';
@@ -28,6 +29,7 @@ import { happierPageRowDividerWidth, useHappierPageSection } from '../layout/Pag
 import { resolveHappierPageTextStyle } from '../layout/pageText.js';
 import { HAPPIER_TONE_COLOR_TOKEN, type HappierTone } from '../semantics.js';
 import { HappierText } from '../text/Text.js';
+import { HAPPIER_META_COLUMN_STYLE } from '../text/metaColumn.js';
 import { resolveHappierTypeRoleStyle } from '../text/typeRole.js';
 import {
   resolveHappierItemBehavior,
@@ -227,10 +229,12 @@ const NAVIGATION_ROW_FOCUS_RING_WIDTH = 1;
 /** The least air above and below a navigation row's text when it wraps past the row's height. */
 const NAVIGATION_ROW_TEXT_FLOOR_PX = 4;
 
+// The trailing meta column (`HAPPIER_META_COLUMN_STYLE`); its tabular figures come through `tabularNumbers`.
 const DETAIL_TEXT_STYLE: HappierPortableStyle = {
+  textAlign: HAPPIER_META_COLUMN_STYLE.textAlign,
+  minWidth: HAPPIER_META_COLUMN_STYLE.minWidth,
   flexShrink: 1,
   maxWidth: '40%',
-  textAlign: 'right',
 };
 
 const listStyle: ViewStyle = {
@@ -718,10 +722,12 @@ export function HappierListItem({
         minHeight: targetSize,
         marginHorizontal: HAPPIER_COLLECTION_LIST_METRICS.rowInset,
         borderRadius: HAPPIER_COLLECTION_LIST_METRICS.rowRadius,
-        // The focus ring is a border (it keeps the box on every platform); the content padding
-        // subtracts its width, so the glyph still lands on the shared text edge.
+        // The transparent border is the inset ring's band; the content padding subtracts its
+        // width, so the glyph still lands on the shared text edge.
         borderWidth: NAVIGATION_ROW_FOCUS_RING_WIDTH,
-        borderColor: state.focused ? resolvedTheme.colors.focus : 'transparent',
+        borderColor: 'transparent',
+        // Inset, like every list row: rows stack flush in a scrolling column that clips outside them.
+        ...happierFocusRingStyle({ visible: state.focused, color: resolvedTheme.colors.focus, placement: 'inset' }),
         backgroundColor: selected === true
           ? navigationPalette?.navigationSelected ?? resolvedTheme.colors.elevatedSurface
           : state.hovered && !state.disabled ? navigationPalette?.navigationHover ?? 'transparent' : 'transparent',
@@ -734,8 +740,10 @@ export function HappierListItem({
         minWidth: 0,
         minHeight: targetSize,
         // The ring is keyboard focus only; the row's fills are the wrapper's, across the accessory too.
+        // Inset: the row spans its group, which clips anything drawn outside it.
         borderWidth: 1,
-        borderColor: state.focused ? resolvedTheme.colors.focus : 'transparent',
+        borderColor: 'transparent',
+        ...happierFocusRingStyle({ visible: state.focused, color: resolvedTheme.colors.focus, placement: 'inset' }),
         opacity: state.disabled && !state.busy
           ? 0.5
           : state.pressed ? HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle : 1,
@@ -745,7 +753,9 @@ export function HappierListItem({
         minWidth: 0,
         minHeight: targetSize,
         borderWidth: 1,
-        borderColor: state.focused ? resolvedTheme.colors.focus : 'transparent',
+        borderColor: 'transparent',
+        // Inset: the row spans its list, which clips anything drawn outside it.
+        ...happierFocusRingStyle({ visible: state.focused, color: resolvedTheme.colors.focus, placement: 'inset' }),
         borderRadius: resolvedTheme.radii.control,
         // Selection paints a soft control fill (never an accent bar); focus
         // paints only the ring above. They are separate axes, so a focused row

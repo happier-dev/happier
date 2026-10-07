@@ -1,4 +1,5 @@
 import { homedir } from 'node:os';
+import { postWebhookJsonAsync, WebhookDestinationAdmissionError } from '@/notifications/activity/sendWebhookActivityNotification';
 import { createCliSettingsDeclarationAction } from './settingsDeclarationAction';
 import { applyTodoSessionLinkV1, TodoSessionLinkErrorV1, TodoSessionLinkInputV1Schema, projectTodoSessionLinkFailureV1 } from '@happier-dev/protocol/todos/todoSessionLinkV1';
 import { createCliAccountKvJsonTransport } from '@/api/client/accountKvJsonTransport';
@@ -67,6 +68,7 @@ import { MemoryWindowV1Schema } from '@happier-dev/protocol/memory/memoryWindow'
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { WorkflowStepExecutionSelectionSchema, WorkflowIngressContextV1Schema } from '@happier-dev/protocol/workflows/workflowV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { WorkflowMachineCommandOutputV1Schema } from '@happier-dev/protocol/workflows/stepActionsV1';
 import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import { PromptExternalLinksV1Schema } from '@happier-dev/protocol/prompts/library/promptExternalLinksV1';
 import { exportPromptLibraryArtifact, installPromptRegistryItemInLibrary, updatePromptBundleInLibrary, updatePromptDocInLibrary, readPromptDocInLibrary, createPromptDocInLibrary, setPromptDocFavorite, listPromptLibrary } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
@@ -1182,6 +1184,7 @@ export function createCliActionDeps(params: Readonly<{
     method: string;
     request: unknown;
     signal?: AbortSignal;
+    timeoutMs?: number | null;
   }>): Promise<unknown> => {
     if (!isMachineActionServerScopeCurrent(input.serverId)) {
       throw Object.assign(new Error('server_scope_mismatch'), { code: 'server_scope_mismatch' });
@@ -1204,6 +1207,7 @@ export function createCliActionDeps(params: Readonly<{
       request: input.request,
       ...executionRunAuthorityCeiling(input),
       ...(input.signal ? { signal: input.signal } : {}),
+      ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
     });
   };
 
@@ -2821,6 +2825,22 @@ export function createCliActionDeps(params: Readonly<{
       context.signal?.throwIfAborted();
       return { items };
     },
+    webhookCall: async (input, context) => {
+      context.signal?.throwIfAborted();
+      let result: Awaited<ReturnType<typeof postWebhookJsonAsync>>;
+      try {
+        result = await postWebhookJsonAsync({ ...input,
+          idempotencyKey: context.actionRequestId ?? randomUUID(),
+          ...(context.signal ? { signal: context.signal } : {}) });
+      } catch (error) {
+        if (error instanceof WebhookDestinationAdmissionError) {
+          return { ok: false, errorCode: 'webhook_destination_rejected', error: 'Webhook destination rejected' };
+        }
+        throw error;
+      }
+      return result.status >= 300
+        ? { ok: false, errorCode: 'webhook_failed', error: 'Webhook failed', details: result } : result;
+    },
     notificationsNotifyMe: async (input, context) => {
       if (!params.credentials) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       context.signal?.throwIfAborted();
@@ -2852,6 +2872,42 @@ export function createCliActionDeps(params: Readonly<{
           ...(input.open ? { open: input.open } : {}),
           ...(context.actionRequestId ? { actionRequestId: context.actionRequestId } : {}) },
       });
+    },
+    machineCommandRun: async (input, context) => {
+      context.signal?.throwIfAborted();
+      const target = context.externalActionTarget;
+      if (target?.kind !== 'machine' || !target.project || target.project.machineId !== target.machineId) {
+        return { ok: false, errorCode: 'command_target_required', error: 'Command machine and workspace are required' };
+      }
+      if (!isMachineActionServerScopeCurrent(context.serverId ?? undefined)) {
+        return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
+      }
+      if (!params.credentials && params.machineActionDirectTargetTransport?.machineId !== target.machineId) {
+        return { ok: false, errorCode: 'command_transport_unavailable', error: 'Command machine transport is unavailable' };
+      }
+      const raw = await callMachineAction({
+        machineId: target.machineId,
+        serverId: context.serverId ?? undefined,
+        authority: context.authority,
+        method: RPC_METHODS.BASH,
+        request: { command: input.command, ...(input.env ? { env: input.env } : {}),
+          cwd: target.project.directory, cwdMode: 'explicit', timeout: 0 },
+        timeoutMs: null,
+        ...(context.signal ? { signal: context.signal } : {}),
+      });
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw) || !('success' in raw) || typeof raw.success !== 'boolean') {
+        return { ok: false, errorCode: 'action_failed', error: 'Command result is invalid' };
+      }
+      const response = raw as Record<string, unknown>;
+      const output = WorkflowMachineCommandOutputV1Schema.safeParse({
+        exitCode: response.exitCode ?? (response.success ? undefined : -1),
+        stdout: response.stdout ?? '', stderr: response.stderr ?? '',
+      });
+      if (!output.success) return { ok: false, errorCode: 'action_failed', error: 'Command result is invalid' };
+      if (response.success) return output.data;
+      const cancelled = response.error === 'Command cancelled';
+      return { ok: false, errorCode: cancelled ? 'command_cancelled' : 'command_failed',
+        error: cancelled ? 'Command cancelled' : 'Command failed', details: output.data };
     },
     getCurrentWorkspaceWrites: params.getCurrentWorkspaceWrites ?? (params.getCurrentSessionMetadata ? () => readSessionWorkspaceWritesV1(
       params.getCurrentSessionMetadata?.(), {

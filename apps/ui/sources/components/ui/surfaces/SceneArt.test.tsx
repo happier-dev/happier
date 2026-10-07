@@ -15,7 +15,7 @@ function planetStyle(screen: Screen) {
     return Object.assign({}, ...style) as { opacity?: number; transform?: readonly Record<string, number>[] };
 }
 const propGroup = (screen: Screen, transform: string) =>
-    screen.findAll((node) => node.type === 'G' && String(node.props.transform).startsWith(transform))[0]!;
+    screen.findAll((node) => String(node.type) === 'G' && String(node.props.transform).startsWith(transform))[0]!;
 
 /**
  * Widgets plan A5: the host's scene renderer. The registry owns parts and composition; this renderer
@@ -32,7 +32,7 @@ describe('SceneArt', () => {
         expect(art?.props.accessibilityElementsHidden).toBe(true);
         // the planet layer ends just above the ground (y 45.6 of 64, at 232 / 160)
         expect(screen.findHostByTestId('scene-planet')?.props.style).toMatchObject({ height: 45.6 * 1.45, overflow: 'hidden' });
-        const planetDots = screen.findHostByTestId('scene-planet-body')!.findAll((node) => node.type === 'Circle');
+        const planetDots = screen.findHostByTestId('scene-planet-body')!.findAll((node) => String(node.type) === 'Circle');
         expect(planetDots.length).toBeGreaterThan(40);
     });
 
@@ -63,16 +63,16 @@ describe('SceneArt', () => {
             props: [{ prop: { name: 'acme.crate', marks: [{ shape: 'rect', x: -6, y: -8, width: 12, height: 8 }] }, x: 60, scale: 2, flip: true }],
         });
         const screen = await renderScreen(<SceneArt scene={scene} size="pane" still />);
-        const rect = propGroup(screen, 'translate(60 46) scale(-2 2)').findAll((node) => node.type === 'Rect')[0]!;
-        expect(rect.props.stroke).toBe(screen.findAll((node) => node.type === 'Stop')[1]!.props.stopColor);
+        const rect = propGroup(screen, 'translate(60 46) scale(-2 2)').findAll((node) => String(node.type) === 'Rect')[0]!;
+        expect(rect.props.stroke).toBe(screen.findAll((node) => String(node.type) === 'Stop')[1]!.props.stopColor);
         expect(rect.props.strokeWidth).toBeCloseTo((1.3 / 1.1) / 2);
     });
 
     it('paints the one accent in the attention amber, and the beacon of a waiting planet too', async () => {
         const accentOf = async (accent: string | undefined) => {
             const screen = await renderScreen(<SceneArt scene={resolveHappierScene({ name: 'test.shield', moment: 'noon', props: [{ prop: 'shield', x: 56 }], accent })} size="pane" still />);
-            const line = screen.findAll((node) => node.type === 'Stop')[1]!.props.stopColor;
-            const tick = propGroup(screen, 'translate(56 46)').findAll((node) => node.type === 'Path').at(-1)!;
+            const line = screen.findAll((node) => String(node.type) === 'Stop')[1]!.props.stopColor;
+            const tick = propGroup(screen, 'translate(56 46)').findAll((node) => String(node.type) === 'Path').at(-1)!;
             return { line, stroke: tick.props.stroke, opacity: tick.props.strokeOpacity };
         };
         const on = await accentOf('shield');
@@ -83,7 +83,7 @@ describe('SceneArt', () => {
         expect(off.opacity).toBeLessThan(1);
 
         const waiting = await renderScreen(<SceneArt scene={resolveHappierScene('reconnecting')} size="pane" still />);
-        const beacon = waiting.findAll((node) => node.type === 'Circle' && node.props.r === 1.5)[0]!;
+        const beacon = waiting.findAll((node) => String(node.type) === 'Circle' && node.props.r === 1.5)[0]!;
         expect(beacon.props.fill).toBe(on.stroke);
     });
 });

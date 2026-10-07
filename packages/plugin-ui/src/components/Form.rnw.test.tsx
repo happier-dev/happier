@@ -3,6 +3,7 @@ import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import type { ActionInputHints } from '@happier-dev/plugin-sdk/actions';
 
+import { HAPPIER_FIELD_BOX_METRICS } from '../presentation/form/FieldBox.js';
 import { HappierSelect, HappierValidationMessage } from '../presentation/form/Fields.js';
 import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext, SURFACE_THEME_FIXTURE } from '../surfaceFixture.testSupport.js';
@@ -350,11 +351,16 @@ describe('canonical Action Form presentation', () => {
     );
     const toggle = mount.container.querySelector<HTMLElement>('[role="switch"]');
     expect(toggle).not.toBeNull();
-    const unfocusedBorder = getComputedStyle(toggle!).borderTopColor;
+    // The ring rides the drawn track (the switch's first child), not the larger hit box around it.
+    const track = toggle!.firstElementChild as HTMLElement;
+    expect(getComputedStyle(track).outlineStyle).not.toBe('solid');
 
     await act(async () => { toggle?.focus(); });
 
-    expect(getComputedStyle(toggle!).borderTopColor).not.toBe(unfocusedBorder);
+    expect(getComputedStyle(track).outlineStyle).toBe('solid');
+    expect(getComputedStyle(track).outlineOffset).toBe('2px');
+    // One ring: the hit box drops the browser's own.
+    expect(getComputedStyle(toggle!).outlineStyle).toBe('none');
     mount.unmount();
   });
 
@@ -1096,7 +1102,7 @@ describe('shared control visuals (D6)', () => {
     const box = input.parentElement!;
     expect(getComputedStyle(box).borderTopColor).toBe('rgb(171, 205, 239)');
     expect(getComputedStyle(box).backgroundColor).toBe('rgb(253, 253, 253)');
-    expect(box.style.borderTopLeftRadius).toBe('9px');
+    expect(box.style.borderTopLeftRadius).toBe(`${HAPPIER_FIELD_BOX_METRICS.radiusPx}px`);
     mount.unmount();
   });
 

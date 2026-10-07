@@ -654,12 +654,16 @@ When a Linux target has a ready systemd user manager and a loaded `happier-jobs.
 job runs in a transient user scope in that slice at nice level 10. The launcher does not create or
 configure the slice; targets without that prepared boundary run the same admitted command directly.
 
-The normal scratch floor is 1 GiB. A target whose synchronized checkout has not installed the
-current dependencies needs at least 16 GiB for automatic dependency-backed routing, covering the
-Yarn cache and linked workspace tree. Already-prepared targets keep using the normal floor, and
-source searches can still use an otherwise healthy unprepared target. An explicit
-`dev-targets exec <name>` remains an operator override and can still attempt dependency preparation
-on that target.
+In current 0.3 development, Linux worker admission measures its existing dependency tree, shared
+caches and retained build workspace against the available bytes on their filesystems. Live peers'
+disk envelopes share the existing admission lock. If headroom is insufficient, cleanup tries stale
+staging across stacks, Yarn entries absent from protected lockfiles, then lane scratch older than
+24 hours. Unknown holder visibility preserves data. AUTO selects another worker for that command
+class if space is still insufficient; an explicit target reports the failure. `dev-targets status`
+shows the measured runtime envelope and available bytes. Source searches require a filesystem with
+free space but do not reserve a build envelope. These resident measurements do not establish temporal
+install/build peaks or account for filesystem quotas; the development workflow still needs those
+live measurements before claiming protection against every `ENOSPC` failure.
 
 On POSIX, the checkout-local launcher first performs a conservative filesystem check. If no
 repository target configuration can exist, it replaces itself with the requested command without

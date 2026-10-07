@@ -943,6 +943,7 @@ describe('sendSessionMessage machine admission', () => {
       requestedAction: { v: 1, kind: 'enqueue' },
       messageMeta: {
         source: 'hostile-source',
+        permissionMode: 'read-only',
         happierProvenanceV1: { v: 1, kind: 'automation', automationId: 'forged', runId: 'forged' },
         happierInputRequestV1: { v: 1, producer: 'automation', caller: { kind: 'host' }, automation: { automationId: 'forged', runId: 'forged' }, permission: {} },
       },
@@ -968,6 +969,7 @@ describe('sendSessionMessage machine admission', () => {
           v: expect.objectContaining({
             meta: expect.objectContaining({
               source: 'ui',
+              permissionMode: 'read-only',
               happierProvenanceV1: { v: 1, kind: 'host', producer: 'happierApp' },
               happierInputRequestV1: expect.objectContaining({ producer: 'happierApp' }),
             }),

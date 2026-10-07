@@ -4,6 +4,7 @@ import {
     resolveHappierWorkStatusSurfaceStyle,
     resolveHappierWorkStatusWordColor,
     type HappierWorkColors,
+    type HappierWorkStateColors,
     type HappierWorkStatusColors,
 } from '@happier-dev/plugin-ui/presentation';
 
@@ -26,6 +27,25 @@ import type { WorkStatusTone } from './resolveWorkStatusTone';
 
 const hostWorkColors = new WeakMap<Theme, HappierWorkColors>();
 
+type AttentionThemeColors = Readonly<{
+    attention: Readonly<{ foreground: string }>;
+    warning: HappierWorkStateColors;
+}>;
+
+/**
+ * "Needs you" is the Brand-owned attention amber wherever it appears (DESIGN.md, "One attention
+ * colour"), not the system warning orange: its ink and the ring drawn from it. The amber has no tint
+ * token of its own, so the faint ground stays the warning tint (the attention ink is asserted AA on
+ * an amber tint in `themeContrast.test.ts`).
+ */
+function attentionStateColors(state: AttentionThemeColors): HappierWorkStateColors {
+    return {
+        foreground: state.attention.foreground,
+        background: state.warning.background,
+        border: state.attention.foreground,
+    };
+}
+
 /**
  * The exact colour roles the shared Work primitives (status treatment, Work sections and rows, the
  * work map) draw with in Happier core: the state hues with their own tints and rings, the inset
@@ -47,7 +67,7 @@ export function projectWorkColors(theme: Theme): HappierWorkColors {
         hover: colors.surface.pressedOverlay,
         selected: colors.surface.selected,
         focus: colors.border.focus,
-        attention: colors.state.warning,
+        attention: attentionStateColors(colors.state),
         danger: colors.state.danger,
     });
     hostWorkColors.set(theme, projected);
@@ -78,14 +98,14 @@ export function workStatusSurfaceStyle(tone: WorkStatusTone) {
 
 type ToneColors = Readonly<{
     text: Readonly<{ secondary: string }>;
-    state: Readonly<{ warning: HappierWorkStatusColors['attention']; danger: HappierWorkStatusColors['danger'] }>;
+    state: AttentionThemeColors & Readonly<{ danger: HappierWorkStatusColors['danger'] }>;
 }>;
 
 /** A state glyph's colour in this tone (an icon has no text style): quiet secondary ink while healthy. */
 export function workStatusGlyphColor(colors: ToneColors, tone: WorkStatusTone): string {
     return resolveHappierWorkStatusGlyphColor(tone, {
         secondaryText: colors.text.secondary,
-        attention: colors.state.warning,
+        attention: attentionStateColors(colors.state),
         danger: colors.state.danger,
     });
 }

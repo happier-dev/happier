@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -22,6 +22,8 @@ const { promptSpy, alertSpy, machineRpcSpy } = vi.hoisted(() => ({
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+// On web, draft persistence reads IndexedDB; the canonical fixture stands in for that browser boundary.
+vi.mock('@/sync/domains/state/browserRecordStorage', async () => (await import('@/dev/testkit/mocks/browserRecordStorage')).createBrowserRecordStorageModuleMock());
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit')).createExpoVectorIconsMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit')).createTextModuleMock({ translate: key => key }));
 vi.mock('@/modal', async () => {
@@ -30,14 +32,21 @@ vi.mock('@/modal', async () => {
     boundary.spies.alert.mockImplementation(alertSpy);
     return boundary.module;
 });
-vi.mock('@/components/ui/popover', async importOriginal => (await import('@/dev/testkit')).createInlinePopoverModuleMock(importOriginal));
+vi.mock('@/components/ui/popover', async importOriginal => (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal));
 // Execute the real Metro web owners in the Node renderer.
 vi.mock('@/hooks/ui/useWebFileDropZone', () => import('@/hooks/ui/useWebFileDropZone.web'));
 vi.mock('@/utils/files/webDroppedEntries', () => import('@/utils/files/webDroppedEntries.web'));
 
 describe('SessionRepositoryTreeBrowserView (create actions)', () => {
     let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>>;
-    beforeAll(prepareSessionFilesViewTestkit);
+    let restoreLocks = () => {};
+    beforeAll(async () => {
+        // jsdom has no Web Locks; Home profile writes take a browser lock on web.
+        const { installWebLockManagerMock } = await import('@/auth/storage/tokenStorage.web.testHelpers');
+        restoreLocks = installWebLockManagerMock().restore;
+        await prepareSessionFilesViewTestkit();
+    });
+    afterAll(() => restoreLocks());
 
     beforeEach(async () => {
         vi.stubGlobal('SharedWorker', class SharedWorker {});
@@ -92,6 +101,9 @@ describe('SessionRepositoryTreeBrowserView (create actions)', () => {
 
     async function selectMenuItem(screen: Awaited<ReturnType<typeof renderRepositoryTreeBrowserView>>, id: string) {
         await screen.pressByTestIdAsync('repository-tree-create-button');
+        // The menu opens on the next frame (DropdownMenu schedules the open after the press).
+        await vi.waitFor(() => expect(screen.findByTestId(id)).toBeTruthy());
+        // The selection is committed on the next frame as well, so callers wait for its outcome.
         await screen.pressByTestIdAsync(id);
         await flushHookEffects();
     }
@@ -106,6 +118,12 @@ describe('SessionRepositoryTreeBrowserView (create actions)', () => {
     it('disables create actions when no machine RPC target is available', async () => {
         const session = fixture.session;
         await changeSession({ metadata: session.metadata ? { ...session.metadata, machineId: undefined, host: 'unknown-host' } : null });
+        // The target resolver also finds the machine through the Home's machine list (same-locality
+        // replacement), so "no machine target" means this Home knows no machine for the session.
+        fixture.storage.setState((state) => ({
+            machines: {},
+            machineListByServerId: { ...state.machineListByServerId, [fixture.scope.serverId]: [] },
+        }));
         const screen = await renderRepositoryTreeBrowserView();
         expect(createMenuItem(screen, 'repository-tree-upload-files')?.disabled).toBe(true);
         expect(createMenuItem(screen, 'repository-tree-create-file')?.disabled).toBe(true);
@@ -129,15 +147,18 @@ describe('SessionRepositoryTreeBrowserView (create actions)', () => {
         promptSpy.mockResolvedValueOnce('src/uploads');
         const screen = await renderRepositoryTreeBrowserView();
         await selectMenuItem(screen, 'repository-tree-upload-destination-select');
-        expect(promptSpy).toHaveBeenCalledWith(
+        await vi.waitFor(() => expect(promptSpy).toHaveBeenCalledWith(
             'settingsAttachments.workspaceDirectory.uploadsDirectory.promptTitle',
             'settingsAttachments.workspaceDirectory.uploadsDirectory.promptMessage',
             expect.objectContaining({ defaultValue: '', placeholder: 'files.projectRoot' }),
-        );
-        expect(createMenuItem(screen, 'repository-tree-upload-destination-select')).toMatchObject({ subtitle: 'src/uploads' });
-        await selectMenuItem(screen, 'repository-tree-upload-files');
+        ));
+        await vi.waitFor(() => expect(createMenuItem(screen, 'repository-tree-upload-destination-select')).toMatchObject({ subtitle: 'src/uploads' }));
         const input = screen.inputs.find(candidate => !candidate.hasAttribute('webkitdirectory'));
         if (!input) throw new Error('Expected files picker input');
+        // The committed menu selection opens the browser picker; files are chosen only after that.
+        const pickerOpened = new Promise(resolve => input.addEventListener('click', resolve, { once: true }));
+        await selectMenuItem(screen, 'repository-tree-upload-files');
+        await pickerOpened;
         Object.defineProperty(input, 'files', { value: [new File(['source'], 'upload-source.txt')] });
         await act(async () => { input.dispatchEvent(new Event('change', { bubbles: true })); });
         await vi.waitFor(() => expect(machineRpcSpy).toHaveBeenCalledWith(expect.objectContaining({
@@ -154,7 +175,8 @@ describe('SessionRepositoryTreeBrowserView (create actions)', () => {
         const { WorkspaceRepositoryTreeList } = await import('@/components/projects/files/WorkspaceRepositoryTreeList');
         const tree = screen.findByType(WorkspaceRepositoryTreeList);
         await selectMenuItem(screen, 'repository-tree-create-file');
-        await vi.waitFor(() => expect(onOpenFilePinned).toHaveBeenCalledWith('src/new-file.ts'));
+        // Prompt, workspace write and open are one async chain behind the deferred menu commit.
+        await vi.waitFor(() => expect(onOpenFilePinned).toHaveBeenCalledWith('src/new-file.ts'), { timeout: 5_000 });
         expect(machineRpcSpy).toHaveBeenCalledWith(expect.objectContaining({
             targetId: 'm1', method: RPC_METHODS.WRITE_FILE,
             payload: { path: '/repo/src/new-file.ts', content: '', expectedHash: null },

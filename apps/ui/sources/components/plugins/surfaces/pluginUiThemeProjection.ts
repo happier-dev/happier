@@ -48,6 +48,8 @@ export const PLUGIN_UI_THEME_COLOR_TOKEN_IDS = Object.freeze({
     onAccent: 'control.button.primary.foreground',
     success: 'state.success.foreground',
     warning: 'state.warning.foreground',
+    // "Needs you": Brand's attention amber (the host's one attention owner), never the system warning.
+    attention: 'state.attention.foreground',
     danger: 'state.danger.foreground',
     info: 'state.info.foreground',
     // Chips, secondary buttons, pickers and field wells. The raised surface,
@@ -192,6 +194,7 @@ export function projectPluginUiTheme(theme: Theme): PluginUiThemeV1 {
             onAccent: theme.colors.button.primary.tint,
             success: theme.colors.state.success.foreground,
             warning: theme.colors.state.warning.foreground,
+            attention: theme.colors.state.attention.foreground,
             danger: theme.colors.state.danger.foreground,
             info: theme.colors.state.info.foreground,
             control: theme.colors.surface.elevated,

@@ -78,14 +78,13 @@ const WidgetFramePreview = React.memo(function WidgetFramePreview(props: Readonl
 
 /**
  * Settings → Appearance → Widgets (lab WK): how widgets are framed on this device, per surface —
- * Home, the Board, the Companion — each a Card | Plain choice under a live preview of all three,
- * and how the Add popover opens. One widget's own frame is changed from its ⋯ menu.
+ * Home, the Board, the Companion — each a Card | Plain choice under a live preview of all three.
+ * One widget's own frame is changed from its ⋯ menu.
  */
 export function WidgetFrameAppearanceSection() {
     const [home, setHome] = useLocalSettingMutable('widgetFrameStyleHome');
     const [board, setBoard] = useLocalSettingMutable('widgetFrameStyleBoard');
     const [companion, setCompanion] = useLocalSettingMutable('widgetFrameStyleCompanion');
-    const [galleryView, setGalleryView] = useLocalSettingMutable('widgetGalleryViewV1');
     const settings = APPEARANCE_SETTINGS.settings;
     const choices = styleChoices();
     return (
@@ -123,20 +122,6 @@ export function WidgetFrameAppearanceSection() {
                         options={choices}
                         value={companion}
                         onChange={setCompanion}
-                    />
-                </SettingAnchor>
-                <SettingAnchor setting={settings.widgetGalleryView}>
-                    <SegmentedChoiceItem
-                        title={t(settings.widgetGalleryView.titleKey)}
-                        subtitle={t('widgetFrame.addViewDescription')}
-                        subtitleLines={0}
-                        testIDPrefix="settings-appearance-widgets-addView"
-                        options={[
-                            { id: 'grid', label: t('widgetAdd.viewGallery') },
-                            { id: 'list', label: t('widgetAdd.viewList') },
-                        ]}
-                        value={galleryView}
-                        onChange={setGalleryView}
                     />
                 </SettingAnchor>
             </ItemGroup>

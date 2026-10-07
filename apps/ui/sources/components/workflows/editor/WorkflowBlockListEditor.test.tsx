@@ -525,7 +525,7 @@ describe('workflow block list editor', () => {
 
         const root = await openAddMenu(screen, 'workflow-editor-add-root');
         expect(root.sections.map((section) => section.options.map((option) => option.label))).toEqual([
-            ['workflows.editor.addStep', 'workflows.page.blocks.menuRun', 'workflows.page.blocks.menuAction', 'workflows.page.blocks.menuWait'],
+            ['workflows.editor.addStep', 'workflows.page.blocks.menuRun', 'workflows.page.blocks.menuAction', 'workflows.actionTitles.callWebhook', 'workflows.actionTitles.runCommand', 'workflows.page.blocks.menuWait'],
             ['workflows.editor.addParallel', 'workflows.editor.addLoop', 'workflows.editor.addIf'],
         ]);
         const actionStep = root.sections[0]!.options.find((option) => option.id === 'workflow-editor-add-root-action')?.openStep;

@@ -14,7 +14,6 @@ import { installSessionHandoffCommonModuleMocks } from './sessionHandoffTestHelp
 import type { CustomModalChromeConfig } from '@/modal';
 
 const pathBrowserModuleLoadedMock = vi.fn();
-let credentialsReady = true;
 let activeServerIdState = '';
 
 
@@ -68,7 +67,8 @@ installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
 const { sync } = await import('@/sync/sync');
 const { storage } = await import('@/sync/domains/state/storage');
-const { setActiveServer } = await import('@/sync/domains/server/serverRuntime');
+const { setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
+const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
 const { MachineSelector } = await import('@/components/sessions/new/components/MachineSelector');
 const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
 const { ItemList } = await import('@/components/ui/lists/ItemList');
@@ -76,7 +76,7 @@ const { renderScreen: renderScreenBase, invokeTestInstanceHandler, standardClean
 const homeA = { id: await home.addHome({ name: 'Handoff A', serverUrl: 'https://handoff-a.example.test', accountId: 'account-a' }) };
 const homeB = { id: await home.addHome({ name: 'Handoff B', serverUrl: 'https://handoff-b.example.test', accountId: 'account-b' }) };
 home.answer(homeA.id, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
-home.answer(homeA.id, '/v1/machines', { body: { machines: [] } });
+home.answer(homeA.id, '/v1/machines', { body: [] });
 const refreshMachinesThrottledMock = vi.spyOn(sync, 'refreshMachinesThrottled');
 const workspaceOps = await import('@/sync/ops/workspaceSync');
 const listWorkspaceSyncStatusesMock = vi.spyOn(workspaceOps, 'listWorkspaceSyncStatuses');
@@ -84,11 +84,9 @@ let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefi
 const initialStorage = storage.getState();
 
 async function applyFixtureState() {
-    if (!credentialsReady) {
-        await connection?.dispose();
-        connection = undefined;
+    if (getActiveServerSnapshot().serverId !== activeServerIdState) {
+        await setActiveServerId(activeServerIdState);
     }
-    await setActiveServer({ serverId: activeServerIdState });
     const machines = allMachinesState.map(machine => createMachineFixture({
         ...machine, metadata: { ...createMachineFixture().metadata!, ...machine.metadata },
     }));
@@ -131,12 +129,17 @@ afterAll(() => { refreshMachinesThrottledMock.mockRestore(); listWorkspaceSyncSt
 describe('SessionHandoffPickerModal', () => {
     beforeEach(async () => {
         // The package harness clears persisted profiles before every test.
+        homeA.id = await home.addHome({ name: 'Handoff A', serverUrl: 'https://handoff-a.example.test', accountId: 'account-a' });
         homeB.id = await home.addHome({ name: 'Handoff B', serverUrl: 'https://handoff-b.example.test', accountId: 'account-b', active: false });
+        home.answer(homeA.id, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
+        home.answer(homeA.id, '/v1/machines', { body: [] });
         connection = await restoreServerAccountForTest({ serverUrl: 'https://handoff-a.example.test', accountId: 'account-a', request: async (url, init) => {
             const { serverFetch } = await import('@/sync/http/client');
             const target = new URL(String(url));
             return serverFetch(target.pathname + target.search, init);
         } });
+        // Finish the real Account's memory bootstrap before seeding its projection.
+        await sync.applyAuthoringMemoryDelta({});
         storage.setState(initialStorage, true);
         ({ resetWorkspaceSyncStatusStoreForTests, setWorkspaceSyncStatus } = await import(
             '@/sync/domains/sessionHandoff/workspaceSyncStatusStore'
@@ -152,7 +155,6 @@ describe('SessionHandoffPickerModal', () => {
             });
         }
         resetWorkspaceSyncStatusStoreForTests();
-        credentialsReady = true;
         activeServerIdState = homeA.id;
         machineListByServerIdState = {
             [homeA.id]: [
@@ -331,9 +333,11 @@ describe('SessionHandoffPickerModal', () => {
     it('does not hydrate machines after the Account runtime retires', async () => {
         machineListByServerIdState = { [homeA.id]: [] };
         allMachinesState = [];
-        credentialsReady = false;
         const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
         await applyFixtureState();
+        await connection!.dispose();
+        connection = undefined;
+        expect(sync.getCredentials()).toBeNull();
 
         const screen = await renderScreenBase(<SessionHandoffPickerModal
             onClose={vi.fn()}
@@ -346,6 +350,31 @@ describe('SessionHandoffPickerModal', () => {
         await act(async () => {});
 
         expect(refreshMachinesThrottledMock).not.toHaveBeenCalled();
+        expect(screen.tree.findByType(MachineSelector).props.machines).toEqual([]);
+        screen.unmount();
+    });
+
+    it('refreshes an empty cached machine inventory while mounted', async () => {
+        machineListByServerIdState = { [homeA.id]: [] };
+        allMachinesState = [];
+        const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
+        await applyFixtureState();
+        const requestStart = home.requests.length;
+
+        const screen = await renderScreenBase(<SessionHandoffPickerModal
+            onClose={vi.fn()}
+            setChrome={vi.fn()}
+            onResolve={vi.fn()}
+            sessionId="sess_1"
+            sourceMachineId="machine_source"
+            serverId={homeA.id}
+        />);
+        await act(async () => {
+            await vi.waitFor(() => expect(home.requests.slice(requestStart)).toEqual(expect.arrayContaining([
+                expect.objectContaining({ serverId: homeA.id, path: '/v1/machines' }),
+            ])));
+        });
+
         expect(screen.tree.findByType(MachineSelector).props.machines).toEqual([]);
         screen.unmount();
     });
@@ -820,11 +849,13 @@ describe('SessionHandoffPickerModal', () => {
             return 'browser-modal';
         });
         await screen.pressByTestIdAsync('path-selection-list:open-tree-browser');
-        await vi.waitFor(() => expect(modalMock.spies.show).toHaveBeenCalledWith(expect.objectContaining({ props: expect.objectContaining({
-            machineId: 'machine_target',
-            serverId: homeA.id,
-            initialPath: '/home/target/pasted-project',
-        }) })));
+        await act(async () => {
+            await vi.waitFor(() => expect(modalMock.spies.show).toHaveBeenCalledWith(expect.objectContaining({ props: expect.objectContaining({
+                machineId: 'machine_target',
+                serverId: homeA.id,
+                initialPath: '/home/target/pasted-project',
+            }) })));
+        });
 
         const startButton = findElementByTestId(requireCardChrome(chrome).footer, 'session-handoff-start');
         await act(async () => {
@@ -1218,14 +1249,12 @@ describe('SessionHandoffPickerModal', () => {
         ]);
     });
 
-    it('does not start a credential polling loop when credentials hydrate after mount', async () => {
-        credentialsReady = false;
-
+    it('keeps cached machine rows without another refresh when device credentials hydrate after mount', async () => {
         const onResolve = vi.fn();
         const onClose = vi.fn();
         const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
 
-        await renderScreen(<SessionHandoffPickerModal
+        const screen = await renderScreen(<SessionHandoffPickerModal
             onClose={onClose}
             onResolve={onResolve}
             sessionId="sess_1"
@@ -1234,17 +1263,17 @@ describe('SessionHandoffPickerModal', () => {
         />);
 
         await act(async () => {});
-        expect(refreshMachinesThrottledMock).not.toHaveBeenCalled();
+        expect(refreshMachinesThrottledMock).toHaveBeenCalledTimes(1);
+        expect(screen.tree.findByType(MachineSelector).props.machines).toMatchObject([{ id: 'machine_target' }]);
 
-        credentialsReady = true;
+        await home.switchAccount(homeA.id, 'account-a');
         await act(async () => {});
 
-        expect(refreshMachinesThrottledMock).not.toHaveBeenCalled();
+        expect(refreshMachinesThrottledMock).toHaveBeenCalledTimes(1);
+        expect(screen.tree.findByType(MachineSelector).props.machines).toMatchObject([{ id: 'machine_target' }]);
     });
 
     it('renders a second online machine from the authoritative machine storage update', async () => {
-        credentialsReady = true;
-
         machineListByServerIdState = {
             [homeA.id]: [
                 { id: 'machine_source', metadata: { displayName: 'Source machine', host: 'source.local' } },

@@ -5,7 +5,8 @@ import { darkTheme, lightTheme } from '@/theme';
 import { applyThemeStyleScales, resolveThemeStyleScales } from './themeStyleScales';
 
 // Today's literal values, written out so a table edit that silently moves the default fails here.
-const TODAY_BORDER_RADIUS = { sm: 4, md: 8, lg: 10, xl: 12, xxl: 16, modalCard: 14 };
+// One base of 10 with the derived steps (plugin-ui `radius.ts`); a modal card is a dialog.
+const TODAY_BORDER_RADIUS = { sm: 6, md: 8, lg: 10, xl: 14, xxl: 18, modalCard: 18 };
 const TODAY_MARGINS = { xs: 4, sm: 8, md: 12, lg: 16, xl: 20, xxl: 24 };
 
 describe('theme style scales', () => {
@@ -15,11 +16,11 @@ describe('theme style scales', () => {
         expect(scales.borderRadius).toEqual(TODAY_BORDER_RADIUS);
         expect(scales.margins).toEqual(TODAY_MARGINS);
         expect(scales.parts).toEqual({
-            userBubble: { radius: 12 },
-            // The composer stack: 16, 20 on Android (the test platform is not Android).
-            composer: { radius: 16 },
+            userBubble: { radius: 14 },
+            // The composer stack: 14, 18 on Android (the test platform is not Android).
+            composer: { radius: 14 },
             toolCard: { radius: 8 },
-            approvalCard: { radius: 12 },
+            approvalCard: { radius: 14 },
             codeBlock: { radius: 10 },
         });
         expect(scales.transcript).toEqual({ messageGap: 22 });

@@ -417,8 +417,9 @@ async function findClaimCandidates(params: {
     expectedTriggerKind?: AutomationTriggerKind;
 
     recipeFeaturePolicy: AutomationRecipeFeaturePolicy;
-    scope?: "session_scoped";
+    scope?: "session_scoped" | "workflow";
 }) {
+    if (params.scope === "workflow" && !params.recipeFeaturePolicy.workflowsEnabled) return [];
     const activeScoped = await params.tx.automationRun.findMany({
         where: { accountId: params.accountId, triggerId: { not: null },
             automation: { is: { scopeSessionId: { not: null } } },
@@ -430,6 +431,7 @@ async function findClaimCandidates(params: {
         where: {
             accountId: params.accountId,
             ...(params.scope === "session_scoped" ? { automation: { is: { scopeSessionId: { not: null } } } } : {}),
+            ...(params.scope === "workflow" ? { workflowCustodyState: { not: null } } : {}),
             dueAt: { lte: params.now },
             ...expectedRunTriggerCauseWhere(params.expectedTriggerKind),
             ...(!params.recipeFeaturePolicy.workflowsEnabled
@@ -800,7 +802,7 @@ export async function claimAutomationRun(params: {
     /** Exact signed HTTP claim identity; direct service callers may omit a receipt. */
     claimRequest?: AutomationClaimRequest;
     recipeFeaturePolicy?: AutomationRecipeFeaturePolicy;
-    scope?: "session_scoped";
+    scope?: "session_scoped" | "workflow";
 }): Promise<AutomationClaimResult> {
     const recipeFeaturePolicy = params.recipeFeaturePolicy ?? await resolveAutomationRecipeFeaturePolicy();
     const execute = async (): Promise<AutomationClaimResult> => await inTx(async (tx) => {

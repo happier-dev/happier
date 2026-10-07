@@ -157,6 +157,9 @@ native_command_policy_finish() {
   if { [ "$policy_family" = 'test' ] || [ "$policy_family" = 'vitest' ]; }; then
     policy_preparationBuildMode='qa-runtime'
   fi
+  if { [ "$policy_bootstrap" = '1' ]; } && { [ "$policy_heavyClass" = '' ]; }; then
+    policy_heavyClass='dependency-install'
+  fi
   if { [ "$policy_entry" = 'remote_runtime_build.mjs' ]; }; then
     policy_heavyClass='compilation'
   fi
@@ -358,4 +361,3 @@ resolve_native_command_policy() {
   if [ -z "$policy_componentOverride" ] && [ "$policy_componentFromNative" = 1 ] && [ -n "$native_test_component" ]; then policy_component=$native_test_component; fi
   native_command_policy_finish
 }
-

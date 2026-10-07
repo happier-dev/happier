@@ -10,6 +10,7 @@ import { AUTOMATION_RUN_TERMINAL_STATES } from "./automationTypes";
 import { AutomationValidationError } from "./automationValidation";
 import { admitAutomationRunTx } from "./automationRunAdmissionService";
 import { decodeAutomationRunLifecycleConfiguration } from "./automationRunLifecycleConfigurationCodec";
+import { readAutomationOriginTriggerIdsTx } from "./automationTriggerCauseChain";
 
 /** Registration uses the source's existing Account access owner, never the target's placement. */
 export async function validateAutomationRunLifecycleSourceTx(tx: Tx, accountId: string, definition: AutomationRunLifecycleTrigger): Promise<void> {
@@ -46,8 +47,10 @@ async function admitRunLifecycleOccurrenceTx(tx: Tx, accountId: string, occurren
         enabled: true, deletedAt: null, remainingOccurrences: 1,
         automation: { accountId, enabled: true, deletedAt: null } },
         select: { id: true, automationId: true, revision: true, runLifecycleConfigurationJson: true }, orderBy: { id: "asc" } });
+    const originTriggerIds = rows.length > 0 ? await readAutomationOriginTriggerIdsTx(tx, evidence) : new Set<string>();
     const admitted = [];
     for (const row of rows) {
+        if (originTriggerIds.has(row.id)) continue;
         const definition = decodeAutomationRunLifecycleConfiguration(row);
         if (definition.condition !== evidence.condition
             || createCanonicalJsonSigningInput(definition.source) !== createCanonicalJsonSigningInput(evidence.source)) continue;

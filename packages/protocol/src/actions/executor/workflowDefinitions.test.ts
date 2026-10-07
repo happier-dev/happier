@@ -29,6 +29,21 @@ function readEmptyTriggerSummaries() {
 }
 
 describe('shared workflow definition create', () => {
+  it('projects current definition destinations without binding an unknown origin', async () => {
+    const targeted = { ...definition, defaults: { ...definition.defaults,
+      conversation: { kind: 'existing_session' as const, sessionId: 'destination', machineId: 'machine' } } };
+    const revision = { headerVersion: 1, bodyVersion: 1 };
+    const unused = (): never => { throw new Error('unexpected_operation'); };
+    const actions = createWorkflowDefinitionActions({ artifactStore: {
+      read: async () => ({ artifactId: definitionId, revision, ownerAccountId: 'owner', access: 'owner',
+        header: { kind: 'workflow-definition.v1', definitionId, revision, metadata: { title: 'Writes' } },
+        body: JSON.stringify({ kind: 'workflow-definition.v1', definition: targeted }) }),
+      list: unused, create: unused, update: unused, delete: unused,
+    }, encodeListCursor: unused, assertDefinitionWriteAllowed: unused });
+    expect(await actions.get({ definitionId })).toMatchObject({ destinations: {
+      targetSessionIds: ['destination'], usesOriginSession: false, unresolvedWorkflowRefs: [],
+    } });
+  });
   it('retains reference options and readable neighbors when an unavailable header has no metadata', async () => {
     const neighborId = '22222222-2222-4222-8222-222222222222';
     const rows = [definitionId, neighborId].map(artifactId => ({
@@ -316,7 +331,8 @@ describe('shared workflow definition create', () => {
     };
     const actions = createWorkflowDefinitionActions({ artifactStore: store, encodeListCursor: () => 'cursor', assertDefinitionWriteAllowed: () => {},
       readWorkflowTriggerSummaries: async () => new Map() });
-    await expect(actions.list({})).resolves.toEqual({ definitions: [{ ...row.header, ownerAccountId: 'other-owner', access: 'edit', contentStatus: 'available', stepCount: 1, triggers: [], nextRunAt: null }] });
+    await expect(actions.list({})).resolves.toMatchObject({ definitions: [{ ...row.header, ownerAccountId: 'other-owner', access: 'edit', contentStatus: 'available', stepCount: 1, triggers: [], nextRunAt: null,
+      destinations: { targetSessionIds: [], usesOriginSession: false } }] });
   });
   it.each(['existing', 'conflict', 'response_loss'] as const)('rejoins same semantic content after %s', async (scenario) => {
     let saved = scenario === 'existing';

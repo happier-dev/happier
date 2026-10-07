@@ -5,7 +5,7 @@ import { QualifiedConnectedAccountRefSchema, sameQualifiedConnectedAccountRef } 
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
-import { ActionInputHintsSchema, type ActionInputHints } from '@happier-dev/protocol/inputs/inputFields';
+import { InputHintsSchema as ActionInputHintsSchema, type InputHints as ActionInputHints } from '@happier-dev/protocol/inputs/inputFields';
 import type { MessageActionReferenceV1 } from '@happier-dev/protocol/sessions/messages/messageActionReferenceV1';
 import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import {

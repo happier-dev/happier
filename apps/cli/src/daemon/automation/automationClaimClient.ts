@@ -176,7 +176,7 @@ export function createAutomationClaimClient(params: {
       if (!AutomationExecutionRunLifecycleReportResponseSchema.parse(response.data).consumed) throw new Error('run_source_admission_ineligible');
     },
 
-    async claimRun(paramsClaim: { machineId: string; leaseDurationMs: number; scope?: 'session_scoped' }): Promise<AutomationClaimRunResponse> {
+    async claimRun(paramsClaim: { machineId: string; leaseDurationMs: number; scope?: 'session_scoped' | 'workflow' }): Promise<AutomationClaimRunResponse> {
       const body = {
         machineId: paramsClaim.machineId,
         leaseDurationMs: paramsClaim.leaseDurationMs,

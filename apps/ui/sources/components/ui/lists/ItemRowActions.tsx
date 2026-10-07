@@ -13,6 +13,7 @@ import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactive
 import { Icon } from '@/components/ui/icons/Icon';
 import type { FocusReturnTarget } from '@/keyboard/focusReturn';
 import { resolveHappierFocusRingVisible } from '@happier-dev/plugin-ui/presentation';
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 
 export interface ItemRowActionsProps {
     title: string;
@@ -298,7 +299,7 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                     return [
                         styles.actionControl,
                         actionControlFrame,
-                        resolveHappierFocusRingVisible(webState.focused) ? styles.actionControlFocused : null,
+                        actionFocusRing(webState.focused, theme.colors.border.focus),
                     ];
                 }}
                 accessibilityRole="button"
@@ -317,7 +318,7 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                 )}
             </Pressable>
         );
-    }, [actionControlFrame, iconSize, props, theme.colors.button.secondary.tint, theme.colors.state.danger.foreground]);
+    }, [actionControlFrame, iconSize, props, theme.colors.border.focus, theme.colors.button.secondary.tint, theme.colors.state.danger.foreground]);
 
     const renderOverflow = React.useCallback(() => {
         const accessibilityLabel = props.overflowTriggerAccessibilityLabel ?? t('common.moreActions');
@@ -346,7 +347,7 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                                         styles.actionControl,
                                         actionControlFrame,
                                         showOverflow ? { opacity: 0 } : null,
-                                        resolveHappierFocusRingVisible(webState.focused) ? styles.actionControlFocused : null,
+                                        actionFocusRing(webState.focused, theme.colors.border.focus),
                                     ];
                                 }}
                                 onPressIn={() => props.onActionPressIn?.()}
@@ -412,7 +413,7 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                 ) : null}
             </View>
         );
-    }, [actionControlFrame, blurTintOnWeb, iconSize, onOverflowTriggerKeyDown, overflowActionSections, overflowAnchorOverlay, overflowPlacement, overflowPortal, props, showOverflow, theme.colors.button.secondary.tint]);
+    }, [actionControlFrame, blurTintOnWeb, iconSize, onOverflowTriggerKeyDown, overflowActionSections, overflowAnchorOverlay, overflowPlacement, overflowPortal, props, showOverflow, theme.colors.border.focus, theme.colors.button.secondary.tint]);
 
     return (
         <View style={[styles.container, { gap }]}>
@@ -455,7 +456,15 @@ export function ItemRowActions(props: ItemRowActionsProps) {
     );
 }
 
-const stylesheet = StyleSheet.create((theme) => ({
+/**
+ * Inset: the action frames grow into the row's target band and meet their neighbours edge to edge,
+ * so an outset ring would overlap the next action and the next row.
+ */
+function actionFocusRing(focused: boolean | undefined, color: string) {
+    return focusRingStyle({ focused: resolveHappierFocusRingVisible(focused), color, placement: 'inset' });
+}
+
+const stylesheet = StyleSheet.create({
     container: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -464,15 +473,4 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
     },
-    actionControlFocused: {
-        ...(Platform.select({
-            web: {
-                outlineStyle: 'solid',
-                outlineWidth: 2,
-                outlineColor: theme.colors.border.focus,
-                outlineOffset: -2,
-            },
-            default: {},
-        }) as object),
-    },
-}));
+});

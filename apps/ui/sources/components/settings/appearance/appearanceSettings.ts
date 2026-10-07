@@ -59,7 +59,6 @@ export const APPEARANCE_SETTINGS = defineSettingsPage({
                 widgetFrameHome: { titleKey: 'widgetFrame.surfaceHome', storage: { scope: 'local', key: 'widgetFrameStyleHome', access: 'read_write', allowedValues: ['card', 'plain'] } },
                 widgetFrameBoard: { titleKey: 'widgetFrame.surfaceBoard', storage: { scope: 'local', key: 'widgetFrameStyleBoard', access: 'read_write', allowedValues: ['card', 'plain'] } },
                 widgetFrameCompanion: { titleKey: 'widgetFrame.surfaceCompanion', storage: { scope: 'local', key: 'widgetFrameStyleCompanion', access: 'read_write', allowedValues: ['card', 'plain'] } },
-                widgetGalleryView: { titleKey: 'widgetFrame.addViewTitle', descriptionKey: 'widgetFrame.addViewDescription', storage: { scope: 'local', key: 'widgetGalleryViewV1', access: 'read_write', allowedValues: ['grid', 'list'] } },
             },
         },
         sessions: {

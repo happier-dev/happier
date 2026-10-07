@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { WorkflowRunIdV1Schema } from "@happier-dev/protocol";
 
 import { assertSessionCapabilityInTx, resolveSessionAccessForOperation } from "@/app/session/access/sessionAccess";
 import { readSessionAccessAuthenticationFromRequest } from "@/app/session/access/sessionAccessAuthentication";
@@ -10,6 +11,8 @@ import { db } from "@/storage/db";
 import { didSessionActivityBadgeSignalChange } from "@/app/activity/accountActivityBadge";
 import { SESSION_TRANSCRIPT_PUBLICATION_SELECT } from "@/app/session/sessionTranscriptPublicationPolicy";
 import { publishSessionArchiveTransition } from "@/app/session/archive/publishSessionArchiveTransition";
+import { isAutomationOriginRunPublisherTx } from "@/app/automations/automationTriggerCauseChain";
+import { PluginInstallationPublisherProofError, verifyPluginInstallationPublisherHeader } from "@/app/plugins/installations/publisherProof";
 import { type Fastify } from "../../types";
 
 export function registerSessionArchiveRoutes(app: Fastify) {
@@ -17,6 +20,7 @@ export function registerSessionArchiveRoutes(app: Fastify) {
         preHandler: app.authenticate,
         schema: {
             params: z.object({ sessionId: z.string() }),
+            body: z.object({ originRunId: WorkflowRunIdV1Schema.optional() }).strict().optional(),
             response: {
                 200: z.object({ success: z.literal(true), archivedAt: z.number() }),
                 403: z.union([z.object({ error: z.literal("Forbidden") }), z.object({ error: z.literal("team_authentication_required") })]),
@@ -28,6 +32,19 @@ export function registerSessionArchiveRoutes(app: Fastify) {
     }, async (request, reply) => {
         const userId = request.userId;
         const { sessionId } = request.params;
+
+        const originRunId = request.body?.originRunId;
+        let originPublisher: Awaited<ReturnType<typeof verifyPluginInstallationPublisherHeader>> = null;
+        if (originRunId !== undefined) {
+            try {
+                originPublisher = await verifyPluginInstallationPublisherHeader({ accountId: userId, request,
+                    path: `/v2/sessions/${sessionId}/archive`, required: true });
+            } catch (error) {
+                if (!(error instanceof PluginInstallationPublisherProofError)) throw error;
+                return reply.code(403).send({ error: "Forbidden" });
+            }
+            if (originPublisher === null) return reply.code(403).send({ error: "Forbidden" });
+        }
 
         const authentication = readSessionAccessAuthenticationFromRequest(request);
         const admission = await resolveSessionAccessForOperation(db, {
@@ -45,6 +62,10 @@ export function registerSessionArchiveRoutes(app: Fastify) {
         const res = await inTx(async (tx) => {
             const authority = await assertSessionCapabilityInTx({ tx, accountId: userId, sessionId, capability: "archiveSession", authentication });
             if (!authority.ok) return { ok: false as const, error: authority.reason };
+            if (originRunId !== undefined && (originPublisher === null || !await isAutomationOriginRunPublisherTx(tx,
+                { accountId: userId, machineId: originPublisher.machineId, runId: originRunId }))) {
+                return { ok: false as const, error: "Forbidden" as const };
+            }
             const session = await tx.session.findUnique({
                 where: { id: sessionId },
                 select: {

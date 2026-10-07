@@ -18,7 +18,10 @@ import { ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER } from '../account/accountBlockForm
  * peek, Home) renders meters through `UsageMeterRow`, so their columns line up everywhere.
  */
 export const USAGE_METER_METRICS = Object.freeze({
-    /** Wide enough for a per-model window ("Weekly · Sonnet"); the narrow card column is `cardLabelWidthPx`. */
+    /**
+     * The name column every meter starts at ("Weekly · Sonnet" fits); a longer name grows past it while the
+     * bar keeps `minBarWidthPx`. The narrow card column is `cardLabelWidthPx`.
+     */
     labelWidthPx: 100,
     cardLabelWidthPx: 70,
     valueWidthPx: 62,
@@ -141,7 +144,8 @@ export const UsageMeterRow = React.memo(function UsageMeterRow(props: UsageMeter
             const next = event.nativeEvent.layout.width;
             if (Number.isFinite(next) && next > 0) setWidth(next);
         }} accessible accessibilityLabel={accessibilityLabel}>
-            <Text style={[styles.label, { width: labelWidth }]} numberOfLines={1}>{props.label}</Text>
+            {/* The name holds its column and grows past it rather than truncating while the bar has room. */}
+            <Text style={[styles.label, styles.inlineLabel, { minWidth: labelWidth }]} numberOfLines={1}>{props.label}</Text>
             {bar}
             {props.loading ? (
                 <View style={[styles.valueSlot, { marginRight: resetWidth + USAGE_METER_METRICS.gapPx }]}>
@@ -202,6 +206,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: 12,
         lineHeight: 16,
         color: theme.colors.text.secondary,
+    },
+    inlineLabel: {
+        width: 'auto',
+        flexShrink: 1,
     },
     bar: {
         flex: 1,

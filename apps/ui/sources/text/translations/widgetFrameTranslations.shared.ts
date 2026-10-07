@@ -24,8 +24,6 @@ export type WidgetFrameTranslation = Readonly<{
     /** The undoable notice after a widget's frame changed. */
     noticeChanged: string;
     /** Appearance → Widgets: how the Add popover opens (Gallery | List), also switched in the popover. */
-    addViewTitle: string;
-    addViewDescription: string;
 }>;
 
 
@@ -45,7 +43,5 @@ export const widgetFrameTranslationsEnglish = { en: {
         appearanceDescription: 'How widgets are framed on this device. To change one widget, use its ⋯ menu.',
         previewLabel: ({ surface, style }) => `${surface} · ${style}`,
         noticeChanged: 'Frame changed',
-        addViewTitle: 'Adding widgets',
-        addViewDescription: 'How the Add popover opens. Switching it there changes this too.',
         newChip: 'New',
     } } satisfies Pick<Readonly<Record<string, WidgetFrameTranslation>>, "en">;

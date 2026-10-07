@@ -865,7 +865,7 @@ async function workflowRunCallerScopeWhereTx(tx: Tx, scope: WorkflowRunCallerSco
 
 export async function listWorkflowRuns(params: PageOptions & Readonly<{
     accountId: string; runId?: string; origin?: "automation" | "direct"; states?: readonly WorkflowRunState[]; attention?: "required";
-    originSessionId?: string; automationId?: string; machineId?: string; sourceArtifactId?: string;
+    originSessionId?: string; targetSessionId?: string; automationId?: string; machineId?: string; sourceArtifactId?: string;
 }>) {
     if (params.limit !== undefined && (!Number.isSafeInteger(params.limit) || params.limit <= 0)) throw new WorkflowRunServiceError("invalid_input");
     // The exact-Run selection is part of the cursor binding like every other
@@ -873,7 +873,9 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
     // an exact read or vice versa. The lookup itself stays the lean list
     // projection with exact opaque accepted/root sidecars, uniform keyset
     // pagination, and no child content or usage reads.
-    const queryKey = JSON.stringify({ accountId: params.accountId, sourceArtifactId: params.sourceArtifactId ?? null, runId: params.runId ?? null, origin: params.origin ?? null, states: [...(params.states ?? [])].sort(), attention: params.attention ?? null, originSessionId: params.originSessionId ?? null, automationId: params.automationId ?? null, machineId: params.machineId ?? null });
+    // Destinations remain private; the Action owner filters opened snapshots.
+    // Bind its selection to the same storage cursor to reject cross-filter replay.
+    const queryKey = JSON.stringify({ accountId: params.accountId, sourceArtifactId: params.sourceArtifactId ?? null, runId: params.runId ?? null, origin: params.origin ?? null, states: [...(params.states ?? [])].sort(), attention: params.attention ?? null, originSessionId: params.originSessionId ?? null, targetSessionId: params.targetSessionId ?? null, automationId: params.automationId ?? null, machineId: params.machineId ?? null });
     const decoded = params.cursor ? decodeKeysetCursorV1(params.cursor, queryKey) : null;
     const afterDate = decoded?.status === "ok" ? readKeysetCursorTextV1(decoded.parts[0]) : null;
     const afterId = decoded?.status === "ok" ? readKeysetCursorIdV1(decoded.parts[1]) : null;

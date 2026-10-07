@@ -264,7 +264,7 @@ function TriageBulkPhaseStatus(props: Readonly<{
   if (phase.kind === 'resolving' || phase.kind === 'choosing') {
     return (
       <Status
-        tone="info"
+        tone="neutral"
         pulsing
         label={text('plugins.triage.surface.bulk.resolving', 'Preparing…')}
       />
@@ -279,7 +279,7 @@ function TriageBulkPhaseStatus(props: Readonly<{
     return (
       <Stack gap="xsmall" style={BULK_PROGRESS_STYLE_V1}>
         <Progress value={phase.total === 0 ? undefined : phase.started / phase.total} label={label} />
-        <Status tone="info" pulsing label={label} />
+        <Status tone="neutral" pulsing label={label} />
       </Stack>
     );
   }
@@ -288,7 +288,7 @@ function TriageBulkPhaseStatus(props: Readonly<{
     const refused = phase.outcomes.length - applied + phase.refusals.length;
     const seeded = (
       <Status
-        tone={refused === 0 ? 'success' : 'warning'}
+        tone={refused === 0 ? 'secondary' : 'warning'}
         label={text('plugins.triage.surface.bulk.seeded', '{count} attached to New Session', {
           count: String(applied),
         })}
@@ -317,7 +317,7 @@ function TriageBulkPhaseStatus(props: Readonly<{
     });
     return (
       <Status
-        tone={unknown > 0 || left > 0 || notStarted > 0 ? 'warning' : 'success'}
+        tone={unknown > 0 || left > 0 || notStarted > 0 ? 'warning' : 'secondary'}
         label={text(
           'plugins.triage.surface.bulk.settled',
           '{opened} started, {unknown} unconfirmed, {notStarted} not started, {left} could not be used',

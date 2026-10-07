@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 import type { WorkflowEngineSelectionV1, WorkflowSessionAuthoringSelection } from '@happier-dev/protocol/workflows/workflowV1';
 import type { WorkflowRoleV1 } from '@happier-dev/protocol';
@@ -217,7 +217,8 @@ function SessionAuthoringOptionChip(props: Readonly<{
                     hasPopup="menu"
                     onPress={() => setOpen((current) => !current)}
                     style={(state) => props.presentation === 'fields'
-                        ? styles.fieldTrigger
+                        // The field box inside draws the ring.
+                        ? [styles.fieldTrigger, HAPPIER_FOCUS_RING_DELEGATED_STYLE]
                         : [
                             styles.chip,
                             props.changed === true ? styles.chipChanged : null,
@@ -233,7 +234,7 @@ function SessionAuthoringOptionChip(props: Readonly<{
                             chevronColor: theme.colors.text.secondary,
                             // Stacked under its label in a settings row, the field spans the row (E1).
                             ...(props.fieldSpan === undefined ? {} : { fieldSpan: props.fieldSpan }),
-                            // The field box's own border carries the keyboard focus ring.
+                            // The field box carries the keyboard focus ring.
                             field: resolveFieldBoxColors(theme, state.focused ? 'focused' : 'idle'),
                         })
                         : (

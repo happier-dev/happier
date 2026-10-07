@@ -1,4 +1,5 @@
 import type { HappierPortableStyle } from '../portableTypes.js';
+import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, happierFocusRingStyle } from './focusVisible.js';
 
 export const HAPPIER_ICON_BUTTON_SIZE = 28;
 
@@ -30,6 +31,8 @@ export function resolveHappierIconButtonChrome(input: Readonly<{
           : input.selected && input.selectedBackground !== false ? input.colors.selected
             : input.variant === 'outlined' ? input.colors.background : undefined,
       ...(input.disabled ? { opacity: 0.5 } : {}),
+      // The frame is the hit box; the ring belongs to the drawn circle (`surface`).
+      ...HAPPIER_FOCUS_RING_DELEGATED_STYLE,
     },
     surface: {
       width: input.size,
@@ -37,10 +40,8 @@ export function resolveHappierIconButtonChrome(input: Readonly<{
       borderRadius: input.size / 2,
       alignItems: 'center',
       justifyContent: 'center',
-      ...(input.focused || input.variant === 'outlined' ? {
-        borderWidth: 1,
-        borderColor: input.focused ? input.colors.focus : input.colors.border,
-      } : {}),
+      ...(input.variant === 'outlined' ? { borderWidth: 1, borderColor: input.colors.border } : {}),
+      ...happierFocusRingStyle({ visible: input.focused, color: input.colors.focus }),
     },
   };
 }

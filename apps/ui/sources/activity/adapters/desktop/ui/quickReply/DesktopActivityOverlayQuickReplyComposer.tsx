@@ -147,9 +147,7 @@ export function DesktopActivityOverlayQuickReplyComposer(props: Readonly<{
                                     kind: 'action',
                                 }),
                                 targetUnavailable ? styles.disabledAction : null,
-                                (state as DesktopActivityOverlayPressableInteractionState).focused === true
-                                    ? createDesktopActivityOverlayFocusRingStyle(theme)
-                                    : null,
+                                createDesktopActivityOverlayFocusRingStyle(theme, (state as DesktopActivityOverlayPressableInteractionState).focused),
                             ]}
                         >
                             <Text
@@ -216,9 +214,7 @@ export function DesktopActivityOverlayQuickReplyComposer(props: Readonly<{
                         styles.sendButton,
                         I18nManager.isRTL ? styles.sendButtonRtl : null,
                         !canSendDraft ? styles.disabledAction : null,
-                        (state as DesktopActivityOverlayPressableInteractionState).focused === true
-                            ? createDesktopActivityOverlayFocusRingStyle(theme)
-                            : null,
+                        createDesktopActivityOverlayFocusRingStyle(theme, (state as DesktopActivityOverlayPressableInteractionState).focused),
                     ]}
                 >
                     <Icon name="arrow-up" size={14} color={theme.colors.overlay.foreground} />

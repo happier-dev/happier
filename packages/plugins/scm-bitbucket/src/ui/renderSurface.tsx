@@ -60,6 +60,7 @@ import {
 // could start meaning two things in one list. They are aliased to this file's local
 // vocabulary so the call sites read as the panel language they already are.
 import {
+  resolveTriageRowFactStatusToneV1,
   describeTriageSourceFailureV1 as failureDescription,
   formatTriageTimestampV1 as formatTimestamp,
   projectTriageDetailFieldTextV1 as fieldValueText,
@@ -69,7 +70,6 @@ import {
   isBitbucketFailingBuildStateV1,
   type BitbucketProjectedCommentRowV1,
   type BitbucketProjectedDiffstatRowV1,
-  type BitbucketProjectedStatusRowV1,
 } from '../triage/detail/projection.js';
 import {
   projectBitbucketDetailOverview,
@@ -99,6 +99,7 @@ import {
   useBitbucketOverview,
 } from './detail/panelReaders.js';
 import type { BitbucketPagedStateV1 } from './detail/panelState.js';
+import { bitbucketBuildToneV1 } from './detail/rowTone.js';
 import {
   BITBUCKET_DEFAULT_DETAIL_TAB_V1,
   BITBUCKET_DETAIL_TABS_V1,
@@ -334,7 +335,7 @@ function OverviewPanel({
         {statusFields.length === 0 ? null : (
           <Row gap="small">
             {statusFields.map((field) => (
-              <Status key={field.id} tone={field.tone} label={`${text(`plugins.bitbucket.ui.field.${field.id.replace('bitbucket/', '')}`, field.label)}: ${field.value}`} />
+              <Status key={field.id} tone={resolveTriageRowFactStatusToneV1(field.tone)} label={`${text(`plugins.bitbucket.ui.field.${field.id.replace('bitbucket/', '')}`, field.label)}: ${field.value}`} />
             ))}
           </Row>
         )}
@@ -496,14 +497,6 @@ function activityHeadline(
 
 /* ---------------------------------------------------------------------- Builds */
 
-function buildTone(row: BitbucketProjectedStatusRowV1): 'success' | 'danger' | 'warning' | 'neutral' {
-  const state = row.state.trim().toUpperCase();
-  if (state === 'SUCCESSFUL') return 'success';
-  if (state === 'FAILED' || state === 'ERROR') return 'danger';
-  if (state === 'INPROGRESS') return 'warning';
-  return 'neutral';
-}
-
 function BuildsPanel({
   input,
   locale,
@@ -593,7 +586,7 @@ function BuildsPanel({
         <Item
           title={row.name}
           subtitle={row.description ?? row.state}
-          tone={buildTone(row)}
+          tone={bitbucketBuildToneV1(row)}
           {...(row.updatedAtMs === undefined
             ? {}
             : { detail: formatTimestamp(locale, row.updatedAtMs, 'relative', nowMs) })}

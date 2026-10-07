@@ -31,6 +31,8 @@ import type {
   NotificationsNotifyMeResultV1,
 } from '../../account/notifications/notifyMeV1.js';
 import type { ActionExecuteFailure, ActionExecuteResult } from '../actionExecutionResult.js';
+import type { WorkflowWebhookInputV1Schema, WorkflowWebhookOutputV1Schema,
+  WorkflowMachineCommandInputV1Schema, WorkflowMachineCommandOutputV1Schema } from '../../workflows/stepActionsV1.js';
 import type { ApiTokenGrantV1, CallerInputConstraintsV1 } from '../../auth/apiTokenGrant.js';
 import type { SessionPermissionRespondActionDecisionV1, SessionPermissionRespondRpcParamsV1 } from '../../sessions/permissions/respondRpcParamsV1.js';
 import type { AgentsBackendsListOutput } from '../agentBackendInventory.js';
@@ -1290,6 +1292,10 @@ export type ActionExecutorDeps = Readonly<{
     input: NotificationsNotifyMeInputV1,
     context: ActionExecutorContext,
   ) => Promise<NotificationsNotifyMeResultV1 | ActionExecuteFailure>;
+  webhookCall?: (input: z.infer<typeof WorkflowWebhookInputV1Schema>, context: ActionExecutorContext)
+    => Promise<z.infer<typeof WorkflowWebhookOutputV1Schema> | ActionExecuteFailure>;
+  machineCommandRun?: (input: z.infer<typeof WorkflowMachineCommandInputV1Schema>, context: ActionExecutorContext)
+    => Promise<z.infer<typeof WorkflowMachineCommandOutputV1Schema> | ActionExecuteFailure>;
   /** Configured channel ids and labels from the executing Account host. */
   notificationChannelsList?: (context: ActionExecutorContext) => Promise<unknown>;
   /**

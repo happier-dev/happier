@@ -19,6 +19,7 @@ import type { HostRuntimeLimitMeasurementRecorder } from '@/agent/runtime/state/
 import { validatePluginEventPayloadSchema } from '../../context/eventPayloadSchema';
 import { clonePluginPlainData } from '../../plainData';
 import type { PluginInvocationServicesSeed } from './types';
+import { resolvePluginActionCaller, withPluginEventActionOrigin } from './actionCaller';
 
 export const STABLE_PLUGIN_EVENT_QUEUE_LIMITS = Object.freeze({
     pendingDeliveriesPerSubscription: 256,
@@ -34,6 +35,8 @@ type DeliveredPluginEvent = Readonly<{
 }>;
 
 type EventPublicationIdentity = Readonly<{
+    /** Host-private initiating caller; never taken from plugin event payload. */
+    originActionCaller?: import('@happier-dev/protocol/actions').ActionCaller;
     pluginId: string;
     pluginVersion: string;
     contributionId: string;
@@ -231,7 +234,8 @@ export function createStablePluginEventsBroker(params?: Readonly<{
                         continue;
                     }
                     try {
-                        await subscription.listener(queued.publication.event);
+                        await withPluginEventActionOrigin(queued.publication.identity.originActionCaller,
+                            () => subscription.listener(queued.publication.event));
                     } catch (error) {
                         try {
                             params?.onListenerError?.({
@@ -823,7 +827,9 @@ export function createPluginInvocationPluginEventsService(params: Readonly<{
                 }
             }
             ensureCurrent(options?.signal);
-            return await params.broker.emit({ event: { ref, payload: normalizedPayload }, identity });
+            const originActionCaller = resolvePluginActionCaller(params.seed)?.initiatingCaller;
+            return await params.broker.emit({ event: { ref, payload: normalizedPayload },
+                identity: { ...identity, ...(originActionCaller ? { originActionCaller } : {}) } });
         },
         subscribe<T extends JsonValue>(
             ref: PluginContributionRef,

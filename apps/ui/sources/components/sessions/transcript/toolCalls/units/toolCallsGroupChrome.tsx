@@ -17,6 +17,7 @@ import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/present
 import type { GroupedToolCallChromeMode } from './groupedToolCallRowRenderDecision';
 import { Icon } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { workStatusGlyphColor } from '@/components/work/status/workStatusTreatment';
 
 export type ToolCallsGroupChromeVariant = 'cards' | 'feed' | 'feed_background';
 export type ToolCallsGroupUnitPosition = 'header' | 'middle' | 'footer';
@@ -196,13 +197,14 @@ export const ToolCallsGroupHeaderChrome = React.memo(function ToolCallsGroupHead
                     style={terminalStatusLabel ? chromeStyles.terminalStatus : chromeStyles.statusIconRight}
                 >
                     {props.status === 'running' ? (
-                        <ActivitySpinner size={iconMatchedSpinnerSize(GROUP_STATUS_ICON_SIZE_PX)} color={theme.colors.text.secondary} />
+                        <ActivitySpinner size={iconMatchedSpinnerSize(GROUP_STATUS_ICON_SIZE_PX)} color={workStatusGlyphColor(theme.colors, 'neutral')} />
                     ) : props.status === 'error' ? (
-                        <Icon name="warning-circle" size={GROUP_STATUS_ICON_SIZE_PX} color={theme.colors.state.danger.foreground} />
+                        <Icon name="warning-circle" size={GROUP_STATUS_ICON_SIZE_PX} color={workStatusGlyphColor(theme.colors, 'danger')} />
                     ) : props.status === 'permission_denied' || props.status === 'permission_canceled' ? (
                         <Icon name="minus-circle" size={16} color={theme.colors.state.danger.foreground} />
                     ) : (
-                        <Icon name="check-circle" size={GROUP_STATUS_ICON_SIZE_PX} color={theme.colors.state.success.foreground} />
+                        // Done is quiet: the group's check stays in the ink.
+                        <Icon name="check-circle" size={GROUP_STATUS_ICON_SIZE_PX} color={workStatusGlyphColor(theme.colors, 'neutral')} />
                     )}
                     {terminalStatusLabel ? (
                         <Text style={chromeStyles.terminalStatusText} numberOfLines={1}>

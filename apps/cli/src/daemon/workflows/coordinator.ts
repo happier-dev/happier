@@ -1587,8 +1587,8 @@ async function executeActionBlock(
       blockKind: 'action', path: { blockId: leaf.id, scope }, attempt: 0, lifecycle: 'pending', memberOrdinal,
       ...(parentKey ? { parentKey } : {}) });
   }
-  const fail = async (code: string, state: 'failed' | 'outcome_uncertain' = 'failed', collectable = false) => {
-    await context.deps.store.commitFact({ key: row!.key, lifecycle: state, reason: code });
+  const fail = async (code: string, state: 'failed' | 'outcome_uncertain' = 'failed', collectable = false, result?: WorkflowJsonValue) => {
+    await context.deps.store.commitFact({ key: row!.key, lifecycle: state, reason: code, ...(result === undefined ? {} : { result }) });
     throw new WorkflowLeafFailure(state, code, collectable);
   };
   let completionState = row.execution?.kind === 'action' && row.execution.awaitedRuns && row.execution.output !== undefined
@@ -1617,15 +1617,16 @@ async function executeActionBlock(
     const actionWorkspace = workspace ?? await resolveLeafWorkspace(leaf, row, scope, frame, context);
     workspace = actionWorkspace;
     const localInputId = `workflow:${createHash('sha256').update(row.recordId).digest('hex')}:action`;
+    const actionRequestId = `${context.runId}/${row.logicalInvocationRecordId ?? row.recordId}/${row.attempt}`;
     const actionContext: ActionExecutorContext = { ...await context.holds.track(() => context.deps.action!.buildContext({ runId: context.runId, authorization: context.authorization,
       workDepth: context.workDepth, workspace: actionWorkspace, ...(context.originSessionId ? { originSessionId: context.originSessionId } : {}),
       ...(frozen.role ? { role: frozen.role } : {}),
-      ...(context.signal ? { signal: context.signal } : {}) })), actionRequestId: localInputId };
+      ...(context.signal ? { signal: context.signal } : {}) })), actionRequestId };
     const prepared = await context.holds.track(() => context.deps.action!.executor.prepare(actionId.data, input, actionContext));
     if (prepared.kind === 'settled' && !prepared.result.ok) return await fail(prepared.result.errorCode, 'failed', true);
     await assertAdmissionOpen(context);
     await assertAcceptedAuthorizationCurrent(context);
-    const execution = { kind: 'action' as const, actionId: actionId.data, actionRequestId: localInputId, localInputId, input };
+    const execution = { kind: 'action' as const, actionId: actionId.data, actionRequestId, localInputId, input };
     // This CAS is the last asynchronous boundary before the one-shot effect.
     // Failure/lost acknowledgement never authorizes dispatch or replay.
     try { row = await context.deps.store.commitFact({ key: row.key, lifecycle: 'admitting', execution }); }
@@ -1666,7 +1667,8 @@ async function executeActionBlock(
     const collectable = completed.kind === 'failed'
       && (!frozen.actionContract.completion || noRunsLaunched || (completionState !== undefined
         && getActionSpec(actionId.data).completion?.launched(completionState.output).failed.length === 0));
-    return await fail(completed.errorCode, collectable ? 'failed' : 'outcome_uncertain', collectable);
+    return await fail(completed.errorCode, collectable ? 'failed' : 'outcome_uncertain', collectable,
+      completed.kind === 'failed' ? completed.value : undefined);
   }
   const outputSchema = frozen.actionContract.outputSchema;
   if (!isWorkflowJsonObject(outputSchema)) return await fail('schema_mismatch');

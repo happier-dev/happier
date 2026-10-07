@@ -2,6 +2,7 @@ import { forwardRef, type ReactNode } from 'react';
 import { View } from 'react-native';
 
 import type { HappierStyleProp } from '../portableTypes.js';
+import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, happierFocusRingStyle, resolveHappierFocusRingVisible } from './focusVisible.js';
 import { HappierPressable, type HappierPressableProps } from './Pressable.js';
 
 /**
@@ -70,9 +71,8 @@ export const HappierDragGrip = forwardRef<View, HappierDragGripProps>(function H
           // Only the chrome fades: the host's focus/gesture target and this grip's geometry remain mounted.
           opacity: visible ? 1 : 0,
           backgroundColor: active ? props.colors.activeFill : lit ? props.colors.hoverFill ?? 'transparent' : 'transparent',
-          // The ring sits on the grip's own corner, so it is concentric with the glyph's box.
-          borderWidth: 1,
-          borderColor: focused && props.colors.focusRing ? props.colors.focusRing : 'transparent',
+          // The ring follows the grip's own corner, so it is concentric with the glyph's box.
+          ...(props.colors.focusRing ? happierFocusRingStyle({ visible: resolveHappierFocusRingVisible(focused), color: props.colors.focusRing }) : null),
         },
         props.style,
       ] as HappierStyleProp}
@@ -96,6 +96,8 @@ export function HappierDragGripTrigger(props: HappierDragGripTriggerProps) {
     style={({ pressed }) => [props.style, {
       borderRadius: GRIP_METRICS[props.density ?? 'pointer'].radius,
       backgroundColor: pressed && !props.active ? props.colors.hoverFill ?? 'transparent' : 'transparent',
+      // The grip draws the ring; without a ring colour the browser's own ring stays.
+      ...(props.colors.focusRing ? HAPPIER_FOCUS_RING_DELEGATED_STYLE : null),
     }]}
   >{state => <HappierDragGrip active={props.active} revealed={props.revealed} density={props.density}
     interaction={{ focused: state.focused, hovered: state.hovered }} colors={props.colors}

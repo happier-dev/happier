@@ -1,6 +1,7 @@
 import { isExactClaudePastedTextMarker } from './pastedTextMarker.js';
 import { isClaudeUnifiedComposerTextMatch } from './promptIdentity.js';
 import { parseClaudeScreenState } from './screenState.js';
+import { classifyClaudeOwnComposerDraft } from './ownComposerDraftClassification.js';
 
 function normalizeNewlines(value: string): string {
   return value.replace(/\r\n?/g, '\n');
@@ -11,18 +12,24 @@ function isCollapsedPastedTextComposer(composerContent: string | null): boolean 
     && isExactClaudePastedTextMarker(composerContent);
 }
 
-function isPromptInComposer(params: Readonly<{ promptText: string; screenText: string }>): boolean {
+function isPromptInComposer(params: Readonly<{ promptText: string; screenText: string; beforeSubmit?: boolean }>): boolean {
   const promptText = normalizeNewlines(params.promptText);
-  const composerContent = parseClaudeScreenState(params.screenText).composerContent;
+  const screen = parseClaudeScreenState(params.screenText);
+  const composerContent = screen.composerContent;
   // During this authorized paste, Claude may expose fewer than 256 characters
   // in a small viewport (observed with 2.1.280). Historical draft ownership
   // keeps its stronger threshold; submission must not depend on window size.
-  return isCollapsedPastedTextComposer(composerContent)
-    || (composerContent !== null && isClaudeUnifiedComposerTextMatch({
+  const matches = (composerText: string) => isCollapsedPastedTextComposer(composerText)
+    || isClaudeUnifiedComposerTextMatch({
       promptText,
-      composerText: composerContent,
+      composerText,
       allowShortVisibleWindow: true,
-    }));
+    });
+  if (composerContent !== null && matches(composerContent)) return true;
+  if (params.beforeSubmit && classifyClaudeOwnComposerDraft({
+    screen, rawText: params.screenText, ownComposerTexts: { matches },
+  }) === 'foreign') throw new Error('Claude composer changed before prompt submission');
+  return false;
 }
 
 export function createClaudePromptSubmitVerificationPolicy() {
@@ -30,7 +37,7 @@ export function createClaudePromptSubmitVerificationPolicy() {
     shouldVerifyAfterSubmit(promptText: string) {
       return normalizeNewlines(promptText).trim().length > 0;
     },
-    verifyBeforeSubmitStaging: isPromptInComposer,
+    verifyBeforeSubmitStaging: (params: Readonly<{ promptText: string; screenText: string }>) => isPromptInComposer({ ...params, beforeSubmit: true }),
     verifyAfterSubmit: isPromptInComposer,
   };
 }

@@ -1,9 +1,6 @@
 
 
 export type WidgetAddTranslation = Readonly<{
-    viewGallery: string;
-    viewList: string;
-    viewLabel: string;
     added: string;
     boardTitle: string;
     boardHint: string;
@@ -11,8 +8,6 @@ export type WidgetAddTranslation = Readonly<{
     companionHint: string;
     searchWidgets: string;
     searchCompanion: string;
-    fromPlugins: string;
-    fromPluginsHint: string;
     makeOne: string;
     noteSubtitle: string;
     interactiveViewSubtitle: string;
@@ -34,14 +29,27 @@ export type WidgetAddTranslation = Readonly<{
         local_services: string;
     }>;
     noMatch: (params: Readonly<{ query: string }>) => string;
-    setupTitle: (params: Readonly<{ widget: string }>) => string;
+    pickTitle: string;
+    pickHint: string;
+    pickNote: string;
+    askAction: string;
+    pluginTag: string;
+    pluginProvenance: (params: Readonly<{ plugin: string }>) => string;
+    readsChosenSession: string;
+    readsFrom: (params: Readonly<{ source: string }>) => string;
+    savedQueryOn: (params: Readonly<{ source: string }>) => string;
+    madeByYou: (params: Readonly<{ date: string }>) => string;
+    madeByAgent: (params: Readonly<{ date: string }>) => string;
+    madeByPlugin: (params: Readonly<{ date: string }>) => string;
+    previewLiveData: string;
+    addsAtSize: (params: Readonly<{ size: string }>) => string;
+    backToWidgets: string;
     editTitle: (params: Readonly<{ widget: string }>) => string;
     editHint: string;
     preview: string;
     previewLive: string;
     previewWaiting: (params: Readonly<{ field: string }>) => string;
     previewAfterAdd: string;
-    backToGallery: string;
     needed: string;
     stillNeeded: (params: Readonly<{ field: string }>) => string;
     followGroup: string;
@@ -73,7 +81,6 @@ export type WidgetAddTranslation = Readonly<{
     saveFailed: string;
     homeTitle: string;
     homeHint: string;
-    homeFromPluginsHint: string;
     addWidgets: string;
     addToHome: string;
     addToBoard: string;
@@ -118,9 +125,6 @@ export function inSentence(label: string): string {
 
 
 export const widgetAddTranslationsEnglish = { en: {
-        viewGallery: 'Gallery',
-        viewList: 'List',
-        viewLabel: 'View',
         added: 'Added',
         boardTitle: 'Add to the board',
         boardHint: 'Everyone here sees what you add',
@@ -128,8 +132,6 @@ export const widgetAddTranslationsEnglish = { en: {
         companionHint: 'Only you see your Companion',
         searchWidgets: 'Search widgets',
         searchCompanion: 'Search glances and panes',
-        fromPlugins: 'From plugins',
-        fromPluginsHint: 'live, with this session’s data',
         makeOne: 'Make one',
         noteSubtitle: 'Markdown',
         interactiveViewSubtitle: 'HTML',
@@ -151,14 +153,27 @@ export const widgetAddTranslationsEnglish = { en: {
             local_services: 'Open local services running for the session you choose.',
         },
         noMatch: ({ query }) => `No widgets match “${query}”`,
-        setupTitle: ({ widget }) => `Set up ${widget}`,
+        pickTitle: 'Pick a widget to see it here',
+        pickHint: 'It shows your own data, at the size you choose, before anything is added.',
+        pickNote: 'Pick a widget to add it',
+        askAction: 'Draft the request',
+        pluginTag: 'plugin',
+        pluginProvenance: ({ plugin }) => `${plugin} plugin`,
+        readsChosenSession: 'reads the session you choose, where it runs',
+        readsFrom: ({ source }) => `reads ${source}`,
+        savedQueryOn: ({ source }) => `a saved query on ${source}`,
+        madeByYou: ({ date }) => `made by you on ${date}`,
+        madeByAgent: ({ date }) => `made by your agent on ${date}`,
+        madeByPlugin: ({ date }) => `made by a plugin on ${date}`,
+        previewLiveData: 'Live, with your data',
+        addsAtSize: ({ size }) => `Adds it at ${size}. You can change its size later.`,
+        backToWidgets: 'Widgets',
         editTitle: ({ widget }) => `${widget} · inputs`,
         editHint: 'Only this copy changes. Other copies keep their inputs.',
         preview: 'Preview',
         previewLive: 'Preview · live',
         previewWaiting: ({ field }) => `Choose the ${inSentence(field)} to see it here`,
         previewAfterAdd: 'It shows here once it’s added',
-        backToGallery: 'Back to the gallery',
         needed: 'Needed',
         stillNeeded: ({ field }) => `${field} is still needed`,
         followGroup: 'Follow',
@@ -186,7 +201,6 @@ export const widgetAddTranslationsEnglish = { en: {
         saveFailed: 'Couldn’t save. Try again.',
         homeTitle: 'Add to Home',
         homeHint: 'Only you see your Home · on every device',
-        homeFromPluginsHint: 'live, with your data',
         addWidgets: 'Add widgets',
         addToHome: 'Add to Home',
         addToBoard: 'Add to the board',

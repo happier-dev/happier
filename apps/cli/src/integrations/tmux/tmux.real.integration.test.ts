@@ -199,6 +199,58 @@ function shellSingleQuote(value: string): string {
 }
 
 describe.skipIf(!shouldRunTmuxIntegration())('tmux (real) integration tests (opt-in)', { timeout: 20_000 }, () => {
+    it('delivers once when provider staging and consumption outlast the terminal write budget', async () => {
+        const dir = mkdtempSync(join(tmpdir(), 'hp-tmux-'));
+        const socketPath = join(dir, 'tmux.sock');
+        const utils = new TmuxUtilities('happy', undefined, socketPath);
+        const { createTmuxTerminalHostAdapter } = await import('./adapter');
+        const { createClaudePromptSubmitVerificationPolicy } = await import('../../../../../packages/plugins/claude/src/agent/runtime/terminal/unified/promptSubmitVerification.js');
+        const adapter = createTmuxTerminalHostAdapter({ tmux: utils, promptSubmitVerification: createClaudePromptSubmitVerificationPolicy() });
+        const fixture = join(dir, 'slow-provider.cjs');
+        const receipt = join(dir, 'receipt.json');
+        const ready = join(dir, 'ready');
+        // The external TUI boundary consumes real bracketed paste and Enter over an isolated
+        // tmux PTY. Its delayed redraw reproduces the observed 20s staging / 10s consumption.
+        writeFileSync(fixture, [
+            "const fs = require('node:fs');",
+            'process.stdin.setRawMode(true); process.stdin.resume();',
+            'process.stdout.write("\\x1b[?2004h");',
+            'let input = "", prompt = "", enters = 0;',
+            'const draw = text => process.stdout.write("\\x1b[2J\\x1b[HClaude Code\\r\\n──────────\\r\\n❯ " + text + "\\r\\n──────────\\r\\n  ⏵⏵ bypass permissions on");',
+            'draw(""); fs.writeFileSync(process.argv[3], "ready");',
+            'process.stdin.on("data", bytes => {',
+            '  input += bytes.toString();',
+            '  const end = input.indexOf("\\x1b[201~");',
+            '  if (end >= 0) {',
+            '    prompt = input.slice(input.indexOf("\\x1b[200~") + 6, end); input = input.slice(end + 6);',
+            '    setTimeout(() => draw(prompt), 20_000);',
+            '  }',
+            '  if (input.includes("\\r")) {',
+            '    enters += input.split("\\r").length - 1; input = "";',
+            '    setTimeout(() => { fs.writeFileSync(process.argv[2], JSON.stringify({prompt, enters})); draw(""); }, 10_000);',
+            '  }',
+            '});',
+        ].join('\n'));
+        const lifetime = new AbortController();
+        try {
+            const handle = await adapter.createOrAttachHost({
+                sessionName: 'slow-provider', workingDirectory: dir,
+                spawnArgv: [process.execPath, fixture, receipt, ready], spawnEnv: {}, isolatedEnv: true,
+            });
+            await waitForFile(ready, 5_000);
+            const input = { text: 'loaded prompt', multiline: false,
+                origin: { kind: 'ui_pending' as const, nonce: 'slow-delivery' },
+                scheduling: { timeoutMs: 15_000 }, signal: lifetime.signal };
+            const result = await adapter.injectUserPrompt(handle, input);
+            expect(result).toMatchObject({ status: 'injected' });
+            expect(JSON.parse(readFileSync(receipt, 'utf8'))).toEqual({ prompt: input.text, enters: 1 });
+        } finally {
+            lifetime.abort();
+            killIsolatedTmuxServer(socketPath);
+            await removeTmuxTempDir(dir);
+        }
+    }, 60_000);
+
     it.each([
         [true, 'latest', false], [false, 'latest', false],
         [true, 'smallest', false], [false, 'smallest', true],

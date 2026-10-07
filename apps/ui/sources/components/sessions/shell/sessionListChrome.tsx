@@ -1,7 +1,8 @@
 import React from 'react';
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { describeWorkStatusBucket } from '@/components/work/status/workStatusBuckets';
 import { View, Pressable, Platform, I18nManager, Image as ReactNativeImage, type StyleProp, type ViewProps, type ViewStyle } from 'react-native';
-import { HappierPressable, resolveHappierFocusRingVisible } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import { useUnistyles } from 'react-native-unistyles';
@@ -391,7 +392,8 @@ export const SessionFolderFocusBreadcrumbs = React.memo(function SessionFolderFo
                         justifyContent: 'center',
                         borderRadius: 6,
                         borderWidth: 1,
-                        borderColor: resolveHappierFocusRingVisible(focused) ? theme.colors.border.focus : 'transparent',
+                        borderColor: 'transparent',
+                        ...focusRingStyle({ focused, color: theme.colors.border.focus }),
                         opacity: pressed ? motionTokens.press.opacitySubtle : 1,
                     }]}
                 >
@@ -420,7 +422,8 @@ export const SessionFolderFocusBreadcrumbs = React.memo(function SessionFolderFo
                                 justifyContent: 'center',
                                 borderRadius: 6,
                                 borderWidth: 1,
-                                borderColor: resolveHappierFocusRingVisible(focused) ? theme.colors.border.focus : 'transparent',
+                                borderColor: 'transparent',
+                                ...focusRingStyle({ focused, color: theme.colors.border.focus }),
                                 opacity: pressed ? motionTokens.press.opacitySubtle : 1,
                             }]}
                         >

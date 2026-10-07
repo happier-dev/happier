@@ -1,6 +1,7 @@
 import { Switch as ReactNativeSwitch, View, type ViewStyle } from 'react-native';
 
 import { HappierPressable } from '../interaction/Pressable.js';
+import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, happierFocusRingStyle } from '../interaction/focusVisible.js';
 import { HAPPIER_MOTION_V1 } from '../interaction/motion.js';
 import { HAPPIER_PRESS_FEEDBACK_V1 } from '../interaction/pressFeedback.js';
 import type { HappierFocusable, HappierStyleProp } from '../portableTypes.js';
@@ -24,10 +25,8 @@ import type { HappierFocusable, HappierStyleProp } from '../portableTypes.js';
 export const HAPPIER_SWITCH_METRICS = Object.freeze({
   default: Object.freeze({ trackWidth: 40, trackHeight: 22, thumbSize: 18, padding: 2 }),
   compact: Object.freeze({ trackWidth: 32, trackHeight: 18, thumbSize: 14, padding: 2 }),
-  /** The web control's own focus and hit box around the drawn track. */
+  /** The web control's own hit box around the drawn track. */
   webTargetPx: 44,
-  /** The focus-visible ring, drawn on the web control's box. */
-  focusRingWidthPx: 2,
   disabledOpacity: 0.6,
 });
 
@@ -148,16 +147,14 @@ export function HappierSwitch(props: HappierSwitchProps) {
           alignItems: 'center',
           justifyContent: 'center',
           alignSelf: 'flex-start',
-          borderRadius: HAPPIER_SWITCH_METRICS.webTargetPx / 2,
-          borderWidth: HAPPIER_SWITCH_METRICS.focusRingWidthPx,
-          borderColor: state.focused ? colors.focusRing : 'transparent',
+          ...HAPPIER_FOCUS_RING_DELEGATED_STYLE,
           opacity: disabled
             ? HAPPIER_SWITCH_METRICS.disabledOpacity
             : state.pressed ? HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle : 1,
         },
       ]}
     >
-      <View
+      {(state) => <View
         style={[
           {
             width: metrics.trackWidth,
@@ -167,6 +164,8 @@ export function HappierSwitch(props: HappierSwitchProps) {
             justifyContent: 'center',
             backgroundColor: value ? colors.trackOn : colors.trackOff,
           },
+          // The ring follows the drawn track, not the larger hit box around it.
+          happierFocusRingStyle({ visible: state.focused, color: colors.focusRing }),
           props.reducedMotion ? null : TRACK_TRANSITION,
         ]}
       >
@@ -182,7 +181,7 @@ export function HappierSwitch(props: HappierSwitchProps) {
             props.reducedMotion ? null : THUMB_TRANSITION,
           ]}
         />
-      </View>
+      </View>}
     </HappierPressable>
   );
 }

@@ -179,13 +179,41 @@ async function renderSection() {
 }
 
 describe('Automations · Latest runs on Home', () => {
-    it('keeps run times short and relative in the compact Home rows', async () => {
+    it('draws a done Run quietly in the ink, a failed one (glyph and line) in rose, one to look at in attention amber', async () => {
+        const { LatestRunRow } = await import('./AutomationsLatestRunsSection');
+        const { automationRunTone } = await import('./latestAutomationRuns');
+        const { lightTheme } = await import('@/theme');
+        const glyphOf = async (state: AutomationDefinitionRun['state'], glyph: string) => {
+            const screen = await renderScreen(
+                <LatestRunRow
+                    row={{ run: run(state, 'triage', 1_000, state), automationName: 'Morning triage', targetType: 'newSession', at: 1_000, tone: automationRunTone(state) }}
+                    onOpen={() => {}}
+                />,
+            );
+            const icon = screen.tree.root.findAll((node) => node.props.name === glyph)[0];
+            const item = screen.tree.root.findAll((node) => node.props.testID === `home-automations.run.${state}` && 'subtitle' in node.props)[0];
+            return { color: icon?.props.color as string | undefined, subtitleStyle: item?.props.subtitleStyle as { color?: string } | undefined };
+        };
+
+        const done = await glyphOf('succeeded', 'check-circle');
+        expect(done.color).toBe(lightTheme.colors.text.secondary);
+        expect(done.subtitleStyle).toBeUndefined();
+        const failed = await glyphOf('failed', 'x-circle');
+        expect(failed.color).toBe(lightTheme.colors.state.danger.foreground);
+        expect(failed.subtitleStyle?.color).toBe(lightTheme.colors.state.danger.foreground);
+        expect((await glyphOf('outcome_uncertain', 'warning-circle')).color).toBe(lightTheme.colors.state.attention.foreground);
+    });
+
+    it('keeps run times short and relative, in the rows\' meta column rather than inside the state line', async () => {
         const now = Date.now();
         vi.spyOn(Date, 'now').mockReturnValue(now);
         server.automations = [automation('triage', 'Morning triage', now - 12 * 60_000)];
         server.runsByAutomationId = { triage: [run('recent', 'triage', now - 12 * 60_000, 'succeeded')] };
         const screen = await renderSection();
         expect(screen.getTextContent()).toContain('12m');
+        const item = screen.tree.root.findAll((node) => node.props.testID === 'home-automations.run.recent' && 'subtitle' in node.props)[0];
+        expect(item?.props.detail).toBe('12m');
+        expect(String(item?.props.subtitle)).not.toContain('12m');
     });
     it('shows the newest Runs across Automations, with when they were read and a way to Automations', async () => {
         serveTwoAutomations();

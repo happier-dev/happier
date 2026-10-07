@@ -234,10 +234,12 @@ describe('global Voice post-End permission custody', () => {
         const flatten = (style: unknown): Record<string, unknown> => (Array.isArray(style)
             ? style.reduce((acc: Record<string, unknown>, next) => ({ ...acc, ...flatten(next) }), {})
             : ((style as Record<string, unknown> | null | undefined) ?? {}));
-        const pillBorder = () => {
+        // The pill's painted ring: the shared outline, held off the pill so the page shows through.
+        const pillRing = () => {
             const frames = resume().findAll((node) => String(node.type) === 'Animated.View');
             expect(frames).toHaveLength(1);
-            return flatten(frames[0]!.props.style).borderColor;
+            const style = flatten(frames[0]!.props.style);
+            return style.outlineStyle === 'solid' ? { color: style.outlineColor, gap: style.outlineOffset } : null;
         };
         // The browser's `:focus-visible` verdict: a click leaves focus that does not match it, Tab does.
         const focusedElement = (focusVisible: boolean) => ({
@@ -246,18 +248,18 @@ describe('global Voice post-End permission custody', () => {
 
         expect(resume().props.accessibilityLabel).toBe('session.pendingActivation.actions.resume');
         expect(resume().props.accessibilityState).toMatchObject({ busy: false, disabled: false });
-        expect(pillBorder()).not.toBe(focusColor);
+        expect(pillRing()).toBeNull();
 
         await act(async () => {
             resume().props.onFocus?.({ target: focusedElement(false) });
         });
-        expect(pillBorder()).not.toBe(focusColor);
+        expect(pillRing()).toBeNull();
 
         await act(async () => {
             resume().props.onBlur?.({});
             resume().props.onFocus?.({ target: focusedElement(true) });
         });
-        expect(pillBorder()).toBe(focusColor);
+        expect(pillRing()).toEqual({ color: focusColor, gap: 2 });
     });
 
     it('opens a stopped secondary-Home session before resuming with Home-scoped settings', async () => {

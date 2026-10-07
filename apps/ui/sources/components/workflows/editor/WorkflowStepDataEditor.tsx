@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 
 import type { JsonValue } from '@happier-dev/protocol';
 import { parsePermissionIntentAlias } from '@happier-dev/agents/permissions';
@@ -249,6 +249,8 @@ function ReferenceSelect(props: Readonly<{
                         hasPopup="menu"
                         expanded={open}
                         onPress={toggle}
+                        // The field box inside draws the ring.
+                        style={HAPPIER_FOCUS_RING_DELEGATED_STYLE}
                     >
                         {(state) => renderDropdownItemTriggerRightElement({
                             detail: typeof selected?.title === 'string' ? selected.title : null,
@@ -284,6 +286,8 @@ export function WorkflowValueReferenceEditor(props: Readonly<{
     stepId: string;
     /** True for a loop's after-each-round consumer (`stopWhen`), which resolves inside the body. */
     continuation?: boolean;
+    /** The consuming field's canonical contract accepts authored literals only. */
+    literalOnly?: boolean;
     onChange: (value: WorkflowValueReference) => void;
     onRemove?: () => void;
     /**
@@ -310,7 +314,7 @@ export function WorkflowValueReferenceEditor(props: Readonly<{
     // Loop-scoped kinds are offered only where the canonical validator accepts
     // them; a reference already authored there stays visible for repair.
     const scopeFacts = resolveWorkflowReferenceScopeFacts(props.draft, props.stepId, consumer);
-    const kinds = [
+    const kinds = props.literalOnly === true ? ['literal'] as const : [
         'literal',
         'input',
         'result',
@@ -340,7 +344,7 @@ export function WorkflowValueReferenceEditor(props: Readonly<{
     };
     return (
         <View style={workflowEditorStyles.inlineControl}>
-            <ReferenceSelect
+            {props.literalOnly !== true || reference.kind !== 'literal' ? <ReferenceSelect
                 testID={`${rowId}-kind`}
                 label={t('workflows.input.valueKindGroup')}
                 items={kinds.map((kind) => ({ id: kind, testID: `${rowId}-kind-${kind}`, title: referenceKindLabel(kind) }))}
@@ -349,7 +353,7 @@ export function WorkflowValueReferenceEditor(props: Readonly<{
                     const kind = kinds.find((candidate) => candidate === id);
                     if (kind !== undefined) setKind(kind);
                 }}
-            />
+            /> : null}
             {reference.kind === 'literal' && props.renderLiteral !== undefined
                 // The consumer's own field sits on the binding's line, like the plain value entry.
                 ? <View style={workflowEditorStyles.inlineLiteral}>{props.renderLiteral(reference.value, (next) => props.onChange({

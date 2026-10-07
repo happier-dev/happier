@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readdirSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { access, chmod, copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -8,7 +9,7 @@ import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { installNativeAdmissionFixture } from '../../testkit/core/native_admission_fixture.mjs';
 import { recordStackRuntimeStart, recordStackRuntimeUpdate } from '../stack/runtime_state.mjs';
 import { writePidState } from '../expo/expo.mjs';
-import { readLinuxWorkerProcesses, readWorkerMemoryReservations, renderWorkerMemoryReservationRows } from './service_memory.mjs';
+import { readLinuxWorkerProcesses, readWorkerMemoryReservations, renderWorkerMemoryReservationRows, writeRuntimeAdmissionPhase } from './service_memory.mjs';
 
 const policy = fileURLToPath(new URL('../dev_targets/native_command_policy.sh', import.meta.url));
 const identity = fileURLToPath(new URL('./native_process_identity.sh', import.meta.url));
@@ -134,16 +135,24 @@ test('admission diagnostics authenticate owner class, age and recent tree CPU pr
   const observe = (nowMs, previousProgress) => readWorkerMemoryReservations({
     admissionRoot: owner.root, readProcesses: () => processes, includeOwnerProgress: true, nowMs, previousProgress,
   });
+  await writeFile(`${owner.ownerPath}/phase`, 'awaiting-runtime-request\n');
+  assert.equal(writeRuntimeAdmissionPhase('building-runtime', {
+    HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT: owner.root,
+    HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN: `${owner.child.pid}:${owner.token}`,
+  }), false, 'an unrelated live owner is not phase-write authority');
+  assert.equal(await readFile(`${owner.ownerPath}/phase`, 'utf8'), 'awaiting-runtime-request\n');
   const first = observe(1000);
   assert.equal(first.ownerProgress?.owners.length, 1);
   assert.deepEqual(first.ownerProgress.owners[0], {
     pid: owner.child.pid, token: owner.token, className: 'runtime-build', ageSeconds: 14400,
-    cpuSeconds: 6, recentCpuPercent: null,
+    cpuSeconds: 6, recentCpuPercent: null, phase: 'awaiting-runtime-request',
   });
   const idle = observe(5000, first.ownerProgress);
   assert.equal(idle.ownerProgress.owners[0].recentCpuPercent, 0);
   processes.get(owner.descendantPid).cpuSeconds += 2;
+  await writeFile(`${owner.ownerPath}/phase`, 'building-runtime\n');
   const active = observe(9000, idle.ownerProgress);
+  assert.equal(active.ownerProgress.owners[0].phase, 'building-runtime');
   assert.equal(active.ownerProgress.owners[0].recentCpuPercent, 50, 'CPU progress includes the actual descendant tree');
   await writeFile(`${owner.ownerPath}/process`, `${owner.child.pid} 0\n`);
   assert.deepEqual(observe(13000, active.ownerProgress).ownerProgress.owners, [], 'mismatched owner identity is never reported as live');
@@ -152,6 +161,42 @@ test('admission diagnostics authenticate owner class, age and recent tree CPU pr
   assert.throws(() => readWorkerMemoryReservations({ admissionRoot: fixture.path('invalid'),
     readProcesses: () => processes, includeOwnerProgress: true }), /ENOTDIR/,
   'unobservable owner state must not be advertised as no live holders');
+});
+
+test('runtime holder diagnostics distinguish awaiting ACK from acknowledged work and release their phase on cancellation', { skip: process.platform !== 'linux', timeout: 15000 }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-runtime-phase-' });
+  const native = await installNativeAdmissionFixture({ root: fixture.root });
+  const env = await memoryBoundary(fixture, { availableKiB: 28000000, totalKiB: 30000000 });
+  const fifo = fixture.path('request.json');
+  assert.equal(spawnSync('mkfifo', [fifo]).status, 0);
+  const entry = fileURLToPath(new URL('../../build/remote_runtime_build.mjs', import.meta.url));
+  const child = spawn('/bin/sh', [native.launcher, '--heavyweight-admission', '--class=runtime-build', '--',
+    'env', process.execPath, entry, '--worker-request=stdin', `--artifact-target=${process.platform}-${process.arch}`],
+  { cwd: fixture.root, env, stdio: ['pipe', 'pipe', 'pipe'] });
+  const completion = new Promise(resolve => child.once('close', resolve));
+  t.after(async () => { if (child.exitCode === null) child.kill('SIGTERM'); await completion; });
+  let stdout = '', stderr = '';
+  child.stdout.on('data', chunk => { stdout += chunk; });
+  child.stderr.on('data', chunk => { stderr += chunk; });
+  const observe = () => readWorkerMemoryReservations({ admissionRoot: native.admissionRoot, includeOwnerProgress: true,
+    // This fixture is a physical worker; exclude the runner's real admission
+    // root at the OS snapshot boundary, just as the native fixture does.
+    readProcesses: () => {
+      const ownerPids = new Set(readdirSync(`${native.admissionRoot}/owners`).map(name => Number(name.split('-')[0])));
+      return new Map([...readLinuxWorkerProcesses()].filter(([pid, record]) => ownerPids.has(pid)
+        || record.env.HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT === native.admissionRoot));
+    },
+  }).ownerProgress.owners;
+  for (let attempt = 0; attempt < 500 && !stdout.includes('HAPPIER_RUNTIME_BUILD_READY='); attempt++) await new Promise(resolve => setTimeout(resolve, 20));
+  assert.match(stdout, /HAPPIER_RUNTIME_BUILD_READY=/, stderr);
+  assert.equal(observe()[0]?.phase, 'awaiting-runtime-request');
+  child.stdin.write(JSON.stringify({ requestPath: fifo }) + '\n');
+  for (let attempt = 0; attempt < 500 && observe()[0]?.phase !== 'building-runtime'; attempt++) await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(observe()[0]?.phase, 'building-runtime', 'an ACK is observable before the real filesystem request read can proceed');
+  child.kill('SIGTERM');
+  await completion;
+  assert.deepEqual(observe(), []);
+  assert.deepEqual(await import('node:fs/promises').then(fs => fs.readdir(`${native.admissionRoot}/owners`)), []);
 });
 
 test('a real waiting admission reports its live holder and recent CPU without terminating it', { skip: process.platform !== 'linux', timeout: 15000 }, async t => {

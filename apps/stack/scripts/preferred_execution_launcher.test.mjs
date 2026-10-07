@@ -31,6 +31,8 @@ const executionNeutralEnv = Object.fromEntries(
     'HAPPIER_TYPECHECK_DISPATCHED',
     'HAPPIER_STACK_CLI_HOME_DIR',
     'HAPPIER_HOME_DIR',
+    'HAPPIER_STACK_PM_CACHE_BASE_DIR',
+    'HAPPIER_RUNTIME_BUILD_DISK_TARGET',
   ].includes(key)),
 );
 
@@ -38,6 +40,62 @@ async function executable(path, contents) {
   await writeFile(path, contents, 'utf8');
   await chmod(path, 0o755);
 }
+
+test('worker disk admission rejects insufficient filesystem headroom before starting payload', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-disk-admission-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const { launcher: native } = await installNativeAdmissionFixture({ root });
+  const checkout = join(root, 'native-owner');
+  const cache = join(root, 'cli/cache');
+  await mkdir(join(cache, 'yarn/v6'), { recursive: true });
+  await mkdir(join(checkout, 'node_modules'), { recursive: true });
+  await writeFile(join(checkout, 'node_modules/data'), 'dependency'.repeat(8192));
+  const bin = join(root, 'bin');
+  await mkdir(bin);
+  // df and memory telemetry are the OS boundaries; filesystem measurement,
+  // class admission, process identity and retention execute their real owners.
+  await executable(join(bin, 'df'), '#!/bin/sh\nprintf "Filesystem 1024-blocks Used Available Capacity Mounted\\nfixture 100000 99999 1 99%% /\\n"\n');
+  await executable(join(bin, 'awk'), '#!/bin/sh\ncase "$*" in */proc/meminfo*) printf "28000000 30000000\\n" ;; */proc/loadavg*|*/proc/pressure/*) printf "0\\n" ;; *) exec /usr/bin/awk "$@" ;; esac\n');
+  await executable(join(bin, 'systemctl'), '#!/bin/sh\nexit 1\n');
+  const payload = join(root, 'started');
+  const result = spawnSync('/bin/sh', [native, '--heavyweight-admission', '--class=runtime-build', '--machine=worker', '--failure-id=disk-test', '--no-wait', '--', process.execPath, '-e', 'require("node:fs").writeFileSync(process.argv[1], "started")', payload], {
+    cwd: checkout, encoding: 'utf8', env: { ...executionNeutralEnv, PATH: `${bin}:${process.env.PATH}`, HAPPIER_STACK_PM_CACHE_BASE_DIR: cache },
+  });
+  assert.equal(result.status, 75, result.stderr);
+  assert.match(result.stderr, /HSTACK_ADMISSION_DISK:disk-test/);
+  await assert.rejects(access(payload), { code: 'ENOENT' });
+});
+
+test('inherited equal-memory build class rechecks its larger disk envelope', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-disk-escalation-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const { launcher: native } = await installNativeAdmissionFixture({ root });
+  const checkout = join(root, 'native-owner');
+  const cache = join(root, 'cli/cache');
+  const phase = join(root, 'phase');
+  const payload = join(root, 'started');
+  await mkdir(join(cache, 'yarn/v6'), { recursive: true });
+  await mkdir(join(checkout, 'node_modules'), { recursive: true });
+  await writeFile(join(checkout, 'node_modules/data'), 'dependency');
+  await writeFile(join(cache, 'native-output'), 'build'.repeat(65536));
+  const bin = join(root, 'bin');
+  await mkdir(bin);
+  // Free disk changes between the admitted parent and its nested build.
+  await executable(join(bin, 'df'), '#!/bin/sh\nif [ -f "$DISK_PHASE" ]; then free=20; else free=100000; fi\nprintf "Filesystem 1024-blocks Used Available Capacity Mounted\\nfixture 200000 100000 %s 50%% /\\n" "$free"\n');
+  await executable(join(bin, 'awk'), '#!/bin/sh\ncase "$*" in */proc/meminfo*) printf "28000000 30000000\\n" ;; */proc/loadavg*|*/proc/pressure/*) printf "0\\n" ;; *) exec /usr/bin/awk "$@" ;; esac\n');
+  await executable(join(bin, 'systemctl'), '#!/bin/sh\nexit 1\n');
+  const parent = `require('node:fs').writeFileSync(process.env.DISK_PHASE, 'build');
+    const child = require('node:child_process').spawnSync('/bin/sh', [process.argv[1], '--heavyweight-admission', '--class=package-dist', '--machine=worker', '--failure-id=disk-escalation', '--no-wait', '--', process.execPath, '-e', 'require("node:fs").writeFileSync(process.argv[1], "started")', process.argv[2]], {encoding:'utf8',env:process.env});
+    console.log(JSON.stringify({status:child.status,stderr:child.stderr}));`;
+  const result = spawnSync('/bin/sh', [native, '--heavyweight-admission', '--class=validation', '--machine=worker', '--no-wait', '--', process.execPath, '-e', parent, native, payload], {
+    cwd: checkout, encoding: 'utf8', env: { ...executionNeutralEnv, PATH: `${bin}:${process.env.PATH}`, DISK_PHASE: phase, HAPPIER_STACK_PM_CACHE_BASE_DIR: cache },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const child = JSON.parse(result.stdout.trim());
+  assert.equal(child.status, 75, child.stderr);
+  assert.match(child.stderr, /HSTACK_ADMISSION_DISK:disk-escalation/);
+  await assert.rejects(access(payload), { code: 'ENOENT' });
+});
 
 test('runtime build memory observation reads the admission owner without dispatch or queuing', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-build-memory-'));
@@ -534,6 +592,39 @@ test('automatic placement reroutes admission I/O failure with unavailable TTL an
   });
   assert.equal(second.status, 75, second.stderr);
   assert.deepEqual((await readFile(fixture.invocation.env.DISPATCHES, 'utf8')).trim().split('\n'), ['starved', 'roomy', 'roomy']);
+});
+
+test('automatic disk rejection reroutes only this class and cannot replay a started payload', async t => {
+  const fixture = await memoryRoutingFixture(t, { availableKiB: 28000000, roomyLoad: 12, fallback: 'local' });
+  await executable(join(fixture.binDir, 'ssh'), [
+    '#!/bin/sh',
+    'case "$*" in',
+    ' *getconf*) case "$*" in *starved-host*) cat "$STARVED_SAMPLE" ;; *) printf "8 12 0.9 22000000 20 0 28000000 30000000 0 0 0 0 0 0 0 linux\\n" ;; esac ;;',
+    ' *"&& command -v "*|*-O\\ check*|*-MNf*) exit 0 ;;',
+    ' *remote_execution_custody.sh*)',
+    '  case "$*" in *starved-host*) name=starved ;; *) name=roomy ;; esac',
+    '  printf "%s\\n" "$name" >> "$DISPATCHES"',
+    '  case "$*" in *starved-host*--heavyweight-admission*)',
+    '    for argument in "$@"; do remote=$argument; done',
+    '    id=$(printf "%s\\n" "$remote" | sed -n "s/.*--failure-id=\\(native-[A-Za-z0-9_-]*\\).*/\\1/p")',
+    '    printf "HSTACK_ADMISSION_DISK:%s\\n" "$id" >&2; exit 75 ;;',
+    '  esac',
+    '  printf "payload:%s\\n" "$name"; exit "${PAYLOAD_EXIT-0}" ;;',
+    ' *) exit 0 ;;',
+    'esac', '',
+  ].join('\n'));
+  const heavy = spawnSync('/bin/sh', [launcher, '--', 'node', '--test', 'focused.test.mjs'], fixture.invocation);
+  assert.equal(heavy.status, 0, heavy.stderr);
+  assert.match(heavy.stderr, /disk budget rejected/);
+  assert.match(heavy.stdout, /payload:roomy/);
+  const search = spawnSync('/bin/sh', [launcher, '--', 'rg', 'source'], fixture.invocation);
+  assert.equal(search.status, 0, search.stderr);
+  assert.match(search.stdout, /payload:starved/, 'build disk rejection must not exclude a source search');
+  const failedPayload = spawnSync('/bin/sh', [launcher, '--', 'node', '--test', 'focused.test.mjs'], {
+    ...fixture.invocation, env: { ...fixture.invocation.env, PAYLOAD_EXIT: '75' },
+  });
+  assert.equal(failedPayload.status, 75, failedPayload.stderr);
+  assert.deepEqual((await readFile(fixture.invocation.env.DISPATCHES, 'utf8')).trim().split('\n'), ['starved', 'roomy', 'starved', 'starved', 'roomy']);
 });
 
 test('native nonblocking admission certifies busy without certifying state failure', async (t) => {
@@ -2878,7 +2969,7 @@ test('native launcher exact target fails closed when no target configuration exi
   assert.doesNotMatch(result.stdout, /wrong-local/);
 });
 
-test('native launcher excludes a target without enough repository scratch space', async () => {
+test('native launcher excludes a target with no free repository filesystem space', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-full-disk-'));
   const binDir = join(root, 'bin');
   const storageDir = join(root, 'stacks');
@@ -2917,7 +3008,7 @@ test('native launcher excludes a target without enough repository scratch space'
   await executable(join(binDir, 'ssh'), [
     '#!/bin/sh',
     'case "$*" in',
-    '  *getconf*) case "$*" in *mac2-host*) printf "8 0.5 0.8 220000 99\\n" ;; *) printf "8 4 0.5 22000000 98\\n" ;; esac ;;',
+    '  *getconf*) case "$*" in *mac2-host*) printf "8 0.5 0.8 0 99\\n" ;; *) printf "8 4 0.5 22000000 98\\n" ;; esac ;;',
     '  *command\\ -v*) exit 0 ;;',
     '  *-MNf*|*-O\\ exit*) exit 0 ;;',
     '  *mac2-host*) printf "wrong-target:mac2\\n" ;;',
@@ -4468,70 +4559,6 @@ test('native launcher bootstraps dependency-consuming commands and leaves source
       platform: 'linux',
     },
   );
-});
-
-test('native launcher refuses insufficient install scratch on a reachable target without local fallback', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-cold-dependency-disk-'));
-  const binDir = join(root, 'bin');
-  const storageDir = join(root, 'stacks');
-  const stackDir = join(storageDir, `repo-${repoToken}-native`);
-  await mkdir(binDir, { recursive: true });
-  await mkdir(join(stackDir, 'mutagen', 'data'), { recursive: true });
-  await writeFile(join(stackDir, 'dev-targets.json'), '{}\n');
-  await writeFile(join(stackDir, 'dev-target-exec-v1.sh'), [
-    "HSTACK_EXEC_PROJECTION_VERSION='2'",
-    "dependency_direct_commands='node'",
-    "dependency_corepack_subcommands=''",
-    `projection_repo_root='${repoRoot}'`,
-    "command_mode='auto'",
-    "include_local='0'",
-    "fallback_mode='local'",
-    "load_ttl_seconds='15'",
-    "unavailable_ttl_seconds='120'",
-    "target_count='1'",
-    "target_1_name='mac2'",
-    "target_1_ssh='mac2-host'",
-    "target_1_ssh_config=''",
-    "target_1_repo_dir='/remote/repo'",
-    "target_1_cli_home='/remote/home'",
-    "target_1_remote_path='/usr/bin:/bin'",
-    '',
-  ].join('\n'));
-  await executable(join(binDir, 'node'), '#!/bin/sh\nprintf "local-node:%s\\n" "$*"\n');
-  await executable(join(binDir, 'tsc'), '#!/bin/sh\nprintf "local-tsc:%s\\n" "$*"\n');
-  await executable(
-    join(binDir, 'mutagen'),
-    '#!/bin/sh\nprintf "%s|Watching|false|true|1|0/0|0/0|true|1|0/0|0/0|active|7|ok|0|0\\n" "$3"\n',
-  );
-  await executable(join(binDir, 'ssh'), [
-    '#!/bin/sh',
-    'case "$*" in',
-    '  *getconf*) printf "8 1 0.5 22000000 98\\n" ;;',
-    '  *command\\ -v*) case "$*" in *node_modules/.yarn-integrity*df\\ -Pk*) exit 76 ;; *) exit 0 ;; esac ;;',
-    '  *-MNf*|*-O\\ exit*) exit 0 ;;',
-    '  *remote_dependency_bootstrap.mjs*) printf "unexpected-remote-bootstrap\\n"; exit 42 ;;',
-    'esac',
-    '',
-  ].join('\n'));
-
-  const result = spawnSync('/bin/sh', [launcher, '--', 'tsc', '--version'], {
-    cwd: repoRoot,
-    env: {
-      ...executionNeutralEnv,
-      HOME: root,
-      XDG_RUNTIME_DIR: root,
-      DBUS_SESSION_BUS_ADDRESS: '',
-      HAPPIER_STACK_STORAGE_DIR: storageDir,
-      PATH: `${binDir}:/usr/bin:/bin`,
-      TMPDIR: root,
-    },
-    encoding: 'utf8',
-  });
-
-  assert.equal(result.status, 1, result.stderr);
-  assert.doesNotMatch(result.stderr, /running locally/i);
-  assert.equal(result.stdout, '');
-  assert.doesNotMatch(result.stdout, /unexpected-remote-bootstrap/);
 });
 
 test('queue policy native launcher delegates dependency refresh waiting to the remote lock owner', async () => {

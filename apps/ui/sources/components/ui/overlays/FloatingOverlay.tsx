@@ -28,6 +28,7 @@ import { surfaceUsesRim } from '@/components/ui/surfaces/surfaceEdgeTreatment';
 import { FLOATING_OVERLAY_METRICS } from './floatingOverlayMetrics';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
+import { createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
 import { useGlassSurfaceColor } from '@/components/ui/glass/useGlassSurfaceColor';
 
 const OVERLAY_BORDER_RADIUS = FLOATING_OVERLAY_METRICS.radiusPx;
@@ -146,7 +147,7 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
     const insideSheet = React.useContext(FloatingOverlaySheetContext);
     const styles = stylesheet;
     const { theme } = useUnistyles();
-    const fadeColor = useGlassSurfaceColor(theme.colors.surface.base, 'floating', false);
+    const fadeColor = useGlassSurfaceColor(theme.colors.edge.floatingFill, 'floating', false);
     const { 
         children, 
         maxHeight = 240, 
@@ -302,11 +303,16 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
     const arrowSize = arrowCfg.size;
     const protrusion = arrowSize / 2;
 
-    const arrowBoxStyle: ViewStyle & { boxShadow?: string } = {
+    const arrowBoxStyle: ViewStyle = {
         width: arrowSize,
         height: arrowSize,
-        backgroundColor: glassSurfaceBackgroundColor(theme.colors.surface.base, 'floating'),
+        backgroundColor: glassSurfaceBackgroundColor(theme.colors.edge.floatingFill, 'floating'),
         transform: [{ rotate: '45deg' as const }],
+        // The arrow is part of the floating surface, so on web it frosts what lies under it like the
+        // surface does (it holds no content, so its own backdrop cuts nothing off).
+        ...(Platform.OS === 'web'
+            ? createBackdropWebStyle({ backgroundColor: glassSurfaceBackgroundColor(theme.colors.edge.floatingFill, 'floating'), surfaceGroup: 'floating' }) as unknown as ViewStyle
+            : null),
     };
 
     // The arrow wears its surface's hairline. Its sides are diagonals, so it stays flat (no raised

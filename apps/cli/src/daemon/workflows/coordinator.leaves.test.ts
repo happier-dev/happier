@@ -7,7 +7,7 @@ import { ActionIdSchema, DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, ExecutionRunResu
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends';
 import { validateExecutionRunProfileResult } from '@happier-dev/protocol/execution/runs/resultContract';
 import type { WorkflowActionLeafV1, WorkflowDefinitionV1, WorkflowMaterializedLeafV1 } from '@happier-dev/protocol/workflows';
-import {  WorkflowRuntimeInterruption } from './coordinator';
+import { WORKFLOW_CANCEL_REQUESTED_ABORT_REASON, WorkflowRuntimeInterruption } from './coordinator';
 import { createInMemoryWorkflowCoordinatorStore } from './workflowCoordinator.testkit';
 
 const workspace = { machineId: 'machine', directory: '/repo', checkoutRootPath: '/repo' };
@@ -65,6 +65,51 @@ const goal: WorkflowActionLeafV1 = { kind: 'action', id: 'goal', actionId: 'sess
   input: { sessionId: { kind: 'origin_session_id' }, status: { kind: 'literal', value: 'complete' } } };
 
 describe('workflow Action leaves', () => {
+  it('retains JSON failure output and gives the effect its run/step/attempt idempotency identity', async () => {
+    const contexts: string[] = [];
+    const store = createInMemoryWorkflowCoordinatorStore();
+    const output = { exitCode: 7, stdout: 'partial', stderr: 'refused' };
+    const leaf: WorkflowActionLeafV1 = { kind: 'action', id: 'command', actionId: 'machines.command.run',
+      input: { command: { kind: 'literal', value: 'exit 7' } } };
+    const executor = createTestActionExecutor({ machineCommandRun: async (_input, context) => {
+      contexts.push(context.actionRequestId ?? '');
+      return { ok: false, errorCode: 'command_failed', error: 'Command failed', details: output };
+    } });
+    // Admission remains real; the process-effect dependency supplies its definitive response.
+    const observedCoordinator = createWorkflowCoordinator({ store, executeStep: async () => { throw new Error('Action has no Agent'); },
+      resolveWorkspace: async () => ({ ok: true, workspace }), isAcceptedAuthorizationCurrent: async () => true,
+      action: { executor, buildContext: async () => ({ surface: 'cli', authority: 'account_automation', bypassApprovals: true,
+        externalActionTarget: { kind: 'machine', machineId: workspace.machineId,
+          project: { machineId: workspace.machineId, directory: workspace.directory } } }),
+        observeRun: async () => { throw new Error('Immediate Action has no awaited Runs'); } } });
+    const outcome = await observedCoordinator.run({ runId: 'effect-run', definition: definition([leaf]), inputs: {},
+      executionTarget, authorization, originSessionId: 'origin', materializedLeaves: [frozen(leaf)] });
+    expect(outcome.state).toBe('failed');
+    const row = store.list().find((entry) => entry.blockId === leaf.id)!;
+    expect(row).toMatchObject({ lifecycle: 'failed', reason: 'command_failed', result: output });
+    expect(contexts).toEqual([`effect-run/${row.logicalInvocationRecordId ?? row.recordId}/0`]);
+  });
+  it('keeps known command output when an authoritative Stop cancels the Run during the effect', async () => {
+    const controller = new AbortController();
+    const store = createInMemoryWorkflowCoordinatorStore();
+    const output = { exitCode: -1, stdout: 'printed before Stop', stderr: '' };
+    const leaf: WorkflowActionLeafV1 = { kind: 'action', id: 'command', actionId: 'machines.command.run',
+      input: { command: { kind: 'literal', value: 'long-running-command' } } };
+    const executor = createTestActionExecutor({ machineCommandRun: async () => {
+      controller.abort(WORKFLOW_CANCEL_REQUESTED_ABORT_REASON);
+      return { ok: false, errorCode: 'command_cancelled', error: 'Command cancelled', details: output };
+    } });
+    const coordinator = createWorkflowCoordinator({ store, executeStep: async () => { throw new Error('Action has no Agent'); },
+      resolveWorkspace: async () => ({ ok: true, workspace }), isAcceptedAuthorizationCurrent: async () => true,
+      action: { executor, buildContext: async () => ({ surface: 'cli', authority: 'account_automation', bypassApprovals: true,
+        externalActionTarget: { kind: 'machine', machineId: workspace.machineId,
+          project: { machineId: workspace.machineId, directory: workspace.directory } } }),
+        observeRun: async () => { throw new Error('Immediate Action has no awaited Runs'); } } });
+    expect(await coordinator.run({ runId: 'stopped-command', definition: definition([leaf]), inputs: {},
+      executionTarget, authorization, signal: controller.signal, materializedLeaves: [frozen(leaf)] }))
+      .toMatchObject({ state: 'cancelled' });
+    expect(store.list().find((row) => row.blockId === leaf.id)?.result).toEqual(output);
+  });
   it.each([true, false])('keeps a successful Action with invalid frozen output repairable only when review is enabled (%s)', async (pauseForReview) => {
     let effects = 0;
     const leaf = { ...goal, pauseForReview };

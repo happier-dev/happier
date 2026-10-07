@@ -39,7 +39,8 @@ export function createAutomationRunLifecycleObservers(deps: Readonly<{
               const finishedAt = result.result.run.finishedAtMs;
               if (finishedAt === undefined) throw new Error('execution_run_terminal_fact_unavailable');
               await deps.report({ v: 1, kind: 'runLifecycle', source, condition: 'terminal',
-                sourceRevision: finishedAt, occurredAt: finishedAt }, controller.signal);
+                sourceRevision: finishedAt, occurredAt: finishedAt,
+                ...(result.result.run.originWorkflowRunId ? { originRunId: result.result.run.originWorkflowRunId } : {}) }, controller.signal);
               return;
             }
           } catch (error) {

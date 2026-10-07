@@ -33,6 +33,8 @@ test('try admission reports owner denial only when exit 75 and its stderr sentin
   const sentinel = 'HSTACK_ADMISSION_BUSY:admission-test-id';
   for (const scenario of [
     { code: 75, stream: 'stderr', line: sentinel, declined: true },
+    { code: 75, stream: 'stderr', line: 'HSTACK_ADMISSION_DISK:admission-test-id', declined: true },
+    { code: 75, stream: 'stderr', line: 'HSTACK_ADMISSION_DISK:another-execution-id', declined: false },
     { code: 75, stream: 'stderr', line: 'HSTACK_ADMISSION_BUSY:another-execution-id', declined: false },
     { code: 75, stream: 'stderr', line: '[preferred-execution] heavyweight admission declined before dispatch (memory-available)', declined: false },
     { code: 75, stream: 'stderr', line: 'worker failed', declined: false },

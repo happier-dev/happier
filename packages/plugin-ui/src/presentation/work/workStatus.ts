@@ -16,7 +16,7 @@ export type HappierWorkStatusTone = 'neutral' | 'attention' | 'danger';
 /** The shared semantic treatment for a Work tone in a status label or badge. */
 export const HAPPIER_WORK_STATUS_SEMANTIC_TONE = {
   neutral: 'neutral',
-  attention: 'warning',
+  attention: 'attention',
   danger: 'danger',
 } as const satisfies Readonly<Record<HappierWorkStatusTone, HappierTone>>;
 

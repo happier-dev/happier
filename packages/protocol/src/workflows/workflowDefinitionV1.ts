@@ -24,6 +24,8 @@ import { WorkflowDefinitionRefV1StringSchema } from './workflowDefinitionRefV1.j
 import { ARTIFACT_EXCERPT_MAX_CHARS_V1 } from '../artifacts/artifactExcerptV1.js';
 import { ArtifactSavedByV1Schema } from '../artifacts/artifactBinaryV1.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
+export { collectWorkflowLeavesV1, deriveWorkflowDestinationsV1, readWorkflowLeafTargetSessionIdsV1,
+  resolveWorkflowDestinationsV1, WorkflowDestinationsV1Schema, type WorkflowDestinationsV1 } from './workflowDestinationsV1.js';
 
 /** One deliberate engine edit; replay retains every other accepted leaf fact. */
 export const WorkflowReplayAgentOverrideV1Schema = z.object({
@@ -141,6 +143,9 @@ export type WorkflowRunStartedByV1 = z.infer<typeof WorkflowRunStartedByV1Schema
 export const WorkflowFrozenChildrenV1Schema = z.record(WorkflowDefinitionRefV1StringSchema, WorkflowDefinitionV1Schema);
 
 const workflowMaterializationFields = {
+  /** Private relation frozen by admission, inside the existing Run envelope. */
+  targetSessionIds: z.array(preservedBoundedNfcString(191, 'Session ids')).optional(),
+  requiresMachineStartCapacity: z.boolean().optional(),
   startedBy: WorkflowRunStartedByV1Schema,
   workDepth: z.number().int().nonnegative().safe(),
   roleOverrides: WorkflowRoleOverridesV1Schema.optional(),

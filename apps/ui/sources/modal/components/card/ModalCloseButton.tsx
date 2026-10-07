@@ -4,9 +4,10 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { Icon } from '@/components/ui/icons/Icon';
+import { resolveHappierFocusRingVisible } from '@happier-dev/plugin-ui/presentation';
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { t } from '@/text';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
-import { resolveHappierFocusRingVisible } from '@happier-dev/plugin-ui/presentation';
 
 type ModalCloseButtonProps = Readonly<{
     onPress: () => void;
@@ -15,23 +16,12 @@ type ModalCloseButtonProps = Readonly<{
     size?: number;
 }> & Pick<PressableProps, 'hitSlop'>;
 
-const stylesheet = StyleSheet.create((theme) => ({
+const stylesheet = StyleSheet.create({
     button: {
         alignItems: 'center',
         justifyContent: 'center',
     },
-    buttonFocused: {
-        ...(Platform.select({
-            web: {
-                outlineStyle: 'solid',
-                outlineWidth: 2,
-                outlineColor: theme.colors.border.focus,
-                outlineOffset: -2,
-            },
-            default: {},
-        })),
-    },
-}));
+});
 
 export function ModalCloseButton(props: ModalCloseButtonProps) {
     const { theme } = useUnistyles();
@@ -56,7 +46,7 @@ export function ModalCloseButton(props: ModalCloseButtonProps) {
                         minWidth: minimumInteractiveTargetSize,
                         minHeight: minimumInteractiveTargetSize,
                     },
-                    resolveHappierFocusRingVisible(webState.focused) ? styles.buttonFocused : null,
+                    focusRingStyle({ focused: resolveHappierFocusRingVisible(webState.focused), color: theme.colors.border.focus }),
                     { opacity: interactionState.pressed ? motionTokens.press.opacity : 1 },
                 ];
             }}

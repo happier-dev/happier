@@ -47,7 +47,7 @@ export const SurfaceRim = React.memo(function SurfaceRim(props: Readonly<{
     const stroke = HAIRLINE * 2; // centred on the edge: the outer half falls outside and only the inner hairline shows
     const rect = { x: 0, y: 0, width: '100%', height: '100%', rx: props.radius, ry: props.radius } as const;
     return (
-        <Svg pointerEvents="none" style={StyleSheet.absoluteFill} width="100%" height="100%" aria-hidden>
+        <Svg pointerEvents="none" style={StyleSheet.absoluteFill} width="100%" height="100%">
             <Defs>
                 <RadialGradient id={`${id}l`} cx={0} cy={0} r={1} gradientUnits="objectBoundingBox" gradientTransform={RIM_LIGHT_ELLIPSE}>
                     <Stop offset={0} stopColor={edge.rimHi} />

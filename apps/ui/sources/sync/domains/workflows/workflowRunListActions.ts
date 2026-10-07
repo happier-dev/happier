@@ -42,6 +42,7 @@ export type WorkflowRunListFilter = Readonly<{
     origin?: 'automation' | 'direct';
     automationId?: string;
     originSessionId?: string;
+    targetSessionId?: string;
     machineId?: string;
 }>;
 

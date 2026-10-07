@@ -24,4 +24,8 @@ export const workflowFieldTranslationsEnglish = { en: {
         secondOpinion: "Second opinion",
         useJudge: "Judge",
         diffFingerprint: "Reviewed changes",
+        url: "URL",
+        body: "JSON body",
+        command: "Command",
+        env: "Environment variables",
     } };

@@ -258,3 +258,24 @@ export function describeTriageSourceFailureV1(
 ): string {
     return failure === null ? fallback : `${fallback} (${failure.code})`;
 }
+
+/**
+ * How a source's status fact speaks, in the shared status vocabulary (Happier DESIGN.md → "One attention
+ * colour, a short status vocabulary"): a healthy fact ("Checks passed") and news stay quiet, a caution is
+ * the attention tone ("needs you"), a failure is danger. The names are the presentation tones a plugin
+ * surface renders (`@happier-dev/plugin-ui` `HappierTone`); a source never colours a fact by itself.
+ */
+export type TriageRowFactStatusPresentationToneV1 = 'secondary' | 'attention' | 'danger';
+
+export function resolveTriageRowFactStatusToneV1(tone: TriageRowFactStatusToneV1): TriageRowFactStatusPresentationToneV1 {
+    switch (tone) {
+        case 'warning':
+            return 'attention';
+        case 'danger':
+            return 'danger';
+        case 'success':
+        case 'info':
+        case 'neutral':
+            return 'secondary';
+    }
+}

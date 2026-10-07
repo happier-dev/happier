@@ -64,6 +64,9 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
         expect(screen.getTextContent()).toContain('session.toolCalls');
         expect(screen.getTextContent()).toContain('2');
         expect(screen.findAllByProps({ name: 'check-circle' }).length).toBeGreaterThan(0);
+        // Done is quiet: the group's check is drawn in the ink, never the success green.
+        const { lightTheme } = await import('@/theme');
+        expect(screen.findAllByProps({ name: 'check-circle' })[0]!.props.color).toBe(lightTheme.colors.text.secondary);
         expect(screen.findAllByProps({ name: 'stack-simple' }).length).toBeGreaterThan(0);
         expect(screen.findAllByProps({ name: 'caret-up' })).toHaveLength(0);
     });
@@ -231,6 +234,7 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
     });
 
     it('renders a cards top cap: background, top radii, no bottom radii, shared horizontal margin', async () => {
+        const { lightTheme } = await import('@/theme');
         const screen = await renderHeaderRow({
             toolMessages: [createToolCallMessageFixture({ id: 'm1', createdAt: 1 })],
             ...createTranscriptSessionCommonPropsFixture({
@@ -241,8 +245,8 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
         const container = screen.findByTestId('transcript-tool-calls-unit-header') as any;
         const style = flattenStyleProp(container?.props.style);
         expect(style.marginHorizontal).toBe(16);
-        expect(style.borderTopLeftRadius).toBe(12);
-        expect(style.borderTopRightRadius).toBe(12);
+        expect(style.borderTopLeftRadius).toBe(lightTheme.borderRadius.xl);
+        expect(style.borderTopRightRadius).toBe(lightTheme.borderRadius.xl);
         expect(style.borderBottomLeftRadius).toBeUndefined();
         expect(style.backgroundColor).toBeTruthy();
         expect(style.marginBottom).toBeUndefined();
@@ -261,6 +265,7 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
     });
 
     it('renders the feed-background top cap with horizontal padding and top vertical padding', async () => {
+        const { lightTheme } = await import('@/theme');
         const screen = await renderHeaderRow({
             toolMessages: [createToolCallMessageFixture({ id: 'm1', createdAt: 1 })],
             ...createTranscriptSessionCommonPropsFixture({
@@ -273,7 +278,7 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
         expect(style.paddingHorizontal).toBe(10);
         expect(style.paddingTop).toBe(6);
         expect(style.paddingBottom).toBeUndefined();
-        expect(style.borderTopLeftRadius).toBe(12);
+        expect(style.borderTopLeftRadius).toBe(lightTheme.borderRadius.xl);
         expect(style.borderBottomLeftRadius).toBeUndefined();
         expect(style.backgroundColor).toBeTruthy();
     });

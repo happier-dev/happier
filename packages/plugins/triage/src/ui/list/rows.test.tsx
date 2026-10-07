@@ -8,7 +8,10 @@ import {
 } from './continuation.js';
 import {
   TRIAGE_ROW_SELECT_ACTION_ID_V1,
+  readTriageAgentCellMarkV1,
+  readTriageAttentionBadgeToneV1,
   readTriageRowMarkV1,
+  readTriageSignalCellMarkV1,
   triageListRowItemProps,
   triageListRowSecondaryActionsV1,
   triageListRowTestId,
@@ -214,7 +217,7 @@ describe('a PRs & Issues entry row', () => {
       title: 'Replace the duplicated normalizer',
       subtitle: 'pull-request · example/repository · Open',
       detail: 'Your review is requested',
-      detailTone: 'accent',
+      detailTone: 'attention',
       busy: true,
       accessibilityLabel: 'Replace the duplicated normalizer',
       accessibilityHint: 'pull-request, example/repository, Open, Your review is requested',
@@ -245,13 +248,30 @@ describe('a PRs & Issues entry row', () => {
       false,
       ANNOUNCED,
     );
-    expect(attention.detailTone).toBe('accent');
+    // Needs-you speaks the work status vocabulary's attention tone, never blue.
+    expect(attention.detailTone).toBe('attention');
     expect(summary).not.toHaveProperty('detailTone');
     expect(suggestion).not.toHaveProperty('detailTone');
-    expect(readTriageRowMarkV1(displayRow({ detailKind: 'attention' }))).toEqual({ name: 'change-open', tone: 'accent' });
+    expect(readTriageRowMarkV1(displayRow({ detailKind: 'attention' }))).toEqual({ name: 'change-open', tone: 'attention' });
     expect(readTriageRowMarkV1(displayRow({ lifecyclePresentation: 'resolved' }))).toEqual({ name: 'change-complete', tone: 'secondary' });
     expect(readTriageRowMarkV1(displayRow({ lifecyclePresentation: null, detailKind: 'presence', tone: 'warning' })))
       .toEqual({ name: 'info', tone: 'warning' });
+    // The detail header's badge: a required reason needs you, a suggestion stays quiet (never blue).
+    expect(readTriageAttentionBadgeToneV1('required')).toBe('attention');
+    expect(readTriageAttentionBadgeToneV1('suggested')).toBe('secondary');
+  });
+
+  it('marks a cell only where it says something: healthy is quiet, news and working are ink, needs-you amber, failure rose', () => {
+    expect(readTriageSignalCellMarkV1('success')).toEqual({ tone: 'secondary', marked: false, live: false });
+    expect(readTriageSignalCellMarkV1('neutral')).toEqual({ tone: 'secondary', marked: false, live: false });
+    expect(readTriageSignalCellMarkV1('info')).toEqual({ tone: 'secondary', marked: true, live: false });
+    expect(readTriageSignalCellMarkV1('warning')).toEqual({ tone: 'attention', marked: true, live: false });
+    expect(readTriageSignalCellMarkV1('danger')).toEqual({ tone: 'danger', marked: true, live: false });
+    // A working agent is the one moving mark, in the ink; a finished or idle one is a quiet word.
+    expect(readTriageAgentCellMarkV1({ tone: 'neutral', live: true })).toEqual({ tone: 'secondary', marked: true, live: true });
+    expect(readTriageAgentCellMarkV1({ tone: 'neutral', live: false })).toEqual({ tone: 'secondary', marked: false, live: false });
+    expect(readTriageAgentCellMarkV1({ tone: 'attention', live: false })).toEqual({ tone: 'attention', marked: true, live: false });
+    expect(readTriageAgentCellMarkV1({ tone: 'danger', live: false })).toEqual({ tone: 'danger', marked: true, live: false });
   });
 
   it('marks an entry by its kind, and by where its lifecycle stands', () => {

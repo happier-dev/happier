@@ -39,7 +39,7 @@ describe('usePressFeedback', () => {
         const hook = await renderHook(() => usePressFeedback());
 
         hook.getCurrent().onPressIn();
-        expect((await hook.rerender()).animatedStyle).toEqual({ transform: [{ scale: 0.96 }] });
+        expect((await hook.rerender()).animatedStyle).toEqual({ transform: [{ scale: motionTokens.press.scale }] });
         expect(timingCalls).toEqual([{ value: 1, duration: motionTokens.durationMs.press }]);
 
         hook.getCurrent().onPressOut();
@@ -68,7 +68,7 @@ describe('usePressFeedback', () => {
         const hook = await renderHook(() => usePressFeedback({ glyph: true }));
 
         hook.getCurrent().onPressIn();
-        expect((await hook.rerender()).animatedStyle).toEqual({ opacity: 0.7, transform: [{ scale: 0.96 }] });
+        expect((await hook.rerender()).animatedStyle).toEqual({ opacity: 0.7, transform: [{ scale: motionTokens.press.scale }] });
         expect(timingCalls).toEqual([{ value: 1, duration: motionTokens.durationMs.press }]);
 
         hook.getCurrent().onPressOut();

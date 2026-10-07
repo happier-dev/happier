@@ -109,17 +109,20 @@ const lightThemeBase = {
             elevated: '#f0f0f0',
             ripple: 'rgba(0, 0, 0, 0.08)',
             pressed: '#fafafa',
-            selected: '#f8f8f8',
+            // Selection is ink (DESIGN.md → "Borders, dividers and selection are ink"), never a grey.
+            selected: 'rgba(0, 0, 0, 0.055)',
             pressedOverlay: '#fafafa',
             // Barely-there grouped-section tint. Baked as an opacity overlay (not a
             // solid inset) so it reads a hair off the base surface; a runtime opacity
             // transform would be a silent no-op once web var-ifies the token.
             sectionTint: 'rgba(0,0,0,0.012)',
         },
+        // Borders are ink in three weights — border 8%, divider (`subtle`) 6%, selection 5.5% — so they sit
+        // right on every surface, tint and theme profile (lab `ui-refine` R1). `strong` is a control's border.
         border: {
-            default: Platform.select({ ios: '#eaeaea', default: '#eaeaea' }),
-            surface: 'transparent',
-            strong: Platform.select({ ios: '#d6d6d6', default: '#d6d6d6' }),
+            default: 'rgba(0, 0, 0, 0.08)',
+            surface: 'rgba(0, 0, 0, 0.08)',
+            strong: 'rgba(0, 0, 0, 0.1)',
             // The keyboard focus ring, and the ONE token any focus-visible treatment may use.
             // It is a semantic role, not a border weight: WCAG 1.4.11 requires a focus indicator to
             // reach 3:1 against every surface it can land on, and no *border* token in this theme
@@ -130,11 +133,11 @@ const lightThemeBase = {
             // every surface in both themes. Do not point a focus style back at `border.strong`;
             // that token keeps its real job of drawing higher-emphasis edges.
             focus: '#007AFF',
-            modal: 'rgba(0, 0, 0, 0.1)',
+            modal: 'rgba(0, 0, 0, 0.08)',
             // Half the weight of `default`, for seams and for controls whose border should imply an
             // edge without competing with the content inside it. Introduced for the sidebar/content
             // seam and shared by the quiet toolbar buttons rather than re-typed as a literal.
-            subtle: 'rgba(0, 0, 0, 0.062)',
+            subtle: 'rgba(0, 0, 0, 0.06)',
             // About half the weight of `subtle`: the content-width separator between groups of one
             // section's rows (a pause inside the section), so it never competes with the section's
             // own full-width hairline (`subtle`) above it.
@@ -226,7 +229,8 @@ const lightThemeBase = {
                 background: '#000000',
                 gradient: createVerticalGradient(['#000000', '#020202']),
                 tint: '#FFFFFF',
-                disabled: '#C0C0C0',
+                // A primary that cannot act yet: a muted ink slab, never the dimmed black fill.
+                disabled: '#E8E8E8',
             },
             secondary: {
                 background: 'transparent',
@@ -456,32 +460,34 @@ const darkThemeBase = {
                 border: 'rgba(158, 185, 255, 0.50)',
             },
         },
+        // Dark is layered, not inverted: the navigation plane (canvas) < the page (base) < cards < floating
+        // surfaces, each a small step of light up (cards and floating fills derive in `raisedEdge.ts`).
         background: {
-            canvas: '#131111',
+            canvas: '#141212',
         },
         surface: {
-            base: '#191717',
+            base: '#1B1919',
             inset: '#171515',
             elevated: '#221C1C',
             ripple: 'rgba(255, 255, 255, 0.055)',
             pressed: '#302727',
-            selected: '#292121',
+            selected: 'rgba(255, 255, 255, 0.065)',
             pressedOverlay: 'rgba(255,255,255,0.036)',
             sectionTint: 'rgba(255,255,255,0.014)',
         },
         border: {
-            default: 'rgba(255,255,255,0.050)',
-            surface: 'rgba(255,255,255,0.056)',
-            strong: 'rgba(255,255,255,0.090)',
+            default: 'rgba(255,255,255,0.060)',
+            surface: 'rgba(255,255,255,0.060)',
+            strong: 'rgba(255,255,255,0.100)',
             // See the light theme's note. Tracks dark `state.active.foreground`.
             focus: '#9EB9FF',
-            modal: 'rgba(255,255,255,0.064)',
+            modal: 'rgba(255,255,255,0.080)',
             subtle: 'rgba(255,255,255,0.040)',
             faint: 'rgba(255,255,255,0.024)',
         },
         chrome: {
             header: {
-                background: '#131111',
+                background: '#141212',
                 foreground: '#EFEFEF',
             },
         },
@@ -517,14 +523,14 @@ const darkThemeBase = {
             composerInnerShadow: buildGlassInnerShadow(true, COMPOSER_GLASS_INNER_SHADOW_OPACITY_SCALE),
             castShadow: buildGlassCastShadow(true),
             // Glass composer fill: a lifted/elevated tone on dark so the dark glass
-            // composer reads as raised glass (vs the flat `surface.base` = #191717).
+            // composer reads as raised glass (vs the flat `surface.base` = #1B1919).
             composerSurface: '#221C1C',
             // Solid grey-ish fill for opt-in glass panels — the same lifted/elevated
             // tone as the dark glass composer (already glass-ish vs the flat base).
             panelSurface: '#221C1C',
             // Translucent tint behind the web `backdrop-filter` blur — a frosted dark
-            // (≈ `surface.base` #191717), kept transparent enough to read as glass.
-            webBlurTint: 'rgba(25, 23, 23, 0.5)',
+            // (≈ `surface.base` #1B1919), kept transparent enough to read as glass.
+            webBlurTint: 'rgba(27, 25, 25, 0.5)',
         },
 
         //

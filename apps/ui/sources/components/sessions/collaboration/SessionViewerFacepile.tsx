@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Animated, Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { AvatarStack } from '@/components/ui/avatar/AvatarStack';
 import { Text } from '@/components/ui/text/Text';
@@ -29,7 +30,6 @@ const styles = StyleSheet.create((theme) => ({
         borderRadius: 8, borderWidth: 1, borderColor: 'transparent',
     },
     hovered: { backgroundColor: theme.colors.surface.selected },
-    focused: { borderColor: theme.colors.border.focus },
     overflow: { ...Typography.default('semiBold'), ...ITEM_SUBTITLE_TEXT_METRICS.cozy, color: theme.colors.text.secondary, paddingLeft: 4 },
 }));
 
@@ -69,7 +69,7 @@ export function SessionViewerFacepile({ viewers, stale, attentionLabel, onPress 
         onHoverIn={() => setHovered(true)} onHoverOut={() => setHovered(false)}
         onFocus={(event) => setFocused(isHappierFocusVisible(event?.target))} onBlur={() => setFocused(false)}
         accessibilityRole="button" accessibilityLabel={label} accessibilityHint={t('session.collaboration.open')}
-        style={({ pressed }) => [styles.button, hovered && styles.hovered, focused && styles.focused, { opacity: pressed ? motionTokens.press.opacity : stale ? STALE_PRESENCE_OPACITY : 1 }]}
+        style={({ pressed }) => [styles.button, hovered && styles.hovered, focusRingStyle({ focused, color: theme.colors.border.focus }), { opacity: pressed ? motionTokens.press.opacity : stale ? STALE_PRESENCE_OPACITY : 1 }]}
     >
         <View accessible={false} importantForAccessibility="no-hide-descendants" style={{ flexDirection: 'row', alignItems: 'center' }}>
             <AvatarStack size={AVATAR_SIZE} entries={viewers.slice(0, 3).map((viewer) => ({

@@ -88,7 +88,7 @@ import {
   mapClaudeUnifiedTranscriptLifecyclePayload,
 } from './lifecycleEvents.js';
 import { createPersistedClaudeUnifiedOwnInjectedTextLog } from './ownInjectedTextLog.js';
-import { isControllerTypedSlashCommandResidue } from './tuiControls/slashControls.js';
+import { classifyClaudeOwnComposerDraft } from './ownComposerDraftClassification.js';
 import {
   hasClaudeUnifiedVisibleDialog,
   resolveClaudeUnifiedDialogBlockedReason,
@@ -1646,7 +1646,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
     inFlightConfigApplySupported: isTuiRuntimeControlFeatureEnabled(),
   });
   const arbiter = createClaudeUnifiedInputArbiter({
-    injectPrompt: async (input) => {
+    injectPrompt: async (input, delivery) => {
       const handle = await ensureHost();
       // Never interleave prompt bytes with an in-flight control sequence (slash command /
       // mode cycle): the controller holds the terminal lock; wait for it to drain first.
@@ -1659,7 +1659,9 @@ export function createClaudeUnifiedTerminalTurnOperations(
       // Recorded BEFORE the injection so failed/partial attempts (the own-leftover class)
       // are matchable too.
       ownInjectedTextLog.record(input.text);
-      const result = await params.ctx.agentRuntime.terminalHost.injectUserPrompt(handle, input);
+      const result = await params.ctx.agentRuntime.terminalHost.injectUserPrompt(handle, {
+        ...input, resolveDeliveryState: delivery?.resolveDeliveryState,
+      });
       if (result.status === 'failed'
         && result.phase === 'during_write'
         && result.duplicateRisk !== 'none') {
@@ -2647,9 +2649,10 @@ export function createClaudeUnifiedTerminalTurnOperations(
   // running turn — deliberate fail-safe). A genuine user draft can never match. Registry fallback
   // (ported HF-4): controller-typed slash residue from the finite /model//effort vocabulary is
   // provably our own even when the persisted registry cannot match after a respawn.
-  function isOwnLeftoverDraft(composerContent: string | null | undefined): boolean {
-    return ownInjectedTextLog.matches(composerContent)
-      || isControllerTypedSlashCommandResidue(composerContent);
+  function isOwnLeftoverDraft(screen: ReturnType<typeof parseClaudeScreenState>): boolean {
+    return classifyClaudeOwnComposerDraft({
+      screen, rawText: screen.text, ownComposerTexts: ownInjectedTextLog,
+    }) === 'own';
   }
 
   async function maybeClearOwnLeftoverDraft(
@@ -2657,7 +2660,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
     screen: ReturnType<typeof parseClaudeScreenState>,
   ): Promise<ReturnType<typeof parseClaudeScreenState> | null> {
     if (screen.generating || isClaudeUsageLimitWaitBlockingComposerClear(screen)) return null;
-    if (!isOwnLeftoverDraft(screen.composerContent)) return null;
+    if (!isOwnLeftoverDraft(screen)) return null;
     for (let attempt = 1; attempt <= MAX_OWN_LEFTOVER_DRAFT_CLEAR_ATTEMPTS; attempt += 1) {
       try {
         await params.ctx.agentRuntime.terminalHost.interruptTurn(handle);
@@ -2677,7 +2680,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
         resetUserDraftStarvation();
         return next;
       }
-      if (next.generating || !isOwnLeftoverDraft(next.composerContent)) return null;
+      if (next.generating || !isOwnLeftoverDraft(next)) return null;
     }
     return null;
   }
@@ -2950,7 +2953,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
           });
           return;
         }
-        if (isClaudeUsageLimitWaitBlockingComposerClear(screen) && isOwnLeftoverDraft(screen.composerContent)) {
+        if (isClaudeUsageLimitWaitBlockingComposerClear(screen) && isOwnLeftoverDraft(screen)) {
           resetUserDraftStarvation();
           arbiter.observeReadiness({
             status: 'defer_provider_starting',

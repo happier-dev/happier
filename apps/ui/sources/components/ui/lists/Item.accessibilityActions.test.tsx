@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { act } from 'react-test-renderer';
+import { renderScreen, invokeTestInstanceHandler } from '@/dev/testkit';
 import { installUiListsCommonModuleMocks } from './uiListsTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -49,6 +50,37 @@ vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => {}) }));
  * silently lose its action by gaining a right accessory.
  */
 describe('Item (row accessibility actions)', () => {
+    it('activates a decorative-accessory disclosure with Enter and Space on web', async () => {
+        const { Platform } = await import('react-native');
+        const previousOS = Platform.OS;
+        Platform.OS = 'web';
+        try {
+            const { Item } = await import('./Item');
+            const { ExpandableItem } = await import('./ExpandableItem');
+            function Disclosure() {
+                const [expanded, setExpanded] = React.useState(false);
+                return <ExpandableItem expanded={expanded} onExpandedChange={setExpanded}
+                    header={({ headerProps }) => <Item {...headerProps} testID="web-disclosure-header" title="Details"
+                        rightElement={React.createElement('View', { testID: 'decorative-chevron' })} />}>
+                    <Item title="Provider disclosure" mode="info" />
+                </ExpandableItem>;
+            }
+            const screen = await renderScreen(<Disclosure />);
+            const header = () => screen.findHostByTestId('web-disclosure-header')!;
+            expect(header().props['aria-expanded']).toBe(false);
+            for (const [key, expanded] of [['Enter', true], [' ', false]] as const) {
+                await act(async () => invokeTestInstanceHandler(header(), 'onKeyDown', {
+                    key, preventDefault: vi.fn(), stopPropagation: vi.fn(),
+                }));
+                expect(header().props['aria-expanded']).toBe(expanded);
+            }
+            expect(header().props.role).toBe('button');
+            expect(header().props.tabIndex).toBe(0);
+        } finally {
+            Platform.OS = previousOS;
+        }
+    });
+
     it('announces controlled disclosure expansion from the standard native header props', async () => {
         const { Item } = await import('./Item');
         const { ExpandableItem } = await import('./ExpandableItem');

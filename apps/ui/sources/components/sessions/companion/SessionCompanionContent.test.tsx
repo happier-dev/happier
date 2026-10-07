@@ -11,16 +11,18 @@ import {
 import { createSessionBoardSourceAvailabilityResolver } from '@/components/sessions/board/sessionBoardItemPresentation';
 import { createSessionFixture } from '@/dev/testkit';
 import { createSessionSurfaceNoteDocumentV1 } from '@happier-dev/protocol/sessions/board';
+import { resolveWidgetSizeChoicesV1, WidgetSizeDeclarationV1Schema, type WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
 import type { SessionWidgetHostProps } from '@/components/sessions/board/SessionWidgetHost';
 import { sessionCompanionGlanceLabel } from './glances/SessionCompanionGlance';
 
 vi.mock('@/text', () => createTextModuleMock());
 
 it('names an inline Companion copy from its published definition, preserving its local rename', () => {
-    const instance = { v: 1, id: 'shared-copy', bindings: {}, definition: { kind: 'inline', definition: {
+    const instance: WidgetInstanceV1 = { v: 1, id: 'shared-copy', bindings: {}, definition: { kind: 'inline', definition: {
         v: 1, id: 'shared-definition', name: 'Shared checks', body: { kind: 'installed', surface: { pluginId: 'acme.ci', localId: 'checks' } },
+        sizeDeclaration: WidgetSizeDeclarationV1Schema.parse(resolveWidgetSizeChoicesV1('sessionBoard')),
         inputs: { fields: [] }, inputSchema: { type: 'object' }, provenance: { source: { kind: 'authored' } },
-    } } } as const;
+    } } };
     expect(sessionCompanionGlanceLabel({ kind: 'instance', ref: { kind: 'instance', instance } })).toBe('Shared checks');
     expect(sessionCompanionGlanceLabel({ kind: 'instance', ref: { kind: 'instance', instance: { ...instance, displayName: 'My checks' } } })).toBe('My checks');
 });

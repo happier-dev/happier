@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { WIDGET_SIZE_POLICY_V1 } from '@happier-dev/protocol/widgets';
 
 import {
     widgetInstalledPackage as installedPackage,
@@ -39,6 +40,7 @@ function selectSessionWidgetCandidates(
 describe('Widget Add candidates', () => {
     it('names and configures a saved definition from its list projection without needing its body', () => {
         const candidate = describeWidgetDefinitionSummaryV1({ artifactId: 'checks', name: 'Checks on main',
+            sizeDeclaration: { sizes: [...WIDGET_SIZE_POLICY_V1.home.sizes], defaultSize: WIDGET_SIZE_POLICY_V1.home.defaultSize },
             inputs: { fields: [{ path: 'repo', title: 'Repository', widget: 'text' }] },
             inputSchema: { type: 'object', properties: { repo: { type: 'string' } } }, bodyKind: 'declarative', resources: [] });
         expect(candidate).toMatchObject({ definition: { kind: 'artifact', artifactId: 'checks' }, title: 'Checks on main',

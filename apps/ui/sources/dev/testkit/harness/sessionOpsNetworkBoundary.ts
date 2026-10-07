@@ -103,7 +103,7 @@ export async function installSessionOpsNetworkBoundary() {
         return token ? { token } : null;
     });
     const httpRequests: Array<{ url: string; token: string | null }> = [];
-    setRuntimeFetch(async (input, init) => {
+    const runtimeFetchBoundary: RuntimeFetch = async (input, init) => {
         const url = new URL(String(input));
         const token = new Headers(init?.headers).get('authorization');
         httpRequests.push({ url: url.href, token });
@@ -116,13 +116,16 @@ export async function installSessionOpsNetworkBoundary() {
             dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
         } });
         return Response.json({}, { status: 404 });
-    });
+    };
+    setRuntimeFetch(runtimeFetchBoundary);
     return {
         requests,
         httpRequests,
         credentialRequests,
         socketBoundaries,
         resetRequests() {
+            // The global UI cleanup retires runtimeFetch after every test.
+            setRuntimeFetch(runtimeFetchBoundary);
             requests.length = 0;
             httpRequests.length = 0;
             credentialRequests.length = 0;

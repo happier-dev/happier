@@ -298,13 +298,13 @@ function projectSettledMutation(
   const result = parsed.data;
   switch (result.kind) {
     case 'applied':
-      return { tone: 'success', title: appliedTitle(operation, text) };
+      return { tone: 'secondary', title: appliedTitle(operation, text) };
     case 'pending':
-      if (operation !== 'complete') return { tone: 'warning', title: pendingTitle(operation, text) };
+      if (operation !== 'complete') return { tone: 'neutral', title: pendingTitle(operation, text) };
       // Auto-complete is not a poll that ran out of patience: completion fires later, on policy
       // satisfaction, outside this request entirely. Saying so is the honest answer indefinitely.
       return {
-        tone: 'warning',
+        tone: 'neutral',
         title: result.autoCompleteEnabled === true
           ? text(
             'plugins.azureDevops.ui.mutations.complete.pendingAutoComplete',
@@ -667,7 +667,7 @@ function projectSettledThreadStatus(
   switch (result.kind) {
     case 'applied':
       return {
-        tone: 'success',
+        tone: 'secondary',
         title: text(
           'plugins.azureDevops.ui.mutations.threadStatus.applied',
           'Azure DevOps confirmed this thread is now {status}.',

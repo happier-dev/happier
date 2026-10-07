@@ -1582,6 +1582,7 @@ const en = Shared_connectedServicesCollectionTranslations.en;
 
 const ca: ConnectedServicesCollectionCopy = {
     accountLabel: ({ service }) => `Compte de ${service}`,
+    accountLabelNumbered: ({ service, number }) => `Compte de ${service} ${number}`,
     meterResetsIn: ({ time }) => `d'aquí a ${time}`,
     meterNextResetIn: ({ time }) => `el proper d'aquí a ${time}`,
     meterResetsAt: ({ countdown, time }) => `${countdown} · ${time}`,
@@ -10802,9 +10803,6 @@ type WidgetAddTranslation = Shared_widgetAddTranslations.WidgetAddTranslation;
 const inSentence = Shared_widgetAddTranslations.inSentence;
 
 const widgetAddTranslations = { ca: {
-        viewGallery: 'Galeria',
-        viewList: 'Llista',
-        viewLabel: 'Vista',
         added: 'Afegit',
         boardTitle: 'Afegeix al tauler',
         boardHint: 'Tothom aquí veu el que afegeixes',
@@ -10812,8 +10810,6 @@ const widgetAddTranslations = { ca: {
         companionHint: 'Només tu veus el teu acompanyant',
         searchWidgets: 'Cerca ginys',
         searchCompanion: 'Cerca resums i panells',
-        fromPlugins: 'De connectors',
-        fromPluginsHint: 'en directe, amb les dades d’aquesta sessió',
         makeOne: 'Crea’n un',
         noteSubtitle: 'Markdown',
         interactiveViewSubtitle: 'HTML',
@@ -10835,14 +10831,27 @@ const widgetAddTranslations = { ca: {
             local_services: 'Obre els serveis locals de la sessió que triïs.',
         },
         noMatch: ({ query }) => `Cap giny coincideix amb «${query}»`,
-        setupTitle: ({ widget }) => `Configura ${widget}`,
+        pickTitle: 'Tria un giny per veure’l aquí',
+        pickHint: 'Mostra les teves dades, a la mida que triïs, abans d’afegir res.',
+        pickNote: 'Tria un giny per afegir-lo',
+        askAction: 'Redacta la petició',
+        pluginTag: 'connector',
+        pluginProvenance: ({ plugin }) => `Connector ${plugin}`,
+        readsChosenSession: 'llegeix la sessió que triïs, on s’executa',
+        readsFrom: ({ source }) => `llegeix ${source}`,
+        savedQueryOn: ({ source }) => `una consulta desada a ${source}`,
+        madeByYou: ({ date }) => `feta per tu el ${date}`,
+        madeByAgent: ({ date }) => `feta pel teu agent el ${date}`,
+        madeByPlugin: ({ date }) => `feta per un connector el ${date}`,
+        previewLiveData: 'En directe, amb les teves dades',
+        addsAtSize: ({ size }) => `L’afegeix amb mida ${size}. Pots canviar-la més tard.`,
+        backToWidgets: 'Ginys',
         editTitle: ({ widget }) => `${widget} · entrades`,
         editHint: 'Només canvia aquesta còpia. Les altres mantenen les seves entrades.',
         preview: 'Previsualització',
         previewLive: 'Previsualització · en directe',
         previewWaiting: ({ field }) => `Tria ${field} per veure-ho aquí`,
         previewAfterAdd: 'Es veurà aquí un cop afegit',
-        backToGallery: 'Torna a la galeria',
         needed: 'Cal',
         stillNeeded: ({ field }) => `Encara cal ${field}`,
         followGroup: 'Segueix',
@@ -10870,7 +10879,6 @@ const widgetAddTranslations = { ca: {
         saveFailed: 'No s’ha pogut desar. Torna-ho a provar.',
         homeTitle: 'Afegeix a l’inici',
         homeHint: 'Només tu veus el teu inici · a tots els dispositius',
-        homeFromPluginsHint: 'en directe, amb les teves dades',
         addWidgets: 'Afegeix ginys',
         addToHome: 'Afegeix a l’inici',
         addToBoard: 'Afegeix al tauler',
@@ -11011,8 +11019,6 @@ const widgetFrameTranslations = { ca: {
         appearanceDescription: 'Com s’emmarquen els ginys en aquest dispositiu. Per canviar-ne un, fes servir el seu menú ⋯.',
         previewLabel: ({ surface, style }) => `${surface} · ${style}`,
         noticeChanged: 'Marc canviat',
-        addViewTitle: 'Afegir ginys',
-        addViewDescription: 'Com s’obre el menú Afegeix. Si el canvies allà, també canvia aquí.',
         newChip: 'Nou',
     } } satisfies Pick<Readonly<Record<string, WidgetFrameTranslation>>, "ca">;
 
@@ -11074,6 +11080,9 @@ const en = Shared_workflowActionTranslations.en;
 const workflowActionTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy>, "ca"> = { ca: {
         host: "Happier",
         structure: "Estructura",
+        callWebhook: "Crida un webhook",
+        runCommand: "Executa una ordre",
+        commandValuesInEnv: "Passa els valors del flux de treball amb variables d’entorn. El text de l’ordre es manté tal com l’has escrit.",
         artifactCreate: "Crea un document",
         artifactGet: "Llegeix un document",
         artifactList: "Llista documents",
@@ -11185,6 +11194,10 @@ const workflowFieldTranslations = { ca: {
         secondOpinion: "Segona opinió",
         useJudge: "Jutge",
         diffFingerprint: "Canvis revisats",
+        url: "URL",
+        body: "Cos JSON",
+        command: "Ordre",
+        env: "Variables d’entorn",
     } };
 
 return { workflowFieldTranslations };

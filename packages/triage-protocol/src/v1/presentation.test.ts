@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
     describeTriageSourceFailureV1,
+    resolveTriageRowFactStatusToneV1,
     formatTriageCountV1,
     formatTriageTimestampV1,
     projectTriageDetailFieldTextV1,
@@ -123,5 +124,13 @@ describe('triage detail presentation', () => {
             { class: 'authentication', code: 'source/unauthorized' },
             'Could not complete this read.',
         )).toBe('Could not complete this read. (source/unauthorized)');
+    });
+
+    it('speaks a status fact in the shared status vocabulary: healthy and news stay quiet, a caution needs you, failure is rose', () => {
+        expect(resolveTriageRowFactStatusToneV1('success')).toBe('secondary');
+        expect(resolveTriageRowFactStatusToneV1('neutral')).toBe('secondary');
+        expect(resolveTriageRowFactStatusToneV1('info')).toBe('secondary');
+        expect(resolveTriageRowFactStatusToneV1('warning')).toBe('attention');
+        expect(resolveTriageRowFactStatusToneV1('danger')).toBe('danger');
     });
 });

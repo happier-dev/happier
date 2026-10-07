@@ -23,6 +23,15 @@ export const appShellColumnSurface = StyleSheet.create((theme) => ({
         ...glassSurfacePlaneStyle(theme.colors.surface.inset, 'sidebar'),
     },
     /**
+     * A peeked column floats over the open column or the page, so its sidebar coat paints through
+     * `GlassSurface` (the floating-capable owner, which blurs what lies under it) inside this edge.
+     */
+    peekEdge: {
+        flexShrink: 0,
+        borderRightWidth: StyleSheet.hairlineWidth,
+        borderRightColor: theme.colors.border.default,
+    },
+    /**
      * A peeked column is a layer over the open column or the page: its lift falls on the trailing
      * edge (the content sheet clips the other edges, and the leading one sits against the rail). The
      * same level as the other floating layers (`FloatingOverlay`).

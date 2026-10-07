@@ -82,6 +82,7 @@ import { readAccountSettingDeclarationV1 } from './accountSettingDeclarations.js
 import { APP_SHELL_ACTION_IDS, APP_SHELL_ACTION_SPECS } from './appShellActionFamily.js';
 import { NOTIFICATION_CONFIGURATION_ACTION_IDS, NOTIFICATION_CONFIGURATION_ACTION_SPECS, NotificationConfigurationActionInputSchemas, NotificationConfigurationActionOutputSchemas, type NotificationConfigurationActionId } from './notificationConfigurationActionFamily.js';
 import { APP_UPDATE_ACTION_IDS, APP_UPDATE_ACTION_SPECS, AppUpdateActionInputSchemas, AppUpdateActionOutputSchemas, type AppUpdateActionId } from './appUpdateActionFamily.js';
+import { WORKFLOW_EFFECT_ACTION_SPECS_V1, WorkflowEffectActionInputSchemasV1, WorkflowEffectActionOutputSchemasV1, type WorkflowEffectActionIdV1 } from '../workflows/stepActionsV1.js';
 import { ROLE_ACTION_IDS_V1, type RoleActionIdV1 } from '../prompts/roles/roleActionIdsV1.js';
 import { LaunchProfilePublishInputV1Schema, LaunchProfilePublishOutputV1Schema } from '../launchProfiles/publishLaunchProfile.js';
 import { RoleActionInputSchemasV1, RoleActionOutputSchemasV1, isAccountRoleMutationV1 } from '../prompts/roles/roleActionsV1.js';
@@ -2909,6 +2910,7 @@ const RESULT_REQUIRED_DEFERRED_APPROVAL_ACTION_IDS = [
 ] as const satisfies readonly ActionId[];
 
 const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
+  ...ACTION_ID_FAMILIES_V1.workflow_effects,
   ...VOICE_CONVERSATION_ACTION_IDS,
   ...ACTION_ID_FAMILIES_V1.composer_ingress,
   ...ACTION_ID_FAMILIES_V1.workflow_authoring,
@@ -4990,6 +4992,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
 ]);
 
 const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD = Object.freeze(defineActionSpecs([
+  ...WORKFLOW_EFFECT_ACTION_SPECS_V1,
   ...WORKSPACE_ACTION_SPECS,
   ...SESSION_CANVAS_ACTION_SPECS,
   ...WORKFLOW_AUTHORING_ACTION_SPECS,
@@ -11729,6 +11732,8 @@ const ACTION_EXECUTION_PLACEMENT_BY_ID: ReadonlyMap<ActionId, ActionExecutionPla
   register('client', ACTION_ID_FAMILIES_V1.find);
   register('client', ACTION_ID_FAMILIES_V1.prompt_picker);
   register('client', ACTION_ID_FAMILIES_V1.widgets.filter((id) => id === 'widgets.instance.refresh'));
+  // Workflow effect actions declare their placement on their own spec (`stepActionsV1`).
+  for (const spec of WORKFLOW_EFFECT_ACTION_SPECS_V1) register(spec.executionPlacement, [spec.id]);
 
   // A canonical Session resolves its current machine/daemon owner. Execution
   // runs are intentionally absent: detached runs have no Session owner.
@@ -12215,6 +12220,9 @@ type AccountSecurityActionSpecDefinition =
     >;
 
 export type CanonicalActionSpecDefinition =
+  | { [Id in WorkflowEffectActionIdV1]: CanonicalActionSchemaDefinition<Id,
+      (typeof WorkflowEffectActionInputSchemasV1)[Id], (typeof WorkflowEffectActionOutputSchemasV1)[Id]>
+    }[WorkflowEffectActionIdV1]
   | { [Id in VoiceConversationActionId]: CanonicalActionSchemaDefinition<Id,
       (typeof VoiceConversationActionInputSchemas)[Id], (typeof VoiceConversationActionOutputSchemas)[Id]>
     }[VoiceConversationActionId]

@@ -4,6 +4,8 @@ import type { ViewToken } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Switch } from '@/components/ui/forms/Switch';
+import { resolveHappierFocusRingVisible } from '@happier-dev/plugin-ui/presentation';
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useListPresentation } from '@/components/ui/lists/listPresentation';
@@ -238,6 +240,12 @@ export const ExternalSessionsIntegrationSection = React.memo(function ExternalSe
     const announcedStateByAgentIdentityRef = React.useRef(new Map<string, ExternalSessionsIntegrationDescriptor['state']>());
     const [pendingKeys, setPendingKeys] = React.useState<ReadonlySet<string>>(() => new Set());
     const [sectionFallbackFocused, setSectionFallbackFocused] = React.useState(false);
+    // Inset: the fallback region fills the pane, which clips anything drawn outside it.
+    const sectionFallbackRing = focusRingStyle({
+        focused: resolveHappierFocusRingVisible(sectionFallbackFocused),
+        color: theme.colors.border.focus,
+        placement: 'inset',
+    });
     const replacementActionRef = React.useRef<React.ComponentRef<typeof Pressable> | null>(null);
     const sectionFocusFallbackRef = React.useRef<React.ComponentRef<typeof View> | null>(null);
     const pendingFocusReturnRef = React.useRef<ExternalSessionsPendingFocusReturn | null>(null);
@@ -783,12 +791,7 @@ export const ExternalSessionsIntegrationSection = React.memo(function ExternalSe
                 accessibilityLabel={t('externalSessions.settingsIntegrationsGroupTitle')}
                 style={{
                     flex: 1,
-                    ...(Platform.OS === 'web' && sectionFallbackFocused ? {
-                        outlineStyle: 'solid',
-                        outlineWidth: 2,
-                        outlineColor: theme.colors.border.focus,
-                        outlineOffset: -2,
-                    } : {}),
+                    ...sectionFallbackRing,
                 }}
                 {...(Platform.OS === 'web' ? {
                     role: 'region',
@@ -834,12 +837,7 @@ export const ExternalSessionsIntegrationSection = React.memo(function ExternalSe
             testID="settings-external-sessions-focus-fallback"
             accessible
             accessibilityLabel={t('externalSessions.settingsIntegrationsGroupTitle')}
-            style={Platform.OS === 'web' && sectionFallbackFocused ? {
-                outlineStyle: 'solid',
-                outlineWidth: 2,
-                outlineColor: theme.colors.border.focus,
-                outlineOffset: -2,
-            } : undefined}
+            style={sectionFallbackRing}
             {...(Platform.OS === 'web' ? {
                 role: 'region',
                 tabIndex: -1,

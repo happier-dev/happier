@@ -2,6 +2,7 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { GROUPED_SURFACE_RADIUS_PX } from './pageListMetrics';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -47,7 +48,7 @@ async function renderItemGroup(props?: Readonly<{ clipContent?: boolean }>) {
 function findGroupSurfaceStyle(screen: Awaited<ReturnType<typeof renderItemGroup>>): Record<string, unknown> {
     const matchingNode = screen.findAllByType('View' as never).find((node) => {
         const style = flattenStyle(node.props.style);
-        return style.backgroundColor === '#ffffff' && style.borderRadius === 16;
+        return style.backgroundColor === '#ffffff' && style.borderRadius === GROUPED_SURFACE_RADIUS_PX;
     });
     return matchingNode ? flattenStyle(matchingNode.props.style) : {};
 }
@@ -63,23 +64,22 @@ afterEach(() => {
 });
 
 describe('ItemGroup surface chrome', () => {
-    it('stands a borderless light sheet on its raised bottom lip and the card elevation', async () => {
+    it('draws a light sheet with its ink hairline, the raised bottom lip and the card elevation', async () => {
         const screen = await renderItemGroup();
         const style = findGroupSurfaceStyle(screen);
 
-        expect(style.borderWidth).toBe(0);
-        expect(style.borderTopWidth).toBeUndefined();
-        expect(Number(style.borderBottomWidth)).toBeGreaterThan(0);
+        expect(Number(style.borderWidth)).toBeGreaterThan(0);
+        expect(style.borderBottomColor).toBeDefined();
+        expect(style.borderBottomColor).not.toBe(style.borderColor);
         expect(hasShadow(style)).toBe(true);
     });
-
 
     it('clips only the inner rounded surface when embedded content paints to the card edges', async () => {
         const screen = await renderItemGroup({ clipContent: true });
         const roundedNodes = screen.findAllByType('View' as never).map((node) => flattenStyle(node.props.style));
 
         expect(roundedNodes).toContainEqual(expect.objectContaining({
-            borderRadius: 16,
+            borderRadius: GROUPED_SURFACE_RADIUS_PX,
             overflow: 'hidden',
         }));
         expect(findGroupSurfaceStyle(screen).overflow).toBe('visible');

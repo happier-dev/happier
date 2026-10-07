@@ -6,7 +6,7 @@ import { useHomeHubLayout } from '@/components/hub/layout/useHomeHubLayout';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 
-import { WidgetAddPopover } from './WidgetAddPopover';
+import { WidgetAddSurface } from './WidgetAddSurface';
 import type { WidgetAddSection } from './widgetAddModel';
 import {
     buildAccountWidgetAddSections,
@@ -18,7 +18,6 @@ import {
 const HOME_LABELS: AccountWidgetSurfaceLabels = {
     count: (count) => t('widgetAdd.countOnHome', { count }),
     get submit() { return t('widgetAdd.addToHome'); },
-    get fromPluginsHint() { return t('widgetAdd.homeFromPluginsHint'); },
 };
 
 /**
@@ -31,9 +30,8 @@ export function buildHomeWidgetAddSections(input: Omit<AccountWidgetAddInput, 'l
 }
 
 /**
- * Add to Home, anchored to Home's Customize button (lab dbind G / dadd A): the shared Gallery | List
- * popover and its Set up step. It replaces Customize's former "available widgets" rows: Customize
- * arranges what is on Home, this adds to it. Mounted only while open.
+ * Add to Home, anchored to Home's Customize button (lab `widget-add` wsplit A): the shared Add
+ * surface. Customize arranges what is on Home, this adds to it. Mounted only while open.
  */
 export function HomeWidgetAddPopover(props: Readonly<{
     open: boolean;
@@ -58,13 +56,14 @@ function OpenHomeWidgetAddPopover(props: React.ComponentProps<typeof HomeWidgetA
     const sections = useAccountWidgetAddSections({ scope, instances, addInstance: layout.addInstance, labels: HOME_LABELS, testID: props.testID });
 
     return (
-        <WidgetAddPopover
+        <WidgetAddSurface
             open
             anchorRef={props.anchorRef}
             onRequestClose={props.onRequestClose}
             title={t('widgetAdd.homeTitle')}
             hint={t('widgetAdd.homeHint')}
             searchPlaceholder={t('widgetAdd.searchWidgets')}
+            addLabel={t('widgetAdd.addToHome')}
             sections={sections}
             {...(scope ? { serverId: scope.serverId } : {})}
             testID={props.testID}

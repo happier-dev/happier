@@ -332,7 +332,7 @@ The `overview` app page declares a `pinned` area with the same readable context:
 
 Open **Widget areas**, enter a directory on the serving machine, choose **Use
 directory**, and add
-**Directory count** from its Gallery. Bind both inputs to **This page**, then
+**Directory count** from its Add surface. Bind both inputs to **This page**, then
 switch **Files** to **Folders** to see the count change. Add another copy with
 its own pinned directory or filter; changing the page follows only the first
 copy. Add a file in that directory and the live Resource invalidates; **Refresh
@@ -407,7 +407,7 @@ ambiguous inputs use that same setup step.
 Submit `size` with `widgets.instance.add`, as in the example above, so placement
 and presentation are one operation. Change an existing copy through
 `widgets.instance.size.set` with `{ ref, size }`; see the generated
-[widget Action reference](/plugins/api/host-actions). Native renderers receive
+[widget Action reference](/plugins/api/host-actions). On grid surfaces, native renderers receive
 `RenderContext.widgetPresentation` with the actual `footprint`, a `size` when
 that native rectangle matches a named intent, and optional measured `geometry`.
 Existing custom Board width/height combinations retain their rectangle without

@@ -25,7 +25,7 @@ import {
   HAPPIER_WORK_STATUS_SEMANTIC_TONE,
   HappierStatusDot,
 } from '@happier-dev/plugin-ui/presentation';
-import { formatTriageTimestampV1 } from '@happier-dev/triage-protocol/v1';
+import { formatTriageTimestampV1, resolveTriageRowFactStatusToneV1 } from '@happier-dev/triage-protocol/v1';
 
 import type { TriageListDisplayRowV1 } from '../marks/pinnedRows.js';
 import type { TriageSourceDescriptorV1, TriageSourceWorkflowSubjectV1 } from '@happier-dev/triage-protocol/v1';
@@ -35,7 +35,8 @@ import {
   readTriageEntryRowContextV1,
   type TriageEntryDisplayTextV1,
 } from '../window/entryDisplay.js';
-import type { TriageListItemV1 } from './sections.js';
+import type { TriageListItemV1, TriageListRowSignalV1 } from './sections.js';
+import type { TriageAgentStatusV1 } from '../detail/agentState.js';
 import { TRIAGE_ENTRY_DRAG_SOURCE_ID_V1, TRIAGE_ENTRY_SESSION_DROP_TARGET_ID_V1 } from './entryDragDrop.js';
 
 /**
@@ -172,7 +173,7 @@ export function readTriageRowMarkV1(
   const name = readTriageEntryGlyphV1(row.lifecyclePresentation, workflowSubject);
   const tone: TextTone = row.detailKind === 'presence' && row.tone !== 'neutral'
     ? row.tone
-    : row.detailKind === 'attention' ? 'accent' : 'secondary';
+    : row.detailKind === 'attention' ? HAPPIER_WORK_STATUS_SEMANTIC_TONE.attention : 'secondary';
   return { name, tone };
 }
 
@@ -198,6 +199,14 @@ export function readTriageEntryGlyphV1(
 }
 
 /**
+ * The tone of the detail header's attention badge: a required reason is the
+ * entry's one loud fact, a suggestion stays quiet.
+ */
+export function readTriageAttentionBadgeToneV1(level: 'required' | 'suggested'): TextTone {
+  return level === 'required' ? HAPPIER_WORK_STATUS_SEMANTIC_TONE.attention : 'secondary';
+}
+
+/**
  * The colour of the trailing detail. A required-attention reason is the row's
  * one loud fact and a presence problem keeps its caution; a suggestion, a
  * summary or a neutral note stays quiet. The title itself is never toned, so a
@@ -207,7 +216,8 @@ export function readTriageRowDetailToneV1(
   row: Pick<TriageListDisplayRowV1, 'detail' | 'detailKind' | 'tone'>,
 ): TextTone | undefined {
   if (row.detail === null) return undefined;
-  if (row.detailKind === 'attention') return 'accent';
+  // Needs-you speaks the shared work status vocabulary's attention tone; blue stays for focus and links.
+  if (row.detailKind === 'attention') return HAPPIER_WORK_STATUS_SEMANTIC_TONE.attention;
   if (row.detailKind === 'presence' && row.tone !== 'neutral') return row.tone;
   return undefined;
 }
@@ -420,27 +430,40 @@ function TriageListPeek(props: Readonly<{ item: TriageListItemV1 }>): React.Reac
   );
 }
 
-const SIGNAL_TONES: Readonly<Record<NonNullable<TriageListItemV1['signal']>['tone'], TextTone>> = Object.freeze({
-  success: 'success',
-  warning: 'warning',
-  danger: 'danger',
-  info: 'info',
-  neutral: 'secondary',
-});
+/** A cell's mark: the tone it is drawn in, whether it draws a dot at all, and whether the dot moves. */
+export type TriageCellMarkV1 = Readonly<{ tone: TextTone; marked: boolean; live: boolean }>;
+
+const QUIET_CELL_MARK_V1: TriageCellMarkV1 = Object.freeze({ tone: 'secondary', marked: false, live: false });
+
+/**
+ * A source's status fact as a cell mark, in the shared status vocabulary: a healthy fact ("Checks
+ * passed") says nothing, news is an ink dot, a caution the attention tone and a failure danger.
+ */
+export function readTriageSignalCellMarkV1(tone: TriageListRowSignalV1['tone']): TriageCellMarkV1 {
+  // The tone is the contract's one status-fact projection; the cell only decides whether it marks.
+  if (tone === 'success' || tone === 'neutral') return QUIET_CELL_MARK_V1;
+  return { tone: resolveTriageRowFactStatusToneV1(tone), marked: true, live: false };
+}
+
+/** The linked agent as a cell mark: working is the one moving mark, in the ink; needs-you and trouble keep their tone. */
+export function readTriageAgentCellMarkV1(agent: Pick<TriageAgentStatusV1, 'tone' | 'live'>): TriageCellMarkV1 {
+  if (agent.tone !== 'neutral') return { tone: HAPPIER_WORK_STATUS_SEMANTIC_TONE[agent.tone], marked: true, live: agent.live };
+  return agent.live ? { tone: 'secondary', marked: true, live: true } : QUIET_CELL_MARK_V1;
+}
 
 /**
  * A cell's state as a small tone mark beside a quiet word ("Checks passed", "Working"): the colour is
  * the glance, the word is the meaning. It is not a `Status` because a row cell is not a notice — it is
  * one line that truncates inside a fixed cell, and it is never a live region: the row's own description
  * says the same words (`cells` in `triageListRowItemProps`), so thirty announcing cells would only be noise.
- * A secondary tone has no mark: healthy facts stay quiet.
  */
-function TriageCellState(props: Readonly<{ tone: TextTone; label: string; live?: boolean }>): React.ReactElement {
+function TriageCellState(props: Readonly<{ mark: TriageCellMarkV1; label: string }>): React.ReactElement {
   const theme = usePluginTheme();
-  const marked = props.tone !== 'secondary' && props.tone !== 'muted';
   return (
     <Row gap="xsmall" align="center" style={TRIAGE_CELL_STATE_STYLE_V1}>
-      {marked ? <HappierStatusDot color={theme.colors[HAPPIER_TONE_COLOR_TOKEN[props.tone]]} isPulsing={props.live === true} /> : null}
+      {props.mark.marked
+        ? <HappierStatusDot color={theme.colors[HAPPIER_TONE_COLOR_TOKEN[props.mark.tone]]} isPulsing={props.mark.live} />
+        : null}
       <Stack style={TRIAGE_CELL_STATE_WORD_STYLE_V1}>
         <Text variant="body" tone="secondary" value={props.label} numberOfLines={1} />
       </Stack>
@@ -535,17 +558,13 @@ export function useTriageListAnatomyV1(input: Readonly<{ withSignal: boolean; or
       },
       ...(withSignal ? {
         signal: (item: TriageListItemV1) => (item.signal === null ? null : (
-          <TriageCellState tone={SIGNAL_TONES[item.signal.tone]} label={item.signal.label} />
+          <TriageCellState mark={readTriageSignalCellMarkV1(item.signal.tone)} label={item.signal.label} />
         )),
       } : {}),
       agent: (item) => (item.agent === null ? null : (
         <TriageCellState
-          // A working agent gets the one live mark; a finished or idle one stays a quiet word.
-          tone={item.agent.tone !== 'neutral'
-            ? HAPPIER_WORK_STATUS_SEMANTIC_TONE[item.agent.tone]
-            : item.agent.live ? 'info' : 'secondary'}
+          mark={readTriageAgentCellMarkV1(item.agent)}
           label={text(item.agent.labelKey, item.agent.label)}
-          live={item.agent.live}
         />
       )),
       age: (item) => (item.row.activityAtMs === null

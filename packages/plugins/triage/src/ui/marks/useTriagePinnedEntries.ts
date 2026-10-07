@@ -34,7 +34,7 @@ import {
  */
 
 export type TriagePinNoticeV1 = Readonly<{
-  tone: 'success' | 'warning';
+  tone: 'secondary' | 'warning';
   message: string;
 }>;
 
@@ -104,7 +104,7 @@ function noticeFor(
     };
   }
   return {
-    tone: 'success',
+    tone: 'secondary',
     message: status === 'pinned'
       ? text('plugins.triage.surface.pin.pinned', 'Pinned')
       : text('plugins.triage.surface.pin.unpinned', 'Unpinned'),

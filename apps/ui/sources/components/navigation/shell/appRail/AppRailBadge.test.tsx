@@ -41,7 +41,22 @@ describe('AppRailBadge', () => {
         expect(dot.getTextContent()).toBe('');
     });
 
-    it('is red only for what needs action', async () => {
+    it('draws needs-action in the attention amber and everything else in the ink, never blue or red', async () => {
+        const { AppRailBadge } = await import('./AppRailBadge');
+        const { lightTheme } = await import('@/theme');
+        const fill = async (tone: 'attention' | 'accent' | 'neutral', kind: 'count' | 'dot') => {
+            const signal = kind === 'count' ? { kind, value: 4, tone } as const : { kind, tone } as const;
+            const screen = await renderScreen(<AppRailBadge signal={signal} testID="badge" />);
+            return flatten(screen.findByTestId('badge')!.props.style).backgroundColor;
+        };
+        for (const kind of ['count', 'dot'] as const) {
+            expect(await fill('attention', kind)).toBe(lightTheme.colors.state.attention.foreground);
+            expect(await fill('accent', kind)).toBe(lightTheme.colors.text.primary);
+            expect(await fill('neutral', kind)).toBe(lightTheme.colors.text.tertiary);
+        }
+    });
+
+    it('is amber only for what needs action', async () => {
         const { resolveAppRailBadgeTone } = await import('./AppRailBadge');
         expect(resolveAppRailBadgeTone({ source: 'inbox' })).toBe('attention');
         expect(resolveAppRailBadgeTone({ source: 'updates', failed: true })).toBe('attention');

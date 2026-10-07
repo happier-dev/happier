@@ -246,7 +246,7 @@ function PublicationResult({ result, text }: Readonly<{
     : counts;
   return (
     <Banner
-      tone={complete ? 'success' : 'warning'}
+      tone={complete ? 'secondary' : 'warning'}
       title={complete
         ? text('plugins.azureDevops.ui.publication.complete', 'Review published')
         : uncertain > 0 || verdict === 'uncertain'

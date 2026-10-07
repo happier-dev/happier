@@ -613,10 +613,13 @@ describe('workflow trigger Automation composition', () => {
   it('attaches, lists, updates and removes scoped triggers using the authorized Session placement', async () => {
     const { deps, rows } = fixture();
     const actions = createWorkflowTriggerActions({ ...deps, resolveSession: async () => ({ project, nativeGoalOwner: false }) });
-    const added = await actions.sessionAdd({ sessionId: 'session-one', target: { kind: 'inline', definition }, trigger,
+    const scopedDefinition = WorkflowDefinitionV1Schema.parse({ ...definition,
+      defaults: { ...definition.defaults, conversation: { kind: 'origin_session' } } });
+    const added = await actions.sessionAdd({ sessionId: 'session-one', target: { kind: 'inline', definition: scopedDefinition }, trigger,
       onComplete: { kind: 'originating_session' } });
     expect(rows.get(added.set.automationId)).toMatchObject({ scopeSessionId: 'session-one', assignments: [{ machineId: project.machineId }] });
     expect(added.set.context).toMatchObject({ workspace: { directory: project.directory }, onComplete: { kind: 'originating_session' } });
+    expect(added.set.destinations).toMatchObject({ targetSessionIds: ['session-one'] });
     expect((await actions.sessionList({ sessionId: 'session-other' })).sets).toEqual([]);
     expect((await actions.list({ scope: 'account_inline' })).sets).toEqual([]);
     const updated = await actions.sessionUpdate({ sessionId: 'session-one', triggerId: added.triggerId!, expectedRevision: added.set.revision,

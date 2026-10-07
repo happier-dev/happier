@@ -591,6 +591,41 @@ describe('createSessionProviderInputConsumer', () => {
     expect(events).toEqual(['other accepted', 'replacement admitted']);
   });
 
+  it('does not lend retired dispatch custody to a later asynchronous replacement', async () => {
+    const consumer = createSessionProviderInputConsumer({
+      messageQueue: new MessageQueue2<TestMode>(() => 'hash'),
+      session: { waitForMetadataUpdate: () => new Promise<boolean>(() => {}) },
+    });
+    const beginReplacement = createDeferred<void>();
+    const replacementEntered = createDeferred<void>();
+    const otherRelease = createDeferred<void>();
+    let replacement: Promise<unknown> | undefined;
+    let enforced = false;
+    await consumer.runProviderInputDispatch({
+      abortSignal: new AbortController().signal,
+      dispatch: async () => {
+        replacement = (async () => {
+          await beginReplacement.promise;
+          const closing = consumer.enforceProviderInputAdmission(generationEpoch('later-replacement'));
+          replacementEntered.resolve();
+          await closing;
+          enforced = true;
+        })();
+      },
+    });
+    const other = consumer.runProviderInputDispatch({
+      abortSignal: new AbortController().signal,
+      dispatch: async () => await otherRelease.promise,
+    });
+    beginReplacement.resolve();
+    await replacementEntered.promise;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(enforced).toBe(false);
+    otherRelease.resolve();
+    await Promise.all([replacement, other]);
+    expect(enforced).toBe(true);
+  });
+
   it('releases the exact transition admission when atomic transfer is cancelled or provider dispatch throws', async () => {
     const consumer = createSessionProviderInputConsumer({
       messageQueue: new MessageQueue2<TestMode>(() => 'hash'),

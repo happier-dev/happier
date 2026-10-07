@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import Animated, { FadeIn, FadeOut, useAnimatedStyle, type SharedValue } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { isHappierFocusVisible } from '@happier-dev/plugin-ui/presentation';
 
 import { GlassPanel } from '@/components/ui/glass/GlassPanel';
 import { CompanionNoDragRegion } from '@/components/companion/interaction/CompanionNoDragRegion';
@@ -119,7 +120,8 @@ export const VoiceOrb = React.memo(function VoiceOrb(props: Readonly<{
                 onAccessibilityAction={onAccessibilityAction}
                 onPress={onPress}
                 onLongPress={openSection}
-                onFocus={() => setFocused(true)}
+                // The ring is for keyboard focus only; a click focuses the orb too.
+                onFocus={(event) => setFocused(isHappierFocusVisible(event?.target))}
                 onBlur={() => setFocused(false)}
                 {...(Platform.OS === 'web' ? { onKeyDown, 'aria-keyshortcuts': OPTIONS_KEYS } : {})}
                 style={[

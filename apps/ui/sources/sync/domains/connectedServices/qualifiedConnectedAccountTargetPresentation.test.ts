@@ -165,3 +165,25 @@ describe('presentQualifiedConnectedAccountTarget', () => {
     } }).primaryLabel).toBe('ChatGPT');
   });
 });
+
+describe('presentConnectedAccountNames', () => {
+  it('tells apart accounts that read as their service account by a stable order, never an id', async () => {
+    const { presentConnectedAccountNames } = await import('./qualifiedConnectedAccountTargetPresentation');
+    const entry = (key: string, extra: Readonly<{ serviceTitle?: string; email?: string }> = {}) => ({
+      key, serviceTitle: extra.serviceTitle ?? 'Claude', accountId: key.split('/')[1], email: extra.email ?? null,
+    });
+    const claudeA = entry('claude/97bd5614-8970');
+    const claudeB = entry('claude/7e9ced1f-60ac');
+    const named = entry('claude/c', { email: 'kevin@gmail.com' });
+    const codex = entry('codex/z', { serviceTitle: 'Codex' });
+    // The order an account is shown in (by usage left) changes; its number does not.
+    for (const order of [[claudeA, claudeB, named, codex], [codex, named, claudeB, claudeA]]) {
+      const names = presentConnectedAccountNames(order);
+      expect(names.get(claudeB.key)?.primaryLabel).toBe('Claude account');
+      expect(names.get(claudeA.key)?.primaryLabel).toBe('Claude account 2');
+      expect(names.get(named.key)?.primaryLabel).toBe('kevin@gmail.com');
+      expect(names.get(codex.key)?.primaryLabel).toBe('Codex account');
+      expect([...names.values()].map((name) => name.primaryLabel).join(' ')).not.toMatch(/97bd|7e9c/);
+    }
+  });
+});

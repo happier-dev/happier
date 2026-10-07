@@ -38,11 +38,16 @@ describe('theme token reference audit', () => {
     });
 
     it('does not leave production references to phantom Happier theme color paths', () => {
+        // `colors.danger` is a real path on plugin-ui's `HappierUiTheme` (the projected plugin theme a host
+        // surface holds as `presentationTheme`); only the Happier theme lacks it.
         const offenders = collectProductionSourceFiles(sourceRoot).flatMap((filePath) => {
             const contents = readFileSync(filePath, 'utf8');
-            return contents.match(/\b(?:theme\.colors|props\.theme\.colors|colors)\.danger\b/g)
-                ? [path.relative(process.cwd(), filePath)]
-                : [];
+            const matches = Array.from(contents.matchAll(/\b(?:theme\.colors|props\.theme\.colors|colors)\.danger\b/g));
+            const hasHappierThemeReference = matches.some((match) => {
+                const leadingContext = contents.slice(Math.max(0, (match.index ?? 0) - 24), match.index ?? 0);
+                return !/presentationTheme\.$/.test(leadingContext);
+            });
+            return hasHappierThemeReference ? [path.relative(process.cwd(), filePath)] : [];
         });
 
         expect(offenders).toEqual([]);

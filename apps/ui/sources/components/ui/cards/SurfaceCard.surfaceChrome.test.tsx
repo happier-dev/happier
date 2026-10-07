@@ -2,6 +2,7 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { GROUPED_SURFACE_RADIUS_PX } from '@/components/ui/lists/pageListMetrics';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -47,7 +48,7 @@ async function renderSurfaceCard() {
 function findSurfaceCardStyle(screen: Awaited<ReturnType<typeof renderSurfaceCard>>): Record<string, unknown> {
     const matchingNode = screen.findAllByType('View' as never).find((node) => {
         const style = flattenStyle(node.props.style);
-        return style.minWidth === 0 && style.borderRadius === 16;
+        return style.minWidth === 0 && style.borderRadius === GROUPED_SURFACE_RADIUS_PX;
     });
     return matchingNode ? flattenStyle(matchingNode.props.style) : {};
 }
@@ -60,6 +61,7 @@ afterEach(() => {
 
 describe('SurfaceCard surface chrome', () => {
     it('stands on its raised lip and the card elevation like a grouped sheet, even with a transparent border', async () => {
+        shared.themeOverride = { colors: { border: { surface: 'transparent' } } };
         const screen = await renderSurfaceCard();
         const style = findSurfaceCardStyle(screen);
 

@@ -5,6 +5,14 @@ import type { PluginMachineMaterializationRefV1 } from '@happier-dev/protocol';
 import type { ActionCaller, ActionPluginCaller } from '@happier-dev/protocol/actions';
 import type { PluginInvocationCaller } from '@happier-dev/plugin-sdk';
 
+// The broker owns a delivery scope, including an explicitly independent event.
+// This keeps callback Actions causal without changing their authorization caller.
+const pluginEventActionOrigin = new AsyncLocalStorage<Readonly<{ caller: ActionCaller | undefined }>>();
+
+export function withPluginEventActionOrigin<T>(caller: ActionCaller | undefined, operation: () => T): T {
+    return pluginEventActionOrigin.run({ caller }, operation);
+}
+
 type PluginActionCallerSeed = Readonly<{
     plugin: Readonly<{ id: string }>;
     /** Host-private original Action provenance, never plugin input or authorization. */
@@ -122,8 +130,9 @@ export function resolvePluginActionCaller(
         ? undefined
         : PluginSourceCustodyV1Schema.safeParse(seed.sourceCustody);
     if (sourceCustody !== undefined && !sourceCustody.success) return null;
-    let initiatingCaller: ActionCaller | undefined = seed.initiatingActionCaller;
-    if (seed.caller?.kind === 'automationRun') {
+    const eventOrigin = pluginEventActionOrigin.getStore();
+    let initiatingCaller: ActionCaller | undefined = eventOrigin ? eventOrigin.caller : seed.initiatingActionCaller;
+    if (eventOrigin === undefined && seed.caller?.kind === 'automationRun') {
         // SDK declarations are brand-free; canonical parsing owns the host representation.
         const cause = AutomationRunCauseSchema.safeParse(seed.caller.cause);
         if (!cause.success) return null;
@@ -146,3 +155,4 @@ export function resolvePluginActionCaller(
         ...(!initiatingCaller && seed.startedBy ? { startedBy: seed.startedBy } : {}),
     });
 }
+import { AsyncLocalStorage } from 'node:async_hooks';

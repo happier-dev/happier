@@ -6,7 +6,7 @@ import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/prot
 import { MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES, AutomationStoredContentEnvelopeV1ReadSchema } from '@happier-dev/protocol/automations/automationStoredContentEnvelopeV1';
 import { AutomationStoredWorkflowDefinitionV2ReadSchema } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { WorkflowAcceptedSnapshotV1Schema, WorkflowResolvedInputsV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
-import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
+import { materializeWorkflowAcceptedSnapshotV1, workflowRequiresMachineStartCapacityV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
 import { resolveWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionResolverV1';
 import { readTriggerTargetV1 } from '@happier-dev/protocol/workflows/triggers/triggerTargetV1';
 import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowCheckpointStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowFinalResultStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
@@ -1613,6 +1613,10 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         ? { automationCause: initial.run.origin.cause } : {}),
       ...(accepted.origin?.originSessionId ? { originSessionId: accepted.origin.originSessionId } : {}),
       ...(claim.signal ? { signal: claim.signal } : {}) });
+    if (accepted.requiresMachineStartCapacity ?? workflowRequiresMachineStartCapacityV1(accepted.materializedLeaves)) {
+      await claim.acquireMachineStartCapacity?.(claim.signal);
+    }
+    claim.signal?.throwIfAborted();
     let result = await runCoordinator();
     while (result.state === 'waiting_for_review') {
       if (result.parkRevision === undefined) throw new Error('workflow_review_park_token_missing');

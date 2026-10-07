@@ -14,7 +14,7 @@ const EXTERNAL_AUTHORING_THEME: PluginUiThemeV1 = {
     text: '#f0f0f0', secondaryText: '#c0c0c0', mutedText: '#909090',
     border: '#404040', divider: '#353535', focus: '#5599ff',
     accent: '#2277ee', onAccent: '#ffffff',
-    success: '#34c759', warning: '#ff9500', danger: '#ff3b30', info: '#5856d6',
+    success: '#34c759', warning: '#ff9500', attention: '#945200', danger: '#ff3b30', info: '#5856d6',
     control: '#252525', controlDisabled: '#454545', overlay: 'rgba(0,0,0,0.5)',
   },
   spacing: { xsmall: 4, small: 8, medium: 12, large: 16, xlarge: 20 },

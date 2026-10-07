@@ -1,4 +1,4 @@
-import { HAPPIER_FIELD_BOX_METRICS, HAPPIER_FIELD_BOX_SHAPE } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_FIELD_BOX_METRICS, HAPPIER_FIELD_BOX_SHAPE, type HappierRaisedEdge } from '@happier-dev/plugin-ui/presentation';
 
 import { resolveThemeControlEdge } from '@/components/ui/surfaces/themeRaisedEdge';
 import type { ShadowLevels } from '@/shadowElevation';
@@ -23,23 +23,32 @@ type FieldBoxTheme = Readonly<{
     }>;
 }>;
 
-/** `focused`: a select trigger whose own box carries the keyboard focus ring (the ring replaces the edge). */
+/** `focused`: a select trigger whose own box carries the keyboard focus ring (the box sits flat inside it). */
 export type FieldBoxState = 'idle' | 'invalid' | 'focused';
+
+export type FieldBoxColors = Readonly<{
+    borderColor: string;
+    backgroundColor: string;
+    valueColor: string;
+    placeholderColor: string;
+    edge: HappierRaisedEdge | null;
+    /** The shared focus ring's colour while a select trigger's box carries it. */
+    focusRing: string | null;
+}>;
 
 /**
  * The field box colours. A text field has no focused colour: its caret is its focus cue (DESIGN.md →
  * focus); a select trigger whose box carries the ring passes `focused`. The box
  * stands on its raised edge; an invalid box sits flat so its danger border speaks alone.
  */
-export function resolveFieldBoxColors(theme: FieldBoxTheme, state: FieldBoxState = 'idle') {
+export function resolveFieldBoxColors(theme: FieldBoxTheme, state: FieldBoxState = 'idle'): FieldBoxColors {
     return {
-        borderColor: state === 'invalid'
-            ? theme.colors.state.danger.foreground
-            : state === 'focused' ? theme.colors.border.focus : theme.colors.border.strong,
+        borderColor: state === 'invalid' ? theme.colors.state.danger.foreground : theme.colors.border.strong,
         backgroundColor: theme.colors.edge.fill,
         valueColor: theme.colors.text.primary,
         placeholderColor: theme.colors.input.placeholder,
         edge: resolveThemeControlEdge(theme, 'strong', { invalid: state === 'invalid', focused: state === 'focused' }),
+        focusRing: state === 'focused' ? theme.colors.border.focus : null,
     } as const;
 }
 

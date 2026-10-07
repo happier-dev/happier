@@ -112,6 +112,7 @@ export const FieldValueItem = React.memo(function FieldValueItem(props: FieldVal
             accessoryLayout="adaptive"
             rightElement={stepper ? <HappierFieldStepper
                 testID={fieldTestID} colors={resolveFieldBoxColors(theme, error ? 'invalid' : 'idle')}
+                focusColor={theme.colors.border.focus}
                 decreaseLabel={`${t('common.decrease')} ${title ?? ''}`}
                 increaseLabel={`${t('common.increase')} ${title ?? ''}`}
                 disabled={itemProps.disabled} canDecrement={field.canDecrement} canIncrement={field.canIncrement}

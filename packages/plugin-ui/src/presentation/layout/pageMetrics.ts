@@ -1,3 +1,5 @@
+import { HAPPIER_RADIUS_V1 } from '../../environment/radius.js';
+
 /**
  * Geometry of the configuration-page anatomy, for Happier core and plugin pages.
  *
@@ -27,7 +29,8 @@ export const HAPPIER_PAGE_METRICS = Object.freeze({
   pageHeaderLineGapPx: 4,
   sectionGapPx: 28,
   sectionHeaderGapPx: 10,
-  sheetRadiusPx: 14,
+  /** Sheets are cards: the `xl` step of the one radius base. */
+  sheetRadiusPx: HAPPIER_RADIUS_V1.xl,
   rowPaddingHorizontalPx: 16,
   /**
    * Above and below the light separator between two groups of a sheet's rows

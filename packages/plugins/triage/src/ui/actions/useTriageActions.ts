@@ -34,7 +34,7 @@ import {
  */
 
 export type TriageActionsNoticeV1 = Readonly<{
-  tone: 'success' | 'warning';
+  tone: 'secondary' | 'warning';
   message: string;
 }>;
 
@@ -209,7 +209,7 @@ export function useTriageActions(): TriageMountedActionsV1 {
         if (result.revision !== undefined) setRevision(result.revision);
         setLoaded(true);
         setNotice({
-          tone: 'success',
+          tone: 'secondary',
           message: text('plugins.triage.surface.actions.settled', 'Actions updated'),
         });
         return projection.value.actions;

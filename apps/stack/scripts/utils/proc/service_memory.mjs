@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { closeSync, ftruncateSync, openSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolveHeavyweightPressureRetryMilliseconds } from '../dev_targets/heavyweight_pressure_cadence.mjs';
@@ -15,6 +15,7 @@ const OBSERVED_ENVIRONMENT_KEYS = new Set([
   'HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT', 'HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN',
 ]);
 const nativeIdentityPath = fileURLToPath(new URL('./native_process_identity.sh', import.meta.url));
+const runtimeAdmissionPhases = ['awaiting-runtime-request', 'building-runtime'];
 
 function readLinuxProcessFingerprintSync(pid) {
   // Admission runs before dependency bootstrap. Its existing native owner
@@ -40,6 +41,48 @@ function canonicalPath(path) {
   } catch {
     return resolve(path);
   }
+}
+
+function readAdmissionPhase(ownerPath) {
+  try {
+    const phase = readFileSync(join(ownerPath, 'phase'), 'utf8').trim();
+    if (phase === 'admitted' || runtimeAdmissionPhases.includes(phase)) return phase;
+  } catch { /* Older or exiting owners have no phase observation. */ }
+  return undefined;
+}
+
+/** Diagnostic only: update an existing native ancestor's phase, never admission. */
+export function writeRuntimeAdmissionPhase(phase, env = process.env) {
+  if (!runtimeAdmissionPhases.includes(phase)) throw new Error('invalid runtime admission phase');
+  if (process.platform !== 'linux') return false;
+  const root = String(env.HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT ?? '');
+  const token = /^(\d+):(\d+)$/.exec(String(env.HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN ?? ''));
+  if (!isAbsolute(root) || !token) return false;
+  const ownerPath = join(root, 'owners', `${token[1]}-${token[2]}`);
+  // Native creation owns this optional field. Do not add it to already-loaded
+  // older owners whose cleanup cannot release it.
+  if (!readAdmissionPhase(ownerPath)) return false;
+  try {
+    const processes = readLinuxWorkerProcesses();
+    const ownerPid = Number(token[1]);
+    if (processes.get(ownerPid)?.fingerprint !== `linux-proc:${token[2]}`) return false;
+    let ancestor = process.pid;
+    while (ancestor !== ownerPid) {
+      if (ancestor <= 1 || !processes.has(ancestor)) return false;
+      ancestor = processes.get(ancestor).parentPid;
+    }
+    if (readFileSync(join(ownerPath, 'process'), 'utf8').trim() !== `${token[1]} ${token[2]}`
+      || readFileSync(join(ownerPath, 'class'), 'utf8').trim() !== 'runtime-build') return false;
+    // Open only the existing field: concurrent native release must not leave a
+    // recreated phase file behind after unlinking the owner record.
+    const phaseFile = openSync(join(ownerPath, 'phase'), 'r+');
+    try {
+      const content = phase + '\n';
+      writeFileSync(phaseFile, content);
+      ftruncateSync(phaseFile, Buffer.byteLength(content));
+    } finally { closeSync(phaseFile); }
+    return true;
+  } catch { return false; }
 }
 
 /** One account-visible OS snapshot, never a persisted PID registry. */
@@ -150,7 +193,8 @@ function readLegacyOwners(processes, admissionRoot) {
       const recorded = readFileSync(join(ownerPath, 'process'), 'utf8').trim();
       const className = readFileSync(join(ownerPath, 'class'), 'utf8').trim();
       if (recorded !== `${pid} ${start}` || !/^[a-z][a-z-]*$/.test(className)) continue;
-      owners.set(identity, { pid, token: start, className });
+      const phase = readAdmissionPhase(ownerPath);
+      owners.set(identity, { pid, token: start, className, ...(phase ? { phase } : {}) });
     } catch {
       // An inherited token alone is not an admitted owner.
     }
@@ -172,13 +216,15 @@ function processTreePids(roots, children) {
 
 function readAdmittedOwnerRss(processes, admissionRoot, legacyOwners, children, progress) {
   const owners = new Map();
-  const accept = (pid, token, className) => {
+  const accept = (pid, token, className, phase) => {
     const current = processes.get(pid);
     if (!current) return;
     current.fingerprint ??= readLinuxProcessFingerprintSync(pid);
     if (current.fingerprint !== `linux-proc:${token}`) return;
     const previous = owners.get(`${pid}:${token}`);
-    owners.set(`${pid}:${token}`, { pid, token, className: previous?.className ?? className });
+    const observedPhase = previous?.phase ?? phase;
+    owners.set(`${pid}:${token}`, { pid, token, className: previous?.className ?? className,
+      ...(observedPhase ? { phase: observedPhase } : {}) });
   };
   let entries = [];
   try { entries = readdirSync(join(admissionRoot, 'owners'), { withFileTypes: true }); } catch (error) {
@@ -193,13 +239,14 @@ function readAdmittedOwnerRss(processes, admissionRoot, legacyOwners, children, 
     try {
       const recorded = readFileSync(join(admissionRoot, 'owners', entry.name, 'process'), 'utf8').trim();
       const className = readFileSync(join(admissionRoot, 'owners', entry.name, 'class'), 'utf8').trim();
-      if (recorded === `${identity[1]} ${identity[2]}` && /^[a-z][a-z-]*$/.test(className)) accept(Number(identity[1]), identity[2], className);
+      if (recorded === `${identity[1]} ${identity[2]}` && /^[a-z][a-z-]*$/.test(className)) accept(Number(identity[1]), identity[2], className,
+        progress ? readAdmissionPhase(join(admissionRoot, 'owners', entry.name)) : undefined);
     } catch (error) {
       if (progress && error.code !== 'ENOENT') throw error;
       // A concurrent exit cannot supply an RSS credit or live diagnostics.
     }
   }
-  for (const owner of legacyOwners) accept(owner.pid, owner.token, owner.className);
+  for (const owner of legacyOwners) accept(owner.pid, owner.token, owner.className, owner.phase);
   const result = [];
   for (const [identity, owner] of owners) {
     const roots = new Set([owner.pid]);
@@ -272,7 +319,7 @@ export function renderWorkerMemoryReservationRows(sample) {
 }
 
 export function renderAdmissionOwnerProgress(progress) {
-  return progress.owners.map(owner => `${owner.className} owner pid ${owner.pid} (age=${owner.ageSeconds ?? 'unknown'}s, recent CPU=${owner.recentCpuPercent === null ? 'unknown' : '~' + owner.recentCpuPercent.toFixed(1) + '%'}, tree CPU=${owner.cpuSeconds ?? 'unknown'}s)`).join('; ');
+  return progress.owners.map(owner => `${owner.className} owner pid ${owner.pid} (age=${owner.ageSeconds ?? 'unknown'}s, phase=${owner.phase ?? 'unknown'}, recent CPU=${owner.recentCpuPercent === null ? 'unknown' : '~' + owner.recentCpuPercent.toFixed(1) + '%'}, tree CPU=${owner.cpuSeconds ?? 'unknown'}s)`).join('; ');
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
@@ -298,7 +345,14 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
         await new Promise(resolve => setTimeout(resolve, resolveHeavyweightPressureRetryMilliseconds()));
         sample = readWorkerMemoryReservations({ admissionRoot: root, includeOwnerProgress: true, previousProgress: sample.ownerProgress });
       }
-      process.stdout.write(JSON.stringify({ state: 'observed', ...sample.ownerProgress }) + '\n');
+      let disk;
+      if (process.env.HAPPIER_STACK_PM_CACHE_BASE_DIR) {
+        try {
+          const { inspectWorkerDiskBudget } = await import('../dev_targets/worker_disk_budget.mjs');
+          disk = { state: 'observed', ...await inspectWorkerDiskBudget({ repoDir: process.cwd(), cacheBaseDir: process.env.HAPPIER_STACK_PM_CACHE_BASE_DIR }) };
+        } catch (error) { disk = { state: 'unavailable', error: error.message }; }
+      }
+      process.stdout.write(JSON.stringify({ state: 'observed', ...sample.ownerProgress, ...(disk ? { disk } : {}) }) + '\n');
     } else process.stdout.write(renderWorkerMemoryReservationRows(sample));
   }
 }

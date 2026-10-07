@@ -45,6 +45,36 @@ function injected(overrides: Partial<Extract<TerminalInputInjectionResult, { sta
 }
 
 describe('createClaudeUnifiedInputArbiter', () => {
+  it.each(['accepted', 'retired'] as const)('settles a waiting terminal submission from canonical %s custody without Enter', async phase => {
+    const input = promptInput('waiting', { localIds: ['waiting-row'] });
+    let enterCount = 0;
+    const accepted: string[] = [];
+    let arbiter!: ReturnType<typeof createClaudeUnifiedInputArbiter>;
+    arbiter = createClaudeUnifiedInputArbiter({
+      // External terminal injection boundary: settlement must suppress a delayed Enter.
+      injectPrompt: async (_input, delivery) => {
+        if (phase === 'accepted') {
+          await arbiter.confirmProviderAcceptance({ promptText: input.text });
+        } else {
+          arbiter.retirePendingInputs(['waiting-row']);
+        }
+        if (!delivery?.resolveDeliveryState?.()) enterCount += 1;
+        return injected();
+      },
+      onPromptAccepted: acceptedInput => { accepted.push(acceptedInput.text); },
+    });
+    try {
+      arbiter.observeReadiness(readiness());
+      arbiter.enqueue(input);
+      await arbiter.drain();
+      expect(enterCount).toBe(0);
+      expect(arbiter.snapshot().queuedCount).toBe(0);
+      expect(accepted).toEqual(phase === 'accepted' ? [input.text] : []);
+    } finally {
+      arbiter.dispose();
+    }
+  });
+
   afterEach(() => {
     vi.useRealTimers();
   });

@@ -1,4 +1,5 @@
 import type { HappierCollectionKey } from './collectionModel.js';
+import { HAPPIER_MOTION_V1 } from '../interaction/motion.js';
 
 /**
  * The Collection's `table` presentation rules and its `detail: 'auto'` composition (COLLECTION.md §3, §4, §7).
@@ -114,10 +115,10 @@ export function resolveHappierCollectionTableColumns<Column extends HappierColle
 }
 
 /**
- * The table → split shared-element timeline, as fractions of the open duration (`motionTokens.durationMs.slow`,
- * 320 ms). The close plays the same timeline backwards over the close duration.
+ * The table → split shared-element timeline, as fractions of the open duration (`HAPPIER_MOTION_V1.slowMs`).
+ * The close plays the same timeline backwards over the close duration.
  */
-const OPEN_MS = 320;
+const OPEN_MS = HAPPIER_MOTION_V1.slowMs;
 export const HAPPIER_COLLECTION_TRANSITION_TIMELINE = Object.freeze({
   /** The non-title columns, the column header and the footer hints fade out (exit easing). */
   columns: Object.freeze([0 / OPEN_MS, 120 / OPEN_MS] as const),

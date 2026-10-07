@@ -118,7 +118,7 @@ export type ActionCompletionStateV1 = z.infer<typeof ActionCompletionStateV1Sche
 
 export type ActionCompletionResult =
   | Readonly<{ kind: 'completed'; value: JsonValue }>
-  | Readonly<{ kind: 'failed'; errorCode: string }>
+  | Readonly<{ kind: 'failed'; errorCode: string; value?: JsonValue }>
   | Readonly<{ kind: 'outcome_uncertain'; errorCode: 'outcome_uncertain' }>;
 
 export function freezeActionCompletionContractV1(declaration: ActionCompletionDeclaration): ActionCompletionContractV1 {
@@ -136,7 +136,10 @@ export function prepareActionCompletionV1(
 ): ActionCompletionResult
   | Readonly<{ kind: 'failed'; errorCode: string; noRunsLaunched: true }>
   | Readonly<{ kind: 'awaiting'; state: ActionCompletionStateV1 }> {
-  if (!executed.ok) return { kind: 'failed', errorCode: executed.errorCode };
+  if (!executed.ok) {
+    const details = StrictJsonValueSchema.safeParse(executed.details);
+    return { kind: 'failed', errorCode: executed.errorCode, ...(details.success ? { value: details.data } : {}) };
+  }
   const output = StrictJsonValueSchema.safeParse(executed.result);
   if (!output.success) return { kind: 'failed', errorCode: 'invalid_action_output' };
   if (!declaration) return { kind: 'completed', value: output.data };

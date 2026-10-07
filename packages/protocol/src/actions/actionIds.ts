@@ -29,6 +29,7 @@ import { NOTIFICATION_CONFIGURATION_ACTION_IDS } from './notificationConfigurati
 import { APP_UPDATE_ACTION_IDS } from './appUpdateActionFamily.js';
 import { WIDGET_INSTANCE_ACTION_IDS_V1 } from '../widgets/actionIdsV1.js';
 import { WIDGET_DEFINITION_ACTION_IDS_V1 } from '../widgets/definitionActionIdsV1.js';
+import { WORKFLOW_EFFECT_ACTION_IDS_V1 } from '../workflows/stepActionsV1.js';
 
 export const WORKFLOW_ACTION_IDS_V1 = [
   'workflow.validate', 'workflow.run.start', 'workflow.run.list', 'workflow.run.summaries', 'workflow.run.get', 'workflow.run.wait',
@@ -95,6 +96,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'action.invoke',
   ],
   workflows: WORKFLOW_ACTION_IDS_V1,
+  workflow_effects: WORKFLOW_EFFECT_ACTION_IDS_V1,
   workflow_authoring: ['workflow.authoring.conversation.bind'],
   artifact_access: ARTIFACT_ACCESS_ACTION_IDS_V1,
   artifacts: ARTIFACT_ACTION_IDS_V1,
@@ -771,6 +773,7 @@ export const ACTION_IDS = [
   ...ACTION_ID_FAMILIES_V1.teams,
   ...ACTION_ID_FAMILIES_V1.saved_secret_sharing,
   ...ACTION_ID_FAMILIES_V1.workflows,
+  ...ACTION_ID_FAMILIES_V1.workflow_effects,
   ...ACTION_ID_FAMILIES_V1.notifications,
 ] as const;
 
