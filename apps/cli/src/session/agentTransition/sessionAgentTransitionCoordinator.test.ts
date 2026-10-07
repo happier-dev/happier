@@ -76,6 +76,20 @@ describe('runSessionAgentTransition — the recorded machine is not a gate', () 
 });
 
 describe('runSessionAgentTransition — pre-stop failures leave the source untouched (QA-T-03)', () => {
+  it.each(['unrecognized-permission', '', 42])('rejects invalid authored permission %j before every source effect', async (permissionMode) => {
+    const harness = createTransitionDepsHarness();
+    const result = await runSessionAgentTransition({
+      credentials: TEST_CREDENTIALS,
+      request: buildTransitionRequest({
+        input: { text: 'continue please', localId: TEST_LOCAL_ID, meta: { permissionMode } },
+      }),
+      deps: harness.deps,
+    });
+
+    expect(result).toEqual({ type: 'rejected', code: 'unsupported_operation', sourceEffect: 'none' });
+    expect(harness.calls).toEqual([]);
+  });
+
   it.each([
     [
       'the server explicitly disables it',

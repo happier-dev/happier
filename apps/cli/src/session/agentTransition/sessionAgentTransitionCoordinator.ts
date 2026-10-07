@@ -6,6 +6,7 @@ import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/s
 import type { SessionAgentTransitionCurrentViewCommitted, SessionAgentTransitionRejectedCodeV1, SessionAgentTransitionRequestV1, SessionAgentTransitionResultV1, SessionAgentTransitionSelectionV1, SessionAgentTransitionSourceUntouched, AgentNativeResumeIdentityV1 } from '@happier-dev/protocol';
 import {
   resolveAgentIdFromSessionMetadata,
+  parsePermissionIntentAlias,
   projectCurrentAgentSessionView,
   type AgentId,
 } from '@happier-dev/agents';
@@ -665,6 +666,16 @@ export async function runSessionAgentTransition(
   // One effect ledger per invocation. The handle in scope is the proof of how
   // far the transition got, and it is the ONLY source of result arms.
   const effects = beginSessionAgentTransitionEffects({ localId });
+
+  // Trusted input preserves the authored metadata at admission. Validate an
+  // explicit permission through the canonical intent owner before stopping
+  // the source; absent permission keeps the existing trusted-input semantics.
+  if (Object.prototype.hasOwnProperty.call(request.input.meta, 'permissionMode')) {
+    const permissionMode = request.input.meta.permissionMode;
+    if (typeof permissionMode !== 'string' || !parsePermissionIntentAlias(permissionMode)) {
+      return effects.rejected('unsupported_operation');
+    }
+  }
 
   // The server-owned feature decision is the admission boundary for this
   // optional operation. Its resolver owns snapshot parsing, dependencies,

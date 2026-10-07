@@ -496,6 +496,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
   // the incumbent execution-run bridge/action family with its nullable scope;
   // no Admin target picker, Session projection, or parallel daemon registry.
   registerCapabilitiesHandlers(rpcHandlerManager, {
+    hasSessionAgentTransition: () => rpcHandlerManager.hasHandler(RPC_METHODS.SESSION_AGENT_TRANSITION),
     ...(params.deps?.createCapabilitiesApiClient
       ? { createApiClient: params.deps.createCapabilitiesApiClient }
       : {}),
