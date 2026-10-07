@@ -1,14 +1,23 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import 'fake-indexeddb/auto';
 
 import { renderSettingsView, standardCleanup } from '@/dev/testkit';
-import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
-import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { localSettingsDefaults, localSettingsParse } from '@/sync/domains/settings/localSettings';
+import { settingsDefaults, settingsParse } from '@/sync/domains/settings/settings';
+import { storage } from '@/sync/domains/state/storageStore';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { createThemeProfileDraft } from '@/theme/profiles/createThemeProfileDraft';
 import { installSessionSettingsEntryModuleMocks, resetSessionSettingsEntryState } from './sessionSettingsEntryTestHelpers';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+const testGlobal = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean };
+testGlobal.IS_REACT_ACT_ENVIRONMENT = true;
+installDisconnectedServerSocketBoundary();
+const initialStorage = storage.getState();
+let account: Awaited<ReturnType<typeof createSecretSettingsTestHarness>> | undefined;
 
 const CUSTOM_PROFILE = createThemeProfileDraft({ id: 'custom-1', name: 'Mine', now: '2026-09-23T00:00:00.000Z' });
 
@@ -46,7 +55,6 @@ function nonDefaultAppearanceState(): Record<string, unknown> {
 }
 
 const shared = vi.hoisted(() => ({
-    settingsState: {} as Record<string, unknown>,
     confirm: vi.fn(async (): Promise<boolean> => true),
 }));
 
@@ -73,44 +81,34 @@ installSessionSettingsEntryModuleMocks({
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
         return createModalModuleMock({ spies: { confirm: shared.confirm } }).module;
     },
-    storageModule: async (importOriginal) => {
-        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        const mutableSetting = (key: string) => [
-            shared.settingsState[key] ?? null,
-            (next: unknown) => { shared.settingsState[key] = next; },
-        ];
-        return createStorageModuleMock({
-            importOriginal,
-            overrides: {
-                useSettingMutable: mutableSetting as unknown as typeof import('@/sync/domains/state/storage')['useSettingMutable'],
-                useLocalSettingMutable: mutableSetting as unknown as typeof import('@/sync/domains/state/storage')['useLocalSettingMutable'],
-            },
-        });
-    },
+    storageModule: (importOriginal) => importOriginal<typeof import('@/sync/domains/state/storage')>(),
     useDeviceType: 'desktop',
 });
 
-// Boundary fixture: the settings writers persist to the synced store; here they write the same keyed state.
-vi.mock('@/sync/store/settingsWriters', () => ({
-    useApplySettings: () => (delta: Record<string, unknown>) => { Object.assign(shared.settingsState, delta); },
-    useApplyLocalSettings: () => (delta: Record<string, unknown>) => { Object.assign(shared.settingsState, delta); },
-}));
 vi.mock('expo-localization', () => ({ getLocales: () => [{ languageTag: 'en-US' }] }));
 vi.mock('expo-status-bar', () => ({ setStatusBarStyle: vi.fn() }));
 vi.mock('expo-system-ui', () => ({ setBackgroundColorAsync: vi.fn() }));
 vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({ useReducedMotionPreference: () => true }));
 
-afterEach(() => {
+afterEach(async () => {
     standardCleanup();
+    await account?.dispose();
+    account = undefined;
+    storage.setState(initialStorage, true);
     resetSessionSettingsEntryState();
     shared.confirm.mockReset();
     shared.confirm.mockImplementation(async () => true);
 });
 
 async function pressReset() {
-    shared.settingsState = nonDefaultAppearanceState();
+    const fixture = nonDefaultAppearanceState();
+    account = await createSecretSettingsTestHarness({ settings: settingsParse(fixture), sharedEnabled: false });
+    storage.setState({ localSettings: localSettingsParse(fixture) });
     const mod = await import('@/app/(app)/settings/appearance');
-    const screen = await renderSettingsView(React.createElement(mod.default), { flushOptions: { cycles: 0 } });
+    const screen = await renderSettingsView(
+        <InjectedAuthProvider credentials={account.credentials}>{React.createElement(mod.default)}</InjectedAuthProvider>,
+        { flushOptions: { cycles: 0 } },
+    );
     const reset = screen.findByTestId('settings-appearance-reset');
     if (!reset) throw new Error('Expected the Reset action in the page header');
     await act(async () => {
@@ -123,7 +121,11 @@ describe('Appearance reset', () => {
         await pressReset();
 
         expect(shared.confirm).toHaveBeenCalledOnce();
-        const state = shared.settingsState;
+        await vi.waitFor(() => expect(account?.settingsWrites.length).toBeGreaterThan(0));
+        const { sync } = await import('@/sync/sync');
+        const queue = Reflect.get(sync, 'settingsSync') as import('@/utils/sessions/sync').InvalidateSync;
+        await queue.awaitQueue();
+        const state = storage.getState().localSettings;
         expect(state.themePreference).toBe(localSettingsDefaults.themePreference);
         expect(state.themeProfiles).toEqual({ activeProfileIds: { light: null, dark: null }, profiles: [CUSTOM_PROFILE] });
         for (const key of [
@@ -139,10 +141,12 @@ describe('Appearance reset', () => {
             'tabBarShowLabels', 'tabBarSize', 'glassBlurEnabled', 'glassBlurIntensity', 'visualEffectsLevel',
             'contextGaugeStyle', 'animatedNumbers', 'alwaysShowContextSize',
         ] as const) {
-            expect(state[key], key).toEqual(settingsDefaults[key]);
+            expect(storage.getState().settings[key], key).toEqual(settingsDefaults[key]);
+            expect(account?.persistedSettings[key], `${key} persisted`).toEqual(settingsDefaults[key]);
         }
         // Language has its own page and is not an appearance preference.
-        expect(state.preferredLanguage).toBe('fr');
+        expect(storage.getState().settings.preferredLanguage).toBe('fr');
+        expect(account?.persistedSettings.preferredLanguage).toBe('fr');
     });
 
     it('changes nothing when the confirmation is declined', async () => {
@@ -150,6 +154,10 @@ describe('Appearance reset', () => {
 
         await pressReset();
 
-        expect(shared.settingsState).toEqual(nonDefaultAppearanceState());
+        const fixture = nonDefaultAppearanceState();
+        expect(storage.getState().localSettings).toEqual(localSettingsParse(fixture));
+        expect(storage.getState().settings).toEqual(settingsParse(fixture));
+        expect(account?.persistedSettings).toEqual(settingsParse(fixture));
+        expect(account?.settingsWrites).toEqual([]);
     });
 });

@@ -1,121 +1,70 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// todoOps imports Sync, which instantiates MMKV. Mock it for deterministic tests.
-const kvStore = vi.hoisted(() => new Map<string, string>());
-vi.mock('react-native-mmkv', () => {
-    class MMKV {
-        getString(key: string) {
-            return kvStore.get(key);
-        }
-        set(key: string, value: string) {
-            kvStore.set(key, value);
-        }
-        delete(key: string) {
-            kvStore.delete(key);
-        }
-        clearAll() {
-            kvStore.clear();
-        }
-    }
-
-    return { MMKV };
-});
-
-const appStateAddListener = vi.hoisted(() => vi.fn(() => ({ remove: vi.fn() })));
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                        Platform: { OS: 'web' },
-                        AppState: { addEventListener: appStateAddListener as any },
-                    }
-    );
-});
-
-const runtimeFetchSpy = vi.hoisted(() => vi.fn());
-
-vi.mock('@/utils/system/runtimeFetch', () => ({
-    runtimeFetch: (...args: unknown[]) => runtimeFetchSpy(...args),
-}));
-
-vi.mock('@/log', () => ({
-    log: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
-}));
-
-vi.mock('@/voice/context/voiceHooks', () => ({
-    voiceHooks: {
-        onSessionFocus: vi.fn(),
-        onSessionOffline: vi.fn(),
-        onSessionOnline: vi.fn(),
-        onMessages: vi.fn(),
-        reportContextualUpdate: vi.fn(),
-    },
-}));
-
-vi.mock('@/track', () => ({
-    initializeTracking: vi.fn(),
-    tracking: null,
-    trackPaywallPresented: vi.fn(),
-    trackPaywallPurchased: vi.fn(),
-    trackPaywallCancelled: vi.fn(),
-    trackPaywallRestored: vi.fn(),
-    trackPaywallError: vi.fn(),
-}));
-
-import { encodeBase64 } from '@/encryption/base64';
-import { encodeUTF8 } from '@/encryption/text';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 
-function buildTokenWithSub(sub: string): string {
-    const payload = encodeBase64(encodeUTF8(JSON.stringify({ sub })), 'base64');
-    return `hdr.${payload}.sig`;
-}
+describe('syncTodos fetchTodos retry semantics at the HTTP boundary', () => {
+    let network: Awaited<ReturnType<typeof installSessionOpsNetworkBoundary>>;
+    let credentials: AuthCredentials;
+    let fetchTodos: typeof import('./syncTodos').fetchTodos;
+    let kvStatus: number;
 
-describe('syncTodos fetchTodos retry semantics', () => {
-    afterEach(() => {
-        runtimeFetchSpy.mockReset();
+    beforeEach(async () => {
         vi.resetModules();
-        vi.useRealTimers();
+        kvStatus = 200;
+        network = await installSessionOpsNetworkBoundary();
+        const home = await network.addHome('https://todos-retry.example.test', 'account-todos');
+        credentials = { token: home.token };
+        network.setHttpResponder(async (input) => {
+            const path = new URL(String(input)).pathname;
+            if (path === '/v1/account/encryption/currentness') {
+                return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            }
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            if (path === '/v1/kv') return Response.json({ items: [] }, { status: kvStatus });
+            return null;
+        });
+        await loadSyncSingletonForTests();
+        const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+        const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+        await upsertAndActivateServer({ serverUrl: home.serverUrl });
+        await restoreConnectionToActiveServer(credentials);
+        ({ fetchTodos } = await import('./syncTodos'));
+        network.httpRequests.length = 0;
+    });
+
+    afterEach(async () => {
+        const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
+        await disconnectActiveServerConnection();
+        const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
+        const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
+        serverScopedRpcSocketPool.resetForTests();
+        resetScopedMachineTransportCacheForTests();
+        network.dispose();
         vi.restoreAllMocks();
     });
 
-    it('throws and performs only a single HTTP attempt when KV fetch fails', async () => {
-        upsertAndActivateServer({ serverUrl: 'https://server.example.test', scope: 'tab' });
-        runtimeFetchSpy.mockResolvedValue(new Response('nope', { status: 500 }));
-
-        const { fetchTodos } = await import('./syncTodos');
-
-        const credentials: AuthCredentials = {
-            token: buildTokenWithSub('server-test'),
-            secret: encodeBase64(new Uint8Array(32).fill(1), 'base64url'),
-        };
-
+    it('throws and performs only a single KV HTTP attempt when KV fetch fails', async () => {
+        kvStatus = 500;
         await expect(fetchTodos({ credentials })).rejects.toThrow();
 
-        expect(runtimeFetchSpy).toHaveBeenCalledTimes(1);
+        const kvRequests = network.httpRequests.filter(({ url }) => new URL(url).pathname === '/v1/kv');
+        expect(kvRequests).toHaveLength(1);
+        expect(kvRequests[0]).toMatchObject({ token: `Bearer ${credentials.token}` });
+        expect(new URL(kvRequests[0]!.url).searchParams.get('prefix')).toBe('todo.');
     });
 
     it('drops fetched todos when the captured sync scope is stale before apply', async () => {
-        upsertAndActivateServer({ serverUrl: 'https://server.example.test', scope: 'tab' });
-        runtimeFetchSpy.mockResolvedValue(new Response(JSON.stringify({
-            items: [],
-        }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
-
-        const { fetchTodos } = await import('./syncTodos');
         const { storage } = await import('@/sync/domains/state/storage');
-        const applyTodos = vi.spyOn(storage.getState(), 'applyTodos');
+        const retained = { todos: {}, undoneOrder: ['retained'], doneOrder: [], versions: { retained: 4 } };
+        storage.getState().applyTodos(retained);
 
-        const credentials: AuthCredentials = {
-            token: buildTokenWithSub('server-test'),
-            secret: encodeBase64(new Uint8Array(32).fill(1), 'base64url'),
-        };
+        await fetchTodos({ credentials, shouldContinue: () => false });
 
-        await fetchTodos({
-            credentials,
-            shouldContinue: () => false,
-        } as Parameters<typeof fetchTodos>[0] & { shouldContinue: () => boolean });
-
-        expect(applyTodos).not.toHaveBeenCalled();
+        expect(storage.getState().todoState).toBe(retained);
+        expect(network.httpRequests.filter(({ url }) => new URL(url).pathname === '/v1/kv')).toEqual([]);
     });
 });

@@ -1,14 +1,24 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
-import type { StorageState } from '@/sync/store/types';
-import { registerStorageStateReader } from '@/sync/domains/state/storageStateReaderBridge';
+import { getStorage } from '@/sync/domains/state/storage';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { disconnectActiveServerConnection, restoreConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { resetRuntimeFetch, setRuntimeFetch, type RuntimeFetch } from '@/utils/system/runtimeFetch';
 import { fetchAccountSettingsHistory } from './apiAccountSettingsHistory';
 
-const credentials: AuthCredentials = { token: 'token-a' };
+installDisconnectedServerSocketBoundary();
+beforeAll(loadSyncSingletonForTests);
+
+function credentialsFor(name: string): AuthCredentials {
+    return { token: `e30.${Buffer.from(JSON.stringify({ sub: `account-${name}` })).toString('base64url')}.signature` };
+}
+const credentials = credentialsFor('a');
 const snapshots = [
     { version: 3, createdAt: '2026-08-29T10:00:00.000Z', contentKind: 'plain', byteLength: 128 },
     { version: 2, createdAt: '2026-08-28T10:00:00.000Z', contentKind: 'encrypted', byteLength: 256 },
@@ -17,22 +27,33 @@ let scope: { serverId: string; accountId: string };
 const http = vi.fn<RuntimeFetch>();
 
 async function activateHome(name: string) {
+    await disconnectActiveServerConnection();
     const profile = await upsertAndActivateServer({ serverUrl: `https://home-${name}.example.test`, name });
     scope = { serverId: profile.id, accountId: `account-${name}` };
-    // Minimal registered state fixture: the real lifetime owner reads profileScope only.
-    registerStorageStateReader(() => ({ profileScope: scope }) as StorageState);
+    const homeCredentials = credentialsFor(name);
+    await TokenStorage.setCredentialsForServerUrl(profile.serverUrl, { serverId: profile.id }, homeCredentials);
+    await restoreConnectionToActiveServer(homeCredentials);
+    getStorage().setState({ profileScope: scope, settingsScope: scope });
     return scope;
 }
 
 beforeEach(async () => {
     retireActiveServerAccountScopeLifetime();
-    const initialScope = await activateHome('a');
-    await TokenStorage.setCredentialsForServerUrl('https://home-a.example.test', { serverId: initialScope.serverId }, credentials);
     http.mockReset();
     http.mockImplementation(async () => Response.json({ snapshots }));
-    setRuntimeFetch(http);
+    setRuntimeFetch(async (url, init) => {
+        const path = new URL(String(url)).pathname;
+        if (path === '/health' || path === '/v1/auth/ping') return Response.json({});
+        if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+        if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+        if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+        if (path === '/v2/account/settings/history') return http(url, init);
+        return Response.json({ error: 'not_found' }, { status: 404 });
+    });
+    await activateHome('a');
 });
-afterEach(() => {
+afterEach(async () => {
+    await disconnectActiveServerConnection();
     retireActiveServerAccountScopeLifetime();
     resetRuntimeFetch();
 });
@@ -42,7 +63,7 @@ describe('fetchAccountSettingsHistory', () => {
         await expect(fetchAccountSettingsHistory(credentials, { settingsScope: scope })).resolves.toEqual({ status: 'ready', snapshots });
         const historyRequest = http.mock.calls.find(([url]) => String(url).endsWith('/v2/account/settings/history'));
         expect(String(historyRequest?.[0])).toBe('https://home-a.example.test/v2/account/settings/history');
-        expect(new Headers(historyRequest?.[1]?.headers).get('Authorization')).toBe('Bearer token-a');
+        expect(new Headers(historyRequest?.[1]?.headers).get('Authorization')).toBe(`Bearer ${credentials.token}`);
     });
 
     it('rejects a retained A list intent after B becomes focused before any HTTP effect', async () => {

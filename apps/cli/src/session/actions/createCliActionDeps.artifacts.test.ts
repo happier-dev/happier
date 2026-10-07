@@ -19,7 +19,7 @@ describe('Account Artifact Actions through the real CLI host composition', () =>
     await mkdir(join(root, 'workspace'));
     http.get.mockReset(); http.post.mockReset(); http.delete.mockReset();
     // Machine identity is persistent machine-local configuration, a system boundary.
-    vi.spyOn(persistence, 'readSettings').mockResolvedValue({ schemaVersion: persistence.SUPPORTED_SCHEMA_VERSION,
+    await persistence.writeSettings({ schemaVersion: persistence.SUPPORTED_SCHEMA_VERSION,
       onboardingCompleted: true, machineId: 'local-machine' });
   });
   afterEach(async () => { vi.restoreAllMocks(); await rm(root, { recursive: true, force: true }); });
@@ -105,25 +105,29 @@ describe('Account Artifact Actions through the real CLI host composition', () =>
   it('lists, revokes and creates owner public links without a mounted delivery consumer', async () => {
     const publicShare = { id: 'share-1', subject: { kind: 'artifact', id: artifactId }, expiresAt: null, maxUses: null,
       useCount: 0, isConsentRequired: false, createdAt: 1, updatedAt: 1, keyDerivation: 'fragment_v1' };
-    http.get.mockImplementation(async (url: string) => ({ status: 200, data: url.includes('/v1/public-shares') ? { publicShares: [publicShare] }
+    http.get.mockImplementation(async (url: string) => ({ status: 200, data: url.endsWith('/v1/account/encryption') ? { mode: 'plain', updatedAt: 1 }
+      : url.includes('/v1/public-shares') ? { publicShares: [publicShare] }
       : { id: artifactId, header: encodePlainArtifactStoredContent({ title: 'Note' }),
         body: encodePlainArtifactStoredContent({ body: 'note' }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain',
         headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } }));
     http.delete.mockResolvedValue({ status: 200, data: { success: true } });
     http.post.mockResolvedValue({ status: 200, data: { publicShare, isolatedOrigin: 'https://public.example.test' } });
-    const host = deps();
+    const executor = createActionExecutor(deps());
     const context = { surface: 'cli' as const };
-    await expect(host.artifactAction?.({ actionId: 'artifact.public_link.list', input: { artifactId }, context })).resolves.toEqual({ publicShares: [publicShare] });
-    await expect(host.artifactAction?.({ actionId: 'artifact.public_link.revoke', input: { artifactId, shareId: 'share-1' }, context })).resolves.toMatchObject({ revoked: true });
-    await expect(host.artifactAction?.({ actionId: 'artifact.public_link.create', input: { artifactId }, context })).resolves.toMatchObject({ publicShare, url: expect.stringMatching(/^https:\/\/public.example.test\/s\/[^#]+#k=.+$/) });
+    await expect(executor.execute('artifact.public_link.list', { artifactId }, context)).resolves.toEqual({ ok: true, result: { publicShares: [publicShare] } });
+    await expect(executor.execute('artifact.public_link.revoke', { artifactId, shareId: 'share-1' },
+      { ...context, presentUserConfirmation: { actionId: 'artifact.public_link.revoke' } })).resolves.toMatchObject({ ok: true, result: { revoked: true } });
+    await expect(executor.execute('artifact.public_link.create', { artifactId },
+      { ...context, presentUserConfirmation: { actionId: 'artifact.public_link.create' } })).resolves.toMatchObject({ ok: true, result: { publicShare, url: expect.stringMatching(/^https:\/\/public.example.test\/s\/[^#]+#k=.+$/) } });
   });
   it('returns an approved Artifact fragment link and also notifies an optional mounted host', async () => {
     const issued: ArtifactPublicLinkIssuedV1[] = [];
     const publicShare = { id: 'share-1', subject: { kind: 'artifact', id: artifactId }, expiresAt: null, maxUses: null,
       useCount: 0, isConsentRequired: false, createdAt: 1, updatedAt: 1, keyDerivation: 'fragment_v1' };
-    http.get.mockResolvedValue({ status: 200, data: { id: artifactId, header: encodePlainArtifactStoredContent({ title: 'Note' }),
+    http.get.mockImplementation(async (url: string) => ({ status: 200, data: url.endsWith('/v1/account/encryption') ? { mode: 'plain', updatedAt: 1 }
+      : { id: artifactId, header: encodePlainArtifactStoredContent({ title: 'Note' }),
       body: encodePlainArtifactStoredContent({ body: 'note' }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
-      ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } });
+      ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } }));
     http.post.mockResolvedValue({ status: 200, data: { publicShare, isolatedOrigin: 'https://public.example.test' } });
     const executor = createActionExecutor({ ...deps(link => { issued.push(link); }), isActionApprovalRequired: () => false });
     const result = await executor.execute('artifact.public_link.create', { artifactId },

@@ -1,5 +1,5 @@
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createSessionFixture, renderHook, standardCleanup } from '@/dev/testkit';
 
@@ -31,31 +31,18 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 
-const getActiveServerSnapshotMock = vi.hoisted(() => vi.fn(() => ({ serverId: 'active-server', serverUrl: 'https://example.com', generation: 1 })));
-const activeServerRuntimeState = vi.hoisted(() => ({
-    listener: null as null | ((snapshot: { serverId: string; serverUrl: string; generation: number }) => void),
-    snapshot: { serverId: 'active-server', serverUrl: 'https://example.com', generation: 1 },
-}));
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { activatePendingQueueScope } from '../engine/pending/pendingQueueV2.testHelpers';
 
-vi.mock('@/sync/domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: () => {
-        getActiveServerSnapshotMock();
-        return activeServerRuntimeState.snapshot;
-    },
-    subscribeActiveServer: (listener: (snapshot: { serverId: string; serverUrl: string; generation: number }) => void) => {
-        activeServerRuntimeState.listener = listener;
-        return () => {
-            if (activeServerRuntimeState.listener === listener) {
-                activeServerRuntimeState.listener = null;
-            }
-        };
-    },
-}));
+beforeEach(async () => {
+    await loadSyncSingletonForTests();
+    storage.setState(storage.getInitialState(), true);
+    await activatePendingQueueScope({ serverId: 'active-server', accountId: 'account-a' });
+});
 
 afterEach(() => {
-    activeServerRuntimeState.listener = null;
-    activeServerRuntimeState.snapshot = { serverId: 'active-server', serverUrl: 'https://example.com', generation: 1 };
     standardCleanup();
+    storage.setState(storage.getInitialState(), true);
 });
 
 function makeRenderable(id: string): SessionListRenderableSession {
@@ -120,7 +107,7 @@ describe('useSession exact Home lookup', () => {
         const previousState = storage.getState();
         const legacy = createSessionFixture({ id: 'same', serverId: undefined, activeAt: 90_000 });
         try {
-            activeServerRuntimeState.snapshot = { serverId: 'home-a', serverUrl: 'https://a.example', generation: 1 };
+            await activatePendingQueueScope({ serverId: 'home-a', accountId: 'account-a' });
             storage.setState((state) => ({
                 ...state,
                 sessions: { same: legacy },
@@ -135,8 +122,7 @@ describe('useSession exact Home lookup', () => {
 
             // Selection may publish Home B before Sync retires Home A's carrier.
             await act(async () => {
-                activeServerRuntimeState.snapshot = { serverId: 'home-b', serverUrl: 'https://b.example', generation: 2 };
-                activeServerRuntimeState.listener?.(activeServerRuntimeState.snapshot);
+                await activatePendingQueueScope({ serverId: 'home-b', accountId: 'account-a' });
             });
             expect(hook.getCurrent()).toEqual({ homeA: null, homeB: null });
 
@@ -1348,11 +1334,7 @@ describe('useSessionListRenderableWithServerScope', () => {
                 presence: 'online',
             };
 
-            activeServerRuntimeState.snapshot = {
-                serverId: 'side-server',
-                serverUrl: 'https://side.example.com',
-                generation: 1,
-            };
+            await activatePendingQueueScope({ serverId: 'side-server', accountId: 'account-a' });
 
             storage.setState((state) => ({
                 ...state,
@@ -1374,12 +1356,7 @@ describe('useSessionListRenderableWithServerScope', () => {
             }));
 
             await act(async () => {
-                activeServerRuntimeState.snapshot = {
-                    serverId: 'other-server',
-                    serverUrl: 'https://other.example.com',
-                    generation: 2,
-                };
-                activeServerRuntimeState.listener?.(activeServerRuntimeState.snapshot);
+                await activatePendingQueueScope({ serverId: 'other-server', accountId: 'account-a' });
             });
 
             expect(hook.getCurrent()).toEqual(expect.objectContaining({

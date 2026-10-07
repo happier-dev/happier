@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { filterUserFacingMachineDetailSessions } from '@/app/(app)/machine/[id]/machineDetailSessionQueries';
+import { filterUserFacingMachineDetailSessions } from '@/components/machines/machineDetailSessionQueries';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
 describe('filterUserFacingMachineDetailSessions', () => {

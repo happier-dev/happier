@@ -2223,7 +2223,8 @@ export function useSessionListViewStateFromPaneState(
                     item,
                     node: {
                         id,
-                        headerKind: item.type === 'header' ? item.headerKind : undefined,
+                        kind: item.type,
+                        ...(item.type === 'header' ? { headerKind: item.headerKind } : {}),
                         isGroupTail,
                     },
                 };

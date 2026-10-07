@@ -1,28 +1,36 @@
-import { describe, expect, it } from 'vitest';
-import type { StorageState } from '@/sync/store/types';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+
+beforeAll(loadSyncSingletonForTests);
 
 async function activateServerAccount(serverUrl: string, accountId: string) {
     const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
     const { createServerAccountScope } = await import('@/sync/domains/scope/serverAccountScope');
-    const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
 
     const server = await upsertAndActivateServer({ serverUrl, source: 'manual', scope: 'device', replaceEquivalentStoredUrl: true });
     const scope = createServerAccountScope(server.id, accountId);
     expect(scope).not.toBeNull();
-    registerStorageStateReader(() => ({ profileScope: scope } as unknown as StorageState));
+    if (!scope) throw new Error('Expected Account scope');
+    await activateScope(scope);
 }
 
 async function activateScope(scope: { serverId: string; accountId: string }) {
-    const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
-    registerStorageStateReader(() => ({ profileScope: scope } as unknown as StorageState));
+    const { switchConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+    const { storage } = await import('@/sync/domains/state/storage');
+    await switchConnectionToActiveServer();
+    storage.getState().activateProfileScope(scope);
+    await storage.getState().activateSettingsScope(scope);
 }
 
 async function activateServerWithoutAccount(serverUrl: string) {
     const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
-    const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
+    const { switchConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+    const { storage } = await import('@/sync/domains/state/storage');
 
-    upsertAndActivateServer({ serverUrl, source: 'manual', scope: 'device', replaceEquivalentStoredUrl: true });
-    registerStorageStateReader(() => ({ profileScope: null } as unknown as StorageState));
+    await upsertAndActivateServer({ serverUrl, source: 'manual', scope: 'device', replaceEquivalentStoredUrl: true });
+    await switchConnectionToActiveServer();
+    storage.getState().clearProfileScope();
+    storage.getState().clearSettingsScope();
 }
 
 describe('pendingNotificationAction', () => {

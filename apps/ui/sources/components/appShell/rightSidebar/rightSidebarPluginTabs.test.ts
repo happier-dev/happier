@@ -28,12 +28,14 @@ function createPlacement(overrides: Partial<PluginUiSurfacePlacementProjection> 
     const placement = {
         id: `surfacePlacement:${REVIEW_PLUGIN_ID}:review-panel`,
         pluginId: REVIEW_PLUGIN_ID,
-        contributionKind: 'surfacePlacement',
+        occurrenceId: `${REVIEW_PLUGIN_ID}#1`,
+        contributionKind: 'surfacePlacement' as const,
         descriptorId: 'review-panel',
         target: { kind: 'session' },
         renderer: { kind: 'host', rendererId: 'review.panel' },
         display: { developerFallback: 'Review', icon: 'review' },
-        availability: { state: 'available', reason: 'available', diagnostics: [] },
+        availability: { state: 'available' as const, reason: 'available', diagnostics: [] },
+        headerActions: [],
         ...overrides,
     };
     const binding = placement.binding ?? destinationBinding(
@@ -47,7 +49,7 @@ function createPlacement(overrides: Partial<PluginUiSurfacePlacementProjection> 
         ...placement,
         binding,
         target: binding.target,
-    } as PluginUiSurfacePlacementProjection;
+    } satisfies PluginUiSurfacePlacementProjection;
 }
 
 describe('rightSidebarPluginTabs', () => {
@@ -187,7 +189,10 @@ describe('rightSidebarPluginTabs', () => {
             scope: 'session',
             placements: [
                 createPlacement({
-                    compatibility: { platforms: ['web'] },
+                    availability: {
+                        state: 'available', reason: 'available', diagnostics: [],
+                        when: { fact: 'host.platform', operator: 'equals', value: 'web' },
+                    },
                 }),
             ],
             projectionGeneration: 4,
@@ -197,7 +202,10 @@ describe('rightSidebarPluginTabs', () => {
             scope: 'session',
             placements: [
                 createPlacement({
-                    compatibility: { platforms: ['web'] },
+                    availability: {
+                        state: 'available', reason: 'available', diagnostics: [],
+                        when: { fact: 'host.platform', operator: 'equals', value: 'web' },
+                    },
                 }),
             ],
             projectionGeneration: 4,
@@ -214,7 +222,10 @@ describe('rightSidebarPluginTabs', () => {
             scope: 'session',
             placements: [
                 createPlacement({
-                    featureGate: 'plugins.ui.reviewPanel',
+                    availability: {
+                        state: 'available', reason: 'available', diagnostics: [],
+                        when: { fact: 'host.feature', operator: 'enabled', value: 'plugins.ui.reviewPanel' },
+                    },
                 }),
                 createPlacement({
                     id: `surfacePlacement:${REVIEW_PLUGIN_ID}:blocked-review`,

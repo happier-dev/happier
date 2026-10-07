@@ -2,6 +2,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import sodium from '@/encryption/libsodium.lib';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { createDirectoryHttpFixture } from './accountDirectoryTestFixtures';
 import { AccountDirectorySession } from '@/sync/domains/accountDirectory/accountDirectorySession';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
@@ -17,10 +18,6 @@ const TEST_CREDENTIAL_TOKEN_DIGEST = 'sha256:test-account-credential';
 
 installTokenStorageWebPlatformMocks();
 const boundary = vi.hoisted(() => ({ request: vi.fn() }));
-vi.mock('@/sync/http/client', () => ({
-    createServerFetchAtEndpoint: (options: { endpointUrl: string }) => (path: string, init?: RequestInit) => boundary.request(options.endpointUrl, path, init),
-    serverFetch: (path: string, init?: RequestInit) => boundary.request('ambient', path, init),
-}));
 
 describe('exact Directory approval continuation', () => {
     const previousStorageScope = process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
@@ -35,9 +32,15 @@ describe('exact Directory approval continuation', () => {
         restoreLocks = installWebLockManagerMock().restore;
         fixture = createDirectoryHttpFixture();
         boundary.request.mockImplementation(fixture.request);
+        setRuntimeFetch(async (input, init) => {
+            const url = new URL(input instanceof Request ? input.url : String(input));
+            if (url.pathname === '/v1/auth/ping') return Response.json({});
+            return boundary.request(url.origin, `${url.pathname}${url.search}`, init);
+        });
     });
     afterEach(async () => {
         await cancelPendingDirectoryHomeEnrollment();
+        resetRuntimeFetch();
         restoreLocks();
         restore();
         if (previousStorageScope === undefined) delete process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;

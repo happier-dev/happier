@@ -4,15 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
 vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        View: 'View',
-        ActivityIndicator: 'ActivityIndicator',
-        Platform: {
-            OS: 'ios',
-            select: (options: Record<string, unknown>) => options.ios ?? options.native ?? options.default,
-        },
-    });
+    const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeNativeMock({ platformOS: 'ios' });
 });
 
 vi.mock('react-native-unistyles', async () => {
@@ -29,12 +22,11 @@ vi.mock('react-native-unistyles', async () => {
 });
 
 describe('ActivitySpinner native accessibility', () => {
-    it('defaults the native activity indicator to a progressbar role', async () => {
+    it('defaults the native spinner to a progressbar role', async () => {
         const { ActivitySpinner } = await import('./ActivitySpinner');
         const screen = await renderScreen(<ActivitySpinner testID="spinner" />);
 
         const spinner = screen.findByTestId('spinner');
-        expect(spinner?.type).toBe('ActivityIndicator');
         expect(spinner?.props.accessibilityRole).toBe('progressbar');
     });
 

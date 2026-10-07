@@ -1501,11 +1501,11 @@ describe('settings', () => {
                     gemini: 'system-first',
                     invalid: 'nope',
                 },
-            } as any);
+            });
 
-            expect((parsed as any).backendCliSourcePreferenceByTargetKey).toEqual({
-                'backend:codex': 'managed-first',
-                'backend:gemini': 'system-first',
+            expect(parsed.backendCliSourcePreferenceByTargetKey).toEqual({
+                'agent:happier.agent.codex/codex': 'managed-first',
+                'agent:happier.agent.gemini/gemini': 'system-first',
             });
         });
 

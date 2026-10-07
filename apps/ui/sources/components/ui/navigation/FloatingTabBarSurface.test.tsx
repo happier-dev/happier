@@ -7,6 +7,7 @@ import { renderScreen } from '@/dev/testkit';
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 installNavigationCommonModuleMocks({
+    storage: async (importOriginal) => await importOriginal(),
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
@@ -39,7 +40,7 @@ function findAccessoryRow(root: { findByType: (type: never) => TestNode }): Test
 }
 
 describe('FloatingTabBarSurface', () => {
-    it('keeps the bar as the positioner\'s direct child when no accessory is provided', async () => {
+    it('constrains the bar inside the positioner when no accessory is provided', async () => {
         const { FloatingTabBarSurface } = await import('./FloatingTabBarSurface');
 
         const screen = await renderScreen(
@@ -48,12 +49,16 @@ describe('FloatingTabBarSurface', () => {
             </FloatingTabBarSurface>,
         );
 
-        // Every other bottom bar renders through this component, and the chrome host publishes the
-        // measured height of whatever it renders. An extra layout layer here would move several
-        // downstream consumers, so the default tree stays exactly as flat as it is today.
-        const positioner = screen.tree.toJSON() as { children: Array<Record<string, any>> };
-        expect(positioner.children).toHaveLength(1);
-        expect(positioner.children[0].children[0].props.testID).toBe('tab-bar-surface');
+        // The bar can shrink-wrap, but a wide tab row must remain inside the positioner's
+        // available width. Query the public surface identity rather than GlassPanel's internals.
+        const bar = screen.root.findAllByProps({ testID: 'tab-bar-surface' })[0]!;
+        const bounds = bar.parent!;
+        const positioner = screen.root.findAll((node) => typeof node.type === 'string')[0];
+        let parentHost = bounds.parent;
+        while (parentHost && typeof parentHost.type !== 'string') parentHost = parentHost.parent;
+        expect(parentHost).toBe(positioner);
+        expect(bounds.children).toEqual([bar]);
+        expect(mergedStyle(bounds.props.style).maxWidth).toBe('100%');
     });
 
     it('renders a trailing accessory as a sibling capsule beside the bar', async () => {
@@ -131,4 +136,3 @@ describe('FloatingTabBarSurface', () => {
         expect(cells[cells.length - 1]!.findAllByType('TrailingAccessory' as never)).toHaveLength(1);
     });
 });
-

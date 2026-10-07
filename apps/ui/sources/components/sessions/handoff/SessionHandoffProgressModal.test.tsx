@@ -1,58 +1,24 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
+import { ACTION_OPERATION_RPC_METHODS_V1 } from '@happier-dev/protocol';
+import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installSessionHandoffCommonModuleMocks } from './sessionHandoffTestHelpers';
 
-const requestActionOperationStopMock = vi.hoisted(() => vi.fn(async () => ({ kind: 'requested' as const })));
-
-vi.mock('@/components/inbox/actionOperations/requestActionOperationStop', () => ({
-    requestActionOperationStop: requestActionOperationStopMock,
-}));
-
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-installSessionHandoffCommonModuleMocks();
-
-vi.mock('@/components/ui/buttons/RoundButton', () => ({
-    RoundButton: (props: Record<string, unknown>) => React.createElement('RoundButton', props),
-}));
-
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: (props: React.PropsWithChildren<Record<string, unknown>>) => React.createElement('ItemGroup', props, props.children),
-}));
-
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: React.PropsWithChildren<Record<string, unknown>>) => React.createElement('Item', props, props.children),
-}));
-
-vi.mock('@/components/ui/lists/ExpandableItem', () => ({
-    ExpandableItem: (props: React.PropsWithChildren<{
-        expanded: boolean;
-        onExpandedChange: (next: boolean) => void;
-        header: (state: Readonly<{
-            expanded: boolean;
-            headerProps: Readonly<{
-                onPress: () => void;
-                accessibilityRole: 'button';
-                accessibilityState: Readonly<{ expanded: boolean }>;
-            }>;
-        }>) => React.ReactNode;
-    }>) => React.createElement(
-        'ExpandableItem',
-        props,
-        props.header({
-            expanded: props.expanded,
-            headerProps: {
-                onPress: () => props.onExpandedChange(!props.expanded),
-                accessibilityRole: 'button',
-                accessibilityState: { expanded: props.expanded },
-            },
-        }),
-        props.expanded ? props.children : null,
-    ),
-}));
+installSessionHandoffCommonModuleMocks({ storage: async importOriginal => importOriginal() });
+vi.doUnmock('@/components/ui/text/Text');
+const network = await installSessionOpsNetworkBoundary();
+await loadSyncSingletonForTests();
+const home = await network.addHome('https://handoff-progress.example.test', 'account-1');
+const { renderScreen, standardCleanup } = await import('@/dev/testkit');
+beforeEach(() => {
+    network.resetRequests();
+    network.respond(ACTION_OPERATION_RPC_METHODS_V1.cancel, { kind: 'requested' });
+});
+afterEach(() => standardCleanup());
+afterAll(() => network.dispose());
 
 function findProgressIndicators(screen: Awaited<ReturnType<typeof renderScreen>>) {
     return screen.findAll((node) => node.props?.accessibilityRole === 'progressbar');
@@ -141,7 +107,7 @@ describe('SessionHandoffProgressModal', () => {
                 onClose={onClose}
                 setChrome={setChrome}
                 operation={operation}
-                serverId="home-a"
+                serverId={home.id}
             />,
         );
 
@@ -149,7 +115,7 @@ describe('SessionHandoffProgressModal', () => {
         expect(React.isValidElement(chrome?.footer)).toBe(true);
         const footer = await renderScreen(chrome.footer);
         await footer.pressByTestIdAsync('action-operation-cancel');
-        expect(requestActionOperationStopMock).toHaveBeenCalledWith({ serverId: 'home-a', snapshot: operation });
+        expect(network.requests).toContainEqual(expect.objectContaining({ serverUrl: home.serverUrl, targetId: 'source-machine', method: ACTION_OPERATION_RPC_METHODS_V1.cancel, payload: { operationId: operation.operationId } }));
         await footer.pressByTestIdAsync('action-operation-collapse');
         expect(onClose).toHaveBeenCalledTimes(1);
     });
@@ -241,7 +207,7 @@ describe('SessionHandoffProgressModal', () => {
 
         const progressBar = screen.findByTestId('session-handoff-operation-progress-bar');
         expect(progressBar).toBeTruthy();
-        expect(progressBar?.props.accessibilityLabel).toBe('Packaging session state');
+        expect(progressBar?.props.accessibilityLabel).toBe('sessionHandoff.progress.primary.preparing');
         expect(screen.getTextContent()).toContain('25');
         expect(screen.getTextContent()).not.toContain('Packaging session state');
         await expandProgressDetails(screen);

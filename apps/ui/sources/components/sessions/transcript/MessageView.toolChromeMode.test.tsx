@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, expect, it, vi, afterEach } from 'vitest';
-import { createPartialStorageModuleMock, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createPartialStorageModuleMock, createTestSessionTranscriptSource, renderWithSessionTranscriptSource as renderScreen, standardCleanup } from '@/dev/testkit';
 import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 import { createReducer } from "@happier-dev/session-core/reducer";
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
@@ -106,6 +106,8 @@ afterEach(() => {
     standardCleanup();
 });
 
+await import('./MessageView');
+
 describe('MessageView (tool timeline chrome mode)', () => {
     it('passes a stable server route id to ToolTimelineRow when the message is already persisted', async () => {
         toolChromeMode = 'activity_feed';
@@ -131,7 +133,8 @@ describe('MessageView (tool timeline chrome mode)', () => {
             children: [],
         };
 
-        await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" serverId="home-b" />);
+        await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" serverId="home-b" />,
+            createTestSessionTranscriptSource({ sessionId: 's1', serverId: 'home-b' }));
 
         expect(renderedToolTimelineRowProps).toHaveLength(1);
         expect(renderedToolTimelineRowProps[0]!.messageId).toBe('server:server-msg-1');
@@ -269,7 +272,8 @@ describe('MessageView (tool timeline chrome mode)', () => {
             children: [],
         };
 
-        await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" serverId="home-b" />);
+        await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" serverId="home-b" />,
+            createTestSessionTranscriptSource({ sessionId: 's1', serverId: 'home-b' }));
 
         expect(renderedToolViewProps).toHaveLength(1);
         expect(renderedToolViewProps[0]!.messageId).toBe('server:server-msg-1');

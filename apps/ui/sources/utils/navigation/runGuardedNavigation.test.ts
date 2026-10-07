@@ -240,8 +240,11 @@ describe('runGuardedNavigation', () => {
     it('serializes repeated shell exits through the active guard', async () => {
         const { setActiveUnsavedChangesGuard, runGuardedNavigation } = await loadRunGuardedNavigationModule();
         let resolveDecision!: (decision: UnsavedChangesDecision) => void;
+        let markDecisionStarted!: () => void;
+        const decisionStarted = new Promise<void>((resolve) => { markDecisionStarted = resolve; });
         const requestDecision = vi.fn(() => new Promise<UnsavedChangesDecision>((resolve) => {
             resolveDecision = resolve;
+            markDecisionStarted();
         }));
         const firstNavigate = vi.fn();
         const secondNavigate = vi.fn();
@@ -255,6 +258,7 @@ describe('runGuardedNavigation', () => {
         const firstExit = runGuardedNavigation(firstNavigate);
         const secondExit = runGuardedNavigation(secondNavigate);
 
+        await decisionStarted;
         expect(requestDecision).toHaveBeenCalledOnce();
         await expect(secondExit).resolves.toBe(false);
 

@@ -1,23 +1,25 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 
 import { resolveConnectedServicesQuotasDaemonEnabled } from './resolveConnectedServicesQuotasDaemonEnabled';
+import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 
 describe('resolveConnectedServicesQuotasDaemonEnabled', () => {
+  afterEach(() => {
+    resetServerFeaturesClientForTests();
+    vi.unstubAllGlobals();
+  });
+
   it('returns false when the server reports quotas disabled', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => ({
-        ok: true,
-        status: 200,
-        json: async () =>
+      vi.fn<typeof fetch>(async () => new Response(JSON.stringify(
           FeaturesResponseSchema.parse({
             features: {
               connectedServices: { enabled: true, quotas: { enabled: false } },
             },
             capabilities: {},
-          }),
-      })) as unknown as typeof fetch,
+          })), { status: 200, headers: { 'content-type': 'application/json' } })),
     );
 
     const enabled = await resolveConnectedServicesQuotasDaemonEnabled({
@@ -32,17 +34,13 @@ describe('resolveConnectedServicesQuotasDaemonEnabled', () => {
   it('returns true when server reports quotas enabled and build policy does not deny the feature', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => ({
-        ok: true,
-        status: 200,
-        json: async () =>
+      vi.fn<typeof fetch>(async () => new Response(JSON.stringify(
           FeaturesResponseSchema.parse({
             features: {
               connectedServices: { enabled: true, quotas: { enabled: true } },
             },
             capabilities: {},
-          }),
-      })) as unknown as typeof fetch,
+          })), { status: 200, headers: { 'content-type': 'application/json' } })),
     );
 
     const enabled = await resolveConnectedServicesQuotasDaemonEnabled({
@@ -57,18 +55,14 @@ describe('resolveConnectedServicesQuotasDaemonEnabled', () => {
   });
 
   it('does not enable quotas when build policy denies the feature', async () => {
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      json: async () =>
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify(
         FeaturesResponseSchema.parse({
           features: {
             connectedServices: { enabled: true, quotas: { enabled: true } },
           },
           capabilities: {},
-        }),
-    }));
-    vi.stubGlobal('fetch', fetchMock as any);
+        })), { status: 200, headers: { 'content-type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
 
     const enabled = await resolveConnectedServicesQuotasDaemonEnabled({
       env: {

@@ -1,20 +1,46 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-
-import { renderHook } from '@/dev/testkit';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { createHomeGovernanceHarness } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { stubServerFeaturesFetch, stubServerFeaturesFetchFailure } from './serverFeaturesTestUtils';
 import { renderHookAndCollectValues } from './serverFeatureHookHarness.testHelpers';
+
+installDisconnectedServerSocketBoundary();
+beforeAll(loadSyncSingletonForTests);
+
+
+const homes = createHomeGovernanceHarness();
+beforeEach(async () => {
+    await homes.reset();
+    const { getStorage } = await import('@/sync/domains/state/storage');
+    const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+    getStorage().setState({ settings: { ...settingsDefaults }, settingsScope: null });
+    // Device credential reads are the OS boundary; selection and usable-Home policy stay real.
+    vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async (serverUrl) => {
+        const token = homes.findByServerUrl(serverUrl)?.token;
+        return token ? { token } : null;
+    });
+    const { updateEffectiveHomeViewState } = await import('@/sync/domains/server/selection/homeViewSelectionState');
+    await updateEffectiveHomeViewState(() => ({
+        version: 1, groups: [], activeTargetKind: null, activeTargetId: null,
+    }), { scope: 'device' });
+});
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 afterEach(() => {
+    standardCleanup();
     vi.unstubAllGlobals();
-    vi.resetModules();
+    vi.restoreAllMocks();
 });
 
 describe('useFeatureDetails', () => {
     it('returns selected server details when features are ready', async () => {
-        vi.resetModules();
         await stubServerFeaturesFetch({ automationsEnabled: true });
 
         const { resetServerFeaturesClientForTests, getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
@@ -42,7 +68,6 @@ describe('useFeatureDetails', () => {
     }, 30_000);
 
     it('returns fallback when feature probing fails', async () => {
-        vi.resetModules();
         await stubServerFeaturesFetchFailure();
 
         const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
@@ -67,18 +92,16 @@ describe('useFeatureDetails', () => {
     }, 30_000);
 
     it('uses spawn scope server id when provided', async () => {
-        vi.resetModules();
 
         const { buildServerFeaturesResponse } = await import('./serverFeaturesTestUtils');
         const { resetServerFeaturesClientForTests, getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
-        const { upsertServerProfile, setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
         const { getStorage } = await import('@/sync/domains/state/storage');
 
         resetServerFeaturesClientForTests();
 
-        const serverA = await upsertServerProfile({ serverUrl: 'https://a.example', name: 'A', source: 'manual' });
-        const serverB = await upsertServerProfile({ serverUrl: 'https://b.example', name: 'B', source: 'manual' });
-        await setActiveServerId(serverA.id, { scope: 'device' });
+        const serverAId = await homes.addHome({ serverUrl: 'https://a.example', name: 'A' });
+        const serverBId = await homes.addHome({ serverUrl: 'https://b.example', name: 'B', active: false });
+
 
         getStorage().getState().applySettingsLocal({
             experiments: true,
@@ -87,36 +110,37 @@ describe('useFeatureDetails', () => {
 
         vi.stubGlobal(
             'fetch',
-            vi.fn(async (url: any) => {
-                const href = String(url ?? '');
+            vi.fn(async (url: RequestInfo | URL) => {
+                const href = url instanceof Request ? url.url : String(url);
                 if (href.includes('a.example')) {
-                    return { ok: true, status: 200, json: async () => buildServerFeaturesResponse({ automationsEnabled: false }) };
+                    return Response.json(buildServerFeaturesResponse({ automationsEnabled: false }));
                 }
                 if (href.includes('b.example')) {
-                    return { ok: true, status: 200, json: async () => buildServerFeaturesResponse({ automationsEnabled: true }) };
+                    return Response.json(buildServerFeaturesResponse({ automationsEnabled: true }));
                 }
-                return { ok: true, status: 200, json: async () => buildServerFeaturesResponse({ automationsEnabled: false }) };
-            }) as any,
+                return Response.json(buildServerFeaturesResponse({ automationsEnabled: false }));
+            }),
         );
 
         // Seed spawn cache to avoid relying on fireAndForget probe timing.
-        await getServerFeaturesSnapshot({ serverId: serverB.id, force: true });
+        await getServerFeaturesSnapshot({ serverId: serverBId, force: true });
 
         const { useFeatureDetails } = await import('./useFeatureDetails');
         const seen = await renderHookAndCollectValues(() =>
-            (useFeatureDetails as any)({
+            useFeatureDetails({
                 featureId: 'automations',
                 fallback: false,
-                select: (features: any) => Boolean(features?.features?.automations?.enabled),
-                scope: { scopeKind: 'spawn', serverId: serverB.id },
+                select: (features) => features.features.automations.enabled,
+                scope: { scopeKind: 'spawn', serverId: serverBId },
             }),
         );
 
         expect(seen.at(-1)).toBe(true);
+        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        expect(getActiveServerSnapshot().serverId).toBe(serverAId);
     }, 30_000);
 
     it('does not rerender feature details for unrelated account settings', async () => {
-        vi.resetModules();
         await stubServerFeaturesFetch({ automationsEnabled: true });
 
         const { resetServerFeaturesClientForTests, getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
@@ -152,10 +176,11 @@ describe('useFeatureDetails', () => {
         expect(renderCount).toBe(rendersAfterMount);
 
         await act(async () => {
-            getStorage().getState().applySettingsLocal({ experiments: false });
+            getStorage().getState().applySettingsLocal({ featureToggles: { automations: false } });
         });
 
         expect(renderCount).toBeGreaterThan(rendersAfterMount);
+        expect(hook.getCurrent()).toBe(false);
 
         await hook.unmount();
     }, 30_000);

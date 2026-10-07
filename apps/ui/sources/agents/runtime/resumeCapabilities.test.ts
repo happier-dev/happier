@@ -187,12 +187,12 @@ describe('getAgentVendorResumeId', () => {
         expect(canResumeSessionWithOptions({ flavor: 'cursor', cursorSessionId: 'cursor-1' })).toBe(true);
     });
 
-    test('treats empty ids as missing and trims non-empty strings', () => {
+    test('treats blank ids as missing and preserves opaque Agent-minted identity bytes', () => {
         expect(getAgentVendorResumeId({ claudeSessionId: '' }, 'claude')).toBeNull();
         expect(getAgentVendorResumeId({
             claudeSessionId: ' c1 ',
             claudeTranscriptPath: ' /tmp/c1.jsonl ',
-        }, 'claude')).toBe('c1');
+        }, 'claude')).toBe(' c1 ');
         expect(getAgentVendorResumeId(
             { codexSessionId: '   ' },
             'codex',

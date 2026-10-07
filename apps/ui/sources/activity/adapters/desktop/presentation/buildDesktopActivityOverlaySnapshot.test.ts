@@ -93,6 +93,7 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
                         path: '/Users/tester/PRIVATE-WORKSPACE-SENTINEL',
                         host: 'tester.local',
                         homeDir: '/Users/tester',
+                        summary: { text: 'Permission work', updatedAt: 3 },
                     },
                 })] }),
                 serverProfilesById: {

@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+
+installDisconnectedServerSocketBoundary();
 
 const kvStore = vi.hoisted(() => new Map<string, string>());
 vi.mock('react-native-mmkv', () => {
@@ -31,24 +35,6 @@ vi.mock('react-native', async () => {
     });
 });
 
-vi.mock('@/sync/api/session/apiSocket', () => ({
-    apiSocket: {
-        onMessage: vi.fn(),
-        onError: vi.fn(),
-        onReconnected: vi.fn(),
-        onStatusChange: vi.fn(() => () => {}),
-        onConnectionStateChange: vi.fn(() => () => {}),
-        connect: vi.fn(),
-        disconnect: vi.fn(),
-        initialize: vi.fn(),
-        request: vi.fn(async () => new Response('ok', { status: 200 })),
-    },
-}));
-
-vi.mock('@/log', () => ({
-    log: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
-}));
-
 describe('sync JS thread lag telemetry lifecycle', () => {
     beforeEach(() => {
         vi.resetModules();
@@ -56,7 +42,9 @@ describe('sync JS thread lag telemetry lifecycle', () => {
         kvStore.clear();
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+        const { sync } = await import('./syncEngine');
+        await sync.disconnectServer();
         vi.useRealTimers();
         vi.unstubAllEnvs();
         delete (globalThis as { nativeLoggingHook?: unknown }).nativeLoggingHook;
@@ -70,11 +58,12 @@ describe('sync JS thread lag telemetry lifecycle', () => {
             jsThreadLagTelemetryMaxSamples: 8,
         }));
 
-        const { sync } = await import('./syncEngine');
+        await loadSyncSingletonForTests();
+        const { sync } = await import('./sync');
         const { syncPerformanceTelemetry } = await import('@/sync/runtime/syncPerformanceTelemetry');
 
         await vi.advanceTimersByTimeAsync(50);
-        sync.disconnectServer();
+        await sync.disconnectServer();
 
         const event = syncPerformanceTelemetry
             .snapshot()
@@ -96,7 +85,7 @@ describe('sync JS thread lag telemetry lifecycle', () => {
         const nativeLoggingHook = vi.fn();
         (globalThis as { nativeLoggingHook?: typeof nativeLoggingHook }).nativeLoggingHook = nativeLoggingHook;
 
-        await import('./syncEngine');
+        await loadSyncSingletonForTests();
 
         await vi.advanceTimersByTimeAsync(1050);
 
@@ -115,11 +104,12 @@ describe('sync JS thread lag telemetry lifecycle', () => {
             jsThreadLagTelemetryMaxSamples: 8,
         }));
 
+        await loadSyncSingletonForTests();
         const { sync } = await import('./sync');
         const { syncPerformanceTelemetry } = await import('@/sync/runtime/syncPerformanceTelemetry');
 
         await vi.advanceTimersByTimeAsync(50);
-        sync.disconnectServer();
+        await sync.disconnectServer();
 
         expect(syncPerformanceTelemetry.snapshot().events).not.toEqual(
             expect.arrayContaining([

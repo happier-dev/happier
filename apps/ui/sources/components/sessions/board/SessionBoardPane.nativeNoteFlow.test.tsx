@@ -4,15 +4,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
     readSessionSurfaceNoteTextV1,
+    SessionBoardMutationV1Schema,
+    SessionSurfaceItemV1Schema,
     type SessionBoardItemUpsertInputV1,
     type SessionSurfaceItemV1,
 } from '@happier-dev/protocol/sessions/board';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import type { CodeEditorHandle, CodeEditorProps } from '@/components/ui/code/editor/codeEditorTypes';
 import type { CallerHostedHtmlRuntime } from '@/components/ui/surfaces/hostedHtml/HostedHtmlSurfaceAdapter';
 import {
     projectSessionBoard,
-    type SessionBoardActionsPort,
     type SessionBoardSnapshot,
 } from '@/sync/domains/session/board';
 
@@ -20,38 +22,36 @@ import { SessionBoardContinuityProvider } from './SessionBoardContinuity';
 import { SessionBoardControllerOwner } from './SessionBoardControllerProvider';
 import { SessionBoardPane } from './SessionBoardPane';
 import { createSessionBoardSourceAvailabilityResolver } from './sessionBoardItemPresentation';
+import { realBoardActions } from './sessionBoardActionsTestkit';
+import { unavailableSessionBoardActions } from '@/sync/domains/session/board/sessionBoardActionsPort';
 
 const editorHarness = vi.hoisted(() => ({
     value: '',
     flushPendingChange: vi.fn(async () => undefined),
 }));
 
-// SessionBoardPane also imports the sibling hosted-HTML editor. Keep its
-// bundler-selected editor boundary out of this mounted native-Note suite; the
-// Board/controller/Note owners below remain real.
-vi.mock('@/components/ui/code/editor/CodeEditor', () => ({ CodeEditor: () => null }));
-
-vi.mock('@/components/ui/markdown/editor/MarkdownCodeEditorField', () => ({
-    MarkdownCodeEditorField: (props: Readonly<{
-        editorRef?: { current: unknown };
-        testID?: string;
-    }>) => {
-        if (props.editorRef) {
-            props.editorRef.current = {
-                flushPendingChange: editorHarness.flushPendingChange,
-                getValue: () => editorHarness.value,
-                focus: () => undefined,
-            };
-        }
-        return React.createElement('MarkdownCodeEditorField', props);
-    },
+// CodeMirror's platform surface is the embedded-editor boundary; the Board,
+// controller, Note editor and Markdown field/ref forwarding remain real.
+vi.mock('@/components/ui/code/editor/CodeEditor', () => ({
+    CodeEditor: React.forwardRef<CodeEditorHandle, CodeEditorProps>(function MockCodeEditor(props, ref) {
+        React.useImperativeHandle(ref, () => ({
+            flushPendingChange: editorHarness.flushPendingChange,
+            getValue: () => editorHarness.value,
+            focus: () => undefined,
+        }), []);
+        return React.createElement('MockCodeEditor', props);
+    }),
 }));
 
-vi.mock('@react-navigation/native', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@react-navigation/native')>(),
-    useNavigation: () => ({ dispatch: () => undefined }),
-    usePreventRemove: () => undefined,
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit');
+    return createExpoRouterMock({ navigation: { dispatch: () => undefined } }).module;
+});
+
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit');
+    return createReactNavigationNativeMock();
+});
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit');
@@ -177,27 +177,15 @@ describe('SessionBoardPane native Note flow', () => {
     afterEach(() => standardCleanup());
 
     it('creates and rereads a blank-Board Note through the mounted Action port without losing the final editor value', async () => {
-        const upsertItem = vi.fn(async (input: SessionBoardItemUpsertInputV1) => ({
-            status: 'ok' as const,
-            value: {
-                v: 1 as const,
-                serverId: 'home-1',
-                sessionId: 'session-1',
-                result: {
-                    operation: 'upsert_item' as const,
-                    outcome: 'created' as const,
-                    itemId: input.itemId,
-                    itemRevision: 'item-revision-1',
-                    layoutRevision: 'layout-revision-1',
-                },
-                destination: { tabId: 'overview', width: 'medium' as const },
-            },
-        }));
-        const actions: SessionBoardActionsPort = {
-            upsertItem,
-            removeItem: async () => ({ status: 'unavailable', reason: 'board_actions_unavailable' }),
-            updateLayout: async () => ({ status: 'unavailable', reason: 'board_actions_unavailable' }),
-        };
+        const mutations: Array<ReturnType<typeof SessionBoardMutationV1Schema.parse>> = [];
+        const actions = realBoardActions(async (_path, init) => {
+            if (init?.method !== 'PUT') return Response.json({ record: null });
+            const mutation = SessionBoardMutationV1Schema.parse(JSON.parse(String(init.body)));
+            mutations.push(mutation);
+            if (mutation.operation !== 'upsert_item') throw new Error('Expected a Note upsert');
+            const revision = 'ssr1.AAAACHN5c3JlY18xAAAAAQ';
+            return Response.json({ operation: 'upsert_item', outcome: 'created', itemId: mutation.itemId, itemRevision: revision, layoutRevision: revision });
+        }, undefined, { serverId: 'home-1', sessionId: 'session-1' });
         const renderMountedPane = (snapshot: SessionBoardSnapshot) => {
             const binding = { status: 'ready' as const, snapshot, refresh: () => undefined };
             return (
@@ -243,15 +231,23 @@ describe('SessionBoardPane native Note flow', () => {
             await Promise.resolve();
         });
 
-        expect(upsertItem).toHaveBeenCalledOnce();
-        const submitted = upsertItem.mock.calls[0]?.[0];
-        expect(submitted).toBeDefined();
-        if (!submitted) throw new Error('Expected the mounted Note editor to submit an upsert');
-        expect(submitted.placement).toEqual({
-            tabId: 'overview',
-            tabTitle: 'Overview',
-            width: 'medium',
+        await vi.waitFor(async () => {
+            await act(async () => {});
+            expect(screen.findByTestId('session-board-note-editor-title')).toBeNull();
         });
+        expect(mutations).toHaveLength(1);
+        const mutation = mutations[0];
+        if (mutation?.operation !== 'upsert_item' || mutation.itemContent.t !== 'plain') {
+            throw new Error('Expected the mounted Note editor to persist a plain upsert');
+        }
+        expect(mutation.placement?.layoutContent).toMatchObject({ t: 'plain', v: { tabs: [{
+            id: 'overview', title: 'Overview', items: [{ itemId: mutation.itemId, width: 'medium' }],
+        }] } });
+        const submitted: SessionBoardItemUpsertInputV1 = {
+            sessionId: 'session-1', itemId: mutation.itemId, expectedItemRevision: null,
+            item: SessionSurfaceItemV1Schema.parse(mutation.itemContent.v),
+            placement: { tabId: 'overview', tabTitle: 'Overview', width: 'medium' },
+        };
         expect(submitted.item.source.kind).toBe('declarative');
         expect(submitted.item.source.kind === 'declarative'
             ? readSessionSurfaceNoteTextV1(submitted.item.source.document)
@@ -266,11 +262,7 @@ describe('SessionBoardPane native Note flow', () => {
     });
 
     it('offers hosted-HTML Edit only when the mounted caller runtime can render the editor', async () => {
-        const actions: SessionBoardActionsPort = {
-            upsertItem: async () => ({ status: 'unavailable', reason: 'board_actions_unavailable' }),
-            removeItem: async () => ({ status: 'unavailable', reason: 'board_actions_unavailable' }),
-            updateLayout: async () => ({ status: 'unavailable', reason: 'board_actions_unavailable' }),
-        };
+        const actions = unavailableSessionBoardActions;
         const renderMountedPane = (runtime: CallerHostedHtmlRuntime | null) => {
             const binding = { status: 'ready' as const, snapshot: HOSTED_HTML_SNAPSHOT, refresh: () => undefined };
             return (

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { PluginProjectedActionV2, PluginProjectionV2 } from '@happier-dev/protocol';
+import type { PluginAvailabilityDescriptorV2, PluginProjectedActionV2, PluginProjectionV2 } from '@happier-dev/protocol';
 import {
     type PluginUiResolvedSemanticCommandV1,
 } from '@happier-dev/protocol/plugins/ui';
@@ -19,6 +19,7 @@ import {
 } from './pluginHeaderActions';
 
 const HOST_POLICY_CONTEXT = { platform: 'web', channel: 'internal' } as const;
+const HEADER_OCCURRENCE_ID = 'acme-plugin-occurrence-7';
 
 const DEFAULT_HEADER_COMMAND = {
     kind: 'executeAction',
@@ -46,8 +47,7 @@ function createProjectedHeaderAction(params?: Readonly<{
     extraActions?: Readonly<Record<string, PluginProjectedActionV2>>;
     icon?: 'refresh';
     legacyAction?: string;
-    availability?: Readonly<Record<string, unknown>>;
-    compatibility?: Readonly<Record<string, unknown>>;
+    availability?: PluginAvailabilityDescriptorV2;
     available?: boolean;
 }>): PluginProjectionV2 {
     return {
@@ -63,7 +63,7 @@ function createProjectedHeaderAction(params?: Readonly<{
             'acme.plugin/roundtrip': {
                 id: 'roundtrip',
                 pluginId: 'acme.plugin',
-                occurrenceId: 'acme-plugin-occurrence-7',
+                occurrenceId: HEADER_OCCURRENCE_ID,
                 title: 'Roundtrip',
                 scopes: ['session'],
                 surfaces: ['ui'],
@@ -86,7 +86,7 @@ function createProjectedHeaderAction(params?: Readonly<{
                     'translations:acme.plugin': {
                         id: 'translations:acme.plugin',
                         pluginId: 'acme.plugin',
-                        occurrenceId: 'acme-plugin-occurrence-7',
+                        occurrenceId: HEADER_OCCURRENCE_ID,
                         contributionKind: 'translations',
                         locales: ['en'],
                         bundles: {
@@ -98,7 +98,7 @@ function createProjectedHeaderAction(params?: Readonly<{
                     'sessionHeaderAction:acme.plugin:roundtrip-header': {
                         id: 'sessionHeaderAction:acme.plugin:roundtrip-header',
                         pluginId: 'acme.plugin',
-                        occurrenceId: 'acme-plugin-occurrence-7',
+                        occurrenceId: HEADER_OCCURRENCE_ID,
                         contributionKind: 'sessionHeaderAction',
                         descriptorId: 'roundtrip-header',
                         title: {
@@ -114,7 +114,6 @@ function createProjectedHeaderAction(params?: Readonly<{
                         ...(params?.icon ? { icon: params.icon } : {}),
                         order: 3,
                         ...(params?.availability ? { availability: params.availability } : {}),
-                        ...(params?.compatibility ? { compatibility: params.compatibility } : {}),
                     },
                 },
             },
@@ -198,7 +197,7 @@ describe('pluginHeaderActions — contribution-reference resolution', () => {
         });
     });
 
-    it('keeps omitted executeAction input absent through the generation-leased daemon action RPC', async () => {
+    it('keeps omitted executeAction input absent through the occurrence-bound daemon action RPC', async () => {
         const projection = normalizePluginUiProjection(createProjectedHeaderAction());
         const projectedAction = projection.sessionHeaderActionsById[
             'sessionHeaderAction:acme.plugin:roundtrip-header'
@@ -222,7 +221,7 @@ describe('pluginHeaderActions — contribution-reference resolution', () => {
         expect(result).toEqual({ ok: true, result: { completed: true } });
         expect(execute).toHaveBeenCalledWith('machine-1', {
             serverId: 'server-a',
-            expectedContributorOccurrenceId: '7',
+            expectedContributorOccurrenceId: HEADER_OCCURRENCE_ID,
             qualifiedActionId: 'acme.plugin/roundtrip',
             sessionId: 'sess-1',
             executionSurface: 'ui',
@@ -294,7 +293,7 @@ describe('pluginHeaderActions — contribution-reference resolution', () => {
         }));
     });
 
-    it('delegates openSurface through the existing host handler without inventing input or action transport', async () => {
+    it('delegates only current openSurface commands through the existing host handler without inventing input or action transport', async () => {
         const projection = normalizePluginUiProjection(createProjectedHeaderAction({
             command: {
                 kind: 'openSurface',
@@ -312,8 +311,8 @@ describe('pluginHeaderActions — contribution-reference resolution', () => {
         await expect(dispatchPluginSessionHeaderAction({
             projection,
             menuActionId: createPluginSessionHeaderActionMenuId(projectedAction),
-            // Action dispatch currentness is intentionally not navigation authority.
-            scopeIsCurrent: () => false,
+            scopedLaunchFacts: createScopedLaunchFacts(),
+            scopeIsCurrent: () => true,
             execute,
             openSurface,
         })).resolves.toEqual({ ok: true });
@@ -324,9 +323,25 @@ describe('pluginHeaderActions — contribution-reference resolution', () => {
             instanceKey: 'current-session',
         });
         expect(execute).not.toHaveBeenCalled();
+
+        openSurface.mockClear();
+        await expect(dispatchPluginSessionHeaderAction({
+            projection,
+            menuActionId: createPluginSessionHeaderActionMenuId(projectedAction),
+            scopedLaunchFacts: createScopedLaunchFacts(),
+            scopeIsCurrent: () => false,
+            execute,
+            openSurface,
+        })).resolves.toEqual({
+            ok: false,
+            code: 'stale_surface',
+            reason: 'plugin_ui_generation_retired',
+        });
+        expect(openSurface).not.toHaveBeenCalled();
+        expect(execute).not.toHaveBeenCalled();
     });
 
-    it('fails closed before transport when projection generation or scoped machine authority is absent', async () => {
+    it('fails closed before transport when scoped interaction or machine authority is absent', async () => {
         const projection = normalizePluginUiProjection(createProjectedHeaderAction());
         const projectedAction = projection.sessionHeaderActionsById[
             'sessionHeaderAction:acme.plugin:roundtrip-header'
@@ -334,9 +349,9 @@ describe('pluginHeaderActions — contribution-reference resolution', () => {
         const execute = vi.fn();
 
         await expect(dispatchPluginSessionHeaderAction({
-            projection: { ...projection, generation: null },
+            projection,
             menuActionId: createPluginSessionHeaderActionMenuId(projectedAction),
-            scopedLaunchFacts: createScopedLaunchFacts({ machineId: 'machine-1' }),
+            scopedLaunchFacts: createScopedLaunchFacts({ machineId: 'machine-1', interactionEnabled: false }),
             execute,
         })).resolves.toMatchObject({
             ok: false,
@@ -484,7 +499,7 @@ describe('pluginHeaderActions — scoped projection authority', () => {
         expect(reconnectedPresentations[0]?.enabled).toBe(true);
     });
 
-    it('uses the exact scoped machine, server, and generation rather than a header-local handoff target', async () => {
+    it('uses the exact scoped machine, server, and contributor occurrence rather than a header-local handoff target', async () => {
         const projection = normalizePluginUiProjection(createProjectedHeaderAction());
         const projectedAction = projection.sessionHeaderActionsById[
             'sessionHeaderAction:acme.plugin:roundtrip-header'
@@ -508,14 +523,14 @@ describe('pluginHeaderActions — scoped projection authority', () => {
 
         expect(execute).toHaveBeenCalledWith('machine-projection', {
             serverId: 'server-projection',
-            expectedContributorOccurrenceId: '7',
+            expectedContributorOccurrenceId: HEADER_OCCURRENCE_ID,
             qualifiedActionId: 'acme.plugin/roundtrip',
             sessionId: 'sess-1',
             executionSurface: 'ui',
         });
     });
 
-    it('fails closed before transport when a retained descriptor no longer matches the scoped projection generation', async () => {
+    it('fails closed before transport while replacement scope facts have no interaction authority', async () => {
         const projection = normalizePluginUiProjection(createProjectedHeaderAction());
         const projectedAction = projection.sessionHeaderActionsById[
             'sessionHeaderAction:acme.plugin:roundtrip-header'
@@ -531,6 +546,7 @@ describe('pluginHeaderActions — scoped projection authority', () => {
             scopedLaunchFacts: createScopedLaunchFacts({
                 machineId: 'machine-replacement',
                 serverId: 'server-replacement',
+                interactionEnabled: false,
             }),
         };
 
@@ -601,7 +617,7 @@ describe('pluginHeaderActions — applicability against the exact host facts', (
 
     it('keeps a header action declaring this platform visible', () => {
         const projection = normalizePluginUiProjection(createProjectedHeaderAction({
-            compatibility: { platforms: ['web'] },
+            availability: { when: { fact: 'host.platform', operator: 'equals', value: 'web' } },
         }));
 
         expect(createPluginSessionHeaderActionDropdownItems({
@@ -617,7 +633,7 @@ describe('pluginHeaderActions — applicability against the exact host facts', (
 
     it('hides a header action declaring only other platforms', () => {
         const projection = normalizePluginUiProjection(createProjectedHeaderAction({
-            compatibility: { platforms: ['ios'] },
+            availability: { when: { fact: 'host.platform', operator: 'equals', value: 'ios' } },
         }));
 
         expect(createPluginSessionHeaderActionDropdownItems({
@@ -633,6 +649,7 @@ describe('pluginHeaderActions — applicability against the exact host facts', (
         const projection = normalizePluginUiProjection(createProjectedHeaderAction({
             availability: {
                 disabledWhen: { fact: 'host.platform', operator: 'equals', value: 'desktop' },
+                disabledReason: 'Unavailable on this platform',
             },
         }));
 
@@ -652,6 +669,7 @@ describe('pluginHeaderActions — applicability against the exact host facts', (
         const projection = normalizePluginUiProjection(createProjectedHeaderAction({
             availability: {
                 disabledWhen: { fact: 'host.platform', operator: 'equals', value: 'web' },
+                disabledReason: 'Unavailable on this platform',
             },
         }));
 

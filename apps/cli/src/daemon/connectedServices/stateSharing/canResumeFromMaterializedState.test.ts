@@ -2,11 +2,20 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { resolveTrackedConnectedServiceSwitchContinuityContext } from '../sessionAuthSwitch/resolveTrackedConnectedServiceSwitchContinuityContext';
 import { canResumeFromMaterializedState } from './canResumeFromMaterializedState';
 
 describe('canResumeFromMaterializedState', () => {
+  let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
+  beforeAll(async () => {
+    runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController });
+  });
+  afterAll(async () => { await runtime?.dispose(); });
+
   it('returns persisted_file provenance when candidatePersistedSessionFile exists', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-can-resume-persisted-'));
     try {
@@ -42,6 +51,15 @@ describe('canResumeFromMaterializedState', () => {
       await mkdir(join(root, 'pi-agent-dir', 'sessions', '--tmp-project--'), { recursive: true });
       await writeFile(staleCandidate, '{}\n');
 
+      const resume = resolveTrackedConnectedServiceSwitchContinuityContext({
+        agentId: 'pi',
+        baseDir: root,
+        tracked: { vendorResumeId: 'pi-session-A' },
+        vendorResumeId: 'pi-session-B',
+        candidatePersistedSessionFile: staleCandidate,
+      });
+      expect(resume).toMatchObject({ vendorResumeId: 'pi-session-A', candidatePersistedSessionFile: null });
+
       await expect(canResumeFromMaterializedState({
         agentId: 'pi',
         serviceId: 'openai-codex',
@@ -49,15 +67,15 @@ describe('canResumeFromMaterializedState', () => {
         requestedStateMode: 'shared',
         effectiveStateMode: 'shared',
         materializationIdentity: { v: 1, id: 'csm_1' },
-        vendorResumeId: 'pi-session-A',
+        vendorResumeId: resume.vendorResumeId ?? '',
         cwd: '/tmp/project',
-        candidatePersistedSessionFile: staleCandidate,
+        candidatePersistedSessionFile: resume.candidatePersistedSessionFile,
       })).resolves.toMatchObject({
         ok: false,
         reason: 'pi_session_file_not_found',
         continuityDiagnostics: {
           vendorResumeId: 'pi-session-A',
-          candidatePersistedSessionFile: staleCandidate,
+          candidatePersistedSessionFile: null,
           reachabilityMissReason: 'pi_session_file_not_found',
         },
       });

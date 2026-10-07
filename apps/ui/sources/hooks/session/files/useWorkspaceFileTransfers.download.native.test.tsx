@@ -50,6 +50,41 @@ describe('workspace file native download actions through the prepared carrier', 
         return { screen, api: () => api! };
     }
 
+
+    it('removes the native sink when real encrypted bytes fail manifest verification before OS handoff', async () => {
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });
+        const http = await import('@/utils/system/runtimeFetch');
+        const { MACHINE_CARRIER_INTERRUPTED_TRANSFER_ERROR } = await import('@/sync/domains/transfers/runtime/transferRuntime/plumbing/machineCarrierHttpLease');
+        const request = http.runtimeFetch;
+        // Corrupt only the daemon HTTP manifest; transport, decryption,
+        // verification and destination cleanup remain the real owners.
+        const manifestBoundary = vi.spyOn(http, 'runtimeFetch').mockImplementation(async (input, init) => {
+            const response = await request(input, init);
+            if (!new URL(String(input)).pathname.endsWith('/open') || !response.ok) return response;
+            const manifest: unknown = await response.json();
+            if (!manifest || typeof manifest !== 'object' || !('manifestHash' in manifest)
+                || typeof manifest.manifestHash !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(manifest.manifestHash)) {
+                throw new Error('Expected SHA-256 transfer manifest');
+            }
+            const hash = manifest.manifestHash;
+            return Response.json({ ...manifest, manifestHash: `sha256:${hash[7] === '0' ? '1' : '0'}${hash.slice(8)}` });
+        });
+        try {
+            const transfers = await renderTransfers();
+            await act(async () => {
+                await expect(transfers.api().startDownload({ path: 'recording.mp4', asZip: false }))
+                    .resolves.toEqual({ ok: false, error: MACHINE_CARRIER_INTERRUPTED_TRANSFER_ERROR });
+            });
+            expect((await fs).writes).toHaveBeenCalledWith(expect.any(String), new Uint8Array([1, 2, 3]));
+            expect(actions.iosShare).not.toHaveBeenCalled();
+            expect(actions.saveFile).not.toHaveBeenCalled();
+            expect((await fs).files.size).toBe(0);
+            expect(harness.nativeTunnelStops).toHaveLength(1);
+        } finally {
+            manifestBoundary.mockRestore();
+        }
+    });
+
     it.each(['save', 'open', 'share'] as const)('reports the completed native %s result after app cancellation during handoff', async action => {
         const entered = createDeferred<void>();
         const release = createDeferred<void>();

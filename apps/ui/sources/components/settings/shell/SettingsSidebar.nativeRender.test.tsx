@@ -1,5 +1,14 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { storage as storageStore } from '@/sync/domains/state/storage';
+import { settingsParse } from '@/sync/domains/settings/settings';
+import { localSettingsParse } from '@/sync/domains/settings/localSettings';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { standardCleanup } from '@/dev/testkit';
+
+const initialSettingsCatalogStorage = storageStore.getState();
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 
@@ -28,20 +37,7 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => true,
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        useSetting: (key: string) => {
-            if (key === 'useProfiles') return false;
-            return null;
-        },
-        useLocalSetting: (key: string) => {
-            if (key === 'devModeEnabled') return false;
-            if (key === 'uiFontScale') return 1;
-            return null;
-        },
-    });
-});
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => importOriginal());
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -72,6 +68,20 @@ vi.mock('@/components/ui/text/Text', async (importOriginal) => {
         ...actual,
         Text: 'StyledText',
     };
+});
+
+beforeEach(async () => {
+    await loadSyncSingletonForTests();
+    installDisconnectedServerSocketBoundary();
+    storageStore.setState({
+        settings: settingsParse({ useProfiles: false }),
+        localSettings: localSettingsParse({ devModeEnabled: false, uiFontScale: 1 }),
+    });
+});
+
+afterEach(async () => {
+    await standardCleanup();
+    storageStore.setState(initialSettingsCatalogStorage, true);
 });
 
 describe('SettingsSidebar real TextInput render', () => {

@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { createDirectPeerTransferApp, createDirectPeerTransferRegistry } from './directPeerTransport';
+
 function encodeDirectPeerTransferPathKey(transferId: string): string {
   return Buffer.from(transferId, 'utf8').toString('base64url');
 }
@@ -53,8 +55,6 @@ describe('direct peer machine transfer', () => {
   it('responds to browser preflight requests for published transfer routes with loopback-safe CORS headers', async () => {
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
 
-    const { createDirectPeerTransferApp, createDirectPeerTransferRegistry } = await import('./directPeerTransport');
-
     const registry = createDirectPeerTransferRegistry({
       advertisedPort: 46001,
       now: () => 1_000,
@@ -100,8 +100,6 @@ describe('direct peer machine transfer', () => {
 
   it('responds to browser preflight requests for direct-open routes with loopback-safe CORS headers', async () => {
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
-
-    const { createDirectPeerTransferApp, createDirectPeerTransferRegistry } = await import('./directPeerTransport');
 
     const registry = createDirectPeerTransferRegistry({
       advertisedPort: 46001,
@@ -3084,16 +3082,13 @@ describe('direct peer machine transfer', () => {
     }
   });
 
-  it('caches expensive /open metadata resolution across repeated opens for the same transfer token', async () => {
+  it('reuses resolved /open metadata across repeated opens for the same transfer token', async () => {
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
 
     const payloadSourceModule = await import('./transferPayloadSource');
     const { createDirectPeerTransferApp, createDirectPeerTransferRegistry } = await import('./directPeerTransport');
     const { createFileTransferPayloadSource } = payloadSourceModule;
     const { deriveBoxPublicKeyFromSeed } = await import('@happier-dev/protocol');
-
-    const resolveSizeSpy = vi.spyOn(payloadSourceModule, 'resolveTransferPayloadSizeBytes');
-    const resolveHashSpy = vi.spyOn(payloadSourceModule, 'resolveTransferPayloadManifestHash');
 
     const registry = createDirectPeerTransferRegistry({
       advertisedPort: 46003,
@@ -3117,9 +3112,6 @@ describe('direct peer machine transfer', () => {
 
     try {
       await app.ready();
-      resolveSizeSpy.mockClear();
-      resolveHashSpy.mockClear();
-
       const first = await app.inject({
         method: 'POST',
         url: buildDirectPeerOpenUrl('transfer_open_cache'),
@@ -3129,6 +3121,9 @@ describe('direct peer machine transfer', () => {
         },
       });
       expect(first.statusCode).toBe(200);
+      // Once metadata has been resolved, another open must reuse it rather
+      // than accessing the physical source again. A fresh stat/hash would fail.
+      await rm(tempPath);
 
       const second = await app.inject({
         method: 'POST',
@@ -3140,11 +3135,8 @@ describe('direct peer machine transfer', () => {
       });
       expect(second.statusCode).toBe(200);
 
-      expect(resolveSizeSpy).toHaveBeenCalledTimes(1);
-      expect(resolveHashSpy).toHaveBeenCalledTimes(1);
+      expect(second.json()).toEqual(first.json());
     } finally {
-      resolveSizeSpy.mockRestore();
-      resolveHashSpy.mockRestore();
       await app.close();
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -3162,23 +3154,17 @@ describe('direct peer machine transfer', () => {
       createHash: createHashSpy,
     }));
 
-    const { createDirectPeerTransferApp } = await import('./directPeerTransport');
+    const { createDirectPeerTransferApp, createDirectPeerTransferRegistry } = await import('./directPeerTransport');
+    const { createBufferTransferPayloadSource } = await import('./transferPayloadSource');
     const { deriveBoxPublicKeyFromSeed } = await import('@happier-dev/protocol');
 
     const recipientSecretKeySeed = new Uint8Array(32).fill(7);
     const recipientPublicKeyBase64 = Buffer.from(deriveBoxPublicKeyFromSeed(recipientSecretKeySeed)).toString('base64');
-    const payloadSource = {
-      kind: 'file' as const,
-      filePath: '/virtual/direct-peer-cache.bin',
-      sizeBytes: 5,
-      manifestHash: 'sha256:'.padEnd(71, '1'),
-    };
-
+    const payloadSource = createBufferTransferPayloadSource(Buffer.from('hello'));
+    const registry = createDirectPeerTransferRegistry({ advertisedPort: 46003, now: () => 7_000 });
+    const published = registry.publishTransfer({ transferId: 'transfer_token_hash_cache', payloadSource });
     const app = createDirectPeerTransferApp({
-      readPublishedTransfer: ({ transferId, transferToken }) =>
-        transferId === 'transfer_token_hash_cache' && transferToken === 'shared-token'
-          ? payloadSource
-          : null,
+      readPublishedTransfer: registry.readPublishedTransfer,
     });
 
     try {
@@ -3190,7 +3176,7 @@ describe('direct peer machine transfer', () => {
         method: 'POST',
         url: buildDirectPeerOpenUrl('transfer_token_hash_cache'),
         headers: {
-          authorization: 'Bearer shared-token',
+          authorization: `Bearer ${published.transferToken}`,
           'x-happier-transfer-recipient-public-key': recipientPublicKeyBase64,
         },
       });
@@ -3200,7 +3186,7 @@ describe('direct peer machine transfer', () => {
         method: 'POST',
         url: buildDirectPeerOpenUrl('transfer_token_hash_cache'),
         headers: {
-          authorization: 'Bearer shared-token',
+          authorization: `Bearer ${published.transferToken}`,
           'x-happier-transfer-recipient-public-key': recipientPublicKeyBase64,
         },
       });

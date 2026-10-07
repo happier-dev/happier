@@ -333,6 +333,9 @@ In the development daemon inventory, `installed` means the Agent's own resolved
 CLI executed successfully; a version string alone or an installed server dependency
 does not establish that fact. Required setup dependencies come from the selected
 runtime transport, not the list of executables a plugin is permitted to invoke.
+Inventory cache scope includes the manifest-declared executable lookup environment,
+including vendor bin roots and alternative-binary fallback controls, independently of
+whether the request also probes sign-in status.
 
 When static credential presence is insufficient, the same Agent entry may provide
 the focused `cliAuth.detectAuthStatus` callback. The host gives it only

@@ -1,9 +1,20 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SessionPermissionRemoteGrantSummaryV1Schema } from '@happier-dev/protocol';
-import { renderScreen } from '@/dev/testkit';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+installDisconnectedServerSocketBoundary();
+await loadSyncSingletonForTests();
+const { SessionRemotePermissionGrantsView } = await import('./SessionRemotePermissionGrantsView');
+let serverId = '';
 
 const sessionRpcWithServerScope = vi.hoisted(() => vi.fn());
 const confirm = vi.hoisted(() => vi.fn<() => Promise<boolean>>());
@@ -12,9 +23,10 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', (
     sessionRpcWithServerScope,
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: { confirm },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({ spies: { confirm } }).module;
+});
 
 const activeGrant = SessionPermissionRemoteGrantSummaryV1Schema.parse({
     turnId: 'turn-1',
@@ -44,15 +56,21 @@ const secondActiveGrant = SessionPermissionRemoteGrantSummaryV1Schema.parse({
 });
 
 async function renderGrantsView() {
-    const { SessionRemotePermissionGrantsView } = await import('./SessionRemotePermissionGrantsView');
-    return renderScreen(<SessionRemotePermissionGrantsView sessionId="session-1" serverId="server-owner" />);
+    return renderScreen(<SessionRemotePermissionGrantsView sessionId="session-1" serverId={serverId} />);
 }
 
 describe('SessionRemotePermissionGrantsView', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
         sessionRpcWithServerScope.mockReset();
         confirm.mockReset();
         confirm.mockResolvedValue(true);
+        await homes.reset();
+        serverId = await homes.addHome({ name: 'Permission owner', serverUrl: 'https://permission-owner.test', accountId: 'owner' });
+    });
+
+    afterEach(async () => {
+        await standardCleanup();
+        await homes.reset();
     });
 
     it('uses the owner Action path to list, revoke, and re-read the authoritative grant record', async () => {
@@ -69,7 +87,7 @@ describe('SessionRemotePermissionGrantsView', () => {
         await vi.waitFor(() => expect(sessionRpcWithServerScope).toHaveBeenCalledTimes(1));
         expect(sessionRpcWithServerScope).toHaveBeenCalledWith({
             sessionId: 'session-1',
-            serverId: 'server-owner',
+            serverId,
             method: 'session.permission.remote.grants.list',
             payload: { sessionId: 'session-1', limit: 50 },
         });
@@ -83,7 +101,7 @@ describe('SessionRemotePermissionGrantsView', () => {
 
         expect(sessionRpcWithServerScope).toHaveBeenNthCalledWith(2, {
             sessionId: 'session-1',
-            serverId: 'server-owner',
+            serverId,
             method: 'session.permission.remote.grants.revoke',
             payload: {
                 sessionId: 'session-1',
@@ -94,7 +112,7 @@ describe('SessionRemotePermissionGrantsView', () => {
         });
         expect(sessionRpcWithServerScope).toHaveBeenNthCalledWith(3, {
             sessionId: 'session-1',
-            serverId: 'server-owner',
+            serverId,
             method: 'session.permission.remote.grants.list',
             payload: { sessionId: 'session-1', limit: 50 },
         });
@@ -145,7 +163,7 @@ describe('SessionRemotePermissionGrantsView', () => {
 
         expect(sessionRpcWithServerScope).toHaveBeenNthCalledWith(2, {
             sessionId: 'session-1',
-            serverId: 'server-owner',
+            serverId,
             method: 'session.permission.remote.grants.list',
             payload: { sessionId: 'session-1', limit: 50, cursor: 'cursor-2' },
         });

@@ -196,6 +196,7 @@ describe('LocalRelayRuntimeControlSection', () => {
                 ok: true,
                 data: {
                     installed: true,
+                    dataPresent: true,
                     version: '1.2.3',
                     relayUrl: 'http://127.0.0.1:3005',
                     healthy: true,
@@ -254,6 +255,7 @@ describe('LocalRelayRuntimeControlSection', () => {
                 ok: true,
                 data: {
                     installed: false,
+                    dataPresent: false,
                     version: null,
                     relayUrl: 'http://127.0.0.1:3005',
                     healthy: false,

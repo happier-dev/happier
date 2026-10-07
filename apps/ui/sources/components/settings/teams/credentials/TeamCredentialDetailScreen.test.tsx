@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, TEAM_CREDENTIAL_EXTERNAL_PROVIDER_PROTOCOLS_V1 } from '@happier-dev/protocol';
+import { TEAM_CREDENTIAL_EXTERNAL_PROVIDER_PROTOCOLS_V1 } from '@happier-dev/protocol';
 
 import { collectRenderedTestIds } from '@/dev/testkit/render/collectRenderedTestIds';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
@@ -493,13 +493,6 @@ describe('TeamCredentialDetailScreen', () => {
         });
         harness.answer(serverId, GET_PATH, {
             body: teamCredentialResourceFixture({ enabled: true }),
-        });
-        harness.answer(serverId, ARTIFACT_CREATE_PATH, {
-            body: {
-                id: 'artifact-approval', header: '', body: '',
-                dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
-                headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
-            },
         });
         await harness.requireUiApproval(serverId, 'teams.credentials.test');
 

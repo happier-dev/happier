@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { renderScreen } from '@/dev/testkit';
 import { createSignInServiceFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { initializeTerminalRouteRuntimeForTests } from '@/__tests__/routes/(app)/terminal/terminalRouteTestHelpers';
 
 // Controllable navigation store so that only components calling the navigation hooks
 // (via useSyncExternalStore) re-render when the route changes — faithfully modelling
@@ -27,39 +29,19 @@ function setNav(pathname: string, segments: string[]): void {
     navState.listeners.forEach((listener) => listener());
 }
 
-vi.mock('expo-router', () => ({
-    Redirect: (props: Record<string, unknown>) => React.createElement('Redirect', props),
+vi.mock('expo-router', async () => ({
+    ...(await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
+        params: {}, router: { replace: replaceSpy },
+    }).module,
     useSegments: () => useSyncExternalStore(subscribeNav, () => navState.segments),
     usePathname: () => useSyncExternalStore(subscribeNav, () => navState.pathname),
-    useGlobalSearchParams: () => ({}),
-    useRouter: () => ({ push() {}, back() {}, replace() {}, setParams() {} }),
-    router: { push() {}, back() {}, replace: replaceSpy, setParams() {} },
 }));
 
 const replaceSpy = vi.hoisted(() => vi.fn());
 
-const authState: { isAuthenticated: boolean; refreshFromActiveServer: () => Promise<void> } = {
+const authState = {
     isAuthenticated: true,
-    refreshFromActiveServer: async () => {},
 };
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => authState,
-}));
-
-// Auth-recovery + web-server-override gating dependencies default to pass-through
-// (no hold, no redirect) so the isolation property can be observed in isolation.
-vi.mock('@/hooks/session/sessionRouteAuthRecovery', () => ({
-    resolveSessionRouteAuthRecoveryState: () => ({ isAuthRecovering: false, baseHref: null }),
-    isSessionRouteInAuthRecoverySubtree: () => false,
-    shouldNormalizeSessionRouteToAuthRecoveryBase: () => false,
-}));
-vi.mock('@/sync/domains/state/storage', () => ({
-    useEndpointConnectivity: () => ({ status: 'connected' }),
-    useSyncError: () => null,
-}));
-vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({
-    useActiveServerSnapshot: () => ({ serverId: '', serverUrl: '', activeLocalRelayUrl: null }),
-}));
 const runtimeFetchSpy = vi.hoisted(() => vi.fn(async () => new Response('', { status: 503 })));
 vi.mock('@/utils/system/runtimeFetch', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/utils/system/runtimeFetch')>(),
@@ -72,6 +54,13 @@ vi.mock('@/modal', async () => {
 
 import { useSegments } from 'expo-router';
 import { RootLayoutRedirectGate, WebServerOverrideGate } from './RootLayoutRedirectGate';
+
+await initializeTerminalRouteRuntimeForTests();
+
+function renderGateScreen(children: React.ReactNode) {
+    const credentials = authState.isAuthenticated ? { token: 'e30.eyJzdWIiOiJhY2NvdW50LWEifQ.signature' } : null;
+    return renderScreen(<InjectedAuthProvider credentials={credentials}>{children}</InjectedAuthProvider>);
+}
 
 type Counter = { n: number };
 
@@ -109,7 +98,7 @@ describe('RootLayoutRedirectGate', () => {
         const nav: Counter = { n: 0 };
         const stableChild = React.createElement(ShellProbe, { counter: shell });
 
-        const screen = await renderScreen(
+        const screen = await renderGateScreen(
             React.createElement(
                 React.Fragment,
                 null,
@@ -138,7 +127,7 @@ describe('RootLayoutRedirectGate', () => {
     it('does not mutate the active server when the gate mounts without a URL override', async () => {
         const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverProfiles');
         const before = getActiveServerSnapshot().serverId;
-        const screen = await renderScreen(
+        const screen = await renderGateScreen(
             React.createElement(
                 RootLayoutRedirectGate,
                 null,
@@ -158,7 +147,7 @@ describe('RootLayoutRedirectGate', () => {
         setNav('/settings', ['(app)', 'settings']);
 
         const shell: Counter = { n: 0 };
-        const screen = await renderScreen(
+        const screen = await renderGateScreen(
             React.createElement(
                 RootLayoutRedirectGate,
                 null,
@@ -179,7 +168,7 @@ describe('RootLayoutRedirectGate', () => {
         setNav('/', ['index']);
 
         const shell: Counter = { n: 0 };
-        const screen = await renderScreen(
+        const screen = await renderGateScreen(
             React.createElement(
                 RootLayoutRedirectGate,
                 null,
@@ -204,7 +193,7 @@ describe('RootLayoutRedirectGate', () => {
         const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
         await upsertAndActivateServer({ serverUrl: 'https://saved.example.test', source: 'manual', scope: 'device' });
         const activeBefore = getActiveServerSnapshot().serverId;
-        const screen = await renderScreen(
+        const screen = await renderGateScreen(
             <WebServerOverrideGate><RootLayoutRedirectGate><React.Fragment /></RootLayoutRedirectGate></WebServerOverrideGate>,
         );
         try {
@@ -234,7 +223,7 @@ describe('RootLayoutRedirectGate', () => {
         const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
         await upsertAndActivateServer({ serverUrl: 'https://saved.example.test', source: 'manual', scope: 'device' });
         const beforeService = profiles.resolveSelectedAccountServiceEndpoint();
-        const screen = await renderScreen(<WebServerOverrideGate><React.Fragment /></WebServerOverrideGate>);
+        const screen = await renderGateScreen(<WebServerOverrideGate><React.Fragment /></WebServerOverrideGate>);
         try {
             await vi.waitFor(() => expect(profiles.getActiveServerSnapshot().serverUrl).toBe(address));
             expect(profiles.resolveSelectedAccountServiceEndpoint()).toEqual(beforeService);

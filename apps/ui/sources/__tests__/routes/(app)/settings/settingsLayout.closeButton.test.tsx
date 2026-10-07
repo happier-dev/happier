@@ -44,11 +44,10 @@ vi.mock('@/components/navigation/RouteModalPortalScope', () => ({
     RouteModalPortalScope: (props: { children?: React.ReactNode }) => React.createElement('RouteModalPortalScope', null, props.children),
 }));
 
-vi.mock('@/components/navigation/createAppStackScreenOptions', () => ({
-    createAppStackScreenOptions: () => ({}),
+vi.mock('@/utils/platform/platform', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/utils/platform/platform')>(),
+    isRunningOnMac: () => false,
 }));
-
-vi.mock('@/utils/platform/platform', () => ({ isRunningOnMac: () => false }));
 
 vi.mock('@/components/navigation/AppHeaderCloseButton', () => ({
     AppHeaderCloseButton: (props: Record<string, unknown>) => React.createElement('AppHeaderCloseButton', props),

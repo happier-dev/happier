@@ -563,7 +563,7 @@ describe('A.11 plugin context services', () => {
         await expect(disabled.resolve({ preference: 'auto' })).rejects.toMatchObject({
             code: 'PLUGIN_TERMINAL_HOST_CAPABILITY_REQUIRED',
         });
-        const missingPermission = createPluginTerminalHostService({
+        const terminalOnlyCapability = createPluginTerminalHostService({
             hasCapability: (capability) => capability === 'terminalHost',
             resolveTerminalHost: () => ({ status: 'resolved', adapter, reason: 'tmux_available' }),
             resolveAgentCliLaunch: () => ({
@@ -572,8 +572,10 @@ describe('A.11 plugin context services', () => {
             }),
             disposeHost: vi.fn(async () => undefined),
         });
-        await expect(missingPermission.resolve({ preference: 'auto' })).rejects.toMatchObject({
-            code: 'PLUGIN_TERMINAL_HOST_CAPABILITY_REQUIRED',
+        await expect(terminalOnlyCapability.resolve({ preference: 'auto' })).resolves.toEqual({
+            status: 'resolved',
+            hostKind: 'tmux',
+            reason: 'tmux_available',
         });
     });
 

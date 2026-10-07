@@ -1,168 +1,99 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { TransferRelayV2SendEnvelope } from '@happier-dev/protocol';
-import type { createEphemeralServerSocketClient as createEphemeralServerSocketClientFn } from './createEphemeralServerSocketClient';
-import type { resolveServerScopedContext as resolveServerScopedContextFn } from './resolveServerScopedContext';
-import type { ScopedRpcEncryptionContext } from './serverScopedRpcTypes';
-import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TRANSFER_RELAY_V2_SOCKET_EVENT, type TransferRelayV2SendEnvelope } from '@happier-dev/protocol';
+import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 
-const state = vi.hoisted(() => ({
-    profileId: 'user-1',
-}));
+const boundary = await installSessionOpsNetworkBoundary();
+const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
+await loadSyncSingletonForTests();
+const { resolveServerScopedTransferRelaySocket } = await import('./serverScopedTransferRelaySocket');
+const { serverScopedRpcSocketPool } = await import('./serverScopedRpcSocketPool');
+const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+const { restoreConnectionToActiveServer, disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
+const { storage } = await import('@/sync/domains/state/storage');
+const { profileDefaults } = await import('@/sync/domains/profiles/profile');
+let activeHome: Awaited<ReturnType<typeof boundary.addHome>>;
+let scopedHome: Awaited<ReturnType<typeof boundary.addHome>>;
 
-const apiSocketSendTransferRelayV2EnvelopeSpy = vi.hoisted(() => vi.fn<(payload: TransferRelayV2SendEnvelope) => void>());
-const apiSocketOnTransferRelayV2EnvelopeSpy = vi.hoisted(() => vi.fn<(listener: (payload: TransferRelayV2SendEnvelope) => void) => () => void>(() => () => {}));
-const createEphemeralServerSocketClientSpy = vi.hoisted(() => vi.fn<typeof createEphemeralServerSocketClientFn>());
-const resolveServerScopedContextSpy = vi.hoisted(() => vi.fn<typeof resolveServerScopedContextFn>());
-const scopedRpcEncryptionStub: ScopedRpcEncryptionContext = {
-    decryptEncryptionKey: async () => null,
-    initializeMachines: async () => {},
-    getMachineEncryption: () => null,
-};
+function envelope(scopeUserId: string): TransferRelayV2SendEnvelope {
+    return {
+        scopeUserId,
+        sender: { kind: 'user', socketId: 'socket-source' },
+        recipient: { kind: 'machine', machineId: 'machine-1' },
+        envelope: { transferId: 'transfer-1', kind: 'ack', nextSequence: 2 },
+    };
+}
 
-const storageMock = createStorageModuleStub({
-    storage: {
-        getState: () => ({
-            profile: state.profileId ? { id: state.profileId } : null,
-        }),
-    } as any,
-});
+afterAll(() => boundary.dispose());
 
-vi.mock('@/sync/domains/state/storage', () => storageMock);
+describe('resolveServerScopedTransferRelaySocket (real scoped network)', () => {
+    beforeEach(async () => {
+        boundary.resetRequests();
+        activeHome = await boundary.addHome('https://server-a.example.test', 'account-a');
+        scopedHome = await boundary.addHome('https://server-b.example.test', 'account-b');
+        await upsertAndActivateServer({ serverUrl: activeHome.serverUrl });
+        await restoreConnectionToActiveServer({ token: activeHome.token });
+        storage.getState().applyProfile({ ...profileDefaults, id: activeHome.accountId });
+        await vi.waitFor(() => expect(boundary.socketBoundaries.some((network) =>
+            network.serverUrl === activeHome.serverUrl && network.socket.connected,
+        )).toBe(true));
+    });
 
-vi.mock('@/sync/api/session/apiSocket', () => ({
-    apiSocket: {
-        sendTransferRelayV2Envelope: (payload: TransferRelayV2SendEnvelope) => apiSocketSendTransferRelayV2EnvelopeSpy(payload),
-        onTransferRelayV2Envelope: (listener: (payload: TransferRelayV2SendEnvelope) => void) => apiSocketOnTransferRelayV2EnvelopeSpy(listener),
-    },
-}));
-
-vi.mock('./createEphemeralServerSocketClient', () => ({
-    createEphemeralServerSocketClient: (
-        params: Parameters<typeof createEphemeralServerSocketClientFn>[0],
-    ) => createEphemeralServerSocketClientSpy(params),
-}));
-
-vi.mock('./resolveServerScopedContext', () => ({
-    resolveServerScopedContext: (
-        params: Parameters<typeof resolveServerScopedContextFn>[0],
-    ) => resolveServerScopedContextSpy(params),
-}));
-
-describe('resolveServerScopedTransferRelaySocket', () => {
-    beforeEach(() => {
-        state.profileId = 'user-1';
-        apiSocketSendTransferRelayV2EnvelopeSpy.mockReset();
-        apiSocketOnTransferRelayV2EnvelopeSpy.mockReset();
-        apiSocketOnTransferRelayV2EnvelopeSpy.mockImplementation(() => () => {});
-        createEphemeralServerSocketClientSpy.mockReset();
-        resolveServerScopedContextSpy.mockReset();
+    afterEach(async () => {
+        await disconnectActiveServerConnection();
+        await serverScopedRpcSocketPool.stopAll();
+        await resetServerReachabilitySupervisors();
     });
 
     it('uses the active apiSocket when the target server is active', async () => {
-        resolveServerScopedContextSpy.mockResolvedValue({
-            scope: 'active',
-            machineId: 'machine-1',
-            timeoutMs: 1_000,
-        });
-
-        const { resolveServerScopedTransferRelaySocket } = await import('./serverScopedTransferRelaySocket');
         const client = await resolveServerScopedTransferRelaySocket({
-            machineId: 'machine-1',
-            serverId: 'server-a',
-            timeoutMs: 1_000,
+            machineId: 'machine-1', serverId: activeHome.id, timeoutMs: 1_000,
         });
-
-        expect(client.scopeUserId).toBe('user-1');
-        expect(client.machineId).toBe('machine-1');
-
+        expect(client).toMatchObject({ scopeUserId: activeHome.accountId, machineId: 'machine-1' });
+        const network = boundary.socketBoundaries.find((socket) => socket.serverUrl === activeHome.serverUrl);
+        if (!network) throw new Error('Expected active Socket.IO boundary');
         const listener = vi.fn();
         const unsubscribe = client.onEnvelope(listener);
-        const envelope: TransferRelayV2SendEnvelope = {
-            scopeUserId: 'user-1',
-            sender: {
-                kind: 'user',
-                socketId: 'socket-source',
-            },
-            recipient: {
-                kind: 'machine',
-                machineId: 'machine-1',
-            },
-            envelope: {
-                transferId: 'transfer-1',
-                kind: 'ack',
-                nextSequence: 2,
-            },
-        };
-        client.sendEnvelope(envelope);
-
-        expect(apiSocketOnTransferRelayV2EnvelopeSpy).toHaveBeenCalledWith(listener);
-        expect(apiSocketSendTransferRelayV2EnvelopeSpy).toHaveBeenCalledWith(envelope);
-
+        const payload = envelope(activeHome.accountId);
+        client.sendEnvelope(payload);
+        expect(network.socket.emit).toHaveBeenCalledWith(TRANSFER_RELAY_V2_SOCKET_EVENT, payload);
+        network.trigger(TRANSFER_RELAY_V2_SOCKET_EVENT, payload);
+        expect(listener).toHaveBeenCalledWith(payload);
         unsubscribe();
-        client.disconnect();
-        expect(createEphemeralServerSocketClientSpy).not.toHaveBeenCalled();
+        listener.mockClear();
+        network.trigger(TRANSFER_RELAY_V2_SOCKET_EVENT, payload);
+        expect(listener).not.toHaveBeenCalled();
+        await client.disconnect();
+        expect(boundary.socketBoundaries.filter((socket) => socket.serverUrl === scopedHome.serverUrl)).toHaveLength(0);
     });
 
-    it('uses an ephemeral scoped socket when the target server is not active', async () => {
-        const socketOffSpy = vi.fn();
-        const socketDisconnectSpy = vi.fn();
-        const socketOnSpy = vi.fn();
-        createEphemeralServerSocketClientSpy.mockResolvedValue({
-            emit: vi.fn(),
-            timeout: vi.fn(),
-            getSocketId: vi.fn(() => 'socket-scoped'),
-            disconnect: socketDisconnectSpy,
-            on: socketOnSpy,
-            off: socketOffSpy,
-        });
-        resolveServerScopedContextSpy.mockResolvedValue({
-            scope: 'scoped',
-            machineId: 'machine-2',
-            timeoutMs: 2_000,
-            targetServerId: 'server-b',
-            targetServerUrl: 'https://server-b.example.test',
-            token: 'token-b',
-            encryption: scopedRpcEncryptionStub,
-        });
-
-        const { resolveServerScopedTransferRelaySocket } = await import('./serverScopedTransferRelaySocket');
+    it('uses the target Home Account and a scoped socket when that Home is not active', async () => {
         const client = await resolveServerScopedTransferRelaySocket({
-            machineId: 'machine-2',
-            serverId: 'server-b',
-            timeoutMs: 2_000,
+            machineId: 'machine-1', serverId: scopedHome.id, timeoutMs: 2_000,
         });
-
+        expect(client).toMatchObject({ scopeUserId: scopedHome.accountId, machineId: 'machine-1' });
+        const network = boundary.socketBoundaries.find((socket) => socket.serverUrl === scopedHome.serverUrl);
+        if (!network) throw new Error('Expected scoped Socket.IO boundary');
+        expect(network.token).toBe(scopedHome.token);
         const listener = vi.fn();
         const unsubscribe = client.onEnvelope(listener);
-
-        expect(createEphemeralServerSocketClientSpy).toHaveBeenCalledWith({
-            serverUrl: 'https://server-b.example.test',
-            token: 'token-b',
-            timeoutMs: 2_000,
-        });
-        expect(socketOnSpy).toHaveBeenCalledWith(expect.any(String), listener);
-
+        const payload = envelope(scopedHome.accountId);
+        client.sendEnvelope(payload);
+        expect(network.socket.emit).toHaveBeenCalledWith(TRANSFER_RELAY_V2_SOCKET_EVENT, payload);
+        network.trigger(TRANSFER_RELAY_V2_SOCKET_EVENT, payload);
+        expect(listener).toHaveBeenCalledWith(payload);
         unsubscribe();
-        expect(socketOffSpy).toHaveBeenCalledWith(expect.any(String), listener);
-
-        client.disconnect();
-        expect(socketDisconnectSpy).toHaveBeenCalledTimes(1);
+        listener.mockClear();
+        network.trigger(TRANSFER_RELAY_V2_SOCKET_EVENT, payload);
+        expect(listener).not.toHaveBeenCalled();
+        await client.disconnect();
+        expect(network.socket.disconnect).not.toHaveBeenCalled();
     });
 
     it('fails closed when the active account profile id is unavailable', async () => {
-        state.profileId = '';
-        resolveServerScopedContextSpy.mockResolvedValue({
-            scope: 'active',
-            machineId: 'machine-1',
-            timeoutMs: 1_000,
-        });
-
-        const { resolveServerScopedTransferRelaySocket } = await import('./serverScopedTransferRelaySocket');
-
+        storage.getState().applyProfile({ ...profileDefaults });
         await expect(resolveServerScopedTransferRelaySocket({
-            machineId: 'machine-1',
-            serverId: 'server-a',
-            timeoutMs: 1_000,
+            machineId: 'machine-1', serverId: activeHome.id, timeoutMs: 1_000,
         })).rejects.toThrow('Active account profile id is unavailable for transfer relay');
     });
 });

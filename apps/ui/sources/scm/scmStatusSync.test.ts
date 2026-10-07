@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { storage } from '@/sync/domains/state/storage';
-import { apiSocket } from '@/sync/api/session/apiSocket';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { EMPTY_SCM_CAPABILITIES } from './core/snapshotMappers';
@@ -15,6 +14,14 @@ import {
     shouldAttributeChangedPaths,
     ScmStatusSync,
 } from './scmStatusSync';
+
+const machineRpc = vi.hoisted(() => vi.fn());
+// The authenticated Machine RPC transport is external; repository resolution,
+// snapshot mapping, sync lifetimes and storage publication remain real.
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
+    const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
+    return createServerScopedMachineRpcBoundaryMock(machineRpc);
+});
 
 function makeSnapshot(entries: ScmWorkingSnapshot['entries']): ScmWorkingSnapshot {
     return {
@@ -62,14 +69,17 @@ describe('repository scope snapshot publication and reuse', () => {
     const initialState = storage.getState();
     afterEach(() => {
         storage.setState(initialState, true);
+        machineRpc.mockReset();
         vi.restoreAllMocks();
     });
 
     it('keeps identical session and repository IDs on different Homes in independent sync lifetimes', () => {
+        const machine = createMachineFixture({ id: 'm' });
         const base = createSessionFixture();
         const session = createSessionFixture({ id: 'same', metadata: { ...base.metadata!, machineId: 'm', path: '/repo' } });
         storage.setState({
             sessions: { same: session },
+            machineListByServerId: { a: [machine], b: [machine] },
             sessionListRowsByServerId: { a: { same: session }, b: { same: session } },
         });
         const syncer = new ScmStatusSync();
@@ -125,8 +135,7 @@ describe('repository scope snapshot publication and reuse', () => {
                 otherMachine: session('otherMachine', member, 'other-machine'),
             },
         });
-        // Mock only the RPC transport; repository resolution, mapping, sync and storage remain real.
-        const rpc = vi.spyOn(apiSocket, 'machineRPC').mockResolvedValue({
+        const rpc = machineRpc.mockResolvedValue({
             success: true,
             snapshot: { ...makeSnapshot([]), repo: { isRepo: true, rootPath: root }, capabilities: EMPTY_SCM_CAPABILITIES },
         });

@@ -1,5 +1,4 @@
 import { spawn } from 'node:child_process';
-import { execFileSync } from 'node:child_process';
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -40,10 +39,12 @@ async function waitForFileContents(path: string, expected: string): Promise<void
 }
 
 async function writeExactDevPredecessorHarness(dir: string): Promise<string> {
-  const predecessor = execFileSync('git', [
-    'show',
-    '877ee97a0df346a1daaa541632dc42643d533120:apps/cli/src/daemon/connectedServices/stateSharing/connectedServiceStateSharingLock.ts',
-  ], { encoding: 'utf8' });
+  // Exact source at 877ee97a0df346a1daaa541632dc42643d533120, same repository path.
+  // Keep coexistence independent of CI's shallow Git-history availability.
+  const predecessor = await readFile(
+    new URL('./connectedServiceStateSharingLock.devPredecessor.ts.txt', import.meta.url),
+    'utf8',
+  );
   const harnessPath = join(dir, 'dev-predecessor-state-sharing-lock.ts');
   await writeFile(harnessPath, `${predecessor}\n
 const destination = process.env.HAPPIER_TEST_DESTINATION!;

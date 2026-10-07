@@ -1,4 +1,4 @@
-import type { ConnectedServiceId } from '@happier-dev/protocol';
+import { readBuiltInLegacyConnectedAccountServiceKeyIngress, type ConnectedServiceId } from '@happier-dev/protocol';
 
 import { resolveTrackedSessionCatalogAgentId } from '../../sessions/resolveTrackedSessionCatalogAgentId';
 import type { TrackedSession } from '../../types';
@@ -19,10 +19,14 @@ export function createConnectedServiceGroupHomeCleanupScheduler(params: Readonly
     groupExists: params.groupExists,
     resolveGroupDeletionAuthority: params.resolveGroupDeletionAuthority,
     hasLiveTarget: ({ serviceId, groupId, agentId }) => {
+      // Group-home paths retain the bundled scalar service identity, while
+      // current and released tracked bindings parse to qualified Account keys.
+      const serviceKey = readBuiltInLegacyConnectedAccountServiceKeyIngress(serviceId);
+      if (!serviceKey) return false;
       for (const tracked of params.pidToTrackedSession.values()) {
         const trackedAgentId = resolveTrackedSessionCatalogAgentId(tracked);
         if (trackedAgentId !== agentId) continue;
-        if (hasTrackedConnectedServiceGroupBinding({ tracked, serviceId, groupId })) {
+        if (hasTrackedConnectedServiceGroupBinding({ tracked, serviceId: serviceKey, groupId })) {
           return true;
         }
       }

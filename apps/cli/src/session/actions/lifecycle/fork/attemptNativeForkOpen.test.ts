@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { deriveSessionCreationTagV1, SessionCreationCorrespondenceV1Schema, SessionTurnProviderCheckpointV1Schema } from '@happier-dev/protocol';
+import { deriveSessionCreationTagV1, SessionCreationCorrespondenceV1Schema, SessionTurnProviderCheckpointV1Schema, type RuntimeDescriptorV1 } from '@happier-dev/protocol';
+import { projectCurrentAgentSessionView } from '@happier-dev/agents';
 
 const mocks = vi.hoisted(() => ({
     fetchSessionTurnsProjection: vi.fn(),
@@ -28,13 +29,16 @@ const credentials = {
     token: 'token',
     encryption: { type: 'legacy' as const, secret: new Uint8Array([1, 2, 3]) },
 };
-const parentMetadata = {
-    runtimeDescriptorV1: {
-        v: 1,
-        agentId: 'grok',
-        agent: { providerSessionId: 'provider-parent' },
-    },
-};
+const parentRuntimeDescriptor = {
+    v: 1,
+    agentId: 'grok',
+    agent: { providerSessionId: 'provider-parent' },
+} satisfies RuntimeDescriptorV1;
+const parentMetadata = projectCurrentAgentSessionView({ runtimeDescriptorV1: parentRuntimeDescriptor }, {
+    agentId: 'grok',
+    runtimeDescriptor: parentRuntimeDescriptor,
+    nativeResumeIdentity: { v: 1, vendorResumeId: 'provider-parent' },
+});
 const forkBackendResolution = {
     ok: true as const,
     catalogAgentId: 'grok' as const,

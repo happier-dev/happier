@@ -305,15 +305,15 @@ describe('workspace details surface renderers', () => {
         const rendered = renderer?.render(renderInput);
 
         expect(React.isValidElement(rendered)).toBe(true);
-        if (!React.isValidElement<{ openableContentViewer?: unknown }>(rendered)) return;
-        expect(rendered.props.openableContentViewer).toMatchObject({
+        const screen = await renderScreen(<>{rendered}</>);
+        const { WorkspaceFileDetailsView } = await import('@/components/workspaces/files/details/WorkspaceFileDetailsView');
+        expect(screen.findByType(WorkspaceFileDetailsView).props.openableContentViewer).toMatchObject({
             targetKind: 'project',
             projection,
             details: renderInput,
             scopedLaunchFacts: {
                 serverId: 'server-1',
                 machineId: 'machine-1',
-                generation: 9,
                 interactionEnabled: true,
             },
         });

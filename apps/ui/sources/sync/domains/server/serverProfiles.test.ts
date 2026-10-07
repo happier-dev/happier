@@ -2701,10 +2701,9 @@ describe('serverProfiles', () => {
             activeTargetId: homeA.id,
         });
 
-        const captured = selection.loadEffectiveHomeViewState()!;
         await profiles.updateHomeViewState((latest) => ({ ...latest, groups: [concurrentlySavedGroup] }));
-        await selection.updateEffectiveHomeViewState(() => ({
-            ...captured,
+        await selection.updateEffectiveHomeViewState((latest) => ({
+            ...latest,
             activeTargetKind: 'server',
             activeTargetId: homeB.id,
         }), { scope: 'tab' });

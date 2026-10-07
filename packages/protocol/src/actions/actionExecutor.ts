@@ -23,6 +23,7 @@ import { HomeConnectInputSchema, MachineAddCommandInputSchema, MachinePairingCre
 import { NotificationsNotifyMeInputV1Schema } from '../account/notifications/notifyMeV1.js';
 import { MachinesAgentsSignInStartInputSchema, MachinesAgentsSignInStatusInputSchema, MachinesAgentsSignInCancelInputSchema } from '../daemon/agentSignIn.js';
 import { isRoleActionIdV1 } from '../prompts/roles/roleActionIdsV1.js';
+import { projectAccountRoleActionRefusalV1 } from '../prompts/roles/accountRoleActions.js';
 import { isWorkBoardActionIdV1 } from '../boards/actionIdsV1.js';
 import { WorkBoardActionInputSchemasV1 } from '../boards/actionsV1.js';
 import { HOME_HUB_LAYOUT_ACTION_IDS, HomeHubLayoutUpdateInputSchema } from './specs/homeHub.js';
@@ -3876,7 +3877,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           ctx = { ...ctx, agentStartContext: roleContext ?? undefined };
         }
         if (!deps.roleActionExecute) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
-        const result = await deps.roleActionExecute({ actionId, input: parsed.data, context: ctx });
+        let result: unknown;
+        try {
+          result = await deps.roleActionExecute({ actionId, input: parsed.data, context: ctx });
+        } catch (error) {
+          const failure = projectAccountRoleActionRefusalV1(error);
+          if (failure) return failure;
+          throw error;
+        }
         const failure = readActionFailureEnvelope(result);
         return failure ?? { ok: true, result };
       }

@@ -3,6 +3,8 @@ import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createTestSessionTranscriptSource, renderWithSessionTranscriptSource } from '@/dev/testkit';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import type { Message } from '@happier-dev/session-core/messages';
 import { installTranscriptCommonModuleMocks, resetTranscriptCommonModuleMockState } from './transcriptTestHelpers';
 
@@ -115,6 +117,9 @@ vi.mock('./MessageView', () => ({
 vi.mock('./ChatFooter', () => ({
     ChatFooter: () => React.createElement('ChatFooter'),
 }));
+
+installDisconnectedServerSocketBoundary();
+await loadSyncSingletonForTests();
 
 describe('TranscriptList safe area', () => {
     beforeEach(() => {

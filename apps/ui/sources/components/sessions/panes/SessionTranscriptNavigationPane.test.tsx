@@ -2,7 +2,8 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { invokeTestInstanceHandler, renderScreen, standardCleanup, createSessionFixture, createSessionMessagesFixture } from '@/dev/testkit';
+import { invokeTestInstanceHandler, renderScreen, createSessionFixture, createSessionMessagesFixture } from '@/dev/testkit';
+import { installSessionPaneRuntimeTestHarness } from './sessionPaneRuntimeTestHarness';
 import { storage } from '@/sync/domains/state/storage';
 import { installNavigationCommonModuleMocks } from '@/components/ui/navigation/navigationTestHelpers';
 import type { Message } from "@happier-dev/session-core/messages";
@@ -66,23 +67,7 @@ installNavigationCommonModuleMocks({
 });
 
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
-vi.mock('@/sync/store/hooks', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/store/hooks')>(), useActiveServerAccountScope: () => null,
-}));
-vi.mock('@/sync/sync', () => ({ sync: {
-    prefetchForkedTranscriptContext: async () => undefined,
-    getSessionTailDiscontinuityOlderAvailability: () => undefined,
-} }));
-vi.mock('@/hooks/session/useUserMessageHistory', () => ({
-    useUserMessageHistoryRemoteEntries: () => ({
-        rows: [],
-        hasMore: false,
-        nextBeforeSeq: null,
-        pagesLoaded: 0,
-        pendingEncryption: false,
-        requestNextPage: () => {},
-    }),
-}));
+const runtime = installSessionPaneRuntimeTestHarness();
 
 const ENTRY_TEST_ID = 'nav-entry:session-1:user-turn:3';
 
@@ -107,7 +92,7 @@ function seedTranscript() {
     transcriptState.messagesById = Object.fromEntries(messages.map((message) => [message.id, message]));
     transcriptState.isLoaded = true;
     storage.setState({
-        sessions: { 'session-1': createSessionFixture({ id: 'session-1' }) },
+        sessions: { 'session-1': createSessionFixture({ id: 'session-1', serverId: runtime.serverId }) },
         sessionMessages: { 'session-1': createSessionMessagesFixture({
             messageIdsOldestFirst: transcriptState.ids, messagesById: transcriptState.messagesById, isLoaded: true,
         }) },
@@ -122,8 +107,6 @@ async function flushDeferredJump() {
 
 describe('SessionTranscriptNavigationPane', () => {
     beforeEach(async () => {
-        standardCleanup();
-        persistedStorage.clear();
         seedTranscript();
         const { transcriptNavigationPaneStore } = await import('@/components/sessions/transcript/navigation/transcriptNavigationPaneStore');
         transcriptNavigationPaneStore.set('session-1', null);

@@ -7,6 +7,7 @@ import type {
     SessionOrganizationContentEnvelope,
     SessionOrganizationOrderEntry,
 } from '@happier-dev/protocol';
+import { SessionOrganizationSnapshotSchema } from '@happier-dev/protocol';
 
 type SessionOrganizationJsonValue = Extract<
     SessionOrganizationContentEnvelope,
@@ -158,4 +159,31 @@ export function buildSessionOrganizationProjectionFromLegacyTestSettings(
         ),
         labelsByLabelKey: {},
     };
+}
+
+/** Enroll the fixture through the store's canonical snapshot publisher and selectors. */
+export async function applySessionOrganizationLegacyTestSettings(
+    fixture: LegacySessionOrganizationProjectionFixture,
+): Promise<void> {
+    const projection = buildSessionOrganizationProjectionFromLegacyTestSettings(fixture);
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    storage.getState().applySessionOrganizationSnapshot(fixture.serverId, SessionOrganizationSnapshotSchema.parse({
+        schemaVersion: projection.schemaVersion,
+        version: projection.version,
+        pins: Object.values(projection.pinsBySessionId),
+        // Readable wire rows carry the display envelope; available/locked are
+        // UI decode results, not protocol display states. The real store derives
+        // available state from these plain envelopes when applying the snapshot.
+        folders: Object.values(projection.foldersById).map(({ displayState: _displayState, ...folder }) => folder),
+        folderAssignments: Object.entries(projection.folderAssignmentsBySessionId).flatMap(([sessionId, folderId]) => (
+            folderId === null ? [] : [{ sessionId, folderId }]
+        )),
+        tags: Object.values(projection.tagsById).map(({ displayState: _displayState, ...tag }) => tag),
+        tagAssignments: Object.entries(projection.tagAssignmentsBySessionId).map(([sessionId, tagIds]) => ({
+            sessionId,
+            tagIds: [...tagIds],
+        })),
+        orderEntries: Object.values(projection.orderEntriesByScopeKey).flat(),
+        labels: Object.values(projection.labelsByLabelKey).map(({ displayState: _displayState, ...label }) => label),
+    }));
 }

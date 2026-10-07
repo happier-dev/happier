@@ -33,8 +33,8 @@ describe('Contributed realtime conversation language controls', () => {
     const screen = await renderSettingsView(<VoiceConversationLanguageSection voice={voice} setVoice={vi.fn()} registry={registry} />);
     const menu = screen.tree.root.findByType(DropdownMenu);
     expect(menu.props.selectedId).toBe('he-IL');
-    expect(menu.props.itemTrigger.showSelectedSubtitle).toBe(true);
-    const choices = menu.props.items as readonly Readonly<{ id: string; disabled?: boolean }>[];
+    expect(menu.props.itemTrigger?.showSelectedSubtitle).toBe(true);
+    const choices = menu.props.items;
     expect(choices.find((choice) => choice.id === 'he-IL')?.disabled).toBe(true);
   });
   it('uses one supported language choice for hearing and a read-only coupled reply', async () => {
@@ -42,8 +42,8 @@ describe('Contributed realtime conversation language controls', () => {
     const setVoice = vi.fn();
     const screen = await renderSettingsView(<VoiceConversationLanguageSection voice={voice} setVoice={setVoice} registry={registry} />);
     const menu = screen.tree.root.findByType(DropdownMenu);
-    expect(menu.props.itemTrigger.title).toBe('settingsVoice.pages.conversations.iSpeakTitle');
-    const choices = menu.props.items as readonly Readonly<{ id: string }>[];
+    expect(menu.props.itemTrigger?.title).toBe('settingsVoice.pages.conversations.iSpeakTitle');
+    const choices = menu.props.items;
     expect(choices.some((choice) => choice.id === 'he-IL')).toBe(false);
     expect(choices.some((choice) => choice.id === 'fr')).toBe(true);
     const reply = screen.tree.root.findAllByProps({ testID: 'settings.voice.language.replyIn' }).find((row) => typeof row.props.detail === 'string');
@@ -59,7 +59,7 @@ describe('Contributed realtime conversation language controls', () => {
     const recognition = screen.tree.root.findAllByProps({ testID: 'settings.voice.language.iSpeak' }).find((row) => typeof row.props.detail === 'string');
     expect(recognition?.props.detail).toBe('settingsVoice.pages.conversations.iSpeakAutomatic');
     expect(recognition?.props.onPress).toBeUndefined();
-    expect(screen.tree.root.findByType(DropdownMenu).props.itemTrigger.title).toBe('settingsVoice.pages.conversations.replyInTitle');
+    expect(screen.tree.root.findByType(DropdownMenu).props.itemTrigger?.title).toBe('settingsVoice.pages.conversations.replyInTitle');
   });
 
   it('does not advertise a mutable language for an unknown or opaque service', async () => {

@@ -2,7 +2,7 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { installToolShellCommonModuleMocks, makeToolCall } from './ToolView.testHelpers';
 import {
-  renderScreen,
+  renderWithSessionTranscriptSource as renderScreen,
   standardCleanup,
 } from '@/dev/testkit';
 import { Text } from '@/components/ui/text/Text';
@@ -52,13 +52,14 @@ vi.mock('@/components/tools/renderers/core/_registry', () => ({
   },
 }));
 
+const { ToolFullView } = await import('./ToolFullView');
+
 describe('ToolFullView (text selection scope)', () => {
   afterEach(() => {
     standardCleanup();
   });
 
   it('defaults tool renderer content to selectable in the full view', async () => {
-    const { ToolFullView } = await import('./ToolFullView');
 
     const tool = makeToolCall({
       name: 'Run echo hello',

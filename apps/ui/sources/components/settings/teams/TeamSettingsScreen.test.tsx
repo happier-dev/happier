@@ -2,8 +2,8 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-    ARTIFACT_PLAIN_DATA_KEY_MARKER,
-    encodePlainArtifactStoredContent,
+    ApprovalRequestV2Schema,
+    buildApprovalRequestArtifactHeaderV1,
 } from '@happier-dev/protocol';
 
 import {
@@ -16,6 +16,7 @@ import {
     teamPolicyFixture,
     teamSummaryFixture,
 } from '@/dev/testkit';
+import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
@@ -96,41 +97,21 @@ const ACCOUNT_SETTINGS_V2_PATH = '/v2/account/settings';
 const ARTIFACT_CREATE_PATH = '/v1/artifacts';
 const APPROVAL_ARTIFACT_ID = '00000000-0000-4000-8000-000000000001';
 
-function approvalArtifactResponse(approvalStatus: 'canceled' | 'executed') {
-    const request = {
-        v: 1 as const,
-        status: approvalStatus,
-        createdAtMs: 1,
-        updatedAtMs: 2,
-        createdBy: { surface: 'system' as const },
-        requestedSurface: 'ui',
-        actionId: 'teams.update' as const,
-        actionArgs: { teamId: 'team-1', name: 'Approval rename' },
-        summary: 'Update Team',
-        ...(approvalStatus === 'executed'
-            ? {
-                decision: { kind: 'approve' as const, decidedAtMs: 2 },
-                execution: { executedAtMs: 2, ok: true },
-            }
-            : {}),
-    };
-    return {
-        id: APPROVAL_ARTIFACT_ID,
-        header: encodePlainArtifactStoredContent({
-            v: 1,
-            kind: 'approval_request.v1',
-            title: 'Update Team',
-            actionId: 'teams.update',
-            approvalStatus,
-        }),
-        body: encodePlainArtifactStoredContent({ body: JSON.stringify(request) }),
-        dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
-        headerVersion: 2,
-        bodyVersion: 2,
-        seq: 2,
-        createdAt: 1,
-        updatedAt: 2,
-    };
+async function cancelApprovalOnHome(serverId: string) {
+    // Another device cancels the actual stored request through the Account's
+    // canonical Artifact writer, including its schema, codec and version CAS.
+    const { captureActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const context = await captureActionAccountContext(serverId);
+    try {
+        const artifact = await context.fetchArtifact(APPROVAL_ARTIFACT_ID);
+        if (!artifact) throw new Error('approval_artifact_missing');
+        if (typeof artifact.body !== 'string') throw new Error('approval_artifact_body_not_json_text');
+        const request = ApprovalRequestV2Schema.parse(JSON.parse(artifact.body));
+        const canceled = ApprovalRequestV2Schema.parse({ ...request, status: 'canceled', updatedAtMs: Date.now() });
+        await context.updateArtifact(artifact.id, buildApprovalRequestArtifactHeaderV1(canceled), JSON.stringify(canceled), artifact);
+    } finally {
+        context.dispose();
+    }
 }
 
 async function renderSettings(serverId: string) {
@@ -627,19 +608,6 @@ describe('TeamSettingsScreen', () => {
             // an intentionally different live settings snapshot.
             homeKey: 'policy-approval',
         });
-        harness.answer(serverId, ARTIFACT_CREATE_PATH, {
-            body: {
-                id: 'artifact-team-policy',
-                header: '',
-                body: '',
-                dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
-                headerVersion: 1,
-                bodyVersion: 1,
-                seq: 1,
-                createdAt: 1,
-                updatedAt: 1,
-            },
-        });
 
         const screen = await renderSettings(serverId);
         await waitForTestId(screen, 'team-settings-external-sharing:disabled');
@@ -659,19 +627,6 @@ describe('TeamSettingsScreen', () => {
             waiveDangerousUi: false,
             homeKey: 'identity-approval',
         });
-        harness.answer(serverId, ARTIFACT_CREATE_PATH, {
-            body: {
-                id: 'artifact-team-update',
-                header: '',
-                body: '',
-                dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
-                headerVersion: 1,
-                bodyVersion: 1,
-                seq: 1,
-                createdAt: 1,
-                updatedAt: 1,
-            },
-        });
 
         const screen = await renderSettings(serverId);
         await waitForTestId(screen, 'team-settings-name');
@@ -687,31 +642,12 @@ describe('TeamSettingsScreen', () => {
     });
 
     it('clears a canceled identity approval so the user can retry without redispatching it', async () => {
-        let releaseArtifact!: () => void;
-        const artifactReady = new Promise<void>((resolve) => { releaseArtifact = resolve; });
         const team = teamSummaryFixture({
             capabilities: teamCapabilitiesFixture({ manageSettings: true }),
         });
         const serverId = await addHomeWithTeam(team, {
             waiveDangerousUi: false,
             homeKey: 'identity-approval-canceled',
-        });
-        harness.answer(serverId, ARTIFACT_CREATE_PATH, {
-            body: {
-                id: APPROVAL_ARTIFACT_ID,
-                header: '',
-                body: '',
-                dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
-                headerVersion: 1,
-                bodyVersion: 1,
-                seq: 1,
-                createdAt: 1,
-                updatedAt: 1,
-            },
-        });
-        harness.answer(serverId, `/v1/artifacts/${APPROVAL_ARTIFACT_ID}`, {
-            body: approvalArtifactResponse('canceled'),
-            respondAfter: artifactReady,
         });
 
         const screen = await renderSettings(serverId);
@@ -722,7 +658,7 @@ describe('TeamSettingsScreen', () => {
         await waitForTestId(screen, 'team-approval');
         expect(screen.findByTestId('team-settings-save')?.props.disabled).toBe(true);
         expect(harness.requestsFor(TEAM_UPDATE_PATH)).toHaveLength(0);
-        await act(async () => releaseArtifact());
+        await act(async () => cancelApprovalOnHome(serverId));
 
         await vi.waitFor(() => {
             expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-approval');
@@ -732,8 +668,6 @@ describe('TeamSettingsScreen', () => {
     });
 
     it('refreshes the Team after an approved identity replay executes without redispatching the mutation', async () => {
-        let releaseArtifact!: () => void;
-        const artifactReady = new Promise<void>((resolve) => { releaseArtifact = resolve; });
         const team = teamSummaryFixture({
             capabilities: teamCapabilitiesFixture({ manageSettings: true }),
         });
@@ -741,24 +675,8 @@ describe('TeamSettingsScreen', () => {
             waiveDangerousUi: false,
             homeKey: 'identity-approval-executed',
         });
-        harness.answer(serverId, ARTIFACT_CREATE_PATH, {
-            body: {
-                id: APPROVAL_ARTIFACT_ID,
-                header: '',
-                body: '',
-                dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
-                headerVersion: 1,
-                bodyVersion: 1,
-                seq: 1,
-                createdAt: 1,
-                updatedAt: 1,
-            },
-        });
-        harness.answer(serverId, `/v1/artifacts/${APPROVAL_ARTIFACT_ID}`, {
-            body: approvalArtifactResponse('executed'),
-            respondAfter: artifactReady,
-        });
 
+        harness.answer(serverId, TEAM_UPDATE_PATH, { body: { ...team, name: 'Approval rename' } });
         const screen = await renderSettings(serverId);
         await waitForTestId(screen, 'team-settings-name');
         const teamReadsBeforeApproval = harness.requestsFor(TEAM_GET_PATH).length;
@@ -767,13 +685,13 @@ describe('TeamSettingsScreen', () => {
 
         await waitForTestId(screen, 'team-approval');
         expect(harness.requestsFor(TEAM_UPDATE_PATH)).toHaveLength(0);
-        await act(async () => releaseArtifact());
+        await expect(decideApprovalAsInbox(serverId, APPROVAL_ARTIFACT_ID, 'approve')).resolves.toMatchObject({ ok: true });
 
         await vi.waitFor(() => {
             expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-approval');
             expect(harness.requestsFor(TEAM_GET_PATH).length).toBeGreaterThan(teamReadsBeforeApproval);
         });
-        expect(harness.requestsFor(TEAM_UPDATE_PATH)).toHaveLength(0);
+        expect(harness.requestsFor(TEAM_UPDATE_PATH)).toHaveLength(1);
     });
 
     it('leaves the Team after archiving it and offers restore from the archived Team', async () => {
@@ -817,19 +735,6 @@ describe('TeamSettingsScreen', () => {
             waiveDangerousUi: false,
             homeKey: 'archive-explicit-approval',
         });
-        harness.answer(serverId, ARTIFACT_CREATE_PATH, {
-            body: {
-                id: 'artifact-team-archive',
-                header: '',
-                body: '',
-                dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
-                headerVersion: 1,
-                bodyVersion: 1,
-                seq: 1,
-                createdAt: 1,
-                updatedAt: 1,
-            },
-        });
 
         const screen = await renderSettings(serverId);
         await waitForTestId(screen, 'team-settings-archive');
@@ -849,19 +754,6 @@ describe('TeamSettingsScreen', () => {
         const serverId = await addHomeWithTeam(team, {
             waiveDangerousUi: false,
             homeKey: 'restore-explicit-approval',
-        });
-        harness.answer(serverId, ARTIFACT_CREATE_PATH, {
-            body: {
-                id: 'artifact-team-restore',
-                header: '',
-                body: '',
-                dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
-                headerVersion: 1,
-                bodyVersion: 1,
-                seq: 1,
-                createdAt: 1,
-                updatedAt: 1,
-            },
         });
 
         const screen = await renderSettings(serverId);

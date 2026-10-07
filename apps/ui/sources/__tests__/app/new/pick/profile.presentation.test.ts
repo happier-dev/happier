@@ -12,8 +12,7 @@ import {
     PICKER_THEME_COLORS,
     createRouterMock,
 } from './testHarness';
-import type { PickerStackScreenOptions } from './testHarness';
-import { createUseSettingMock, createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
+import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 
 enableReactActEnvironment();
 
@@ -50,18 +49,6 @@ installPickerCommonModuleMocks({
                 show: vi.fn(),
             },
         }).module,
-    storage: async (importOriginal) =>
-        (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
-            importOriginal,
-            overrides: {
-                useSetting: createUseSettingMock({ fallback: () => false }),
-                useSettingMutable: createUseSettingMutableMockFromReader(() => [[], vi.fn()]),
-            },
-        }),
-    tempDataStore: {
-        storeTempData: () => 'temp',
-        getTempData: () => null,
-    },
 });
 
 vi.mock('@expo/vector-icons', async () => {
@@ -69,45 +56,7 @@ vi.mock('@expo/vector-icons', async () => {
     return createExpoVectorIconsMock();
 });
 
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children }: React.PropsWithChildren<Record<string, never>>) => React.createElement(React.Fragment, null, children),
-}));
-
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: () => null,
-}));
-
-vi.mock('@/components/profiles/ProfilesList', () => ({
-    ProfilesList: () => null,
-}));
-
-vi.mock('@/components/secrets/requirements', () => ({
-    SecretRequirementModal: () => null,
-}));
-
-vi.mock('@/utils/secrets/secretSatisfaction', () => ({
-    getSecretSatisfaction: () => ({ isSatisfied: true, items: [] }),
-}));
-
-vi.mock('@/sync/domains/profiles/profileSecrets', () => ({
-    getRequiredSecretEnvVarNames: () => [],
-}));
-
-vi.mock('@/hooks/machine/useMachineEnvPresence', () => ({
-    useMachineEnvPresence: () => ({ refresh: vi.fn(), machineEnvReadyByName: {} }),
-}));
-
-vi.mock('@/sync/ops', () => ({
-    machinePreviewEnv: vi.fn(async () => ({ supported: false })),
-}));
-
-vi.mock('@/sync/domains/profiles/profileCompatibility', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/profiles/profileCompatibility')>();
-    return {
-        ...actual,
-        getProfileEnvironmentVariables: () => ({}),
-    };
-});
+const runtime = installSessionPaneRuntimeTestHarness();
 
 describe('ProfilePickerScreen (iOS presentation)', () => {
     afterEach(() => {
@@ -121,9 +70,9 @@ describe('ProfilePickerScreen (iOS presentation)', () => {
 
     it('presents as containedModal on iOS and provides an explicit header back button', async () => {
         const ProfilePickerScreen = (await import('@/app/(app)/new/pick/profile')).default;
-        await renderScreen(React.createElement(ProfilePickerScreen));
+        await renderScreen(React.createElement(runtime.Wrapper, null, React.createElement(ProfilePickerScreen)));
 
-        const resolvedOptions = stackOptionsCapture.getResolved() as PickerStackScreenOptions | null;
+        const resolvedOptions = stackOptionsCapture.getResolved();
         expect(resolvedOptions?.presentation).toBe('containedModal');
         expect(typeof resolvedOptions?.headerLeft).toBe('function');
 

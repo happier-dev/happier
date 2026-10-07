@@ -200,7 +200,7 @@ describe('LegacyProfileMigrationConflictReview', () => {
             status: 'success', sourceProfileId: 'deepseek', connectionId: 'pc_new', settingsVersion: 19,
         });
         const onConfirmed = vi.fn()
-            .mockRejectedValueOnce(new Error('settings rehydrate unavailable'))
+            .mockRejectedValueOnce(Object.assign(new Error('settings rehydrate unavailable'), { code: 'ENETUNREACH' }))
             .mockResolvedValueOnce(undefined);
         const onClose = vi.fn();
         const { LegacyProfileMigrationConflictReview } = await import('./LegacyProfileMigrationConflictReview');

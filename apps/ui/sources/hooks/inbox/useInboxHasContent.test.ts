@@ -3,74 +3,56 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { storage } from '@/sync/domains/state/storageStore';
 import { useInboxHasContent } from './useInboxHasContent';
-import { renderScreen as renderScreenBase } from '@/dev/testkit';
-import type { Message } from "@happier-dev/session-core/messages";
+import { renderScreen as renderScreenBase } from '@/dev/testkit/render/renderScreen';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import type { Session } from '@/sync/domains/state/storageTypes';
+import type { NormalizedMessage } from '@happier-dev/session-core/raw';
+import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+import { removeServerProfile, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { deleteServerFeaturesSnapshot, primeServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { MMKV } from 'react-native-mmkv';
 import { createReducer } from "@happier-dev/session-core/reducer";
 import type { SessionMessages } from '@/sync/store/domains/messages';
 import { InboxSummaryProvider } from './useInboxSummary';
 import { ApprovalRequestV1Schema, buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol';
 
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-let mockUpdateAvailable = false;
-let mockHasUnread = false;
-
-vi.mock('./useUpdates', () => ({
-    useUpdates: () => ({
-        updateAvailable: mockUpdateAvailable,
-        isChecking: false,
-        checkForUpdates: async () => {},
-        reloadApp: async () => {},
-    }),
-}));
-
-vi.mock('./useChangelog', () => ({
-    useChangelog: () => ({
-        hasUnread: mockHasUnread,
-        latestReleaseId: null,
-        markAsRead: () => {},
-    }),
-}));
-
-const friendsGate = vi.hoisted(() => ({ enabled: true, identityReady: true }));
-
-vi.mock('@/hooks/server/useFriendsEnabled', () => ({
-    useFriendsEnabled: () => friendsGate.enabled,
-}));
-
-vi.mock('@/hooks/server/useFriendsIdentityReadiness', () => ({
-    useFriendsIdentityReadiness: () => ({ isReady: friendsGate.identityReady }),
-}));
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const originalDevFlag = (globalThis as any).__DEV__;
+const initialState = storage.getInitialState();
+let homeAId: string;
+let homeBId: string;
+
+function setFriendsEnabled(enabled: boolean) {
+    primeServerFeaturesSnapshot({ snapshot: { status: 'ready', features: createRootLayoutFeaturesResponse({
+        features: { workflows: { enabled: false }, automations: { enabled: false }, social: { friends: { enabled } } },
+        capabilities: { social: { friends: { allowUsername: true, requiredIdentityProviderId: null } } },
+    }) } });
+}
 
 function renderScreen(node: React.ReactNode) {
     return renderScreenBase(React.createElement(InboxSummaryProvider, null, node));
 }
 
-function createPermissionMessage(createdAt: number): Message {
+function createPermissionMessage(createdAt: number): NormalizedMessage {
     return {
-        kind: 'tool-call',
         id: 'message-permission',
         localId: null,
         createdAt,
-        children: [],
-        tool: {
+        isSidechain: false,
+        role: 'agent',
+        content: [{
+            type: 'tool-call',
             id: 'request-permission',
             name: 'Bash',
-            state: 'running',
-            input: { command: 'ls' },
-            createdAt,
-            startedAt: createdAt,
-            completedAt: null,
+            input: { command: 'ls', permissionId: 'request-permission', status: 'pending' },
             description: null,
-            permission: {
-                id: 'request-permission',
-                status: 'pending',
-                kind: 'permission',
-            },
-        },
+            uuid: 'permission-uuid',
+            parentUUID: null,
+        }],
     };
 }
 
@@ -90,26 +72,27 @@ function createSessionMessages(overrides: Partial<SessionMessages> = {}): Sessio
     };
 }
 
-function withOrdinarySession(session: Readonly<Record<string, unknown>>) {
-    const sessionId = String(session.id);
-    const scopedSession = { ...session, serverId: 'server-a' };
+function withOrdinarySession(session: Partial<Session>) {
+    const sessionId = session.id ?? 's1';
+    const scopedSession = createSessionFixture({ activeAt: session.active ? Date.now() : 1, ...session, id: sessionId, serverId: homeAId });
     return {
         sessions: { [sessionId]: scopedSession },
-        sessionListRowsByServerId: { 'server-a': { [sessionId]: scopedSession } },
-        ordinarySessionListMembershipByServerId: { 'server-a': [sessionId] },
+        sessionListRowsByServerId: { [homeAId]: { [sessionId]: buildSessionListRenderableFromSession(scopedSession) } },
+        ordinarySessionListMembershipByServerId: { [homeAId]: [sessionId] },
     };
 }
 
 describe('useInboxHasContent', () => {
     let tree: renderer.ReactTestRenderer | null = null;
 
-    beforeEach(() => {
+    beforeEach(async () => {
         (globalThis as any).__DEV__ = true;
-        mockUpdateAvailable = false;
-        mockHasUnread = false;
-        friendsGate.enabled = true;
-        friendsGate.identityReady = true;
+        storage.setState(initialState, true);
+        homeAId = (await upsertAndActivateServer({ serverUrl: 'https://inbox-content-a.example.test', name: 'Inbox A' })).id;
+        homeBId = (await upsertServerProfile({ serverUrl: 'https://inbox-content-b.example.test', name: 'Inbox B' })).id;
+        setFriendsEnabled(true);
         storage.setState({
+            profile: { ...initialState.profile, username: 'inbox-reader' },
             friends: {},
             feedItems: [],
             sessions: {},
@@ -117,10 +100,10 @@ describe('useInboxHasContent', () => {
             ordinarySessionListMembershipByServerId: {},
             artifacts: {},
             isDataReady: true,
-        } as any);
+        });
     });
 
-    afterEach(() => {
+    afterEach(async () => {
         if (tree) {
             act(() => {
                 tree?.unmount();
@@ -129,15 +112,10 @@ describe('useInboxHasContent', () => {
         }
         vi.restoreAllMocks();
         (globalThis as any).__DEV__ = originalDevFlag;
-        storage.setState({
-            friends: {},
-            feedItems: [],
-            sessions: {},
-            sessionListRowsByServerId: {},
-            ordinarySessionListMembershipByServerId: {},
-            artifacts: {},
-            isDataReady: true,
-        } as any);
+        deleteServerFeaturesSnapshot();
+        await removeServerProfile(homeAId);
+        await removeServerProfile(homeBId);
+        storage.setState(initialState, true);
     });
 
     it('does not light the inbox for passive feed history', async () => {
@@ -198,7 +176,7 @@ describe('useInboxHasContent', () => {
     it('does not light the inbox for friend requests the Inbox screen cannot show', async () => {
         // The screen hides the friends section behind the same gate. A dot the
         // user can never clear by opening the Inbox is worse than no dot.
-        friendsGate.enabled = false;
+        setFriendsEnabled(false);
         storage.setState({
             friends: {
                 u1: { id: 'u1', status: 'pending' },
@@ -218,7 +196,7 @@ describe('useInboxHasContent', () => {
     });
 
     it('does not light the inbox for friend requests before the friends identity is ready', async () => {
-        friendsGate.identityReady = false;
+        storage.setState({ profile: { ...storage.getState().profile, username: null, linkedProviders: [] } });
         storage.setState({
             friends: {
                 u1: { id: 'u1', status: 'pending' },
@@ -250,7 +228,12 @@ describe('useInboxHasContent', () => {
     });
 
     it('does not light the inbox for changelog history', async () => {
-        mockHasUnread = true;
+        const readStoredString = MMKV.prototype.getString;
+        vi.spyOn(MMKV.prototype, 'getString').mockImplementation(function (this: MMKV, key) {
+            return key === 'changelog-last-viewed-release-id'
+                ? 'earlier-release'
+                : readStoredString.call(this, key);
+        });
 
         let latest: boolean | null = null;
         function Test() {
@@ -371,17 +354,9 @@ describe('useInboxHasContent', () => {
 
         const permissionMessage = createPermissionMessage(1_000);
         act(() => {
-            storage.setState({
-                sessionMessages: {
-                    s1: createSessionMessages({
-                        messageIdsOldestFirst: [permissionMessage.id],
-                        messagesById: {
-                            [permissionMessage.id]: permissionMessage,
-                        },
-                        messagesVersion: 2,
-                    }),
-                },
-            } as any);
+            // Transcript ingestion owns the summary projection; the Inbox does
+            // not subscribe to detailed messages merely to maintain its badge.
+            storage.getState().applyMessages('s1', [permissionMessage]);
         });
 
         expect(latest).toBe(true);
@@ -450,6 +425,8 @@ describe('useInboxHasContent', () => {
                 thinking: false,
                 thinkingAt: 0,
                 latestTurnStatus: 'completed',
+                latestReadyEventSeq: 4,
+                latestReadyEventAt: 10,
                 presence: 1,
                 metadata: null,
                 metadataVersion: 0,
@@ -509,10 +486,12 @@ describe('useInboxHasContent', () => {
             feedItems: [],
             sessions: {},
             sessionListRowsByServerId: {
-                'server-a': {
-                    s1: {
+                [homeAId]: {
+                    s1: buildSessionListRenderableFromSession(createSessionFixture({
                         id: 's1',
+                        serverId: homeAId,
                         seq: 4,
+                        lastViewedSessionSeq: 1,
                         updatedAt: 10,
                         createdAt: 1,
                         active: false,
@@ -522,16 +501,16 @@ describe('useInboxHasContent', () => {
                         presence: 1,
                         metadata: {
                             name: 'Query-only unread',
+                            host: 'inbox-content-a.example.test',
                             path: '/Users/leeroy/query-only',
                             homeDir: '/Users/leeroy',
                         },
                         metadataVersion: 0,
                         agentStateVersion: 0,
-                        hasUnreadMessages: true,
-                    },
+                    })),
                 },
             },
-            ordinarySessionListMembershipByServerId: { 'server-a': [] },
+            ordinarySessionListMembershipByServerId: { [homeAId]: [] },
         } as any);
 
         let latest: boolean | null = null;
@@ -551,10 +530,14 @@ describe('useInboxHasContent', () => {
             feedItems: [],
             sessions: {},
             sessionListRowsByServerId: {
-                'server-b': {
-                    s1: {
+                [homeBId]: {
+                    s1: buildSessionListRenderableFromSession(createSessionFixture({
                         id: 's1',
+                        serverId: homeBId,
                         seq: 4,
+                        lastViewedSessionSeq: 1,
+                        latestReadyEventSeq: 4,
+                        latestReadyEventAt: 9,
                         updatedAt: 10,
                         createdAt: 1,
                         active: false,
@@ -566,16 +549,16 @@ describe('useInboxHasContent', () => {
                         presence: 1,
                         metadata: {
                             name: 'Scoped unread',
+                            host: 'inbox-content-b.example.test',
                             path: '/Users/leeroy/scoped',
                             homeDir: '/Users/leeroy',
                         },
                         metadataVersion: 0,
                         agentStateVersion: 0,
-                        hasUnreadMessages: true,
-                    },
+                    })),
                 },
             },
-            ordinarySessionListMembershipByServerId: { 'server-b': ['s1'] },
+            ordinarySessionListMembershipByServerId: { [homeBId]: ['s1'] },
         } as any);
 
         let latest: boolean | null = null;
@@ -596,10 +579,14 @@ describe('useInboxHasContent', () => {
             sessions: {},
             isDataReady: false,
             sessionListRowsByServerId: {
-                'server-a': {
-                    s1: {
+                [homeAId]: {
+                    s1: buildSessionListRenderableFromSession(createSessionFixture({
                         id: 's1',
+                        serverId: homeAId,
                         seq: 4,
+                        lastViewedSessionSeq: 1,
+                        latestReadyEventSeq: 4,
+                        latestReadyEventAt: 9,
                         updatedAt: 10,
                         createdAt: 1,
                         active: false,
@@ -611,16 +598,16 @@ describe('useInboxHasContent', () => {
                         presence: 1,
                         metadata: {
                             name: 'Warm unread',
+                            host: 'inbox-content-a.example.test',
                             path: '/Users/leeroy/warm',
                             homeDir: '/Users/leeroy',
                         },
                         metadataVersion: 0,
                         agentStateVersion: 0,
-                        hasUnreadMessages: true,
-                    },
+                    })),
                 },
             },
-            ordinarySessionListMembershipByServerId: { 'server-a': ['s1'] },
+            ordinarySessionListMembershipByServerId: { [homeAId]: ['s1'] },
         } as any);
 
         let latest: boolean | null = null;

@@ -44,7 +44,7 @@ describe('useTeamBinding', () => {
         const hook = await renderHook(() => useTeamBinding(home.id, 'team-1'));
         // Never a spinner that cannot settle, never a sign-out claim.
         await vi.waitFor(() => {
-            expect(hook.getCurrent()).toEqual({ kind: 'credential_unreadable', serverId: home.id, homeName: 'Unreadable Home' });
+            expect(hook.getCurrent()).toEqual({ kind: 'credential_unreadable', serverId: home.id });
         });
 
         storageBoundary.unreadable = false;
@@ -52,7 +52,7 @@ describe('useTeamBinding', () => {
             retryServerCredentialAccountScope(home.id);
         });
         await vi.waitFor(() => {
-            expect(hook.getCurrent().kind).toBe('signed_out');
+            expect(hook.getCurrent()).toEqual({ kind: 'signed_out', homeName: 'Unreadable Home' });
         });
     });
 });

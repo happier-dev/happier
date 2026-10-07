@@ -90,10 +90,6 @@ export function installAgentInputCommonModuleMocks(
         return createModalModuleMock().module;
     });
 
-    vi.mock('@/hooks/ui/textInputCaretRect', () => ({
-        useTextInputCaretRect: () => null,
-    }));
-
     vi.mock('react-native-keyboard-controller', () => ({
         useFocusedInputHandler: () => {},
     }));
@@ -118,31 +114,15 @@ export function installAgentInputCommonModuleMocks(
             return await activeOptions.storage(importOriginal);
         }
 
-        const [{ createStorageModuleStub, createUseSettingMock }, { settingsDefaults }] = await Promise.all([
-            import('@/dev/testkit/mocks/storage'),
-            import('@/sync/domains/settings/settings'),
-        ]);
-
-        return createStorageModuleStub({
-            useSettings: () => settingsDefaults,
-            useSetting: createUseSettingMock({
-                fallback: (key) => settingsDefaults[key],
-            }),
-        });
+        return importOriginal();
     });
 
-    vi.mock('@/sync/domains/state/storageStore', async () => {
+    vi.mock('@/sync/domains/state/storageStore', async (importOriginal) => {
         const activeOptions = agentInputCommonModuleState.options;
         if (activeOptions.storageStore) {
             return await activeOptions.storageStore();
         }
 
-        const { createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
-        const store = createStorageStoreMock({
-            sessionMessages: {},
-        });
-        return {
-            getStorage: () => store,
-        };
+        return importOriginal();
     });
 }

@@ -109,7 +109,7 @@ async function measureContainer(screen: Screen, widthPx: number): Promise<void> 
     });
 }
 
-function isRoleHost(node: Node): boolean {
+function isRoleHost(node: Readonly<{ type: unknown; props: Node['props'] }>): boolean {
     return typeof node.type === 'string' && typeof node.props?.role === 'string';
 }
 

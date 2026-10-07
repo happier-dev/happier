@@ -1,10 +1,13 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BUILT_IN_ROLES_V1 } from '@happier-dev/protocol';
 import type { Metadata } from '@happier-dev/session-core/state';
 
-import { renderScreen } from '@/dev/testkit';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -54,11 +57,9 @@ vi.mock('@/text', async () => {
     });
 });
 
-// A stub, not the real module plus overrides: the real storage graph reaches the Work pane, which
-// mounts these sections, so importing it here would load them against the unmocked module.
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createPartialStorageModuleMock, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
+    return createPartialStorageModuleMock(importOriginal, {
         useSetting: createUseSettingMock({
             fallback: (key: string) => {
                 if (key === 'rolesV1') return { overrides: {} };
@@ -68,10 +69,11 @@ vi.mock('@/sync/domains/state/storage', async () => {
             },
         }),
         useSessionMetadata: () => shared.metadata ? { path: '/repo', host: 'test-machine', ...shared.metadata } : null,
-        useActiveServerAccountScope: () => ({ serverId: 'server-1', accountId: 'account-1' }),
     });
 });
 
+installDisconnectedServerSocketBoundary();
+await loadSyncSingletonForTests();
 const { SessionRolesSection } = await import('./SessionRolesSection');
 const { SessionNotesSection } = await import('./SessionNotesSection');
 const { SessionWorkMoreMenu } = await import('../SessionWorkMoreMenu');
@@ -98,7 +100,20 @@ const researchRole = {
 };
 
 describe('Work › Roles and Notes', () => {
-    beforeEach(() => {
+    let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+    beforeEach(async () => {
+        connection = await restoreServerAccountForTest({
+            serverUrl: 'https://session-roles.test', accountId: 'account-1',
+            request: async (url) => {
+                const path = new URL(String(url)).pathname;
+                if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+                if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+                if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
+                return Response.json({}, { status: 404 });
+            },
+        });
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.getState().activateProfileScope({ serverId: connection.home.id, accountId: 'account-1' });
         shared.calls = [];
         shared.refused = new Set();
         shared.alerts = [];
@@ -117,6 +132,11 @@ describe('Work › Roles and Notes', () => {
             },
         };
         invalidateRoleCatalog();
+    });
+    afterEach(async () => {
+        await standardCleanup();
+        await connection?.dispose();
+        connection = undefined;
     });
 
     it('shows only this session\'s differences on the flat page section, then All roles', async () => {

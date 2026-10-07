@@ -5,6 +5,7 @@ import * as registryUiBehavior from '@/agents/registry/registryUiBehavior';
 import { createSessionFixture } from '../fixtures/sessionFixtures';
 import { createAccountEncryptionModeModuleMock } from './accountEncryptionMode';
 import { createRegistryUiBehaviorModuleMock } from './registryUiBehavior';
+import type { ExpoRouterParams } from './router';
 import { createTokenStorageModuleMock } from './tokenStorage';
 
 describe('UI testkit mock factories', () => {
@@ -371,13 +372,38 @@ describe('UI testkit mock factories', () => {
 
         expect(routerMock.module.usePathname()).toBe('/settings');
         expect(routerMock.module.useSegments()).toEqual(['(app)', 'settings']);
-        expect(routerMock.module.useLocalSearchParams()).toEqual({ serverId: 'server-b' });
+        expect(routerMock.state.params).toEqual({ serverId: 'server-b' });
         expect(routerMock.module.useNavigation()).toBe(navigation);
         expect(routerMock.state.router).toBe(providedRouter);
         expect(routerMock.spies.push).toHaveBeenCalledWith('/next');
         expect(routerMock.spies.replace).toHaveBeenCalledWith('/replace');
         expect(routerMock.spies.setParams).toHaveBeenCalledWith({ serverId: 'server-b' });
         expect(stackOptionsCapture.getResolved()).toEqual({ title: 'Settings title' });
+    });
+
+    it('keeps supplied router setParams resettable while merging dynamic route params', async () => {
+        const { createExpoRouterMock } = await import('./router');
+        let currentParams = { serverId: 'server-a' };
+        const onSetParams = vi.fn((value: ExpoRouterParams) => value.path);
+        const providedRouter = { setParams: onSetParams };
+        const routerMock = createExpoRouterMock({
+            router: providedRouter,
+            params: () => currentParams,
+        });
+
+        expect(providedRouter.setParams({ path: '/first' })).toBe('/first');
+        expect(routerMock.state.params).toEqual({ serverId: 'server-a', path: '/first' });
+
+        providedRouter.setParams.mockClear();
+        expect(routerMock.spies.setParams).not.toHaveBeenCalled();
+        currentParams = { serverId: 'server-b' };
+        expect(providedRouter.setParams({ path: '/next' })).toBe('/next');
+
+        expect(routerMock.spies.setParams).toHaveBeenCalledExactlyOnceWith({ path: '/next' });
+        expect(onSetParams).toHaveBeenCalledTimes(2);
+        expect(routerMock.state.params).toEqual({ serverId: 'server-b', path: '/next' });
+        routerMock.resetParams();
+        expect(routerMock.state.params).toEqual({ serverId: 'server-b' });
     });
 
     it('fills in missing router methods when only a partial router is supplied', async () => {
@@ -401,7 +427,7 @@ describe('UI testkit mock factories', () => {
         expect(routerMock.spies.back).toHaveBeenCalledTimes(1);
         expect(routerMock.spies.replace).toHaveBeenCalledWith('/replace');
         expect(routerMock.spies.setParams).toHaveBeenCalledWith({ path: '/next' });
-        expect(routerMock.module.useLocalSearchParams()).toEqual({ path: '/next' });
+        expect(routerMock.state.params).toEqual({ path: '/next' });
     });
 
     it('preserves caller-provided router vi.fn methods without wrapping them', async () => {
@@ -437,13 +463,14 @@ describe('UI testkit mock factories', () => {
             params: () => currentParams,
         });
 
-        expect(routerMock.module.useLocalSearchParams()).toEqual({ serverId: 'server-a' });
+        expect(routerMock.state.params).toEqual({ serverId: 'server-a' });
 
         currentParams = { serverId: 'server-b', path: '/repo' };
-        expect(routerMock.module.useLocalSearchParams()).toEqual({ serverId: 'server-b', path: '/repo' });
+        routerMock.resetParams();
+        expect(routerMock.state.params).toEqual({ serverId: 'server-b', path: '/repo' });
 
         routerMock.state.router.setParams({ draftId: 'draft-1' });
-        expect(routerMock.module.useLocalSearchParams()).toEqual({
+        expect(routerMock.state.params).toEqual({
             serverId: 'server-b',
             path: '/repo',
             draftId: 'draft-1',

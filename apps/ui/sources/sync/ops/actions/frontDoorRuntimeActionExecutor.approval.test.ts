@@ -12,6 +12,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { createFrontDoorRuntimeActionExecutor } from './frontDoorRuntimeActionExecutor';
+import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { createVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleController';
 import { registerVoiceAdapters, resetVoiceAdapterRegistryForTests } from '@/voice/session/voiceAdapterRegistry';
 import type { VoiceAdapterController, VoiceSessionSnapshot } from '@/voice/session/types';
@@ -67,11 +68,8 @@ const VALID_OUTPUT = {
 const EXECUTION_CONTEXT = {
     serverId: 'home-1',
     actionRequestId: 'action-request-1',
+    defaultSessionId: 's1',
 } as const;
-
-function unsupported(): never {
-    throw new Error('unexpected executor dependency invocation');
-}
 
 /**
  * Builds the real protocol executor with the production approval wiring. Required deps are filled
@@ -79,36 +77,7 @@ function unsupported(): never {
  * provided per test). The executor's enablement + approval routing logic is exercised for real.
  */
 function createTestExecutor(overrides: Partial<ActionExecutorDeps>) {
-    const baseDeps = {
-        executionRunStart: unsupported,
-        executionRunList: unsupported,
-        executionRunGet: unsupported,
-        detachedExecutionRunSend: unsupported,
-        executionRunStop: unsupported,
-        executionRunAction: unsupported,
-        executionRunWait: unsupported,
-        sessionOpen: unsupported,
-        sessionFork: unsupported,
-        sessionRollback: unsupported,
-        sessionSpawnNew: unsupported,
-        pathsListRecent: unsupported,
-        machinesList: unsupported,
-        serversList: unsupported,
-        reviewEnginesList: unsupported,
-        agentsBackendsList: unsupported,
-        agentsModelsList: unsupported,
-        sessionSendMessage: unsupported,
-        sessionPermissionRespond: unsupported,
-        sessionUserActionAnswer: unsupported,
-        sessionTargetPrimarySet: unsupported,
-        sessionTargetTrackedSet: unsupported,
-        sessionList: unsupported,
-        sessionActivityGet: unsupported,
-        sessionRecentMessagesGet: unsupported,
-        daemonMemorySearch: unsupported,
-        daemonMemoryGetWindow: unsupported,
-        daemonMemoryEnsureUpToDate: unsupported,
-        resetGlobalVoiceAgent: () => {},
+    const baseDeps = createActionExecutorBoundaryFixture({
         // Production wiring (defaultActionExecutor.ts): approval decided by the persisted/
         // surface-keyed ActionsSettings policy.
         isActionApprovalRequired: (
@@ -119,7 +88,7 @@ function createTestExecutor(overrides: Partial<ActionExecutorDeps>) {
         // Durable replay is permitted only after the host revalidates the immutable origin.
         isApprovalExecutionOriginCurrent: async () => true,
         ...overrides,
-    } as unknown as ActionExecutorDeps;
+    });
     return createActionExecutor(baseDeps);
 }
 

@@ -25,7 +25,7 @@ describe('readSessionRuntimePublicationState', () => {
             descriptor: {
                 v: 1,
                 agentId: 'codex',
-                provider: {
+                agent: {
                     backendMode: 'appServer',
                 },
             },
@@ -57,13 +57,13 @@ describe('readSessionRuntimePublicationState', () => {
                     followLeaseSupported: true,
                 },
             },
-        } as any);
+        });
 
         expect(readSessionRuntimePublicationState(metadata)).toEqual({
             descriptor: {
                 v: 1,
                 agentId: 'acme.provider',
-                provider: {
+                agent: {
                     backendMode: 'native',
                 },
             },
@@ -106,7 +106,7 @@ describe('readSessionRuntimePublicationState', () => {
             descriptor: {
                 v: 1,
                 agentId: 'acme.provider',
-                provider: {
+                agent: {
                     backendMode: 'native',
                 },
             },

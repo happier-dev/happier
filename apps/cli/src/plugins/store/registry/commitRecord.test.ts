@@ -1,7 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -69,17 +68,6 @@ function unsupportedDigestBearingCommitRecord() {
 }
 
 describe('PluginRegistryCommitRecord', () => {
-  it('rejects the primed isolated-home registry retired generation-map key', async () => {
-    const primedRegistryPath = fileURLToPath(new URL(
-      '../../../../prime-isolated-home/plugins/plugins/state/plugin-registry-current.v1.json',
-      import.meta.url,
-    ));
-
-    const primedRegistry = JSON.parse(await readFile(primedRegistryPath, 'utf8')) as unknown;
-
-    expect(() => PluginRegistryCommitRecordSchema.parse(primedRegistry)).toThrow();
-  });
-
   it('atomically advances the sole current record by exactly one revision', async () => {
     const happyHomeDir = await import('node:fs/promises').then(({ mkdtemp }) => mkdtemp(join(tmpdir(), 'happier-registry-commit-')));
     const paths = resolvePluginStorePaths({ happyHomeDir });

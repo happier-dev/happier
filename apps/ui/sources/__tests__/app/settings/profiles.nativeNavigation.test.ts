@@ -1,10 +1,15 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import 'fake-indexeddb/auto';
 import { act } from 'react-test-renderer';
-import { renderInCollectionLayout } from '@/dev/testkit';
+import { renderInCollectionLayout, standardCleanup } from '@/dev/testkit';
 import { createCapturingComponent, createPassThroughComponent } from '@/dev/testkit/mocks/components';
 import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
-import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+import { storage } from '@/sync/domains/state/storageStore';
+import { settingsParse } from '@/sync/domains/settings/settings';
+import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { installProfilesCommonModuleMocks } from '@/components/profiles/profilesTestHelpers';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
@@ -12,6 +17,9 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 };
 
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
+installDisconnectedServerSocketBoundary();
+const initialStorage = storage.getState();
+let account: Awaited<ReturnType<typeof createSecretSettingsTestHarness>> | undefined;
 
 type ProfileRow = { id: string; name: string };
 type CapturedProfilesListProps = {
@@ -45,10 +53,7 @@ installProfilesCommonModuleMocks({
             OS: 'ios',
         },
     }),
-    storage: () => createStorageModuleStub({
-        useSetting: (key: string) => settingsState.values[key],
-        useSettingMutable: (key: string) => [settingsState.values[key], vi.fn()],
-    }),
+    storage: () => vi.importActual<typeof import('@/sync/domains/state/storage')>('@/sync/domains/state/storage'),
 });
 
 const routerMock = vi.hoisted(() => ({
@@ -113,11 +118,25 @@ function resetSettings(overrides: Record<string, unknown> = {}) {
 }
 
 async function renderIndex(mode: 'split' | 'stacked' | null) {
+    account = await createSecretSettingsTestHarness({ settings: settingsParse(settingsState.values), sharedEnabled: false });
     const { ProfileSettingsIndex } = await import('@/components/settings/profiles/ProfileSettingsIndex');
     capturedProfilesListProps = null;
     routerMock.push.mockClear();
-    return renderInCollectionLayout(React.createElement(ProfileSettingsIndex), mode);
+    return renderInCollectionLayout(
+        React.createElement(InjectedAuthProvider, {
+            credentials: account.credentials,
+            children: React.createElement(ProfileSettingsIndex),
+        }),
+        mode,
+    );
 }
+
+afterEach(async () => {
+    standardCleanup();
+    await account?.dispose();
+    account = undefined;
+    storage.setState(initialStorage, true);
+});
 
 describe('Settings › Profiles collection list', () => {
     it('adds a profile as a draft in the collection', async () => {

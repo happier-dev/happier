@@ -47,10 +47,7 @@ vi.mock('@/utils/errors/toolErrorParser', () => ({
     parseToolUseError: () => ({ isToolUseError: false }),
 }));
 
-vi.mock('@/agents/catalog/catalog', () => ({
-    resolveAgentIdFromFlavor: () => null,
-    getAgentCore: () => ({ toolRendering: { hideUnknownToolsByDefault: false } }),
-}));
+const { ToolInlineBody } = await import('./ToolInlineBody');
 
 describe('ToolInlineBody (SubAgentRun error fallback)', () => {
     afterEach(() => {
@@ -58,7 +55,6 @@ describe('ToolInlineBody (SubAgentRun error fallback)', () => {
     });
 
     it('suppresses default ToolError for SubAgentRun when specific renderer is available', async () => {
-        const { ToolInlineBody } = await import('./ToolInlineBody');
 
         const screen = await renderScreen(
             <ToolInlineBody
@@ -86,7 +82,6 @@ describe('ToolInlineBody (SubAgentRun error fallback)', () => {
     });
 
     it('keeps default ToolError behavior for non-SubAgentRun errors', async () => {
-        const { ToolInlineBody } = await import('./ToolInlineBody');
 
         const screen = await renderScreen(
             <ToolInlineBody

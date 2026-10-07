@@ -5,7 +5,7 @@ import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from '@happier-dev/pr
 import { renderScreen } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
-import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { AuthProvider } from '@/auth/context/AuthContext';
 import { adoptHomeProfile, getActiveServerId, setActiveServerId, resolveServerProfileScopeId, setAccountServiceEndpoint } from '@/sync/domains/server/serverProfiles';
@@ -25,10 +25,6 @@ vi.mock('@/utils/system/runtimeFetch', () => ({
         return boundary.request(url.origin, url.pathname, init);
     },
 }));
-vi.mock('@/sync/http/client', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/http/client')>(),
-    createServerFetchAtEndpoint: (target: { endpointUrl: string; signal?: AbortSignal }) => (path: string, init?: RequestInit) => boundary.request(target.endpointUrl, path, { ...init, signal: init?.signal ?? target.signal }),
-}));
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
@@ -37,9 +33,21 @@ vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).creat
 let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
 let restore: (() => void) | undefined;
 let unsubscribeFocus: (() => void) | undefined;
-afterEach(async () => { await screen?.unmount(); unsubscribeFocus?.(); restore?.(); vi.unstubAllGlobals(); });
+let webLocks: ReturnType<typeof installWebLockManagerMock> | undefined;
+afterEach(async () => {
+    await screen?.unmount();
+    unsubscribeFocus?.();
+    webLocks?.restore();
+    restore?.();
+    screen = undefined;
+    unsubscribeFocus = undefined;
+    webLocks = undefined;
+    restore = undefined;
+    vi.unstubAllGlobals();
+});
 
 function installStorageGlobals() {
+    webLocks = installWebLockManagerMock();
     boundary.request.mockReset();
     const tabStorage = installLocalStorageMock();
     vi.stubGlobal('sessionStorage', globalThis.localStorage);

@@ -11,7 +11,7 @@ const clipboard = vi.hoisted(() => vi.fn<(value: string) => Promise<boolean>>(as
 const focusComposer = vi.hoisted(() => vi.fn(() => true));
 const routerPush = vi.hoisted(() => vi.fn());
 const routerReplace = vi.hoisted(() => vi.fn());
-const deviceType = vi.hoisted(() => ({ current: 'desktop' as 'desktop' | 'phone' }));
+const deviceType = vi.hoisted(() => ({ current: 'tablet' as 'tablet' | 'phone' }));
 const repositoryRetry = vi.hoisted(() => vi.fn());
 const repositoryRefreshDiscussion = vi.hoisted(() => vi.fn());
 const repositoryCreate = vi.hoisted(() => vi.fn(async () => ({ kind: 'failed', errorCode: 'test-stop' })));
@@ -107,7 +107,12 @@ vi.mock('@/sync/ops/sessionDiscussions/sessionDiscussionRepositoryRegistry', () 
 vi.mock('@/sync/domains/session/discussions/sessionDiscussionVisibleReadController', () => ({ createSessionDiscussionVisibleReadController: () => ({ updateEligibility: updateVisibleReadEligibility, observeVisibleMessageSeqs }) }));
 vi.mock('@/utils/runtime/useHostActivelyViewed', () => ({ useHostActivelyViewed: () => true }));
 vi.mock('@/sync/domains/session/sessionSurfaceVisibility', () => ({ useSessionSurfaceVisibilitySnapshot: () => 1, isSessionSurfaceVisible: () => true }));
-vi.mock('@/utils/platform/responsive', () => ({ useDeviceType: () => deviceType.current }));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        useWindowDimensions: () => ({ width: deviceType.current === 'phone' ? 390 : 1440, height: 900, scale: 1, fontScale: 1 }),
+    });
+});
 vi.mock('@/sync/domains/state/storage', () => ({ useSetting: (key: string) => key === 'transcriptBulkCopyFormat' ? 'markdown_labeled' : '{{MESSAGES}}' }));
 vi.mock('@/utils/ui/clipboard', () => ({ setClipboardStringSafe: clipboard }));
 vi.mock('@/components/sessions/presentation/sessionComposerPresentationTargets', () => ({ requestRegisteredSessionComposerFocus: focusComposer }));
@@ -148,7 +153,7 @@ describe('SessionDiscussionDetailsView selection', () => {
         focusComposer.mockClear();
         routerPush.mockClear();
         routerReplace.mockClear();
-        deviceType.current = 'desktop';
+        deviceType.current = 'tablet';
         resetInteractiveExecutionRunDraftNavigationIntentsForTests();
         metadataWrites.mockClear();
         repositoryRetry.mockClear();
@@ -493,7 +498,14 @@ describe('SessionDiscussionDetailsView selection', () => {
         expect(routerReplace).not.toHaveBeenCalled();
         expect(focusComposer).not.toHaveBeenCalled();
         expect(screen.findByTestId('transcript-selection-toolbar-count')?.props.children).toBe('1 message selected');
-        expect(screen.findByTestId('session-discussion-selection-handoff-error')?.props.accessibilityLiveRegion).toBe('polite');
+        const announcements = screen.root.findAll((node) => (
+            typeof node.type === 'string'
+            && node.props.role === 'status'
+            && node.findAll((child) => child.props.testID === 'session-discussion-selection-handoff-error').length > 0
+        ));
+        expect(announcements).toHaveLength(1);
+        expect(announcements[0]?.props.accessibilityLiveRegion).toBe('polite');
+        expect(announcements[0]?.props['aria-live']).toBe('polite');
         expect(screen.getTextContent()).toContain('The selected messages could not be added to the Session composer.');
 
         await press(screen, 'session-discussion-selection-handoff-retry');

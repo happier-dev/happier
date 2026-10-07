@@ -1,9 +1,13 @@
 import { type SessionMessageV1 } from '@happier-dev/protocol';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Encryption } from '@/sync/encryption/encryption';
+import { storage } from '@/sync/domains/state/storage';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { readStoredSessionMessages } from '@happier-dev/session-core/messages';
 
 import { fetchAndApplyMessages } from './syncSessions';
 
-function buildEncryptedApiMessage(id: string, seq: number): SessionMessageV1 {
+function buildEncryptedApiMessage(id: string, seq: number, ciphertext: string): SessionMessageV1 {
     return {
         id,
         seq,
@@ -11,7 +15,7 @@ function buildEncryptedApiMessage(id: string, seq: number): SessionMessageV1 {
         sidechainId: null,
         content: {
             t: 'encrypted',
-            c: `cipher-${id}`,
+            c: ciphertext,
         },
         createdAt: 1_000 + seq,
         updatedAt: 2_000 + seq,
@@ -19,32 +23,45 @@ function buildEncryptedApiMessage(id: string, seq: number): SessionMessageV1 {
 }
 
 describe('fetchAndApplyMessages (encrypted decrypt retry)', () => {
+    beforeEach(() => {
+        storage.setState(storage.getInitialState(), true);
+        storage.getState().applySessions([createSessionFixture({
+            id: 's1', encryptionMode: 'e2ee', encryptedContentAvailability: 'ready',
+        })]);
+    });
+    afterEach(() => vi.restoreAllMocks());
+
+    async function createEncryption(seed = 3) {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(seed));
+        await encryption.initializeSessions(new Map([['s1', new Uint8Array(32).fill(seed + 1)]]));
+        const sessionEncryption = encryption.getSessionEncryption('s1');
+        if (!sessionEncryption) throw new Error('Encrypted Session fixture was not initialized');
+        return { encryption, sessionEncryption };
+    }
+
     it('decrypts initial transcript pages in large default batches', async () => {
-        const messages = Array.from({ length: 150 }, (_, index) =>
-            buildEncryptedApiMessage(`m${index + 1}`, index + 1),
-        );
+        const { encryption, sessionEncryption } = await createEncryption();
+        const messages = await Promise.all(Array.from({ length: 150 }, async (_, index) => {
+            const id = `m${index + 1}`;
+            const ciphertext = await sessionEncryption.encryptRawRecord({
+                role: 'user', content: { type: 'text', text: `hello-${id}` },
+            });
+            return buildEncryptedApiMessage(id, index + 1, ciphertext);
+        }));
         const request = vi.fn(async () => new Response(
             JSON.stringify({ messages }),
             { status: 200, headers: { 'Content-Type': 'application/json' } },
         ));
 
-        const decryptMessages = vi.fn(async (apiMessages: SessionMessageV1[]) =>
-            apiMessages.map((m) => ({
-                id: m.id,
-                seq: m.seq,
-                localId: null,
-                createdAt: m.createdAt,
-                content: { role: 'user', content: { type: 'text', text: `hello-${m.id}` } },
-            })),
-        );
+        const decryptMessages = vi.spyOn(sessionEncryption, 'decryptMessages');
 
         await fetchAndApplyMessages({
             sessionId: 's1',
-            getSessionEncryption: () => ({ decryptMessages }),
+            getSessionEncryption: (id) => encryption.getSessionEncryption(id),
             request,
             sessionReceivedMessages: new Map<string, Map<string, number>>(),
-            applyMessages: vi.fn(),
-            markMessagesLoaded: vi.fn(),
+            applyMessages: (id, rows) => storage.getState().applyMessages(id, rows),
+            markMessagesLoaded: (id) => storage.getState().applyMessagesLoaded(id),
             log: { log: () => {} },
         });
 
@@ -52,59 +69,41 @@ describe('fetchAndApplyMessages (encrypted decrypt retry)', () => {
         expect(decryptMessages.mock.calls[0]?.[0]).toHaveLength(64);
         expect(decryptMessages.mock.calls[1]?.[0]).toHaveLength(64);
         expect(decryptMessages.mock.calls[2]?.[0]).toHaveLength(22);
+        expect(Object.keys(storage.getState().sessionMessages.s1?.messagesById ?? {})).toHaveLength(150);
     });
 
-    it('retries encrypted messages that previously failed to decrypt', async () => {
+    it('retries an unconsumed encrypted row after a content-authentication failure', async () => {
+        const { encryption, sessionEncryption } = await createEncryption();
+        const wrongKey = await createEncryption(9);
+        const content = { role: 'user' as const, content: { type: 'text' as const, text: 'hello' } };
+        let ciphertext = await wrongKey.sessionEncryption.encryptRawRecord(content);
         const request = vi.fn(async () => new Response(
             JSON.stringify({
-                messages: [buildEncryptedApiMessage('m1', 1)],
+                messages: [buildEncryptedApiMessage('m1', 1, ciphertext)],
             }),
             { status: 200, headers: { 'Content-Type': 'application/json' } },
         ));
 
-        let canDecrypt = false;
-        const decryptMessages = vi.fn(async (messages: SessionMessageV1[]) => {
-            return messages.map((m) => ({
-                id: m.id,
-                seq: m.seq,
-                localId: null,
-                createdAt: m.createdAt,
-                content: canDecrypt
-                    ? { role: 'user', content: { type: 'text', text: 'hello' } }
-                    : null,
-            }));
-        });
-
-        const applyMessages = vi.fn();
-        const markMessagesLoaded = vi.fn();
         const sessionReceivedMessages = new Map<string, Map<string, number>>();
-
-        await fetchAndApplyMessages({
+        const params: Parameters<typeof fetchAndApplyMessages>[0] = {
             sessionId: 's1',
-            getSessionEncryption: () => ({ decryptMessages }),
+            getSessionEncryption: (id) => encryption.getSessionEncryption(id),
             request,
             sessionReceivedMessages,
-            applyMessages,
-            markMessagesLoaded,
+            applyMessages: (id, rows) => storage.getState().applyMessages(id, rows),
+            markMessagesLoaded: (id) => storage.getState().applyMessagesLoaded(id),
             log: { log: () => {} },
-        });
+        };
+        await expect(fetchAndApplyMessages(params)).rejects.toMatchObject({ name: 'SessionMessagePageDecryptionError' });
+        expect(sessionReceivedMessages.get('s1')?.has('m1') ?? false).toBe(false);
+        expect(readStoredSessionMessages(storage.getState(), 's1')).toEqual([]);
 
-        expect(decryptMessages.mock.calls[0]?.[0]).toHaveLength(1);
-        expect(applyMessages.mock.calls[0]?.[1]).toHaveLength(0);
+        ciphertext = await sessionEncryption.encryptRawRecord(content);
+        await fetchAndApplyMessages(params);
 
-        canDecrypt = true;
-
-        await fetchAndApplyMessages({
-            sessionId: 's1',
-            getSessionEncryption: () => ({ decryptMessages }),
-            request,
-            sessionReceivedMessages,
-            applyMessages,
-            markMessagesLoaded,
-            log: { log: () => {} },
-        });
-
-        expect(decryptMessages.mock.calls[1]?.[0]).toHaveLength(1);
-        expect(applyMessages.mock.calls[1]?.[1]?.[0]?.id).toBe('m1');
+        expect(readStoredSessionMessages(storage.getState(), 's1')).toEqual([
+            expect.objectContaining({ realID: 'm1', kind: 'user-text', text: 'hello' }),
+        ]);
+        expect(sessionReceivedMessages.get('s1')?.has('m1')).toBe(true);
     });
 });

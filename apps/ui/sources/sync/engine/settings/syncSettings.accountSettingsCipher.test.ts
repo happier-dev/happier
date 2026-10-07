@@ -1359,12 +1359,12 @@ describe('syncSettings account settings ciphertext', () => {
             params.init?.method ?? 'GET',
         ])).toEqual([
             [
-                '/v2/session-organization?includeFolders=true&includeTags=true&includeLabels=true&includeAllFolderAssignments=true&includeAllTagAssignments=true',
+                '/v2/session-organization?projectionVersion=2&includeFolders=true&includeTags=true&includeLabels=true&includeAllFolderAssignments=true&includeAllTagAssignments=true',
                 'GET',
             ],
             ['/v2/session-organization/import', 'POST'],
             [
-                '/v2/session-organization?includeFolders=true&includeTags=true&includeLabels=true&includeAllTagAssignments=true',
+                '/v2/session-organization?projectionVersion=2&includeFolders=true&includeTags=true&includeLabels=true&includeAllTagAssignments=true',
                 'GET',
             ],
         ]);
@@ -1731,7 +1731,7 @@ describe('syncSettings account settings ciphertext', () => {
             params.init?.method ?? 'GET',
         ])).toEqual([
             [
-                '/v2/session-organization?includeFolders=true&includeTags=true&includeLabels=true&includeAllFolderAssignments=true&includeAllTagAssignments=true',
+                '/v2/session-organization?projectionVersion=2&includeFolders=true&includeTags=true&includeLabels=true&includeAllFolderAssignments=true&includeAllTagAssignments=true',
                 'GET',
             ],
         ]);

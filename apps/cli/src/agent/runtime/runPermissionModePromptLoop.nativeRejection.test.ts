@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AgentSessionRuntime, AgentSessionRuntimeContext, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
+import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { MessageQueue2 } from './modeMessageQueue';
 import { combinePermissionModeQueuedPrompts, type PermissionModeQueuedPrompt } from './permissions/queuedPrompt';
 import { runPermissionModePromptLoop } from './runPermissionModePromptLoop';
@@ -70,22 +72,18 @@ describe('native prompt loop non-admission recovery', () => {
             const abort = new AbortController();
             let readyCount = 0;
             // Server transport boundary; the prompt loop and native lifecycle owner stay real.
-            const session = {
+            const session = createMutableApiSessionClientFixture({
                 sessionId: 'session-1',
-                sendSessionEvent: vi.fn(),
-                enqueueSessionEventCommitted: async () => ({ persisted: true, delivered: false }),
-                getLastObservedMessageSeq: () => 0,
-                getMetadataSnapshot: () => ({ permissionMode: 'default', permissionModeUpdatedAt: 0 }),
-                fetchLatestUserPermissionIntentFromTranscript: async () => null,
-                refreshSessionSnapshotFromServerBestEffort: async () => undefined,
-                ensureMetadataSnapshot: async () => undefined,
-                popPendingMessage: async () => false,
-                waitForMetadataUpdate: async () => false,
-                sendAgentMessage: vi.fn(),
-            };
+                metadata: createTestMetadata({ permissionMode: 'default', permissionModeUpdatedAt: 0 }),
+                overrides: {
+                    enqueueSessionEventCommitted: async () => ({ persisted: true, delivered: false }),
+                    getLastObservedMessageSeq: () => 0,
+                    ensureMetadataSnapshot: async () => createTestMetadata({ permissionMode: 'default', permissionModeUpdatedAt: 0 }),
+                },
+            });
             const loop = runPermissionModePromptLoop({
                 providerName: 'Test Agent', agentMessageType: 'codex', explicitPermissionMode: undefined,
-                session: session as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['session'],
+                session,
                 messageQueue: queue,
                 permissionHandler: { setPermissionMode: vi.fn(), reset: vi.fn() },
                 runtime,

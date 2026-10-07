@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 
@@ -11,7 +11,10 @@ import {
 } from '@/components/plugins/surfaces/pluginSurfaceLaunchAuthority';
 import type { DetailsSurfaceRenderInputV1 } from '@/components/appShell/panes/details/surfaces';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
-import { renderHook, renderScreen } from '@/dev/testkit';
+import { createMachineFixture, renderHook, renderScreen as renderPanelScreen } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storageStore';
+import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
+import { installSessionDetailsPanelCommonModuleMocks } from '@/components/sessions/panes/sessionDetailsPanelTestHelpers';
 import type { DetailsTabState } from '../workspace/detailsWorkspaceTypes';
 import {
     EMPTY_PLUGIN_UI_PROJECTION,
@@ -31,6 +34,17 @@ import {
     usePluginDetailsDestinationOpenSurfaceHandler,
     usePluginDetailsDestinationLaunchStaging,
 } from './pluginDetailsDestination';
+
+installSessionDetailsPanelCommonModuleMocks();
+const runtime = installSessionPaneRuntimeTestHarness({ sessionId: 'session-1' });
+beforeEach(() => {
+    const machine = createMachineFixture({ id: 'machine-1' });
+    storage.getState().applyMachines([machine]);
+    storage.setState({ machineListByServerId: { ...storage.getState().machineListByServerId, [runtime.serverId]: [machine] } });
+});
+async function renderScreen(element: React.ReactElement) {
+    return renderPanelScreen(element, { wrapper: runtime.Wrapper });
+}
 
 function flattenStyle(style: unknown): Record<string, unknown> {
     if (typeof style === 'function') {
@@ -69,7 +83,7 @@ function createDetailsTabProjection() {
         headerActions: [],
         hostOrigin: {
             machineId: 'machine-1',
-            serverId: 'server-1',
+            serverId: runtime.serverId,
             generation: 4,
             phase: 'current',
             interactionEnabled: true,
@@ -166,11 +180,11 @@ function createDetailsRenderInput(): DetailsSurfaceRenderInputV1 {
         descriptor: {
             surfaceId: 'session:session-1:details:plugin-file',
             resourceKey: 'pluginDetailsDestination:plugin-file',
-            scope: { kind: 'session', sessionId: 'session-1', serverId: 'server-1', machineId: 'machine-1' },
+            scope: { kind: 'session', sessionId: 'session-1', serverId: runtime.serverId, machineId: 'machine-1' },
             region: 'details',
             status: 'available',
         },
-        scope: { kind: 'session', sessionId: 'session-1', serverId: 'server-1', machineId: 'machine-1' },
+        scope: { kind: 'session', sessionId: 'session-1', serverId: runtime.serverId, machineId: 'machine-1' },
         region: 'details',
         active: true,
         callbacks: {},
@@ -193,7 +207,7 @@ describe('pluginDetailsDestination', () => {
             placement: originlessPlacement,
             accountLifetime: null,
         })).toEqual({
-            serverId: 'server-1',
+            serverId: runtime.serverId,
             machineId: 'machine-1',
             occurrenceId: 'com-example-viewer-originless-occurrence',
             accountLifetime: null,
@@ -252,7 +266,7 @@ describe('pluginDetailsDestination', () => {
             projection,
             mount: {
                 machineId: 'machine-1',
-                serverId: 'server-1',
+                serverId: runtime.serverId,
                 sessionId: 'session-1',
                 platform: 'web',
                 projectionPhase: 'current',
@@ -295,7 +309,7 @@ describe('pluginDetailsDestination', () => {
             headerActions: [],
             hostOrigin: {
                 machineId: 'machine-1',
-                serverId: 'server-1',
+                serverId: runtime.serverId,
                 generation: 4,
                 phase: 'current',
                 interactionEnabled: true,
@@ -371,7 +385,7 @@ describe('pluginDetailsDestination', () => {
                     mount: {
                         sessionId: 'session-1',
                         machineId: 'machine-1',
-                        serverId: 'server-1',
+                        serverId: runtime.serverId,
                         platform: 'ios',
                         formFactor,
                         projectionPhase: 'current',
@@ -382,10 +396,8 @@ describe('pluginDetailsDestination', () => {
             ),
             {
                 initialProps: { formFactor: 'tablet' },
-                wrapper: ({ children }) => React.createElement(
-                    PluginDetailsDestinationLaunchScope,
-                    null,
-                    children ?? null,
+                wrapper: ({ children }) => React.createElement(runtime.Wrapper, null,
+                    React.createElement(PluginDetailsDestinationLaunchScope, null, children ?? null),
                 ),
             },
         );
@@ -612,7 +624,7 @@ describe('pluginDetailsDestination', () => {
         expect(resolve({
             store,
             authority: createPluginSurfaceLaunchAuthority({
-                serverId: 'server-1',
+                serverId: runtime.serverId,
                 machineId: 'machine-1',
                 occurrenceId: 'viewer-occurrence-replacement',
             }),
@@ -652,7 +664,7 @@ describe('pluginDetailsDestination', () => {
             },
         } satisfies PluginUiSurfacePlacementProjection;
         const scopedLaunchFacts = {
-            serverId: 'server-1',
+            serverId: runtime.serverId,
             machineId: 'machine-1',
             interactionEnabled: true,
         } as const;
@@ -662,7 +674,7 @@ describe('pluginDetailsDestination', () => {
             scoped: scopedLaunchFacts,
         });
         expect(authority).toMatchObject({
-            serverId: 'server-1',
+            serverId: runtime.serverId,
             machineId: 'machine-1',
             occurrenceId: direct.occurrenceId,
             executionOrigin: {
@@ -715,7 +727,7 @@ describe('pluginDetailsDestination', () => {
             mount: {
                 sessionId: 'session-1',
                 machineId: 'machine-1',
-                serverId: 'server-1',
+                serverId: runtime.serverId,
                 platform: 'web',
                 projectionPhase: 'current',
                 projectionInteractionEnabled: true,
@@ -826,7 +838,7 @@ describe('pluginDetailsDestination', () => {
                 projection: placementAvailable ? projection : null,
                 mount: {
                     machineId: 'machine-1',
-                    serverId: 'server-1',
+                    serverId: runtime.serverId,
                     sessionId: 'session-1',
                     platform: 'web',
                     projectionPhase: 'current',

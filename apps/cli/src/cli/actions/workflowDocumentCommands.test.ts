@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { parseWorkflowDocumentV1, validateWorkflowDefinition } from '@happier-dev/protocol';
+import { parseWorkflowDocumentV1, validateWorkflowDefinition, type WorkflowDefinitionGetResultV1 } from '@happier-dev/protocol';
 import { captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
 
 import { tryHandleWorkflowDocumentCliCommand } from './workflowDocumentCommands';
@@ -115,7 +115,8 @@ describe('workflow document CLI commands', () => {
       revision: { headerVersion: 2, bodyVersion: 3 },
       definition: DOCUMENT.definition,
       metadata: { title: 'Review workflow' },
-    }));
+      access: 'owner',
+    } satisfies WorkflowDefinitionGetResultV1));
     const output = captureStdoutJsonOutput();
     try {
       expect(await tryHandleWorkflowDocumentCliCommand({

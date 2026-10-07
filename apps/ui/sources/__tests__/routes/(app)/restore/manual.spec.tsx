@@ -1,171 +1,138 @@
 import React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { AuthProvider } from '@/auth/context/AuthContext';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
+import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { initializeTerminalRouteRuntimeForTests } from '../terminal/terminalRouteTestHelpers';
 import { installRestoreRouteCommonModuleMocks } from './restoreRouteTestHelpers';
 import { createDirectoryHttpFixture } from '@/sync/ops/accountDirectory/accountDirectoryTestFixtures';
-import { adoptHomeProfile } from '@/sync/domains/server/serverProfiles';
+import { adoptHomeProfile, resetServerProfilesRuntimeForTests } from '@/sync/domains/server/serverProfiles';
+import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+import { disconnectActiveServerConnection } from '@/sync/runtime/orchestration/connectionManager';
+import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { encodeBase64 } from '@/encryption/base64';
+import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
-
-type ReactActEnvironmentGlobal = typeof globalThis & {
-    IS_REACT_ACT_ENVIRONMENT?: boolean;
-};
-(globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
-
-const routerBackSpy = vi.hoisted(() => vi.fn());
-const routerReplaceSpy = vi.hoisted(() => vi.fn());
-const routerDismissToSpy = vi.hoisted(() => vi.fn());
-const authLoginSpy = vi.hoisted(() => vi.fn(async () => ({ kind: 'completed' as const })));
-const guardCredentialMutationSpy = vi.hoisted(() => vi.fn(async () => ({ kind: 'allowed' as const })));
-const normalizeSecretKeySpy = vi.hoisted(() => vi.fn((input: string) => input.trim()));
-const routeParams = vi.hoisted(() => ({ current: {} as Record<string, string | undefined> }));
-
-vi.mock('@expo/vector-icons/Ionicons', () => ({
-    default: 'Ionicons',
+const navigation = vi.hoisted(() => ({
+    back: vi.fn(), replace: vi.fn(), dismissTo: vi.fn(),
+    params: {} as Record<string, string | undefined>,
 }));
-
+installTokenStorageWebPlatformMocks();
 installRestoreRouteCommonModuleMocks({
-    router: async () => {
-        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-        const routerMock = createExpoRouterMock({
-            params: () => routeParams.current,
-            router: { back: routerBackSpy, replace: routerReplaceSpy, dismissTo: routerDismissToSpy },
-        });
-        return routerMock.module;
-    },
+    router: async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
+        params: () => navigation.params,
+        router: { back: navigation.back, replace: navigation.replace, dismissTo: navigation.dismissTo },
+    }).module,
 });
+await initializeTerminalRouteRuntimeForTests();
+const Screen = (await import('@/app/(app)/restore/manual')).default;
 
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ login: authLoginSpy }),
-}));
-
-vi.mock('@/auth/flows/getToken', () => ({
-    authGetToken: vi.fn(async () => 'token'),
-}));
-
-vi.mock('@/auth/recovery/secretKeyBackup', () => ({
-    normalizeSecretKey: normalizeSecretKeySpy,
-}));
-
-vi.mock('@/sync/ops/account/accountEncryptionFirstKeyExternalAuth', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/ops/account/accountEncryptionFirstKeyExternalAuth')>();
-    return {
-        ...actual,
-        guardAccountEncryptionFirstKeyCredentialMutation: guardCredentialMutationSpy,
-    };
+let localStorage: ReturnType<typeof installLocalStorageMock>;
+beforeEach(() => {
+    localStorage = installLocalStorageMock();
+    resetServerProfilesRuntimeForTests();
+    resetServerFeaturesClientForTests();
+    navigation.params = {};
+    navigation.back.mockClear();
+    navigation.replace.mockClear();
+    navigation.dismissTo.mockClear();
+    setRuntimeFetch(async () => new Response('{}', { status: 404 }));
 });
-
-vi.mock('@/encryption/base64', () => ({
-    decodeBase64: vi.fn((_value: string, _encoding: string) => new Uint8Array(32)),
-}));
-
-vi.mock('@/components/ui/buttons/RoundButton', () => ({
-    RoundButton: 'RoundButton',
-}));
-
-vi.mock('@/components/ui/layout/layout', () => ({
-    layout: { maxWidth: 1024 },
-    useLayoutMaxWidth: () => 1024,
-    useLayoutMaxWidthStyle: () => ({ maxWidth: 1024 }),
-}));
-
-afterEach(() => {
-    routeParams.current = {};
-    vi.restoreAllMocks();
-    standardCleanup();
+afterEach(async () => {
+    await standardCleanup();
+    await disconnectActiveServerConnection();
+    resetServerFeaturesClientForTests();
+    resetServerProfilesRuntimeForTests();
+    localStorage.restore();
 });
 
 async function renderManualRestoreScreen() {
-    vi.resetModules();
-    const { default: Screen } = await import('@/app/(app)/restore/manual');
-    return renderScreen(<Screen />);
+    return renderScreen(<AuthProvider initialCredentials={null}><Screen /></AuthProvider>);
 }
 
 describe('/restore/manual', () => {
     it('fails closed instead of falling back to the active Home when an exact repair target is incomplete', async () => {
-        routeParams.current = {
-            returnTo: '/settings/account/api-tokens',
-            resumeCreate: '1',
-            targetServerId: 'home-a',
-        };
-
+        navigation.params = { returnTo: '/settings/account/api-tokens', resumeCreate: '1', targetServerId: 'home-a' };
         const screen = await renderManualRestoreScreen();
-
         expect(screen.findByTestId('restore-manual-target-unavailable')).toBeTruthy();
         expect(screen.findByTestId('restore-manual-secret-input')).toBeNull();
     });
 
-    it('binds token-encryption repair to the captured Home and Account', async () => {
+    it('binds token-encryption repair to the captured Home address and Account', async () => {
         const fixture = createDirectoryHttpFixture();
         const home = await adoptHomeProfile({
             descriptor: fixture.home.connectionDescriptor,
-            source: 'account-directory',
-            descriptorAuthority: 'current_connection_observation',
+            source: 'account-directory', descriptorAuthority: 'current_connection_observation',
         });
-        routeParams.current = {
-            returnTo: '/settings/account/api-tokens',
-            resumeCreate: '1',
-            targetServerId: home.id,
+        navigation.params = {
+            returnTo: '/settings/account/api-tokens', resumeCreate: '1',
+            targetServerId: home.id, targetServerUrl: home.canonicalServerUrl ?? home.serverUrl,
             expectedAccountId: 'account-a',
         };
-
         const screen = await renderManualRestoreScreen();
         const exactLogin = screen.find((candidate) => (
             candidate.props.target?.expectedAccountId === 'account-a'
             && candidate.props.target?.serverId === home.id
         ));
-
         expect(exactLogin?.props.target).toMatchObject({
-            endpointUrl: home.serverUrl,
-            canonicalServerUrl: home.canonicalServerUrl ?? home.serverUrl,
-            serverId: home.id,
-            serverIdentityId: fixture.home.homeServerIdentityId,
-            expectedAccountId: 'account-a',
-            requireKeyChallengeV2: true,
+            endpointUrl: home.serverUrl, canonicalServerUrl: home.canonicalServerUrl ?? home.serverUrl,
+            serverId: home.id, serverIdentityId: fixture.home.homeServerIdentityId,
+            expectedAccountId: 'account-a', requireKeyChallengeV2: true,
         });
     });
 
-    it('does not auto-capitalize secret key input (supports case-sensitive base64url input)', async () => {
+    it('does not auto-capitalize the case-sensitive Secret Key input', async () => {
         const screen = await renderManualRestoreScreen();
         expect(screen.findByTestId('restore-manual-wizard')).toBeTruthy();
-        const input = screen.findByTestId('restore-manual-secret-input');
-        expect(input).not.toBeNull();
-        expect(input?.props?.autoCapitalize).toBe('none');
+        expect(screen.findByTestId('restore-manual-secret-input')?.props.autoCapitalize).toBe('none');
     });
 
-    it('masks the secret key input by default and allows toggling visibility', async () => {
+    it('masks the Secret Key input by default and allows toggling visibility', async () => {
         const screen = await renderManualRestoreScreen();
-
         const input = screen.findByTestId('restore-manual-secret-input');
-        expect(input).not.toBeNull();
-        expect(input?.props?.secureTextEntry).toBe(true);
-        expect(input?.props?.multiline).toBe(false);
-
+        expect(input?.props.secureTextEntry).toBe(true);
+        expect(input?.props.multiline).toBe(false);
         await screen.pressByTestIdAsync('restore-manual-secret-reveal');
-
-        const revealedInput = screen.findByTestId('restore-manual-secret-input');
-        expect(revealedInput?.props?.secureTextEntry).toBe(false);
+        expect(screen.findByTestId('restore-manual-secret-input')?.props.secureTextEntry).toBe(false);
     });
 
-    it('dismisses to home after a successful restore without dispatching a nested replace action', async () => {
+    it('persists the restored Secret Key and dismisses to Home without dispatching a nested replace', async () => {
+        const token = 'e30.eyJzdWIiOiJhY2NvdW50LWEifQ.signature';
+        const secret = encodeBase64(new Uint8Array(32).fill(7), 'base64url');
+        const authRequests: RequestInit[] = [];
+        const features = createRootLayoutFeaturesResponse({ capabilities: { auth: { keyChallenge: { v2: false } } } });
+        setRuntimeFetch(async (input, init) => {
+            const path = new URL(String(input)).pathname;
+            if (path === '/v1/features') return Response.json(features);
+            if (path === '/v1/auth/ping') return Response.json({});
+            if (path === '/v1/auth') {
+                authRequests.push(init ?? {});
+                return Response.json({ token });
+            }
+            if (path === '/v1/account/encryption/currentness') return Response.json({
+                mode: 'e2ee', version: 1, signingKeyFingerprint: 'signing', contentKeyFingerprint: 'content',
+                updatedAt: 1, recipientEnvelopeReadiness: { status: 'available' },
+            });
+            return new Response('{}', { status: 404 });
+        });
+        const home = await upsertAndActivateServer({ serverUrl: 'https://manual-restore.example.test', scope: 'device' });
+        expect((await getServerFeaturesSnapshot({ serverId: home.id, force: true })).status).toBe('ready');
         const screen = await renderManualRestoreScreen();
-
-        const submit = screen.findByTestId('restore-manual-submit');
-        expect(submit).not.toBeNull();
-
-        await act(async () => {
-            screen.changeTextByTestId('restore-manual-secret-input', 'secret-key');
+        await act(async () => { screen.changeTextByTestId('restore-manual-secret-input', '  ' + secret + '  '); });
+        await screen.pressByTestIdAsync('restore-manual-submit');
+        expect(authRequests).toHaveLength(1);
+        expect(JSON.parse(String(authRequests[0].body))).toMatchObject({
+            publicKey: expect.any(String), challenge: expect.any(String), signature: expect.any(String),
         });
-
-        await act(async () => {
-            await submit?.props?.action?.();
-        });
-
-        expect(authLoginSpy).toHaveBeenCalled();
-        expect(guardCredentialMutationSpy).toHaveBeenCalled();
-        expect(normalizeSecretKeySpy).toHaveBeenCalled();
-        expect(routerBackSpy).not.toHaveBeenCalled();
-        expect(routerReplaceSpy).not.toHaveBeenCalled();
-        expect(routerDismissToSpy).toHaveBeenCalledWith('/');
+        expect(await TokenStorage.getCredentialsForServerUrl(home.serverUrl, { serverId: home.id })).toEqual({ token, secret });
+        expect(getActiveServerSnapshot().serverId).toBe(home.id);
+        expect(navigation.back).not.toHaveBeenCalled();
+        expect(navigation.replace).not.toHaveBeenCalled();
+        expect(navigation.dismissTo).toHaveBeenCalledWith('/');
+        expect(screen.findByTestId('restore-manual-secret-input')?.props.value).toBe('');
     });
 });

@@ -673,7 +673,6 @@ describe('WorkspaceFileDetailsView (markdown edit mode)', () => {
                 scopedLaunchFacts: {
                     serverId: 'srv1',
                     machineId: 'm1',
-                    generation: 9,
                     interactionEnabled: true,
                 },
                 input: { kind: 'workspaceFile', handle: 'opaque-workspace-file-ref' },

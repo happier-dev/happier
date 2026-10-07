@@ -1,217 +1,114 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PauseController } from '@/utils/timing/pauseController';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
-// Sync imports persistence, which instantiates MMKV. Mock it for deterministic tests.
-const kvStore = vi.hoisted(() => new Map<string, string>());
-vi.mock('react-native-mmkv', () => {
-    class MMKV {
-        getString(key: string) {
-            return kvStore.get(key);
-        }
-        set(key: string, value: string) {
-            kvStore.set(key, value);
-        }
-        delete(key: string) {
-            kvStore.delete(key);
-        }
-        clearAll() {
-            kvStore.clear();
-        }
-    }
-
-    return { MMKV };
-});
-
-const appStateAddListener = vi.hoisted(() => vi.fn(() => ({ remove: vi.fn() })));
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                        Platform: { OS: 'web' },
-                        AppState: {
-                            currentState: 'active',
-                            addEventListener: appStateAddListener as any,
-                        },
-                    }
-    );
+    return createReactNativeWebMock();
 });
-
-vi.mock('@/sync/api/session/apiSocket', () => ({
-    apiSocket: {
-        onMessage: vi.fn(),
-        onError: vi.fn(),
-        onReconnected: vi.fn(),
-        onStatusChange: vi.fn(() => () => {}),
-        onConnectionStateChange: vi.fn(() => () => {}),
-        connect: vi.fn(),
-        disconnect: vi.fn(),
-        initialize: vi.fn(),
-        request: vi.fn(async () => new Response('ok', { status: 200 })),
-    },
-}));
-
-vi.mock('@/log', () => ({
-    log: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
-}));
-
-vi.mock('@/voice/context/voiceHooks', () => ({
-    voiceHooks: {
-        onSessionFocus: vi.fn(),
-        onSessionOffline: vi.fn(),
-        onSessionOnline: vi.fn(),
-        onMessages: vi.fn(),
-        reportContextualUpdate: vi.fn(),
-    },
-}));
-
-const fetchChangesBarrier = vi.hoisted(() => {
-    let resolve: (() => void) | null = null;
-    let promise: Promise<void> = new Promise<void>((r) => {
-        resolve = r;
-    });
-    return {
-        get promise() {
-            return promise;
-        },
-        resolve: () => resolve?.(),
-        reset: () => {
-            promise = new Promise<void>((r) => {
-                resolve = r;
-            });
-        },
-    };
-});
-
-vi.mock('./api/session/apiChanges', () => ({
-    fetchChanges: vi.fn(async () => {
-        await fetchChangesBarrier.promise;
-        return {
-            status: 'ok' as const,
-            changes: [],
-            nextCursor: '0',
-        };
-    }),
-    fetchCurrentChangesCursor: vi.fn(async () => ({
-        status: 'ok' as const,
-        cursor: '0',
-    })),
-}));
 
 describe('sync resumeSync background interruption', () => {
-    beforeEach(() => {
+    let network: Awaited<ReturnType<typeof installSessionOpsNetworkBoundary>>;
+    let home: Awaited<ReturnType<typeof network.addHome>>;
+    let changesStarted: Promise<void>;
+    let releaseChanges: () => void;
+    let startChanges: () => void;
+    let changesResponse: Promise<void>;
+    let holdChanges: boolean;
+    let nextCursor: number;
+    let now: number;
+
+    beforeEach(async () => {
         vi.resetModules();
-        kvStore.clear();
-        appStateAddListener.mockClear();
-        fetchChangesBarrier.reset();
-        vi.unstubAllGlobals();
+        holdChanges = false;
+        nextCursor = 0;
+        now = Date.now();
+        vi.spyOn(Date, 'now').mockImplementation(() => now);
+        changesStarted = new Promise((resolve) => { startChanges = resolve; });
+        changesResponse = new Promise((resolve) => { releaseChanges = resolve; });
+        network = await installSessionOpsNetworkBoundary();
+        home = await network.addHome('https://resume-a.example.test', 'account-resume');
+        const { profileDefaults } = await import('./domains/profiles/profile');
+        network.setHttpResponder(async (input) => {
+            const path = new URL(String(input)).pathname;
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            if (path === '/v1/account/profile') return Response.json({ ...profileDefaults, id: home.accountId });
+            if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+            if (path === '/v2/cursor') return Response.json({ cursor: 0 });
+            if (path === '/v2/changes') {
+                if (holdChanges) { startChanges(); await changesResponse; }
+                return Response.json({ changes: [], nextCursor });
+            }
+            if (path === '/v2/sessions') return Response.json({ sessions: [], nextCursor: null, hasNext: false });
+            if (path === '/v1/machines') return Response.json([]);
+            if (path === '/v1/artifacts') return Response.json([]);
+            if (path === '/v1/friends') return Response.json({ friends: [] });
+            if (path === '/v1/kv') return Response.json({ items: [] });
+            return null;
+        });
+        await loadSyncSingletonForTests();
+        const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+        const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+        await upsertAndActivateServer({ serverUrl: home.serverUrl });
+        await restoreConnectionToActiveServer({ token: home.token });
+        const { storage } = await import('./domains/state/storage');
+        await vi.waitFor(() => expect(storage.getState().isDataReady).toBe(true));
+        // The elapsed downtime comes from a real transport disconnect and clock,
+        // not synthetic private Sync credentials/encryption or disconnected state.
+        const socket = network.socketBoundaries.find((boundary) => boundary.serverUrl === home.serverUrl);
+        expect(socket).toBeDefined();
+        socket!.trigger('disconnect', 'transport close');
+        now += 1_000;
+        network.httpRequests.length = 0;
+        holdChanges = true;
+    });
+
+    afterEach(async () => {
+        releaseChanges();
+        const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
+        await disconnectActiveServerConnection();
+        network.dispose();
+        vi.restoreAllMocks();
     });
 
     it('does not continue issuing HTTP sync requests after app is backgrounded mid-resume', async () => {
-        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-            const url: string =
-                typeof input === 'string'
-                    ? input
-                    : input instanceof Request
-                      ? input.url
-                      : 'url' in input
-                        ? String(input.url)
-                        : input.toString();
-
-            if (url.includes('/v2/sessions')) {
-                return new Response(
-                    JSON.stringify({ sessions: [], nextCursor: null, hasNext: false }),
-                    { status: 200, headers: { 'Content-Type': 'application/json' } },
-                );
-            }
-            if (url.includes('/v1/machines')) {
-                return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
-            }
-            return new Response(JSON.stringify({}), { status: 200, headers: { 'Content-Type': 'application/json' } });
-        });
-        vi.stubGlobal('fetch', fetchMock);
-
-        const { storage } = await import('./domains/state/storage');
-        const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
-        const { sync } = await import('./syncEngine');
-
-        upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
-
-        storage.setState((state) => ({ ...state, profile: { ...(state.profile ?? {}), id: 'test-account' } as any }), true);
-        (sync as any).credentials = { token: 'hdr.eyJzdWIiOiJ0ZXN0In0.sig', secret: 'secret' };
-        (sync as any).encryption = {
-            decryptEncryptionKey: async () => null,
-            initializeMachines: async () => {},
-            initializeSessions: async () => {},
-            getSessionEncryption: () => null,
-        };
-        (sync as any).isForeground = true;
-        (sync as any).lastSocketDisconnectedAtMs = Date.now() - 1000;
-
+        const { sync } = await import('./sync');
         const pauseController = (sync as unknown as { pauseController: PauseController }).pauseController;
         expect(pauseController.isPaused()).toBe(false);
+        const resumed = sync.resumeSync('socket-reconnect');
+        await changesStarted;
 
-        const promise = (sync as any).resumeSync('socket-reconnect') as Promise<void>;
-
-        // Pause the app while resume is in-flight (right before changes reconcile unblocks).
         pauseController.pause();
-
-        // Allow changes reconcile to finish; resumeSync should see the pause before issuing HTTP work.
-        fetchChangesBarrier.resolve();
-
-        await new Promise<void>((resolve) => queueMicrotask(resolve));
+        releaseChanges();
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-        expect(fetchMock).toHaveBeenCalledTimes(0);
+        expect(network.httpRequests.filter(({ url }) => new URL(url).pathname === '/v2/sessions')).toEqual([]);
 
         pauseController.resume();
-        await promise;
-
-        expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual(
-            expect.arrayContaining([expect.stringContaining('/v2/sessions')]),
-        );
+        await resumed;
+        expect(network.httpRequests.map(({ url }) => new URL(url).pathname)).toContain('/v2/sessions');
     }, 60_000);
 
     it('does not checkpoint an in-flight changes cursor after the server scope is reset', async () => {
-        const { fetchChanges } = await import('./api/session/apiChanges');
-        vi.mocked(fetchChanges).mockImplementationOnce(async () => {
-            await fetchChangesBarrier.promise;
-            return {
-                status: 'ok' as const,
-                changes: [],
-                nextCursor: 'stale-server-tail',
-            };
-        });
-
-        const { loadChangesCursor } = await import('./domains/state/persistence');
-        const { upsertAndActivateServer, getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
-        const { storage } = await import('./domains/state/storage');
         const { sync } = await import('./sync');
+        const { loadChangesCursor } = await import('./domains/state/persistence');
+        const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+        nextCursor = 99;
+        const resumed = sync.resumeSync('socket-reconnect');
+        await changesStarted;
 
-        upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
+        await sync.disconnectServer();
+        const other = await network.addHome('https://resume-b.example.test', 'account-other');
+        await upsertAndActivateServer({ serverUrl: other.serverUrl });
+        releaseChanges();
+        await resumed;
 
-        storage.setState((state) => ({ ...state, profile: { ...(state.profile ?? {}), id: 'test-account' } as any }), true);
-        (sync as any).serverID = 'test-account';
-        (sync as any).credentials = { token: 'hdr.eyJzdWIiOiJ0ZXN0LWFjY291bnQifQ.sig', secret: 'secret' };
-        (sync as any).encryption = {
-            decryptEncryptionKey: async () => null,
-            initializeMachines: async () => {},
-            initializeSessions: async () => {},
-            getSessionEncryption: () => null,
-        };
-        (sync as any).isForeground = true;
-        (sync as any).lastSocketDisconnectedAtMs = Date.now() - 1000;
-
-        const promise = (sync as any).resumeSync('socket-reconnect') as Promise<void>;
-        await new Promise<void>((resolve) => queueMicrotask(resolve));
-
-        (sync as unknown as { disconnectServer: () => void }).disconnectServer();
-        upsertAndActivateServer({ serverUrl: 'http://localhost:53289', scope: 'tab' });
-        const switchedServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
-
-        fetchChangesBarrier.resolve();
-        await promise;
-
-        expect(loadChangesCursor({ serverScope: switchedServerId, accountId: 'test-account' })).toBeNull();
+        expect(loadChangesCursor({ serverScope: other.id, accountId: other.accountId })).toBeNull();
+        expect(loadChangesCursor({ serverScope: home.id, accountId: home.accountId })).not.toBe('99');
     }, 60_000);
 });

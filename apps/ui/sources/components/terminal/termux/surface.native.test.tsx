@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { createLayoutChangeEvent } from '@/dev/testkit/fixtures/nativeEventFixtures';
 import { View } from 'react-native';
 import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
@@ -247,7 +248,9 @@ describe('TermuxTerminalSurface', () => {
         });
 
         await act(async () => {
-            root.root.findByType(View).props.onLayout?.();
+            const onLayout = root.root.findByType(View).props.onLayout;
+            if (!onLayout) throw new Error('Expected native terminal layout handler');
+            onLayout(createLayoutChangeEvent({ x: 0, y: 0, width: 800, height: 600 }));
             await Promise.resolve();
         });
 

@@ -268,9 +268,17 @@ describe('buildUsageAnalyticsViewModel', () => {
         expect(estimatedViewModel.modelTimeline[0].leaders[0].totalCost).toBe(7);
         expect(estimatedViewModel.engineTimeline[0].leaders[0].totalCost).toBe(8);
 
-        const summary = buildUsageAnalyticsSummaryViewModel(response);
-        expect(summary.topEngine?.label).toBe('Google Gemini Remote');
-        expect(summary.busiestWindowLabel).toBe('Thu · 2 PM');
+        // Locale and timezone are environment boundaries, not analytics rules.
+        const DateTimeFormat = Intl.DateTimeFormat;
+        const formatter = vi.spyOn(Intl, 'DateTimeFormat').mockImplementation((_locales, options) =>
+            new DateTimeFormat('en-US', { ...options, timeZone: 'UTC' }));
+        try {
+            const summary = buildUsageAnalyticsSummaryViewModel(response);
+            expect(summary.topEngine?.label).toBe('Google Gemini Remote');
+            expect(summary.busiestWindowLabel).toBe('Thu · 1 PM');
+        } finally {
+            formatter.mockRestore();
+        }
     });
 
     it('preserves server-computed effective cost for mixed-provenance auto responses', () => {

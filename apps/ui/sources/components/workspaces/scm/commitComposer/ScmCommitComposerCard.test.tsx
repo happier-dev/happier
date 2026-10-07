@@ -24,12 +24,6 @@ vi.mock('@/text', async () => {
     });
 });
 
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
-    },
-}));
-
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
     TextInput: 'TextInput',

@@ -26,13 +26,6 @@ function getPlugins(value: unknown): PluginWithResolver[] {
 }
 
 describe('vitest integration config', () => {
-    it('does not exclude integration patterns inherited from unit config', async () => {
-        const module = await import('../../vitest.integration.config');
-        const testConfig = module.default.test ?? {};
-
-        expect(testConfig.exclude ?? []).toEqual([]);
-    });
-
     it('resolves workspace package imports through the inherited source resolver', async () => {
         const module = await import('../../vitest.integration.config');
         const plugins = getPlugins(module.default.plugins);

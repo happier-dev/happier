@@ -2,7 +2,7 @@
 import * as React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { installPopoverCommonModuleMocks } from '@/components/ui/popover/popoverTestHelpers';
 
@@ -11,11 +11,29 @@ import { installPopoverCommonModuleMocks } from '@/components/ui/popover/popover
 installPopoverCommonModuleMocks({ reactNative: async () => await vi.importActual('react-native-web') });
 
 // The host's reduce-motion preference (a media query on the web) is the boundary.
-const hostMotion = vi.hoisted(() => ({ reduced: false }));
-vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({ useReducedMotionPreference: () => hostMotion.reduced }));
+const hostMotion = {
+    reduced: false,
+    listeners: new Set<(event: Readonly<{ matches: boolean }>) => void>(),
+};
+const previousMatchMedia = Object.getOwnPropertyDescriptor(window, 'matchMedia');
+Object.defineProperty(window, 'matchMedia', { configurable: true, value: (query: string) => ({
+    get matches() { return query === '(prefers-reduced-motion: reduce)' && hostMotion.reduced; },
+    addEventListener: (_type: string, listener: (event: Readonly<{ matches: boolean }>) => void) => {
+        if (query === '(prefers-reduced-motion: reduce)') hostMotion.listeners.add(listener);
+    },
+}) });
+
+function setHostReducedMotion(reduced: boolean) {
+    hostMotion.reduced = reduced;
+    for (const listener of hostMotion.listeners) listener({ matches: reduced });
+}
+afterAll(() => {
+    if (previousMatchMedia) Object.defineProperty(window, 'matchMedia', previousMatchMedia);
+    else Reflect.deleteProperty(window, 'matchMedia');
+});
 
 const { View } = await import('react-native');
-const { useUnistyles } = await import('react-native-unistyles');
+const { appShellColumnSurface } = await import('./appShellColumnSurface');
 const { AppRailPeek } = await import('./AppRailPeek');
 const { AppShellPeekLayer, AppShellPeekProvider } = await import('./AppShellPeek');
 type AppShellShownColumn = import('./appRailModel').AppShellShownColumn;
@@ -25,12 +43,6 @@ const COLUMN_WIDTH_PX = 320;
 let container: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
 const navigate = vi.fn();
-/** The sidebar plane of the theme the shell renders with. */
-const themeState = { surfaceInset: '' };
-function ThemeProbe() {
-    themeState.surfaceInset = useUnistyles().theme.colors.surface.inset;
-    return null;
-}
 const openRow = vi.fn();
 
 /** The shell as `SidebarNavigator` composes it: rail triggers, and the peek layer in the column's place. */
@@ -45,13 +57,13 @@ async function renderShell(params: Readonly<{ currentId: string; columnShown: bo
     await act(async () => {
         root.render(
             <AppShellPeekProvider enabled currentId={params.currentId} columnShown={params.columnShown}>
-                <ThemeProbe />
                 {(['sessions', 'plugins', 'plugin:acme.triage:triage'] as const).map((kind) => (
                     <AppRailPeek key={kind} testID={`rail-peek:${kind}`} destinationId={kind}>
                         {() => <button data-testid={`rail-item:${kind}`} onClick={navigate}>{kind}</button>}
                     </AppRailPeek>
                 ))}
                 <View testID="sheet" style={{ position: 'relative', width: 1000, height: 800 }}>
+                    {params.columnShown ? <View testID="docked-column" style={appShellColumnSurface.column} /> : null}
                     <AppShellPeekLayer
                         widthPx={COLUMN_WIDTH_PX}
                         resolveColumn={(destinationId) => COLUMNS_BY_DESTINATION[destinationId] ?? null}
@@ -90,13 +102,6 @@ const hoverOpen = async (el: Element) => {
     await rest(motionTokens.overlay.popover.hoverOpenDelayMs + 10);
 };
 
-function hexToRgb(hex: string): string {
-    const value = hex.replace('#', '');
-    const full = value.length === 3 ? value.split('').map((c) => c + c).join('') : value.slice(0, 6);
-    const [r, g, b] = [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16));
-    return `rgb(${r}, ${g}, ${b})`;
-}
-
 describe('AppShellPeek', () => {
     beforeEach(() => {
         container = document.createElement('div');
@@ -126,7 +131,9 @@ describe('AppShellPeek', () => {
         expect(layer.querySelector('[data-testid="column:sessions"]')).not.toBeNull();
         const style = getComputedStyle(layer);
         expect([style.position, style.left, style.top, style.bottom, style.width]).toEqual(['absolute', '0px', '0px', '0px', `${COLUMN_WIDTH_PX}px`]);
-        expect(style.backgroundColor).toBe(hexToRgb(themeState.surfaceInset));
+        const dockedColumn = container.querySelector<HTMLElement>('[data-testid="docked-column"]')!;
+        expect(style.backgroundColor).not.toBe('');
+        expect(style.backgroundColor).toBe(getComputedStyle(dockedColumn).backgroundColor);
         // A layer above the open column: its lift shows on the trailing edge.
         expect(style.boxShadow).not.toBe('');
 
@@ -239,7 +246,7 @@ describe('AppShellPeek', () => {
 
     it('fades without moving when the host asks for reduced motion', async () => {
         fakeTimers();
-        hostMotion.reduced = true;
+        await act(async () => { setHostReducedMotion(true); });
         try {
             const item = await renderShell({ currentId: 'plugins', columnShown: true });
             await hoverOpen(item('sessions'));
@@ -248,7 +255,7 @@ describe('AppShellPeek', () => {
                 options: expect.objectContaining({ duration: motionTokens.overlay.panel.reducedMotionFadeMs }),
             })]);
         } finally {
-            hostMotion.reduced = false;
+            await act(async () => { setHostReducedMotion(false); });
         }
     });
 

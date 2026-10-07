@@ -1,17 +1,27 @@
 import * as React from 'react';
 import { Platform, Text } from 'react-native';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { standardCleanup } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storage';
 
 import { stageVisualTokens } from '../tour/stage/stageVisualTokens';
 import { StagePane } from './StagePane';
 import { UnauthenticatedSplitShell } from './UnauthenticatedSplitShell';
-import { useUnauthShellLayout, type UnauthShellLayout } from './useUnauthShellLayout';
+import type { UnauthShellLayout } from './useUnauthShellLayout';
 
 const deviceState = vi.hoisted(() => ({
     safeAreaInsets: { top: 0, bottom: 0, left: 0, right: 0 },
+    width: 1000,
 }));
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        useWindowDimensions: () => ({ width: deviceState.width, height: 800, scale: 1, fontScale: 1 }),
+    });
+});
 
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
@@ -33,9 +43,10 @@ vi.mock('@/text/i18n', async () => {
     return createTextModuleMock({ translate: (key: string) => key });
 });
 
-vi.mock('react-native-safe-area-context', () => ({
-    useSafeAreaInsets: () => deviceState.safeAreaInsets,
-}));
+vi.mock('react-native-safe-area-context', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('react-native-safe-area-context')>();
+    return { ...actual, useSafeAreaInsets: () => deviceState.safeAreaInsets };
+});
 
 // Stub the asset import — the JPG never resolves through Vitest's transformer.
 vi.mock('@/assets/onboarding/planet-dark.jpg', () => ({ default: 'planet-dark.jpg' }));
@@ -46,13 +57,12 @@ vi.mock('@/agents/registry/AgentIcon', () => ({
     AgentIcon: (props: Record<string, unknown>) => React.createElement('AgentIcon', props),
 }));
 
-vi.mock('./useUnauthShellLayout', () => ({
-    useUnauthShellLayout: vi.fn(),
-    MOBILE_MAX_WIDTH_PX: 720,
-}));
+const initialStorageState = storage.getState();
 
-function mockLayout(layout: UnauthShellLayout) {
-    (useUnauthShellLayout as unknown as ReturnType<typeof vi.fn>).mockReturnValue(layout);
+function setLayoutFixture(layout: UnauthShellLayout) {
+    deviceState.width = layout === 'split' ? 1000 : 390;
+    storage.setState({ localSettings: { ...storage.getState().localSettings,
+        brandHeroSeenAt: layout === 'mobile-workflow' ? 1 : null } });
 }
 
 function FakeBody(props: { label: string }) {
@@ -74,11 +84,13 @@ function flattenStyle(style: unknown): Record<string, unknown> {
 
 describe('UnauthenticatedSplitShell', () => {
     beforeEach(() => {
+        storage.setState(initialStorageState, true);
         deviceState.safeAreaInsets = { top: 0, bottom: 0, left: 0, right: 0 };
     });
+    afterEach(() => { standardCleanup(); storage.setState(initialStorageState, true); });
 
     it('renders brand stage left and workflow right in split layout (R1 order)', async () => {
-        mockLayout('split');
+        setLayoutFixture('split');
         const screen = await renderScreen(
             <UnauthenticatedSplitShell
                 stepId="welcome"
@@ -111,7 +123,7 @@ describe('UnauthenticatedSplitShell', () => {
     });
 
     it('keeps the workflow pane shrinkable so nested setup and restore scroll views can scroll', async () => {
-        mockLayout('split');
+        setLayoutFixture('split');
         const screen = await renderScreen(
             <UnauthenticatedSplitShell
                 stepId="relay_select"
@@ -128,7 +140,7 @@ describe('UnauthenticatedSplitShell', () => {
     });
 
     it('renders only the brand panel (with Get started) in mobile-hero layout', async () => {
-        mockLayout('mobile-hero');
+        setLayoutFixture('mobile-hero');
         const onBrandHeroGetStarted = vi.fn();
         const screen = await renderScreen(
             <UnauthenticatedSplitShell
@@ -151,7 +163,7 @@ describe('UnauthenticatedSplitShell', () => {
     });
 
     it('keeps mobile brand hero content inside native safe areas', async () => {
-        mockLayout('mobile-hero');
+        setLayoutFixture('mobile-hero');
         deviceState.safeAreaInsets = { top: 44, bottom: 34, left: 0, right: 0 };
 
         const screen = await renderScreen(
@@ -172,7 +184,7 @@ describe('UnauthenticatedSplitShell', () => {
     });
 
     it('renders only the workflow pane in mobile-workflow layout', async () => {
-        mockLayout('mobile-workflow');
+        setLayoutFixture('mobile-workflow');
         const screen = await renderScreen(
             <UnauthenticatedSplitShell
                 stepId="welcome"
@@ -191,7 +203,7 @@ describe('UnauthenticatedSplitShell', () => {
     });
 
     it('keeps mobile workflow content inside native safe areas and stretches transitioned content', async () => {
-        mockLayout('mobile-workflow');
+        setLayoutFixture('mobile-workflow');
         deviceState.safeAreaInsets = { top: 44, bottom: 34, left: 0, right: 0 };
 
         const screen = await renderScreen(
@@ -219,7 +231,7 @@ describe('UnauthenticatedSplitShell', () => {
     });
 
     it('lets scanner-style mobile workflow steps render full-bleed without shell padding', async () => {
-        mockLayout('mobile-workflow');
+        setLayoutFixture('mobile-workflow');
         deviceState.safeAreaInsets = { top: 44, bottom: 34, left: 0, right: 0 };
 
         const screen = await renderScreen(
@@ -243,7 +255,7 @@ describe('UnauthenticatedSplitShell', () => {
     });
 
     it('renders WelcomeFooterLinks only when isWelcomeStep is true', async () => {
-        mockLayout('split');
+        setLayoutFixture('split');
         const screenWelcome = await renderScreen(
             <UnauthenticatedSplitShell
                 stepId="welcome"
@@ -273,7 +285,7 @@ describe('UnauthenticatedSplitShell', () => {
     });
 
     it('renders BackChevron only when onBack is provided', async () => {
-        mockLayout('split');
+        setLayoutFixture('split');
         const onBack = vi.fn();
         const screenWithBack = await renderScreen(
             <UnauthenticatedSplitShell
@@ -310,7 +322,7 @@ describe('UnauthenticatedSplitShell', () => {
     });
 
     it('does not expose the focused Home as a welcome auth authority and keeps footer links touchable', async () => {
-        mockLayout('split');
+        setLayoutFixture('split');
         const onOpenRelayCustomFlow = vi.fn();
         const screen = await renderScreen(
             <UnauthenticatedSplitShell

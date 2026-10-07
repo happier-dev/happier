@@ -1,34 +1,20 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { getStorage } from '@/sync/domains/state/storage';
+import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
+import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 
 const { mockServerFetch } = vi.hoisted(() => ({
     mockServerFetch: vi.fn(),
 }));
 
-const activeAccountScopeState = vi.hoisted(() => ({
-    activeServerId: 'server-a',
-    profileScope: { serverId: 'server-a', accountId: 'account-a' } as null | {
-        serverId: string;
-        accountId: string;
-    },
+vi.mock('@/sync/http/client', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/http/client')>(),
+    serverFetch: (...args: Parameters<typeof import('@/sync/http/client').serverFetch>) => mockServerFetch(...args),
 }));
 
-vi.mock('@/sync/http/client', () => ({
-    serverFetch: (...args: any[]) => mockServerFetch(...args),
-}));
-
-vi.mock('@/sync/domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: () => ({
-        serverId: activeAccountScopeState.activeServerId,
-        serverUrl: 'https://home.example.test',
-        generation: 1,
-    }),
-}));
-
-vi.mock('@/sync/domains/state/storageStateReaderBridge', () => ({
-    readRegisteredStorageState: () => ({
-        profileScope: activeAccountScopeState.profileScope,
-    }),
-}));
+beforeAll(loadSyncSingletonForTests);
 
 import {
     machineClearReplacementFromAccount,
@@ -43,13 +29,10 @@ import {
 } from '@happier-dev/protocol';
 
 function makeResponse(opts: Readonly<{ ok: boolean; status?: number; json?: unknown; text?: string }>) {
-    return {
-        ok: opts.ok,
+    return new Response(opts.text ?? JSON.stringify(opts.json ?? {}), {
         status: opts.status ?? (opts.ok ? 200 : 500),
-        json: async () => opts.json ?? {},
-        text: async () => opts.text ?? '',
-        headers: new Map(),
-    } as any;
+        headers: { 'content-type': 'application/json' },
+    });
 }
 
 describe('machineRevokeFromAccount', () => {
@@ -79,20 +62,27 @@ describe('machineRevokeFromAccount', () => {
 });
 
 describe('machineRevokeWithProviderCleanup', () => {
-    beforeEach(() => {
-        activeAccountScopeState.activeServerId = 'server-a';
-        activeAccountScopeState.profileScope = { serverId: 'server-a', accountId: 'account-a' };
+    let expectedScope: AccountSettingsScope;
+
+    beforeEach(async () => {
+        const home = await upsertAndActivateServer({ serverUrl: 'https://home.example.test', name: 'Revoke Home' });
+        // Applying a signed-out Home runs the real connection lifecycle without
+        // opening authenticated Sync. Profile hydration then establishes its Account.
+        await switchConnectionToActiveServer();
+        expectedScope = { serverId: home.id, accountId: 'account-a' };
+        getStorage().getState().activateProfileScope(expectedScope);
     });
 
     it('refuses the irreversible revoke when the rendered Account scope retired during confirmation', async () => {
-        activeAccountScopeState.activeServerId = 'server-b';
-        activeAccountScopeState.profileScope = { serverId: 'server-b', accountId: 'account-b' };
+        const otherHome = await upsertAndActivateServer({ serverUrl: 'https://other-home.example.test', name: 'Other Home' });
+        await switchConnectionToActiveServer();
+        getStorage().getState().activateProfileScope({ serverId: otherHome.id, accountId: 'account-b' });
         const revoke = vi.fn(async () => ({ ok: true as const }));
         const mutateAccountSettingsOnce = vi.fn();
 
         await expect(machineRevokeWithProviderCleanup(
             'revoked',
-            { serverId: 'server-a', accountId: 'account-a' },
+            expectedScope,
             1,
             { revoke, mutateAccountSettingsOnce },
         )).resolves.toEqual({
@@ -130,7 +120,7 @@ describe('machineRevokeWithProviderCleanup', () => {
             settings = ProviderSettingsV1Schema.parse(next.settings.providerSettingsV1);
             return { status: 'applied' as const, settingsVersion: 2, value: next.value };
         });
-        await expect(machineRevokeWithProviderCleanup('revoked', { serverId: 'server-a', accountId: 'account-a' }, 1, {
+        await expect(machineRevokeWithProviderCleanup('revoked', expectedScope, 1, {
             revoke: vi.fn(async () => ({ ok: true as const })),
             mutateAccountSettingsOnce,
         })).resolves.toEqual({ ok: true, machineAlreadyRevoked: false, providerCleanup: 'complete' });
@@ -167,10 +157,10 @@ describe('machineRevokeWithProviderCleanup', () => {
             .mockResolvedValueOnce({ ok: true })
             .mockResolvedValueOnce({ ok: false, status: 410, error: 'machine_revoked' });
         const deps = { revoke, mutateAccountSettingsOnce };
-        await expect(machineRevokeWithProviderCleanup('revoked', { serverId: 'server-a', accountId: 'account-a' }, 1, deps)).resolves.toEqual({
+        await expect(machineRevokeWithProviderCleanup('revoked', expectedScope, 1, deps)).resolves.toEqual({
             ok: false, status: 503, error: 'provider_cleanup_pending', machineRevoked: true, providerCleanup: 'pending', retryable: true,
         });
-        await expect(machineRevokeWithProviderCleanup('revoked', { serverId: 'server-a', accountId: 'account-a' }, 1, deps)).resolves.toEqual({
+        await expect(machineRevokeWithProviderCleanup('revoked', expectedScope, 1, deps)).resolves.toEqual({
             ok: true, machineAlreadyRevoked: true, providerCleanup: 'complete',
         });
     });
@@ -202,7 +192,7 @@ describe('machineRevokeWithProviderCleanup', () => {
             return { status: 'conflict' as const, currentSettingsVersion: 2 };
         });
 
-        await expect(machineRevokeWithProviderCleanup('revoked', { serverId: 'server-a', accountId: 'account-a' }, 1, {
+        await expect(machineRevokeWithProviderCleanup('revoked', expectedScope, 1, {
             revoke: vi.fn(async () => ({ ok: true as const })),
             mutateAccountSettingsOnce,
         })).resolves.toEqual({
@@ -235,7 +225,7 @@ describe('machineRevokeWithProviderCleanup', () => {
             return { status: 'applied' as const, settingsVersion: 2, value: next.value };
         });
 
-        await expect(machineRevokeWithProviderCleanup('revoked', { serverId: 'server-a', accountId: 'account-a' }, 1, {
+        await expect(machineRevokeWithProviderCleanup('revoked', expectedScope, 1, {
             revoke: vi.fn(async () => ({ ok: true as const })),
             mutateAccountSettingsOnce,
         })).resolves.toMatchObject({
@@ -257,7 +247,7 @@ describe('machineRevokeWithProviderCleanup', () => {
             return { status: 'applied' as const, settingsVersion: 2, value: next.value };
         });
 
-        await expect(machineRevokeWithProviderCleanup('revoked', { serverId: 'server-a', accountId: 'account-a' }, 1, {
+        await expect(machineRevokeWithProviderCleanup('revoked', expectedScope, 1, {
             revoke: vi.fn(async () => ({ ok: true as const })),
             mutateAccountSettingsOnce,
         })).resolves.toMatchObject({

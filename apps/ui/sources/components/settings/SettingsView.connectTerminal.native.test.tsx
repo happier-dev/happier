@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { act, ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
@@ -92,9 +93,10 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@react-navigation/native', () => ({
-    useFocusEffect: (_cb: () => void) => {},
-}));
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return { ...createReactNavigationNativeMock(), useFocusEffect: () => {} };
+});
 
 vi.mock('expo-constants', () => ({
     default: { expoConfig: { version: '0.0.0-test' } },
@@ -130,9 +132,6 @@ vi.mock('@/hooks/session/useConnectTerminal', () => ({
     useConnectTerminal: () => ({ connectTerminal: connectTerminalSpy, connectWithUrl: vi.fn(), isLoading: false }),
 }));
 
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ credentials: null }),
-}));
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -246,7 +245,7 @@ describe('SettingsView (native connect terminal)', () => {
         const { SettingsView } = await import('./SettingsView');
 
         let tree!: ReactTestRenderer;
-        tree = (await renderScreen(<SettingsView />)).tree;
+        tree = (await renderScreen(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>)).tree;
 
         const scanItem = findPressableByTestId(tree, 'settings-connect-terminal-scan');
         const manualItem = findPressableByTestId(tree, 'settings-connect-terminal-enter-url');
@@ -269,7 +268,7 @@ describe('SettingsView (native connect terminal)', () => {
         settingsViewScanProcessAuthUrlSpy.mockResolvedValueOnce(true);
 
         const { SettingsView } = await import('./SettingsView');
-        const tree = (await renderScreen(<SettingsView />)).tree;
+        const tree = (await renderScreen(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>)).tree;
 
         const manualItem = findPressableByTestId(tree, 'settings-connect-terminal-enter-url');
         expect(manualItem).toBeTruthy();
@@ -294,7 +293,7 @@ describe('SettingsView (native connect terminal)', () => {
 
         vi.useFakeTimers();
         try {
-            const screen = await renderScreen(<SettingsView />, { flushOptions: { cycles: 0 } });
+            const screen = await renderScreen(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>, { flushOptions: { cycles: 0 } });
 
             await flushDeferredSettingsDelay(1000);
 
@@ -318,7 +317,7 @@ describe('SettingsView (native connect terminal)', () => {
 
         vi.useFakeTimers();
         try {
-            const screen = await renderScreen(<SettingsView />, { flushOptions: { cycles: 0 } });
+            const screen = await renderScreen(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>, { flushOptions: { cycles: 0 } });
 
             expect(findItemByTitle(screen.tree, 'settings.account')).toBeTruthy();
             expect(findItemByTitle(screen.tree, 'settings.appearance')).toBeTruthy();

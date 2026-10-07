@@ -9,6 +9,8 @@ import {
 } from '@happier-dev/protocol';
 
 import { createTestSessionTranscriptSource, renderWithSessionTranscriptSource, standardCleanup } from '@/dev/testkit';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import type { Message } from '@happier-dev/session-core/messages';
 import type { CapturingLegendListMockState } from '@/dev/testkit/mocks/legendList';
 
@@ -33,6 +35,9 @@ vi.mock('@legendapp/list/react-native', async () => {
     legendListCapture.state = mock.state;
     return mock.module;
 });
+
+installDisconnectedServerSocketBoundary();
+await loadSyncSingletonForTests();
 
 describe('public TranscriptList web keyboard ownership', () => {
     afterEach(() => {

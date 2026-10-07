@@ -1,11 +1,16 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
+import { resetRuntimeFetch } from '@/utils/system/runtimeFetch';
+
+beforeAll(loadSyncSingletonForTests);
 
 afterEach(() => {
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
-    vi.resetModules();
+    resetRuntimeFetch();
 });
 
 async function setup() {
@@ -13,6 +18,9 @@ async function setup() {
     const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
     const { upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');
     const active = await upsertAndActivateServer({ serverUrl: 'https://active.example', name: 'Active' });
+    // A selected profile alone is not a published Home lifetime. Apply the
+    // real signed-out connection before hydrating its Account projection.
+    await switchConnectionToActiveServer();
     const target = await upsertServerProfile({ serverUrl: 'https://target.example', name: 'Target' });
     const { storage } = await import('@/sync/domains/state/storageStore');
     storage.getState().activateProfileScope({ serverId: active.id, accountId: 'active-account' });

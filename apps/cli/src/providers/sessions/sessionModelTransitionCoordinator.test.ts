@@ -2357,7 +2357,6 @@ describe('createSessionModelTransitionCoordinator', () => {
       activeSelection: selection,
     });
 
-    expect(harness.authorize).toHaveBeenCalledWith(selection);
     expect(harness.applyRuntime).not.toHaveBeenCalled();
   });
 

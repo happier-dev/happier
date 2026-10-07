@@ -188,8 +188,8 @@ const CORRESPONDENCE: readonly Readonly<{
   },
   {
     // The incumbent wait clamps rather than rejecting an over-long timeout.
-    argv: ['wait', 'session_1', '--timeout', '99999'],
-    pathLength: 1,
+    argv: ['session', 'wait', 'session_1', '--timeout', '99999'],
+    pathLength: 2,
     actionId: 'session.wait.idle',
     input: { sessionId: 'session_1', timeoutSeconds: 3600 },
   },
@@ -258,11 +258,10 @@ describe('migrated one-shot Session leaves', () => {
 
   it('keeps the released JSON envelope kind for every spelling of a migrated leaf', async () => {
     // The derived kind is the command path, so a root alias would otherwise
-    // publish `stop`/`wait` where scripts have always read `session_stop`.
+    // publish `stop` where scripts have always read `session_stop`.
     for (const [path, kind] of [
       [['stop'], 'session_stop'],
       [['session', 'stop'], 'session_stop'],
-      [['wait'], 'session_wait'],
       [['session', 'wait'], 'session_wait'],
       [['session', 'set-title'], 'session_set_title'],
     ] as const) {

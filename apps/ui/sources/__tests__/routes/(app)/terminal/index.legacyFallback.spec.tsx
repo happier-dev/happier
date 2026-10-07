@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { standardCleanup } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
-import { installTerminalRouteCommonModuleMocks } from './terminalRouteTestHelpers';
+import { installTerminalRouteCommonModuleMocks, initializeTerminalRouteRuntimeForTests, renderTerminalRoute } from './terminalRouteTestHelpers';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -24,31 +24,16 @@ installTerminalRouteCommonModuleMocks({
     router: () => routerMock.module,
 });
 
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ isAuthenticated: true, credentials: { token: 't', secret: 's' } }),
-}));
-
-vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
-    setPendingTerminalConnect: vi.fn(),
-    clearPendingTerminalConnect: vi.fn(),
-    getPendingTerminalConnect: () => null,
-}));
-
-vi.mock('@/sync/domains/server/serverConfig', () => ({
-    getServerUrl: () => 'https://api.happier.dev',
-}));
-
-vi.mock('@/hooks/session/useConnectTerminal', () => ({
-    useConnectTerminal: () => ({ processAuthUrl: vi.fn(async () => {}), isLoading: false }),
-}));
+await initializeTerminalRouteRuntimeForTests();
 
 describe('TerminalScreen legacy deep-link fallback', () => {
     afterEach(() => {
         standardCleanup();
     });
 
-    beforeEach(() => {
-        vi.resetModules();
+    beforeEach(async () => {
+        const { clearPendingTerminalConnect } = await import('@/sync/domains/pending/pendingTerminalConnect');
+        clearPendingTerminalConnect();
         routerBackMock.mockClear();
         localSearchParamsMock.mockReset();
         localSearchParamsMock.mockReturnValue({ server: 'https://example.test' });
@@ -58,7 +43,7 @@ describe('TerminalScreen legacy deep-link fallback', () => {
         const Screen = (await import('@/app/(app)/terminal/index')).default;
         routerMock.state.params = localSearchParamsMock();
 
-        const screen = await renderScreen(<Screen />);
+        const screen = await renderTerminalRoute(Screen);
         await act(async () => {});
 
         expect(screen.getTextContent()).toContain('terminal.invalidConnectionLink');
@@ -69,7 +54,7 @@ describe('TerminalScreen legacy deep-link fallback', () => {
         const Screen = (await import('@/app/(app)/terminal/index')).default;
         routerMock.state.params = localSearchParamsMock();
 
-        const screen = await renderScreen(<Screen />);
+        const screen = await renderTerminalRoute(Screen);
         await act(async () => {});
 
         expect(screen.findByTestId('terminal-connect-surface-card')).toBeTruthy();
@@ -82,7 +67,7 @@ describe('TerminalScreen legacy deep-link fallback', () => {
         const Screen = (await import('@/app/(app)/terminal/index')).default;
         routerMock.state.params = localSearchParamsMock();
 
-        const screen = await renderScreen(<Screen />);
+        const screen = await renderTerminalRoute(Screen);
         await act(async () => {});
 
         expect(screen.getTextContent()).toContain('terminal.invalidConnectionLink');

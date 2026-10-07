@@ -115,8 +115,7 @@ export function installNewSessionComponentsCommonModuleMocks(
             return await activeOptions.storage(importOriginal);
         }
 
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({});
+        return await importOriginal();
     });
 }
 

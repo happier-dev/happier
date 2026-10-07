@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Session } from '../../domains/state/storageTypes';
+import { createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { areStoredSessionsEqual } from './areStoredSessionsEqual';
 
 function makeSession(overrides: Partial<Session> = {}): Session {
@@ -24,6 +25,15 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 }
 
 describe('areStoredSessionsEqual', () => {
+    it('propagates read-access revocation while reusing an equal normalized access projection', () => {
+        const previous = makeSession({ access: createSessionAccessFixture('view') });
+        const equivalent = { ...previous, access: structuredClone(previous.access) };
+        const revoked = { ...previous, access: createSessionAccessFixture('view', { readTranscript: false }) };
+
+        expect(areStoredSessionsEqual(previous, equivalent)).toBe(true);
+        expect(areStoredSessionsEqual(previous, revoked)).toBe(false);
+    });
+
     it('propagates encrypted content authentication failure and recovery as stored session changes', () => {
         const ready = makeSession({ encryptionMode: 'e2ee', encryptedContentAvailability: 'ready' });
         const unavailable: Session = { ...ready, encryptedContentAvailability: 'encrypted_content_unavailable' };

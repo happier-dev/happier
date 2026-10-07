@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { Pressable, Text, View } from 'react-native';
-import { renderHook, renderScreen } from '@/dev/testkit';
+import { pressTestInstanceAsync, renderHook, renderScreen } from '@/dev/testkit';
 import { buildCodeLinesFromFile } from '@/components/ui/code/model/buildCodeLinesFromFile';
 import { buildCodeLinesFromUnifiedDiff } from '@/components/ui/code/model/buildCodeLinesFromUnifiedDiff';
 import { computeLineContentHash } from '@/utils/text/lineContentHash';
@@ -198,9 +198,7 @@ describe('useCodeLinesReviewComments', () => {
         ));
         if (!save) throw new Error('Expected save button');
 
-        await act(async () => {
-            save.props.onPress();
-        });
+        await pressTestInstanceAsync(save, 'review comment Save button');
 
         expect(onUpsertDraft).toHaveBeenCalledTimes(1);
         expect(onUpsertDraft.mock.calls[0]?.[0]).toMatchObject({

@@ -215,6 +215,7 @@ describe('buildPetCompanionActivityState', () => {
             latestTurnStatus: 'in_progress',
             latestTurnStatusObservedAt: 1_000,
             pendingPermissionRequestCount: 1,
+            pendingRequestObservedAt: 1_000,
         });
 
         expect(buildPetCompanionActivityState({

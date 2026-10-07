@@ -33,8 +33,7 @@ export function useExternalSessionOperationTranscriptDismissal(params: Readonly<
         actionRef: ExternalSessionOperationActionRef,
     ) => {
         if (
-            transcriptSource.actions === null
-            || params.presentation === null
+            params.presentation === null
             || !isExternalSessionOperationDismissibleStatus(
                 params.presentation.status,
             )
@@ -48,7 +47,7 @@ export function useExternalSessionOperationTranscriptDismissal(params: Readonly<
             operationId: actionRef.operationId,
             revision: actionRef.revision,
         });
-    }, [params.presentation, sessionId, transcriptSource.actions]);
+    }, [params.presentation, sessionId]);
 
     return React.useMemo(() => ({
         dismissal,

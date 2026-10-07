@@ -1,116 +1,42 @@
 import * as React from 'react';
-import renderer from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
+import { installSessionPaneRuntimeTestHarness } from './sessionPaneRuntimeTestHarness';
 
-
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-installSessionDetailsPanelCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            Platform: {
-                OS: 'web',
-                select: (_: any) => 1,
-            },
-            View: 'View',
-            Pressable: 'Pressable',
-            ScrollView: 'ScrollView',
-            ActivityIndicator: 'ActivityIndicator',
-            AppState: {
-                currentState: 'active',
-                addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-            },
-        });
-    },
-    icons: () => ({
-        Octicons: 'Octicons',
-        Ionicons: 'Ionicons',
-    }),
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            useLocalSetting: (key: string) => {
-                return null;
-            },
-            useLocalSettingMutable: () => [false, vi.fn()],
-        });
-    },
-    text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({ translate: (key) => key });
-    },
-});
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-}));
-
-const terminalViewSpy = vi.fn();
-vi.mock('@/components/sessions/terminal/SessionEmbeddedTerminalPane', () => ({
-    SessionEmbeddedTerminalPane: (props: any) => {
-        terminalViewSpy(props);
-        return React.createElement('SessionEmbeddedTerminalPane');
-    },
-}));
-
+installSessionDetailsPanelCommonModuleMocks();
+const runtime = installSessionPaneRuntimeTestHarness();
+// Metro module admission is the boundary under test: opening a Terminal must not load file editors.
 vi.mock('@/components/sessions/files/views/SessionCommitDetailsView', () => {
-    throw new Error('commit details view should not be imported for terminal-only details rendering');
+    throw new Error('commit details loaded by a terminal-only mount');
 });
-
 vi.mock('@/components/sessions/files/views/SessionFileDetailsView', () => {
-    throw new Error('file details view should not be imported for terminal-only details rendering');
+    throw new Error('file details loaded by a terminal-only mount');
 });
-
 vi.mock('@/components/sessions/files/views/SessionScmReviewDetailsView', () => {
-    throw new Error('scm review details view should not be imported for terminal-only details rendering');
+    throw new Error('review details loaded by a terminal-only mount');
 });
-
 vi.mock('@/components/sessions/files/views/SessionScmStashDetailsView', () => {
-    throw new Error('scm stash details view should not be imported for terminal-only details rendering');
+    throw new Error('stash details loaded by a terminal-only mount');
 });
-
-vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
-    useAppPaneScope: () => ({
-        closeDetails: vi.fn(),
-        closeDetailsTab: vi.fn(),
-        pinDetailsTab: vi.fn(),
-        setActiveDetailsTab: vi.fn(),
-        scopeState: {
-            details: {
-                isOpen: true,
-                activeTabKey: 'terminal:term-1',
-                tabs: [
-                    {
-                        key: 'terminal:term-1',
-                        kind: 'terminal',
-                        title: 'Terminal',
-                        isPinned: true,
-                        isPreview: false,
-                        resource: { kind: 'terminal', terminalInstanceId: 'term-1' },
-                    },
-                ],
-            },
-        },
-    }),
-}));
 
 describe('SessionDetailsPanel (terminal resource lazy deps)', () => {
-    afterEach(() => {
-        vi.clearAllMocks();
-    });
-
-    it('renders terminal details without importing heavy non-terminal detail views', async () => {
+    it('renders terminal details without loading heavy non-terminal detail modules', async () => {
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
-        terminalViewSpy.mockClear();
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />)).tree;
-
-        expect(tree).toBeTruthy();
-        expect(terminalViewSpy.mock.calls.length).toBeGreaterThan(0);
-        expect(terminalViewSpy.mock.calls.at(-1)?.[0]?.terminalInstanceId).toBe('term-1');
+        const { SessionEmbeddedTerminalPane } = await import('@/components/sessions/terminal/SessionEmbeddedTerminalPane');
+        const screen = await renderScreen(<runtime.Wrapper>
+            <SessionDetailsPanel sessionId="s1" routeServerId={runtime.serverId} scopeId="session:s1" />
+        </runtime.Wrapper>);
+        await act(async () => runtime.pane.openDetailsTab({
+            key: 'terminal:term-1', kind: 'terminal', title: 'Terminal',
+            resource: { kind: 'terminal', terminalInstanceId: 'term-1' },
+        }, { intent: 'pinned' }));
+        const terminals = screen.tree.findAllByType(SessionEmbeddedTerminalPane);
+        expect(terminals).toHaveLength(1);
+        expect(terminals[0].props).toMatchObject({
+            sessionId: 's1', scopeId: 'session:s1', terminalInstanceId: 'term-1', currentDockLocation: 'details',
+        });
+        expect(screen.findHostByTestId('details-surface-fallback-pending')).toBeNull();
     });
 });

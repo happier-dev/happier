@@ -1,77 +1,41 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { createResolvedAgentCatalogEntryFixture } from '@/dev/testkit/fixtures/agentCatalogFixtures';
 import { renderScreen } from '@/dev/testkit';
-import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
-import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { getResolvedBackendCatalogEntries, type ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { getAgentCliGlyph } from '@/agents/catalog/catalog';
+import { applyAcpBackendUpsertV1 } from '@happier-dev/protocol';
 import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 
 installNewSessionComponentsCommonModuleMocks({
-    storage: () => createStorageModuleStub({
-        useSetting: () => ({
-            v: 2,
-            backends: [{ id: 'custom-acp', title: 'Custom ACP', command: 'custom-acp', args: [] }],
-        }),
-    }),
+    storage: async (importOriginal) => importOriginal(),
     text: () => createTextModuleMock({ translate: (key) => key }),
 });
 
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
-    },
-}));
+function configuredBackendEntries() {
+    const result = applyAcpBackendUpsertV1({
+        settings: { v: 2, backends: [] },
+        backend: { id: 'custom-acp', name: 'custom-acp', title: 'Custom ACP', command: 'custom-acp', args: [] },
+        nowMs: 1,
+    });
+    if (!result.ok) throw new Error(`Invalid configured ACP fixture: ${result.code}`);
+    const entries = getResolvedBackendCatalogEntries({ enabledAgentIds: [], acpCatalogSettingsV1: result.settings });
+    expect(entries).toHaveLength(1);
+    return entries;
+}
 
-vi.mock('@/sync/domains/profiles/profileCompatibility', async () => {
-    const actual = await vi.importActual<typeof import('@/sync/domains/profiles/profileCompatibility')>(
-        '@/sync/domains/profiles/profileCompatibility',
-    );
-    return {
-        ...actual,
-        isProfileCompatibleWithBackendTarget: (profile: {
-            compatibility?: Record<string, boolean>;
-            compatibilityByTargetKey?: Record<string, boolean>;
-        }, target: { kind: 'backend'; backendId: string; configuredBackendId?: string }) => {
-            if (typeof target.configuredBackendId === 'string' && target.configuredBackendId.trim().length > 0) {
-                return profile.compatibilityByTargetKey?.[`acpBackend:${target.configuredBackendId}`] === true;
-            }
-            return profile.compatibility?.[target.backendId] === true;
-        },
-    };
-});
-
-vi.mock('@/agents/catalog/catalog', () => ({
-    AGENT_IDS: ['claude', 'codex', 'opencode', 'auggie'],
-    getAgentCliGlyph: (agentId: string) => ({
-        claude: 'CL',
-        codex: 'CX',
-        opencode: 'OC',
-        auggie: 'AU',
-    })[agentId] ?? agentId,
-    getAgentCore: () => ({
-        displayNameKey: 'agent.name',
-        ui: {
-            profileCompatibilityGlyphScale: 1,
-        },
-    }),
-    isBundledAgentId: (agentId: string) => ['claude', 'codex', 'opencode', 'auggie'].includes(agentId),
-}));
-
-vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
-    useEnabledAgentIds: () => ['claude', 'codex', 'opencode', 'auggie'],
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
-}));
+function bundledEntries(enabledAgentIds: string[]) {
+    return getResolvedBackendCatalogEntries({ enabledAgentIds, acpCatalogSettingsV1: { v: 2, backends: [] } });
+}
 
 describe('ProfileCompatibilityIcon', () => {
     it('shows only the first two compatible backend glyphs followed by ellipsis when more than two backends are supported', async () => {
         const { ProfileCompatibilityIcon } = await import('./ProfileCompatibilityIcon');
+        const backendEntries = bundledEntries(['claude', 'codex', 'opencode', 'auggie']);
 
         const screen = await renderScreen(
             <ProfileCompatibilityIcon
@@ -85,64 +49,53 @@ describe('ProfileCompatibilityIcon', () => {
                     },
                     compatibilityByTargetKey: {},
                 }}
+                backendEntries={backendEntries}
             />,
         );
 
-        const glyphs = screen.findAllByType('Text').map((node: any) => node.props.children);
-        expect(glyphs).toEqual(['CL', 'CX', '...']);
+        const glyphs = screen.findAllByType('Text').map((node) => node.props.children);
+        expect(glyphs).toEqual([getAgentCliGlyph('claude'), getAgentCliGlyph('codex'), '...']);
     });
 
-    it('shows the neutral fallback glyph when a profile is only compatible with a configured ACP backend that has no real provider icon', async () => {
+    it('shows a neutral configured ACP glyph alongside a bundled Agent glyph without borrowing its icon', async () => {
         const { ProfileCompatibilityIcon } = await import('./ProfileCompatibilityIcon');
 
         const screen = await renderScreen(
             <ProfileCompatibilityIcon
                 profile={{
                     isBuiltIn: false,
-                    compatibility: {},
+                    compatibility: { codex: true },
                     compatibilityByTargetKey: {
                         'acpBackend:custom-acp': true,
                     },
                 }}
+                backendEntries={[...configuredBackendEntries(), ...bundledEntries(['codex'])]}
             />,
         );
 
-        const glyphs = screen.findAllByType('Text').map((node: any) => node.props.children);
-        expect(glyphs).toEqual(['•']);
+        const glyphs = screen.findAllByType('Text').map((node) => node.props.children);
+        expect(glyphs).toEqual(['•', getAgentCliGlyph('codex')]);
     });
 
     it('shows the neutral fallback glyph when legacy customAcp compatibility resolves to a configured backend with no canonical icon carrier', async () => {
         const { ProfileCompatibilityIcon } = await import('./ProfileCompatibilityIcon');
-        const compatEntries: ResolvedBackendCatalogEntry[] = [{
-            agentCatalogEntry: createResolvedAgentCatalogEntryFixture({ agentId: 'acp:custom-acp' }),
-            backendTarget: { kind: 'backend', backendId: 'custom-acp', configuredBackendId: 'custom-acp', sourceKind: 'configured' },
-            backendTargetKey: 'backend:custom-acp:configured:custom-acp',
-            kind: 'configuredBackend',
-            backendId: 'custom-acp',
-            agentId: 'acp:custom-acp',
-            catalogAgentId: null,
-            builtInAgentId: null,
-            iconAgentId: null,
-            title: 'Custom ACP',
-            subtitle: 'custom-acp',
-            cliAuthBackgroundCheckSafe: false,
-        }];
+        const compatEntries = configuredBackendEntries();
 
         const screen = await renderScreen(
             <ProfileCompatibilityIcon
                 profile={{
                     isBuiltIn: false,
-                    compatibility: {},
+                    compatibility: { claude: true },
                     compatibilityByTargetKey: {
                         'acpBackend:custom-acp': true,
                     },
                 }}
-                backendEntries={compatEntries}
+                backendEntries={[...compatEntries, ...bundledEntries(['claude'])]}
             />,
         );
 
-        const glyphs = screen.findAllByType('Text').map((node: any) => node.props.children);
-        expect(glyphs).toEqual(['•']);
+        const glyphs = screen.findAllByType('Text').map((node) => node.props.children);
+        expect(glyphs).toEqual(['•', getAgentCliGlyph('claude')]);
     });
 
     it('never borrows a bundled carrier glyph for an external Agent target', async () => {
@@ -152,8 +105,8 @@ describe('ProfileCompatibilityIcon', () => {
                 agentId: 'acme.review/agent',
                 overrides: { isBuiltIn: false, iconAgentId: 'codex' },
             }),
-            backendTarget: { kind: 'backend', backendId: 'acme-review' },
-            backendTargetKey: 'backend:acme-review',
+            backendTarget: { kind: 'agent', identity: { pluginId: 'acme.review', localId: 'agent' } },
+            backendTargetKey: 'agent:acme.review/agent',
             kind: 'pluginBackend',
             backendId: 'acme-review',
             agentId: 'acme.review/agent',
@@ -169,13 +122,13 @@ describe('ProfileCompatibilityIcon', () => {
             <ProfileCompatibilityIcon
                 profile={{
                     isBuiltIn: false,
-                    compatibility: { 'acme-review': true },
-                    compatibilityByTargetKey: {},
+                    compatibility: { codex: true },
+                    compatibilityByTargetKey: { 'agent:acme.review/agent': true },
                 }}
-                backendEntries={[externalEntry]}
+                backendEntries={[externalEntry, ...bundledEntries(['codex'])]}
             />,
         );
 
-        expect(screen.findAllByType('Text').map((node: any) => node.props.children)).toEqual(['•']);
+        expect(screen.findAllByType('Text').map((node) => node.props.children)).toEqual(['•', getAgentCliGlyph('codex')]);
     });
 });

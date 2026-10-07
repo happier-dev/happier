@@ -951,7 +951,7 @@ describe('socket update handling: external-session transcript invalidations', ()
                         },
                         generation: 'source-1',
                     },
-                    contributionGeneration: 'contribution-1',
+                    sourceCustody: { kind: 'development', registeredRootId: 'contribution-1' },
                     cursorIdentity: `external_session_cursor_binding_v1:${'a'.repeat(64)}`,
                 },
             },

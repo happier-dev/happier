@@ -2421,9 +2421,15 @@ describe('createExternalSessionFollowLeaseManager', () => {
 
     it('does not publish source unavailable when the status metadata commit fails', async () => {
         const publishSourceUnavailableOccurrence = vi.fn(async () => {});
-        const writeFollowStatus = vi.fn()
-            .mockRejectedValueOnce(new Error('offline'))
-            .mockResolvedValue(undefined);
+        let failedUnavailableCommit = false;
+        // Metadata persistence is the effect boundary. The initial enabled status
+        // succeeds; it is the unavailable transition whose commit is rejected.
+        const writeFollowStatus = vi.fn(async (input: FollowStatusWriteInput) => {
+            if (input.followStatusV1.reason === 'follow_refresh_source_unavailable' && !failedUnavailableCommit) {
+                failedUnavailableCommit = true;
+                throw new Error('offline');
+            }
+        });
         const manager = createExternalSessionFollowLeaseManager({
             writeFollowStatus,
             publishSourceUnavailableOccurrence,
@@ -2440,7 +2446,7 @@ describe('createExternalSessionFollowLeaseManager', () => {
         await manager.requestTranscriptRefresh({ sessionId: 'session-no-commit', resource });
         expect(publishSourceUnavailableOccurrence).not.toHaveBeenCalled();
         await vi.advanceTimersByTimeAsync(250);
-        expect(writeFollowStatus).toHaveBeenCalledTimes(2);
+        expect(writeFollowStatus.mock.calls.filter(([input]) => input.followStatusV1.reason === 'follow_refresh_source_unavailable')).toHaveLength(2);
         expect(publishSourceUnavailableOccurrence).toHaveBeenCalledTimes(1);
         await manager.dispose();
     });

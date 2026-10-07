@@ -2574,7 +2574,11 @@ describe('runPermissionModePromptLoop', () => {
   });
 
   it('settles selected SessionMedia video as typed unsupported without a provider effect', async () => {
-    const session = createPromptLoopSession();
+    const session = createMutableApiSessionClientFixture<PromptLoopMetadata>({ sessionId: 'session-1' });
+    // Plugin material resolution is a boundary; unsupported media must fail before entering it.
+    const resolveComposerAttachmentForDispatch = vi.fn(async () => {
+      throw new Error('Unsupported video must not reach plugin material resolution');
+    });
     const observeProviderInputSettlement = vi.spyOn(session, 'observeProviderInputSettlement').mockImplementation(
       (() => Promise.resolve(false)) as typeof session.observeProviderInputSettlement,
     );
@@ -2638,10 +2642,12 @@ describe('runPermissionModePromptLoop', () => {
       setCurrentPermissionModeUpdatedAt: () => {},
       formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
       registerProviderAcceptedEffect: () => undefined,
+      resolveComposerAttachmentForDispatch,
     } as Parameters<typeof runPermissionModePromptLoop>[0]);
 
     expect(runtime.beginTurnLifecycle).not.toHaveBeenCalled();
     expect(runtime.sendTurnPrompt).not.toHaveBeenCalled();
+    expect(resolveComposerAttachmentForDispatch).not.toHaveBeenCalled();
     expect(observeProviderInputSettlement).toHaveBeenCalledWith({
       kind: 'rejected_before_effect',
       localId: 'local-review-video',
@@ -3425,6 +3431,10 @@ describe('runPermissionModePromptLoop', () => {
     const session = createPromptLoopSession();
     const queue = createModeQueue();
     const runtime = createRuntime();
+    const providerAcceptance = createProviderAcceptanceHarness();
+    runtime.sendTurnPrompt.mockImplementation(async (_prompt, meta) => {
+      if (meta?.localId) providerAcceptance.accept(meta.localId);
+    });
     const messageBuffer = new MessageBuffer();
     const permissionHandler = {
       setPermissionMode: vi.fn(),
@@ -3464,17 +3474,21 @@ describe('runPermissionModePromptLoop', () => {
       setCurrentPermissionModeUpdatedAt: () => {},
       resolveFreshSessionSystemPrompt: async ({ baseOverride }) => baseOverride === undefined ? 'FALLBACK' : baseOverride ?? '',
       formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
-      registerProviderAcceptedEffect: () => undefined,
+      registerProviderAcceptedEffect: providerAcceptance.registerProviderAcceptedEffect,
     });
 
     expect(runtime.sendTurnPrompt).toHaveBeenNthCalledWith(1, 'APPEND\n\nhello', localIdentityMeta('local-1'));
     expect(runtime.sendTurnPrompt).toHaveBeenNthCalledWith(2, 'second', localIdentityMeta('local-2'));
   });
 
-  it('does not prepend appendSystemPrompt when resuming an existing provider session', async () => {
+  it('does not repeat the native-accepted startup plan when resuming an existing provider session', async () => {
     const session = createPromptLoopSession();
     const queue = createModeQueue();
-    const runtime = createRuntime();
+    const startupInstructions = { v: 1, id: 'happier.coding_session_plan', revision: 1, instructions: 'APPEND' } as const;
+    const runtime = {
+      ...createRuntime(),
+      readSessionStartupInstructions: () => startupInstructions,
+    };
     const messageBuffer = new MessageBuffer();
     const permissionHandler = {
       setPermissionMode: vi.fn(),
@@ -3510,6 +3524,7 @@ describe('runPermissionModePromptLoop', () => {
       setCurrentPermissionMode: () => {},
       setCurrentPermissionModeUpdatedAt: () => {},
       initialResumeId: 'resume-1',
+      readSessionPromptPlanDeliveryState: () => ({ startupInstructionsSupported: true, marker: startupInstructions }),
       resolveFreshSessionSystemPrompt: async ({ baseOverride }) => baseOverride === undefined ? 'FALLBACK' : baseOverride ?? '',
       formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
       registerProviderAcceptedEffect: () => undefined,
@@ -3781,6 +3796,7 @@ describe('runPermissionModePromptLoop', () => {
       strictInitialResume: true,
       onStrictInitialResumeFailure,
       formatPromptErrorMessage: (error: unknown) => `Error: ${String(error)}`,
+      registerProviderAcceptedEffect: createProviderAcceptanceHarness().registerProviderAcceptedEffect,
     })).resolves.toBeUndefined();
 
     expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('hello', localIdentityMeta('local-6'));
@@ -3843,6 +3859,7 @@ describe('runPermissionModePromptLoop', () => {
       strictInitialResume: true,
       onStrictInitialResumeFailure,
       formatPromptErrorMessage: (error: unknown) => `Error: ${String(error)}`,
+      registerProviderAcceptedEffect: createProviderAcceptanceHarness().registerProviderAcceptedEffect,
     });
 
     expect(outcome).toBeUndefined();

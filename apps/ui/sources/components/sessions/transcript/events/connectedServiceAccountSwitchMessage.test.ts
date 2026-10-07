@@ -19,7 +19,7 @@ describe('buildConnectedServiceAccountSwitchMessage', () => {
             labelsByKey: undefined,
         });
 
-        expect(message).toBe('Switched Codex group Happier from team@happier.dev to leeroy.brun@gmail.com');
+        expect(message).toBe('Switched ChatGPT group Happier from team@happier.dev to leeroy.brun@gmail.com');
         expect(message).not.toContain('from group');
         expect(message).not.toContain('to profile');
     });
@@ -38,7 +38,7 @@ describe('buildConnectedServiceAccountSwitchMessage', () => {
             labelsByKey: undefined,
         });
 
-        expect(message).toBe('Switched Claude group Team Pool from leeroy to leeroy');
+        expect(message).toBe('Switched Claude subscription group Team Pool from leeroy to leeroy');
         expect(message).not.toContain('batiplus');
         expect(message).not.toContain('from group');
         expect(message).not.toContain('to profile');
@@ -57,8 +57,8 @@ describe('buildConnectedServiceAccountSwitchMessage', () => {
             labelsByKey: undefined,
         });
 
-        expect(message).toBe('Switched Claude group team-pool from leeroy to leeroy');
-        expect(message).not.toContain('Switched Claude group Claude');
+        expect(message).toBe('Switched Claude subscription group team-pool from leeroy to leeroy');
+        expect(message).not.toContain('group Claude');
     });
 
     it('describes both sides as profiles for a direct (non-group) switch', () => {
@@ -72,7 +72,7 @@ describe('buildConnectedServiceAccountSwitchMessage', () => {
             labelsByKey: { 'openai-codex/work': 'Work', 'openai-codex/backup': 'Backup' },
         });
 
-        expect(message).toBe('Switched Codex account from Work to Backup');
+        expect(message).toBe('Switched ChatGPT account from Work to Backup');
     });
 
     it('falls back to the native CLI-auth label when a switch side has no profile', () => {

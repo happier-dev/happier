@@ -1,148 +1,78 @@
 import React from 'react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
+import { beforeEach, describe, expect, it } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
+import { storage } from '@/sync/domains/state/storageStore';
 import {
-    renderScreen,
-    standardCleanup,
-} from '@/dev/testkit';
-import {
-    createConfiguredBackendRouteParams,
-    createNavigationMock,
-    createProjectionDescribeMock,
-    createRouterMock,
-    createStackOptionsCapture,
-    enableReactActEnvironment,
-    installPickerCommonModuleMocks,
-    PICKER_THEME_COLORS,
+    createConfiguredBackendRouteParams, createNavigationMock, createRouterMock,
+    createStackOptionsCapture, enableReactActEnvironment, installPickerCommonModuleMocks,
 } from './testHarness';
-import { settingsDefaults } from '@/sync/domains/settings/settings';
-import { createUseSettingMock, createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
 
 enableReactActEnvironment();
 
-const routerMock = createRouterMock();
-const navigationMock = createNavigationMock();
-const stackOptionsCapture = createStackOptionsCapture();
-const routeParamsState = {
-    current: {} as Record<string, string>,
-};
-const storeTempDataSpy = vi.fn(() => 'invalid-secret-result-id');
+const router = createRouterMock();
+const navigation = createNavigationMock();
+const capture = createStackOptionsCapture();
+let params: Record<string, string> = {};
 
 installPickerCommonModuleMocks({
-    text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
-    reactNative: async () =>
-        (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
-            Platform: { OS: 'ios' },
-        }),
-    expoRouter: async () =>
-        (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
-            navigation: navigationMock,
-            params: () => routeParamsState.current,
-            router: {
-                push: routerMock.push,
-                back: routerMock.back,
-                replace: routerMock.replace,
-                setParams: routerMock.setParams,
-            },
-            stackOptionsCapture,
-        }).module,
-    storage: async (importOriginal) =>
-        (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
-            importOriginal,
-            overrides: {
-                useSetting: createUseSettingMock({ fallback: (key) => {
-                    if (key === 'profiles') return [];
-                    return undefined;
-                } }),
-                useSettingMutable: createUseSettingMutableMockFromReader((key) => {
-                    if (key === 'secrets') return [[], vi.fn()];
-                    return [{}, vi.fn()];
-                }),
-                useSettings: () => settingsDefaults,
-            },
-        }),
-    unistyles: async () =>
-        (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock({
-            theme: { colors: PICKER_THEME_COLORS },
-        }),
-    projectionSeam: { describe: createProjectionDescribeMock() },
-    tempDataStore: {
-        storeTempData: (...args: Parameters<typeof storeTempDataSpy>) => storeTempDataSpy(...args),
-    },
+    reactNative: async () => (await import('@/dev/testkit/mocks/reactNative'))
+        .createReactNativeNativeMock({ platformOS: 'ios' }),
+    expoRouter: async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
+        navigation, params: () => params, router, stackOptionsCapture: capture,
+    }).module,
+});
+const runtime = installSessionPaneRuntimeTestHarness();
+
+beforeEach(async () => {
+    params = {};
+    capture.reset();
+    router.back.mockClear(); router.replace.mockClear(); router.setParams.mockClear();
+    navigation.dispatch.mockClear(); navigation.goBack.mockClear(); navigation.setParams.mockClear();
+    navigation.getState = () => ({
+        index: 0, routes: [{ key: 'secret-requirement-route', name: '(app)/new/pick/secret-requirement', path: '/new/pick/secret-requirement' }],
+    });
+    storage.getState().applySettingsLocal({ profiles: [] });
+    const { clearTempData } = await import('@/utils/sessions/tempDataStore');
+    clearTempData();
 });
 
-vi.mock('@/components/secrets/requirements', () => ({
-    SecretRequirementScreen: () => React.createElement('SecretRequirementScreen'),
-}));
-
-vi.mock('@/components/ui/popover', () => ({
-    PopoverScope: ({ children }: React.PropsWithChildren) => React.createElement(React.Fragment, null, children),
-}));
+async function renderPicker() {
+    const Screen = (await import('@/app/(app)/new/pick/secret-requirement')).default;
+    return renderScreen(React.createElement(runtime.Wrapper, null, React.createElement(Screen)));
+}
 
 describe('SecretRequirementPickerScreen invalid route state', () => {
-    afterEach(() => {
-        standardCleanup();
-    });
-
-    beforeEach(() => {
-        routeParamsState.current = {};
-        storeTempDataSpy.mockClear();
-        stackOptionsCapture.reset();
-        routerMock.back.mockClear();
-        routerMock.replace.mockClear();
-        routerMock.setParams.mockClear();
-        navigationMock.dispatch.mockClear();
-        navigationMock.goBack.mockClear();
-        navigationMock.setParams.mockClear();
-        navigationMock.getState = () => ({
-            index: 0,
-            routes: [
-                {
-                    key: 'secret-requirement-route',
-                    name: '(app)/new/pick/secret-requirement',
-                    path: '/new/pick/secret-requirement',
-                },
-            ],
-        });
-    });
-
     it('dismisses itself when required route params are missing', async () => {
-        const SecretRequirementPickerScreen = (await import('@/app/(app)/new/pick/secret-requirement')).default;
-        await renderScreen(React.createElement(SecretRequirementPickerScreen));
-
-        // No return route exists, so the picker replaces to the structured
-        // new-session href; an empty route carries no new-session context.
-        expect(routerMock.replace).toHaveBeenCalledWith({ pathname: '/new', params: {} });
+        await renderPicker();
+        expect(router.replace).toHaveBeenCalledWith({ pathname: '/new', params: {} });
     });
 
-    it('returns a cancel result with current backend route context when the profile route state is unusable', async () => {
-        routeParamsState.current = {
-            agentType: 'customAcp',
-            ...createConfiguredBackendRouteParams('review-bot'),
-            dataId: 'draft-1',
-            machineId: 'machine-1',
-            profileId: 'missing-profile',
-            spawnServerId: 'server-2',
+    it('returns a one-shot cancel result with the current backend and exact Home when the profile is unavailable', async () => {
+        params = {
+            agentType: 'customAcp', ...createConfiguredBackendRouteParams('review-bot'),
+            dataId: 'draft-1', machineId: 'machine-1', profileId: 'missing-profile',
+            spawnServerId: runtime.serverId,
         };
-
-        const SecretRequirementPickerScreen = (await import('@/app/(app)/new/pick/secret-requirement')).default;
-        await renderScreen(React.createElement(SecretRequirementPickerScreen));
-
-        expect(storeTempDataSpy).toHaveBeenCalledWith({
-            profileId: 'missing-profile',
-            revertOnCancel: false,
-            result: { action: 'cancel' },
-        });
-        expect(routerMock.replace).toHaveBeenCalledWith({
+        await renderPicker();
+        expect(router.replace).toHaveBeenCalledWith({
             pathname: '/new',
             params: {
                 ...createConfiguredBackendRouteParams('review-bot'),
-                dataId: 'draft-1',
-                machineId: 'machine-1',
-                profileId: 'missing-profile',
-                secretRequirementResultId: 'invalid-secret-result-id',
-                spawnServerId: 'server-2',
+                dataId: 'draft-1', machineId: 'machine-1', profileId: 'missing-profile',
+                secretRequirementResultId: expect.any(String), spawnServerId: runtime.serverId,
             },
         });
+        const href = router.replace.mock.calls[0]?.[0];
+        if (!href || typeof href !== 'object' || !('params' in href) || !href.params || typeof href.params !== 'object'
+            || !('secretRequirementResultId' in href.params) || typeof href.params.secretRequirementResultId !== 'string') {
+            throw new Error('Expected a result handoff in the new-session return route');
+        }
+        const { getTempData } = await import('@/utils/sessions/tempDataStore');
+        const id = href.params.secretRequirementResultId;
+        expect(getTempData<{ profileId: string; revertOnCancel: boolean; result: { action: string } }>(id)).toEqual({
+            profileId: 'missing-profile', revertOnCancel: false, result: { action: 'cancel' },
+        });
+        expect(getTempData(id)).toBeNull();
     });
 });

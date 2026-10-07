@@ -1,42 +1,29 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+
+beforeEach(async () => {
+    await upsertAndActivateServer({ serverUrl: 'https://api.example.test', name: 'HTTP Home' });
+    vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('abort-account') });
+});
 
 afterEach(async () => {
     vi.useRealTimers();
-    try {
-        const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
-        await resetServerReachabilitySupervisors();
-    } catch {
-        // ignore
-    }
-    try {
-        const { stopAllEndpointSupervisorsForTests } = await import('@/sync/runtime/connectivity/endpointSupervisorPool');
-        await stopAllEndpointSupervisorsForTests();
-    } catch {
-        // ignore
-    }
+    const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+    await resetServerReachabilitySupervisors();
+    const { stopAllEndpointSupervisorsForTests } = await import('@/sync/runtime/connectivity/endpointSupervisorPool');
+    await stopAllEndpointSupervisorsForTests();
     const { resetRuntimeFetch } = await import('./client');
     resetRuntimeFetch();
     vi.unstubAllGlobals();
-    vi.resetModules();
-    vi.clearAllMocks();
+    vi.restoreAllMocks();
 });
 
 describe('serverFetch abort handling', () => {
     it('refuses a request before fetch when its admitted server basis is no longer active', async () => {
-        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
-            getActiveServerSnapshot: () => ({
-                serverId: 'server-b',
-                serverUrl: 'https://server-b.example.test',
-                kind: 'custom',
-                generation: 9,
-            }),
-        }));
-        vi.doMock('@/auth/storage/tokenStorage', () => ({
-            TokenStorage: {
-                getCredentials: vi.fn(async () => null),
-                invalidateCredentialsTokenForServerUrl: vi.fn(async () => false),
-            },
-        }));
+        const admitted = getActiveServerSnapshot();
+        await upsertAndActivateServer({ serverUrl: 'https://server-b.example.test', name: 'Other Home' });
         const fetchMock = vi.fn(async () =>
             new Response(null, { status: 200 }));
         vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
@@ -52,8 +39,8 @@ describe('serverFetch abort handling', () => {
                 includeAuth: false,
                 retry: 'none',
                 expectedActiveServer: {
-                    serverId: 'server-a',
-                    generation: 7,
+                    serverId: admitted.serverId,
+                    generation: admitted.generation,
                 },
             },
         )).rejects.toMatchObject({
@@ -63,23 +50,12 @@ describe('serverFetch abort handling', () => {
     });
 
     it('aborts in-flight requests when abortServerFetches is called', async () => {
-        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
-            getActiveServerSnapshot: () => ({
-                serverId: 'server-a',
-                serverUrl: 'https://api.example.test',
-                kind: 'custom',
-                generation: 1,
-            }),
-        }));
-        vi.doMock('@/auth/storage/tokenStorage', () => ({
-            TokenStorage: {
-                getCredentials: vi.fn(async () => null),
-                invalidateCredentialsTokenForServerUrl: vi.fn(async () => false),
-            },
-        }));
-
+        let observeIssued!: () => void;
+        const issued = new Promise<void>((resolve) => { observeIssued = resolve; });
         const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+            if (new URL(String(_input)).pathname === '/v1/auth/ping') return Response.json({});
             return await new Promise<Response>((_resolve, reject) => {
+                observeIssued();
                 const signal = init?.signal;
                 if (!signal) {
                     reject(new Error('missing signal'));
@@ -87,13 +63,13 @@ describe('serverFetch abort handling', () => {
                 }
                 if (signal.aborted) {
                     const error = new Error('aborted');
-                    (error as any).name = 'AbortError';
+                    error.name = 'AbortError';
                     reject(error);
                     return;
                 }
                 signal.addEventListener('abort', () => {
                     const error = new Error('aborted');
-                    (error as any).name = 'AbortError';
+                    error.name = 'AbortError';
                     reject(error);
                 }, { once: true });
             });
@@ -102,32 +78,14 @@ describe('serverFetch abort handling', () => {
 
         const { abortServerFetches, serverFetch } = await import('./client');
         const pending = serverFetch('/v1/health', undefined, { retry: 'none' });
+        const rejected = expect(pending).rejects.toMatchObject({ name: 'ServerFetchAbortedForServerSwitchError' });
+        await issued;
         abortServerFetches();
-
-        await expect(pending).rejects.toMatchObject({ name: 'ServerFetchAbortedForServerSwitchError' });
+        await rejected;
     });
 
     it('rejects authenticated absolute-URL requests that target a different host than the active server', async () => {
-        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
-            getActiveServerSnapshot: () => ({
-                serverId: 'server-a',
-                serverUrl: 'https://api.example.test',
-                kind: 'custom',
-                generation: 1,
-            }),
-        }));
-        vi.doMock('@/auth/storage/tokenStorage', () => ({
-            TokenStorage: {
-                getCredentials: vi.fn(async () => ({ token: 'token-a', secret: 'secret-a' })),
-                invalidateCredentialsTokenForServerUrl: vi.fn(async () => false),
-            },
-        }));
-
-        const fetchMock = vi.fn(async () => ({
-            ok: true,
-            status: 200,
-            headers: new Headers(),
-        }));
+        const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
         vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
         const { serverFetch } = await import('./client');
@@ -138,26 +96,7 @@ describe('serverFetch abort handling', () => {
     });
 
     it('rejects cross-origin requests when an explicit Authorization header is provided (even with includeAuth=false)', async () => {
-        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
-            getActiveServerSnapshot: () => ({
-                serverId: 'server-a',
-                serverUrl: 'https://api.example.test',
-                kind: 'custom',
-                generation: 1,
-            }),
-        }));
-        vi.doMock('@/auth/storage/tokenStorage', () => ({
-            TokenStorage: {
-                getCredentials: vi.fn(async () => ({ token: 'token-a', secret: 'secret-a' })),
-                invalidateCredentialsTokenForServerUrl: vi.fn(async () => false),
-            },
-        }));
-
-        const fetchMock = vi.fn(async () => ({
-            ok: true,
-            status: 200,
-            headers: new Headers(),
-        }));
+        const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
         vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
         const { serverFetch } = await import('./client');
@@ -172,64 +111,26 @@ describe('serverFetch abort handling', () => {
         expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it('rejects authenticated requests when the active server URL is not a valid absolute URL', async () => {
-        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
-            getActiveServerSnapshot: () => ({
-                serverId: 'server-a',
-                serverUrl: 'api.example.test',
-                kind: 'custom',
-                generation: 1,
-            }),
-        }));
-        vi.doMock('@/auth/storage/tokenStorage', () => ({
-            TokenStorage: {
-                getCredentials: vi.fn(async () => ({ token: 'token-a', secret: 'secret-a' })),
-                invalidateCredentialsTokenForServerUrl: vi.fn(async () => false),
-            },
-        }));
-
-        const fetchMock = vi.fn(async () => ({
-            ok: true,
-            status: 200,
-            headers: new Headers(),
-        }));
+    it('rejects authenticated captured endpoints that are not valid absolute URLs', async () => {
+        const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
         vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
-        const { serverFetch } = await import('./client');
-        await expect(serverFetch('/v1/account/profile')).rejects.toThrow(/refused authenticated request/i);
+        const { createServerFetchAtEndpoint } = await import('./client');
+        const request = createServerFetchAtEndpoint({ endpointUrl: 'api.example.test', credentials: { token: createAccountTokenForTests('abort-account') } });
+        await expect(request('/v1/account/profile', undefined, { retry: 'none' })).rejects.toThrow(/refused authenticated request/i);
         expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it('rejects explicit Authorization headers when the active server URL is not a valid absolute URL', async () => {
-        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
-            getActiveServerSnapshot: () => ({
-                serverId: 'server-a',
-                serverUrl: 'api.example.test',
-                kind: 'custom',
-                generation: 1,
-            }),
-        }));
-        vi.doMock('@/auth/storage/tokenStorage', () => ({
-            TokenStorage: {
-                getCredentials: vi.fn(async () => {
-                    throw new Error('Unexpected TokenStorage.getCredentials() call');
-                }),
-                invalidateCredentialsTokenForServerUrl: vi.fn(async () => false),
-            },
-        }));
-
-        const fetchMock = vi.fn(async () => ({
-            ok: true,
-            status: 200,
-            headers: new Headers(),
-        }));
+    it('rejects explicit Authorization headers for captured endpoints that are not valid absolute URLs', async () => {
+        const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
         vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
-        const { serverFetch } = await import('./client');
-        await expect(serverFetch(
+        const { createServerFetchAtEndpoint } = await import('./client');
+        const request = createServerFetchAtEndpoint({ endpointUrl: 'api.example.test', credentials: null });
+        await expect(request(
             '/v1/account/profile',
             { headers: { Authorization: 'Bearer share-token' } },
-            { includeAuth: false },
+            { includeAuth: false, retry: 'none' },
         )).rejects.toThrow(/refused authenticated request/i);
         expect(fetchMock).not.toHaveBeenCalled();
     });

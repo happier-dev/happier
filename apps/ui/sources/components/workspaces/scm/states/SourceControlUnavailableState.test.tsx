@@ -18,10 +18,6 @@ vi.mock('@/components/ui/buttons/RoundButton', () => ({
   RoundButton: (props: any) => React.createElement('RoundButton', props),
 }));
 
-vi.mock('@/constants/Typography', () => ({
-  Typography: { default: () => ({}) },
-}));
-
 describe('SourceControlUnavailableState', () => {
   it('exposes the retry control under a caller-scoped testID', async () => {
     // The card's Retry could only be reached by its visible text, and a text locator hits the

@@ -6,7 +6,6 @@ import type { SessionAttributedFile } from '@/scm/scmAttribution';
 import { installSourceControlChangesCommonModuleMocks } from './sourceControlChangesTestHelpers';
 
 installSourceControlChangesCommonModuleMocks({
-    typography: async () => vi.importActual('@/constants/Typography'),
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({

@@ -1,16 +1,27 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createSessionFixture, renderScreen as renderBareScreen, standardCleanup } from '@/dev/testkit';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import type { UserTextMessage } from "@happier-dev/session-core/messages";
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
-import { MessageView, MessageViewWithSessionCommon } from './MessageView';
 import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { storage } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionMessageProvenance } from '@happier-dev/protocol';
 
 installMessageViewCommonModuleMocks();
+const { MessageView, MessageViewWithSessionCommon } = await import('./MessageView');
+const { AppSessionTranscriptSourceProvider } = await import('./source/appSessionTranscriptSource');
+
+// These cases prove the real Home-scoped store-to-authorship path, not snapshot bylines.
+function renderScreen(element: React.ReactElement<{ sessionId: string; serverId?: string | null }>) {
+    return renderBareScreen(
+        <AppSessionTranscriptSourceProvider sessionId={element.props.sessionId} serverId={element.props.serverId}>
+            {element}
+        </AppSessionTranscriptSourceProvider>,
+    );
+}
+
 afterEach(() => {
     standardCleanup();
     storage.setState(storage.getInitialState(), true);

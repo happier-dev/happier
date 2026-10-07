@@ -1,8 +1,20 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defineProtocolNumber, defineProtocolObject, defineProtocolString } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { createMachineFixture } from '@/dev/testkit';
-import { clearDaemonMergedProjectionCacheForTests } from './loadDaemonMergedProjectionInputs';
+import { RPC_METHODS, RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { createSocketIoAckTimeoutError } from '@happier-dev/sync-client';
+import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+
+let network: Awaited<ReturnType<typeof installSessionOpsNetworkBoundary>>;
+let storage: typeof import('@/sync/domains/state/storage').storage;
+let getMachineContributionRegistryProjectionRevision: typeof import('@/sync/ops/machineContributionRegistryProjectionRevision').getMachineContributionRegistryProjectionRevision;
+let publishMachineContributionRegistryProjectionInvalidation: typeof import('@/sync/ops/machineContributionRegistryProjectionRevision').publishMachineContributionRegistryProjectionInvalidation;
+let clearDaemonMergedProjectionCacheForTests: typeof import('./loadDaemonMergedProjectionInputs').clearDaemonMergedProjectionCacheForTests;
+let activeAccountRestored = false;
+let initialRevision = 0;
+const projectionScope = { machineId: 'machine-1', serverId: 'server-1' };
 
 // Localization is a platform boundary; projection and descriptor logic stay real.
 vi.mock('@/text', async () => {
@@ -11,17 +23,7 @@ vi.mock('@/text', async () => {
 });
 
 const projectionDescribeMock = vi.hoisted(() => vi.fn());
-const projectionRevision = vi.hoisted(() => ({ value: 0 }));
-
-vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
-    getMachineContributionRegistryProjectionRevision: () => projectionRevision.value,
-    machineContributionRegistryProjectionDescribe: projectionDescribeMock,
-    machinePluginSecretStatus: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
-    machinePluginSecretSet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
-    machinePluginSecretDelete: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
-    machinePluginSettingsGet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
-    machinePluginSettingsSet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
-}));
+const homeIds = new Map<string, string>();
 
 function daemonProjection(generation: number) {
     return {
@@ -145,22 +147,62 @@ const composerSurfaceCatalog = [{
 
 describe('loadDaemonMergedProjectionCacheEntry', () => {
     beforeEach(async () => {
+        vi.resetModules();
+        activeAccountRestored = false;
         projectionDescribeMock.mockReset();
-        projectionRevision.value = 0;
+        network = await installSessionOpsNetworkBoundary();
+        const home = await network.addHome('https://server-1', 'account-a');
+        expect(home.id).toBe('server-1');
+        homeIds.clear();
+        homeIds.set(home.serverUrl, home.id);
+        network.setRpcAckResponder(async (request) => {
+            if (request.method !== RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+                return { ok: false, error: 'Unsupported fixture RPC', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
+            }
+            const response = await projectionDescribeMock(request.targetId, { serverId: homeIds.get(request.serverUrl) });
+            if (response.supported !== true) {
+                if (response.reason === 'not-supported') return { ok: false, error: 'Unsupported projection', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
+                if (response.reason === 'timeout') throw createSocketIoAckTimeoutError();
+                throw new Error('Projection transport unavailable');
+            }
+            const { supported: _supported, ...envelope } = response;
+            return { ok: true, result: { protocolVersion: 1, ...envelope } };
+        });
+        ({ storage } = await import('@/sync/domains/state/storage'));
+        ({ getMachineContributionRegistryProjectionRevision, publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjectionRevision'));
+        ({ clearDaemonMergedProjectionCacheForTests } = await import('./loadDaemonMergedProjectionInputs'));
+        initialRevision = getMachineContributionRegistryProjectionRevision(projectionScope);
         clearDaemonMergedProjectionCacheForTests();
+        const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
+        registerStorageStateReader(() => storage.getState());
+    });
+    afterEach(async () => {
+        if (activeAccountRestored) {
+            const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
+            await disconnectActiveServerConnection();
+        }
+        const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
+        const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
+        serverScopedRpcSocketPool.resetForTests();
+        resetScopedMachineTransportCacheForTests();
+        network.dispose();
     });
 
-    it('publishes a background Home descriptor under its Account and retires only that Home on credential removal', async () => {
-        const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
-        const { upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');
-        const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
+    it('publishes a background Home descriptor under its Account and retires only that Home when its request lifetime retires', async () => {
         const { resolveAgentUiBehavior } = await import('@/agents/registry/registryUiBehavior');
         const { loadDaemonMergedProjectionCacheEntry, readCachedDaemonMergedProjectionCacheEntry } = await import('./loadDaemonMergedProjectionInputs');
-        const homeA = await upsertAndActivateServer({ serverUrl: 'https://projection-a.example.test', source: 'manual', scope: 'device' });
-        const homeB = await upsertServerProfile({ serverUrl: 'https://projection-b.example.test', source: 'manual' });
+        const homeA = await network.addHome('https://projection-a.example.test', 'account-a');
+        const homeB = await network.addHome('https://projection-b.example.test', 'account-b');
+        homeIds.set(homeA.serverUrl, homeA.id);
+        homeIds.set(homeB.serverUrl, homeB.id);
+        const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+        await loadSyncSingletonForTests();
+        const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+        await upsertAndActivateServer({ serverUrl: homeA.serverUrl });
+        await restoreConnectionToActiveServer({ token: homeA.token });
+        activeAccountRestored = true;
         const scopeA = { serverId: homeA.id, accountId: 'account-a' };
         const scopeB = { serverId: homeB.id, accountId: 'account-b' };
-        registerStorageStateReader(() => ({ profileScope: scopeA } as never));
         const lifetimeA = createAccountLifetime(scopeA.accountId, homeA.id);
         const lifetimeB = createAccountLifetime(scopeB.accountId, homeB.id);
         const projectionForHome = (serverId: string) => ({
@@ -182,6 +224,11 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
         projectionDescribeMock.mockImplementation(async (_machineId, options) => projectionForHome(options.serverId));
         await loadDaemonMergedProjectionCacheEntry({ machineId: 'shared-machine', serverId: homeA.id, accountLifetime: lifetimeA.lifetime });
         await loadDaemonMergedProjectionCacheEntry({ machineId: 'shared-machine', serverId: homeB.id, accountLifetime: lifetimeB.lifetime });
+        const { parseToken } = await import('@/utils/auth/parseToken');
+        expect(network.requests.filter((request) => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)
+            .map(({ serverUrl, token }) => [serverUrl, token ? parseToken(token) : null])).toEqual([
+            [homeA.serverUrl, 'account-a'], [homeB.serverUrl, 'account-b'],
+        ]);
         expect(resolveAgentUiBehavior('acme.agent', 'shared-machine', scopeB).permissions?.footer?.usePermissionUpdates).toBe(true);
         expect(resolveAgentUiBehavior('acme.agent', 'shared-machine').permissions?.footer?.usePermissionUpdates).toBe(false);
         expect(resolveAgentUiBehavior('acme.agent', 'shared-machine', scopeA).permissions?.footer?.stopHandling).toBe('denyOnly');
@@ -279,7 +326,7 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
         expect(projectionDescribeMock).toHaveBeenCalledTimes(1);
 
         // …until the machine's projection revision advances.
-        projectionRevision.value += 1;
+        publishMachineContributionRegistryProjectionInvalidation(projectionScope);
         projectionDescribeMock.mockResolvedValueOnce({ supported: true, projection: daemonProjection(8) });
         await expect(loadDaemonMergedProjectionInputs({ machineId: 'machine-1', serverId: 'server-1', accountLifetime: account.lifetime }))
             .resolves.toMatchObject({ pluginProjectionV2: { generation: 8 } });
@@ -313,6 +360,7 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
             await expect(read(sameAccount.lifetime)).resolves.toMatchObject({ kind: 'ready' });
             expect(projectionDescribeMock).toHaveBeenCalledTimes(1);
 
+            network.setAccount('https://server-1', 'account-b');
             await expect(read(nextAccount.lifetime)).resolves.toMatchObject({
                 kind: 'ready', inputs: { pluginProjectionV2: { generation: 8 } },
             });
@@ -324,7 +372,7 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
             });
             expect(projectionDescribeMock).toHaveBeenCalledTimes(3);
 
-            projectionRevision.value += 1;
+            publishMachineContributionRegistryProjectionInvalidation(projectionScope);
             await expect(read(nextAccount.lifetime)).resolves.toMatchObject({
                 kind: 'ready', inputs: { pluginProjectionV2: { generation: 10 } },
             });
@@ -373,6 +421,8 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
             serverId: 'server-1',
             accountLifetime: reader.lifetime,
         }));
+        await vi.waitFor(() => expect(pending).toHaveLength(1));
+        network.setAccount('https://server-1', 'account-b');
         const successorRead = loadDaemonMergedProjectionCacheEntry({
             machineId: 'machine-1',
             serverId: 'server-1',
@@ -405,28 +455,28 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
 
         const first = loadDaemonMergedProjectionCacheEntry({ machineId: 'machine-1', serverId: 'server-1' });
         await vi.waitFor(() => expect(pending).toHaveLength(1));
-        projectionRevision.value += 1;
+        publishMachineContributionRegistryProjectionInvalidation(projectionScope);
         const second = loadDaemonMergedProjectionCacheEntry({ machineId: 'machine-1', serverId: 'server-1' });
         await vi.waitFor(() => expect(pending).toHaveLength(2));
-        projectionRevision.value += 1;
+        publishMachineContributionRegistryProjectionInvalidation(projectionScope);
 
         pending[0]!({ supported: true, projection: daemonProjection(1) });
         await expect(first).resolves.toMatchObject({
             kind: 'ready',
-            projectionRevision: 0,
+            projectionRevision: initialRevision,
             inputs: { pluginProjectionV2: { generation: 1 } },
         });
 
         pending[1]!({ supported: true, projection: daemonProjection(2) });
         await expect(second).resolves.toMatchObject({
             kind: 'ready',
-            projectionRevision: 1,
+            projectionRevision: initialRevision + 1,
             inputs: { pluginProjectionV2: { generation: 2 } },
         });
         // A late answer never replaces a newer one already published.
         const { readCachedDaemonMergedProjectionCacheEntry } = await import('./loadDaemonMergedProjectionInputs');
         expect(readCachedDaemonMergedProjectionCacheEntry({ machineId: 'machine-1', serverId: 'server-1' }))
-            .toMatchObject({ projectionRevision: 1 });
+            .toMatchObject({ projectionRevision: initialRevision + 1 });
     });
 
     it('keeps the classified reason of a failed read with the last good inputs', async () => {
@@ -445,6 +495,7 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
     });
 
     describe('retained admission custody around a machine answer', () => {
+        beforeEach(() => { network.setAccount('https://server-1', 'account-default'); });
         const CUSTODY_TARGET = {
             pluginId: 'acme.preview',
             occurrenceId: 'target-generation-a',
@@ -558,15 +609,15 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
                 serverId: 'server-1',
                 accountLifetime: retainedTestAccountLifetime,
             });
-            await Promise.resolve();
+            await vi.waitFor(() => expect(settleStaleResponse).toBeTypeOf('function'));
 
-            projectionRevision.value += 1;
+            publishMachineContributionRegistryProjectionInvalidation(projectionScope);
             custody.savePresentation(8);
 
             settleStaleResponse({ supported: false, reason: 'not-supported' });
             // The late answer still settles, tagged with the revision it
             // answered, but it may not retire custody for the current endpoint.
-            await expect(stale).resolves.toMatchObject({ kind: 'unsupported', projectionRevision: 0 });
+            await expect(stale).resolves.toMatchObject({ kind: 'unsupported', projectionRevision: initialRevision });
             expect(custody.readEntry()).toBeDefined();
         });
     });

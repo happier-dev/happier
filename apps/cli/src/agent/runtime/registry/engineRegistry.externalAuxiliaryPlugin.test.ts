@@ -343,6 +343,7 @@ async function materializeAuxiliaryOnlyPlugin(pluginRoot: string): Promise<void>
                                 ),
                                 nextCursor: 'max-items-next',
                                 boundary: 'max-items-boundary',
+                                hasMore: false,
                             },
                         };
                     }
@@ -353,6 +354,7 @@ async function materializeAuxiliaryOnlyPlugin(pluginRoot: string): Promise<void>
                             items: request.maxItems > 0 ? [transcriptItem(2)] : [],
                             nextCursor: 'tail-2',
                             boundary: 'message-2',
+                            hasMore: false,
                         },
                     };
                 },

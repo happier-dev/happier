@@ -1,9 +1,9 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
 import { WORKSPACE_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol';
-import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+import { storage } from '@/sync/domains/state/storage';
 import { resolveCompactAppDestinations } from '../destinations/compactAppDestinationCatalog';
 import { DestinationInstanceHost, useDestinationParams, useDestinationRouter } from './DestinationInstanceHost';
 import type { WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
@@ -54,20 +54,23 @@ vi.mock('expo-router', async () => {
     return createExpoRouterMock({ pathname: () => boundary.pathname, params: () => boundary.params,
         router: { replace: (href: unknown) => { boundary.mirrors.push(String(href)); } } }).module;
 });
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { create } = await import('zustand');
-    const baseline = createStorageModuleStub({});
-    const store = create<ReturnType<typeof baseline.storage.getState>>(() => ({ ...baseline.storage.getState(), settings: baseline.useSettings() }));
-    return createStorageModuleStub({
-    storage: store, getStorage: () => store,
-    useIsDataReady: () => boundary.dataReady,
-    useActiveServerAccountScope: () => boundary.scope,
-    useLocalSettingMutable: createStorageModuleStub({ useLocalSettingMutable: (key: string) => {
-        if (key === 'titleStripThemeToggleVisible') return [false, () => {}] as const;
-        if (key !== 'workspaceLayoutV1') throw new Error(`Unexpected setting ${key}`);
-        return [boundary.layouts, (next: Record<string, unknown>) => { boundary.layouts = next; }] as const;
-    } }).useLocalSettingMutable,
-});
+const initialStorageState = storage.getState();
+// Test inputs use the same store snapshots and selectors as the mounted workspace.
+Object.defineProperties(boundary, {
+    layouts: {
+        get: () => storage.getState().localSettings.workspaceLayoutV1,
+        set: (layouts: Record<string, unknown>) => storage.setState({
+            localSettings: { ...storage.getState().localSettings, workspaceLayoutV1: layouts },
+        }),
+    },
+    scope: {
+        get: () => storage.getState().profileScope,
+        set: (scope: typeof boundary.scope) => storage.setState({ profileScope: scope }),
+    },
+    dataReady: {
+        get: () => storage.getState().isDataReady,
+        set: (isDataReady: boolean) => storage.setState({ isDataReady }),
+    },
 });
 
 function HostedProbe() {
@@ -95,9 +98,13 @@ function ResizeEditor() {
 }
 
 describe('consumed workspace navigation owner', () => {
-    afterEach(() => { boundary.layouts = {}; boundary.mirrors = []; boundary.scope = { serverId: 'home-a', accountId: 'alice' }; boundary.dataReady = true;
+    beforeEach(() => {
+        storage.setState({ ...initialStorageState, profileScope: { serverId: 'home-a', accountId: 'alice' }, isDataReady: true,
+            localSettings: { ...initialStorageState.localSettings, workspaceLayoutV1: {}, titleStripThemeToggleVisible: false } }, true);
+    });
+    afterEach(() => { standardCleanup(); storage.setState(initialStorageState, true); boundary.mirrors = [];
         boundary.platform = 'ios'; boundary.pathname = '/session/A1'; boundary.params = { id: 'A1', serverId: 'home-a' };
-        clearActiveUnsavedChangesGuard(); standardCleanup(); vi.unstubAllGlobals(); });
+        clearActiveUnsavedChangesGuard(); vi.unstubAllGlobals(); });
     it.each([
         ['/settings/no-body', '', false],
         ['/settings/plugins/acme.review/policy', '?subPath=bindings%2F1&subPath=bindings%2F2', false],
@@ -148,6 +155,16 @@ describe('consumed workspace navigation owner', () => {
         const screen = await renderScreen(element());
         const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
         expect(navigation().active).toBe(true);
+        // The native/browser layout boundary admits retained content after its slot is measured.
+        await act(async () => {
+            invokeTestInstanceHandler(screen.findByTestId('split-canvas-host'), 'onLayout', {
+                nativeEvent: { layout: { x: 0, y: 0, width: 1000, height: 600 } },
+            });
+            const groupId = navigation().state.focusedGroupId;
+            invokeTestInstanceHandler(screen.findByTestId(`split-canvas-content-slot-${groupId}`), 'onLayout', {
+                nativeEvent: { layout: { x: 0, y: 40, width: 1000, height: 560 } },
+            });
+        });
         await act(async () => { screen.root.findByType('ResizeEditor').props.setDraft('unsaved draft'); });
         const tabId = navigation().state.groups[navigation().state.focusedGroupId].activeTabId;
         for (const next of [true, false, true]) {

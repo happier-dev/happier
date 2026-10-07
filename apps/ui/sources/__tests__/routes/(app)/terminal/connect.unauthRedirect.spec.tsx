@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { encodeTerminalConnectLinkV4Payload } from '@happier-dev/protocol';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { standardCleanup } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
-import { installTerminalRouteCommonModuleMocks } from './terminalRouteTestHelpers';
+import { installTerminalRouteCommonModuleMocks, initializeTerminalRouteRuntimeForTests, renderTerminalRoute } from './terminalRouteTestHelpers';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -17,26 +17,16 @@ installTerminalRouteCommonModuleMocks({
     }).module,
 });
 
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ isAuthenticated: false, credentials: null }),
-}));
-
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock({ spies: { alertAsync: modalAlertAsyncMock } }).module;
 });
 
-vi.mock('@/auth/storage/tokenStorage', () => ({
-    TokenStorage: {
-        getCredentialsForServerUrl: vi.fn(async () => null),
-        readPendingExternalAuthState: vi.fn(async () => ({ value: null, serverMismatch: false })),
-        readPendingExternalAuthStateForServerUrl: vi.fn(async () => ({ value: null, serverMismatch: false })),
-    },
-}));
-
 vi.mock('@/sync/domains/pending/pendingTerminalConnect', async () => (
     await import('@/sync/domains/pending/pendingTerminalConnect.web')
 ));
+
+await initializeTerminalRouteRuntimeForTests();
 
 function createStorage(): Storage {
     const values = new Map<string, string>();
@@ -56,7 +46,9 @@ function createV4Link(serverUrl: string, serverIdentityId: string) {
         homeServerIdentityId: serverIdentityId,
         canonicalServerUrl: serverUrl,
         revision: 1,
-        endpoints: [{ kind: 'iroh' as const, endpointId: 'a'.repeat(64) }],
+        endpoints: serverUrl.startsWith('https://')
+            ? [{ kind: 'https' as const, url: serverUrl }]
+            : [{ kind: 'iroh' as const, endpointId: 'a'.repeat(64) }],
     };
     const payload = encodeTerminalConnectLinkV4Payload({
         v: 4,
@@ -97,7 +89,6 @@ describe('TerminalConnectScreen unauthenticated redirect', () => {
     let sessionStorage: Storage;
 
     beforeEach(async () => {
-        vi.resetModules();
         replaceMock.mockClear();
         modalAlertAsyncMock.mockClear();
         const localStorage = createStorage();
@@ -121,7 +112,7 @@ describe('TerminalConnectScreen unauthenticated redirect', () => {
         setWindowLocation(link.href, sessionStorage);
         const Screen = (await import('@/app/(app)/terminal/connect')).default;
 
-        await renderScreen(<Screen />);
+        await renderTerminalRoute(Screen, null);
         await act(async () => {});
 
         const { getPendingTerminalConnect } = await import('@/sync/domains/pending/pendingTerminalConnect');
@@ -144,7 +135,7 @@ describe('TerminalConnectScreen unauthenticated redirect', () => {
         });
         const Screen = (await import('@/app/(app)/terminal/connect')).default;
 
-        await expect(renderScreen(<Screen />)).resolves.toBeDefined();
+        await expect(renderTerminalRoute(Screen, null)).resolves.toBeDefined();
         const { getPendingTerminalConnect } = await import('@/sync/domains/pending/pendingTerminalConnect');
         expect(getPendingTerminalConnect()).toBeNull();
     });
@@ -157,7 +148,7 @@ describe('TerminalConnectScreen unauthenticated redirect', () => {
         setWindowLocation(href, sessionStorage);
         const Screen = (await import('@/app/(app)/terminal/connect')).default;
 
-        const screen = await renderScreen(<Screen />);
+        const screen = await renderTerminalRoute(Screen, null);
         await act(async () => {});
 
         expect(modalAlertAsyncMock).toHaveBeenCalledWith(
@@ -176,7 +167,7 @@ describe('TerminalConnectScreen unauthenticated redirect', () => {
         setWindowLocation(link.href, sessionStorage);
         const Screen = (await import('@/app/(app)/terminal/connect')).default;
 
-        const screen = await renderScreen(<Screen />);
+        const screen = await renderTerminalRoute(Screen, null);
         await act(async () => {});
 
         const { getActiveServerUrl } = await import('@/sync/domains/server/serverProfiles');

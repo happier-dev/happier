@@ -7,6 +7,10 @@ import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage
 import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import type { AuthEntryOptions } from '@/components/account/auth/useAuthEntryOptions';
 import { createRootLayoutFeaturesResponse, createSignInServiceFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+
+installDisconnectedServerSocketBoundary();
 
 installTokenStorageWebPlatformMocks({
     reactNative: async () => {
@@ -81,6 +85,7 @@ describe('first-run custom Home address connection', () => {
     let restoreWebLocks: (() => void) | null = null;
 
     beforeEach(async () => {
+        await loadSyncSingletonForTests();
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = `onboarding_connect_${Date.now()}_${Math.random()}`;
         restoreLocalStorage = installLocalStorageMock().restore;
         restoreWebLocks = installWebLockManagerMock().restore;
@@ -89,11 +94,11 @@ describe('first-run custom Home address connection', () => {
         (await import('@/sync/domains/server/serverProfiles')).resetServerProfilesRuntimeForTests();
     });
 
-    afterEach(() => {
+    afterEach(async () => {
         standardCleanup();
+        await (await import('@/sync/runtime/orchestration/connectionManager')).disconnectActiveServerConnection();
         restoreWebLocks?.();
         restoreLocalStorage?.();
-        vi.resetModules();
         if (originalScope === undefined) delete process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
         else process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = originalScope;
     });

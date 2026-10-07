@@ -55,7 +55,7 @@ describe('account provider universe projection', () => {
 
         const acmeTargetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'acme.review.backend' });
         const claudeTargetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' });
-        const protocolClaudeTargetKey = 'backend:claude';
+        const protocolClaudeTargetKey = 'agent:happier.agent.claude/claude';
         const input = {
             backendEnabledById: {
                 claude: false,

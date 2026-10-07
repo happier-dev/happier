@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installSettingsViewCommonModuleMocks } from './settingsViewTestHelpers';
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
@@ -110,9 +111,6 @@ vi.mock('@/hooks/session/useConnectTerminal', () => ({
     useConnectTerminal: () => ({ connectTerminal: vi.fn(), connectWithUrl: vi.fn(), isLoading: false }),
 }));
 
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ credentials: null }),
-}));
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -210,7 +208,7 @@ await import('./SettingsView');
 describe('SettingsView (runs entry)', () => {
     async function renderSettingsViewUnderTest() {
         const { SettingsView } = await import('./SettingsView');
-        return renderSettingsView(React.createElement(SettingsView));
+        return renderSettingsView(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>);
     }
 
     it('includes a Runs entry that routes to /runs when execution runs are enabled', async () => {

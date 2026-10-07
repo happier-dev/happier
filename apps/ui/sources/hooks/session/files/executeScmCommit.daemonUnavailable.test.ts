@@ -1,22 +1,14 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN,
   SCM_OPERATION_ERROR_CODES,
 } from '@happier-dev/protocol';
 import { installSessionFilesHookCommonModuleMocks } from './sessionFilesHookTestHelpers';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createScmNetworkTestHarness } from '../sourceControl/scmNetworkTestHarness';
 
 const modalAlert = vi.hoisted(() => vi.fn());
 const modalConfirm = vi.hoisted(() => vi.fn(async () => true));
-const sessionScmCommitCreate = vi.hoisted(() => vi.fn());
-const sessionScmRepositoryRemoveIndexLock = vi.hoisted(() => vi.fn(async () => ({
-  success: true,
-  removed: true,
-  lockPath: '/repo/.git/index.lock',
-})));
-const withSessionProjectScmOperationLock = vi.hoisted(() => vi.fn(async (input: any) => {
-  await input.run();
-  return { started: true, message: '' };
-}));
 
 installSessionFilesHookCommonModuleMocks({
   modal: async () => {
@@ -31,29 +23,24 @@ installSessionFilesHookCommonModuleMocks({
   storage: async (importOriginal) => importOriginal(),
 });
 
-vi.mock('@/scm/operations/withOperationLock', () => ({
-  withSessionProjectScmOperationLock,
-}));
+const harness = await createScmNetworkTestHarness();
+const commitResponses = vi.fn();
+const commitRequests = () => harness.network.requests.filter(request => request.method === RPC_METHODS.SCM_COMMIT_CREATE);
 
-vi.mock('@/sync/ops', () => ({
-  sessionScmCommitCreate,
-  sessionScmRepositoryRemoveIndexLock,
-}));
-
-vi.mock('@/scm/scmStatusSync', () => ({
-  scmStatusSync: {
-    invalidateFromMutationAndAwait: vi.fn(async () => {}),
-  },
-}));
+beforeEach(() => {
+  harness.reset();
+  modalAlert.mockClear();
+  modalConfirm.mockClear();
+  commitResponses.mockReset();
+  harness.network.setRpcResponder(async request => request.method === RPC_METHODS.SCM_REPOSITORY_REMOVE_INDEX_LOCK
+    ? { success: true, removed: true, lockPath: '/repo/.git/index.lock' }
+    : await commitResponses());
+});
+afterAll(() => harness.dispose());
 
 describe('executeScmCommit (daemon unavailable)', () => {
   it('leaves an unavailable daemon to the pane outcome line instead of raising a modal', async () => {
-    modalAlert.mockReset();
-    modalConfirm.mockReset();
-    sessionScmCommitCreate.mockReset();
-    sessionScmRepositoryRemoveIndexLock.mockClear();
-
-    sessionScmCommitCreate.mockResolvedValueOnce({
+    commitResponses.mockResolvedValueOnce({
       success: false,
       errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
       error: 'RPC method not available',
@@ -63,6 +50,7 @@ describe('executeScmCommit (daemon unavailable)', () => {
 
     const result = await executeScmCommit({
       sessionId: 's1',
+      serverId: harness.serverId,
       repoPath: '/repo',
       commitMessage: 'feat: test',
       scmCommitStrategy: 'git_staging',
@@ -77,16 +65,11 @@ describe('executeScmCommit (daemon unavailable)', () => {
 
     expect(result.ok).toBe(false);
     expect(modalAlert).not.toHaveBeenCalled();
-    expect(sessionScmCommitCreate).toHaveBeenCalledTimes(1);
+    expect(commitRequests()).toHaveLength(1);
   });
 
   it('omits a broader commit scope when atomic line-selection patches are present', async () => {
-    modalAlert.mockReset();
-    modalConfirm.mockReset();
-    sessionScmCommitCreate.mockReset();
-    sessionScmRepositoryRemoveIndexLock.mockClear();
-
-    sessionScmCommitCreate.mockResolvedValueOnce({
+    commitResponses.mockResolvedValueOnce({
       success: true,
       commitSha: 'abc123',
     });
@@ -95,6 +78,7 @@ describe('executeScmCommit (daemon unavailable)', () => {
 
     const result = await executeScmCommit({
       sessionId: 's1',
+      serverId: harness.serverId,
       repoPath: '/repo',
       commitMessage: 'feat: test',
       scmCommitStrategy: 'atomic',
@@ -122,25 +106,17 @@ describe('executeScmCommit (daemon unavailable)', () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(sessionScmCommitCreate).toHaveBeenCalledTimes(1);
-    expect(sessionScmCommitCreate).toHaveBeenCalledWith(
-      's1',
-      expect.objectContaining({
+    expect(commitRequests()).toHaveLength(1);
+    expect(commitRequests()[0]).toMatchObject({ targetId: 'machine-1', payload: {
         message: 'feat: test',
         patches: expect.any(Array),
-      }),
-      undefined,
-    );
-    expect(sessionScmCommitCreate.mock.calls[0]?.[1]).not.toHaveProperty('scope');
+        cwd: '/repo',
+    } });
+    expect(commitRequests()[0]?.payload).not.toHaveProperty('scope');
   });
 
   it('offers stale Git index-lock recovery and retries commit creation once', async () => {
-    modalAlert.mockReset();
-    modalConfirm.mockReset();
-    sessionScmCommitCreate.mockReset();
-    sessionScmRepositoryRemoveIndexLock.mockClear();
-
-    sessionScmCommitCreate
+    commitResponses
       .mockResolvedValueOnce({
         success: false,
         errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
@@ -157,6 +133,7 @@ describe('executeScmCommit (daemon unavailable)', () => {
 
     const result = await executeScmCommit({
       sessionId: 's1',
+      serverId: harness.serverId,
       repoPath: '/repo',
       commitMessage: 'feat: test',
       scmCommitStrategy: 'git_staging',
@@ -171,12 +148,12 @@ describe('executeScmCommit (daemon unavailable)', () => {
 
     expect(result.ok).toBe(true);
     expect(modalConfirm).toHaveBeenCalledTimes(1);
-    expect(sessionScmRepositoryRemoveIndexLock).toHaveBeenCalledWith('s1', {
+    expect(harness.network.requests.find(request => request.method === RPC_METHODS.SCM_REPOSITORY_REMOVE_INDEX_LOCK)).toMatchObject({ targetId: 'machine-1', payload: {
       cwd: '/repo',
       confirmed: true,
       confirmationToken: REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN,
-    }, undefined);
-    expect(sessionScmCommitCreate).toHaveBeenCalledTimes(2);
+    } });
+    expect(commitRequests()).toHaveLength(2);
     expect(refreshScmData).toHaveBeenCalledTimes(1);
     expect(loadCommitHistory).toHaveBeenCalledWith({ reset: true });
   });

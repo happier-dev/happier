@@ -171,9 +171,13 @@ function shellSingleQuote(value) {
   return `'${String(value).replaceAll("'", "'\\''")}'`;
 }
 
-function fakeCliDistManifestWriteLine(outputDirExpression) {
-  const source = `const path=require("node:path");const m=require(process.env.HAPPIER_TEST_CLI_DIST_MANIFEST_MODULE);const dir=process.env.HAPPIER_TEST_CLI_DIST_DIR;(async()=>{const {readHappyCliRuntimeInputFreshness}=await import(${JSON.stringify(CLI_RUNTIME_INPUTS_MODULE_URL)});const {fingerprint}=await readHappyCliRuntimeInputFreshness(process.cwd());m.writeCliDistBuildManifest(path.join(dir,"index.mjs"),{outputDir:dir,builtAt:"2026-07-09T00:00:00.000Z",inputFingerprint:fingerprint});})().catch(error=>{console.error(error);process.exitCode=1});`;
-  return `  HAPPIER_TEST_CLI_DIST_MANIFEST_MODULE=${shellSingleQuote(CLI_DIST_BUILD_MANIFEST_MODULE_PATH)} HAPPIER_TEST_CLI_DIST_DIR=${outputDirExpression} ${shellSingleQuote(process.execPath)} -e ${shellSingleQuote(source)}`;
+function fakeCliDistManifestWriteLine(outputDirExpression, inputFingerprintExpression = null) {
+  const readFingerprint = inputFingerprintExpression === null
+    ? `const {readHappyCliRuntimeInputFreshness}=await import(${JSON.stringify(CLI_RUNTIME_INPUTS_MODULE_URL)});const {fingerprint}=await readHappyCliRuntimeInputFreshness(process.cwd());`
+    : 'const fingerprint=process.env.HAPPIER_TEST_CLI_COMPILED_INPUT_FINGERPRINT;';
+  const source = `const path=require("node:path");const m=require(process.env.HAPPIER_TEST_CLI_DIST_MANIFEST_MODULE);const dir=process.env.HAPPIER_TEST_CLI_DIST_DIR;(async()=>{${readFingerprint}m.writeCliDistBuildManifest(path.join(dir,"index.mjs"),{outputDir:dir,builtAt:"2026-07-09T00:00:00.000Z",inputFingerprint:fingerprint});})().catch(error=>{console.error(error);process.exitCode=1});`;
+  const capturedInputEnv = inputFingerprintExpression === null ? '' : ` HAPPIER_TEST_CLI_COMPILED_INPUT_FINGERPRINT=${inputFingerprintExpression}`;
+  return `  HAPPIER_TEST_CLI_DIST_MANIFEST_MODULE=${shellSingleQuote(CLI_DIST_BUILD_MANIFEST_MODULE_PATH)} HAPPIER_TEST_CLI_DIST_DIR=${outputDirExpression}${capturedInputEnv} ${shellSingleQuote(process.execPath)} -e ${shellSingleQuote(source)}`;
 }
 
 async function writeYarnEnvDumpStub({ binDir, outputPath }) {
@@ -387,13 +391,20 @@ async function writeCorepackYarnArgDumpStub({ binDir, outputPath }) {
   await writeFile(outputPath, '', 'utf-8');
 }
 
-function fakeAtomicCliDistBuildLines(writeOutputLines) {
+function fakeAtomicCliDistBuildLines(writeOutputLines, beforeCompilationLines = null) {
+  const captureSource = `(async()=>{const {readHappyCliRuntimeInputFreshness}=await import(${JSON.stringify(CLI_RUNTIME_INPUTS_MODULE_URL)});const {fingerprint}=await readHappyCliRuntimeInputFreshness(process.cwd());process.stdout.write(fingerprint);})().catch(error=>{console.error(error);process.exitCode=1});`;
   return [
+    // The mutation fixtures model build.mjs: capture the compiled inputs before
+    // its output work, then publish that same fingerprint even if live inputs move.
+    ...(beforeCompilationLines === null ? [] : [
+      `  happier_test_cli_compiled_input_fingerprint="$(${shellSingleQuote(process.execPath)} -e ${shellSingleQuote(captureSource)})"`,
+      ...beforeCompilationLines,
+    ]),
     '  out="${HAPPIER_CLI_BUILD_OUTPUT_DIR:-dist.staging.$$}"',
     '  rm -rf "$out"',
     '  mkdir -p "$out"',
     ...writeOutputLines,
-    fakeCliDistManifestWriteLine('"$out"'),
+    fakeCliDistManifestWriteLine('"$out"', beforeCompilationLines === null ? null : '"$happier_test_cli_compiled_input_fingerprint"'),
     '  backup="dist.__fake_backup__.$$"',
     '  rm -rf "$backup"',
     '  if [ -e dist ]; then mv dist "$backup"; fi',
@@ -2309,11 +2320,12 @@ test('ensureCliBuilt rebuilds an atomic publication when runtime inputs changed 
       '  exit 0',
       'fi',
       'if [ "${1:-}" = "build:prepared" ]; then',
-      '  tracked="$(tr -d \'\\n\' < src/tracked.txt)"',
-      '  echo "captured" >> "${OUTPUT_PATH:?}"',
-      '  sleep 1',
       ...fakeAtomicCliDistBuildLines([
         '  printf \'export const tracked = "%s";\\n\' "$tracked" > "$out/index.mjs"',
+      ], [
+        '  tracked="$(tr -d \'\\n\' < src/tracked.txt)"',
+        '  echo "captured" >> "${OUTPUT_PATH:?}"',
+        '  sleep 1',
       ]),
       '  exit 0',
       'fi',
@@ -2391,9 +2403,11 @@ test('ensureCliBuilt detects a runtime input changed during build when another i
       '  exit 0',
       'fi',
       'if [ "${1:-}" = "build:prepared" ]; then',
-      '  sleep 1',
       ...fakeAtomicCliDistBuildLines([
         '  echo "export const built = true;" > "$out/index.mjs"',
+      ], [
+        '  echo "captured" >> "${OUTPUT_PATH:?}"',
+        '  sleep 1',
       ]),
       '  exit 0',
       'fi',
@@ -2413,7 +2427,7 @@ test('ensureCliBuilt detects a runtime input changed during build when another i
   });
 
   const buildPromise = ensureCliBuilt(cliDir, { buildCli: true, quiet: true, env: process.env });
-  await waitForFileText(outputPath, /(^|\n)build:prepared(\n|$)/);
+  await waitForFileText(outputPath, /(^|\n)captured(\n|$)/);
   await writeFile(changedInputPath, 'changed\n', 'utf-8');
 
   await assert.doesNotReject(async () => {

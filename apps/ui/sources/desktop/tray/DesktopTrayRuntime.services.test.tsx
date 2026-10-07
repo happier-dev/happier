@@ -6,6 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { UPDATES_ROUTE } from '@/components/updates/updatesRoute';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+
+installDisconnectedServerSocketBoundary();
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -13,8 +16,8 @@ import { UPDATES_ROUTE } from '@/components/updates/updatesRoute';
  * The tray's services half through its real owners (A13-09): the status parser and shared status,
  * the drift banner and connection health, the row projection, the label builder, the tray bridge
  * wrapper, the saved-Home resolver and the active-server switch. Mocked are only boundaries: the
- * native host bridge, the system-task bridge (hsetup), the connection runtime, the auth context
- * provider, the router and the text catalogue. The status line's mapping from connection health is
+ * native host bridge, the system-task bridge (hsetup), credential persistence and Socket transport,
+ * the router and the text catalogue. The status line's mapping from connection health is
  * `buildDesktopTrayState`'s own tests (A13-09: no internal hook is mocked here).
  */
 
@@ -86,6 +89,10 @@ import { getActiveServerSnapshot, resetServerProfilesRuntimeForTests, resolveSav
 import { AuthProvider } from '@/auth/context/AuthContext';
 
 import { DesktopTrayRuntime } from './DesktopTrayRuntime';
+
+// The app entry loads this owner before tray events can switch the active Home.
+const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
+await loadSyncSingletonForTests();
 
 const home = (id: string, serverUrl: string, extra: Record<string, unknown> = {}) =>
     ({ id, name: id, serverUrl, createdAt: 1, updatedAt: 1, lastUsedAt: 1, ...extra });

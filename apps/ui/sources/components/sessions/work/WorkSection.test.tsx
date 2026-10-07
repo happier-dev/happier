@@ -146,10 +146,11 @@ describe('WorkSection', () => {
                 </WorkSection>
             </View>,
         );
-        // Only page rows own the responsive layout measurement. Grouped live-list rows stay inline.
+        // Adaptive page rows measure both row width and accessory width.
+        // Grouped live-list rows stay inline without either measurement.
         for (const id of ['role', 'engine']) {
             const row = screen.findHostByTestId(id)!;
-            expect(row.findAll((node) => typeof node.type === 'string' && typeof node.props.onLayout === 'function')).toHaveLength(1);
+            expect(row.findAll((node) => typeof node.type === 'string' && typeof node.props.onLayout === 'function')).toHaveLength(2);
         }
         expect(screen.findHostByTestId('live')!.findAll((node) => typeof node.type === 'string'
             && typeof node.props.onLayout === 'function')).toHaveLength(0);

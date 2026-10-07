@@ -3,12 +3,10 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
-import type {
-    SessionBoardActionOutcome,
-    SessionBoardActionsPort,
-    SessionBoardItemUpsertInput,
-    SessionBoardMutationResult,
-} from '@/sync/domains/session/board';
+import type { CodeEditorHandle, CodeEditorProps } from '@/components/ui/code/editor/codeEditorTypes';
+import { unavailableSessionBoardActions } from '@/sync/domains/session/board/sessionBoardActionsPort';
+import { SessionBoardMutationV1Schema } from '@happier-dev/protocol/sessions/board';
+import { realBoardActions } from '../sessionBoardActionsTestkit';
 
 import { SessionBoardHostedHtmlEditorCard } from './SessionBoardHostedHtmlEditorCard';
 
@@ -22,26 +20,20 @@ const decisionHarness = vi.hoisted(() => ({
     request: vi.fn(),
 }));
 
-vi.mock('@react-navigation/native', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@react-navigation/native')>(),
-    useNavigation: () => ({ dispatch: vi.fn() }),
-    usePreventRemove: () => undefined,
-}));
-
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit');
-    return createExpoRouterMock().module;
+    return createExpoRouterMock({ navigation: { dispatch: vi.fn() } }).module;
 });
 
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit');
+    return createReactNavigationNativeMock();
+});
+
+// The embedded CodeMirror platform surface cannot mount in react-test-renderer;
+// retain the real card, draft owner, save path and navigation guard underneath.
 vi.mock('@/components/ui/code/editor/CodeEditor', () => ({
-    CodeEditor: React.forwardRef(function MockCodeEditor(props: Readonly<{
-        testID?: string;
-        value: string;
-        readOnly?: boolean;
-    }>, ref: React.ForwardedRef<Readonly<{
-        getValue: () => string;
-        flushPendingChange: () => Promise<void>;
-    }>>) {
+    CodeEditor: React.forwardRef<CodeEditorHandle, CodeEditorProps>(function MockCodeEditor(props, ref) {
         const testID = props.testID ?? 'code-editor';
         editorHarness.renderedValues.set(testID, {
             value: props.value,
@@ -56,7 +48,7 @@ vi.mock('@/components/ui/code/editor/CodeEditor', () => ({
 }));
 
 vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    const { createModalModuleMock } = await import('@/dev/testkit');
     return createModalModuleMock({ spies: {
         alert: (_title, _message, buttons) => {
             decisionHarness.request();
@@ -66,11 +58,10 @@ vi.mock('@/modal', async () => {
     } }).module;
 });
 
-const baseActions: SessionBoardActionsPort = {
-    upsertItem: async () => ({ status: 'unavailable', reason: 'board_actions_unavailable' }),
-    removeItem: async () => ({ status: 'unavailable', reason: 'board_actions_unavailable' }),
-    updateLayout: async () => ({ status: 'unavailable', reason: 'board_actions_unavailable' }),
-};
+const baseActions = unavailableSessionBoardActions;
+const revision2 = 'ssr1.AAAACHN5c3JlY18yAAAAAg';
+const revision3 = 'ssr1.AAAACHN5c3JlY18zAAAAAw';
+const revision4 = 'ssr1.AAAACHN5c3JlY180AAAABA';
 
 describe('SessionBoardHostedHtmlEditorCard', () => {
     afterEach(() => standardCleanup());
@@ -111,32 +102,26 @@ describe('SessionBoardHostedHtmlEditorCard', () => {
     });
 
     it('shows the authoritative HTML only after review and then applies the retained local draft', async () => {
-        const upserts: SessionBoardItemUpsertInput[] = [];
+        const upserts: Array<ReturnType<typeof SessionBoardMutationV1Schema.parse>> = [];
         let attempt = 0;
-        const upsertItem = vi.fn(async (
-            input: SessionBoardItemUpsertInput,
-        ): Promise<SessionBoardActionOutcome<SessionBoardMutationResult>> => {
-            upserts.push(input);
+        const actions = realBoardActions(async (_path, init) => {
+            if (init?.method !== 'PUT') return Response.json({ record: {
+                id: 'html-row',
+                address: { owner: 'host', namespace: 'surface', kind: 'item.v1', localId: 'interactive-1' },
+                content: { t: 'plain', v: {
+                    v: 1, title: 'Dashboard', frame: 'card', height: { mode: 'auto', fallback: 'regular' },
+                    source: { kind: 'hostedHtml', source: { kind: 'html', html: attempt ? '<main>theirs</main>' : '<main>mine</main>' } },
+                } },
+                revision: attempt ? revision3 : revision2,
+                createdAt: '2026-09-05T00:00:00.000Z', updatedAt: '2026-09-05T00:00:00.000Z',
+            } });
+            upserts.push(SessionBoardMutationV1Schema.parse(JSON.parse(String(init.body))));
             attempt += 1;
             if (attempt === 1) {
-                return { status: 'refused' as const, error: { error: 'session_board_revision_conflict' as const } };
+                return Response.json({ error: 'session_board_revision_conflict', currentItemRevision: revision3 }, { status: 409 });
             }
-            return {
-                status: 'ok' as const,
-                value: {
-                    v: 1 as const,
-                    serverId: 'home-1',
-                    sessionId: 'session-1',
-                    result: {
-                        operation: 'upsert_item' as const,
-                        itemId: 'interactive-1',
-                        outcome: 'updated' as const,
-                        itemRevision: 'rev-4',
-                    },
-                    destination: null,
-                },
-            };
-        });
+            return Response.json({ operation: 'upsert_item', itemId: 'interactive-1', outcome: 'updated', itemRevision: revision4 });
+        }, undefined, { serverId: 'home-1', sessionId: 'session-1' });
         const onCancel = vi.fn();
         const onSaved = vi.fn();
         const requestRecoveryRefresh = vi.fn();
@@ -144,13 +129,13 @@ describe('SessionBoardHostedHtmlEditorCard', () => {
             <SessionBoardHostedHtmlEditorCard
                 sessionId="session-1"
                 itemId="interactive-1"
-                expectedItemRevision="rev-2"
-                latestRevision="rev-2"
+                expectedItemRevision={revision2}
+                latestRevision={revision2}
                 latestHtml="<main>mine</main>"
                 initialTitle="Dashboard"
                 initialHtml="<main>mine</main>"
                 reachable
-                actions={{ ...baseActions, upsertItem }}
+                actions={actions}
                 requestRecoveryRefresh={requestRecoveryRefresh}
                 onCancel={onCancel}
                 onSaved={onSaved}
@@ -164,6 +149,10 @@ describe('SessionBoardHostedHtmlEditorCard', () => {
             await Promise.resolve();
         });
 
+        await vi.waitFor(async () => {
+            await act(async () => {});
+            expect(requestRecoveryRefresh).toHaveBeenCalledOnce();
+        });
         expect(screen.findByTestId('session-board-hosted-html-editor-review-latest')).not.toBeNull();
         expect(screen.findByTestId('session-board-hosted-html-editor-latest-source')).toBeNull();
         expect(screen.findByTestId('session-board-hosted-html-editor-source')?.props.value).toBe('<main>mine final</main>');
@@ -173,13 +162,13 @@ describe('SessionBoardHostedHtmlEditorCard', () => {
             <SessionBoardHostedHtmlEditorCard
                 sessionId="session-1"
                 itemId="interactive-1"
-                expectedItemRevision="rev-2"
-                latestRevision="rev-3"
+                expectedItemRevision={revision2}
+                latestRevision={revision3}
                 latestHtml="<main>theirs</main>"
                 initialTitle="Dashboard"
                 initialHtml="<main>mine</main>"
                 reachable
-                actions={{ ...baseActions, upsertItem }}
+                actions={actions}
                 requestRecoveryRefresh={requestRecoveryRefresh}
                 onCancel={onCancel}
                 onSaved={onSaved}
@@ -202,9 +191,10 @@ describe('SessionBoardHostedHtmlEditorCard', () => {
             await Promise.resolve();
         });
 
+        await vi.waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
         expect(upserts[1]).toMatchObject({
-            expectedItemRevision: 'rev-3',
-            item: { source: { kind: 'hostedHtml', source: { html: '<main>mine final</main>' } } },
+            expectedItemRevision: revision3,
+            itemContent: { t: 'plain', v: { source: { kind: 'hostedHtml', source: { html: '<main>mine final</main>' } } } },
         });
     });
 

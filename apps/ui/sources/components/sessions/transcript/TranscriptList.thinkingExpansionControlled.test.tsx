@@ -2,6 +2,8 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createCapturingLegendListMock, createTestSessionTranscriptSource, renderWithSessionTranscriptSource } from '@/dev/testkit';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import type { Message } from '@happier-dev/session-core/messages';
 import {
     installTranscriptCommonModuleMocks,
@@ -29,6 +31,7 @@ let nestedToolSetExpanded: ((expanded: boolean) => void) | null = null;
 let transcriptCollapsibleComponent: React.ComponentType<any> | null = null;
 let rowMutationEvents: string[] = [];
 let legendListDetached = false;
+let platformOS = 'web';
 const capturingLegendListMock = createCapturingLegendListMock({
     resolveState: () => {
         rowMutationEvents.push('anchor-read');
@@ -75,7 +78,7 @@ installTranscriptCommonModuleMocks({
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
             Platform: {
-                OS: 'web',
+                get OS() { return platformOS; },
             },
             View: (props: any) => React.createElement('View', props, props.children),
             ActivityIndicator: () => React.createElement('ActivityIndicator'),
@@ -143,6 +146,9 @@ function getRenderedMessageProps(): any[] {
   return [...renderedMessageViewProps, ...renderedMessageViewWithCommonProps];
 }
 
+installDisconnectedServerSocketBoundary();
+await loadSyncSingletonForTests();
+
 describe('TranscriptList (thinking expansion controlled)', () => {
   beforeEach(() => {
     resetTranscriptCommonModuleMockState();
@@ -153,6 +159,7 @@ describe('TranscriptList (thinking expansion controlled)', () => {
     transcriptCollapsibleComponent = null;
     rowMutationEvents = [];
     legendListDetached = false;
+    platformOS = 'web';
     capturingLegendListMock.state.reset();
   });
 
@@ -285,7 +292,9 @@ describe('TranscriptList (thinking expansion controlled)', () => {
     expect(capturingLegendListMock.state.props?.dataKey).toBe('public:same-session:2');
   });
 
-  it('arms the renderer anchor before public thinking and nested tool rows become visible', async () => {
+  it('arms the native renderer anchor before public thinking and nested tool rows become visible', async () => {
+    // Web expansion is owned by Legend 3.3.3 MVCP; the app's pre-commit hold is native-only.
+    platformOS = 'ios';
     settingValues.sessionThinkingDisplayMode = 'inline';
     settingValues.sessionThinkingInlinePresentation = 'summary';
     const thinkingMessage: Message = {
@@ -329,7 +338,12 @@ describe('TranscriptList (thinking expansion controlled)', () => {
     const detachFromTail = async () => {
       legendListDetached = true;
       await act(async () => {
-        capturingLegendListMock.state.props?.onWheel?.({ deltaY: -1 });
+        capturingLegendListMock.state.props?.onScrollBeginDrag?.({
+          nativeEvent: { contentOffset: { x: 0, y: 20 } },
+        });
+        capturingLegendListMock.state.props?.onScrollEndDrag?.({
+          nativeEvent: { contentOffset: { x: 0, y: 20 } },
+        });
       });
     };
 

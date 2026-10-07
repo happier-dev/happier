@@ -4,18 +4,18 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
     createSessionSurfaceNoteDocumentV1,
+    SessionBoardMutationV1Schema,
     type SessionBoardLayoutV1,
-    type SessionBoardMutationV1,
     type SessionSurfaceItemV1,
 } from '@happier-dev/protocol/sessions/board';
 
 import { renderScreen } from '@/dev/testkit';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { setServerProfileIdentityForUrl, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
 import {
     projectSessionBoard,
-    type SessionBoardActionOutcome,
     type SessionBoardActionsPort,
-    type SessionBoardMutationResult,
     type SessionBoardSnapshot,
 } from '@/sync/domains/session/board';
 
@@ -26,6 +26,12 @@ import {
 } from '@/components/appShell/panes/paneHeaderSlot';
 import { SessionBoardSurface } from './SessionBoardSurface';
 import { useSessionBoardController } from './useSessionBoardController';
+import { realBoardActions } from './sessionBoardActionsTestkit';
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit');
+    return createReactNativeWebMock();
+});
 
 /**
  * The shared Board surface, rendered.
@@ -46,11 +52,10 @@ function note(title: string): SessionSurfaceItemV1 {
     } as SessionSurfaceItemV1;
 }
 
-const OK_ACTIONS: SessionBoardActionsPort = {
-    upsertItem: async () => ({ status: 'unavailable', reason: 'board_actions_unavailable' }),
-    removeItem: async () => ({ status: 'unavailable', reason: 'board_actions_unavailable' }),
-    updateLayout: async () => ({ status: 'unavailable', reason: 'board_actions_unavailable' }),
-};
+const ADDRESS = { serverId: 'home-1', sessionId: 'session-1' };
+const REVISION = 'ssr1.AAAACHN5c3JlY18xAAAAAQ';
+const NEXT_REVISION = 'ssr1.AAAACHN5c3JlY18xAAAAAg';
+const OK_ACTIONS = realBoardActions(async () => new Response(null, { status: 404 }), undefined, ADDRESS);
 
 function snapshot(input: Readonly<{
     layout?: SessionBoardLayoutV1 | null;
@@ -60,10 +65,10 @@ function snapshot(input: Readonly<{
 }>): SessionBoardSnapshot {
     return projectSessionBoard({
         layout: input.layout
-            ? { revision: 'rev-layout', outcome: { status: 'ready', value: input.layout } }
+            ? { revision: REVISION, outcome: { status: 'ready', value: input.layout } }
             : undefined,
         items: new Map((input.items ?? []).map(({ itemId, item }) => [itemId, {
-            revision: `rev-${itemId}`,
+            revision: REVISION,
             outcome: { status: 'ready' as const, value: item },
         }] as const)),
         capabilities: { readTranscript: true, editSessionRecords: input.canEdit ?? true },
@@ -245,45 +250,22 @@ describe('SessionBoardSurface', () => {
     });
 
     it('keeps an ambiguous mutation visible and blocked until refresh enables a deliberate retry', async () => {
-        const mutationRequest: SessionBoardMutationV1 = {
-            operation: 'update_layout',
-            expectedLayoutRevision: 'rev-layout',
-            layoutContent: { t: 'plain', v: mutableLayout(POPULATED) },
-        };
         let attempts = 0;
-        const actions: SessionBoardActionsPort = {
-            upsertItem: OK_ACTIONS.upsertItem,
-            removeItem: OK_ACTIONS.removeItem,
-            updateLayout: async (
-                input,
-            ): Promise<SessionBoardActionOutcome<SessionBoardMutationResult>> => {
-                attempts += 1;
-                if (attempts === 1) {
-                    return {
-                        status: 'outcome_unknown',
-                        recovery: {
-                            v: 1,
-                            actionId: 'session.board.layout.update',
-                            serverId: 'home-1',
-                            sessionId: 'session-1',
-                            requestBody: JSON.stringify(mutationRequest),
-                            mutationRequest,
-                            intent: input,
-                        },
-                    };
-                }
-                return {
-                    status: 'ok',
-                    value: {
-                        v: 1,
-                        serverId: 'home-1',
-                        sessionId: 'session-1',
-                        result: { operation: 'update_layout', outcome: 'updated', layoutRevision: 'rev-layout-2' },
-                        destination: null,
-                    },
-                };
-            },
-        };
+        const actions = realBoardActions(async (_path, init) => {
+            if (init?.method !== 'PUT') return Response.json({ record: {
+                id: 'layout-row', address: { owner: 'host', namespace: 'surface', kind: 'layout.v1', localId: 'layout' },
+                content: { t: 'plain', v: mutableLayout(POPULATED) }, revision: REVISION,
+                createdAt: '2026-09-26T00:00:00.000Z', updatedAt: '2026-09-26T00:00:00.000Z',
+            } });
+            const mutation = SessionBoardMutationV1Schema.parse(JSON.parse(String(init.body)));
+            expect(mutation.operation).toBe('update_layout');
+            attempts += 1;
+            // The server may have committed; losing only the acknowledgement
+            // exercises the adapter's canonical outcome-unknown classification.
+            return attempts === 1 ? new Response('acknowledgement lost') : Response.json({
+                operation: 'update_layout', outcome: 'updated', layoutRevision: NEXT_REVISION,
+            });
+        }, undefined, ADDRESS);
         const refresh = vi.fn();
         const initial = snapshot({ layout: POPULATED, items: [{ itemId: 'note-1', item: note('Plan') }] });
         const screen = await renderScreen(
@@ -477,13 +459,13 @@ describe('SessionBoardSurface', () => {
     });
 
     it('starts direct manipulation only from a visible move handle', async () => {
-        const { upsertServerProfileOnly } = await import('@/sync/domains/server/serverRuntime');
-        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
-        const home = await upsertServerProfileOnly({ serverUrl: 'https://board-grip.test', name: 'Board Home' });
-        // Secure credential storage is the boundary; keep qualified scope admission real.
-        const credentials = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({
-            token: `e30.${Buffer.from(JSON.stringify({ sub: 'board-viewer' })).toString('base64url')}.signature`,
-        });
+        const serverUrl = 'https://board-drag.example.test';
+        const serverId = 'srv_board_drag';
+        await upsertServerProfile({ serverUrl, name: 'Board drag Home' });
+        await setServerProfileIdentityForUrl(serverUrl, serverId);
+        expect(await TokenStorage.setCredentialsForServerUrl(serverUrl, { serverId }, {
+            token: `e30.${Buffer.from(JSON.stringify({ sub: 'board-editor' })).toString('base64url')}.signature`,
+        })).toBe(true);
         const screen = await renderScreen(
             <Harness snapshot={snapshot({
                 layout: MOVABLE,
@@ -491,12 +473,13 @@ describe('SessionBoardSurface', () => {
                     { itemId: 'note-1', item: note('Plan') },
                     { itemId: 'note-2', item: note('Review') },
                 ],
-            })} serverId={home.id} />,
+            })} serverId={serverId} />,
         );
         try {
             await vi.waitFor(() => { expect(screen.findHostByTestId('session-board-item-note-1-move-handle')).not.toBeNull(); });
             const firstHandle = screen.findHostByTestId('session-board-item-note-1-move-handle');
             const secondHandle = screen.findHostByTestId('session-board-item-note-2-move-handle');
+            expect(firstHandle).not.toBeNull();
             expect(secondHandle).not.toBeNull();
             expect(firstHandle?.props.accessibilityLabel).toBe(t('entityDragDrop.organize.grip', { item: 'Plan' }));
             expect(secondHandle?.props.accessibilityLabel).toBe(t('entityDragDrop.organize.grip', { item: 'Review' }));
@@ -508,7 +491,7 @@ describe('SessionBoardSurface', () => {
             await vi.waitFor(() => {
                 expect(screen.findHostByTestId('session-board-item-note-1-move-handle')?.props.accessibilityState.expanded).toBe(true);
             });
-        } finally { await screen.unmount(); credentials.mockRestore(); }
+        } finally { await screen.unmount(); }
     });
 
     it('offers the available built-in sources on an empty Board without advertising unavailable sources', async () => {
@@ -858,12 +841,8 @@ describe('SessionBoardSurface', () => {
 
     it('leads an empty editable Board with Ask the agent and keeps Add a note as the quiet second way', async () => {
         const onAskAgent = vi.fn();
-        const actions: SessionBoardActionsPort = {
-            ...OK_ACTIONS,
-            upsertItem: vi.fn(async () => ({ status: 'unavailable' as const, reason: 'board_actions_unavailable' as const })),
-        };
         const screen = await renderScreen(
-            <Harness snapshot={snapshot({})} actions={actions} onAskAgent={onAskAgent} />,
+            <Harness snapshot={snapshot({})} onAskAgent={onAskAgent} />,
         );
 
         await screen.pressByTestIdAsync('session-board-empty-action');

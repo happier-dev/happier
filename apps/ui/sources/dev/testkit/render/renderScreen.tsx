@@ -29,15 +29,18 @@ declare module 'react-test-renderer' {
     }
 }
 
-function nodeMatchesTestId(node: ReactTestInstance, testID: string): boolean {
+function nodeMatchesTestId(node: Pick<ReactTestInstance, 'props'>, testID: string): boolean {
     return node.props?.testID === testID || node.props?.['data-testid'] === testID;
 }
 
+type HostTestInstance = Omit<ReactTestInstance, 'type'> & Readonly<{ type: string }>;
+
 export function findAllHostTestInstances(
     scope: Pick<ReactTestInstance, 'findAll'>,
-    predicate: (node: ReactTestInstance) => boolean,
+    predicate: (node: HostTestInstance) => boolean,
 ): ReactTestInstance[] {
-    return scope.findAll((node) => typeof node.type === 'string' && predicate(node));
+    // The renderer SDK's ElementType excludes Native host names; the actual boundary is guarded here.
+    return scope.findAll((node) => typeof node.type === 'string' && predicate(node as HostTestInstance));
 }
 
 function findAllByTestId(root: ReactTestInstance, testID: string): ReactTestInstance[] {
@@ -220,8 +223,8 @@ export function findTestInstanceByTypeWithProps(
 
 type RenderScreenQueryHelpers = Readonly<{
     root: ReactTestInstance;
-    findByType: (type: unknown) => ReactTestInstance;
-    findAllByType: (type: unknown) => ReactTestInstance[];
+    findByType: ReactTestRenderer['findByType'];
+    findAllByType: ReactTestRenderer['findAllByType'];
     findByProps: (props: Record<string, unknown>) => ReactTestInstance;
     findAllByProps: (props: Record<string, unknown>) => ReactTestInstance[];
     find: (predicate: (node: ReactTestInstance) => boolean) => ReactTestInstance;
@@ -289,12 +292,23 @@ export async function renderScreen(
 
     const getTree = () => rendered.tree as RenderScreenTree;
     const getRoot = () => getTree().root;
+    const resolveComponentQueryType = (type: unknown): unknown => {
+        // Preserve exact SDK matches: custom memo wrappers can have their own fiber.
+        if (getRoot().findAllByType(type as never).length > 0) return type;
+        // React collapses a simple memo wrapper to its inner component fiber.
+        return type !== null && typeof type === 'object'
+            && '$$typeof' in type && type.$$typeof === Symbol.for('react.memo')
+            && 'type' in type
+            ? type.type
+            : type;
+    };
     const helpers: RenderScreenQueryHelpers = {
         get root() {
             return getRoot();
         },
-        findByType: (type) => getRoot().findByType(type as never),
-        findAllByType: (type) => getRoot().findAllByType(type as never),
+        // The SDK erases props; explicit component queries narrow only this genuine renderer boundary.
+        findByType: ((type: unknown) => getRoot().findByType(resolveComponentQueryType(type) as never)) as ReactTestRenderer['findByType'],
+        findAllByType: ((type: unknown) => getRoot().findAllByType(resolveComponentQueryType(type) as never)) as ReactTestRenderer['findAllByType'],
         findByProps: (props) => getRoot().findByProps(props),
         findAllByProps: (props) => getRoot().findAllByProps(props),
         find: (predicate) => getRoot().find(predicate),

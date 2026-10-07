@@ -650,7 +650,10 @@ describe('PluginHostedWebPane', () => {
                 ...projection.hostedWebById,
                 'hostedWeb:acme.preview:preview-web': {
                     ...projection.hostedWebById['hostedWeb:acme.preview:preview-web'],
-                    visibility: { operand: 'feature.enabled', value: 'preview-hosting' },
+                    availability: {
+                        state: 'available', reason: 'available', diagnostics: [],
+                        when: { fact: 'host.feature', operator: 'enabled', value: 'preview-hosting' },
+                    },
                 },
             },
         };
@@ -1618,7 +1621,10 @@ describe('PluginHostedWebPane', () => {
                 ...projection.hostedWebById,
                 'hostedWeb:acme.preview:preview-web': {
                     ...projection.hostedWebById['hostedWeb:acme.preview:preview-web'],
-                    compatibility: { platforms: ['web'] },
+                    availability: {
+                        state: 'available', reason: 'available', diagnostics: [],
+                        when: { fact: 'host.platform', operator: 'equals', value: 'web' },
+                    },
                 },
             },
         };

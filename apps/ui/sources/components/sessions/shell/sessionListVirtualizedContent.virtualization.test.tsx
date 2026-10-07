@@ -2,8 +2,8 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
-import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 import { buildSessionListIndexNodeId } from '@/sync/domains/sessionList/sessionListIndex';
+import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 // Genuine third-party render boundary; none of these list tests renders Markdown.
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
@@ -81,8 +81,14 @@ vi.mock('@expo/vector-icons', () => ({
 
 function buildNodes(count: number) {
     return Array.from({ length: count }, (_, index) => ({
-        id: index === 0 ? buildSessionListIndexNodeId({ type: 'header', headerKind: 'date', title: 'Today', groupKey: 'today' }) : `session:${index}`,
-        headerKind: index === 0 ? 'date' as const : undefined,
+        ...(index === 0 ? {
+            id: buildSessionListIndexNodeId({ type: 'header', title: 'Today', headerKind: 'date', groupKey: 'today' }),
+            kind: 'header' as const,
+            headerKind: 'date' as const,
+        } : {
+            id: buildSessionListIndexNodeId({ type: 'session', sessionId: String(index), serverId: 'home' }),
+            kind: 'session' as const,
+        }),
         rowViewModel: null,
     }));
 }
@@ -126,15 +132,55 @@ describe('SessionListVirtualizedContent virtualization', () => {
 
     it('gives mixed Run cells a row height class rather than recycling a header cell', async () => {
         virtualizationState.platformOS = 'ios';
-        await renderVirtualizedContent({ nodes: [{ id: 'workflow_run:["home","run"]' }] });
-        expect(virtualizationState.legendListProps.getItemType({ id: 'workflow_run:["home","run"]' }, 0)).toBe('workflow_run:default:body');
-        expect(virtualizationState.legendListProps.getItemType({ id: 'workflow_run:["home","run"]', isGroupTail: true }, 0)).toBe('workflow_run:default:tail');
+        const run = { id: buildSessionListIndexNodeId({ type: 'workflow_run', runId: 'run', serverId: 'home' }), kind: 'workflow_run' as const };
+        await renderVirtualizedContent({ nodes: [run] });
+        expect(virtualizationState.legendListProps.getItemType(run, 0)).toBe('workflow_run:default:body');
+        expect(virtualizationState.legendListProps.getItemType({ ...run, isGroupTail: true }, 0)).toBe('workflow_run:default:tail');
+    });
+
+    it('pools canonical opaque header IDs by their semantic header kind', async () => {
+        virtualizationState.platformOS = 'ios';
+        const active = {
+            id: buildSessionListIndexNodeId({ type: 'header', title: 'Active', headerKind: 'active', groupKey: 'server:home|active' }),
+            kind: 'header' as const,
+            headerKind: 'active' as const,
+        };
+        const project = {
+            id: buildSessionListIndexNodeId({ type: 'header', title: 'Project', headerKind: 'project', groupKey: 'server:home|project:/tmp/inactive' }),
+            kind: 'header' as const,
+            headerKind: 'project' as const,
+        };
+        await renderVirtualizedContent({ nodes: [active, project] });
+
+        expect(virtualizationState.legendListProps.getItemType(active, 0)).toBe('header:active');
+        expect(virtualizationState.legendListProps.getItemType(project, 1)).toBe('header:project');
+    });
+
+    it('renders the canonical priority prefix before the inactive section on web', async () => {
+        const active = {
+            id: buildSessionListIndexNodeId({ type: 'header', title: 'Active', headerKind: 'active', groupKey: 'server:home|active' }),
+            kind: 'header' as const,
+            headerKind: 'active' as const,
+        };
+        const inactive = {
+            id: buildSessionListIndexNodeId({ type: 'header', title: 'Inactive', headerKind: 'inactive', groupKey: 'server:home|inactive' }),
+            kind: 'header' as const,
+            headerKind: 'inactive' as const,
+        };
+        const sessions = Array.from({ length: 21 }, (_, index) => ({
+            id: buildSessionListIndexNodeId({ type: 'session', sessionId: `s${index}`, serverId: 'home' }),
+            kind: 'session' as const,
+        }));
+        await renderVirtualizedContent({ nodes: [active, ...sessions.slice(0, 20), inactive, ...sessions.slice(20)] });
+
+        expect(virtualizationState.flatListProps.initialNumToRender).toBe(21);
     });
 
     it('classifies qualified headers by their domain kind even when their keys contain delimiters', async () => {
         virtualizationState.platformOS = 'ios';
         const nodes = (['active', 'project', 'inactive'] as const).map((headerKind) => ({
             id: buildSessionListIndexNodeId({ type: 'header', headerKind, title: headerKind, groupKey: 'https://home.test:8443/project' }),
+            kind: 'header' as const,
             headerKind,
         }));
         await renderVirtualizedContent({ nodes });
@@ -145,6 +191,7 @@ describe('SessionListVirtualizedContent virtualization', () => {
     it('fills the web priority prefix before the inactive section with qualified header keys', async () => {
         const header = (headerKind: 'active' | 'inactive') => ({
             id: buildSessionListIndexNodeId({ type: 'header', headerKind, title: headerKind, groupKey: `https://home.test:8443/${headerKind}` }),
+            kind: 'header' as const,
             headerKind,
         });
         const priorityRows = buildNodes(17).slice(1);

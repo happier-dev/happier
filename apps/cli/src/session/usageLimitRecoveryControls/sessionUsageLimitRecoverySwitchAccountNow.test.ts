@@ -1,14 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol';
+import { SessionRuntimeIssueV1Schema, type SessionRuntimeIssueV1 } from '@happier-dev/protocol';
 
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
 import { routeSessionUsageLimitRecoverySwitchAccountNow } from './sessionUsageLimitRecoverySwitchAccountNow';
 
 function createUsageLimitIssue(
   patch: Partial<SessionRuntimeIssueV1> = {},
 ): SessionRuntimeIssueV1 {
-  return {
+  return SessionRuntimeIssueV1Schema.parse({
     v: 1,
     scope: 'primary_session',
     status: 'failed',
@@ -29,14 +30,14 @@ function createUsageLimitIssue(
       },
     },
     ...patch,
-  };
+  });
 }
 
 function createRawSession(issue: SessionRuntimeIssueV1 | null): RawSessionRecord {
-  return {
+  return createSessionRecordFixture({
     id: 'session-1',
     lastRuntimeIssue: issue,
-  } as unknown as RawSessionRecord;
+  });
 }
 
 describe('routeSessionUsageLimitRecoverySwitchAccountNow', () => {
@@ -56,7 +57,7 @@ describe('routeSessionUsageLimitRecoverySwitchAccountNow', () => {
         code: 'recovery_retry_scheduled',
         failurePhase: 'runtime_auth_recovery',
         source: 'runtime_auth_recovery',
-        serviceId: 'openai-codex',
+        serviceId: 'happier.agent.codex/openai-codex',
         profileId: 'primary',
         groupId: 'happier',
         retryable: true,
@@ -76,7 +77,7 @@ describe('routeSessionUsageLimitRecoverySwitchAccountNow', () => {
       sessionId: 'session-1',
       uxDiagnostic: expect.objectContaining({
         source: 'runtime_auth_recovery',
-        serviceId: 'openai-codex',
+        serviceId: 'happier.agent.codex/openai-codex',
       }),
     });
     expect(notifyRuntimeAuthFailure).toHaveBeenCalledWith({
@@ -84,7 +85,7 @@ describe('routeSessionUsageLimitRecoverySwitchAccountNow', () => {
       switchesThisTurn: 0,
       classification: expect.objectContaining({
         kind: 'usage_limit',
-        serviceId: 'openai-codex',
+        serviceId: 'happier.agent.codex/openai-codex',
         profileId: 'primary',
         groupId: 'happier',
         resetsAtMs: 10_000,
@@ -121,7 +122,7 @@ describe('routeSessionUsageLimitRecoverySwitchAccountNow', () => {
       code: 'provider_session_state_unavailable_for_resume',
       failurePhase: 'continuity',
       source: 'usage_limit_recovery',
-      serviceId: 'openai-codex',
+      serviceId: 'happier.agent.codex/openai-codex',
       retryable: false,
       suggestedActions: ['resume_current_account'],
     };
@@ -157,7 +158,7 @@ describe('routeSessionUsageLimitRecoverySwitchAccountNow', () => {
       code: 'provider_session_state_unavailable_for_resume',
       failurePhase: 'continuity',
       source: 'usage_limit_recovery',
-      serviceId: 'openai-codex',
+      serviceId: 'happier.agent.codex/openai-codex',
       retryable: false,
       suggestedActions: ['start_fresh_under_selected_account', 'resume_current_account'],
     };
@@ -220,7 +221,7 @@ describe('routeSessionUsageLimitRecoverySwitchAccountNow', () => {
       code: 'post_switch_verification_failed',
       failurePhase: 'post_switch_verification',
       source: 'usage_limit_recovery',
-      serviceId: 'openai-codex',
+      serviceId: 'happier.agent.codex/openai-codex',
       retryable: true,
       suggestedActions: ['retry'],
     };

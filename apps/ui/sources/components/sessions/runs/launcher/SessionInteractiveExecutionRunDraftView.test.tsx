@@ -2,12 +2,14 @@ import * as React from 'react';
 import { Dimensions } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AIBackendProfileSchema, buildBackendTargetKeyV2, DaemonContributionRegistryProjectionDescribeResponseSchema, ExecutionRunPublicStateSchema, FeaturesResponseSchema, MACHINE_PLAIN_DATA_KEY_MARKER, PersistedBackendTargetRefV2Schema, V2SessionByIdResponseSchema } from '@happier-dev/protocol';
+import { AIBackendProfileSchema, buildBackendTargetKeyV2, parseBackendTargetKeyV2, DaemonContributionRegistryProjectionDescribeResponseSchema, ExecutionRunPublicStateSchema, FeaturesResponseSchema, MACHINE_PLAIN_DATA_KEY_MARKER, PersistedBackendTargetRefV2Schema, V2SessionByIdResponseSchema } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { changeTextTestInstance, createMachineFixture, createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 import { serveActionHomes, type ServedHomeRequest } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '@/dev/testkit/fixtures/pluginProviderDaemonProjection';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { AgentInput } from '@/components/sessions/agentInput';
 import { SessionParticipantComposer } from '@/components/sessions/participants/composer/SessionParticipantComposer';
 import { getStorage } from '@/sync/domains/state/storageStore';
@@ -62,13 +64,15 @@ vi.mock('socket.io-client', async () => {
         const { socket } = createSocketIoBoundaryStub();
         socket.emitWithAck.mockImplementation(async (event, raw) => {
             if (event !== 'rpc-call') return { v: 1, ok: true, admittedSessionIds: ['session_1'] };
-            const call = raw as { method: string; params: unknown };
-            const colon = call.method.indexOf(':');
-            const target = call.method.slice(0, colon);
-            const method = call.method.slice(colon + 1);
+            if (!raw || typeof raw !== 'object' || !('method' in raw) || typeof raw.method !== 'string' || !('params' in raw)) {
+                throw new Error('Malformed Socket RPC boundary request');
+            }
+            const colon = raw.method.indexOf(':');
+            const target = raw.method.slice(0, colon);
+            const method = raw.method.slice(colon + 1);
             const { listServerProfiles } = await import('@/sync/domains/server/serverProfiles');
             const serverId = listServerProfiles().find((profile) => profile.serverUrl === url)?.id;
-            return { ok: true, result: await transport.call({ method, payload: call.params, serverId,
+            return { ok: true, result: await transport.call({ method, payload: raw.params, serverId,
                 ...(target === 'machine_1' ? { machineId: target } : { sessionId: target }) }) };
         });
         return socket;
@@ -78,6 +82,8 @@ const modal = vi.hoisted(() => ({ alert: vi.fn(), show: vi.fn() }));
 const platform = vi.hoisted(() => ({ focus: vi.fn() }));
 const random = vi.hoisted(() => ({ next: 0 }));
 vi.mock('@/platform/randomUUID', () => ({ randomUUID: () => `identity_${++random.next}` }));
+
+await loadSyncSingletonForTests();
 
 type Screen = Awaited<ReturnType<typeof renderScreen>>;
 type ComposerProps = React.ComponentProps<typeof SessionParticipantComposer>;
@@ -110,6 +116,7 @@ function run(runId: string, launchOrigin?: unknown): Run {
         retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming', ...(launchOrigin ? { launchOrigin } : {}) });
 }
 function startedTargetKey(value: Record<string, unknown>) { return buildBackendTargetKeyV2(PersistedBackendTargetRefV2Schema.parse(value.backendTarget)); }
+function canonicalTargetKey(optionId: string) { return buildBackendTargetKeyV2(parseBackendTargetKeyV2(optionId)); }
 function setSettings(patch: Partial<Settings>) {
     getStorage().setState((state) => ({ settings: { ...state.settings, ...patch } }));
 }
@@ -162,7 +169,16 @@ async function renderChip(key: string) {
 }
 async function reviewers() {
     const choices = await renderChipContent('execution-run-start-reviewers-add');
-    const ids = [...new Set(choices.root.findAll((node) => typeof node.props.testID === 'string' && node.props.testID.startsWith('execution-run-launcher-target:')).map((node) => node.props.testID as string))];
+    // The current catalog includes every enabled bundled Agent. This journey chooses
+    // two reviewers; it must not silently select every unrelated catalog entry.
+    const prefix = 'execution-run-launcher-target:';
+    const available = [...new Set(choices.root.findAll(node => typeof node.props.testID === 'string'
+        && node.props.testID.startsWith(prefix)).map(node => String(node.props.testID)))];
+    const ids = ['claude', 'codex'].map(agentId => {
+        const id = available.find(candidate => canonicalTargetKey(candidate.slice(prefix.length)) === canonicalTargetKey('agent:' + agentId));
+        if (!id) throw new Error('Expected selectable reviewer: ' + agentId);
+        return id;
+    });
     for (const id of ids) await choices.pressByTestIdAsync(id);
     await settle();
     return ids;
@@ -229,6 +245,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
                     capabilities: { session: { pendingInput: { protocolVersion: 3 } }, accountStoredContentCompatibility: { v: 1, currentProtocolVersion: 3, minimumProtocolVersion: 3, declarationTransport: 'http-header-and-socket-auth-v1' } },
                 }));
                 if (request.path === '/v1/machines/machine_1') return Response.json({ machine: { id: 'machine_1', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } });
+                if (request.path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
                 if (request.path === '/v2/sessions/session_1') {
                     const session = getStorage().getState().sessions.session_1!;
                     return Response.json(V2SessionByIdResponseSchema.parse({ session: { ...session, metadata: JSON.stringify(session.metadata), dataEncryptionKey: null } }));
@@ -248,6 +265,9 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
             },
         });
         serverId = home.homes.home!.id;
+        const credentials = await TokenStorage.getCredentialsForServerUrl(home.homes.home!.serverUrl);
+        if (!credentials) throw new Error('Fixture credentials unavailable');
+        await restoreConnectionToActiveServer(credentials);
         const session = createSessionFixture({ id: 'session_1', serverId, active: true, pendingVersion: 3,
             metadata: { path: '/repo', host: 'tester.local', homeDir: '/Users/tester', machineId: 'machine_1', flavor: 'claude' } });
         const machine = createMachineFixture({ id: 'machine_1', activeAt: Date.now(), storageMode: 'plain' });
@@ -297,7 +317,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         const codex = composer().engine!.options.find((option) => option.id.includes('codex'))!;
         await selectEngine(codex.id);
         await send();
-        expect(startedTargetKey(emittedStarts[0]!)).toBe(codex.id);
+        expect(startedTargetKey(emittedStarts[0]!)).toBe(canonicalTargetKey(codex.id));
         expect(admittedRunId()).toBe('run_1');
     });
     it('does not let an unavailable default Agent hide an eligible Agent', async () => {
@@ -306,7 +326,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         expect(composer().engine!.options.some((option) => option.id.includes('codex'))).toBe(true);
         const codex = composer().engine!.options.find((option) => option.id.includes('codex'))!;
         await send();
-        expect(startedTargetKey(emittedStarts[0]!)).toBe(codex.id);
+        expect(startedTargetKey(emittedStarts[0]!)).toBe(canonicalTargetKey(codex.id));
     });
     it('starts an eligible installed-plugin Agent even when the default Agent is unavailable', async () => {
         pluginProjection = true;
@@ -329,15 +349,18 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
     it('does not guess when correlation has zero matches and leaves authored text intact', async () => {
         startResults.push(uncertain());
         await mount();
+        const inputId = composer().initialLocalId;
         await send();
+        expect(emittedStarts).toHaveLength(1);
         expect(outbound).toEqual([]);
         expect(input().props.value).toBe('Inspect this');
-        await waitFor(() => expect(screen.findByTestId('execution-run-conversation-retry')).not.toBeNull());
-        listedRuns = [run('run_recovered', emittedStarts[0]?.launchOrigin)];
-        await screen.pressByTestIdAsync('execution-run-conversation-retry');
-        await settle();
-        expect(emittedStarts).toHaveLength(1);
-        await waitFor(() => expect(admittedRunId()).toBe('run_recovered'));
+        expect(composer().initialLocalId).toBe(inputId);
+        expect(composer().canSendMessages).toBe(false);
+        expect(screen.findByTestId('execution-run-conversation-error')?.props.children)
+            .toBe(t('sessionDrafts.executionRunStart.unresolved'));
+        expect(screen.findByTestId('execution-run-conversation-start-another')).not.toBeNull();
+        expect(transport.call.mock.calls.filter(([request]) => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_LIST))
+            .toEqual([[expect.objectContaining({ sessionId: 'session_1', serverId, payload: {} })]]);
     });
     it('offers no second Start while reconciliation is pending', async () => {
         startResults.push(uncertain());
@@ -346,18 +369,32 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         await mount();
         await send('Inspect this', false);
         expect(composer().canSendMessages).toBe(false);
-        expect(screen.findByTestId('execution-run-conversation-retry')).toBeNull();
+        const inputId = composer().initialLocalId;
+        expect(screen.findByTestId('execution-run-conversation-start-another')).toBeNull();
+        expect(emittedStarts).toHaveLength(1);
         await act(async () => resolveList({ runs: [] }));
         await settle();
-        await waitFor(() => expect(screen.findByTestId('execution-run-conversation-retry')).not.toBeNull());
+        await waitFor(() => expect(screen.findByTestId('execution-run-conversation-start-another')).not.toBeNull());
+        expect(composer().canSendMessages).toBe(false);
+        expect(composer().initialLocalId).toBe(inputId);
+        expect(input().props.value).toBe('Inspect this');
+        expect(emittedStarts).toHaveLength(1);
+        expect(outbound).toEqual([]);
     });
     it('uses fresh correlation and input identities only after explicit Start another', async () => {
         startResults.push(uncertain(), started('run_new'));
         await mount();
         const initialInputId = composer().initialLocalId;
         await send();
+        expect(composer().initialLocalId).toBe(initialInputId);
+        expect(input().props.value).toBe('Inspect this');
+        expect(emittedStarts).toHaveLength(1);
         await screen.pressByTestIdAsync('execution-run-conversation-start-another');
         await settle();
+        expect(composer().initialLocalId).not.toBe(initialInputId);
+        expect(input().props.value).toBe('Inspect this');
+        expect(emittedStarts).toHaveLength(1);
+        expect(outbound).toEqual([]);
         await send();
         expect(record(emittedStarts[0]?.launchOrigin).draftCorrelationId).not.toBe(record(emittedStarts[1]?.launchOrigin).draftCorrelationId);
         expect(admitted().localId).not.toBe(initialInputId);
@@ -368,7 +405,8 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         await selectEngine(composer().engine!.options.find((option) => option.id.includes('codex'))!.id);
         await send();
         await send();
-        expect(emittedStarts.map(startedTargetKey)).toEqual([composer().engine!.selectedOptionId, composer().engine!.selectedOptionId]);
+        const selected = canonicalTargetKey(composer().engine!.selectedOptionId!);
+        expect(emittedStarts.map(startedTargetKey)).toEqual([selected, selected]);
         expect(emittedStarts[0]?.launchOrigin).toEqual(emittedStarts[1]?.launchOrigin);
     });
     it('does not guess when correlation has multiple matches', async () => {
@@ -382,6 +420,9 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         expect(emittedStarts).toHaveLength(1);
         expect(outbound).toEqual([]);
         expect(input().props.value).toBe('Inspect this');
+        expect(composer().canSendMessages).toBe(false);
+        expect(screen.findByTestId('execution-run-conversation-error')?.props.children)
+            .toBe(t('sessionDrafts.executionRunStart.unresolved'));
     });
     it('retains the materialized Run and exact draft when HTTP admission refuses custody', async () => {
         admissionFailure = true;
@@ -412,17 +453,21 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
     });
     it('announces launch and reconciliation through the polite status owner', async () => {
         let resolveStart!: (result: unknown) => void;
+        let resolveList!: (result: unknown) => void;
         startResults.push(new Promise((resolve) => { resolveStart = resolve; }));
+        listResult = new Promise(resolve => { resolveList = resolve; });
         await mount();
         await send('Inspect this', false);
         expect(screen.findHostByTestId('execution-run-conversation-accessibility-status')?.props.accessibilityLiveRegion).toBe('polite');
         await act(async () => resolveStart(uncertain()));
-        await settle();
-        expect(screen.findByTestId('execution-run-conversation-phase')).not.toBeNull();
+        await waitFor(() => expect(screen.findByTestId('execution-run-conversation-phase')).not.toBeNull());
+        expect(screen.getTextContent()).toContain(t('sessionDrafts.executionRunStart.reconciling'));
+        await act(async () => resolveList({ runs: [] }));
+        await waitFor(() => expect(screen.findByTestId('execution-run-conversation-start-another')).not.toBeNull());
     });
     it('registers the actual composer focus target only when autofocus is requested', async () => {
         await mount({ autoFocusComposer: true });
-        expect(platform.focus).toHaveBeenCalled();
+        await waitFor(() => expect(platform.focus).toHaveBeenCalled());
         await screen.unmount();
         platform.focus.mockClear();
         await mount({ autoFocusComposer: false });
@@ -494,9 +539,9 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         await send();
         await waitFor(() => expect(opened).toHaveBeenCalledWith('run_claude', undefined, { title: 'Inspect this' }));
         await waitFor(() => expect(modal.alert).toHaveBeenCalledWith(t('runPage.review.reviewersNotStarted', { count: 1 }), expect.any(String)));
-        const failureMessage = modal.alert.mock.calls.at(-1)![1] as string;
-        expect(failureMessage).toContain('Codex');
-        expect(failureMessage).not.toContain('Claude');
+        const failureMessage = modal.alert.mock.calls.at(-1)![1];
+        expect(failureMessage).toContain('codex');
+        expect(failureMessage).not.toContain('claude');
         expect(input().props.value).toBe('');
     });
     it('keeps the typed draft when the real plan Action refuses every start', async () => {
@@ -538,9 +583,6 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         expect(emittedStarts[0]).toMatchObject({ intent: 'plan', roleId: 'planner' });
     });
     it('moves the selected Agent when the chosen role names another Agent', async () => {
-        const credentials = await TokenStorage.getCredentialsForServerUrl(home.homes.home!.serverUrl);
-        if (!credentials) throw new Error('Fixture credentials unavailable');
-        await restoreConnectionToActiveServer(credentials);
         const roles = await createDefaultActionExecutor().execute('roles.list', {}, { serverId, expectedAccountId: 'account_1' });
         expect(roles, JSON.stringify(roles)).toMatchObject({ ok: true });
         await mount({ intent: 'delegate' });

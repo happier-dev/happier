@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IDBFactory } from 'fake-indexeddb';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
 // Sync imports persistence, which instantiates MMKV. Mock it for deterministic tests.
 const kvStore = vi.hoisted(() => new Map<string, string>());
@@ -60,69 +62,39 @@ vi.mock('@/voice/registry/generatedBundledVoiceEntries', () => ({
     BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS: Object.freeze([]),
 }));
 
-const agentCatalogMocks = vi.hoisted(() => {
-    const resolveAgentIdFromFlavor = (flavor: unknown) => {
-        if (flavor === 'claude') return 'claude';
-        if (flavor === 'codex') return 'codex';
-        if (flavor === 'pi') return 'pi';
-        return null;
-    };
-    const getAgentCore = (agentId: string) => ({
-        id: agentId,
-        cli: {
-            spawnAgent: agentId,
-        },
-        permissions: {
-            promptProtocol: agentId === 'codex' ? 'codexDecision' : 'claude',
-        },
-        sessionStorage: {
-            server: true,
-            direct: true,
-        },
-        model: {
-            defaultMode: 'default',
-            supportsSelection: false,
-        },
-        resume: {},
-        runtimeInput: {
-            inFlightSteerSupported: agentId === 'pi',
-        },
-    });
-    return { getAgentCore, resolveAgentIdFromFlavor };
-});
-
-vi.mock('@/agents/registry/registryCore', () => ({
-    AGENT_IDS: ['claude', 'codex', 'pi'],
-    CANONICAL_AGENT_IDS: ['claude', 'codex', 'pi'],
-    DEFAULT_AGENT_ID: 'codex',
-    getAgentCore: agentCatalogMocks.getAgentCore,
-    isBundledAgentId: (agentId: unknown) => typeof agentId === 'string' && ['claude', 'codex', 'pi'].includes(agentId),
-    resolveAgentIdFromFlavor: agentCatalogMocks.resolveAgentIdFromFlavor,
-    resolveAgentIdFromSessionMetadata: (metadata: Record<string, unknown> | null | undefined) =>
-        agentCatalogMocks.resolveAgentIdFromFlavor(metadata?.flavor),
-}));
-
-vi.mock('@/agents/catalog/catalog', () => ({
-    AGENT_IDS: ['claude', 'codex', 'pi'],
-    getAgentCore: agentCatalogMocks.getAgentCore,
-    isBundledAgentId: (agentId: unknown) => typeof agentId === 'string' && ['claude', 'codex', 'pi'].includes(agentId),
-    resolveAgentIdFromFlavor: agentCatalogMocks.resolveAgentIdFromFlavor,
-    resolveAgentIdFromSessionMetadata: (metadata: Record<string, unknown> | null | undefined) =>
-        agentCatalogMocks.resolveAgentIdFromFlavor(metadata?.flavor),
-    buildWakeResumeExtras: ({ session }: { session?: Session | null }) => {
-        const connectedServices = session?.metadata?.connectedServices;
-        return connectedServices ? { connectedServices } : {};
-    },
-}));
-
-const ensureSessionRuntimeForPendingInputSpy = vi.hoisted(() =>
+// Socket.IO is the daemon boundary; scoped Home admission and RPC serialization stay real.
+const machineRpcSpy = vi.hoisted(() =>
     vi.fn<(..._args: unknown[]) => Promise<unknown>>(async () => ({ type: 'success' as const })),
 );
-vi.mock('@/sync/ops', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/ops')>();
+vi.mock('socket.io-client', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('socket.io-client')>();
+    const { createSocketIoBoundaryStub } = await import('@/dev/testkit/mocks/socketIo');
+    const { RPC_METHODS, RPC_ERROR_CODES } = await import('@happier-dev/protocol/rpc');
+    const { SOCKET_RPC_EVENTS } = await import('@happier-dev/protocol/socketRpc');
     return {
         ...actual,
-        ensureSessionRuntimeForPendingInput: (...args: unknown[]) => ensureSessionRuntimeForPendingInputSpy(...args),
+        io: (serverUrl: string, options: { auth?: { token?: string } }) => {
+            const { socket } = createSocketIoBoundaryStub();
+            socket.emitWithAck.mockImplementation(async (event, payload) => {
+                if (event !== SOCKET_RPC_EVENTS.CALL || !payload || typeof payload !== 'object') {
+                    return { v: 1, ok: true, admittedSessionIds: [] };
+                }
+                const request = payload as { method: string; params: unknown };
+                const separator = request.method.indexOf(':');
+                const method = request.method.slice(separator + 1);
+                if (method !== RPC_METHODS.SPAWN_HAPPY_SESSION
+                    && method !== RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE) {
+                    return { ok: false, error: 'RPC method not available', errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE };
+                }
+                return { ok: true, result: await machineRpcSpy({
+                    machineId: request.method.slice(0, separator),
+                    payload: request.params,
+                    serverUrl,
+                    token: options.auth?.token,
+                }) };
+            });
+            return socket;
+        },
     };
 });
 
@@ -135,7 +107,7 @@ import {
     primeServerFeaturesSnapshot,
     resetServerFeaturesClientForTests,
 } from '@/sync/api/capabilities/serverFeaturesClient';
-import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { FeaturesResponseSchema, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { getActiveServerAccountScope } from './domains/scope/activeServerAccountScope';
@@ -150,6 +122,7 @@ import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { loadPendingOutboxForSession } from '@/sync/domains/state/pendingOutboxPersistence';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 // Sync initializes native Markdown bindings, but these transport tests never render them.
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
@@ -160,7 +133,7 @@ const initialStorageState = storage.getState();
 
 function createPlainSession(params: { sessionId: string }): Session {
     const now = Date.now();
-    return {
+    return createSessionFixture({
         id: params.sessionId,
         seq: 0,
         createdAt: now,
@@ -170,9 +143,11 @@ function createPlainSession(params: { sessionId: string }): Session {
         metadata: {
             machineId: 'm1',
             path: '/tmp/project',
+            host: 'test.local',
+            homeDir: '/Users/test',
             flavor: 'codex',
             codexSessionId: 'codex-1',
-        } as any,
+        },
         metadataVersion: 1,
         agentState: null,
         agentStateVersion: 1,
@@ -181,7 +156,7 @@ function createPlainSession(params: { sessionId: string }): Session {
         presence: 'online',
         optimisticThinkingAt: null,
         encryptionMode: 'plain',
-    } as any;
+    });
 }
 
 function createMachine(params: {
@@ -191,7 +166,7 @@ function createMachine(params: {
     replacedAt?: number | null;
 }): Machine {
     const now = Date.now();
-    return {
+    return createMachineFixture({
         id: params.id,
         seq: 1,
         createdAt: now,
@@ -210,7 +185,7 @@ function createMachine(params: {
         daemonStateVersion: 1,
         replacedByMachineId: params.replacedByMachineId ?? null,
         replacedAt: params.replacedAt ?? null,
-    };
+    });
 }
 
 function createRpcMethodNotAvailableError(): RpcError {
@@ -226,9 +201,11 @@ describe('sync.sendMessage wake-after-send', () => {
             serverId: getActiveServerSnapshot().serverId,
             accountId: 'wake-after-send-account',
         };
+        // App entry loads the Sync implementation before applying the selected Home.
+        await loadSyncSingletonForTests();
+        const { sync } = await import('./syncEngine');
         await activatePendingQueueScope(activeScope);
         // These direct Sync tests bypass restore; bind its applied transport and Account.
-        const { sync } = await import('./syncEngine');
         Reflect.set(sync, 'appliedServerTarget', getActiveServerSnapshot());
         Reflect.set(sync, 'serverID', activeScope.accountId);
         resetServerFeaturesClientForTests();
@@ -252,7 +229,19 @@ describe('sync.sendMessage wake-after-send', () => {
             codexBackendMode: 'appServer',
         }), 1);
         appStateAddListener.mockClear();
-        ensureSessionRuntimeForPendingInputSpy.mockClear();
+        machineRpcSpy.mockReset();
+        machineRpcSpy.mockResolvedValue({ type: 'success' });
+        const token = `e30.${Buffer.from(JSON.stringify({ sub: activeScope.accountId })).toString('base64url')}.signature`;
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
+        setRuntimeFetch(async (url) => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/v1/auth/ping') return Response.json({});
+            if (path.startsWith('/v1/machines/')) return Response.json({ machine: {
+                id: decodeURIComponent(path.slice('/v1/machines/'.length)),
+                dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+            } });
+            return Response.json({}, { status: 404 });
+        });
     });
 
     afterEach(async () => {
@@ -354,9 +343,6 @@ describe('sync.sendMessage wake-after-send', () => {
         }]);
 
         const { sync } = await import('./sync');
-        (sync as any).encryption = {
-            getMachineEncryption: () => ({}),
-        };
 
         vi.spyOn(apiSocket, 'sessionRPC').mockRejectedValue(createRpcMethodNotAvailableError());
         sync.setMessageTransport({
@@ -372,24 +358,26 @@ describe('sync.sendMessage wake-after-send', () => {
 
         await sync.sendMessage(sessionId, 'hello');
 
-        expect(ensureSessionRuntimeForPendingInputSpy).toHaveBeenCalledTimes(1);
-        expect(ensureSessionRuntimeForPendingInputSpy).toHaveBeenCalledWith(
+        expect(machineRpcSpy).toHaveBeenCalledTimes(1);
+        expect(machineRpcSpy).toHaveBeenCalledWith(
             expect.objectContaining({
-                sessionId,
                 machineId: 'm1',
-                directory: '/tmp/project',
-                initialTranscriptAfterSeq: 36,
-                connectedServices,
-                connectedServicesUpdatedAt: 12345,
-                runtimeDescriptorV1: {
-                    v: 1,
-                    agentId: 'codex',
-                    agent: {
-                        backendMode: 'appServer',
-                        providerSessionId: 'codex-1',
+                payload: expect.objectContaining({
+                    sessionId,
+                    directory: '/tmp/project',
+                    initialTranscriptAfterSeq: 36,
+                    connectedServices,
+                    connectedServicesUpdatedAt: 12345,
+                    runtimeDescriptorV1: {
+                        v: 1,
+                        agentId: 'codex',
+                        agent: {
+                            backendMode: 'appServer',
+                            providerSessionId: 'codex-1',
+                        },
                     },
-                },
-                resume: 'codex-1',
+                    resume: 'codex-1',
+                }),
             }),
         );
     });
@@ -416,9 +404,6 @@ describe('sync.sendMessage wake-after-send', () => {
         }]);
 
         const { sync } = await import('./sync');
-        (sync as any).encryption = {
-            getMachineEncryption: () => ({}),
-        };
 
         vi.spyOn(apiSocket, 'sessionRPC').mockRejectedValue(createRpcMethodNotAvailableError());
         sync.setMessageTransport({
@@ -434,13 +419,15 @@ describe('sync.sendMessage wake-after-send', () => {
 
         await sync.sendMessage(sessionId, 'hello');
 
-        expect(ensureSessionRuntimeForPendingInputSpy).toHaveBeenCalledTimes(1);
-        expect(ensureSessionRuntimeForPendingInputSpy).toHaveBeenCalledWith(
+        expect(machineRpcSpy).toHaveBeenCalledTimes(1);
+        expect(machineRpcSpy).toHaveBeenCalledWith(
             expect.objectContaining({
-                sessionId,
                 machineId: 'm-new',
-                directory: '/tmp/project',
-                initialTranscriptAfterSeq: 36,
+                payload: expect.objectContaining({
+                    sessionId,
+                    directory: '/tmp/project',
+                    initialTranscriptAfterSeq: 36,
+                }),
             }),
         );
     });
@@ -467,7 +454,6 @@ describe('sync.sendMessage wake-after-send', () => {
         expect(accountLifetime).not.toBeNull();
 
         const { sync } = await import('./sync');
-        (sync as any).encryption = { getMachineEncryption: () => ({}) };
         vi.spyOn(apiSocket, 'sessionRPC').mockRejectedValue(createRpcMethodNotAvailableError());
         sync.setMessageTransport({
             emitWithAck: vi.fn(async (_event: string, payload: { localId: string }) => ({
@@ -486,12 +472,11 @@ describe('sync.sendMessage wake-after-send', () => {
             session: exactSession,
         });
 
-        expect(ensureSessionRuntimeForPendingInputSpy).toHaveBeenCalledWith(expect.objectContaining({
-            sessionId,
+        expect(machineRpcSpy).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'm-exact',
-            directory: '/exact/project',
-            serverId: activeServerId,
-            accountLifetime,
+            serverUrl: getActiveServerSnapshot().serverUrl,
+            token: `e30.${Buffer.from(JSON.stringify({ sub: accountLifetime!.scope.accountId })).toString('base64url')}.signature`,
+            payload: expect.objectContaining({ sessionId, directory: '/exact/project' }),
         }));
         retireActiveServerAccountScopeLifetime();
     });
@@ -526,9 +511,6 @@ describe('sync.sendMessage wake-after-send', () => {
         }]);
 
         const { sync } = await import('./sync');
-        (sync as any).encryption = {
-            getMachineEncryption: () => ({}),
-        };
 
         const rpcSpy = vi.spyOn(apiSocket, 'sessionRPC').mockRejectedValue(createRpcMethodNotAvailableError());
         const emitWithAck = vi.fn(async () => ({
@@ -549,7 +531,7 @@ describe('sync.sendMessage wake-after-send', () => {
 
         expect(rpcSpy).not.toHaveBeenCalled();
         expect(emitWithAck).not.toHaveBeenCalled();
-        expect(ensureSessionRuntimeForPendingInputSpy).not.toHaveBeenCalled();
+        expect(machineRpcSpy).not.toHaveBeenCalled();
         expect(storage.getState().sessionPending[sessionId]).toBeUndefined();
     });
 
@@ -580,22 +562,18 @@ describe('sync.sendMessage wake-after-send', () => {
             ...createPlainSession({ sessionId }),
             pendingVersion: 2,
         }]);
-        ensureSessionRuntimeForPendingInputSpy.mockResolvedValueOnce({
+        machineRpcSpy.mockResolvedValueOnce({
             type: 'error',
             errorCode: 'DAEMON_RPC_UNAVAILABLE',
             errorMessage: 'Daemon RPC is not available',
         });
 
         const { sync } = await import('./sync');
-        (sync as any).encryption = {
-            getSessionEncryption: () => null,
-            getMachineEncryption: () => ({}),
-        };
         vi.spyOn(apiSocket, 'request').mockImplementation(async (_path, init) =>
             currentPendingEnqueueAck(init));
 
         await expect(sync.submitMessage(sessionId, 'should report wake failure')).rejects.toThrow('Daemon RPC is not available');
-        expect(ensureSessionRuntimeForPendingInputSpy).toHaveBeenCalledTimes(1);
+        expect(machineRpcSpy).toHaveBeenCalledTimes(1);
     });
 
     it('rejects an unsupported Voice submit to a resolver-confirmed remote target before persistence or active transport', async () => {
@@ -794,10 +772,6 @@ describe('sync.sendMessage wake-after-send', () => {
         }]);
 
         const { sync } = await import('./sync');
-        (sync as any).encryption = {
-            getSessionEncryption: () => null,
-            getMachineEncryption: () => ({}),
-        };
         const pendingPost = vi.spyOn(apiSocket, 'request').mockImplementation(async (_path, init) =>
             currentPendingEnqueueAck(init));
         const sessionRpc = vi.spyOn(apiSocket, 'sessionRPC');

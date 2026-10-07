@@ -1,6 +1,15 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getStorage } from '@/sync/domains/state/storage';
+import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
+import type { PromptAssetMutationResponseV1 } from '@happier-dev/protocol';
+import {
+    createTransferFinalizeRecovery,
+    settleTransferFinalizeRecovery,
+} from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/directTransferFinalizeRecovery';
 
-const machinePromptAssetsWriteMock = vi.hoisted(() => vi.fn(async (..._args: unknown[]): Promise<any> => ({
+type MachinePromptAssetsWriteResult = Awaited<ReturnType<typeof import('@/sync/ops/machinePromptAssets').machinePromptAssetsWrite>>;
+
+const machinePromptAssetsWriteMock = vi.hoisted(() => vi.fn(async (..._args: unknown[]): Promise<MachinePromptAssetsWriteResult> => ({
     ok: true as const,
     externalRef: { path: '.claude/commands/review.md' },
     digest: 'digest-1',
@@ -10,84 +19,70 @@ const machinePromptAssetsWriteMock = vi.hoisted(() => vi.fn(async (..._args: unk
         fileCount: 1,
     },
 })));
-const runTransferFinalizeRecoveryMock = vi.hoisted(() => vi.fn());
 
-const storageState = vi.hoisted(() => ({
-    artifacts: {
-        'doc-1': {
-            id: 'doc-1',
-            header: { title: 'Review prompt' },
-            body: JSON.stringify({
-                v: 1,
-                markdown: '# Review',
-                createdAtMs: 1,
-                updatedAtMs: 1,
-            }),
-        },
-    } as Record<string, any>,
-    updateArtifact: vi.fn(),
-}));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: {
-        getState: () => storageState,
-    },
-});
-});
-
-vi.mock('@/sync/sync', () => ({
-    sync: {
-        fetchArtifactWithBody: vi.fn(async () => null),
-    },
-}));
-
+// This suite stops at the machine upload operation; signed Iroh grants and
+// native carrier acquisition belong to the transfer suite. Store and export
+// logic, including recovery selection and settlement, remain real here.
 vi.mock('@/sync/ops/machinePromptAssets', () => ({
     machinePromptAssetsWrite: machinePromptAssetsWriteMock,
 }));
 
-vi.mock('@/components/transfers/recovery/runTransferFinalizeRecovery', () => ({
-    runTransferFinalizeRecovery: (...args: unknown[]) => runTransferFinalizeRecoveryMock(...args),
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({ spies: { show: (config) => {
+        const resolve: unknown = Reflect.get(config.props ?? {}, 'onResolve');
+        if (typeof resolve !== 'function') throw new Error('Expected a recovery action selector');
+        resolve('retry_finalize');
+        return 'recovery-modal';
+    } } }).module;
+});
 
 vi.mock('@/platform/randomUUID', () => ({
     randomUUID: () => 'link-1',
 }));
 
-vi.mock('./promptDocs', () => ({
-    findPromptExternalLink: () => null,
-    upsertPromptExternalLink: (_existing: unknown, next: unknown) => next,
-}));
+beforeAll(async () => { await import('@/sync/domains/state/storageStore'); });
 
 describe('writePromptLibraryArtifactToExternalAsset', () => {
     beforeEach(() => {
         machinePromptAssetsWriteMock.mockClear();
-        runTransferFinalizeRecoveryMock.mockReset();
-        storageState.updateArtifact.mockClear();
+        const artifact = {
+            id: 'doc-1',
+            header: { title: 'Review prompt' },
+            title: 'Review prompt',
+            body: JSON.stringify({ v: 1, markdown: '# Review', createdAtMs: 1, updatedAtMs: 1 }),
+            headerVersion: 1,
+            bodyVersion: 1,
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            isDecrypted: true,
+        } satisfies DecryptedArtifact;
+        getStorage().setState({ artifacts: {} });
+        getStorage().getState().applyArtifacts([artifact]);
     });
 
     it('finishes a retained prompt upload without issuing another write', async () => {
-        const recovery = {
-            kind: 'transfer_finalize_recovery' as const,
+        const recoveredResponse = {
+            ok: true,
+            externalRef: { path: '.claude/commands/review.md' },
+            digest: 'digest-recovered',
+        } satisfies PromptAssetMutationResponseV1;
+        const retryFinalize = vi.fn(async () => settleTransferFinalizeRecovery({
+            status: 'finalized' as const,
+            response: recoveredResponse,
+        }));
+        const discard = vi.fn(async () => settleTransferFinalizeRecovery<PromptAssetMutationResponseV1>({ status: 'discarded' }));
+        const recovery = createTransferFinalizeRecovery<PromptAssetMutationResponseV1>({
             expiresAt: Date.now() + 60_000,
-            actions: ['retry_finalize', 'discard_staged'] as const,
-            isActionable: () => true,
-            invoke: vi.fn(),
-        };
+            retryFinalize,
+            discard,
+        });
         machinePromptAssetsWriteMock.mockResolvedValueOnce({
             success: false,
             error: 'Finalize recovery is required',
             errorCode: 'TRANSFER_FINALIZE_RECOVERY_REQUIRED',
             recovery,
-        });
-        runTransferFinalizeRecoveryMock.mockResolvedValueOnce({
-            status: 'finalized',
-            response: {
-                ok: true,
-                externalRef: { path: '.claude/commands/review.md' },
-                digest: 'digest-recovered',
-            },
         });
         const { writePromptLibraryArtifactToExternalAsset } = await import('./exportPromptLibraryArtifact');
 
@@ -103,13 +98,18 @@ describe('writePromptLibraryArtifactToExternalAsset', () => {
 
         expect(result).toMatchObject({ ok: true, response: { digest: 'digest-recovered' } });
         expect(machinePromptAssetsWriteMock).toHaveBeenCalledTimes(1);
-        expect(runTransferFinalizeRecoveryMock).toHaveBeenCalledWith(expect.objectContaining({ recovery }));
+        expect(retryFinalize).toHaveBeenCalledOnce();
+        expect(discard).not.toHaveBeenCalled();
+        expect(recovery.isActionable()).toBe(false);
+        expect(result).toMatchObject({ nextPromptExternalLinks: { v: 1, links: [{
+            id: 'link-1', artifactId: 'doc-1', lastExternalDigest: 'digest-recovered',
+        }] } });
     });
 
     it('passes server routing through to machine prompt asset writes', async () => {
         const { writePromptLibraryArtifactToExternalAsset } = await import('./exportPromptLibraryArtifact');
 
-        await writePromptLibraryArtifactToExternalAsset({
+        const result = await writePromptLibraryArtifactToExternalAsset({
             artifactId: 'doc-1',
             machineId: 'machine-1',
             assetTypeId: 'claude.command',
@@ -120,6 +120,7 @@ describe('writePromptLibraryArtifactToExternalAsset', () => {
             serverId: 'server-1',
         });
 
+        expect(result).toMatchObject({ ok: true });
         expect(machinePromptAssetsWriteMock).toHaveBeenCalledWith(
             'machine-1',
             expect.objectContaining({

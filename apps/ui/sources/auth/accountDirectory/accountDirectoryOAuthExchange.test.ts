@@ -1,6 +1,6 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
-import { installLocalStorageMock, type LocalStorageMockHandle } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { installLocalStorageMock, installWebLockManagerMock, type LocalStorageMockHandle } from '@/auth/storage/tokenStorage.web.testHelpers';
 import {
     ACCOUNT_DIRECTORY_AUTH_CREDENTIALS_STORAGE_KEY,
     PENDING_ACCOUNT_DIRECTORY_AUTH_STORAGE_KEY,
@@ -11,29 +11,29 @@ import { createDirectoryHttpFixture } from '@/sync/ops/accountDirectory/accountD
 import { adoptHomeProfile } from '@/sync/domains/server/serverProfiles';
 import { IrohError } from '@happier-dev/iroh-native';
 installTokenStorageWebPlatformMocks();
-const boundary = vi.hoisted(() => ({ request: vi.fn<(endpoint: string, path: string, init?: RequestInit) => Promise<Response>>(), targets: [] as Array<{ endpointUrl: string; runtimeOrigin?: string }> }));
-vi.mock('@/sync/http/client', () => ({
-    createServerFetchAtEndpoint: (options: { endpointUrl: string; runtimeOrigin?: string }) => {
-        boundary.targets.push(options);
-        return (path: string, init?: RequestInit) => boundary.request(options.endpointUrl, path, init);
+const boundary = vi.hoisted(() => ({ request: vi.fn<(endpoint: string, path: string, init?: RequestInit) => Promise<Response>>() }));
+vi.mock('@/utils/system/runtimeFetch', () => ({
+    runtimeFetch: (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(input instanceof Request ? input.url : String(input));
+        return boundary.request(url.origin, `${url.pathname}${url.search}`, init);
     },
-    serverFetch: (path: string, init?: RequestInit) => boundary.request('ambient', path, init),
 }));
 import { accountDirectoryAuthClient, acquireAccountServiceAuthTransport } from './accountDirectoryAuthClient';
 
 describe('Account Directory OAuth exchange custody', () => {
     let restore: () => void;
+    let restoreLocks: () => void;
     let storage: LocalStorageMockHandle;
     let fixture: ReturnType<typeof createDirectoryHttpFixture>;
     beforeEach(() => {
         storage = installLocalStorageMock();
         restore = storage.restore;
+        restoreLocks = installWebLockManagerMock().restore;
         fixture = createDirectoryHttpFixture();
         boundary.request.mockReset();
-        boundary.targets.length = 0;
         boundary.request.mockImplementation(fixture.request);
     });
-    afterEach(() => { vi.unstubAllGlobals(); restore(); });
+    afterEach(() => { vi.unstubAllGlobals(); restoreLocks(); restore(); });
     it('stops after native self transport rejects the exact descriptor instead of offering retry', async () => {
         vi.stubGlobal('__TAURI_INTERNALS__', { invoke: async () => { throw new IrohError('invalid_descriptor', 'Rejected descriptor'); } });
         await adoptHomeProfile({
@@ -58,7 +58,7 @@ describe('Account Directory OAuth exchange custody', () => {
             transport: { runtimeOrigin: 'http://127.0.0.1:43210' },
         };
         const started = await accountDirectoryAuthClient.startOAuth(input);
-        expect(boundary.targets).toEqual([expect.objectContaining({ runtimeOrigin: input.transport.runtimeOrigin })]);
+        expect(boundary.request.mock.calls.map(([endpoint]) => endpoint)).toEqual([input.transport.runtimeOrigin]);
         const stored = await TokenStorage.getPendingAccountDirectoryAuth({
             endpoint: input.endpointUrl,
             serverIdentityId: input.endpointServerIdentityId,

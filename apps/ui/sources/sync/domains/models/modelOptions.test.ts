@@ -12,7 +12,7 @@ import {
 } from './modelOptions';
 import { findModelOptionForEffectiveModelId } from './modelOptions';
 import type { Metadata } from '@happier-dev/session-core/state';
-import { SessionModelSelectionIntentV1Schema } from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2, SessionModelSelectionIntentV1Schema } from '@happier-dev/protocol';
 import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
 
 function withMetadata(overrides: Partial<Metadata>): Metadata {
@@ -77,11 +77,14 @@ describe('modelOptions', () => {
         const context = {
             preflight: { availableModels: [{ id: 'foreign', name: 'Foreign' }], supportsFreeform: true },
             preflightUpdatedAt: 20,
-            currentTargetKey: 'backend:customAcp:configured:mine',
-            preflightTargetKey: 'backend:customAcp:configured:other',
+            currentTargetKey: buildBackendTargetKeyV2({ kind: 'backend', backendId: 'mine', configuredBackendId: 'mine', sourceKind: 'configured' }),
+            preflightTargetKey: buildBackendTargetKeyV2({ kind: 'backend', backendId: 'other', configuredBackendId: 'other', sourceKind: 'configured' }),
         };
         expect(getModelOptionsForSession('codex', null, context).map((option) => option.value)).toEqual(['default']);
         expect(isModelSelectableForSession('codex', null, 'foreign', context)).toBe(false);
+        const matchingTarget = { ...context, preflightTargetKey: context.currentTargetKey };
+        expect(getModelOptionsForSession('codex', null, matchingTarget).map((option) => option.value)).toEqual(['default', 'foreign']);
+        expect(isModelSelectableForSession('codex', null, 'foreign', matchingTarget)).toBe(true);
     });
 
     it('builds generic options for unknown modes', () => {
@@ -235,16 +238,16 @@ describe('modelOptions', () => {
 
     it('uses authoritative session membership and capabilities for a probe-enabled Agent', () => {
         const out = getModelOptionsForSession(
-            'gemini',
+            'claude',
             withMetadata({
                 sessionModelsV1: {
                     v: 1,
-                    agentId: 'gemini',
+                    agentId: 'claude',
                     updatedAt: 1,
-                    currentModelId: 'gemini-2.5-pro',
+                    currentModelId: 'claude-opus-4-6',
                     availableModels: [
-                        { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro (From Session)' },
-                        { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (From Session)' },
+                        { id: 'claude-opus-4-6', name: 'Opus 4.6 (From Session)' },
+                        { id: 'claude-sonnet-4-6', name: 'Sonnet 4.6 (From Session)' },
                     ],
                 },
             }),
@@ -469,21 +472,24 @@ describe('modelOptions', () => {
         ).toBe(false);
     });
 
-    it('recognizes dynamic list support for a probe-enabled bundled provider', () => {
+    it.each([
+        ['claude', true],
+        ['gemini', false],
+    ] as const)('recognizes the bundled %s Agent dynamic model policy', (agentId, supported) => {
         expect(
             hasDynamicModelListForSession(
-                'gemini',
+                agentId,
                 withMetadata({
                     sessionModelsV1: {
                         v: 1,
-                        agentId: 'gemini',
+                        agentId,
                         updatedAt: 1,
-                        currentModelId: 'gemini-2.5-flash',
-                        availableModels: [{ id: 'gemini-stale', name: 'Gemini Stale' }],
+                        currentModelId: 'model-a',
+                        availableModels: [{ id: 'model-a', name: 'Model A' }],
                     },
                 }),
             ),
-        ).toBe(true);
+        ).toBe(supported);
     });
 
     it('uses live session models for a bundled agent with no static model facts', () => {

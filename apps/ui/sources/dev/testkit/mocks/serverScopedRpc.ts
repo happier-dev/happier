@@ -18,9 +18,12 @@ export type CreateServerScopedMachineRpcModuleMockOptions =
 
 /** An RPC network-boundary replacement without importing the live sync runtime. */
 export function createServerScopedMachineRpcBoundaryMock(
-    machineRpcWithServerScope: ServerScopedMachineRpcModule['machineRpcWithServerScope'],
+    machineRpcWithServerScope: (
+        params: Parameters<ServerScopedMachineRpcModule['machineRpcWithServerScope']>[0],
+    ) => Promise<unknown>,
 ): Pick<ServerScopedMachineRpcModule, 'machineRpcWithServerScope'> {
-    return { machineRpcWithServerScope };
+    // The external transport carries unknown replies; real callers retain their schema validation.
+    return { machineRpcWithServerScope: machineRpcWithServerScope as ServerScopedMachineRpcModule['machineRpcWithServerScope'] };
 }
 export type CreateServerScopedSessionRpcModuleMockOptions =
     MergeModuleMockOptions<ServerScopedSessionRpcModule>;

@@ -41,7 +41,8 @@ function scopedDraftKey(
   return `${scope.serverId}\u0000${scope.accountId}\u0000${sessionId}`;
 }
 
-vi.mock('@react-navigation/native', () => ({
+vi.mock('@react-navigation/native', async () => ({
+  ...(await import('@/dev/testkit/mocks/reactNavigation')).createReactNavigationNativeMock(),
   useIsFocused: () => isFocused,
 }));
 
@@ -293,7 +294,19 @@ async function renderHarness(params: {
   }
 
   let root: renderer.ReactTestRenderer | null = null;
-  root = (await renderScreen(React.createElement(Harness))).tree;
+  const { NavigationContext, useNavigation } = await import('@react-navigation/native');
+  function NavigationHarness() {
+    const navigation = useNavigation();
+    return React.createElement(NavigationContext.Provider, { value: {
+      ...navigation,
+      getState: () => {
+        const state = navigation.getState();
+        if (!state) throw new Error('Expected the draft fixture navigation state');
+        return state;
+      },
+    } }, React.createElement(Harness));
+  }
+  root = (await renderScreen(React.createElement(NavigationHarness))).tree;
 
   return {
     getCurrent: () => {

@@ -6,7 +6,10 @@ import {
     buildConnectedServiceCredentialRecord,
     QualifiedConnectedAccountCredentialSnapshotV4Schema,
     QualifiedConnectedAccountGroupV4Schema,
+    QualifiedConnectedAccountGroupActiveAccountV4Schema,
+    QualifiedConnectedAccountGroupRuntimeStatePatchV4Schema,
     QualifiedConnectedAccountListResponseV4Schema,
+    StrictJsonValueSchema,
     sealQualifiedConnectedAccountContentEnvelope,
 } from '@happier-dev/protocol';
 import type { AgentExecutionRunEvent, AgentExecutionRunOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -123,16 +126,18 @@ async function createScenario() {
         api: {
             readGroup: async () => currentGroup, listAccounts: async () => accounts,
             setActiveAccount: async (input) => {
-                commits.push(input.mutation.connectedAccountId);
+                const mutation = QualifiedConnectedAccountGroupActiveAccountV4Schema.parse(input.mutation);
+                commits.push(mutation.connectedAccountId);
                 currentGroup = QualifiedConnectedAccountGroupV4Schema.parse({ ...currentGroup,
-                    activeConnectedAccountId: input.mutation.connectedAccountId, generation: currentGroup.generation + 1 });
+                    activeConnectedAccountId: mutation.connectedAccountId, generation: currentGroup.generation + 1 });
                 return currentGroup;
             },
             updateRuntimeState: async (input) => {
+                const patch = QualifiedConnectedAccountGroupRuntimeStatePatchV4Schema.parse(input.patch);
                 currentGroup = QualifiedConnectedAccountGroupV4Schema.parse({ ...currentGroup,
                     runtimeStateRevision: currentGroup.runtimeStateRevision + 1,
                     members: currentGroup.members.map((member) => ({ ...member,
-                        state: input.patch.runtimeState.memberStates.find((state) => state.connectedAccountId === member.connectedAccountId)?.state ?? member.state,
+                        state: patch.runtimeState.memberStates.find((state) => state.connectedAccountId === member.connectedAccountId)?.state ?? member.state,
                     })) });
                 return currentGroup;
             },
@@ -179,11 +184,15 @@ async function createScenario() {
     const classification = (materialization: Materialization) => {
         const selection = readConnectedServiceChildSelectionsFromEnv(materialization.env)?.get(serviceId);
         if (selection?.kind !== 'group') throw new Error('Expected materialized pool selection');
-        return authAdapter.classifyRuntimeAuthFailure({ providerErrorPath: true,
+        const failure = authAdapter.classifyRuntimeAuthFailure({ target: { agentId: 'codex' },
             error: { message: `model '${modelId}' is not enabled in rustponsesapi` },
-            serviceId, profileId: selection.activeProfileId, groupId: selection.groupId,
-            sourceAccountIdentity: { groupGeneration: selection.generation, credentialRevision: selection.credentialRevision },
-        })!;
+            selection,
+        });
+        if (!failure) throw new Error('Expected admitted Codex model-entitlement classification');
+        // The synthetic Agent process attests the identity it read from the real
+        // materialized environment, as the Codex turn-failure producer does.
+        return { ...failure, groupGeneration: selection.generation,
+            expectedCredentialRevision: selection.credentialRevision };
     };
     return { bridge, coordinator, materialize, classification, commits, credentialReads,
         group: () => currentGroup, revokeRunner: () => { runnerCurrent = false; },
@@ -226,7 +235,8 @@ describe('composed finite Run model recovery', () => {
                                 const common = { runId, emittedAtMs: 1 };
                                 const event: AgentExecutionRunEvent = rejectCount === 0 || openedMembers.length <= rejectCount
                                     ? { ...common, sequence: 3, kind: 'run-failed', diagnostic: { severity: 'error',
-                                        code: 'connected_service_model_start_rejected', details: { runtimeAuthClassification: failure } } }
+                                        code: 'connected_service_model_start_rejected',
+                                        details: StrictJsonValueSchema.parse(JSON.parse(JSON.stringify({ runtimeAuthClassification: failure }))) } }
                                     : { ...common, sequence: 2, kind: 'run-complete' };
                                 listener({ ...common, sequence: 1, kind: 'run-start' });
                                 if (rejectCount === 0) listener({ ...common, sequence: 2, kind: 'output-delta', channel: 'assistant', text: 'accepted work' });

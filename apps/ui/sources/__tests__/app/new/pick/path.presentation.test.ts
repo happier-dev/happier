@@ -1,6 +1,5 @@
-import { authoringMemoryDefaults } from '@/sync/store/domains/authoringMemory';
 import React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
     renderScreen,
     standardCleanup,
@@ -13,7 +12,9 @@ import {
     installPickerCommonModuleMocks,
     PICKER_THEME_COLORS,
 } from './testHarness';
-import { createUseSettingMock, createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
+import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
+import { storage } from '@/sync/domains/state/storageStore';
+import { createMachineFixture } from '@/dev/testkit';
 
 enableReactActEnvironment();
 
@@ -22,7 +23,6 @@ const navigationMock = createNavigationMock();
 const stackOptionsCapture = createStackOptionsCapture();
 
 type PlatformSelectOptions<T> = { ios?: T; default?: T };
-type ItemGroupProps = React.PropsWithChildren<Record<string, never>>;
 
 installPickerCommonModuleMocks({
     text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
@@ -50,40 +50,16 @@ installPickerCommonModuleMocks({
             theme: { colors },
         });
     },
-    storage: async (importOriginal) =>
-        (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
-            importOriginal,
-            overrides: {
-                // Boundary fixture: this picker only needs the selected machine homeDir.
-                useAllMachines: (() => [{ id: 'm1', metadata: { homeDir: '/home' } }]) as any,
-                useAllSessionListRenderables: () => [],
-                useAuthoringMemoryField: (key) => ({ ...authoringMemoryDefaults, recentMachinePaths: [] })[key],
-                useSetting: createUseSettingMock({ fallback: (key) => {
-                    if (key === 'usePathPickerSearch') return false;
-                    return null;
-                } }),
-                useSettingMutable: createUseSettingMutableMockFromReader(() => [[], vi.fn()]),
-            },
-        }),
 });
 
-vi.mock('@/components/ui/layout/layout', () => ({
-    layout: { maxWidth: 900 },
-    useLayoutMaxWidth: () => 900,
-    useLayoutMaxWidthStyle: () => ({ maxWidth: 900 }),
-}));
-
-vi.mock('@/components/ui/forms/SearchHeader', () => ({
-    SearchHeader: () => null,
-}));
-
-vi.mock('@/components/sessions/new/components/PathSelectionList', () => ({
-    PathSelectionList: () => null,
-}));
-
-vi.mock('@/utils/sessions/recentPaths', () => ({
-    getRecentPathsForMachine: () => [],
-}));
+const runtime = installSessionPaneRuntimeTestHarness();
+beforeEach(() => {
+    storage.getState().applyMachines([createMachineFixture({ id: 'm1', storageMode: 'plain', metadata: {
+        host: 'tester.local', platform: 'darwin', happyCliVersion: '0.0.0-test',
+        happyHomeDir: '/Users/tester/.happy-dev', homeDir: '/home',
+    } })], true, { sourceServerId: runtime.serverId });
+    storage.getState().applySettingsLocal({ usePathPickerSearch: false, favoriteDirectories: [] });
+});
 
 describe('PathPickerScreen (iOS presentation)', () => {
     afterEach(() => {
@@ -94,7 +70,7 @@ describe('PathPickerScreen (iOS presentation)', () => {
         const PathPickerScreen = (await import('@/app/(app)/new/pick/path')).default;
         stackOptionsCapture.reset();
 
-        await renderScreen(React.createElement(PathPickerScreen));
+        await renderScreen(React.createElement(runtime.Wrapper, null, React.createElement(PathPickerScreen)));
 
         const options = stackOptionsCapture.getResolved();
         expect(options?.presentation).toBe('containedModal');

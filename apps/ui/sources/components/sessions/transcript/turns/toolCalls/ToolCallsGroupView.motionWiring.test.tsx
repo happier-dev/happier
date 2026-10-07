@@ -1,174 +1,97 @@
-import React from 'react';
+import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createToolCallMessageFixture, flattenTestStyle, renderStatefulToolCallsGroupView,
+    renderToolCallsGroupView, standardCleanup } from '@/dev/testkit';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { getStorage } from '@/sync/domains/state/storageStore';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { ToolView } from '@/components/tools/shell/views/ToolView';
+import { ToolTimelineRow } from '@/components/tools/shell/views/ToolTimelineRow';
+import { TranscriptEnterWrapper } from '@/components/sessions/transcript/motion/TranscriptEnterWrapper';
+import { TranscriptCollapsible } from '@/components/sessions/transcript/motion/TranscriptCollapsible';
+import { Icon } from '@/components/ui/icons/Icon';
+import { ToolCallsGroupView } from './ToolCallsGroupView';
 
-import {
-    createToolCallMessageFixture,
-    renderStatefulToolCallsGroupView,
-    renderToolCallsGroupView,
-    standardCleanup,
-} from '@/dev/testkit';
-import { createReducer } from "@happier-dev/session-core/reducer";
-import { installToolCallsGroupViewCommonModuleMocks } from './toolCallsGroupViewTestHelpers';
-import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
-
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-let toolChromeMode: 'activity_feed' | 'cards' = 'activity_feed';
-let toolCallsGroupShowBackground: boolean = false;
-installToolCallsGroupViewCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock(
-            {
-                Platform: { OS: 'ios', select: (values: any) => values?.ios ?? values?.default ?? null },
-            },
-        );
-    },
-    unistyles: async () => {
-        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-        return createUnistylesMock();
-    },
-    icons: async () => {
-        const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
-        return {
-            ...createExpoVectorIconsMock(),
-            Ionicons: (props: any) => React.createElement('Ionicons', { ...props, testID: `ionicons:${props.name}` }),
-        };
-    },
-    text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({
-            translate: (key: string) => key,
-        });
-    },
-    storage: async (importOriginal) => {
-        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleMock({
-            importOriginal,
-            overrides: {
-                useSetting: createUseSettingMock({ fallback: (key) => {
-                    if (key === 'toolViewTimelineChromeMode') return toolChromeMode;
-                    if (key === 'transcriptToolCallsCollapsedPreviewCount') return 0;
-                    if (key === 'transcriptToolCallsGroupShowBackground') return toolCallsGroupShowBackground;
-                    return null;
-                } }),
-                useSessionMessagesById: () => ({}),
-                useSessionMessagesReducerState: () => createReducer(),
-            },
-        });
-    },
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({ Platform: { OS: 'ios' } });
 });
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
+vi.mock('@expo/vector-icons', async () => {
+    const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
+    return createExpoVectorIconsMock();
+});
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: key => key });
+});
+installDisconnectedServerSocketBoundary();
+await loadSyncSingletonForTests();
 
-vi.mock('@/components/tools/shell/views/ToolView', () => ({
-    ToolView: (props: any) => React.createElement('ToolView', props),
-}));
-
-vi.mock('@/components/tools/shell/views/ToolTimelineRow', () => ({
-    ToolTimelineRow: (props: any) => React.createElement('ToolTimelineRow', props),
-}));
-
-vi.mock('@/components/sessions/transcript/motion/TranscriptEnterWrapper', () => ({
-    TranscriptEnterWrapper: (props: any) => React.createElement('TranscriptEnterWrapper', { ...props, testID: 'transcript-enter-wrapper' }, props.children),
-}));
-
-vi.mock('@/components/sessions/transcript/motion/TranscriptCollapsible', () => ({
-    TranscriptCollapsible: (props: any) => React.createElement('TranscriptCollapsible', { ...props, testID: 'transcript-collapsible' }, props.children),
-}));
-
-describe('ToolCallsGroupView (motion wiring)', () => {
+describe('ToolCallsGroupView (real motion and row owners)', () => {
+    beforeEach(() => getStorage().setState({ settings: { ...settingsDefaults,
+        toolViewTimelineChromeMode: 'activity_feed', transcriptToolCallsCollapsedPreviewCount: 0,
+        transcriptToolCallsGroupShowBackground: false } }));
     afterEach(standardCleanup);
 
-    it('wraps tool rows in TranscriptEnterWrapper and uses TranscriptCollapsible for expand/collapse', async () => {
-        const toolMessages = [
+    it('mounts real motion-wrapped rows on expansion and removes them on collapse', async () => {
+        const screen = await renderStatefulToolCallsGroupView({ toolMessages: [
             createToolCallMessageFixture({ id: 'm1', createdAt: 1 }),
             createToolCallMessageFixture({ id: 'm2', createdAt: 2 }),
-        ];
-
-        const screen = await renderStatefulToolCallsGroupView({
-            toolMessages,
-        });
-
-        expect(screen.findAllByTestId('transcript-enter-wrapper')).toHaveLength(0);
-        expect(screen.findByTestId('transcript-collapsible')).toBeNull();
-
+        ] });
+        expect(screen.findAllByType(TranscriptEnterWrapper)).toHaveLength(0);
+        expect(screen.findAllByType(TranscriptCollapsible)).toHaveLength(0);
         await screen.pressByTestIdAsync('transcript-tool-calls-preview-more');
-
-        expect(screen.findAllByTestId('transcript-enter-wrapper')).toHaveLength(2);
-        const collapsibleAfter = screen.findByTestId('transcript-collapsible') as any;
-        expect(collapsibleAfter?.props.expanded).toBe(true);
+        expect(screen.findAllByType(TranscriptEnterWrapper)).toHaveLength(2);
+        expect(screen.findByType(TranscriptCollapsible).props.expanded).toBe(true);
+        expect(screen.findAllByType(ToolTimelineRow)).toHaveLength(2);
+        await screen.pressByTestIdAsync('transcript-tool-calls-header');
+        expect(screen.findAllByType(ToolTimelineRow)).toHaveLength(0);
+        expect(screen.findAllByType(TranscriptEnterWrapper)).toHaveLength(0);
+        expect(screen.findByTestId('transcript-tool-calls-preview-more')).not.toBeNull();
     });
 
-    it('shows a stack icon and toggles chevron direction when expanded', async () => {
-        toolChromeMode = 'activity_feed';
-        toolCallsGroupShowBackground = false;
-
-        const toolMessages = [createToolCallMessageFixture({ id: 'm1', createdAt: 1 })];
-
-        const screen = await renderStatefulToolCallsGroupView({
-            status: 'completed',
-            toolMessages,
-        });
-
-        expect(screen.findByTestId('ionicons:layers-outline')).not.toBeNull();
-        expect(screen.findByTestId('ionicons:chevron-down-outline')).toBeNull();
-        expect(screen.findByTestId('ionicons:chevron-up-outline')).toBeNull();
-
+    it('shows the real stack and collapse icon with an actionable expanded header', async () => {
+        const screen = await renderStatefulToolCallsGroupView({ status: 'completed',
+            toolMessages: [createToolCallMessageFixture({ id: 'm1', createdAt: 1 })] });
+        const iconNames = () => screen.findAllByType(Icon).map(node => node.props.name);
+        expect(iconNames()).toContain('stack-simple');
+        expect(iconNames()).not.toContain('caret-up');
+        expect(screen.findByTestId('transcript-tool-calls-header')?.props.disabled).toBe(true);
         await screen.pressByTestIdAsync('transcript-tool-calls-preview-more');
-
-        expect(screen.findByTestId('ionicons:chevron-up-outline')).not.toBeNull();
+        expect(iconNames()).toContain('caret-up');
+        expect(screen.findByTestId('transcript-tool-calls-header')?.props.disabled).toBe(false);
+        await screen.pressByTestIdAsync('transcript-tool-calls-header');
+        expect(iconNames()).not.toContain('caret-up');
+        expect(screen.findAllByType(ToolTimelineRow)).toHaveLength(0);
     });
 
     it('applies a group background only when enabled in tool feed mode', async () => {
-        const { ToolCallsGroupView } = await import('./ToolCallsGroupView');
-        toolChromeMode = 'activity_feed';
-        toolCallsGroupShowBackground = true;
-
+        getStorage().setState(state => ({ settings: { ...state.settings, transcriptToolCallsGroupShowBackground: true } }));
         const toolMessages = [createToolCallMessageFixture({ id: 'm1', createdAt: 1 })];
-
-        const screen = await renderToolCallsGroupView({
-            status: 'completed',
-            toolMessages,
-        });
-
-        const container = screen.findByTestId('transcript-tool-calls-group') as any;
-        const styles = Array.isArray(container.props.style) ? container.props.style : [container.props.style];
-        const backgroundEntry = styles.find((s: any) => s?.backgroundColor);
-        expect(backgroundEntry?.backgroundColor).toBeTruthy();
-
-        toolChromeMode = 'cards';
+        const screen = await renderToolCallsGroupView({ status: 'completed', toolMessages });
+        const background = flattenTestStyle(screen.findByTestId('transcript-tool-calls-group')?.props.style).backgroundColor;
+        expect(background).toBeTruthy();
         await act(async () => {
-            await screen.update(
-                <ToolCallsGroupView
-                    id="toolCalls:1"
-                    status="completed"
-                    toolMessages={toolMessages}
-                    metadata={null}
-                    sessionId="s1"
-                    expanded={false}
-                    setExpanded={vi.fn()}
-                    interaction={{ canSendMessages: true, canApprovePermissions: true }}
-                />,
-            );
+            getStorage().setState(state => ({ settings: { ...state.settings, toolViewTimelineChromeMode: 'cards' } }));
+            await screen.update(<ToolCallsGroupView id="toolCalls:1" status="completed"
+                toolMessages={toolMessages} metadata={null} sessionId="s1" expanded={false}
+                setExpanded={() => {}} interaction={{ canSendMessages: false, canApprovePermissions: false }} />);
         });
-
-        const containerCards = screen.findByTestId('transcript-tool-calls-group') as any;
-        const stylesCards = Array.isArray(containerCards.props.style) ? containerCards.props.style : [containerCards.props.style];
-        const backgroundEntryCards = stylesCards.find((s: any) => s?.backgroundColor);
-        expect(backgroundEntryCards?.backgroundColor ?? null).not.toBe(backgroundEntry?.backgroundColor ?? null);
+        expect(flattenTestStyle(screen.findByTestId('transcript-tool-calls-group')?.props.style).backgroundColor ?? null)
+            .not.toBe(background);
     });
 
-    it('renders grouped tool rows through ToolView in cards mode when no structured message view is needed', async () => {
-        toolChromeMode = 'cards';
-        toolCallsGroupShowBackground = false;
-
-        const screen = await renderToolCallsGroupView({
-            status: 'completed',
-            toolMessages: [createToolCallMessageFixture({ id: 'm1', createdAt: 1 })],
-            expanded: true,
-        });
-
-        expect(screen.findAllByType('ToolView' as any)).toHaveLength(1);
-        expect(screen.findAllByType('ToolTimelineRow' as any)).toHaveLength(0);
+    it('renders the real cards row rather than a timeline row when no structured view is needed', async () => {
+        getStorage().setState(state => ({ settings: { ...state.settings, toolViewTimelineChromeMode: 'cards' } }));
+        const screen = await renderToolCallsGroupView({ status: 'completed', expanded: true,
+            toolMessages: [createToolCallMessageFixture({ id: 'm1', createdAt: 1 })] });
+        expect(screen.findAllByType(ToolView)).toHaveLength(1);
+        expect(screen.findAllByType(ToolTimelineRow)).toHaveLength(0);
     });
 });

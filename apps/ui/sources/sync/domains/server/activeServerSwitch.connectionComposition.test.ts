@@ -1,64 +1,28 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
-const mocks = vi.hoisted(() => ({
-    syncSwitchServer: vi.fn(),
-}));
+describe('active focus transaction with the production connection manager and Sync', () => {
+    let network: Awaited<ReturnType<typeof installSessionOpsNetworkBoundary>> | null = null;
 
-vi.mock('@/sync/sync', () => ({
-    sync: { retryNow: vi.fn() },
-    syncSwitchServer: (...args: unknown[]) => mocks.syncSwitchServer(...args),
-    syncRestore: vi.fn(async () => undefined),
-}));
-
-vi.mock('@/sync/http/client', () => ({
-    abortServerFetches: vi.fn(),
-}));
-
-vi.mock('@/auth/storage/tokenStorage', () => ({
-    TokenStorage: {
-        getCredentials: vi.fn(async () => null),
-        getCredentialsForServerUrl: vi.fn(async () => null),
-    },
-}));
-
-vi.mock('@/sync/runtime/nativeIrohTunnels/runtime', () => ({
-    getIrohHomeTunnelRuntime: () => ({
-        releaseActiveHomeTunnels: vi.fn(async () => undefined),
-        releaseLeasesForStaleTargets: vi.fn(async () => undefined),
-    }),
-}));
-
-vi.mock('@/sync/ops/account/accountEncryptionFirstKeyExternalAuth', () => ({
-    guardAccountEncryptionFirstKeyCredentialMutation: vi.fn(async () => ({ kind: 'allowed' })),
-}));
-
-vi.mock('@/components/account/presentFirstKeyCredentialLifecycle', () => ({
-    presentFirstKeyCredentialLifecycle: async (params: {
-        run: () => Promise<{ kind: string }>;
-    }) => await params.run(),
-}));
-
-function randomScope(): string {
-    return `test_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-}
-
-describe('active focus transaction with the production connection manager', () => {
-    const previousScope = process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
-
-    afterEach(() => {
+    afterEach(async () => {
+        const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
+        await disconnectActiveServerConnection();
+        const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
+        const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
+        serverScopedRpcSocketPool.resetForTests();
+        resetScopedMachineTransportCacheForTests();
+        network?.dispose();
+        network = null;
         vi.unstubAllGlobals();
-        vi.resetModules();
-        vi.clearAllMocks();
-        if (previousScope === undefined) delete process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
-        else process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = previousScope;
+        vi.restoreAllMocks();
     });
 
     it('does not hand focused ownership to the next Home until full Sync applies the current Home', async () => {
-        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
-        vi.stubGlobal('window', { location: { origin: 'https://origin.example.test' } });
-        vi.stubGlobal('document', {});
+        vi.resetModules();
         const lockTails = new Map<string, Promise<void>>();
         vi.stubGlobal('navigator', {
             locks: {
@@ -70,36 +34,38 @@ describe('active focus transaction with the production connection manager', () =
                 },
             },
         });
-
+        network = await installSessionOpsNetworkBoundary();
+        const active = await network.addHome('https://active.example.test', 'active-account');
+        const middle = await network.addHome('https://middle.example.test', 'middle-account');
+        const final = await network.addHome('https://final.example.test', 'final-account');
         const firstSwitchStarted = createDeferred<void>();
         const releaseFirstSwitch = createDeferred<void>();
-        let switchCount = 0;
-        mocks.syncSwitchServer.mockImplementation(async () => {
-            switchCount += 1;
-            if (switchCount !== 1) return;
-            firstSwitchStarted.resolve();
-            await releaseFirstSwitch.promise;
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const readCredential = vi.mocked(TokenStorage.getCredentialsForServerUrl).getMockImplementation()!;
+        let holdMiddleRead = true;
+        vi.mocked(TokenStorage.getCredentialsForServerUrl).mockImplementation(async (...args) => {
+            if (args[0] === middle.serverUrl && holdMiddleRead) {
+                firstSwitchStarted.resolve();
+                await releaseFirstSwitch.promise;
+            }
+            return await readCredential(...args);
+        });
+        network.setHttpResponder(async (input) => {
+            const url = new URL(String(input));
+            if (url.pathname === '/v1/account/encryption/currentness') {
+                return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            }
+            if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            return null;
         });
 
         const profiles = await import('./serverProfiles');
-        const active = await profiles.upsertServerProfile({
-            serverUrl: 'https://active.example.test',
-            name: 'Active',
-        });
-        const middle = await profiles.upsertServerProfile({
-            serverUrl: 'https://middle.example.test',
-            name: 'Middle',
-        });
-        const final = await profiles.upsertServerProfile({
-            serverUrl: 'https://final.example.test',
-            name: 'Final',
-        });
         await profiles.setActiveServerId(active.id, { scope: 'device' });
-        const [switches, connection] = await Promise.all([
-            import('./activeServerSwitch'),
-            import('@/sync/runtime/orchestration/connectionManager'),
-        ]);
-
+        await loadSyncSingletonForTests();
+        const connection = await import('@/sync/runtime/orchestration/connectionManager');
+        await connection.restoreConnectionToActiveServer({ token: active.token });
+        const switches = await import('./activeServerSwitch');
         const first = switches.setActiveServerAndSwitch({ serverId: middle.id, scope: 'device' });
         await firstSwitchStarted.promise;
         const second = switches.setActiveServerAndSwitch({ serverId: final.id, scope: 'device' });
@@ -107,13 +73,14 @@ describe('active focus transaction with the production connection manager', () =
         await Promise.resolve();
         expect(profiles.getActiveServerId()).toBe(middle.id);
         expect(connection.getAppliedActiveServerId()).toBe(active.id);
-        expect(mocks.syncSwitchServer).toHaveBeenCalledTimes(1);
+        expect(network.httpRequests.some(({ url }) => new URL(url).origin === final.serverUrl)).toBe(false);
 
+        holdMiddleRead = false;
         releaseFirstSwitch.resolve();
         await expect(Promise.all([first, second])).resolves.toEqual(['switched', 'switched']);
 
         expect(profiles.getActiveServerId()).toBe(final.id);
         expect(connection.getAppliedActiveServerId()).toBe(final.id);
-        expect(mocks.syncSwitchServer).toHaveBeenCalledTimes(2);
+        expect(connection.isAppliedActiveServerRuntimeAvailable()).toBe(true);
     });
 });

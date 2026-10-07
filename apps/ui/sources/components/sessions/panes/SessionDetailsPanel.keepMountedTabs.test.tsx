@@ -1,507 +1,182 @@
 import * as React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { findTestInstanceByTypeWithProps, flushHookEffects, renderScreen } from '@/dev/testkit';
+import { act } from 'react-test-renderer';
+import { describe, expect, it } from 'vitest';
+import { createSessionFixture, flushHookEffects, renderScreen } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storageStore';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { SessionSystemRecordStoredSchema, type SessionSystemRecordStored } from '@happier-dev/protocol';
+import type { MountedSessionBoardController } from '@/components/sessions/board/SessionBoardControllerProvider';
 import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
-import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
+import { installSessionPaneRuntimeTestHarness } from './sessionPaneRuntimeTestHarness';
+import { createSessionFileDetailsTab, createSessionScmReviewDetailsTab, createSessionBoardDetailsTab } from './details/sessionDetailsTabBuilders';
 
+installSessionDetailsPanelCommonModuleMocks();
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+type PaneRuntime = ReturnType<typeof installSessionPaneRuntimeTestHarness>;
 
-const addEventListenerSpy = vi.fn((type: string, handler: any) => {
-    if (type === 'wheel') wheelHandlers.push(handler);
-    if (type === 'touchmove') touchMoveHandlers.push(handler);
-});
-const removeEventListenerSpy = vi.fn();
-const wheelHandlers: Array<(e: any) => void> = [];
-const touchMoveHandlers: Array<(e: any) => void> = [];
-
-let lastScrollLockBypassEl: { addEventListener: any; removeEventListener: any } | null = null;
-
-const fakeDomNode = {
-    addEventListener: addEventListenerSpy,
-    removeEventListener: removeEventListenerSpy,
-    querySelectorAll: () => [],
-    querySelector: () => null,
-    getAttribute: () => null,
-    hasAttribute: () => false,
-    scrollHeight: 0,
-    clientHeight: 0,
-    scrollWidth: 0,
-    clientWidth: 0,
-    scrollTop: 0,
-    scrollLeft: 0,
-};
-
-type ScopeStateFixture = Readonly<{
-    right: Readonly<{
-        isOpen: boolean;
-        activeTabId: string | null;
-    }>;
-    details: Readonly<{
-        isOpen: boolean;
-        activeTabKey: string;
-        groups?: ReadonlyArray<Readonly<{ id: string; activeTabKey: string | null }>>;
-        maximizedGroupId?: string | null;
-        tabs: ReadonlyArray<Readonly<{
-            key: string;
-            kind: string;
-            title: string;
-            isPinned: boolean;
-            isPreview: boolean;
-            resource: Readonly<{ kind: string; path?: string }>;
-        }>>;
-    }>;
-}>;
-
-function createScopeState(): ScopeStateFixture {
-    return {
-        right: {
-            isOpen: false,
-            activeTabId: null,
-        },
-        details: {
-            isOpen: true,
-            activeTabKey: 'file:a',
-            tabs: [
-                { key: 'file:a', kind: 'file', title: 'a.txt', isPinned: true, isPreview: false, resource: { kind: 'file', path: 'a.txt' } },
-                { key: 'scmReview', kind: 'scmReview', title: 'Review', isPinned: true, isPreview: false, resource: { kind: 'scmReview' } },
-            ],
-        },
-    };
-}
-
-let scopeState = createScopeState();
-let boardFeatureEnabled = false;
-let mountedBoardItemCount = 0;
-let mountedBoardAddressMatches = true;
-let sessionHydrated = true;
-const mountedBoardAddressCalls: unknown[] = [];
-const mountedCallerHostedHtmlRuntime = Object.freeze({ serverIdentityId: 'home-a-runtime' });
-
-function getStyleValue(style: unknown, key: string): unknown {
-    if (Array.isArray(style)) {
-        for (let index = style.length - 1; index >= 0; index -= 1) {
-            const value = getStyleValue(style[index], key);
-            if (typeof value !== 'undefined') return value;
-        }
-        return undefined;
-    }
-    return style && typeof style === 'object'
-        ? (style as Record<string, unknown>)[key]
-        : undefined;
-}
-
-installSessionDetailsPanelCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            Platform: {
-                OS: 'web',
-            },
-            View: React.forwardRef((props: any, ref: any) => {
-                lastScrollLockBypassEl = fakeDomNode;
-                if (ref && typeof ref === 'object') {
-                    ref.current = fakeDomNode;
-                }
-                if (typeof ref === 'function') {
-                    ref(fakeDomNode);
-                }
-                return React.createElement('View', props, props.children);
-            }),
-            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-            ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
-        });
-    },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            useLocalSetting: (key: string) => {
-                return null;
-            },
-            useLocalSettingMutable: () => [false, vi.fn()],
-        });
-    },
-});
-
-vi.mock('@/components/sessions/files/views/SessionCommitDetailsView', () => ({
-    SessionCommitDetailsView: () => React.createElement('SessionCommitDetailsView'),
-}));
-
-vi.mock('@/components/sessions/files/views/SessionFileDetailsView', () => ({
-    SessionFileDetailsView: (props: any) => React.createElement('SessionFileDetailsView', props),
-}));
-
-vi.mock('@/components/sessions/files/views/SessionScmReviewDetailsView', () => ({
-    SessionScmReviewDetailsView: () => React.createElement('SessionScmReviewDetailsView'),
-}));
-
-vi.mock('@/components/ui/media/FileIcon', () => ({
-    FileIcon: 'FileIcon',
-}));
-
-vi.mock('@/components/ui/code/editor/CodeEditor', () => ({
-    CodeEditor: (props: Record<string, unknown>) => React.createElement('CodeEditor', props),
-}));
-
-const unpinDetailsTab = vi.fn();
-const openRight = vi.fn();
-const closeRight = vi.fn();
-
-vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
-    useAppPaneScope: () => ({
-        closeDetails: vi.fn(),
-        closeDetailsTab: vi.fn(),
-        openRight,
-        closeRight,
-        pinDetailsTab: vi.fn(),
-        unpinDetailsTab,
-        setActiveDetailsTab: vi.fn(),
-        openDetailsTab: vi.fn(),
-        scopeState,
-    }),
-}));
-
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: (featureId: string, scope: Readonly<{ serverId?: string | null }>) => {
-        if (featureId !== 'sessions.board' || scope.serverId !== 'home-a') return false;
-        return boardFeatureEnabled;
-    },
-}));
-
-vi.mock('@/components/sessions/board/SessionBoardControllerProvider', () => ({
-    useMountedSessionBoardController: (address: unknown) => {
-        mountedBoardAddressCalls.push(address);
-        if (!mountedBoardAddressMatches) return null;
-        return {
-            callerHostedHtmlRuntime: mountedCallerHostedHtmlRuntime,
-            binding: {
-                status: 'ready',
-                snapshot: {
-                    itemsById: new Map(
-                        Array.from({ length: mountedBoardItemCount }, (_, index) => [`item-${index}`, {}]),
-                    ),
-                },
-            },
-        };
-    },
-}));
-
-vi.mock('@/components/sessions/shell/sessionViewStableSession', () => ({
-    useSessionViewShellSession: (sessionId: string, serverId: string | null) => sessionHydrated ? ({
-        id: sessionId,
-        serverId,
-        metadata: null,
-    }) : null,
-}));
-
-vi.mock('@/components/ui/surfaces/hostedHtml/useSessionCallerHostedHtmlRuntime', () => ({
-    useSessionCallerHostedHtmlRuntime: () => {
-        throw new Error('panels must consume the Session shell mounted Board runtime');
-    },
-}));
-
-async function renderSessionDetailsPanel() {
+async function mountPanel(runtime: PaneRuntime) {
     const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
-    const screen = await renderScreen(<SessionDetailsPanel
-        sessionId="s1"
-        scopeId="session:s1"
-        paneSurfaceScope={{
-            targetKind: 'session',
-            sessionId: 's1',
-            machineId: 'machine-a',
-            serverId: 'home-a',
-            pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION,
-            projectionPhase: 'current',
-            interactionEnabled: true,
-            platform: 'web',
-        }}
-    />);
-    await flushHookEffects({ cycles: 1, frames: 1 });
-    return screen;
+    return await renderScreen(<runtime.Wrapper>
+        <SessionDetailsPanel sessionId="s1" routeServerId={runtime.serverId} scopeId="session:s1" />
+    </runtime.Wrapper>);
 }
 
 describe('SessionDetailsPanel (keep mounted tabs)', () => {
-    beforeEach(() => {
-        scopeState = createScopeState();
-        lastScrollLockBypassEl = null;
-        addEventListenerSpy.mockClear();
-        removeEventListenerSpy.mockClear();
-        openRight.mockClear();
-        closeRight.mockClear();
-        unpinDetailsTab.mockClear();
-        boardFeatureEnabled = false;
-        mountedBoardItemCount = 0;
-        mountedBoardAddressMatches = true;
-        sessionHydrated = true;
-        mountedBoardAddressCalls.length = 0;
-        wheelHandlers.length = 0;
-        touchMoveHandlers.length = 0;
+    const runtime = installSessionPaneRuntimeTestHarness();
+
+    it('shows pending details until the deep-linked Session hydrates', async () => {
+        storage.setState({ sessions: {} });
+        const screen = await mountPanel(runtime);
+        await act(async () => runtime.pane.openDetailsTab(createSessionFileDetailsTab('a.txt'), { intent: 'pinned' }));
+        expect(screen.findHostByTestId('details-surface-fallback-pending')).not.toBeNull();
+        expect(screen.findHostByTestId('details-surface-fallback-unsupported')).toBeNull();
+        await act(async () => storage.getState().applySessions([createSessionFixture({ id: 's1', serverId: runtime.serverId })]));
+        expect(screen.findHostByTestId('details-surface-fallback-pending')).toBeNull();
     });
 
-    it('shows a pending details state until a deep-linked Session hydrates', async () => {
-        sessionHydrated = false;
-        const screen = await renderSessionDetailsPanel();
-        expect(screen.findByTestId('details-surface-fallback-pending')).not.toBeNull();
-        expect(screen.findByTestId('details-surface-fallback-unsupported')).toBeNull();
+    it('retains inactive file and review views without hiding their web DOM state', async () => {
+        const { SessionFileDetailsView } = await import('@/components/sessions/files/views/SessionFileDetailsView');
+        const { SessionScmReviewDetailsView } = await import('@/components/sessions/files/views/SessionScmReviewDetailsView');
+        const screen = await mountPanel(runtime);
+        await act(async () => runtime.pane.openDetailsTab(createSessionFileDetailsTab('a.txt'), { intent: 'pinned' }));
+        await act(async () => runtime.pane.openDetailsTab(createSessionScmReviewDetailsTab(), { intent: 'pinned' }));
+        expect(screen.tree.findAllByType(SessionFileDetailsView)).toHaveLength(1);
+        expect(screen.tree.findAllByType(SessionScmReviewDetailsView)).toHaveLength(1);
+        const inactive = screen.tree.findAll(node => typeof node.type === 'string'
+            && node.props.role === 'tabpanel' && node.props.pointerEvents === 'none');
+        expect(inactive).toHaveLength(1);
+        expect(inactive[0].props.style).toMatchObject({ display: 'flex', visibility: 'hidden' });
+        expect(inactive[0].props.accessibilityElementsHidden).toBeUndefined();
+        expect(inactive[0].props.importantForAccessibility).toBeUndefined();
+        await act(async () => runtime.pane.setActiveDetailsTab('file:a.txt'));
+        expect(screen.tree.findAllByType(SessionFileDetailsView)).toHaveLength(1);
+        expect(screen.tree.findAllByType(SessionScmReviewDetailsView)).toHaveLength(1);
+        expect(runtime.pane.scopeState?.details.activeTabKey).toBe('file:a.txt');
     });
 
-    it('keeps inactive tab contents mounted so state can be preserved', async () => {
-        const screen = await renderSessionDetailsPanel();
-
-        expect(screen.findAllByType('SessionFileDetailsView')).toHaveLength(1);
-        expect(screen.findAllByType('SessionScmReviewDetailsView')).toHaveLength(1);
+    it('publishes pin/unpin affordances that change real tab state and retain the file icon', async () => {
+        const screen = await mountPanel(runtime);
+        await act(async () => runtime.pane.openDetailsTab(createSessionFileDetailsTab('a.txt'), { intent: 'preview' }));
+        const pin = screen.findHostByTestId('session-details-tab-pin-file_a.txt');
+        expect(pin?.props.accessibilityLabel).toContain('Pin');
+        await screen.pressByTestIdAsync('session-details-tab-pin-file_a.txt');
+        expect(runtime.pane.scopeState?.details.tabs.find(tab => tab.key === 'file:a.txt')).toMatchObject({ isPinned: true, isPreview: false });
+        const unpin = screen.findHostByTestId('session-details-tab-unpin-file_a.txt');
+        expect(unpin?.props.accessibilityLabel).toContain('Unpin');
+        expect(screen.findHostByTestId('session-details-tab-file-icon-file_a.txt')).not.toBeNull();
+        await screen.pressByTestIdAsync('session-details-tab-unpin-file_a.txt');
+        expect(runtime.pane.scopeState?.details.tabs.find(tab => tab.key === 'file:a.txt')?.isPinned).toBe(false);
     });
 
-    it('promotes Board to a dedicated exact-Home header action only for content or a visible Board', async () => {
+    it('toggles the actual right pane from the Details header in both directions', async () => {
+        const screen = await mountPanel(runtime);
+        await act(async () => runtime.pane.openDetailsTab(createSessionFileDetailsTab('a.txt'), { intent: 'pinned' }));
+        expect(runtime.pane.scopeState?.right.isOpen).toBe(false);
+        await screen.pressByTestIdAsync('session-details-right-pane-toggle');
+        expect(runtime.pane.scopeState?.right.isOpen).toBe(true);
+        await screen.pressByTestIdAsync('session-details-right-pane-toggle');
+        expect(runtime.pane.scopeState?.right.isOpen).toBe(false);
+    });
+});
+
+function record(localId: string, kind: string, value: unknown): SessionSystemRecordStored {
+    return SessionSystemRecordStoredSchema.parse({
+        id: localId, address: { owner: 'host', namespace: 'surface', kind, localId },
+        content: { t: 'plain', v: value }, revision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ',
+        createdAt: '2026-09-05T00:00:00.000Z', updatedAt: '2026-09-05T00:00:00.000Z',
+    });
+}
+
+function sessionWire(id: string) {
+    const session = createSessionFixture({ id });
+    return {
+        id, seq: 1, createdAt: 1, updatedAt: 1, active: false, activeAt: 1,
+        encryptionMode: 'plain', dataEncryptionKey: null, metadataLayoutVersion: 0,
+        metadataVersion: 1, metadata: JSON.stringify(session.metadata), agentState: null,
+        agentStateVersion: 1, share: null,
+        effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
+            audienceContext: null, capabilities: session.access!.capabilities },
+    };
+}
+
+describe.each([true, false])('SessionDetailsPanel exact-Home Board action (Home enabled: %s)', (enabled) => {
+    let records: SessionSystemRecordStored[] = [];
+    let mounted: MountedSessionBoardController | null = null;
+    const runtime = installSessionPaneRuntimeTestHarness({
+        features: () => createRootLayoutFeaturesResponse({ features: { sessions: { board: { enabled } } } }),
+        request: async (url) => {
+            const path = new URL(String(url)).pathname;
+            if (path.endsWith('/system-records')) return Response.json({ records, nextCursor: null, hasNext: false });
+            if (path === '/v2/sessions/s1' || path === '/v2/sessions/s2') return Response.json({ session: sessionWire(path.split('/').at(-1)!) });
+            if (path === '/v2/sessions' || path === '/v2/sessions/active') return Response.json({ sessions: [sessionWire('s1'), sessionWire('s2')], nextCursor: null, hasNext: false });
+            if (path === '/v2/sessions/metadata-upgrades') return Response.json({ sessionIds: [] });
+            return null;
+        },
+    });
+
+    it('requires the exact Home bit even when the Board has content or a visible split destination', async () => {
+        records = [];
+        mounted = null;
+        storage.getState().applySettingsLocal({ experiments: true });
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
-        boardFeatureEnabled = true;
-
-        let screen = await renderSessionDetailsPanel();
-        expect(screen.findByTestId('session-details-open-board')).toBeUndefined();
-        expect(mountedBoardAddressCalls.at(-1)).toEqual({ serverId: 'home-a', sessionId: 's1' });
-
-        mountedBoardItemCount = 1;
-        screen.tree.update(<SessionDetailsPanel
-            sessionId="s1"
-            scopeId="session:s1"
-            paneSurfaceScope={{
-                targetKind: 'session',
-                sessionId: 's1',
-                machineId: 'machine-a',
-                serverId: 'home-a',
-                pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION,
-                projectionPhase: 'current',
-                interactionEnabled: true,
-                platform: 'web',
-            }}
-        />);
-        expect(screen.findByTestId('session-details-open-board')).toBeTruthy();
-
-        mountedBoardItemCount = 0;
-        scopeState = {
-            ...scopeState,
-            details: {
-                ...scopeState.details,
-                groups: [{ id: 'secondary', activeTabKey: 'board' }],
-            },
-        };
-        screen.tree.update(<SessionDetailsPanel
-            sessionId="s1"
-            scopeId="session:s1"
-            paneSurfaceScope={{
-                targetKind: 'session',
-                sessionId: 's1',
-                machineId: 'machine-a',
-                serverId: 'home-a',
-                pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION,
-                projectionPhase: 'current',
-                interactionEnabled: true,
-                platform: 'web',
-            }}
-        />);
-        expect(screen.findByTestId('session-details-open-board')).toBeTruthy();
-
-        mountedBoardAddressMatches = false;
-        scopeState = createScopeState();
-        screen.tree.update(<SessionDetailsPanel
-            sessionId="s1"
-            scopeId="session:s1"
-            paneSurfaceScope={{
-                targetKind: 'session',
-                sessionId: 's1',
-                machineId: 'machine-a',
-                serverId: 'home-a',
-                pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION,
-                projectionPhase: 'current',
-                interactionEnabled: true,
-                platform: 'web',
-            }}
-        />);
-        expect(screen.findByTestId('session-details-open-board')).toBeUndefined();
-    });
-
-    it('keeps the dedicated Board header action hidden when the exact Home disables Board', async () => {
-        const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
-        mountedBoardItemCount = 1;
-        scopeState = {
-            ...scopeState,
-            details: {
-                ...scopeState.details,
-                activeTabKey: 'board',
-            },
-        };
-
-        const screen = await renderScreen(<SessionDetailsPanel
-            sessionId="s1"
-            scopeId="session:s1"
-            paneSurfaceScope={{
-                targetKind: 'session',
-                sessionId: 's1',
-                machineId: 'machine-a',
-                serverId: 'home-a',
-                pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION,
-                projectionPhase: 'current',
-                interactionEnabled: true,
-                platform: 'web',
-            }}
-        />);
-
-        expect(screen.findByTestId('session-details-open-board')).toBeUndefined();
-    });
-
-    it('does not hide inactive tab surfaces via accessibility props on web (preserve scroll state)', async () => {
-        const screen = await renderSessionDetailsPanel();
-
-        const surfaces = screen.findAll((node) => {
-            const props = node.props as any;
-            return props.pointerEvents === 'none' || props.pointerEvents === 'auto';
+        const { SessionBoardControllerProvider, useMountedSessionBoardController } = await import('@/components/sessions/board/SessionBoardControllerProvider');
+        function Probe() {
+            mounted = useMountedSessionBoardController({ serverId: runtime.serverId, sessionId: 's1' });
+            return null;
+        }
+        const readMounted = () => mounted;
+        function Panel({ providerSessionId = 's1' }: Readonly<{ providerSessionId?: string }>) {
+            return <runtime.Wrapper><SessionBoardControllerProvider sessionId={providerSessionId} serverId={runtime.serverId}>
+                <Probe /><SessionDetailsPanel sessionId="s1" routeServerId={runtime.serverId} scopeId="session:s1" />
+            </SessionBoardControllerProvider></runtime.Wrapper>;
+        }
+        const screen = await renderScreen(<Panel />);
+        await act(async () => runtime.pane.openDetailsTab(createSessionFileDetailsTab('a.txt'), { intent: 'pinned' }));
+        await flushHookEffects({ cycles: 30 });
+        expect(screen.findHostByTestId('session-details-open-board')).toBeNull();
+        records = [
+            record('layout', 'layout.v1', { v: 1, tabs: [{ id: 'research', title: 'Research', items: [{ itemId: 'item-1', width: 'medium' }] }] }),
+            record('item-1', 'item.v1', { v: 1, title: 'Status', frame: 'card',
+                height: { mode: 'auto', fallback: 'regular' },
+                source: { kind: 'widget', instance: { v: 1, id: 'instance-1',
+                    definition: { kind: 'installed', surface: { pluginId: 'acme.board', localId: 'status' } }, bindings: {} } } }),
+        ];
+        await act(async () => readMounted()?.binding.refresh?.());
+        await flushHookEffects({ cycles: 30 });
+        const binding = readMounted()?.binding;
+        if (enabled) {
+            expect(binding?.status).toBe('ready');
+            if (binding?.status !== 'ready') throw new Error('Expected current Board records');
+            expect(binding.snapshot.itemsById.size).toBe(1);
+            expect(screen.findHostByTestId('session-details-open-board')).not.toBeNull();
+            records = [];
+            await act(async () => readMounted()?.binding.refresh?.());
+            await flushHookEffects({ cycles: 30 });
+            const empty = readMounted()?.binding;
+            expect(empty?.status).toBe('ready');
+            if (empty?.status !== 'ready') throw new Error('Expected empty current Board records');
+            expect(empty.snapshot.itemsById.size).toBe(0);
+            expect(screen.findHostByTestId('session-details-open-board')).toBeNull();
+        } else {
+            expect(binding).toMatchObject({ status: 'unavailable', reason: 'board_feature_disabled' });
+            expect(screen.findHostByTestId('session-details-open-board')).toBeNull();
+        }
+        await act(async () => {
+            runtime.pane.splitDetailsGroup?.({ axis: 'horizontal' });
+            runtime.pane.openDetailsTab(createSessionBoardDetailsTab(), { intent: 'pinned' });
         });
-
-        // Find an inactive surface (pointerEvents="none") and ensure we aren't using props that can map to `hidden`
-        // on react-native-web, which would drop scroll/editing state when switching tabs.
-        const inactiveSurface = surfaces.find((s) => (s.props as any).pointerEvents === 'none');
-        expect(inactiveSurface).toBeTruthy();
-        expect(getStyleValue(inactiveSurface!.props.style, 'display')).toBe('flex');
-        expect(getStyleValue(inactiveSurface!.props.style, 'visibility')).toBe('hidden');
-        expect((inactiveSurface!.props as any).accessibilityElementsHidden).toBeUndefined();
-        expect((inactiveSurface!.props as any).importantForAccessibility).toBeUndefined();
-    });
-
-    it('stops wheel/touch scroll propagation on web so docked/overlay panes can scroll inside modals', async () => {
-        lastScrollLockBypassEl = null;
-        const originalDocument = (globalThis as any).document;
-        // Simulate a scroll-locked document (common with web overlays/modals).
-        (globalThis as any).document = {
-            documentElement: {
-                hasAttribute: () => false,
-                getAttribute: () => null,
-            },
-            body: {
-                hasAttribute: () => false,
-                getAttribute: () => null,
-                style: { overflow: 'hidden', overflowY: 'hidden' },
-            },
-            defaultView: {
-                getComputedStyle: () => ({ overflow: 'hidden', overflowY: 'hidden' }),
-            },
-        };
-
-        try {
-            await renderSessionDetailsPanel();
-
-            expect(lastScrollLockBypassEl).toBeTruthy();
-            expect(vi.mocked(lastScrollLockBypassEl!.addEventListener)).toHaveBeenCalledWith(
-                'wheel',
-                expect.any(Function),
-                expect.objectContaining({ passive: true }),
-            );
-            expect(vi.mocked(lastScrollLockBypassEl!.addEventListener)).toHaveBeenCalledWith(
-                'touchmove',
-                expect.any(Function),
-                expect.objectContaining({ passive: true }),
-            );
-        } finally {
-            (globalThis as any).document = originalDocument;
+        expect(runtime.pane.scopeState?.details.groups?.some(group => group.activeTabKey === 'board')).toBe(true);
+        expect(Boolean(screen.findHostByTestId('session-details-open-board'))).toBe(enabled);
+        if (enabled) {
+            await act(async () => runtime.pane.closeDetailsTab('board'));
+            storage.getState().applySessions([createSessionFixture({ id: 's2', serverId: runtime.serverId })]);
+            records = [record('item-1', 'item.v1', { v: 1, title: 'Other Session card', frame: 'card',
+                height: { mode: 'auto', fallback: 'regular' }, source: { kind: 'widget', instance: { v: 1, id: 'other',
+                    definition: { kind: 'installed', surface: { pluginId: 'acme.board', localId: 'status' } }, bindings: {} } } })];
+            await act(async () => screen.tree.update(<Panel providerSessionId="s2" />));
+            await flushHookEffects({ cycles: 30 });
+            expect(readMounted()).toBeNull();
+            expect(screen.findHostByTestId('session-details-open-board')).toBeNull();
         }
-    });
-
-    it('renders pinned tab affordance as an unpin icon (pin-slash)', async () => {
-        const screen = await renderSessionDetailsPanel();
-
-        const pinnedA = screen.findByTestId('session-details-tab-unpin-file_a');
-        const pinnedReview = screen.findByTestId('session-details-tab-unpin-scmReview');
-        if (!pinnedA || !pinnedReview) {
-            throw new Error('Unable to find pinned tab affordances');
-        }
-
-        const aIcon = findTestInstanceByTypeWithProps(pinnedA, 'Icon', { name: 'push-pin-slash' });
-        const reviewIcon = findTestInstanceByTypeWithProps(pinnedReview, 'Icon', { name: 'push-pin-slash' });
-
-        expect(aIcon).toBeTruthy();
-        expect(reviewIcon).toBeTruthy();
-    });
-
-    it('uses the concrete file icon in file detail tabs', async () => {
-        const screen = await renderSessionDetailsPanel();
-
-        const tab = screen.findByTestId('session-details-tab-file_a');
-        if (!tab) {
-            throw new Error('Unable to find file details tab');
-        }
-
-        expect(screen.findByTestId('session-details-tab-file-icon-file_a')).toBeTruthy();
-        expect(findTestInstanceByTypeWithProps(tab, 'Icon', { name: 'file' })).toBeUndefined();
-    });
-
-    it('opens the right pane from the details panel header when it is closed', async () => {
-        const screen = await renderSessionDetailsPanel();
-
-        await screen.pressByTestId('session-details-right-pane-toggle');
-
-        expect(openRight).toHaveBeenCalledTimes(1);
-        expect(closeRight).not.toHaveBeenCalled();
-    });
-
-    it('closes the right pane from the details panel header when it is open', async () => {
-        scopeState = {
-            ...scopeState,
-            right: {
-                isOpen: true,
-                activeTabId: 'files',
-            },
-        };
-        const screen = await renderSessionDetailsPanel();
-
-        await screen.pressByTestId('session-details-right-pane-toggle');
-
-        expect(closeRight).toHaveBeenCalledTimes(1);
-        expect(openRight).not.toHaveBeenCalled();
-    });
-
-    it('renders preview tab pin action as a pin icon (not pin-slash)', async () => {
-        const originalTabs = scopeState.details.tabs;
-        scopeState = {
-            ...scopeState,
-            details: {
-                ...scopeState.details,
-                tabs: [
-                    ...originalTabs,
-                    {
-                        key: 'file:preview',
-                        kind: 'file',
-                        title: 'preview.txt',
-                        isPinned: false,
-                        isPreview: true,
-                        resource: { kind: 'file', path: 'preview.txt' },
-                    },
-                ],
-            },
-        };
-
-        try {
-            const screen = await renderSessionDetailsPanel();
-            const pinButton = screen.findByTestId('session-details-tab-pin-file_preview');
-            if (!pinButton) {
-                throw new Error('Unable to find preview pin affordance');
-            }
-            const pinIcon = findTestInstanceByTypeWithProps(pinButton, 'Icon', { name: 'push-pin' });
-            expect(pinIcon).toBeTruthy();
-        } finally {
-            scopeState = {
-                ...scopeState,
-                details: {
-                    ...scopeState.details,
-                    tabs: originalTabs,
-                },
-            };
-        }
-    });
-
-    it('unpins a pinned tab when pressing the unpin action', async () => {
-        const screen = await renderSessionDetailsPanel();
-
-        await screen.pressByTestId('session-details-tab-unpin-file_a');
-
-        expect(unpinDetailsTab).toHaveBeenCalledWith('file:a');
     });
 });

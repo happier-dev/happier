@@ -43,7 +43,7 @@ describe('createActionToolExecutorBridge', () => {
     // The list port is the authenticated server HTTP boundary; the bridge and executor stay real.
     const sessionList = vi.fn(async () => ({
       sessions: [], nextCursor: null, hasNext: false,
-      queryVersion: 1, attentionNextCursor: null, attentionHasNext: false,
+      attentionNextCursor: null, attentionHasNext: false,
     }));
     const executor = createActionExecutor({
       ...createCliActionDeps({ token: 'test-token', sessionId: 'lead', mode: 'plain', ctx: null }),

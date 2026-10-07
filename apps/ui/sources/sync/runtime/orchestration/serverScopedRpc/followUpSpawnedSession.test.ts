@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { IDBFactory } from 'fake-indexeddb';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1 } from '@happier-dev/protocol';
 
-import { fetchAndApplySessionById } from '@/sync/engine/sessions/sessionById';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { createNotAuthenticatedError } from '@/sync/runtime/connectivity/authErrors';
 
@@ -504,101 +505,6 @@ describe('followUpSpawnedSessionWithServerScope', () => {
         expect(refreshSessions).not.toHaveBeenCalled();
     });
 
-    it('sends the first turn when the scoped by-id row is older than the stored models seed', async () => {
-        const sendSessionMessageWithServerScope = vi.fn(async () => ({ ok: true as const }));
-        const storedSession = {
-            id: 'sess_target',
-            serverId: 'server-b',
-            createdAt: 1,
-            updatedAt: 2,
-            seq: 3,
-            active: true,
-            activeAt: 2,
-            encryptionMode: 'plain',
-            metadataLayoutVersion: 0,
-            metadataVersion: 2,
-            metadata: { sessionModelsV1: { updatedAt: 2 } },
-            agentStateVersion: 1,
-            agentState: null,
-            thinking: false,
-            thinkingAt: 0,
-        } as Session;
-        const applySessions = vi.fn();
-        const { createFollowUpSpawnedSessionWithServerScope } = await import('./followUpSpawnedSession');
-        const { followUpSpawnedSessionWithServerScope } = createFollowUpSpawnedSessionWithServerScope({
-            resolveContext: async () => ({
-                scope: 'scoped',
-                timeoutMs: 5_000,
-                targetServerId: 'server-b',
-                targetAccountId: 'account-b',
-                targetServerUrl: 'https://server-b.example.test',
-                token: 'token-b',
-                credentials: { token: 'token-b' },
-                encryption: null,
-            }),
-            fetchSessionById: async ({ getExistingSession, applySessions: applyFromById }) =>
-                fetchAndApplySessionById({
-                    sessionId: 'sess_target',
-                    serverId: 'server-b',
-                    credentials: { token: 'token-b' },
-                    accountCurrentness: {
-                        mode: 'plain',
-                        version: 1,
-                        signingKeyFingerprint: null,
-                        contentKeyFingerprint: null,
-                        updatedAt: 1,
-                        recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' },
-                    },
-                    encryption: {
-                        decryptEncryptionKey: async () => null,
-                        initializeSessions: async () => {},
-                        getSessionEncryption: () => null,
-                    },
-                    sessionDataKeys: new Map(),
-                    request: async () => Response.json({
-                        session: {
-                            id: 'sess_target',
-                            createdAt: 1,
-                            updatedAt: 1,
-                            seq: 2,
-                            active: true,
-                            activeAt: 1,
-                            encryptionMode: 'plain',
-                            dataEncryptionKey: null,
-                            metadataLayoutVersion: 0,
-                            metadataVersion: 1,
-                            metadata: '{}',
-                            agentStateVersion: 1,
-                            agentState: null,
-                            share: null,
-                        },
-                    }),
-                    applySessions: applyFromById,
-                    getExistingSession,
-                    log: { log: () => {} },
-                    includeTurnsProjection: false,
-                }),
-            sendSessionMessageWithServerScope,
-            getStoredSession: () => storedSession,
-            applySessions,
-        });
-
-        await followUpSpawnedSessionWithServerScope({
-            sessionId: 'sess_target',
-            targetServerId: 'server-b',
-            initialMessageText: 'first prompt',
-            messageLocalId: 'first-turn-local-id',
-        });
-
-        expect(sendSessionMessageWithServerScope).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
-            sessionId: 'sess_target',
-            message: 'first prompt',
-            messageLocalId: 'first-turn-local-id',
-            providerDeliveryIntent: 'first_turn',
-        }));
-        expect(applySessions).not.toHaveBeenCalled();
-        expect(storedSession.metadataVersion).toBe(2);
-    });
 
     it('routes an attachment-only first turn through the selected server scope after hydration', async () => {
         const sendSessionMessageWithServerScope = vi.fn(async () => ({ ok: true as const }));
@@ -900,5 +806,133 @@ describe('followUpSpawnedSessionWithServerScope', () => {
             serverId: 'server-b',
         });
         expect(sendMessage).not.toHaveBeenCalled();
+    });
+});
+
+describe('follow-up first-turn continuity (real scoped transport)', () => {
+    let boundary: Awaited<ReturnType<typeof import('@/dev/testkit/harness/sessionOpsNetworkBoundary').installSessionOpsNetworkBoundary>>;
+    let storage: typeof import('@/sync/domains/state/storage').storage;
+    let fixtures: typeof import('@/dev/testkit/fixtures/sessionFixtures');
+    let followUp: typeof import('./followUpSpawnedSession').followUpSpawnedSessionWithServerScope;
+    let readRecovery: typeof import('./followUpSpawnedSession').readRecoverableFollowUpPayload;
+    let home: Awaited<ReturnType<typeof boundary.addHome>>;
+    let focusedHome: Awaited<ReturnType<typeof boundary.addHome>>;
+    let storedMetadata: NonNullable<Session['metadata']>;
+    let hydrationStatus: number;
+    const pendingWrites: Array<{ url: string; token: string | null; body: unknown }> = [];
+
+    beforeAll(async () => {
+        vi.doUnmock('@/sync/sync');
+        vi.doUnmock('@/sync/runtime/getSyncSingleton');
+        vi.doUnmock('@/agents/catalog/catalog');
+        vi.resetModules();
+        const { installSessionOpsNetworkBoundary } = await import('@/dev/testkit/harness/sessionOpsNetworkBoundary');
+        boundary = await installSessionOpsNetworkBoundary();
+        await loadSyncSingletonForTests();
+        storage = (await import('@/sync/domains/state/storage')).storage;
+        fixtures = await import('@/dev/testkit/fixtures/sessionFixtures');
+        const owner = await import('./followUpSpawnedSession');
+        followUp = owner.followUpSpawnedSessionWithServerScope;
+        readRecovery = owner.readRecoverableFollowUpPayload;
+    });
+
+    beforeEach(async () => {
+        vi.stubGlobal('indexedDB', new IDBFactory());
+        storage.setState(storage.getInitialState(), true);
+        boundary.resetRequests();
+        pendingWrites.length = 0;
+        hydrationStatus = 200;
+        home = await boundary.addHome('https://follow-up-target.example.test', 'target-account');
+        focusedHome = await boundary.addHome('https://follow-up-focused.example.test', 'focused-account');
+        const { setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
+        await setActiveServerId(focusedHome.id, { scope: 'device' });
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        vi.mocked(TokenStorage.getCredentialsForServerUrl).mockResolvedValueOnce(null);
+        await (await import('@/sync/runtime/orchestration/connectionManager')).switchConnectionToActiveServer();
+        storage.setState({ profileScope: { serverId: focusedHome.id, accountId: focusedHome.accountId } });
+        const { MetadataSchema } = await import('@happier-dev/session-core/state');
+        storedMetadata = MetadataSchema.parse({
+            path: '/newer-workspace', host: 'machine.local', machineId: 'machine-1', flavor: 'codex',
+            sessionModelsV1: { v: 1, agentId: 'codex', updatedAt: 2, currentModelId: 'newer-model',
+                availableModels: [{ id: 'newer-model', name: 'Newer model' }] },
+        });
+        storage.getState().applySessions([fixtures.createSessionFixture({
+            id: 'sess_target', serverId: home.id, seq: 3, updatedAt: 2, active: true,
+            metadataLayoutVersion: 0, metadataVersion: 2, metadata: storedMetadata,
+        })]);
+        const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+        const features = createRootLayoutFeaturesResponse();
+        features.capabilities.session.pendingInput = { protocolVersion: 1 };
+        const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        resetServerFeaturesClientForTests();
+        boundary.setHttpResponder(async (input, init) => {
+            const url = new URL(String(input));
+            if (url.pathname === '/v1/features') return Response.json(features);
+            if (url.pathname === '/v1/account/encryption/currentness') return Response.json({
+                mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null,
+                updatedAt: 1, recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' },
+            });
+            if (url.pathname === '/v2/sessions/sess_target') {
+                expect(url.origin).toBe(home.serverUrl);
+                expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${home.token}`);
+                if (hydrationStatus !== 200) return Response.json({ error: 'unauthorized' }, { status: hydrationStatus });
+                return Response.json({ session: {
+                    id: 'sess_target', createdAt: 1, updatedAt: 1, seq: 2, active: true, activeAt: 1,
+                    encryptionMode: 'plain', dataEncryptionKey: null, metadataLayoutVersion: 0,
+                    metadataVersion: 1, metadata: JSON.stringify({ path: '/older-workspace', host: 'machine.local' }),
+                    agentStateVersion: 1, agentState: null, share: null,
+                    access: fixtures.createSessionAccessFixture(),
+                } });
+            }
+            if (url.pathname === '/v2/sessions/sess_target/pending' && init?.method === 'POST') {
+                const body: unknown = typeof init.body === 'string' ? JSON.parse(init.body) : null;
+                pendingWrites.push({ url: url.href, token: new Headers(init.headers).get('Authorization'), body });
+                if (!body || typeof body !== 'object' || !('localId' in body) || !('content' in body) || !('requestedAction' in body)) {
+                    throw new Error('Malformed first-turn Pending request');
+                }
+                return Response.json({ didWrite: true, requestedAction: body.requestedAction, pendingCount: 1, pendingVersion: 1,
+                    pending: { localId: body.localId, content: body.content, status: 'queued', position: 0,
+                        createdAt: 10, updatedAt: 10, discardedAt: null, discardedReason: null, authorAccountId: home.accountId } });
+            }
+            return null;
+        });
+    });
+
+    afterEach(() => vi.unstubAllGlobals());
+    afterAll(async () => {
+        await (await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool')).resetServerReachabilitySupervisors();
+        boundary?.dispose();
+    });
+
+    it('sends the first turn when the scoped by-id row is older than the stored models seed', async () => {
+        await followUp({ sessionId: 'sess_target', targetServerId: home.id,
+            initialMessageText: 'first prompt', messageLocalId: 'first-turn-local-id' });
+        expect(pendingWrites).toEqual([{
+            url: `${home.serverUrl}/v2/sessions/sess_target/pending`, token: `Bearer ${home.token}`,
+            body: expect.objectContaining({ localId: 'first-turn-local-id', messageRole: 'user',
+                requestedAction: { v: 1, kind: 'send_now' },
+                content: expect.objectContaining({ t: 'plain', v: expect.objectContaining({
+                    role: 'user', content: { type: 'text', text: 'first prompt' },
+                }) }),
+            }),
+        }]);
+        expect(storage.getState().sessions['sess_target'].metadataVersion).toBe(2);
+        expect(storage.getState().sessions['sess_target'].metadata).toEqual(storedMetadata);
+        const { loadPendingOutboxForSession } = await import('@/sync/domains/state/pendingOutboxPersistence');
+        expect(await loadPendingOutboxForSession('sess_target', { serverId: home.id, accountId: home.accountId })).toEqual([]);
+    });
+
+    it('does not send or replace newer metadata when the target Home rejects hydration', async () => {
+        hydrationStatus = 401;
+        let thrown: unknown;
+        try {
+            await followUp({ sessionId: 'sess_target', targetServerId: home.id,
+                initialMessageText: 'first prompt', messageLocalId: 'first-turn-local-id' });
+        } catch (error) { thrown = error; }
+        expect(thrown).toMatchObject({ name: 'HappyError', kind: 'auth', code: 'not_authenticated' });
+        expect(readRecovery(thrown)).toMatchObject({ draftText: 'first prompt' });
+        expect(pendingWrites).toEqual([]);
+        expect(storage.getState().sessions['sess_target'].metadataVersion).toBe(2);
+        expect(storage.getState().sessions['sess_target'].metadata).toEqual(storedMetadata);
     });
 });

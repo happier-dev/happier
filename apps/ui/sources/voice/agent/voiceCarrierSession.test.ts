@@ -316,6 +316,7 @@ describe('voiceConversationSession', () => {
       }),
       {
         surface: 'voice',
+        serverId: 'server-a',
         actionRequestId: expect.stringMatching(/^voice-session-attempt:/),
       },
     );
@@ -422,6 +423,7 @@ describe('voiceConversationSession', () => {
       }),
       {
         surface: 'voice',
+        serverId: 'server-a',
         actionRequestId: expect.stringMatching(/^voice-session-attempt:/),
       },
     );
@@ -1046,6 +1048,7 @@ describe('voiceConversationSession', () => {
       }),
       {
         surface: 'voice',
+        serverId: 'server-a',
         actionRequestId: expect.stringMatching(/^voice-session-attempt:/),
       },
     );

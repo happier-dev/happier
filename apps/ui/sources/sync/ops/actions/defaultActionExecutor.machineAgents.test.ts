@@ -146,9 +146,9 @@ describe('UI machine Agent inventory Action transport', () => {
         let dispatched!: () => void;
         const pendingResponse = new Promise<void>((resolve) => { release = resolve; });
         const reachedTransport = new Promise<void>((resolve) => { dispatched = resolve; });
-        harness.answer(serverId, 'GET /v1/artifacts', { select: () => {
+        harness.answer(serverId, 'GET /v1/artifacts?limit=500', { select: () => {
             dispatched();
-            return { body: { artifacts: [] }, respondAfter: pendingResponse };
+            return { body: [], respondAfter: pendingResponse };
         } });
         const pending = createDefaultActionExecutor().execute('roles.list', {}, { surface: 'ui', serverId, expectedAccountId: 'alice' });
         await reachedTransport;

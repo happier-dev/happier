@@ -38,8 +38,8 @@ export type MultiPaneHostProps = Readonly<{
     onCloseDetails: () => void;
     onCommitRightDockWidthPx: (widthPx: number) => void;
     onCommitDetailsDockWidthPx: (widthPx: number) => void;
-    onDragRightDockWidthPx?: (widthPx: number | null) => void;
-    onDragDetailsDockWidthPx?: (widthPx: number | null) => void;
+    onDragRightDockWidthPx?: React.ComponentProps<typeof ResizableDockedPane>['onDragWidthPx'];
+    onDragDetailsDockWidthPx?: React.ComponentProps<typeof ResizableDockedPane>['onDragWidthPx'];
     rightOverlayFocusReturnRef?: FocusReturnMutableRef;
     detailsOverlayFocusReturnRef?: FocusReturnMutableRef;
     /**

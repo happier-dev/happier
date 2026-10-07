@@ -8,6 +8,7 @@ import {
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import { renderScreen } from '@/dev/testkit';
 import { encodeBase64 } from '@/encryption/base64';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 /**
  * The real API-token settings controller on a real Home and Account scope, for controller and
@@ -35,6 +36,7 @@ export async function disposeApiTokenSettingsControllerHarnesses(): Promise<void
 }
 
 export async function createApiTokenSettingsControllerHarness(options: ApiTokenSettingsControllerHarnessOptions = {}) {
+    await loadSyncSingletonForTests();
     vi.stubEnv('EXPO_PUBLIC_HAPPY_STORAGE_SCOPE', `token-ui-${crypto.randomUUID()}`);
     const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
     const { setServerProfileIdentityForUrl } = await import('@/sync/domains/server/serverProfiles');

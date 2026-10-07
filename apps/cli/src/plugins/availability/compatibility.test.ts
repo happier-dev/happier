@@ -15,20 +15,19 @@ function projectionWithIncompatibleUiArtifact(contributionId: string): Record<st
       contributes: {},
     },
     uiArtifacts: {
-      version: 1,
+      version: 2,
       entries: [{
-        contributionId,
+        artifactId: contributionId,
         tier: 'hostedWeb',
-        entry: 'web/index.html',
+        entry: `hosted-web/${contributionId}/index.html`,
         files: [{
-          relativePath: 'web/index.html',
+          relativePath: `hosted-web/${contributionId}/index.html`,
           digest: `sha256:${'a'.repeat(64)}`,
           byteSize: 1,
         }],
         digest: `sha256:${'b'.repeat(64)}`,
-        builtWith: { bundler: 'vite', version: '7.0.0' },
-        hostUiApiVersion: '999.0.0',
-        compat: {},
+        builtWith: { staging: 'staticDirectory' },
+        hostUiApiRange: '^999.0.0',
       }],
     },
   };
@@ -64,7 +63,7 @@ function projectionWithCanonicalIngestionInvalidManifest(
         }],
       },
     },
-    uiArtifacts: { version: 1, entries: [] },
+    uiArtifacts: { version: 2, entries: [] },
   };
 }
 

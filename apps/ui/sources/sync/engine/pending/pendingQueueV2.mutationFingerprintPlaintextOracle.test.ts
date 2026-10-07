@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+
+beforeAll(loadSyncSingletonForTests);
 
 import { sha256 } from '@noble/hashes/sha2';
 import { utf8ToBytes } from '@noble/hashes/utils';

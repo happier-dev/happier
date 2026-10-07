@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderSettingsView, standardCleanup } from '@/dev/testkit';
@@ -67,9 +68,10 @@ vi.mock('expo-image', () => ({
     Image: 'Image',
 }));
 
-vi.mock('@react-navigation/native', () => ({
-    useFocusEffect: (_cb: () => void) => {},
-}));
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return { ...createReactNavigationNativeMock(), useFocusEffect: () => {} };
+});
 
 vi.mock('expo-constants', () => ({
     default: { expoConfig: { version: '0.0.0-test' } },
@@ -129,9 +131,6 @@ vi.mock('@/hooks/session/useConnectTerminal', () => ({
     useConnectTerminal: () => ({ connectTerminal: vi.fn(), connectWithUrl: vi.fn(), isLoading: false }),
 }));
 
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ credentials: null }),
-}));
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -220,7 +219,7 @@ describe('SettingsView plugin marketplace entry', () => {
     it('routes the curated plugin discovery entry to the new descriptor-only surface', async () => {
         vi.useFakeTimers();
         const { SettingsView } = await import('./SettingsView');
-        const screen = await renderSettingsView(React.createElement(SettingsView));
+        const screen = await renderSettingsView(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>);
 
         await flushHookEffects({ cycles: 4, advanceTimersMs: 1000 });
 

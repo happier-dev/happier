@@ -10,50 +10,48 @@ describe('provider local auth registry', () => {
         expect(new Set(agentIds.map((agentId) => getAgentLocalAuthPlugin(agentId as Parameters<typeof getAgentLocalAuthPlugin>[0])?.agentId ?? null))).toEqual(new Set(agentIds));
     });
 
-    it('returns a Claude launch strategy that starts the CLI and submits /login as terminal input', () => {
+    it('returns the declared Claude login launch for daemon execution', () => {
         const plugin = getAgentLocalAuthPlugin('claude');
         const launch = plugin?.buildLoginLaunch?.({ resolvedPath: '/usr/local/bin/claude' }) ?? null;
 
         expect(launch).toEqual({
-            initialCommand: '/usr/local/bin/claude',
-            initialInput: '/login\r',
+            launch: { kind: 'agent_login', agentId: 'claude', launchId: 'primary' },
         });
     });
 
-    it('returns a Codex launch strategy that runs the direct login command', () => {
+    it('returns the declared Codex login launch for daemon execution', () => {
         const plugin = getAgentLocalAuthPlugin('codex');
         const launch = plugin?.buildLoginLaunch?.({ resolvedPath: '/usr/local/bin/codex' }) ?? null;
 
         expect(launch).toEqual({
-            initialCommand: '/usr/local/bin/codex login',
+            launch: { kind: 'agent_login', agentId: 'codex', launchId: 'primary' },
         });
     });
 
-    it('returns a Copilot launch strategy that runs the direct login command', () => {
+    it('returns the declared Copilot login launch for daemon execution', () => {
         const plugin = getAgentLocalAuthPlugin('copilot');
         const launch = plugin?.buildLoginLaunch?.({ resolvedPath: '/usr/local/bin/copilot' }) ?? null;
 
         expect(launch).toEqual({
-            initialCommand: '/usr/local/bin/copilot login',
+            launch: { kind: 'agent_login', agentId: 'copilot', launchId: 'primary' },
         });
     });
 
-    it('returns a Kilo launch strategy that starts the CLI and submits /connect as terminal input', () => {
+    it('returns the declared Kilo login launch for daemon execution', () => {
         const plugin = getAgentLocalAuthPlugin('kilo');
         const launch = plugin?.buildLoginLaunch?.({ resolvedPath: '/usr/local/bin/kilo' }) ?? null;
 
         expect(launch).toEqual({
-            initialCommand: '/usr/local/bin/kilo',
-            initialInput: '/connect\r',
+            launch: { kind: 'agent_login', agentId: 'kilo', launchId: 'primary' },
         });
     });
 
-    it('returns a Kiro launch strategy that runs the direct login command', () => {
+    it('returns the declared Kiro login launch for daemon execution', () => {
         const plugin = getAgentLocalAuthPlugin('kiro');
         const launch = plugin?.buildLoginLaunch?.({ resolvedPath: '/usr/local/bin/kiro-cli' }) ?? null;
 
         expect(launch).toEqual({
-            initialCommand: '/usr/local/bin/kiro-cli login',
+            launch: { kind: 'agent_login', agentId: 'kiro', launchId: 'primary' },
         });
     });
 
@@ -63,7 +61,7 @@ describe('provider local auth registry', () => {
         }
     });
 
-    it('prefers a resolved shell command when the CLI requires a runtime wrapper', () => {
+    it('leaves runtime wrapper resolution to the daemon instead of constructing a shell command', () => {
         const plugin = getAgentLocalAuthPlugin('codex');
         const launch = plugin?.buildLoginLaunch?.({
             resolvedPath: '/opt/tools/fake-codex.js',
@@ -72,11 +70,11 @@ describe('provider local auth registry', () => {
         }) ?? null;
 
         expect(launch).toEqual({
-            initialCommand: `'bun' '/opt/tools/fake-codex.js' login`,
+            launch: { kind: 'agent_login', agentId: 'codex', launchId: 'primary' },
         });
     });
 
-    it('quotes a fallback resolvedPath when the CLI path contains spaces', () => {
+    it('does not interpolate a local CLI path into the daemon login request', () => {
         const plugin = getAgentLocalAuthPlugin('codex');
         const launch = plugin?.buildLoginLaunch?.({
             resolvedPath: '/Applications/Codex App/bin/codex',
@@ -85,7 +83,7 @@ describe('provider local auth registry', () => {
         }) ?? null;
 
         expect(launch).toEqual({
-            initialCommand: `'/Applications/Codex App/bin/codex' login`,
+            launch: { kind: 'agent_login', agentId: 'codex', launchId: 'primary' },
         });
     });
 });

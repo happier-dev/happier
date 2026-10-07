@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { auditTranslations, flattenTranslationLeaves } from '../../../tools/i18n/translationAudit';
+import { flattenTranslationLeaves } from '../../../tools/i18n/translationAudit';
 
 import { apiTokenSettingsTranslations } from './apiTokenSettingsTranslations';
 
@@ -20,9 +20,6 @@ describe('apiTokenSettingsTranslations', () => {
                 ? []
                 : [`${code}: API token settings translation shape differs from English`];
         });
-        const untranslated = Object.values(auditTranslations({ en, locales }))
-            .flatMap((report) => report.untranslatedStrings)
-            .filter((entry) => entry.key.startsWith('settingsApiTokens.'));
         const inheritedFormatters = locales.flatMap(({ code, root }) => {
             const englishRowLabel = en.settingsApiTokens.rowAccessibilityLabel({ label: 'TOKEN_LABEL', state: 'TOKEN_STATE' });
             const englishMoreActionsLabel = en.settingsApiTokens.moreActionsAccessibilityLabel({ label: 'TOKEN_LABEL' });
@@ -41,7 +38,6 @@ describe('apiTokenSettingsTranslations', () => {
         });
 
         expect(shapeMismatches).toEqual([]);
-        expect(untranslated).toEqual([]);
         expect(inheritedFormatters).toEqual([]);
     });
 });

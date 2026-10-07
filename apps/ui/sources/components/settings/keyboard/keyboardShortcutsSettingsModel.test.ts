@@ -24,7 +24,26 @@ const baseSettings = {
     | 'keyboardShortcutOverridesV1'
 >;
 
+// These cases exercise user overrides, not collisions between unrelated
+// registry defaults (the browser and composer both declare a Ctrl+R variant).
+const isolatedOverrideSettings = {
+    ...baseSettings,
+    keyboardShortcutDisabledCommandIdsV1: ['browser.reload', 'composer.prompts.open'],
+};
+
 describe('keyboardShortcutsSettingsModel', () => {
+    it('does not report a command’s host-specific alternative defaults as a conflict with itself', () => {
+        const model = buildKeyboardShortcutSettingsModel({
+            settings: baseSettings,
+            platform: 'macos',
+            surface: 'native',
+        });
+
+        expect(model.conflicts.filter((conflict) => conflict.commandIds.every(
+            (commandId) => commandId === 'composer.prompts.open',
+        ))).toEqual([]);
+    });
+
     it('builds command rows from explicit keyboard registry metadata', () => {
         const model = buildKeyboardShortcutSettingsModel({
             settings: baseSettings,
@@ -41,7 +60,7 @@ describe('keyboardShortcutsSettingsModel', () => {
         ]));
         expect(model.commandRows.find((row) => row.commandId === 'composer.sendPending')?.defaultLabel).toBe('Cmd+Shift+Enter');
         expect(model.commandRows.find((row) => row.commandId === 'commandPalette.open')?.defaultLabel).toBe('Cmd+K');
-        expect(model.commandRows.find((row) => row.commandId === 'settings.open')?.defaultLabel).toBeNull();
+        expect(model.commandRows.find((row) => row.commandId === 'settings.open')?.defaultLabel).toBe('Cmd+,');
         expect(model.commandRows.every((row) => row.titleKey.startsWith('settingsKeyboard.commands.'))).toBe(true);
     });
 
@@ -138,7 +157,7 @@ describe('keyboardShortcutsSettingsModel', () => {
     it('detects duplicate override bindings without exposing raw binding values', () => {
         const model = buildKeyboardShortcutSettingsModel({
             settings: {
-                ...baseSettings,
+                ...isolatedOverrideSettings,
                 keyboardShortcutOverridesV1: {
                     'commandPalette.open': [{ binding: 'Mod+K' }],
                     'session.new': [{ binding: 'Mod+K' }],
@@ -160,7 +179,7 @@ describe('keyboardShortcutsSettingsModel', () => {
     it('does not report duplicates for bindings isolated to different shortcut scopes', () => {
         const model = buildKeyboardShortcutSettingsModel({
             settings: {
-                ...baseSettings,
+                ...isolatedOverrideSettings,
                 keyboardShortcutOverridesV1: {
                     'session.visible.next': [{ binding: 'Alt+ArrowDown', conflictScope: 'sessionNavigation' }],
                     'workspace.focusDown': [{ binding: 'Alt+ArrowDown', conflictScope: 'workspace' }],
@@ -176,7 +195,7 @@ describe('keyboardShortcutsSettingsModel', () => {
     it('still reports duplicates within the same shortcut scope', () => {
         const model = buildKeyboardShortcutSettingsModel({
             settings: {
-                ...baseSettings,
+                ...isolatedOverrideSettings,
                 keyboardShortcutOverridesV1: {
                     'workspace.focusDown': [{ binding: 'Alt+ArrowDown', conflictScope: 'workspace' }],
                     'workspace.focusUp': [{ binding: 'Alt+ArrowDown', conflictScope: 'workspace' }],

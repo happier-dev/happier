@@ -261,12 +261,11 @@ describe('useResolvedSettingsPageCatalog', () => {
             await vi.waitFor(() => expect(hook.getCurrent().admission.admitted).toBe(false));
             expect(flattenIds(hook.getCurrent().catalog.tree)).not.toContain('teams');
             expect(hook.getCurrent().catalog.search('teams').some((result) => result.id === 'teams')).toBe(false);
-            // The direct exact-Home route remains the active Settings
-            // destination even when it is no longer advertised by the
-            // currently selected Home set. Its screen can then render that
-            // exact Home's truthful unavailable/access state without making
-            // the route look like an unknown page in the Settings shell.
-            expect(hook.getCurrent().catalog.activePageId).toBe('teams');
+            // No visible catalog row remains selected. The exact-Home route
+            // still belongs to TeamSection/useTeamBinding, independently of
+            // the selected Home set and this navigation/search projection.
+            expect(pathnameState.value).toBe(`/settings/teams/${homeB.id}/team-one`);
+            expect(hook.getCurrent().catalog.activePageId).toBeNull();
         } finally {
             await hook.unmount();
             if (priorView) await profiles.saveHomeViewState(priorView);

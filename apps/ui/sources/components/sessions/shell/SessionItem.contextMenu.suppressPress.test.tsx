@@ -1,9 +1,12 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createPlainAccountEncryptionCurrentnessFixture, createRootLayoutFeaturesResponse, pressTestInstanceAsync, renderScreen as renderCanonicalScreen, standardCleanup } from '@/dev/testkit';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { SessionCurrentProjectionRecordV1Schema, SessionMetadataTuplePatchV1Schema, SessionMetadataTuplePatchSuccessV1Schema } from '@happier-dev/protocol';
 import { createModelBackedSessionItemTestComponent } from './sessionItemRowViewModelTestFixture';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 import { SessionListSelectionProvider, createSessionListSelectionStore } from './selection/SessionListSelectionContext';
@@ -11,17 +14,8 @@ import { SESSION_ACTION_RENAME_ID } from '@/components/sessions/actions/sessionA
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const sessionRenameSpy = vi.fn(async () => ({ success: true }));
 const modalPromptSpy = vi.fn(async () => 'Renamed Session');
-const openSessionForkStrategyFlowSpy = vi.fn();
-const sessionForkFlowModuleLoadedSpy = vi.fn();
-
-vi.mock('@/components/sessions/fork/openSessionForkStrategyFlow', () => {
-    sessionForkFlowModuleLoadedSpy();
-    return {
-        openSessionForkStrategyFlow: (...args: unknown[]) => openSessionForkStrategyFlowSpy(...args),
-    };
-});
+const modalShowSpy = vi.fn(() => 'fork-strategy-modal');
 
 
 vi.mock('react-native-gesture-handler', () => ({
@@ -39,7 +33,6 @@ vi.mock('@/components/ui/forms/dropdown/ContextMenu', () => ({
 
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => undefined) }));
 
-
 vi.mock('@/components/ui/avatar/Avatar', () => ({
     Avatar: 'Avatar',
 }));
@@ -49,18 +42,10 @@ vi.mock('@/components/ui/status/StatusDot', () => ({
 }));
 
 const navigateToSessionSpy = vi.fn();
-vi.mock('@/hooks/session/useNavigateToSession', () => ({
-    useNavigateToSession: () => navigateToSessionSpy,
-}));
 
 const platformState = vi.hoisted(() => ({
     os: 'ios' as 'ios' | 'android' | 'web',
 }));
-let localDevModeEnabled = false;
-const storageSessionsState = vi.hoisted(() => ({
-    current: {} as Record<string, any>,
-}));
-
 vi.mock('@/utils/platform/responsive', () => ({
     useIsTablet: () => false,
 }));
@@ -72,7 +57,12 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
 installSessionShellCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({ Platform: { get OS() { return platformState.os; } } });
+        const boundary = await createReactNativeWebMock();
+        return { ...boundary, Platform: { ...boundary.Platform, get OS() { return platformState.os; }, select: (values: Record<string, unknown>) => values[platformState.os] ?? values.default } };
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({ router: { navigate: navigateToSessionSpy } }).module;
     },
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -83,63 +73,37 @@ installSessionShellCommonModuleMocks({
         return createModalModuleMock({
             spies: {
                 prompt: modalPromptSpy,
+                show: modalShowSpy,
             },
         }).module;
     },
-    storage: async (_importOriginal) => {
-        const { createStorageModuleStub, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
-        const store = createStorageStoreMock({});
-        const getBaseState = store.getState;
-        const getBaseInitialState = store.getInitialState;
-        const storage = Object.assign(store, {
-            getState: () => ({
-                ...getBaseState(),
-                sessions: storageSessionsState.current,
-            }),
-            getInitialState: () => ({
-                ...getBaseInitialState(),
-                sessions: storageSessionsState.current,
-            }),
-        });
-        return createStorageModuleStub({
-            storage,
-            getStorage: () => storage,
-            useHasUnreadMessages: () => false,
-            useProfile: () => ({
-                id: 'u1',
-                timestamp: 0,
-                firstName: null,
-                lastName: null,
-                username: null,
-                avatar: null,
-                linkedProviders: [],
-                connectedServices: [],
-                connectedServicesV2: [],
-                connectedServiceCredentialRevisionsV1: [],
-            }),
-            useSession: () => null,
-            useSessionListRenderable: () => null,
-            useSessionListMeaningfulActivityAt: () => null,
-            useLocalSetting: (key: string) => key === 'devModeEnabled' ? localDevModeEnabled : null,
-        });
-    },
+    storage: async (importOriginal) => importOriginal(),
 });
 
-vi.mock('@/sync/ops', async (importOriginal) => {
-    const { createSyncOpsModuleMock } = await import('@/dev/testkit/mocks/syncOps');
-    return createSyncOpsModuleMock({
-        importOriginal,
-        overrides: {
-            sessionRename: sessionRenameSpy,
-        },
-    });
-});
+vi.doUnmock('@/sync/domains/state/storage');
+vi.doUnmock('@/hooks/session/useDraft');
+vi.doUnmock('@/agents/registry/registryUiBehavior');
+installDisconnectedServerSocketBoundary();
+await loadSyncSingletonForTests();
+const { storage } = await import('@/sync/domains/state/storage');
+const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+let previousStorageState: ReturnType<typeof storage.getState>;
+let account: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
+let wireSession: ReturnType<typeof SessionCurrentProjectionRecordV1Schema.parse> | undefined;
+const metadataRequests: Array<{ url: string; patch: ReturnType<typeof SessionMetadataTuplePatchV1Schema.parse> }> = [];
+
+async function renderScreen(element: Parameters<typeof renderCanonicalScreen>[0]) {
+    return renderCanonicalScreen(element);
+}
 
 // Collect the real owner before test execution. A cold graph transform inside
 // a timed test can finish after cleanup and contaminate the next renderer.
 const { SessionItem } = await import('./SessionItem');
+const ModelBackedSessionItem = createModelBackedSessionItemTestComponent(SessionItem);
 async function importSessionItem() {
-    return createModelBackedSessionItemTestComponent(SessionItem);
+    return function AuthenticatedSessionItem(props: React.ComponentProps<typeof ModelBackedSessionItem>) {
+        return <InjectedAuthProvider credentials={account.credentials}><ModelBackedSessionItem {...props} /></InjectedAuthProvider>;
+    };
 }
 
 function hasSelectMenuItem(items: unknown): boolean {
@@ -159,16 +123,57 @@ function hasCopyDebugInformationMenuItem(items: unknown): boolean {
 }
 
 describe('SessionItem context menu press suppression', () => {
-    afterEach(() => {
+    beforeEach(async () => {
+        previousStorageState = storage.getState();
+        metadataRequests.length = 0;
+        wireSession = undefined;
+        account = await restoreServerAccountForTest({ serverUrl: 'https://server_a', accountId: 'row-account', request: async (input, init) => {
+            const url = new URL(String(input));
+            if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (url.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            if (url.pathname === '/v1/features' || url.pathname === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+            if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            if (url.pathname === '/v2/sessions/sess_rename' && wireSession) {
+                if (init?.method === 'PATCH') {
+                    const patch = SessionMetadataTuplePatchV1Schema.parse(JSON.parse(String(init.body)));
+                    metadataRequests.push({ url: url.href, patch });
+                    if (patch.mode === 'shared_editor') {
+                        expect(patch.sharedMetadata.expectedVersion).toBe(wireSession.metadataVersion);
+                        wireSession = SessionCurrentProjectionRecordV1Schema.parse({ ...wireSession, metadata: patch.sharedMetadata.ciphertext, metadataVersion: wireSession.metadataVersion + 1 });
+                    } else {
+                        if (patch.mode === 'owner_migration') {
+                            expect(patch.source.metadata).toEqual({ version: wireSession.metadataVersion, ciphertext: wireSession.metadata });
+                            expect(patch.source.agentState).toEqual({ version: wireSession.agentStateVersion, ciphertext: wireSession.agentState });
+                        } else {
+                            expect(patch.sharedMetadata.expectedVersion).toBe(wireSession.metadataVersion);
+                            expect(patch.expectedOwnerMetadata).toEqual(wireSession.ownerMetadata);
+                        }
+                        if (wireSession.agentStateVersion === undefined) {
+                            throw new Error('Metadata mutation fixture requires an Agent state version');
+                        }
+                        const target = patch.mode === 'owner_migration' ? patch.target : patch;
+                        wireSession = SessionCurrentProjectionRecordV1Schema.parse({ ...wireSession, metadataLayoutVersion: 1,
+                            metadata: target.sharedMetadata.ciphertext, ownerMetadata: target.ownerMetadata, agentState: target.agentState.ciphertext,
+                            metadataVersion: wireSession.metadataVersion + 1, agentStateVersion: wireSession.agentStateVersion + 1 });
+                    }
+                    return Response.json(SessionMetadataTuplePatchSuccessV1Schema.parse({ success: true, metadataLayoutVersion: 1,
+                        sharedMetadata: { version: wireSession.metadataVersion }, agentState: { version: wireSession.agentStateVersion } }));
+                }
+                return Response.json({ session: wireSession });
+            }
+            return Response.json({}, { status: 404 });
+        } });
+        storage.setState({ sessions: {}, sessionListRowsByServerId: {}, ordinarySessionListMembershipByServerId: {} });
+    });
+    afterEach(async () => {
         standardCleanup();
         navigateToSessionSpy.mockClear();
         modalPromptSpy.mockClear();
-        sessionRenameSpy.mockClear();
-        openSessionForkStrategyFlowSpy.mockReset();
+        modalShowSpy.mockClear();
         platformState.os = 'ios';
-        localDevModeEnabled = false;
-        storageSessionsState.current = {};
         vi.useRealTimers();
+        await account.dispose();
+        storage.setState(previousStorageState, true);
     });
 
     it('keeps native context menus closed until they are opened', async () => {
@@ -225,7 +230,7 @@ describe('SessionItem context menu press suppression', () => {
     });
 
     it('shows the copy information context menu item in developer mode', async () => {
-        localDevModeEnabled = true;
+        storage.getState().applyLocalSettings({ devModeEnabled: true }, { persist: false });
         const SessionItem = await importSessionItem();
 
         const session = createSessionFixture({
@@ -262,7 +267,7 @@ describe('SessionItem context menu press suppression', () => {
 
     it('copies debug information from the full cached session when row metadata is list-projected', async () => {
         const Clipboard = await import('expo-clipboard');
-        localDevModeEnabled = true;
+        storage.getState().applyLocalSettings({ devModeEnabled: true }, { persist: false });
         const SessionItem = await importSessionItem();
         const fullSession = createSessionFixture({
             id: 'sess_debug_full',
@@ -288,7 +293,7 @@ describe('SessionItem context menu press suppression', () => {
                 },
             },
         });
-        storageSessionsState.current = { [fullSession.id]: fullSession };
+        storage.getState().applySessions([fullSession]);
         const rowSession = {
             ...fullSession,
             metadata: {
@@ -331,7 +336,7 @@ describe('SessionItem context menu press suppression', () => {
 
         const SessionItem = await importSessionItem();
 
-        const session = {
+        const session = createSessionFixture({
             id: 'sess_1',
             seq: 1,
             createdAt: 1,
@@ -345,7 +350,7 @@ describe('SessionItem context menu press suppression', () => {
             thinking: false,
             thinkingAt: 0,
             presence: 'online',
-        } as any;
+        });
 
         const onNativeContextMenuOpenChange = vi.fn();
 
@@ -395,7 +400,7 @@ describe('SessionItem context menu press suppression', () => {
             await pressTestInstanceAsync(itemPressable, 'session list item');
         });
 
-        expect(navigateToSessionSpy).toHaveBeenCalledWith('sess_1', undefined);
+        expect(navigateToSessionSpy).toHaveBeenCalledWith('/session/sess_1', expect.objectContaining({ dangerouslySingular: expect.any(Function) }));
     });
 
     it('keeps the iOS long-press for the row menu even when the row can be carried (K1)', async () => {
@@ -403,7 +408,7 @@ describe('SessionItem context menu press suppression', () => {
 
         const SessionItem = await importSessionItem();
 
-        const session = {
+        const session = createSessionFixture({
             id: 'sess_2',
             seq: 1,
             createdAt: 1,
@@ -417,7 +422,7 @@ describe('SessionItem context menu press suppression', () => {
             thinking: false,
             thinkingAt: 0,
             presence: 'online',
-        } as any;
+        });
 
         const onNativeContextMenuOpenChange = vi.fn();
 
@@ -500,7 +505,7 @@ describe('SessionItem context menu press suppression', () => {
             await pressTestInstanceAsync(itemPressable, 'session list item');
         });
 
-        expect(navigateToSessionSpy).toHaveBeenCalledWith('sess_reorder_drag', { serverId: 'server_a' });
+        expect(navigateToSessionSpy).toHaveBeenCalledWith('/session/sess_reorder_drag?serverId=server_a', expect.objectContaining({ dangerouslySingular: expect.any(Function) }));
     });
 
     it('opens the iOS native context menu from a press-in timer before release', async () => {
@@ -508,7 +513,7 @@ describe('SessionItem context menu press suppression', () => {
 
         const SessionItem = await importSessionItem();
 
-        const session = {
+        const session = createSessionFixture({
             id: 'sess_press_in',
             seq: 1,
             createdAt: 1,
@@ -522,7 +527,7 @@ describe('SessionItem context menu press suppression', () => {
             thinking: false,
             thinkingAt: 0,
             presence: 'online',
-        } as any;
+        });
 
         const onNativeContextMenuOpenChange = vi.fn();
 
@@ -567,7 +572,7 @@ describe('SessionItem context menu press suppression', () => {
 
         const SessionItem = await importSessionItem();
 
-        const session = {
+        const session = createSessionFixture({
             id: 'sess_3',
             seq: 1,
             createdAt: 1,
@@ -581,7 +586,7 @@ describe('SessionItem context menu press suppression', () => {
             thinking: false,
             thinkingAt: 0,
             presence: 'online',
-        } as any;
+        });
 
         const screen = await renderScreen(
             <SessionItem
@@ -607,12 +612,20 @@ describe('SessionItem context menu press suppression', () => {
         const SessionItem = await importSessionItem();
         const session = createSessionFixture({
             id: 'sess_rename',
+            serverId: account.home.id,
             metadata: {
                 name: 'Old Session',
                 serverId: 'server_a',
                 path: '/repo',
                 host: 'devbox',
             },
+        });
+        storage.getState().applySessions([session]);
+        wireSession = SessionCurrentProjectionRecordV1Schema.parse({ ...session,
+            metadataLayoutVersion: 0, metadata: JSON.stringify(session.metadata), agentState: null, ownerMetadata: null,
+            effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }], capabilities: session.access!.capabilities },
+            responsibleAccountId: null, responsibleAccount: null, share: null, archivedAt: null,
+            dataEncryptionKey: null, pendingCount: 0, pendingVersion: 0,
         });
         const onNativeContextMenuOpenChange = vi.fn();
 
@@ -638,7 +651,10 @@ describe('SessionItem context menu press suppression', () => {
 
         expect(onNativeContextMenuOpenChange).toHaveBeenCalledWith(false);
         expect(modalPromptSpy).toHaveBeenCalled();
-        expect(sessionRenameSpy).toHaveBeenCalledWith('sess_rename', 'Renamed Session', { serverId: 'server_a' });
+        await vi.waitFor(() => expect(metadataRequests.length).toBeGreaterThan(0));
+        expect(metadataRequests.every((request) => request.url.startsWith(`${account.home.serverUrl}/v2/sessions/sess_rename`))).toBe(true);
+        expect(JSON.parse(wireSession!.metadata).summary.text).toBe('Renamed Session');
+        await vi.waitFor(() => expect(storage.getState().sessions.sess_rename.metadataVersion).toBe(wireSession!.metadataVersion));
     });
 
     it('does not show selection checkboxes merely on hover', async () => {
@@ -766,6 +782,7 @@ describe('SessionItem context menu press suppression', () => {
         const SessionItem = await importSessionItem();
         const session = createSessionFixture({
             id: 'sess_fork',
+            serverId: 'server_a',
             active: true,
             metadata: {
                 flavor: 'claude',
@@ -774,7 +791,7 @@ describe('SessionItem context menu press suppression', () => {
                 host: 'host-a',
             },
         });
-        storageSessionsState.current = { [session.id]: session };
+        storage.getState().applySessions([session]);
 
         const screen = await renderScreen(
             <SessionItem
@@ -804,20 +821,16 @@ describe('SessionItem context menu press suppression', () => {
             title: 'sessionInfo.forkSession',
             subtitle: undefined,
         });
-        await vi.waitFor(() => expect(sessionForkFlowModuleLoadedSpy).toHaveBeenCalledTimes(1));
-
         await act(async () => {
             await dropdown.props.onSelect('session.fork');
         });
 
-        await vi.waitFor(() => {
-            expect(openSessionForkStrategyFlowSpy).toHaveBeenCalledWith(expect.objectContaining({
-                sessionId: 'sess_fork',
-                forkSupportSource: session,
-                serverId: 'server_a',
-                machineId: 'machine_a',
-                forkPoint: { type: 'latest' },
-            }));
-        });
+        await vi.waitFor(() => expect(modalShowSpy).toHaveBeenCalledWith(expect.objectContaining({
+            props: expect.objectContaining({ request: expect.objectContaining({
+                parentSessionId: 'sess_fork', serverId: account.home.id, machineId: 'machine_a', forkPoint: { type: 'latest' },
+            }), availability: expect.objectContaining({ replay: true }) }),
+            chrome: expect.objectContaining({ testID: 'session-fork-strategy-modal' }),
+            closeOnBackdrop: false,
+        })));
     });
 });

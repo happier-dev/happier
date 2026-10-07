@@ -2,8 +2,10 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
-import { createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import {
     SESSION_ACTION_ARCHIVE_ID,
     SESSION_ACTION_RENAME_ID,
@@ -20,12 +22,8 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 type SessionItemProps = ModelBackedSessionItemTestProps;
 
 const navigateSpy = vi.fn();
-const splitCanvasActionState = vi.hoisted(() => ({
-    mode: 'none' as 'none' | 'open' | 'reveal',
-    openInSplitRight: vi.fn(),
-    openInSplitDown: vi.fn(),
-    revealInSplit: vi.fn(),
-}));
+installDisconnectedServerSocketBoundary();
+let splitFixture: Awaited<ReturnType<typeof prepareSplitCanvas>> | null = null;
 const themeColors = vi.hoisted(() => ({
     surface: '#fff',
     surfaceSelected: '#eee',
@@ -148,10 +146,6 @@ vi.mock('@/components/sessions/pendingBadge', () => ({
 vi.mock('@/hooks/session/useNavigateToSession', () => ({
     useNavigateToSession: () => navigateSpy,
 }));
-vi.mock('@/components/sessions/canvas/useSessionSplitCanvasRowActions', () => ({
-    useSessionSplitCanvasRowActions: () => splitCanvasActionState,
-    useSessionSplitCanvasRowActionsForScope: () => splitCanvasActionState,
-}));
 vi.mock('@/utils/platform/responsive', () => ({
     useIsTablet: () => false,
 }));
@@ -183,26 +177,72 @@ vi.mock('./sessionTagIcons', () => ({
     TagIcon: (props: Record<string, unknown>) => React.createElement('TagIcon', props),
 }));
 
+async function prepareSplitCanvas(sessionId: string, alreadyOpen = false) {
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    const previousStorageState = storage.getState();
+    const connection = await restoreServerAccountForTest({ serverUrl: 'https://canvas-home.example.test', accountId: 'canvas-account' });
+    const serverId = connection.home.id;
+    const session = createSessionFixture({ id: sessionId, active: true, metadata: { path: '/repo', machineId: 'machine-canvas', host: 'canvas.local' } });
+    const anchor = createSessionFixture({ ...session, id: 'anchor' });
+    storage.setState({
+        sessions: { anchor, [sessionId]: session },
+        sessionListRowsByServerId: { [serverId]: {
+            anchor: createSessionListRenderableSessionFixture(anchor),
+            [sessionId]: createSessionListRenderableSessionFixture(session),
+        } },
+        ordinarySessionListMembershipByServerId: { [serverId]: ['anchor', sessionId] },
+    });
+    const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const entityScope = getActiveServerAccountScope();
+    if (!entityScope) throw new Error('expected a real applied Home/Account');
+    const { resolveWorkspaceTargetForSession } = await import('@/sync/domains/session/resolveWorkspaceTargetForSession');
+    const { resolveSessionSplitCanvasScope } = await import('@/sync/domains/session/sessionSplitCanvasScope');
+    const scope = resolveSessionSplitCanvasScope(resolveWorkspaceTargetForSession(sessionId), { routeServerId: serverId });
+    if (!scope) throw new Error('expected the enrolled session workspace');
+    const { collectOpenSessionIds, resolveSessionSplitCanvasState, reduceSessionSplitCanvasState, findSessionCanvasTab } = await import('@/components/sessions/canvas/sessionSplitCanvasState');
+    const { sessionCanvasTabId } = await import('@/sync/domains/session/sessionSplitCanvasPersistence');
+    const { collectSplitCanvasLeaves } = await import('@/components/appShell/splitCanvas/model/splitCanvasTree');
+    let state = resolveSessionSplitCanvasState({ sessionId: 'anchor', scope: entityScope });
+    if (alreadyOpen) {
+        state = reduceSessionSplitCanvasState(state, { type: 'openSession', sessionId, leafId: state.focusedLeafId! });
+        state = reduceSessionSplitCanvasState(state, { type: 'focusSession', sessionId: 'anchor' });
+    }
+    const { createSessionCanvasActionAdapter } = await import('@/components/sessions/canvas/sessionCanvasActions');
+    const execute = createSessionCanvasActionAdapter({
+        canvasKey: scope.workspaceCacheKey, getState: () => state,
+        dispatch: action => { state = reduceSessionSplitCanvasState(state, action); return state; },
+        // The mounted native/DOM canvas owns pixel measurement, not session admission.
+        readCanvas: () => ({ readSplitMeasurement: () => ({ availableSizePx: 1200, minimumExistingSizePx: 420 }), resizeSplit: () => false }),
+        getWorkspaceScope: identity => resolveSessionSplitCanvasScope(resolveWorkspaceTargetForSession(identity), { routeServerId: identity.serverId }),
+    });
+    const { registerSessionSplitCanvasRuntime } = await import('@/components/sessions/canvas/sessionSplitCanvasRuntime');
+    const retire = registerSessionSplitCanvasRuntime({
+        snapshot: { routeSessionId: 'anchor', focusedSessionId: 'anchor', openSessionIds: collectOpenSessionIds(state), scope, entityScope, canvasKey: scope.workspaceCacheKey },
+        controller: {
+            executeAction: execute,
+            openSessionInSplit: input => { execute('session.canvas.tabs.open', { scope: entityScope, canvasKey: scope.workspaceCacheKey, sessionId: input.sessionId, leafId: state.focusedLeafId, placement: input.direction }); },
+            focusSession: targetSessionId => { execute('session.canvas.tabs.activate', { scope: entityScope, canvasKey: scope.workspaceCacheKey, tabId: sessionCanvasTabId(entityScope, targetSessionId) }); },
+        },
+    });
+    return {
+        serverId, session, state: () => state, openSessionIds: () => collectOpenSessionIds(state),
+        addresses: () => collectSplitCanvasLeaves(state.root).flatMap(leaf => leaf.payload.group.tabIds.map(tabId => leaf.payload.tabs[tabId].address)),
+        focusedSessionId: () => {
+            const tabId = collectSplitCanvasLeaves(state.root).find(leaf => leaf.id === state.focusedLeafId)?.payload.group.activeTabId;
+            return tabId ? findSessionCanvasTab(state, tabId)?.tab.address.sessionId : null;
+        },
+        async dispose() { retire(); await connection.dispose(); storage.setState(previousStorageState, true); },
+    };
+}
+
 describe('SessionItem navigation', () => {
     function createSession(id: string) {
-        return {
+        return createSessionFixture({
             id,
-            seq: 1,
-            createdAt: 1,
-            updatedAt: 1,
             active: true,
             activeAt: 1,
-            metadata: null,
-            metadataVersion: 1,
-            agentState: null,
-            agentStateVersion: 1,
-            thinking: false,
-            thinkingAt: 0,
-            presence: 'online',
-            // Row actions (rename/stop/archive) gate on the session's explicit
-            // access capabilities; an owning viewer keeps the full menu visible.
-            access: createSessionAccessFixture('owner'),
-        } as any;
+            metadata: { path: '/repo', machineId: 'machine-canvas', host: 'canvas.local' },
+        });
     }
 
     async function renderSessionItem(props: SessionItemProps) {
@@ -234,12 +274,10 @@ describe('SessionItem navigation', () => {
         });
     }
 
-    afterEach(() => {
+    afterEach(async () => {
         standardCleanup();
-        splitCanvasActionState.mode = 'none';
-        splitCanvasActionState.openInSplitRight.mockClear();
-        splitCanvasActionState.openInSplitDown.mockClear();
-        splitCanvasActionState.revealInSplit.mockClear();
+        await splitFixture?.dispose();
+        splitFixture = null;
     });
 
     it('passes serverId when navigating to a session', async () => {
@@ -287,11 +325,11 @@ describe('SessionItem navigation', () => {
     });
 
     it('adds split commands to the more menu when a compatible split canvas is available', async () => {
-        splitCanvasActionState.mode = 'open';
+        splitFixture = await prepareSplitCanvas('sess_split');
 
         const screen = await renderSessionItem({
-            session: createSession('sess_split'),
-            serverId: 'server_a',
+            session: splitFixture.session,
+            serverId: splitFixture.serverId,
             serverName: 'Server A',
             showServerBadge: true,
             selected: false,
@@ -318,18 +356,22 @@ describe('SessionItem navigation', () => {
             moreMenu?.props.onSelect('openInSplitRight');
         });
 
-        expect(splitCanvasActionState.openInSplitRight).toHaveBeenCalledTimes(1);
-        expect(splitCanvasActionState.openInSplitDown).not.toHaveBeenCalled();
+        expect(splitFixture.openSessionIds()).toEqual(['anchor', 'sess_split']);
+        expect(splitFixture.state().root).toMatchObject({ kind: 'split', axis: 'row' });
+        expect(splitFixture.addresses()).toEqual([
+            { serverId: splitFixture.serverId, sessionId: 'anchor' },
+            { serverId: splitFixture.serverId, sessionId: 'sess_split' },
+        ]);
 
         await screen.unmount();
     });
 
-    it('keeps the desktop row as the navigation target without a separate split handle', async () => {
-        splitCanvasActionState.mode = 'open';
+    it('keeps desktop row navigation without a separate split handle and opens splits from its menu', async () => {
+        splitFixture = await prepareSplitCanvas('sess_drag');
 
         const screen = await renderSessionItem({
-            session: createSession('sess_drag'),
-            serverId: 'server_a',
+            session: splitFixture.session,
+            serverId: splitFixture.serverId,
             serverName: 'Server A',
             showServerBadge: true,
             selected: false,
@@ -345,19 +387,35 @@ describe('SessionItem navigation', () => {
         expect(screen.findByTestId('session-item-split-drag-handle-sess_drag')).toBeNull();
         navigateSpy.mockClear();
         await screen.pressByTestIdAsync('session-list-item-sess_drag');
-        expect(navigateSpy).toHaveBeenCalledWith('sess_drag', { serverId: 'server_a' });
-        expect(splitCanvasActionState.openInSplitRight).not.toHaveBeenCalled();
-        expect(splitCanvasActionState.openInSplitDown).not.toHaveBeenCalled();
+        expect(navigateSpy).toHaveBeenCalledWith('sess_drag', { serverId: splitFixture.serverId });
+        expect(splitFixture.openSessionIds()).toEqual(['anchor']);
+
+        const menu = screen.findAllByType('DropdownMenu').find((dropdown) => dropdown.props.search !== true);
+        expect(menu?.props.items).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'openInSplitRight' }),
+        ]));
+
+        await act(async () => {
+            menu?.props.onSelect('openInSplitRight');
+        });
+
+        expect(splitFixture.openSessionIds()).toEqual(['anchor', 'sess_drag']);
+        expect(splitFixture.state().root).toMatchObject({ kind: 'split', axis: 'row' });
+        expect(splitFixture.addresses()).toEqual([
+            { serverId: splitFixture.serverId, sessionId: 'anchor' },
+            { serverId: splitFixture.serverId, sessionId: 'sess_drag' },
+        ]);
 
         await screen.unmount();
     });
 
     it('shows reveal-in-split instead of duplicate split commands for sessions already open in the active canvas', async () => {
-        splitCanvasActionState.mode = 'reveal';
+        splitFixture = await prepareSplitCanvas('sess_reveal', true);
+        expect(splitFixture.focusedSessionId()).toBe('anchor');
 
         const screen = await renderSessionItem({
-            session: createSession('sess_reveal'),
-            serverId: 'server_a',
+            session: splitFixture.session,
+            serverId: splitFixture.serverId,
             serverName: 'Server A',
             showServerBadge: true,
             selected: false,
@@ -379,7 +437,8 @@ describe('SessionItem navigation', () => {
             moreMenu?.props.onSelect('revealInCurrentSplit');
         });
 
-        expect(splitCanvasActionState.revealInSplit).toHaveBeenCalledTimes(1);
+        expect(splitFixture.openSessionIds()).toEqual(['anchor', 'sess_reveal']);
+        expect(splitFixture.focusedSessionId()).toBe('sess_reveal');
 
         await screen.unmount();
     });

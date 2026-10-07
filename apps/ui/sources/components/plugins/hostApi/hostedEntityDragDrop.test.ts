@@ -6,20 +6,24 @@ import { createHostedEntityDragDropHandlers } from './hostedEntityDragDrop';
 import { createPluginSurfaceHostApi } from '../surfaces/createPluginSurfaceHostApi';
 
 describe('hosted entity coordinates and mount retirement', () => {
-    it('projects mounted target admission, pending settlement and retirement through the existing watch', async () => {
+    it('projects mounted source admission, pending settlement and retirement through the existing watch', async () => {
         const runtime = createEntityDragDropRuntime();
         const scope = { serverId: 'home', accountId: 'account' };
         let refused = false;
         let finish: (() => void) | undefined;
         const pending = new Promise<void>(resolve => { finish = resolve; });
+        let markStarted: (() => void) | undefined;
+        const started = new Promise<void>(resolve => { markStarted = resolve; });
         const descriptor = { id: 'board', title: 'Board', client: { artifactId: 'ui', exportName: 'activate' }, platforms: ['web' as const],
-            acceptedKinds: ['session' as const], actions: [{ kind: 'plugin' as const, action: 'add' }] };
+            acceptedKinds: ['plugin:acme.board/issue' as const], actions: [{ kind: 'plugin' as const, action: 'add' }] };
+        const source = { descriptor: { id: 'issue', title: 'Issue', client: descriptor.client, platforms: descriptor.platforms,
+            referenceSchema: { type: 'string' as const } }, describe: () => ({ title: 'Issue' }), isCurrent: () => true };
         const target = { descriptor, isCurrent: () => true, resolve: () => refused
-                ? { status: 'refused' as const, reason: { code: 'read_only', message: 'Read only' } }
-                : { status: 'allowed' as const, effect: { actionId: 'plugin:acme.board/add', input: {}, preview: { verb: 'Add', target: 'Board' } } } };
+            ? { status: 'refused' as const, reason: { code: 'read_only', message: 'Read only' } }
+            : { status: 'allowed' as const, effect: { actionId: 'plugin:acme.board/add', input: {}, preview: { verb: 'Add', target: 'Board' } } } };
         const binding = createPluginEntityDragDropBinding({ runtime, pluginId: 'acme.board', mountKey: 'iframe', scope, isCurrent: () => true,
-            readSource: () => null, readTarget: () => target,
-            executeAction: async () => { await pending; return { status: 'applied' }; } });
+            readSource: () => source, readTarget: () => target,
+            executeAction: async () => { markStarted?.(); await pending; return { status: 'applied' }; } });
         const hosted = createHostedEntityDragDropHandlers({ binding, isCurrent: () => true, readSessionItem: () => null });
         const surface = { pluginId: 'acme.board', contributionId: 'board', surfaceId: 'iframe', placement: 'sessionPane' as const,
             platform: 'web' as const, channel: 'internal' as const, resourceScope: [], diagnostics: [] };
@@ -27,23 +31,26 @@ describe('hosted entity coordinates and mount retirement', () => {
         const request = (method: 'updateEntityDragDrop' | 'watchEntityDragDrop', payload: PluginUiJsonValueV1) => ({ version: 1 as const, requestId: 'target-feedback', surface, method, payload });
         await api.handleRequest(request('updateEntityDragDrop', { kind: 'mountTarget', mountId: 'target', targetId: 'board',
             bounds: { x: 0, y: 0, width: 100, height: 100 }, viewport: { width: 100, height: 100 } }), { getHostedFrameBounds: async () => ({ x: 0, y: 0, width: 100, height: 100 }) });
+        expect(await api.handleRequest(request('updateEntityDragDrop', { kind: 'mountSource', mountId: 'source', sourceId: 'issue', reference: 'Issue 42' }))).toEqual({ accepted: true });
         const states: PluginUiEntityDragDropStateV1[] = [];
         let unsubscribe: (() => void) | undefined;
-        expect(await api.handleRequest(request('watchEntityDragDrop', { mountId: 'target' }), { entityDragDropSubscription: {
+        expect(await api.handleRequest(request('watchEntityDragDrop', { mountId: 'source' }), { entityDragDropSubscription: {
             publish: state => { states.push(state); }, retain: value => { unsubscribe = value; },
         } })).toEqual({});
         expect(states.at(-1)).toMatchObject({ current: true, phase: 'idle', admission: null });
-        runtime.registerSource({ id: 'session', scope, isCurrent: () => true, getItem: () => ({ kind: 'session', scope, address: { serverId: 'home', sessionId: 's1' } }) });
-        const carry = runtime.begin('session')!; carry.move({ x: 20, y: 20 });
+        const carry = runtime.begin(binding.runtimeMountId('source'))!; carry.move({ x: 20, y: 20 });
         expect(states.at(-1)).toMatchObject({ current: true, phase: 'carrying', admission: { status: 'allowed' } });
         refused = true; binding.refresh();
         expect(states.at(-1)).toMatchObject({ phase: 'carrying', admission: { status: 'refused', reason: { code: 'read_only' } } });
         refused = false; binding.refresh();
         const settling = carry.release();
-        await vi.waitFor(() => expect(states.at(-1)).toMatchObject({ phase: 'pending', admission: { status: 'allowed' } }));
+        await started;
+        expect(states.at(-1)).toMatchObject({ phase: 'pending', admission: { status: 'allowed' } });
         finish?.(); await settling;
         expect(states.at(-1)).toMatchObject({ phase: 'settled', outcome: { status: 'applied' } });
         await api.handleRequest(request('updateEntityDragDrop', { kind: 'unmount', mountId: 'target' }));
+        expect(states.at(-1)?.destinations).toEqual([]);
+        await api.handleRequest(request('updateEntityDragDrop', { kind: 'unmount', mountId: 'source' }));
         expect(states.at(-1)).toMatchObject({ current: false, phase: 'idle', admission: null, destinations: [] });
         unsubscribe?.(); hosted.dispose(); binding.dispose();
     });

@@ -7,22 +7,18 @@ type SendToAllDevicesAsync = (title: string, body: string, data: Record<string, 
 
 function buildSettings(topics: Readonly<{ blocked: boolean; recovered: boolean }>) {
   return accountSettingsParse({
-    notificationChannelsV1: [{
-      v: 1,
-      id: 'expo',
-      kind: 'expo_push',
-      enabled: true,
-      topics: {
-        ready: false,
-        permissionRequest: false,
-        userActionRequest: false,
-        connectedServiceAccountSwitch: false,
-        connectedServiceCredentialHealth: false,
-        connectedServiceQuotaBlocked: topics.blocked,
-        connectedServiceQuotaRecovered: topics.recovered,
+    attentionDeliveryPolicyV1: {
+      channels: {
+        expo_push: {
+          enabled: true,
+          previewBehavior: 'include_preview',
+          events: {
+            connected_service_quota_blocked: { enabled: topics.blocked },
+            connected_service_quota_recovered: { enabled: topics.recovered },
+          },
+        },
       },
-      readyIncludeMessageText: false,
-    }],
+    },
   });
 }
 
@@ -54,7 +50,7 @@ describe('dispatchConnectedServiceQuotaLifecycleNotificationAsync', () => {
       topic: 'connected_service_quota_blocked',
       sessionId: 'sess-1',
       serviceId: 'happier.agent.codex/openai-codex',
-      serviceDisplayName: 'Codex',
+      serviceDisplayName: 'ChatGPT',
       groupId: 'main',
       profileId: 'primary',
       issueFingerprint: 'quota-blocked:openai-codex:main',
@@ -113,7 +109,7 @@ describe('dispatchConnectedServiceQuotaLifecycleNotificationAsync', () => {
       topic: 'connected_service_quota_recovered',
       sessionId: 'sess-1',
       serviceId: 'happier.agent.codex/openai-codex',
-      serviceDisplayName: 'Codex',
+      serviceDisplayName: 'ChatGPT',
       profileId: 'backup',
       retryAfterMs: null,
     });

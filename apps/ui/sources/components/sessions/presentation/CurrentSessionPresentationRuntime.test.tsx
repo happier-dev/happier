@@ -901,7 +901,11 @@ describe('CurrentSessionPresentationRuntime', () => {
         const sessionId = 'session-runtime-cold-surface';
         const address = { serverId: persistentSessionScope.serverId, sessionId } as const;
         activeScopeState.value = persistentSessionScope;
-        const applyIntent = vi.fn(() => ({ status: 'applied' as const }));
+        let returnedToChat = false;
+        const applyIntent = vi.fn((intent: Readonly<{ kind: string }>) => {
+            returnedToChat = intent.kind === 'chat.return';
+            return { status: 'applied' as const };
+        });
         let presented = true;
         const unregister = registerSessionPresentationOnlyTarget(address, {
             applySessionPresentationIntent: applyIntent,
@@ -943,7 +947,7 @@ describe('CurrentSessionPresentationRuntime', () => {
                 payload: expect.objectContaining({ draftRevision: 0 }),
             }));
             expect(applyIntent).toHaveBeenCalledTimes(1);
-            expect(applyIntent).toHaveBeenCalledWith({ kind: 'chat.return' });
+            expect(returnedToChat).toBe(true);
             expect(sessionRpc).toHaveBeenCalledWith(expect.objectContaining({
                 method: CURRENT_SESSION_PRESENTATION_ACK_RPC_METHOD,
                 payload: expect.objectContaining({ commandId: 'return-1', result: { status: 'applied' } }),

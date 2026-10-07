@@ -44,7 +44,7 @@ describe('useHomeAdministration', () => {
         const hook = await renderHook(() => useHomeAdministration(home.id));
         // Never a spinner that cannot settle, never a sign-out claim.
         await vi.waitFor(() => {
-            expect(hook.getCurrent()).toEqual({ kind: 'credential_unreadable', serverId: home.id, homeName: 'Unreadable Home' });
+            expect(hook.getCurrent()).toEqual({ kind: 'credential_unreadable', serverId: home.id });
         });
 
         storageBoundary.unreadable = false;
@@ -52,7 +52,7 @@ describe('useHomeAdministration', () => {
             retryServerCredentialAccountScope(home.id);
         });
         await vi.waitFor(() => {
-            expect(hook.getCurrent().kind).toBe('signed_out');
+            expect(hook.getCurrent()).toEqual({ kind: 'signed_out', homeName: 'Unreadable Home' });
         });
     });
 });

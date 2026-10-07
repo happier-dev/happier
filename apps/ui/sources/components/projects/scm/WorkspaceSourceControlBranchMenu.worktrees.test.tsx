@@ -46,10 +46,6 @@ vi.mock('@/components/ui/popover', () => ({
         React.createElement('Popover', props, props.open && typeof props.children === 'function' ? props.children({}) : null),
 }));
 
-vi.mock('@/components/ui/navigation/SegmentedTabBar', () => ({
-    SegmentedTabBar: (props: Record<string, unknown>) => React.createElement('SegmentedTabBar', props),
-}));
-
 vi.mock('@/components/ui/forms/dropdown/SelectableMenuResults', () => ({
     SelectableMenuResults: (props: Record<string, unknown>) => React.createElement('SelectableMenuResults', props),
 }));
@@ -133,10 +129,7 @@ async function openWorktreesTab(screen: Awaited<ReturnType<typeof renderScreen>>
     await act(async () => {
         trigger.props.onPress();
     });
-    const segmented = screen.tree.findByType('SegmentedTabBar' as never);
-    await act(async () => {
-        segmented.props.onSelectTab('worktrees');
-    });
+    await flushHookEffects({ cycles: 2, turns: 2 });
 }
 
 async function openBranchMenu(screen: Awaited<ReturnType<typeof renderScreen>>) {

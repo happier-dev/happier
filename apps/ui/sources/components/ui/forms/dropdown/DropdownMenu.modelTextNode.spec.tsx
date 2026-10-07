@@ -1,10 +1,11 @@
 import * as React from 'react';
 import renderer from 'react-test-renderer';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderDropdownItemIcon } from '@/components/settings/pickers/renderDropdownItemIcon';
-import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
+import { collectUnexpectedRawTextNodes, findAllHostTestInstances, renderScreen, standardCleanup } from '@/dev/testkit';
+import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { installDropdownCommonModuleMocks } from './dropdownTestHelpers';
 
 const installDropdownReactNativeMock = async () => {
@@ -33,9 +34,11 @@ const installDropdownModalMock = async () => {
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: () => <>{'.'}</>,
-}));
+vi.unmock('@/components/ui/icons/Icon');
+// Exercise the vendor glyph fallback beneath the real Icon and row normalization.
+vi.mock('phosphor-react-native/src/icons/ArrowClockwise', () => ({ ArrowClockwiseIcon: () => '.' }));
+vi.mock('phosphor-react-native/src/icons/StackSimple', () => ({ StackSimpleIcon: () => '.' }));
+vi.mock('phosphor-react-native/src/icons/PencilSimple', () => ({ PencilSimpleIcon: () => '.' }));
 
 vi.mock('expo-clipboard', () => ({
     setStringAsync: vi.fn(async () => {}),
@@ -46,16 +49,21 @@ installDropdownCommonModuleMocks({
     modal: installDropdownModalMock,
 });
 
-vi.mock('@/components/ui/popover', () => ({
-    Popover: ({ children }: any) => (typeof children === 'function' ? children({ maxHeight: 320, maxWidth: 320 }) : children),
-    PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
-}));
-
-vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
-    FloatingOverlay: ({ children }: any) => React.createElement(React.Fragment, null, children),
-}));
-
 describe('DropdownMenu model-style text node guard', () => {
+    let restoreWebGlobals: (() => void) | undefined;
+    let restoreIconFamily: (() => void) | undefined;
+    beforeEach(async () => {
+        restoreWebGlobals = withPopoverWebGlobals();
+        const { getIconFamily, setIconFamily } = await import('@/components/ui/icons/iconFamily');
+        const previous = getIconFamily();
+        setIconFamily('phosphor');
+        restoreIconFamily = () => setIconFamily(previous);
+    });
+    afterEach(() => {
+        standardCleanup();
+        restoreIconFamily?.();
+        restoreWebGlobals?.();
+    });
     it('does not emit raw period text nodes under non-Text parents when a model-id dropdown is open', async () => {
         const { DropdownMenu } = await import('./DropdownMenu');
 
@@ -82,6 +90,7 @@ describe('DropdownMenu model-style text node guard', () => {
         let tree!: renderer.ReactTestRenderer;
         tree = (await renderScreen(<DropdownMenu
                     open={true}
+                    popoverAnchor={{ kind: 'rect', rect: { left: 10, top: 10, width: 320, height: 48 } }}
                     onOpenChange={() => {}}
                     items={items}
                     onSelect={() => {}}
@@ -97,6 +106,7 @@ describe('DropdownMenu model-style text node guard', () => {
                     }}
                 />)).tree;
 
+        expect(findAllHostTestInstances(tree.root, (node) => node.type === 'Text' && React.Children.toArray(node.props.children).includes('.')).length).toBeGreaterThan(0);
         expect(collectUnexpectedRawTextNodes(tree.toJSON())).toEqual([]);
     });
 
@@ -109,6 +119,7 @@ describe('DropdownMenu model-style text node guard', () => {
             const [open, setOpen] = React.useState(false);
             return <DropdownMenu
                 open={open}
+                popoverAnchor={{ kind: 'rect', rect: { left: 10, top: 10, width: 320, height: 48 } }}
                 onOpenChange={(next) => {
                     onOpenChange(next);
                     setOpen(next);
@@ -127,7 +138,7 @@ describe('DropdownMenu model-style text node guard', () => {
         }
 
         const screen = await renderScreen(<VoiceManifestSelect />);
-        const trigger = () => screen.findByTestId('voice-manifest-select');
+        const trigger = () => screen.findHostByTestId('voice-manifest-select');
         const keyEvent = (key: string) => ({
             key,
             nativeEvent: { key },

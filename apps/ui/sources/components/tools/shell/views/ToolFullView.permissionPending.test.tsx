@@ -1,7 +1,8 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-    renderScreen,
+    renderWithSessionTranscriptSource,
+    createTestSessionTranscriptSource,
     standardCleanup,
 } from '@/dev/testkit';
 import {
@@ -14,12 +15,21 @@ import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const hoisted = vi.hoisted(() => ({
-    ensureSidechainMessagesLoadedMock: vi.fn(),
+    ensureSidechainMessagesLoadedMock: vi.fn(async (_sidechainId: string) => 'not_ready' as const),
     chainTranscriptListSpy: vi.fn(),
 }));
 
 const ensureSidechainMessagesLoadedMock = hoisted.ensureSidechainMessagesLoadedMock;
 const chainTranscriptListSpy = hoisted.chainTranscriptListSpy;
+
+function renderScreen(element: React.ReactElement, inactive = false) {
+    return renderWithSessionTranscriptSource(element, createTestSessionTranscriptSource({
+        sessionId: 's1',
+        interaction: { canSendMessages: true, canApprovePermissions: !inactive,
+            ...(inactive ? { permissionDisabledReason: 'inactive' } : {}) },
+        loadSidechain: hoisted.ensureSidechainMessagesLoadedMock,
+    }));
+}
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -95,13 +105,14 @@ vi.mock('../permissions/PermissionFooter', () => ({
     PermissionFooter: (props: any) => React.createElement('PermissionFooter', props),
 }));
 
+const { ToolFullView } = await import('./ToolFullView');
+
 describe('ToolFullView (permission pending)', () => {
     afterEach(() => {
         standardCleanup();
     });
 
     it('renders PermissionFooter so users can approve/deny from the full view', async () => {
-        const { ToolFullView } = await import('./ToolFullView');
 
         const tool = makeToolCall({
             name: 'edit',
@@ -127,7 +138,6 @@ describe('ToolFullView (permission pending)', () => {
     });
 
     it('does not render PermissionFooter for tools that have custom permission UIs', async () => {
-        const { ToolFullView } = await import('./ToolFullView');
 
         const tool = makeToolCall({
             name: 'AskUserQuestion',
@@ -153,7 +163,6 @@ describe('ToolFullView (permission pending)', () => {
     });
 
     it('renders PermissionFooter when transcript fallback is forced for details-only views', async () => {
-        const { ToolFullView } = await import('./ToolFullView');
 
         const tool = makeToolCall({
             name: 'edit',
@@ -180,7 +189,6 @@ describe('ToolFullView (permission pending)', () => {
     });
 
     it('forces transcript permission prompts through the child transcript list when details-only fallback is active', async () => {
-        const { ToolFullView } = await import('./ToolFullView');
 
         const tool = makeToolCall({
             name: 'SubAgent',
@@ -227,7 +235,6 @@ describe('ToolFullView (permission pending)', () => {
     });
 
     it('renders an error (not an approval prompt) when the session is inactive and a permission was pending', async () => {
-        const { ToolFullView } = await import('./ToolFullView');
         const { ToolError } = await import('@/components/tools/shell/presentation/ToolError');
 
         const tool = makeToolCall({
@@ -247,12 +254,8 @@ describe('ToolFullView (permission pending)', () => {
                 metadata: null,
                 messages: [],
                 sessionId: 's1',
-                interaction: {
-                    canSendMessages: true,
-                    canApprovePermissions: false,
-                    permissionDisabledReason: 'inactive',
-                },
             }),
+            true,
         );
 
         expect(screen.findAllByType('PermissionFooter' as any)).toHaveLength(0);

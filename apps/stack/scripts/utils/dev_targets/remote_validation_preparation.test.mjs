@@ -75,7 +75,7 @@ export default { plugins: [createWorkspacePackageSourcesPlugin([{ packageName: '
   assert.match(`${result.stdout}\n${result.stderr}`, /Failed Suites|Transform failed/);
 });
 
-test('remote typecheck preparation admits current dependency declarations without runtime publication', async (t) => {
+test('remote typecheck preparation admits current component declarations without preparing CLI-only runtime dependencies', async (t) => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-typecheck-declarations-' });
   writeFileSync(join(root, 'package.json'), JSON.stringify({ private: true, workspaces: ['apps/*', 'packages/*'] }));
   writeFileSync(join(root, 'yarn.lock'), '# fixture\n');
@@ -83,7 +83,10 @@ test('remote typecheck preparation admits current dependency declarations withou
     const dir = join(root, 'apps', name);
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'package.json'), JSON.stringify({
-      name: `@fixture/${name}`, dependencies: { '@fixture/protocol': 'workspace:*' },
+      name: `@fixture/${name}`, dependencies: {
+        '@fixture/protocol': 'workspace:*',
+        ...(name === 'cli' ? { '@fixture/cli-runtime': 'workspace:*' } : {}),
+      },
     }));
   }
   const protocol = join(root, 'packages', 'protocol');
@@ -94,6 +97,13 @@ test('remote typecheck preparation admits current dependency declarations withou
   }));
   const source = join(protocol, 'src', 'index.ts');
   writeFileSync(source, 'export type Value = "first";\n');
+  const cliRuntime = join(root, 'packages', 'cli-runtime');
+  mkdirSync(join(cliRuntime, 'src'), { recursive: true });
+  writeFileSync(join(cliRuntime, 'package.json'), JSON.stringify({
+    name: '@fixture/cli-runtime', scripts: { build: 'fixture-compiler' },
+    main: './dist/index.js', types: './dist/index.d.ts',
+  }));
+  writeFileSync(join(cliRuntime, 'src', 'index.ts'), 'export declare const runtimeOnly: true;\n');
   let builds = 0;
   const prepare = () => prepareRemoteValidationWorkspace({
     repoDir: root,
@@ -105,15 +115,14 @@ test('remote typecheck preparation admits current dependency declarations withou
         // Replace only the compiler/package-manager process boundary; digest admission is real.
         workspaceBuildBoundary: {
           prepareEnv: async (_dir, env) => ({ ...env }),
-          runPackageBuild: async (_dir, { env }) => {
+          runPackageBuild: async (packageDir, { env }) => {
             builds += 1;
             writeFileSync(join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.js'), 'export {};\n');
-            writeFileSync(join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.d.ts'), readFileSync(source));
+            writeFileSync(join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.d.ts'), readFileSync(join(packageDir, 'src', 'index.ts')));
           },
         },
       }),
     }),
-    loadCliBuildOwner: async () => { throw new Error('runtime publisher loaded'); },
   });
   await prepare();
   assert.equal(readFileSync(join(protocol, 'dist', 'index.d.ts'), 'utf8'), 'export type Value = "first";\n');
@@ -123,6 +132,8 @@ test('remote typecheck preparation admits current dependency declarations withou
   await prepare();
   assert.equal(builds, 2);
   assert.equal(readFileSync(join(protocol, 'dist', 'index.d.ts'), 'utf8'), 'export type Value = "second";\n');
+  assert.throws(() => readFileSync(join(cliRuntime, 'dist', 'index.js')), { code: 'ENOENT' });
+  assert.throws(() => readFileSync(join(cliRuntime, 'dist', 'index.d.ts')), { code: 'ENOENT' });
 });
 
 test('artifact-consuming preparation publishes cold outputs, reuses current outputs and rebuilds stale outputs', async (t) => {
@@ -228,7 +239,6 @@ test('remote development validation isolates an optional plugin at the real pack
         },
       }),
     }),
-    loadCliBuildOwner: async () => { throw new Error('typecheck must not load the runtime publisher'); },
   });
   assert.equal(result.ok, true);
   assert.deepEqual(result.pluginFailures.map((failure) => failure.packageName), ['@happier-dev/plugins-inspector']);

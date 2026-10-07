@@ -1,10 +1,25 @@
 import React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+    AccountSettingsV2GetResponseSchema,
+    CurrentCursorResponseSchema,
+    FeaturesResponseSchema,
+    SavedSecretCatalogEntryV1Schema,
+    SavedSecretResourceMaterialsResponseV1Schema,
+    sealSavedSecretResourceStoredContentV1,
+} from '@happier-dev/protocol';
 
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
-import { installValueRefsCommonModuleMocks } from './valueRefsTestHelpers';
-import { renderScreen } from '@/dev/testkit';
-import { createPassThroughModule } from '@/dev/testkit/mocks/components';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { storage } from '@/sync/domains/state/storage';
+import { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
+import { refreshSavedSecretCatalog, resetSavedSecretCatalogEngineForTests } from '@/sync/engine/settings/savedSecretCatalogEngine';
+import { getSavedSecretCatalogSnapshot, resetSavedSecretCatalogSnapshotsForTests } from '@/sync/store/settings/savedSecretCatalogSnapshot';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -17,113 +32,59 @@ const storedSecrets: SavedSecret[] = [{
     updatedAt: 1,
 }];
 
-const catalogHarness = vi.hoisted(() => {
-    const state = { stale: false };
-    return {
-        state,
-        reload: vi.fn(async () => {
-            state.stale = false;
-        }),
-    };
+// Native/window and modal adapters remain boundaries; all settings/catalog/UI owners stay real.
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        useWindowDimensions: () => ({ width: 1280, height: 900, scale: 1, fontScale: 1 }),
+    });
 });
+vi.mock('@expo/vector-icons', async () => {
+    const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
+    return createExpoVectorIconsMock();
+});
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
+installDisconnectedServerSocketBoundary();
 
-installValueRefsCommonModuleMocks();
+const features = FeaturesResponseSchema.parse({ features: { teams: { enabled: true } }, capabilities: {} });
+const readyEntry = SavedSecretCatalogEntryV1Schema.parse({
+    ref: 'happier:shared-secret:v1:shared-ready', source: 'shared_resource', relationship: 'recipient',
+    name: 'Team key', kind: 'apiKey', encryptionMode: 'plain', ownerAccountId: 'owner-a', revision: 1,
+    materialStatus: 'ready',
+    capabilities: { use: true, rename: false, rotate: false, manageAccess: false, delete: false },
+});
+const materialReply = SavedSecretResourceMaterialsResponseV1Schema.parse({ resources: [
+    {
+        resourceId: 'shared-ready', encryptionMode: 'plain', entry: readyEntry,
+        storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: 'shared-ready', mode: 'plain',
+            content: { v: 1, name: 'Team key', kind: 'apiKey', value: 'shared-value' } }),
+        recipientEnvelope: null,
+    },
+    {
+        resourceId: 'shared-preparing', encryptionMode: 'e2ee', storedContent: null, recipientEnvelope: null,
+        entry: { ...readyEntry, ref: 'happier:shared-secret:v1:shared-preparing', name: 'Preparing key',
+            encryptionMode: 'e2ee', materialStatus: 'preparing_encrypted_access',
+            capabilities: { ...readyEntry.capabilities, use: false } },
+    },
+    { entry: { materialStatus: 'resource_corrupt', relationship: 'owner',
+        repair: { kind: 'delete_resource', resourceId: 'opaque-corrupt-row', expectedRevision: 4 } } },
+] });
 
-vi.mock('@/sync/store/hooks', () => ({
-    useSetting: () => storedSecrets,
-    useSettingsVersion: () => 1,
-}));
-
-vi.mock('@/sync/store/settingsWriters', () => ({
-    useAccountSettingsScope: () => ({ serverId: 'home-a', accountId: 'account-a' }),
-}));
-
-vi.mock('@/components/secrets/useSavedSecretCatalog', () => ({
-    useSavedSecretCatalog: () => ({
-        personalSecrets: storedSecrets,
-        personalMutations: {
-            create: vi.fn(async () => null),
-            rename: vi.fn(async () => true),
-            rotate: vi.fn(async () => true),
-            delete: vi.fn(async () => true),
-        },
-        entries: [
-            {
-                ref: 'happier:shared-secret:v1:shared-ready', source: 'shared_resource', relationship: 'recipient',
-                name: 'Team key', kind: 'apiKey', ownerAccountId: 'owner-a', revision: 1, materialStatus: 'ready',
-                capabilities: { use: true, rename: false, rotate: false, manageAccess: false, delete: false },
-            },
-            {
-                ref: 'happier:shared-secret:v1:shared-preparing', source: 'shared_resource', relationship: 'recipient',
-                name: 'Preparing key', kind: 'apiKey', ownerAccountId: 'owner-a', revision: 1,
-                materialStatus: 'preparing_encrypted_access',
-                capabilities: { use: false, rename: false, rotate: false, manageAccess: false, delete: false },
-            },
-        ],
-        sharedEntries: [
-            {
-                ref: 'happier:shared-secret:v1:shared-ready', source: 'shared_resource', relationship: 'recipient',
-                name: 'Team key', kind: 'apiKey', ownerAccountId: 'owner-a', revision: 1, materialStatus: 'ready',
-                capabilities: { use: true, rename: false, rotate: false, manageAccess: false, delete: false },
-            },
-            {
-                ref: 'happier:shared-secret:v1:shared-preparing', source: 'shared_resource', relationship: 'recipient',
-                name: 'Preparing key', kind: 'apiKey', ownerAccountId: 'owner-a', revision: 1,
-                materialStatus: 'preparing_encrypted_access',
-                capabilities: { use: false, rename: false, rotate: false, manageAccess: false, delete: false },
-            },
-        ],
-        corruptEntries: [{
-            materialStatus: 'resource_corrupt',
-            relationship: 'owner',
-            repair: { kind: 'delete_resource', resourceId: 'opaque-corrupt-row', expectedRevision: 4 },
-        }],
-        resolveReference: (ref: string) => ({
-            ref,
-            kind: 'shared_resource',
-            status: catalogHarness.state.stale ? 'temporarily_unavailable' : 'ready',
-            entry: null,
-            secret: catalogHarness.state.stale ? null : storedSecrets[0],
-            revision: 1,
-            fingerprint: `shared:${ref}:1`,
-        }),
-        status: catalogHarness.state.stale ? 'error' : 'ready',
-        stale: catalogHarness.state.stale,
-        error: catalogHarness.state.stale,
-        reload: catalogHarness.reload,
-    }),
-}));
-
-vi.mock('@/sync/runtime/getSyncSingleton', () => ({
-    getSyncSingleton: () => ({ mutateAccountSettings: vi.fn() }),
-}));
-
-vi.mock('@/components/ui/text/Text', () => createPassThroughModule(['Text', 'TextInput']));
-vi.mock('@/components/ui/lists/ItemList', () => createPassThroughModule(['ItemList']));
-vi.mock('@/components/ui/lists/ItemGroup', () => createPassThroughModule(['ItemGroup']));
-vi.mock('@/components/ui/lists/ItemRowActions', () => createPassThroughModule(['ItemRowActions']));
-vi.mock('@/components/ui/forms/InlineAddExpander', () => createPassThroughModule(['InlineAddExpander']));
-vi.mock('@/constants/Typography', () => ({
-    Typography: new Proxy({}, { get: () => () => ({}) }),
-    FontWeights: { regular: '400' },
-}));
-
-// `Item` renders its right-hand affordances through a prop rather than children, so the row slot has
-// to be mounted for the mutation controls to be observable at all.
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: Record<string, unknown> & { rightElement?: React.ReactNode }) => React.createElement(
-        'Item',
-        props,
-        props.rightElement,
-    ),
-}));
-
-type PickerScreen = Awaited<ReturnType<typeof renderScreen>>;
-
-function rowActionIds(screen: PickerScreen): string[] {
-    return screen.findAllByType('ItemRowActions' as never)
-        .flatMap((node) => ((node.props.actions ?? []) as ReadonlyArray<{ id: string }>).map((action) => action.id));
-}
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+let scope: ServerAccountScope;
+let materialUnavailable = false;
+let writes: string[] = [];
 
 /**
  * The picker is shared between callers that own the secret list (MCP value refs, provider
@@ -131,9 +92,52 @@ function rowActionIds(screen: PickerScreen): string[] {
  * first group may mutate a stored record from inside the picker.
  */
 describe('SavedSecretPickerModal', () => {
-    beforeEach(() => {
-        catalogHarness.state.stale = false;
-        catalogHarness.reload.mockClear();
+    beforeAll(async () => {
+        await loadSyncSingletonForTests();
+    });
+
+    beforeEach(async () => {
+        materialUnavailable = false;
+        writes = [];
+        resetSavedSecretCatalogEngineForTests();
+        resetSavedSecretCatalogSnapshotsForTests();
+        resetServerFeaturesClientForTests();
+        connection = await restoreServerAccountForTest({
+            serverUrl: 'https://secret-picker.example.test', accountId: 'account-a',
+            request: async (url, init) => {
+                const path = new URL(String(url)).pathname;
+                if (init?.method && init.method !== 'GET') {
+                    writes.push(path);
+                    return new Response('{}', { status: 405 });
+                }
+                if (path === '/health') return Response.json({ status: 'ok' });
+                if (path === '/v1/features') return Response.json(features);
+                if (path === '/v2/cursor') return Response.json(CurrentCursorResponseSchema.parse({ cursor: 0, changesFloor: 0 }));
+                if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+                if (path === '/v2/account/settings') return Response.json(AccountSettingsV2GetResponseSchema.parse({
+                    content: { t: 'plain', v: { secrets: storedSecrets, experiments: true } }, version: 1,
+                }));
+                if (path === '/v1/account/saved-secrets/resources/materials') {
+                    if (materialUnavailable) return new Response('{}', { status: 503 });
+                    return Response.json(materialReply);
+                }
+                return new Response('{}', { status: 404 });
+            },
+        });
+        scope = { serverId: connection.home.id, accountId: 'account-a' };
+        expect(storage.getState().settingsScope).toEqual(scope);
+        storage.getState().applySettingsLocal({ secrets: storedSecrets, experiments: true });
+        storage.setState({ settingsVersion: 1 });
+        primeServerFeaturesSnapshot({ serverId: scope.serverId, snapshot: { status: 'ready', features } });
+        await refreshSavedSecretCatalog(scope);
+    });
+
+    afterEach(async () => {
+        await standardCleanup();
+        resetSavedSecretCatalogEngineForTests();
+        resetSavedSecretCatalogSnapshotsForTests();
+        await connection?.dispose();
+        connection = undefined;
     });
 
     it('keeps rename, replace, delete and add for consumers that own the secret list', async () => {
@@ -145,8 +149,10 @@ describe('SavedSecretPickerModal', () => {
             onSelectId: vi.fn(),
         }));
 
-        expect(rowActionIds(screen)).toEqual(['edit', 'replace', 'delete']);
-        expect(screen.findAllByType('InlineAddExpander' as never)).toHaveLength(1);
+        for (const action of ['rename', 'replace', 'delete']) {
+            expect(screen.findByTestId(`saved-secret:secret-1:${action}`)).toBeTruthy();
+        }
+        expect(screen.findByTestId('saved-secret-add')).toBeTruthy();
         expect(screen.findByTestId('saved-secret:none')).toBeTruthy();
     });
 
@@ -165,14 +171,18 @@ describe('SavedSecretPickerModal', () => {
         }));
 
         // Nothing in the tree can create, replace, rename or delete a stored record.
-        expect(rowActionIds(screen)).toEqual([]);
-        expect(screen.findAllByType('InlineAddExpander' as never)).toHaveLength(0);
+        for (const action of ['rename', 'replace', 'delete']) {
+            expect(screen.findByTestId(`saved-secret:secret-1:${action}`)).toBeNull();
+        }
+        expect(screen.findByTestId('saved-secret-add')).toBeNull();
         expect(screen.findByTestId('saved-secret:none')).toBeNull();
 
         // Selecting an already-stored record stays the whole point of the surface.
         screen.pressByTestId('saved-secret:secret-1');
         expect(onSelectId).toHaveBeenCalledWith('secret-1');
         expect(onClose).toHaveBeenCalledTimes(1);
+        expect(writes).toEqual([]);
+        expect(storage.getState().settings.secrets).toEqual(storedSecrets);
     });
 
     it('selects ready shared resources and keeps preparing access visible but disabled', async () => {
@@ -194,7 +204,6 @@ describe('SavedSecretPickerModal', () => {
     });
 
     it('keeps retained stale metadata visible but unavailable, then restores selection after reload', async () => {
-        catalogHarness.state.stale = true;
         const { SavedSecretPickerModal } = await import('./SavedSecretPickerModal');
         const onSelectId = vi.fn();
         const onClose = vi.fn();
@@ -204,6 +213,10 @@ describe('SavedSecretPickerModal', () => {
             onSelectId,
         };
         const screen = await renderScreen(React.createElement(SavedSecretPickerModal, pickerProps));
+        materialUnavailable = true;
+        await act(async () => {
+            await expect(refreshSavedSecretCatalog(scope)).rejects.toThrow();
+        });
 
         const staleRow = screen.findByTestId('saved-secret:happier:shared-secret:v1:shared-ready');
         expect(staleRow?.props.subtitle).toBe('secrets.catalog.status.temporarily_unavailable');
@@ -212,9 +225,11 @@ describe('SavedSecretPickerModal', () => {
         expect(staleRow?.props.onPress).toBeUndefined();
         expect(onClose).not.toHaveBeenCalled();
 
+        materialUnavailable = false;
         await screen.pressByTestIdAsync('saved-secret-catalog-retry');
-        expect(catalogHarness.reload).toHaveBeenCalledOnce();
-        await screen.update(React.createElement(SavedSecretPickerModal, { ...pickerProps }));
+        await act(async () => {
+            await vi.waitFor(() => expect(getSavedSecretCatalogSnapshot(scope)).toMatchObject({ status: 'ready', stale: false }));
+        });
 
         const restoredRow = screen.findByTestId('saved-secret:happier:shared-secret:v1:shared-ready');
         expect(restoredRow?.props.selected).toBe(true);

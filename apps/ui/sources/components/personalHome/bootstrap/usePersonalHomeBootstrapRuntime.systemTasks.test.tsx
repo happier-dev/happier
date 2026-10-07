@@ -784,6 +784,7 @@ describe('usePersonalHomeBootstrapRuntime system-task composition', () => {
         const storage = installLocalStorageMock();
         vi.stubGlobal('window', { localStorage: globalThis.localStorage });
         vi.stubGlobal('document', {});
+        vi.stubGlobal('navigator', { locks: { request: async (_name: string, run: () => Promise<unknown>) => await run() } });
         const profiles = await import('@/sync/domains/server/serverProfiles');
         profiles.resetServerProfilesRuntimeForTests();
         try {

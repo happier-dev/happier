@@ -23,8 +23,10 @@ import {
   restoreServerAccountForTest,
 } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 installDisconnectedServerSocketBoundary();
+await loadSyncSingletonForTests();
 
 const sessionRpcBoundary = vi.hoisted(() => ({
   sessionRpc: vi.fn(),

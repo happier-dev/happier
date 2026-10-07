@@ -1,12 +1,9 @@
+import { act } from 'react-test-renderer';
 import * as React from 'react';
 import type { ReactTestInstance } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
-import { AppPaneProvider } from '../../appShell/panes/AppPaneProvider';
+import { renderScreen as renderPanelScreen } from '@/dev/testkit';
 import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
-
-
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 installSessionDetailsPanelCommonModuleMocks({
     reactNative: async () => {
@@ -21,33 +18,29 @@ installSessionDetailsPanelCommonModuleMocks({
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ translate: (key) => key });
     },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            useLocalSetting: () => null,
-        });
-    },
 });
 
-vi.mock('@/components/sessions/panes/surfaces/SessionBrowseFilesSurface', () => ({
-    SessionBrowseFilesSurface: (props: any) => React.createElement('SessionBrowseFilesSurface', props),
-}));
-
-vi.mock('@/components/sessions/panes/git/SessionRightPanelGitView', () => ({
-    SessionRightPanelGitView: (props: any) => React.createElement('SessionRightPanelGitView', props),
-}));
-
 // The real pane scope owner (tab selection, per-tab state) — not a mock of it.
+
+import { installSessionPaneRuntimeTestHarness } from './sessionPaneRuntimeTestHarness';
+const runtime = installSessionPaneRuntimeTestHarness();
+const initialTabId = 'git';
+async function renderScreen(element: React.ReactElement) {
+    const screen = await renderPanelScreen(<runtime.Wrapper>{element}</runtime.Wrapper>);
+    await act(async () => runtime.pane.openRight({ tabId: initialTabId }));
+    return screen;
+}
 
 describe('SessionRightPanel (keep mounted tabs)', () => {
     it('keeps Git and Files tab surfaces mounted so switching tabs preserves state', async () => {
         const { SessionRightPanel } = await import('./SessionRightPanel');
+        const { SessionGitSurface } = await import('./surfaces/SessionGitSurface');
+        const { SessionBrowseFilesSurface } = await import('./surfaces/SessionBrowseFilesSurface');
 
-        const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
         const screen = await renderScreen(
-            <AppPaneProvider>
+            <>
                 <SessionRightPanel sessionId="s1" scopeId="session:s1" />
-            </AppPaneProvider>,
+            </>,
         );
 
         const getStyleValue = (node: ReactTestInstance, key: string) => {
@@ -60,15 +53,15 @@ describe('SessionRightPanel (keep mounted tabs)', () => {
             return undefined;
         };
 
-        expect(screen.findAllByType('SessionGitSurface')).toHaveLength(1);
+        expect(screen.findAllByType(SessionGitSurface)).toHaveLength(1);
         // Lazy-mount inactive tabs for faster initial open.
-        expect(screen.findAllByType('SessionBrowseFilesSurface')).toHaveLength(0);
+        expect(screen.findAllByType(SessionBrowseFilesSurface)).toHaveLength(0);
 
         await screen.pressByTestIdAsync('session-rightpanel-tab:files');
 
-        expect(screen.findAllByType('SessionGitSurface')).toHaveLength(1);
-        expect(screen.findAllByType('SessionBrowseFilesSurface')).toHaveLength(1);
-        expect(screen.findByType('SessionBrowseFilesSurface')).toBeTruthy();
+        expect(screen.findAllByType(SessionGitSurface)).toHaveLength(1);
+        expect(screen.findAllByType(SessionBrowseFilesSurface)).toHaveLength(1);
+        expect(screen.findByType(SessionBrowseFilesSurface)).toBeTruthy();
         expect(screen.findByTestId('session-rightpanel-surface-git')!.props.pointerEvents).toBe('none');
         expect(getStyleValue(screen.findByTestId('session-rightpanel-surface-git')!, 'opacity')).toBe(0);
         expect(screen.findByTestId('session-rightpanel-surface-files')!.props.pointerEvents).toBe('auto');
@@ -76,8 +69,8 @@ describe('SessionRightPanel (keep mounted tabs)', () => {
 
         // Switching back keeps both mounted.
         await screen.pressByTestIdAsync('session-rightpanel-tab:git');
-        expect(screen.findAllByType('SessionGitSurface')).toHaveLength(1);
-        expect(screen.findAllByType('SessionBrowseFilesSurface')).toHaveLength(1);
+        expect(screen.findAllByType(SessionGitSurface)).toHaveLength(1);
+        expect(screen.findAllByType(SessionBrowseFilesSurface)).toHaveLength(1);
         expect(screen.findByTestId('session-rightpanel-surface-git')!.props.pointerEvents).toBe('auto');
         expect(getStyleValue(screen.findByTestId('session-rightpanel-surface-git')!, 'opacity')).toBe(1);
         expect(screen.findByTestId('session-rightpanel-surface-files')!.props.pointerEvents).toBe('none');

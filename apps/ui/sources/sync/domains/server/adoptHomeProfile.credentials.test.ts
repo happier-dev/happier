@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 type TokenStorageModule = typeof import('@/auth/storage/tokenStorage');
 type SetCredentialsForServerUrl = TokenStorageModule['TokenStorage']['setCredentialsForServerUrl'];
@@ -10,20 +10,28 @@ const setCredentialsForServerUrlWithRollbackMock = vi.hoisted(() => vi.fn<SetHom
 const publicSetCredentialsForServerUrlWithRollbackMock = vi.hoisted(() => vi.fn<SetCredentialsForServerUrlWithRollback>());
 const getHomeCredentialsUnderMutationAuthorityMock = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => null as { token: string } | null));
 
-vi.mock('@/auth/storage/tokenStorage', () => ({
-    getHomeCredentialsUnderMutationAuthority: (...args: unknown[]) => getHomeCredentialsUnderMutationAuthorityMock(...args),
-    removeHomeCredentialsUnderMutationAuthority: vi.fn(async () => true),
-    setHomeCredentialsWithRollbackUnderMutationAuthority: (
-        ...args: Parameters<SetHomeCredentialsWithRollbackUnderMutationAuthority>
-    ) => setCredentialsForServerUrlWithRollbackMock(...args),
-    TokenStorage: {
-        setCredentialsForServerUrl: (...args: Parameters<SetCredentialsForServerUrl>) => setCredentialsForServerUrlMock(...args),
-        setCredentialsForServerUrlWithRollback: (...args: Parameters<SetCredentialsForServerUrlWithRollback>) => publicSetCredentialsForServerUrlWithRollbackMock(...args),
-    },
-}));
+// The untouched legacy failure-injection family remains deferred. The deciding
+// serialization case below removes this fixture and runs the credential owner.
+function installLegacyCredentialFixture(): void {
+    vi.doMock('@/auth/storage/tokenStorage', () => ({
+        getHomeCredentialsUnderMutationAuthority: (...args: unknown[]) => getHomeCredentialsUnderMutationAuthorityMock(...args),
+        removeHomeCredentialsUnderMutationAuthority: vi.fn(async () => true),
+        setHomeCredentialsWithRollbackUnderMutationAuthority: (
+            ...args: Parameters<SetHomeCredentialsWithRollbackUnderMutationAuthority>
+        ) => setCredentialsForServerUrlWithRollbackMock(...args),
+        TokenStorage: {
+            setCredentialsForServerUrl: (...args: Parameters<SetCredentialsForServerUrl>) => setCredentialsForServerUrlMock(...args),
+            setCredentialsForServerUrlWithRollback: (...args: Parameters<SetCredentialsForServerUrlWithRollback>) => publicSetCredentialsForServerUrlWithRollbackMock(...args),
+        },
+    }));
+}
 
 describe('adoptHomeProfileWithCredentials', () => {
     const previousScope = process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
+
+    beforeEach(() => {
+        installLegacyCredentialFixture();
+    });
 
     afterEach(() => {
         setCredentialsForServerUrlMock.mockReset();
@@ -32,6 +40,8 @@ describe('adoptHomeProfileWithCredentials', () => {
         publicSetCredentialsForServerUrlWithRollbackMock.mockReset();
         getHomeCredentialsUnderMutationAuthorityMock.mockReset();
         getHomeCredentialsUnderMutationAuthorityMock.mockResolvedValue(null);
+        vi.doUnmock('react-native');
+        vi.unstubAllGlobals();
         if (previousScope === undefined) delete process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
         else process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = previousScope;
         vi.resetModules();
@@ -70,6 +80,39 @@ describe('adoptHomeProfileWithCredentials', () => {
 
     it('serializes a competing profile claim until a same-identity credential and URL move commits', async () => {
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = `canonical_url_adoption_rollback_${Date.now()}_${Math.random()}`;
+        vi.doUnmock('@/auth/storage/tokenStorage');
+        vi.doMock('react-native', async () => {
+            const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+            return createReactNativeWebMock();
+        });
+        vi.resetModules();
+        const credentialBytes = new Map<string, string>();
+        let onCredentialWrite: (() => void) | null = null;
+        const localStorage = {
+            getItem: (key: string) => credentialBytes.get(key) ?? null,
+            setItem: (key: string, value: string) => {
+                credentialBytes.set(key, value);
+                if (value === JSON.stringify({ token: 'new-home-token' })) onCredentialWrite?.();
+            },
+            removeItem: (key: string) => void credentialBytes.delete(key),
+        };
+        vi.stubGlobal('window', {
+            location: { origin: 'https://adoption-ui.test' }, localStorage,
+            addEventListener: () => undefined, removeEventListener: () => undefined,
+        });
+        vi.stubGlobal('localStorage', localStorage);
+        vi.stubGlobal('document', {});
+        const lockTails = new Map<string, Promise<void>>();
+        vi.stubGlobal('navigator', {
+            locks: {
+                request: <T>(name: string, callback: () => T | PromiseLike<T>): Promise<T> => {
+                    const previous = lockTails.get(name) ?? Promise.resolve();
+                    const result = previous.then(callback);
+                    lockTails.set(name, result.then(() => undefined, () => undefined));
+                    return result;
+                },
+            },
+        });
         const profiles = await import('./serverProfiles');
         const established = await profiles.adoptHomeProfile({
             source: 'qr',
@@ -81,10 +124,9 @@ describe('adoptHomeProfileWithCredentials', () => {
                 endpoints: [{ kind: 'https', url: 'https://moving-home-old.test' }],
             },
         });
-        const rollback = vi.fn(async () => true);
-        getHomeCredentialsUnderMutationAuthorityMock.mockResolvedValue({ token: 'new-home-token' });
         let competitor: Promise<unknown> | null = null;
-        setCredentialsForServerUrlWithRollbackMock.mockImplementationOnce(async () => {
+        onCredentialWrite = () => {
+            onCredentialWrite = null;
             competitor = (async () => {
                 const profile = await profiles.upsertServerProfile({
                     serverUrl: 'https://moving-home-new.test',
@@ -92,12 +134,7 @@ describe('adoptHomeProfileWithCredentials', () => {
                 });
                 return await profiles.setServerProfileIdentityForUrl(profile.serverUrl, 'srv_competing_home');
             })();
-            return {
-                serverUrl: 'https://moving-home-old.test',
-                serverId: 'srv_moving_home',
-                rollback,
-            };
-        });
+        };
         const { adoptHomeProfileWithCredentials } = await import('./adoptHomeProfile');
 
         await expect(adoptHomeProfileWithCredentials({
@@ -115,8 +152,11 @@ describe('adoptHomeProfileWithCredentials', () => {
             serverIdentityId: 'srv_moving_home',
         });
 
-        expect(rollback).not.toHaveBeenCalled();
         await expect(competitor!).resolves.toBeNull();
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        await expect(TokenStorage.getCredentialsForServerUrl('https://moving-home-new.test', {
+            serverId: 'srv_moving_home',
+        })).resolves.toEqual({ token: 'new-home-token' });
         expect(profiles.getServerProfileById(established.id)).toMatchObject({
             canonicalServerUrl: 'https://moving-home-new.test',
             serverIdentityId: 'srv_moving_home',

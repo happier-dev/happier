@@ -4,18 +4,12 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const kvStore = vi.hoisted(() => new Map<string, string>());
-const participantAccountBindings = vi.hoisted(() => new Map([['server-1', {
-    serverId: 'server-1',
-    accountId: 'account-1',
-    scope: { serverId: 'server-1', accountId: 'account-1' },
-    revision: 1,
-    isCurrent: () => true,
-    onRetire: () => ({ dispose: () => {} }),
-}]]));
 vi.mock('react-native-mmkv', () => {
     class MMKV {
         getString(key: string) {
@@ -90,27 +84,6 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({ useFeatureEnabled: () => fa
 vi.mock('@/components/sessions/files/useSessionFileUploadAvailability', () => ({
     useSessionFileUploadAvailability: () => false,
 }));
-vi.mock('@/sync/domains/scope/useServerCredentialAccountScopes', () => ({
-    useServerCredentialAccountScopeBindings: () => participantAccountBindings,
-}));
-vi.mock('@/sync/domains/server/serverRuntime', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/domains/server/serverRuntime')>(),
-    getActiveServerSnapshot: () => ({ serverId: 'server-1', serverUrl: 'http://server-1.test' }),
-}));
-vi.mock('@/sync/domains/scope/activeServerAccountScope', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/domains/scope/activeServerAccountScope')>(),
-    captureActiveServerAccountScopeLifetime: () => ({
-        scope: { serverId: 'server-1', accountId: 'account-1' },
-        isCurrent: () => true,
-        onRetire: () => ({ dispose: () => {} }),
-    }),
-    getActiveServerAccountScope: () => ({ serverId: 'server-1', accountId: 'account-1' }),
-}));
-
-vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
-    sessionExecutionRunSend: vi.fn(async () => ({ ok: true })),
-    isExecutionRunNotRunningSendError: vi.fn(() => false),
-}));
 
 vi.mock('@/utils/system/fireAndForget', () => ({
     fireAndForget: (promise: Promise<unknown>) => void promise,
@@ -131,26 +104,26 @@ vi.mock('@/voice/context/voiceHooks', () => ({
 }));
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
-import { apiSocket } from '@/sync/api/session/apiSocket';
-import {
-    primeServerFeaturesSnapshot,
-    resetServerFeaturesClientForTests,
-} from '@/sync/api/capabilities/serverFeaturesClient';
-import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
-import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
-import '@/sync/syncEngine';
-import { sync } from '@/sync/sync';
-import { storage } from '@/sync/domains/state/storage';
-import type { Session } from '@/sync/domains/state/storageTypes';
-import { Encryption } from '@/sync/encryption/encryption';
-import { SessionParticipantComposer } from './SessionParticipantComposer';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 
+installDisconnectedServerSocketBoundary();
+await loadSyncSingletonForTests();
+const { apiSocket } = await import('@/sync/api/session/apiSocket');
+const { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
+const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
+const { storage } = await import('@/sync/domains/state/storage');
+const { SessionParticipantComposer } = await import('./SessionParticipantComposer');
 const initialStorageState = storage.getState();
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
 
-function createActiveSession(sessionId: string): Session {
+function createActiveSession(sessionId: string, serverId: string) {
     const now = Date.now();
-    return {
+    return createSessionFixture({
         id: sessionId,
+        serverId,
         seq: 0,
         createdAt: now,
         updatedAt: now,
@@ -172,7 +145,7 @@ function createActiveSession(sessionId: string): Session {
         presence: 'online',
         pendingVersion: 1,
         optimisticThinkingAt: null,
-    };
+    });
 }
 
 function readLatestAgentInputProps(): {
@@ -199,17 +172,27 @@ describe('SessionParticipantComposer auth send surface', () => {
         resetServerFeaturesClientForTests();
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+        await standardCleanup();
+        await connection?.dispose();
+        connection = null;
         resetServerFeaturesClientForTests();
         vi.restoreAllMocks();
     });
 
     it('surfaces not_authenticated from the real Session send path instead of silently enqueueing', async () => {
         const sessionId = 's_auth_surface';
-        const activeServer = await upsertAndActivateServer({
+        connection = await restoreServerAccountForTest({
             serverUrl: 'https://server-auth-surface.example.test',
-            scope: 'device',
+            accountId: 'account-auth-surface',
+            request: async (url) => {
+                const path = new URL(String(url)).pathname;
+                if (path === '/v1/account/encryption') return new Response(JSON.stringify({ mode: 'plain', updatedAt: 1 }));
+                if (path === '/v1/account/encryption/currentness') return new Response(JSON.stringify(createPlainAccountEncryptionCurrentnessFixture()));
+                return new Response('{}', { status: 404 });
+            },
         });
+        const activeServer = connection.home;
         const activeScope = {
             serverId: activeServer.id,
             accountId: 'account-auth-surface',
@@ -231,20 +214,16 @@ describe('SessionParticipantComposer auth send surface', () => {
                 }),
             },
         });
-        storage.getState().applySessions([createActiveSession(sessionId)]);
+        storage.getState().applySessions([createActiveSession(sessionId, activeServer.id)]);
         storage.getState().applySettingsLocal({ sessionMessageSendMode: 'agent_queue' });
 
-        const encryption = await Encryption.create(new Uint8Array(32).fill(9));
-        await encryption.initializeSessions(new Map([[sessionId, null]]));
-
-        sync.encryption = encryption;
         const request = vi.spyOn(apiSocket, 'request').mockResolvedValue(
             new Response('auth failed', { status: 401 }),
         );
 
         await renderScreen(<SessionParticipantComposer
             sessionId={sessionId}
-            serverId="server-1"
+            serverId={activeServer.id}
             canSendMessages
             recipient={null}
         />);

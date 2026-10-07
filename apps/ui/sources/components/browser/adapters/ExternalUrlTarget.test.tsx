@@ -79,7 +79,7 @@ describe('ExternalUrlTarget (web)', () => {
             <ExternalUrlTarget testID="external-url" view={createExternalUrlView()} />,
         );
         // Nothing covers the page while it loads normally.
-        expect(screen.findByTestId('external-url-slow-hint')).toBeNull();
+        expect(screen.findHostByTestId('external-url-slow-hint')).toBeNull();
 
         await act(async () => {
             vi.advanceTimersByTime(5000);
@@ -100,7 +100,10 @@ describe('ExternalUrlTarget (web)', () => {
         await act(async () => {
             (screen.findByType('iframe').props as { onLoad?: () => void }).onLoad?.();
         });
-        expect(screen.findByTestId('external-url-slow-hint')).toBeNull();
+        await act(async () => {
+            await vi.runOnlyPendingTimersAsync();
+        });
+        expect(screen.findHostByTestId('external-url-slow-hint')).toBeNull();
     });
 
     it('shows the non-framable fallback and opens the system browser when the frame reports an error', async () => {

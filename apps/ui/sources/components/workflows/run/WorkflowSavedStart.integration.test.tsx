@@ -187,7 +187,9 @@ describe('saved editor Start through the real front door and Account admission',
         await act(async () => {
             const body = screen.root.findByType(WorkflowEditorBody);
             body.props.onChange({ ...body.props.draft, blocks: reviewedDefinition.blocks });
-            body.props.onChangeProjectTarget({ machineId: 'machine-1', directory: '/repo' });
+            const onChangeProjectTarget = body.props.onChangeProjectTarget;
+            if (!onChangeProjectTarget) throw new Error('Missing workflow Project target handler');
+            onChangeProjectTarget({ machineId: 'machine-1', directory: '/repo' });
         });
         await screen.pressByTestIdAsync('workflow-editor-run-now');
         await vi.waitFor(() => expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false));

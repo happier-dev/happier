@@ -149,8 +149,8 @@ async function fixture(mode: 'plain' | 'e2ee', document?: Readonly<{ header: Rec
         throw new Error(`Unexpected sharing HTTP request: ${target.pathname}`);
     });
     const account = await captureLazyActionAccountContext(home.id);
-    const header = document?.header ?? { kind: 'workflow-definition.v1', definitionId: 'document', revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Workflow' } };
-    const body = document?.body ?? 'definition';
+    const header = document?.header ?? { title: 'Shared note' };
+    const body = document?.body ?? 'note';
     // Seed the HTTP store with canonical bytes; creation compatibility is tested
     // by the existing Artifact tests, independently of the sharing front door.
     if (mode === 'plain') stored = { id: 'document', ownerAccountId: 'owner', access, encryptionMode: mode,
@@ -201,7 +201,10 @@ describe('UI Artifact sharing Action front door', () => {
         const f = await fixture(mode, { header, body: originalBody });
         try {
             const nextHeader = { ...header, metadata: { title: 'Current title' }, revision: { headerVersion: 2, bodyVersion: 2 } };
-            const nextBody = JSON.stringify({ kind: 'workflow-definition.v1', definition: { ...definition, description: 'Current body' } });
+            const nextDefinition = validateWorkflowDefinition({ version: 1, defaults: definition.defaults,
+                blocks: ['Current work'],
+            }).normalizedDefinition!;
+            const nextBody = JSON.stringify({ kind: 'workflow-definition.v1', definition: nextDefinition });
             await expect(f.account.workflowArtifacts.update({ artifactId: 'document', expectedRevision: header.revision,
                 header: nextHeader, body: nextBody })).resolves.toEqual({ ok: true, revision: nextHeader.revision });
             const listed = await f.executor.execute('artifact.revisions.list', { artifactId: 'document' }, f.context);
@@ -213,7 +216,7 @@ describe('UI Artifact sharing Action front door', () => {
                 expectedRevision: nextHeader.revision }, f.context)).resolves.toEqual({ ok: true,
                 result: { artifactId: 'document', revision: { headerVersion: 3, bodyVersion: 3 } } });
             const restored = await f.account.workflowArtifacts.read('document');
-            expect(restored).toMatchObject({ body: originalBody, header: withArtifactExcerptV1({ ...nextHeader,
+            expect(restored).toMatchObject({ body: originalBody, header: withArtifactExcerptV1({ ...nextHeader, previewSteps: ['Retained work'],
                 revision: { headerVersion: 3, bodyVersion: 3 } }, originalBody), revision: { headerVersion: 3, bodyVersion: 3 } });
             await expect(f.executor.execute('artifact.access.grants.set', { artifactId: 'document',
                 principal: { kind: 'account', accountId: 'recipient' }, accessLevel: 'view' }, f.context))

@@ -2,16 +2,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { HappyError } from '@/utils/errors/errors';
 
-vi.mock('@/utils/timing/time', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/utils/timing/time')>();
-    const immediate = async <T,>(callback: () => Promise<T>): Promise<T> => await callback();
-    return {
-        ...actual,
-        backoff: immediate,
-        backoffForever: immediate,
-    };
-});
-
 afterEach(() => {
     vi.unstubAllGlobals();
     vi.resetModules();
@@ -19,15 +9,9 @@ afterEach(() => {
 
 const credentials: AuthCredentials = { token: 't', secret: 's' };
 
-function mockServerConfig() {
-    vi.doMock('@/sync/domains/server/serverRuntime', () => ({
-        getActiveServerSnapshot: () => ({
-            serverId: 'test',
-            serverUrl: 'https://api.example.test',
-            kind: 'custom',
-            generation: 1,
-        }),
-    }));
+async function activateTestHome() {
+    const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+    await upsertAndActivateServer({ serverUrl: 'https://api.example.test', scope: 'tab' });
 }
 
 function resolveNonHealthCall(fetchMock: ReturnType<typeof vi.fn>, expectedUrl: string): RequestInit {
@@ -41,7 +25,7 @@ function resolveNonHealthCall(fetchMock: ReturnType<typeof vi.fn>, expectedUrl: 
 
 describe('setAccountUsername', () => {
     it('returns the username on success', async () => {
-        mockServerConfig();
+        await activateTestHome();
         const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
             const url = String(input);
             if (url === 'https://api.example.test/health') {
@@ -68,7 +52,7 @@ describe('setAccountUsername', () => {
     });
 
     it('throws HappyError(username-taken) on 409 username-taken', async () => {
-        mockServerConfig();
+        await activateTestHome();
         const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
             const url = String(input);
             if (url === 'https://api.example.test/health') {
@@ -90,7 +74,7 @@ describe('setAccountUsername', () => {
     });
 
     it('throws HappyError(invalid-username) on 400 invalid-username', async () => {
-        mockServerConfig();
+        await activateTestHome();
         const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
             const url = String(input);
             if (url === 'https://api.example.test/health') {
@@ -112,7 +96,7 @@ describe('setAccountUsername', () => {
     });
 
     it('maps username-disabled to config-kind HappyError', async () => {
-        mockServerConfig();
+        await activateTestHome();
         const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
             const url = String(input);
             if (url === 'https://api.example.test/health') {
@@ -135,7 +119,7 @@ describe('setAccountUsername', () => {
     });
 
     it('falls back to default 4xx message when error body is not JSON', async () => {
-        mockServerConfig();
+        await activateTestHome();
         const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
             const url = String(input);
             if (url === 'https://api.example.test/health') {
@@ -164,7 +148,7 @@ describe('setAccountUsername', () => {
     });
 
     it('throws parse error when success payload does not include username', async () => {
-        mockServerConfig();
+        await activateTestHome();
         const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
             const url = String(input);
             if (url === 'https://api.example.test/health') {

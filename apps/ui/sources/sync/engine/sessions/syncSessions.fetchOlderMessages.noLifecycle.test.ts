@@ -1,17 +1,20 @@
 import { type SessionMessageV1 } from '@happier-dev/protocol';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { NormalizedMessage, RawRecord } from '@happier-dev/session-core/raw';
+import { storage } from '@/sync/domains/state/storage';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
 import { fetchAndApplyOlderMessages } from './syncSessions';
 
-function buildApiMessage(id: string, seq: number): SessionMessageV1 {
+function buildApiMessage(id: string, seq: number, raw: RawRecord): SessionMessageV1 {
   return {
     id,
     seq,
     localId: null,
     sidechainId: null,
     content: {
-      t: 'encrypted',
-      c: `encrypted-${id}`,
+      t: 'plain',
+      v: raw,
     },
     createdAt: 1_000 + seq,
     updatedAt: 2_000 + seq,
@@ -34,13 +37,25 @@ function buildPlainApiMessage(id: string, seq: number): SessionMessageV1 {
 }
 
 describe('fetchAndApplyOlderMessages', () => {
+  beforeEach(() => {
+    storage.setState(storage.getInitialState(), true);
+    storage.getState().applySessions(['s1', 's_plain'].map(id => createSessionFixture({ id, encryptionMode: 'plain' })));
+  });
+
+  function observeAppliedMessages() {
+    return vi.fn((id: string, messages: NormalizedMessage[]) => storage.getState().applyMessages(id, messages));
+  }
+
   it('does not emit lifecycle events from older pages', async () => {
-    const applyMessages = vi.fn();
+    const applyMessages = observeAppliedMessages();
     const onTaskLifecycleEvent = vi.fn();
     const request = vi.fn(async () =>
       new Response(
         JSON.stringify({
-          messages: [buildApiMessage('m1', 2)],
+          messages: [buildApiMessage('m1', 2, {
+            role: 'agent', content: { type: 'acp', agentId: 'kimi',
+              data: { type: 'task_complete', id: 'task-1' } },
+          })],
           hasMore: false,
           nextBeforeSeq: null,
         }),
@@ -48,27 +63,12 @@ describe('fetchAndApplyOlderMessages', () => {
       ),
     );
 
-    const decryptMessages = vi.fn(async () => [
-      {
-        id: 'm1',
-        localId: null,
-        createdAt: 1_002,
-        content: {
-          role: 'agent',
-          content: {
-            type: 'acp',
-            agentId: 'kimi',
-            data: { type: 'task_complete', id: 'task-1' },
-          },
-        },
-      },
-    ]);
-
     await fetchAndApplyOlderMessages({
       sessionId: 's1',
+      sessionEncryptionMode: 'plain',
       beforeSeq: 10,
       limit: 150,
-      getSessionEncryption: () => ({ decryptMessages }),
+      getSessionEncryption: () => null,
       request,
       sessionReceivedMessages: new Map<string, Map<string, number>>(),
       applyMessages,
@@ -81,7 +81,7 @@ describe('fetchAndApplyOlderMessages', () => {
   });
 
   it('applies plaintext older pages without touching the encryption registry', async () => {
-    const applyMessages = vi.fn();
+    const applyMessages = observeAppliedMessages();
     const getSessionEncryption = vi.fn(() => null);
     const request = vi.fn(async () =>
       new Response(
@@ -115,11 +115,13 @@ describe('fetchAndApplyOlderMessages', () => {
   });
 
   it('marks scope=sidechain older-page messages when the API response omits sidechainId', async () => {
-    const applyMessages = vi.fn();
+    const applyMessages = observeAppliedMessages();
     const request = vi.fn(async () =>
       new Response(
         JSON.stringify({
-          messages: [buildApiMessage('m1', 2)],
+          messages: [buildApiMessage('m1', 2, {
+            role: 'user', content: { type: 'text', text: 'hello' },
+          })],
           hasMore: false,
           nextBeforeSeq: null,
         }),
@@ -127,26 +129,14 @@ describe('fetchAndApplyOlderMessages', () => {
       ),
     );
 
-    const decryptMessages = vi.fn(async () => [
-      {
-        id: 'm1',
-        seq: 2,
-        localId: null,
-        createdAt: 1_002,
-        content: {
-          role: 'user',
-          content: { type: 'text', text: 'hello' },
-        },
-      },
-    ]);
-
     await fetchAndApplyOlderMessages({
       sessionId: 's1',
+      sessionEncryptionMode: 'plain',
       beforeSeq: 10,
       limit: 150,
       scope: 'sidechain',
       sidechainId: 'tool_task_1',
-      getSessionEncryption: () => ({ decryptMessages }),
+      getSessionEncryption: () => null,
       request,
       sessionReceivedMessages: new Map<string, Map<string, number>>(),
       applyMessages,

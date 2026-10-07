@@ -119,10 +119,14 @@ describe('editor workflow composer', () => {
         const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
         const body = screen.root.findByType(WorkflowEditorBody);
         await act(async () => {
-            body.props.onChange({ ...body.props.draft, blocks: [{ ...body.props.draft.blocks[0], document: {
-                ...body.props.draft.blocks[0].document, text: 'Reviewed unsaved contents',
+            const block = body.props.draft.blocks[0];
+            if (block.kind !== 'wait') throw new Error('Expected the reviewed wait block');
+            body.props.onChange({ ...body.props.draft, blocks: [{ ...block, document: {
+                ...block.document, text: 'Reviewed unsaved contents',
             } }] });
-            body.props.onChangeProjectTarget({ machineId: 'machine-1', directory: '/repo' });
+            const onChangeProjectTarget = body.props.onChangeProjectTarget;
+            if (!onChangeProjectTarget) throw new Error('Missing workflow Project target handler');
+            onChangeProjectTarget({ machineId: 'machine-1', directory: '/repo' });
         });
         await screen.pressByTestIdAsync('workflow-editor-run-now');
         await vi.waitFor(() => expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false));
@@ -227,47 +231,61 @@ describe('editor workflow composer', () => {
         });
         const composer = screen.root.findAllByType(AgentInput)[0]!;
         expect(composer.props.onAgentClick).toBeTypeOf('function');
-        expect(composer.props.extraActionChips.some((chip: { key: string }) => chip.key === 'workflow-step-engine')).toBe(false);
+        const extraActionChips = composer.props.extraActionChips;
+        if (!extraActionChips) throw new Error('Missing workflow composer action chips');
+        expect(extraActionChips.some((chip: { key: string }) => chip.key === 'workflow-step-engine')).toBe(false);
         await screen.pressByTestIdAsync('agent-input-agent-chip');
         const panel = screen.root.findByType(AgentInputChipPickerPanel);
         const option = panel.props.options.find((candidate: { id: string; disabled?: boolean }) => candidate.id !== 'roles' && !candidate.disabled);
         expect(option).toBeDefined();
-        await act(async () => option.onSelectImmediate());
+        if (!option) throw new Error('Missing selectable workflow Agent option');
+        const onSelectImmediate = option.onSelectImmediate;
+        if (!onSelectImmediate) throw new Error('Missing workflow Agent option handler');
+        await act(async () => onSelectImmediate());
         const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
         const body = screen.root.findByType(WorkflowEditorBody);
-        expect(body.props.draft.blocks[0].execution?.engine?.agentTarget).toBeDefined();
-        expect(body.props.draft.blocks[0].execution?.agentTarget).toBeUndefined();
-        expect(body.props.draft.blocks[0].execution?.modelSelection).toBeUndefined();
-        await act(async () => body.props.onChange({ ...body.props.draft, blocks: [{ ...body.props.draft.blocks[0],
-            execution: { ...body.props.draft.blocks[0].execution, sessionConfigOptionOverrides: { v: 1, updatedAt: 1,
+        const readStep = () => {
+            const block = body.props.draft.blocks[0];
+            if (block.kind !== 'step') throw new Error('Expected the workflow authoring step');
+            return block;
+        };
+        const engine = readStep().execution?.engine;
+        if (!engine || !('agentTarget' in engine)) throw new Error('Expected the workflow Agent engine');
+        expect(engine.agentTarget).toBeDefined();
+        expect(readStep().execution?.agentTarget).toBeUndefined();
+        expect(readStep().execution?.modelSelection).toBeUndefined();
+        await act(async () => body.props.onChange({ ...body.props.draft, blocks: [{ ...readStep(),
+            execution: { ...readStep().execution, sessionConfigOptionOverrides: { v: 1, updatedAt: 1,
                 overrides: { budget: { value: 42, updatedAt: 1 } } } } }] }));
         const { NewSessionEngineOptionDetail } = await import('@/components/sessions/new/components/NewSessionEngineOptionDetail');
         await screen.pressByTestIdAsync(`agent-input-chip-picker.option:${option.id}`);
         const detail = screen.root.findByType(NewSessionEngineOptionDetail);
-        await act(async () => detail.props.onSelectionChange({ modelId: 'selected-model', sessionModeId: null,
-            configOverrides: { reasoning_effort: 'high' } }));
-        expect(body.props.draft.blocks[0].execution.engine).toMatchObject({
+        const onSelectionChange = detail.props.onSelectionChange;
+        if (!onSelectionChange) throw new Error('Missing workflow engine detail selection handler');
+        await act(async () => onSelectionChange({ modelId: 'selected-model', modelSelection: null, modelLabel: null,
+            sessionModeId: 'default', configOverrides: { reasoning_effort: 'high' } }));
+        expect(readStep().execution?.engine).toMatchObject({
             modelSelection: { ref: { modelId: 'selected-model' } }, effort: 'high',
         });
         expect(detail.props.selectedModelId).toBe('selected-model');
-        expect(detail.props.selectedConfigOverrides.reasoning_effort).toBe('high');
-        expect(body.props.draft.blocks[0].execution.sessionConfigOptionOverrides.overrides.budget?.value).toBe(42);
+        expect(detail.props.selectedConfigOverrides?.reasoning_effort).toBe('high');
+        expect(readStep().execution?.sessionConfigOptionOverrides?.overrides.budget?.value).toBe(42);
         const { validateWorkflowEditorDraft } = await import('@/sync/domains/workflows/workflowAuthoring');
         expect(validateWorkflowEditorDraft(body.props.draft).valid).toBe(true);
         await screen.pressByTestIdAsync('agent-input-chip-picker.option:roles');
         await screen.pressByTestIdAsync('roles-rail-option:local-reviewer');
-        expect(body.props.draft.blocks[0].execution.engine).toEqual({ role: 'local-reviewer' });
-        expect(body.props.draft.blocks[0].execution.agentTarget).toBeUndefined();
-        expect(body.props.draft.blocks[0].execution.modelSelection).toBeUndefined();
+        expect(readStep().execution?.engine).toEqual({ role: 'local-reviewer' });
+        expect(readStep().execution?.agentTarget).toBeUndefined();
+        expect(readStep().execution?.modelSelection).toBeUndefined();
         expect(validateWorkflowEditorDraft(body.props.draft).valid).toBe(true);
         expect(transport.mock.calls.filter(([action]) => ['session.spawn', 'workflow.run.start', 'workflow.definition.update'].includes(action))).toHaveLength(0);
-        await screen.pressByTestIdAsync(`workflow-editor-step-${body.props.draft.blocks[0].id}-customize`);
+        await screen.pressByTestIdAsync(`workflow-editor-step-${readStep().id}-customize`);
         const { WorkflowStepInspector } = await import('../editor/WorkflowStepInspector');
         const inspector = screen.root.findByType(WorkflowStepInspector);
         await screen.pressByTestIdAsync(`${inspector.props.testIDPrefix}-agentTarget-reset`);
-        expect(body.props.draft.blocks[0].execution.engine).toBeUndefined();
-        expect(body.props.draft.blocks[0].execution.acpSessionModeId).toBeUndefined();
-        expect(body.props.draft.blocks[0].execution.sessionConfigOptionOverrides).toBeUndefined();
+        expect(readStep().execution?.engine).toBeUndefined();
+        expect(readStep().execution?.acpSessionModeId).toBeUndefined();
+        expect(readStep().execution?.sessionConfigOptionOverrides).toBeUndefined();
     });
 
     it('makes a Can-use recipient’s personal triggers reachable and saves them through the real page without definition.update', async () => {
@@ -288,11 +306,13 @@ describe('editor workflow composer', () => {
         })));
         const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
         const body = screen.root.findByType(WorkflowEditorBody);
-        await act(async () => body.props.onChangeProjectTarget({ machineId: 'machine-1', directory: '/repo' }));
+        const onChangeProjectTarget = body.props.onChangeProjectTarget;
+        if (!onChangeProjectTarget) throw new Error('Missing workflow Project target handler');
+        await act(async () => onChangeProjectTarget({ machineId: 'machine-1', directory: '/repo' }));
         await screen.pressByTestIdAsync('workflow-editor-save');
         expect(transport.mock.calls.filter(([action]) => action === 'workflow.trigger.add')).toHaveLength(1);
         expect(transport.mock.calls.filter(([action]) => action === 'workflow.definition.update' || action === 'workflow.definition.create')).toHaveLength(0);
-        expect(body.props.saveStatus.kind).toBe('failed');
+        expect(body.props.saveStatus).toMatchObject({ kind: 'failed' });
     });
 
     it.each([
@@ -339,8 +359,10 @@ describe('editor workflow composer', () => {
             expect(prompts[0]?.props.onStructuredInputMentionsChange).toBeUndefined();
             expect(screen.findByTestId(width === 390 ? 'workflow-editor-phone-settings' : 'workflow-editor-settings-toggle')).not.toBeNull();
             expect(screen.root.findAllByType(SessionAuthoringControls).every((controls) => controls.props.disabled === true)).toBe(true);
-            expect(body.props.menuActions.map((action: { id: string }) => action.id)).not.toContain('agent');
-            expect(body.props.menuActions.map((action: { id: string }) => action.id)).not.toContain('delete');
+            const menuActions = body.props.menuActions;
+            if (!menuActions) throw new Error('Missing read-only workflow menu actions');
+            expect(menuActions.map((action: { id: string }) => action.id)).not.toContain('agent');
+            expect(menuActions.map((action: { id: string }) => action.id)).not.toContain('delete');
         } else {
             expect(body.props.documentPresentation).toBeUndefined();
             expect(body.props.onSave).toBeTypeOf('function');

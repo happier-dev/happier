@@ -112,12 +112,14 @@ describe('buildAccountSettingsSnapshot', () => {
         });
         const snapshot = buildAccountSettingsSnapshot({
             ...settingsDefaults,
+            newSessionDefaultPersistenceModeV1: 'direct',
             newSessionDefaultPersistenceModeByTargetKeyV1: {
                 [buildBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' })]: 'persisted',
                 [configuredTargetKey]: 'direct',
             },
         });
 
+        expect(snapshot.properties.acct_setting__newSessionDefaultPersistenceModeV1).toBe('direct');
         expect(snapshot.properties[`acct_setting__newSessionDefaultPersistenceModeByTargetKeyV1__${configuredTargetKey}`]).toBe('direct');
     });
 });

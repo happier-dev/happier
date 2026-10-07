@@ -51,6 +51,7 @@ describe('rightSidebarMobileProjection', () => {
         }))).toEqual([
             { tabId: 'git', surface: 'git', owner: 'builtin' },
             { tabId: 'files', surface: 'browse', owner: 'builtin' },
+            { tabId: 'agents', surface: 'agents', owner: 'builtin' },
             { tabId: 'navigation', surface: 'navigation', owner: 'builtin' },
             { tabId: 'terminal', surface: 'terminal', owner: 'builtin' },
             { tabId: 'browser', surface: 'browser', owner: 'builtin' },
@@ -65,7 +66,7 @@ describe('rightSidebarMobileProjection', () => {
             .toBe(`plugin:${REVIEW_PLUGIN_ID}:review-panel`);
     });
 
-    it('keeps the agents tab desktop-only: it declares no session mobile surface', () => {
+    it('keeps the persisted agents destination available as the Work surface on phone', () => {
         const tabs = resolveRightSidebarTabs({
             scope: 'session',
             presentation: 'mobile',
@@ -73,8 +74,8 @@ describe('rightSidebarMobileProjection', () => {
         });
 
         expect(tabs.some((tab) => tab.id === 'agents')).toBe(true);
-        expect(resolveRightSidebarMobileProjection({ scope: 'session', tabs }).map((entry) => entry.tabId))
-            .not.toContain('agents');
+        expect(resolveRightSidebarTabIdForMobileSurface({ scope: 'session', surface: 'agents', tabs }))
+            .toBe('agents');
     });
 
     it('scopes the navigation mobile surface to sessions only', () => {

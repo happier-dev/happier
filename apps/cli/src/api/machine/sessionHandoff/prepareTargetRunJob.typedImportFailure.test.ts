@@ -4,8 +4,7 @@ import { join } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
-import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
-import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 
 import { createSessionHandoffPrepareTargetJobStore } from '../../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 import { createSessionHandoffSourceExportStore } from '../../../session/handoff/state/sessionHandoffSourceExportStore';
@@ -14,13 +13,11 @@ import { createWorkspaceSyncSeedExport } from '@/workspaces/sync/workspaceSyncSe
 import { createMachineTransferRouteCache } from '@/machines/transfer/transferRouteCache';
 
 describe('runSessionHandoffPrepareTargetJob typed native-import failures', () => {
-  let runtimeLease: PluginRuntimeRegistryLease | null = null;
+  let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | null = null;
   beforeAll(async () => {
-    runtimeLease = await pluginReloadController.acquireRuntimeRegistry({
-      resolveRuntimeRegistry: () => resolveExecutablePluginRuntimeRegistry({ pluginIds: [] }),
-    });
+    runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController, runtimeOptions: { pluginIds: [] } });
   });
-  afterAll(async () => { await runtimeLease?.release(); await pluginReloadController.shutdown(); });
+  afterAll(async () => { await runtime?.dispose(); });
   it('materializes the managed source files before native import without WorkspaceRefs', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-managed-seed-target-'));
     const sourcePath = await mkdtemp(join(tmpdir(), 'happier-managed-seed-source-'));

@@ -33,11 +33,6 @@ export async function prepareRemoteValidationWorkspace({
   const buildOptions = { env, ...(livePluginHost ? { isolatePluginFailures: true } : {}) };
 
   const { ensureWorkspacePackagesBuiltForComponent } = await loadWorkspaceBuildOwner();
-  // Typechecks consume dependency dist declarations through package exports.
-  // The existing content-digest owner admits them without the runtime publisher.
-  if (validationKind === 'typecheck') {
-    return await ensureWorkspacePackagesBuiltForComponent(componentDir, buildOptions);
-  }
   if (livePluginHost) {
     const {
       resolveCliBundledWorkspacePackageNames,
@@ -60,6 +55,13 @@ export async function prepareRemoteValidationWorkspace({
       // check can still detect drift in the authoritative checkout bytes.
       bundledPluginArtifactPublication: { mode: 'write', targetOwnedOnly: true },
     });
+  }
+  // Declaration consumers still invoke dependency package builds, including
+  // staged plugin UI artifacts that require the publisher's packed manifests.
+  // Typechecks stop at their own component's dependency admission instead of
+  // adding the CLI component dependency pass below.
+  if (validationKind === 'typecheck') {
+    return await ensureWorkspacePackagesBuiltForComponent(componentDir, buildOptions);
   }
   const result = await ensureWorkspacePackagesBuiltForComponent(componentDir, buildOptions);
   if (normalizedComponentPath === 'apps/ui') {

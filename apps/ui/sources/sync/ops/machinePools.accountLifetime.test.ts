@@ -9,6 +9,7 @@ import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { getStorage } from '@/sync/domains/state/storage';
 import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { refreshMachinePools } from './machinePools';
 
 const initialStorageState = getStorage().getState();
@@ -63,6 +64,7 @@ async function enableMachinePoolsFeatures(serverIds: readonly string[]): Promise
 
 describe('machine pool Account lifetime', () => {
     beforeEach(async () => {
+        await loadSyncSingletonForTests();
         retireActiveServerAccountScopeLifetime();
         resetServerFeaturesClientForTests();
         getStorage().setState(initialStorageState, true);

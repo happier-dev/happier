@@ -71,6 +71,7 @@ function launcherStateWith(targets: LocalServiceLauncherSnapshot['targets'], ses
 const openableTarget = {
     id: 'inventory:openable-row',
     source: 'inventory_entry' as const,
+    sourceClass: { kind: 'inventory_entry' as const, inventoryEntryId: 'openable-row' },
     machineId: 'machine-a',
     sessionId: 'session-a',
     title: 'Openable preview',
@@ -465,6 +466,7 @@ describe('DetectedLocalServicesPane', () => {
         const happierTarget = {
             ...openableTarget,
             id: 'inventory:happier-ui',
+            sourceClass: { kind: 'inventory_entry' as const, inventoryEntryId: 'happier-ui' },
             kind: 'happier' as const,
             title: 'Happier (internal dev)',
             browserTarget: { ...openableTarget.browserTarget, targetId: 'inventory-loopback:happier-ui' },

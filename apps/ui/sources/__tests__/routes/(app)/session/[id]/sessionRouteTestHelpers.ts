@@ -13,6 +13,7 @@ type InstallSessionRouteCommonModuleMocksOptions = Readonly<{
     unistyles?: SessionRouteModuleFactory;
     text?: SessionRouteModuleFactory;
     modal?: SessionRouteModuleFactory;
+    nativeNavigation?: SessionRouteModuleFactory;
     safeAreaInsets?: Readonly<{ top?: number; bottom?: number; left?: number; right?: number }>;
     storageModule?: SessionRouteStorageModuleFactory;
 }>;
@@ -34,6 +35,23 @@ export function installSessionRouteCommonModuleMocks(
 
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock();
+    });
+
+    vi.mock('@react-navigation/native', async () => {
+        const activeOptions = sessionRouteModuleState.options;
+        if (activeOptions.nativeNavigation) return await activeOptions.nativeNavigation();
+        const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+        return createReactNavigationNativeMock();
+    });
+
+    vi.mock('@expo/vector-icons', async () => {
+        const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
+        return createExpoVectorIconsMock();
+    });
+
+    vi.mock('react-native-typography', async () => {
+        const { createReactNativeTypographyMock } = await import('@/dev/testkit/mocks/reactNativeTypography');
+        return createReactNativeTypographyMock();
     });
 
     vi.mock('expo-router', async () => {
@@ -113,8 +131,7 @@ export function installSessionRouteCommonModuleMocks(
             return await activeOptions.storageModule(importOriginal as SessionRouteImportOriginal);
         }
 
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({});
+        return await importOriginal();
     });
 }
 

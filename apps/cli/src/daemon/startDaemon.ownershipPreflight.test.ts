@@ -1,17 +1,26 @@
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderSystemdServiceUnit } from '@happier-dev/cli-common/service';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
+import { spawnSleepyDetachedProcess } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
+import { projectPath } from '@/projectPath';
 
-const waitForInitialCredentialsMock = vi.fn(async () => ({ action: 'shutdown' as const }));
+let ownerProcess: ReturnType<typeof spawnSleepyDetachedProcess> | undefined;
+function spawnOwner() {
+    ownerProcess ??= spawnSleepyDetachedProcess([join(projectPath(), 'src/index.ts'), 'daemon', 'start-sync']);
+    return ownerProcess;
+}
 
-vi.mock('./startup/waitForInitialCredentials', () => ({
-    waitForInitialCredentials: waitForInitialCredentialsMock,
-}));
+async function expectCredentialGateReached(expected: boolean) {
+    const { logger } = await import('@/ui/logger');
+    logger.flushSync();
+    const diagnostic = await readFile(logger.logFilePath, 'utf8');
+    expect(diagnostic.includes('[DAEMON RUN] Waiting for credentials')).toBe(expected);
+}
 
 describe('startDaemon ownership preflight', () => {
     const envScope = createEnvKeyScope([
@@ -30,18 +39,37 @@ describe('startDaemon ownership preflight', () => {
         'HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR',
         'HAPPIER_DAEMON_SERVICE_CHANNEL',
         'HAPPIER_DAEMON_SERVICE_TARGET_MODE',
+        'HAPPIER_DAEMON_WAIT_FOR_AUTH',
     ]);
-    const fetchMock = vi.fn(async () => ({
-        ok: true,
-        status: 200,
-        text: async () => JSON.stringify({ success: true }),
-    }));
+    const fetchMock = vi.fn();
+    let inputTty: boolean | undefined;
+    let outputTty: boolean | undefined;
 
-    afterEach(() => {
+    beforeEach(() => {
+        envScope.patch({ HAPPIER_DAEMON_WAIT_FOR_AUTH: '1' });
+        inputTty = process.stdin.isTTY;
+        outputTty = process.stdout.isTTY;
+        Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: false });
+        Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: false });
+        fetchMock.mockImplementation(async (input: unknown) => {
+            if (String(input).includes('/stop')) {
+                await ownerProcess?.kill();
+                // A real OS shutdown signal retires the following auth wait;
+                // the waiter and daemon shutdown owner stay real.
+                process.emit('SIGTERM');
+            }
+            return { ok: true, status: 200, text: async () => JSON.stringify({ success: true }) };
+        });
+    });
+
+    afterEach(async () => {
+        await ownerProcess?.kill();
+        ownerProcess = undefined;
         envScope.restore();
-        waitForInitialCredentialsMock.mockReset();
         fetchMock.mockReset();
         vi.unstubAllGlobals();
+        Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: inputTty });
+        Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: outputTty });
         vi.resetModules();
     });
 
@@ -65,7 +93,7 @@ describe('startDaemon ownership preflight', () => {
             ]);
 
             writeDaemonState({
-                pid: process.pid,
+                pid: spawnOwner().pid,
                 httpPort: 43110,
                 startedAt: Date.now(),
                 startedWithCliVersion: '0.0.0-other',
@@ -108,7 +136,7 @@ describe('startDaemon ownership preflight', () => {
             ]);
 
             writeDaemonState({
-                pid: process.pid,
+                pid: spawnOwner().pid,
                 httpPort: 43111,
                 startedAt: Date.now(),
                 startedWithCliVersion: '0.0.0-other',
@@ -150,7 +178,7 @@ describe('startDaemon ownership preflight', () => {
             ]);
 
             writeDaemonState({
-                pid: process.pid,
+                pid: spawnOwner().pid,
                 httpPort: 43115,
                 startedAt: Date.now(),
                 controlToken: 'control-token',
@@ -163,7 +191,7 @@ describe('startDaemon ownership preflight', () => {
             await expect(startDaemon()).resolves.toBeUndefined();
             const fetchCalls = fetchMock.mock.calls as Array<readonly unknown[]>;
             expect(fetchCalls.some((call) => String(call[0] ?? '').includes('/stop'))).toBe(true);
-            expect(waitForInitialCredentialsMock).toHaveBeenCalledTimes(1);
+            await expectCredentialGateReached(true);
         });
     });
 
@@ -184,7 +212,7 @@ describe('startDaemon ownership preflight', () => {
             ]);
 
             writeDaemonState({
-                pid: process.pid,
+                pid: spawnOwner().pid,
                 httpPort: 43116,
                 startedAt: Date.now(),
                 controlToken: 'control-token',
@@ -197,7 +225,7 @@ describe('startDaemon ownership preflight', () => {
             await expect(startDaemon()).resolves.toBeUndefined();
             const fetchCalls = fetchMock.mock.calls as Array<readonly unknown[]>;
             expect(fetchCalls.some((call) => String(call[0] ?? '').includes('/stop'))).toBe(true);
-            expect(waitForInitialCredentialsMock).toHaveBeenCalledTimes(1);
+            await expectCredentialGateReached(true);
         });
     });
 
@@ -217,7 +245,7 @@ describe('startDaemon ownership preflight', () => {
             ]);
 
             writeDaemonState({
-                pid: process.pid,
+                pid: spawnOwner().pid,
                 httpPort: 43118,
                 startedAt: Date.now(),
                 controlToken: 'control-token',
@@ -230,7 +258,7 @@ describe('startDaemon ownership preflight', () => {
             await expect(startDaemon()).resolves.toBeUndefined();
             const fetchCalls = fetchMock.mock.calls as Array<readonly unknown[]>;
             expect(fetchCalls.some((call) => String(call[0] ?? '').includes('/stop'))).toBe(true);
-            expect(waitForInitialCredentialsMock).toHaveBeenCalledTimes(1);
+            await expectCredentialGateReached(true);
         });
     });
 
@@ -251,7 +279,7 @@ describe('startDaemon ownership preflight', () => {
             ]);
 
             writeDaemonState({
-                pid: process.pid,
+                pid: spawnOwner().pid,
                 httpPort: 43117,
                 controlToken: 'control-token',
                 startedAt: Date.now(),
@@ -262,7 +290,7 @@ describe('startDaemon ownership preflight', () => {
             await expect(startDaemon()).resolves.toBeUndefined();
             const fetchCalls = fetchMock.mock.calls as Array<readonly unknown[]>;
             expect(fetchCalls.some((call) => String(call[0] ?? '').includes('/stop'))).toBe(true);
-            expect(waitForInitialCredentialsMock).toHaveBeenCalledTimes(1);
+            await expectCredentialGateReached(true);
         });
     });
 
@@ -291,7 +319,7 @@ describe('startDaemon ownership preflight', () => {
             ]);
 
             writeDaemonState({
-                pid: process.pid,
+                pid: spawnOwner().pid,
                 httpPort: 43120,
                 startedAt: Date.now(),
                 startedWithCliVersion: '0.0.0-other',
@@ -310,7 +338,7 @@ describe('startDaemon ownership preflight', () => {
                 exitSpy.mockRestore();
             }
 
-            expect(waitForInitialCredentialsMock).not.toHaveBeenCalled();
+            await expectCredentialGateReached(false);
         });
     });
 
@@ -379,7 +407,7 @@ describe('startDaemon ownership preflight', () => {
             const logContent = await readFile(logger.logFilePath, 'utf8');
             expect(logContent).toContain('Installed background service prevented manual daemon startup');
             expect(logContent).toContain('happier service start');
-            expect(waitForInitialCredentialsMock).not.toHaveBeenCalled();
+            await expectCredentialGateReached(false);
         });
     });
 
@@ -434,7 +462,7 @@ describe('startDaemon ownership preflight', () => {
             );
 
             writeDaemonState({
-                pid: process.pid,
+                pid: spawnOwner().pid,
                 httpPort: 43125,
                 startedAt: Date.now(),
                 controlToken: 'control-token',
@@ -456,7 +484,7 @@ describe('startDaemon ownership preflight', () => {
 
             const fetchCalls = fetchMock.mock.calls as Array<readonly unknown[]>;
             expect(fetchCalls.some((call) => String(call[0] ?? '').includes('/stop'))).toBe(false);
-            expect(waitForInitialCredentialsMock).not.toHaveBeenCalled();
+            await expectCredentialGateReached(false);
 
             logger.flushSync();
             const logContent = await readFile(logger.logFilePath, 'utf8');

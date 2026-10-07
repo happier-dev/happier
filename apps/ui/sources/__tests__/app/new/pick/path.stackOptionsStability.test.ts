@@ -1,153 +1,87 @@
-import { authoringMemoryDefaults } from '@/sync/store/domains/authoringMemory';
 import React from 'react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { createMachineFixture, renderScreen } from '@/dev/testkit';
+import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
+import { storage } from '@/sync/domains/state/storageStore';
 import {
-    renderScreen,
-    standardCleanup,
-} from '@/dev/testkit';
-import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import type { Session } from '@/sync/domains/state/storageTypes';
-import {
-    createNavigationMock,
-    createRouterMock,
-    enableReactActEnvironment,
-    installPickerCommonModuleMocks,
-    PICKER_NAV_STATE,
-    type PickerStackOptionsInput,
+    createNavigationMock, createRouterMock, enableReactActEnvironment,
+    installPickerCommonModuleMocks, PICKER_NAV_STATE, type PickerStackOptionsInput,
 } from './testHarness';
-import { createUseSettingMock, createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
 
 enableReactActEnvironment();
 
-const setOptionsSpy = vi.hoisted(() => vi.fn());
-const pickerMachineMetadata = {
-    host: 'tester.local',
-    platform: 'darwin',
-    happyCliVersion: '0.0.0-test',
-    happyHomeDir: '/Users/tester/.happy-dev',
-    homeDir: '/home',
-} as const;
-const stableMachines = [
-    createMachineFixture({
-        id: 'm1',
-        metadata: pickerMachineMetadata,
-    }),
-];
-const stableSessions: Session[] = [];
-const stableRecentMachinePaths: typeof authoringMemoryDefaults.recentMachinePaths = [];
-const stableFavoriteDirectories: string[] = [];
-let localSearchParams: { machineId: string; selectedPath: string } = { machineId: 'm1', selectedPath: '' };
-const routerApi = createRouterMock();
-const navigationApi = createNavigationMock();
-
-type PathSelectionListProps = {
-    onCommit?: (value: string) => void;
-};
-
-vi.mock('@/components/ui/layout/layout', () => ({
-    layout: { maxWidth: 720 },
-    useLayoutMaxWidth: () => 720,
-    useLayoutMaxWidthStyle: () => ({ maxWidth: 720 }),
-}));
-
-vi.mock('@/components/sessions/new/components/PathSelectionList', () => ({
-    PathSelectionList: (props: PathSelectionListProps) => {
-        const didTriggerRef = React.useRef(false);
-        React.useEffect(() => {
-            if (didTriggerRef.current) return;
-            didTriggerRef.current = true;
-            // Trigger a state update that should NOT require updating Stack.Screen options.
-            props.onCommit?.('/tmp/typing');
-        }, [props]);
-        return null;
-    },
-}));
-
-vi.mock('@/components/ui/forms/SearchHeader', () => ({
-    SearchHeader: () => null,
-}));
-
-vi.mock('@/utils/sessions/recentPaths', () => ({
-    getRecentPathsForMachine: () => [],
-}));
+const setOptions = vi.fn<(options: PickerStackOptionsInput) => void>();
+const router = createRouterMock();
+const navigation = createNavigationMock();
+let params = { machineId: 'm1', selectedPath: '', spawnServerId: '' };
+let resetRouterParams: (() => void) | undefined;
 
 installPickerCommonModuleMocks({
-    text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
-    reactNative: async () =>
-        (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
-            Platform: { OS: 'ios', select: (options: any) => options?.ios ?? options?.default ?? options?.web ?? null },
-        }),
-    unistyles: async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock(),
-    storage: async (importOriginal) =>
-        (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
-            importOriginal,
-            overrides: {
-                useAllMachines: () => stableMachines,
-                useAllSessionListRenderables: () => stableSessions,
-                useAuthoringMemoryField: (key) => ({ ...authoringMemoryDefaults, recentMachinePaths: stableRecentMachinePaths })[key],
-                useSetting: createUseSettingMock({ fallback: (key) => {
-                    if (key === 'usePathPickerSearch') return false;
-                    return null;
-                } }),
-                useSettingMutable: createUseSettingMutableMockFromReader(() => [stableFavoriteDirectories, vi.fn()]),
-            },
-        }),
+    reactNative: async () => (await import('@/dev/testkit/mocks/reactNative'))
+        .createReactNativeNativeMock({ platformOS: 'ios' }),
     expoRouter: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-        const baseModule = createExpoRouterMock({
-            navigation: navigationApi,
-            router: {
-                push: routerApi.push,
-                back: routerApi.back,
-                replace: routerApi.replace,
-                setParams: routerApi.setParams,
+        const boundary = createExpoRouterMock({ navigation, router, params: () => params });
+        resetRouterParams = () => { boundary.resetParams(); };
+        return { ...boundary.module, Stack: {
+            Screen: ({ options }: { options: PickerStackOptionsInput }) => {
+                React.useEffect(() => { setOptions(options); }, [options]);
+                return null;
             },
-        }).module;
-
-        return {
-            ...baseModule,
-            Stack: {
-                Screen: ({ options }: { options: PickerStackOptionsInput }) => {
-                    React.useEffect(() => {
-                        setOptionsSpy(options);
-                    }, [options]);
-                    return null;
-                },
-            },
-            useNavigation: () => navigationApi,
-            useLocalSearchParams: () => localSearchParams,
-        };
+        } };
     },
+});
+const runtime = installSessionPaneRuntimeTestHarness();
+
+beforeEach(() => {
+    params = { machineId: 'm1', selectedPath: '', spawnServerId: runtime.serverId };
+    resetRouterParams?.();
+    storage.getState().applyMachines([createMachineFixture({
+        id: 'm1', storageMode: 'plain', metadata: {
+            host: 'tester.local', platform: 'darwin', happyCliVersion: '0.0.0-test',
+            happyHomeDir: '/Users/tester/.happy-dev', homeDir: '/home',
+        },
+    })], true, { sourceServerId: runtime.serverId });
+    storage.getState().applySettingsLocal({ usePathPickerSearch: false, favoriteDirectories: [] });
+    navigation.getState = () => ({ index: PICKER_NAV_STATE.index, routes: PICKER_NAV_STATE.routes.map((route) => ({ key: route.key })) });
+    navigation.dispatch.mockClear(); navigation.goBack.mockClear(); navigation.setParams.mockClear();
+    router.push.mockClear(); router.back.mockClear(); router.replace.mockClear(); router.setParams.mockClear();
+    setOptions.mockClear();
 });
 
 describe('PathPickerScreen (Stack.Screen options stability)', () => {
-    afterEach(() => {
-        standardCleanup();
-    });
+    it('keeps native screen options stable through a real path edit and parent rerender', async () => {
+        const Screen = (await import('@/app/(app)/new/pick/path')).default;
+        const { NewSessionPathSelectionContent } = await import('@/components/sessions/new/components/NewSessionPathSelectionContent');
+        const screen = await renderScreen(React.createElement(runtime.Wrapper, null, React.createElement(Screen)));
+        const content: React.ComponentProps<typeof NewSessionPathSelectionContent> = screen.findByType<typeof NewSessionPathSelectionContent>(NewSessionPathSelectionContent).props;
+        await act(async () => { content.onChangeSelectedPath('/tmp/typing'); });
+        expect(screen.findByType(NewSessionPathSelectionContent).props.selectedPath).toBe('/tmp/typing');
 
-    beforeEach(() => {
-        localSearchParams = { machineId: 'm1', selectedPath: '' };
-        navigationApi.getState = () => ({
-            index: PICKER_NAV_STATE.index,
-            routes: PICKER_NAV_STATE.routes.map((route) => ({ key: route.key })),
-        });
-        navigationApi.dispatch.mockClear();
-        navigationApi.goBack.mockClear();
-        navigationApi.setParams.mockClear();
-        routerApi.push.mockClear();
-        routerApi.back.mockClear();
-        routerApi.replace.mockClear();
-        routerApi.setParams.mockClear();
-        setOptionsSpy.mockClear();
-    });
+        await act(async () => { router.setParams({ selectedPath: '/tmp/next' }); });
+        await screen.update(React.createElement(runtime.Wrapper, null, React.createElement(Screen)));
+        expect(screen.findByType(NewSessionPathSelectionContent).props.selectedPath).toBe('/tmp/next');
+        expect(setOptions).toHaveBeenCalledTimes(1);
 
-    it('keeps Stack.Screen options referentially stable across parent re-renders', async () => {
-        const PathPickerScreen = (await import('@/app/(app)/new/pick/path')).default;
-        const screen = await renderScreen(React.createElement(PathPickerScreen));
-
-        localSearchParams = { machineId: 'm1', selectedPath: '/tmp/next' };
-        await screen.update(React.createElement(PathPickerScreen));
-
-        expect(setOptionsSpy).toHaveBeenCalledTimes(1);
+        // The stable confirm action must still use the latest committed route, not
+        // the closure from the first native header installation.
+        navigation.getState = () => ({ index: 0, routes: [{ key: 'path-picker' }] });
+        await act(async () => { router.setParams({ dataId: 'draft-latest' }); });
+        const updatedContent = screen.findByType<typeof NewSessionPathSelectionContent>(NewSessionPathSelectionContent).props;
+        const confirmPath = updatedContent.onSubmitSelectedPath;
+        if (!confirmPath) throw new Error('Expected path confirmation action');
+        await act(async () => { confirmPath(updatedContent.selectedPath); });
+        expect(router.replace).toHaveBeenCalledWith(expect.objectContaining({
+            pathname: '/new',
+            params: expect.objectContaining({
+                dataId: 'draft-latest',
+                machineId: 'm1',
+                directoryKind: 'path',
+                directory: '/tmp/next',
+                spawnServerId: runtime.serverId,
+            }),
+        }));
+        expect(setOptions).toHaveBeenCalledTimes(1);
     });
 });

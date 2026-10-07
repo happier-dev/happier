@@ -21,7 +21,7 @@ describe('CLI shared deps test setup', () => {
     vi.resetModules();
   });
 
-  it('uses source-only setup without publishing workspace output', async () => {
+  it('uses source-only setup without a full CLI dist build', async () => {
     await globalSetup();
 
     expect(setupMock).toHaveBeenCalledWith({ buildMode: 'none' });

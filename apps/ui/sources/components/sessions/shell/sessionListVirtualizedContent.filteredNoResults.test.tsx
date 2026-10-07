@@ -2,6 +2,7 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { buildSessionListIndexNodeId } from '@/sync/domains/sessionList/sessionListIndex';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 installSessionShellCommonModuleMocks({
@@ -66,7 +67,12 @@ describe('SessionListVirtualizedContent filtered no-results state', () => {
         const { SessionListVirtualizedContent } = await import('./sessionListVirtualizedContent');
 
         const screen = await renderScreen(React.createElement(SessionListVirtualizedContent as any, {
-            nodes: [{ id: 'header:active', rowViewModel: null }],
+            nodes: [{
+                id: buildSessionListIndexNodeId({ type: 'header', title: 'Active', headerKind: 'active', groupKey: 'active' }),
+                kind: 'header',
+                headerKind: 'active',
+                rowViewModel: null,
+            }],
             rowDensity: 'minimal',
             rowHeight: 48,
             safeAreaBottom: 0,

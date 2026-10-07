@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import type { CurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-import { ConnectedServiceQuotaSnapshotV1Schema, type AccountProfile } from '@happier-dev/protocol';
+import { ConnectedServiceIdSchema, ConnectedServiceQuotaSnapshotV1Schema, type AccountProfile } from '@happier-dev/protocol';
 import { t } from '@/text';
 import type { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import type { getConnectedServiceQuotaSnapshotSealed } from '@/sync/api/account/apiConnectedServicesQuotasV2';
@@ -76,14 +76,6 @@ vi.mock('@/utils/runtime/isRuntimeActive', () => ({
     isRuntimeActive: () => true,
     subscribeToRuntimeActiveChange: () => () => undefined,
 }));
-
-vi.mock('@/sync/api/account/apiUsage', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/api/account/apiUsage')>();
-    return {
-        ...actual,
-        getUsageForPeriod: vi.fn(async () => []),
-    };
-});
 
 const useFeatureEnabledSpy = vi.fn((_featureId: string) => false);
 const useProfileSpy = vi.fn<() => Pick<AccountProfile, 'connectedServicesV2'>>(() => ({
@@ -184,20 +176,36 @@ vi.mock('@/sync/domains/connectedServices/connectedServiceRegistry', () => ({
     }),
 }));
 
-vi.mock('@/sync/api/account/apiAccountEncryptionMode', () => ({
-    fetchAccountEncryptionMode: fetchAccountEncryptionModeSpy,
+// HTTP is the system boundary. Encryption-mode caching, quota envelope parsing,
+// usage adapters and their callers stay real.
+vi.mock('@/sync/http/client', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/http/client')>(),
+    serverFetch: async (path: string) => {
+        if (path === '/v1/account/encryption') {
+            return Response.json(await fetchAccountEncryptionModeSpy(authState.credentials));
+        }
+        const quota = path.match(/^\/v([23])\/connect\/([^/]+)\/profiles\/([^/]+)\/quotas$/);
+        if (quota) {
+            const params = { serviceId: ConnectedServiceIdSchema.parse(decodeURIComponent(quota[2]!)), profileId: decodeURIComponent(quota[3]!) };
+            if (quota[1] === '2') {
+                const sealed = await getConnectedServiceQuotaSnapshotSealedSpy(authState.credentials, params);
+                return sealed ? Response.json(sealed) : new Response('{}', { status: 404 });
+            }
+            const snapshot = await getConnectedServiceQuotaSnapshotPlainSpy(authState.credentials, params);
+            return snapshot ? Response.json({
+                content: { t: 'plain', v: snapshot },
+                metadata: { fetchedAt: snapshot.fetchedAt, staleAfterMs: snapshot.staleAfterMs, status: 'ok' },
+            }) : new Response('{}', { status: 404 });
+        }
+        if (path === '/v2/usage/query') return Response.json([]);
+        throw new Error(`Unexpected Usage Home request: ${path}`);
+    },
 }));
 
-vi.mock('@/sync/api/account/apiConnectedServicesQuotasV2', () => ({
-    getConnectedServiceQuotaSnapshotSealed: getConnectedServiceQuotaSnapshotSealedSpy,
-}));
-
-vi.mock('@/sync/api/account/apiConnectedServicesQuotasV3', () => ({
-    getConnectedServiceQuotaSnapshotPlain: getConnectedServiceQuotaSnapshotPlainSpy,
-}));
-
-afterEach(() => {
+afterEach(async () => {
     invalidateUsageAnalyticsQueryCache();
+    const { invalidateAccountEncryptionModeCache } = await import('@/sync/api/account/apiAccountEncryptionMode');
+    invalidateAccountEncryptionModeCache();
 });
 
 describe('UsagePanel', () => {

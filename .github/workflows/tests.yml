@@ -215,8 +215,8 @@ on:
 
 concurrency:
   group: tests-${{ github.workflow }}-${{ github.ref }}
-  # Preserve superseded PR cancellation and release automatic v0.3 push capacity.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || (!inputs.select_jobs_explicitly && github.event_name == 'push' && github.ref_name == 'v0.3') }}
+  # Superseded PRs are disposable; push runs retain exact-SHA terminal evidence.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Speed up CI: UI postinstall vendors large web-only assets (Monaco/Kokoro/Skia web).

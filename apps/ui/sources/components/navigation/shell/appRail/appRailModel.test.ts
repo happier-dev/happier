@@ -90,6 +90,8 @@ describe('app rail model', () => {
         // A Home's console keeps the settings navigation beside its own.
         expect(at('/settings/home/srv%201/people/acc')).toEqual(['settings', 'settings', 'settings']);
         expect(at('/search')).toEqual(['search', 'search', 'none']);
+        expect(at('/artifacts')).toEqual(['artifacts', 'artifacts', 'none']);
+        expect(at('/artifacts/artifact-1')).toEqual(['artifacts', 'artifacts', 'none']);
     });
 
     it("stands a plugin page's own column beside it, and peeks it from its rail icon", () => {

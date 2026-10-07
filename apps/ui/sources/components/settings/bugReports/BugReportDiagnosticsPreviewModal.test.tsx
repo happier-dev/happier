@@ -31,7 +31,8 @@ installBugReportComponentCommonModuleMocks({
     },
 });
 
-vi.mock('react-native-safe-area-context', () => ({
+vi.mock('react-native-safe-area-context', async (importOriginal) => ({
+    ...await importOriginal<typeof import('react-native-safe-area-context')>(),
     useSafeAreaInsets: () => ({ top: 20, bottom: 20, left: 0, right: 0 }),
 }));
 

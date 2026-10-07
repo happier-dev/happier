@@ -73,7 +73,9 @@ async function renderOpenedPicker(serverId: string, excludedMemberIds: readonly 
     await trigger.pressByTestIdAsync('member-picker-trigger');
     const shown = shownModals.at(-1);
     if (!shown) throw new Error('audience_picker_not_opened');
-    return { picker: await renderScreen(React.createElement(shown.component, shown.props)), onChoose };
+    // The real Modal renderer injects its close port; the captured native modal does the same.
+    const onClose = vi.fn();
+    return { picker: await renderScreen(React.createElement(shown.component, { ...shown.props, onClose })), onChoose, onClose };
 }
 
 beforeEach(async () => {
@@ -140,7 +142,7 @@ describe('TeamCredentialAudiencePicker exact member mode', () => {
             },
         });
 
-        const { picker, onChoose } = await renderOpenedPicker(serverId, ['membership-1']);
+        const { picker, onChoose, onClose } = await renderOpenedPicker(serverId, ['membership-1']);
         await vi.waitFor(() => expect(picker.findByTestId('team-credential-audience-picker:pagination:more')).not.toBeNull());
         expect(picker.findByTestId('team-credential-audience-pick-member:membership-1')).toBeNull();
         harness.answer(serverId, MEMBERS_LIST_PATH, {
@@ -165,6 +167,7 @@ describe('TeamCredentialAudiencePicker exact member mode', () => {
         });
         expect(harness.requestsFor(MEMBERS_LIST_PATH).at(-1)?.input).toMatchObject({ cursor: 'members-next' });
         option?.onSelect?.();
+        expect(onClose).toHaveBeenCalledOnce();
         expect(onChoose).toHaveBeenCalledWith({
             kind: 'member', id: 'membership-2', accountId: 'account-grace', name: 'Grace',
         });

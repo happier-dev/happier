@@ -7,10 +7,20 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+
+import {
+  CLI_BINARY_TARGETS,
+  execOrThrow,
+  resolveCurrentBinaryTarget,
+  resolveProcessCustodyRuntimeExecutableName,
+  stageProcessCustodyRuntime,
+  type RunCommand,
+} from '@happier-dev/cli-common/componentArtifacts'
 
 import { resolveYarnCommandInvocation } from '../../../scripts/workspaces/execYarnCommand.mjs'
 import { createWorkspaceChildBuildEnv } from '../../../scripts/workspaces/workspaceChildBuildEnv.mjs'
+import { readBundledPluginPackageNames } from '../scripts/build-owned/bundledPluginMembership'
 import { ensureBuildArtifactsReadyOnce } from './testSetupBuildCoordinator'
 
 export type CliTestBuildMode = 'none' | 'full'
@@ -18,6 +28,7 @@ export type CliTestBuildMode = 'none' | 'full'
 type CliTestSetupDependencies = {
   resolveProjectRoot: () => string
   ensureDistBuiltOnce: (projectRoot: string) => Promise<void>
+  runCommand: RunCommand
 }
 
 type CliTestSetupOptions = {
@@ -101,6 +112,67 @@ async function ensureDistBuiltOnce(projectRoot: string): Promise<void> {
   })
 }
 
+async function ensureNativeCustodyReadyOnce(projectRoot: string, runCommand: RunCommand): Promise<void> {
+  const target = resolveCurrentBinaryTarget({ availableTargets: CLI_BINARY_TARGETS })
+  const executablePath = join(projectRoot, 'tools', 'unpacked', resolveProcessCustodyRuntimeExecutableName(target))
+  await ensureBuildArtifactsReadyOnce({
+    lockPath: resolveBuildLockPath(projectRoot),
+    markerPaths: [executablePath],
+    lockLabel: 'CLI native process custody',
+    runBuild: async () => {
+      await stageProcessCustodyRuntime({
+        repoRoot: resolveRepoRoot(projectRoot),
+        payloadDir: projectRoot,
+        target,
+        runCommand,
+      })
+    },
+  })
+}
+
+async function ensureBundledPluginPublicationReady(projectRoot: string): Promise<void> {
+  const repoRoot = resolveRepoRoot(projectRoot)
+  const workspaceNames = readBundledPluginPackageNames(repoRoot)
+  if (workspaceNames.length === 0) return
+
+  // The JavaScript build owner owns preparation, currentness and publication
+  // locks. Do not treat a leftover failure inventory as proof of readiness.
+  const modulePath = join(repoRoot, 'apps', 'cli', 'scripts', 'buildSharedDeps.mjs')
+  const owner = await import(pathToFileURL(modulePath).href) as {
+    prepareBundledWorkspaceDependenciesForCli: (options: Readonly<{
+      repoRoot: string
+      env: NodeJS.ProcessEnv
+      publicationMode: 'live'
+      deferPluginBuildToGenerator: true
+    }>) => Promise<unknown>
+    publishBundledPluginArtifactsAfterWorkspaceBuild: (options: Readonly<{
+      repoRoot: string
+      workspaceNames: readonly string[]
+      env: NodeJS.ProcessEnv
+      publicationMode: 'live'
+      bundledPluginArtifactPublication: Readonly<{ mode: 'write'; targetOwnedOnly: true }>
+    }>) => Promise<boolean>
+  }
+  // Match the existing CLI preparation order: build the derived non-plugin
+  // closure before the generator reads Agents compiler inputs. Plugin builds
+  // remain deferred until their canonical publisher has serialized manifests.
+  await owner.prepareBundledWorkspaceDependenciesForCli({
+    repoRoot,
+    env: process.env,
+    publicationMode: 'live',
+    deferPluginBuildToGenerator: true,
+  })
+  await owner.publishBundledPluginArtifactsAfterWorkspaceBuild({
+    repoRoot,
+    workspaceNames,
+    env: process.env,
+    publicationMode: 'live',
+    // Source-test replicas own ignored manifests/runtime bytes, not tracked
+    // host projections. The same bounded output scope is safe for local tests.
+    bundledPluginArtifactPublication: { mode: 'write', targetOwnedOnly: true },
+  })
+}
+
 function readSkipBuildOverride(): boolean {
   const raw = process.env.HAPPIER_CLI_TEST_SKIP_BUILD
   if (typeof raw !== 'string') return false
@@ -113,17 +185,22 @@ export async function setup(options: CliTestSetupOptions = {}) {
 
   const skipBuild = readSkipBuildOverride()
 
-  // Allow global opt-out for low-level setup tests and targeted local debugging.
-  if (skipBuild || options.buildMode === 'none') return
-
   const dependencies: CliTestSetupDependencies = {
     resolveProjectRoot: resolveCliProjectRoot,
     ensureDistBuiltOnce,
+    runCommand: execOrThrow,
     ...options.dependencies,
   }
 
   const buildMode = options.buildMode ?? 'full'
   const projectRoot = dependencies.resolveProjectRoot()
+
+  // Source tests exercise native confinement without publishing the full CLI
+  // dist. Prepare that prerequisite through the same staging owner as releases.
+  await ensureNativeCustodyReadyOnce(projectRoot, dependencies.runCommand)
+  await ensureBundledPluginPublicationReady(projectRoot)
+
+  if (skipBuild || buildMode === 'none') return
 
   if (buildMode === 'full') {
     await dependencies.ensureDistBuiltOnce(projectRoot)

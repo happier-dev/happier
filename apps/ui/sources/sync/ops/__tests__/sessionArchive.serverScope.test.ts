@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterAll, beforeAll, describe, it, expect, vi, beforeEach } from 'vitest';
 
 const { mockRequest, mockResolveContext, mockRuntimeFetchWithServerReachability, mockRelease, mockStorageState } = vi.hoisted(() => ({
   mockRequest: vi.fn(),
@@ -116,45 +116,6 @@ describe('sessionArchiveWithServerScope', () => {
     expect(mockRelease).toHaveBeenCalledTimes(1);
   });
 
-  it('defaults a null serverId to the preferred owner server from local cache', async () => {
-    const now = Date.now();
-    mockStorageState.concurrentSessionListCacheByServerId = {
-      'server-owned': {
-        serverName: 'Owned',
-        sessions: {
-          'sid-owned': {
-            id: 'sid-owned',
-            seq: 0,
-            createdAt: now,
-            updatedAt: now,
-            active: true,
-            activeAt: now,
-            metadataVersion: 0,
-            agentStateVersion: 0,
-            metadata: null,
-            thinking: false,
-            thinkingAt: 0,
-            presence: 'online',
-          },
-        },
-      },
-    };
-    mockResolveContext.mockResolvedValue({
-      scope: 'active',
-      targetServerUrl: 'https://active.example',
-      targetServerId: 'server-owned',
-      token: 'tok',
-      timeoutMs: 1000,
-      encryption: null,
-    });
-    mockRequest.mockResolvedValue(makeResponse({ ok: true, json: { success: true, archivedAt: 12 } }));
-
-    const res = await sessionArchiveWithServerScope('sid-owned', { serverId: null });
-
-    expect(res).toEqual({ success: true, archivedAt: 12 });
-    expect(mockResolveContext).toHaveBeenCalledWith({ serverId: 'server-owned' });
-  });
-
   it('surfaces a stable session_active code for JSON archive conflicts', async () => {
     mockResolveContext.mockResolvedValue({
       scope: 'active',
@@ -177,6 +138,44 @@ describe('sessionArchiveWithServerScope', () => {
       message: 'Cannot archive an active session',
       code: 'session_active',
     });
+  });
+});
+
+describe('archive routing from canonical session-list rows', () => {
+  let boundary: Awaited<ReturnType<typeof import('@/dev/testkit/harness/sessionOpsNetworkBoundary').installSessionOpsNetworkBoundary>>;
+
+  beforeAll(async () => {
+    vi.doUnmock('@/sync/api/session/apiSocket');
+    vi.doUnmock('@/sync/runtime/orchestration/serverScopedRpc/resolveServerAccountRequestContext');
+    vi.doUnmock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch');
+    vi.doUnmock('@/utils/system/runtimeFetch');
+    vi.doUnmock('@/sync/domains/state/storage');
+    vi.resetModules();
+    boundary = await (await import('@/dev/testkit/harness/sessionOpsNetworkBoundary')).installSessionOpsNetworkBoundary();
+  });
+
+  afterAll(async () => {
+    const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+    await resetServerReachabilitySupervisors();
+    boundary?.dispose();
+  });
+
+  it('defaults a null serverId to the preferred owner Home from its canonical local list', async () => {
+    const owner = await boundary.addHome('https://archive-owner.example', 'archive-account');
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { createSessionListRenderableSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+    storage.setState(storage.getInitialState(), true);
+    storage.getState().applyServerScopedSessionListRows(owner.id, [
+      createSessionListRenderableSessionFixture({ id: 'sid-owned' }),
+    ], { source: 'ordinary', mode: 'replace' });
+    boundary.setHttpResponder(async (input) => new URL(String(input)).pathname === '/v2/sessions/sid-owned/archive'
+      ? Response.json({ success: true, archivedAt: 12 }) : null);
+    const { sessionArchiveWithServerScope: archive } = await import('../sessions');
+
+    await expect(archive('sid-owned', { serverId: null })).resolves.toEqual({ success: true, archivedAt: 12 });
+    expect(boundary.httpRequests.filter(({ url }) => url.includes('/archive'))).toEqual([
+      { url: `${owner.serverUrl}/v2/sessions/sid-owned/archive`, token: `Bearer ${owner.token}` },
+    ]);
   });
 });
 

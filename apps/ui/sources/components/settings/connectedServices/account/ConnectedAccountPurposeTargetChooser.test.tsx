@@ -2,7 +2,13 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
+import { renderScreen as renderBaseScreen } from '@/dev/testkit';
+import { AccountProfileSchema } from '@happier-dev/protocol';
+import { storage } from '@/sync/domains/state/storageStore';
+import { profileDefaults } from '@/sync/domains/profiles/profile';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
+
+const initialStorageState = storage.getState();
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -53,33 +59,41 @@ vi.mock('@/components/ui/text/Text', () => ({
   TextInput: (props: React.PropsWithChildren<Record<string, unknown>>) => React.createElement('TextInput', props, props.children),
 }));
 
-vi.mock('@/sync/store/hooks', () => ({
-  useActiveServerAccountScope: () => ({ serverId: 'server-a', accountId: 'account-a' }),
-  useLocalSetting: (key: string) => key === 'uiFontScale' ? 1 : 'comfortable',
-  useProfile: () => ({
-    id: connectedAccountState.profileId,
-    connectedAccountsV4: [{
-      ref: {
-        service: { pluginId: 'acme.managed.provider', localId: 'gateway' },
-        accountId: '35f1d8ec-633c-4bda-9e0d-7055ac95b8af',
+function seedAccountProfile() {
+  storage.setState({
+    profileScope: { serverId: 'server-a', accountId: 'account-a' },
+    profile: AccountProfileSchema.parse({
+      ...profileDefaults,
+      id: connectedAccountState.profileId,
+      connectedAccountsV4: [{
+        ref: {
+          service: { pluginId: 'acme.managed.provider', localId: 'gateway' },
+          accountId: '35f1d8ec-633c-4bda-9e0d-7055ac95b8af',
+        },
+        status: 'connected',
+        authenticationModeId: 'oauth',
+        revisionSemantics: 'revisioned',
+        credentialRevision: 'cred-1',
+        configurationReady: true,
+        configurationRevision: null,
+        displayName: undefined,
+        scopes: [],
+      }, ...connectedAccountState.additionalAccounts],
+      connectedAccountGroupsV4: [],
+    }),
+    settings: {
+      ...settingsDefaults,
+      connectedServicesProfileLabelByKey: {
+        'acme.managed.provider%2Fgateway/35f1d8ec-633c-4bda-9e0d-7055ac95b8af': 'Personal OpenAI',
       },
-      status: 'connected',
-      authenticationModeId: 'oauth',
-      revisionSemantics: 'revisioned',
-      credentialRevision: 'cred-1',
-      configurationReady: true,
-      configurationRevision: null,
-      displayName: undefined,
-      scopes: [],
-    }, ...connectedAccountState.additionalAccounts],
-    connectedAccountGroupsV4: [],
-  }),
-  useSettings: () => ({
-    connectedServicesProfileLabelByKey: {
-      'acme.managed.provider%2Fgateway/35f1d8ec-633c-4bda-9e0d-7055ac95b8af': 'Personal OpenAI',
     },
-  }),
-}));
+  });
+}
+
+async function renderScreen(element: React.ReactElement) {
+  seedAccountProfile();
+  return renderBaseScreen(element);
+}
 vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
   useProjectedConnectedServicesRegistry: () => ({
     scopeKey: 'server-a', status: 'ready', errorReason: null, entries: connectedServiceRegistryState.entries,
@@ -114,6 +128,7 @@ vi.mock('@/sync/domains/connectedServices/connectedServiceRegistry', () => ({
 }));
 
 afterEach(() => {
+  storage.setState(initialStorageState, true);
   featureRuntimeState.status = 'ready';
   featureRuntimeState.qualifiedAccounts = true;
   routeState.pathname = '/settings/providers/cpx-moving';
@@ -376,6 +391,7 @@ describe('ConnectedAccountPurposeTargetChooser', () => {
 
     connectedAccountState.profileId = 'account-a';
     await act(async () => {
+      seedAccountProfile();
       screen.tree.update(<ConnectedAccountPurposeTargetChooser
         testID="provider-connection-managed-purpose-chooser:hydrating"
         localizedTextPluginId="acme.provider.author"

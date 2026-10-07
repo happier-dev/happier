@@ -15,6 +15,9 @@ import { t } from '@/text';
 
 import type { SessionDiscussionActivityItem } from './sessionDiscussionActivityItems';
 import { SessionConversationsBody } from './SessionConversationsBody';
+import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
+import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
+import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 
 const credentials = vi.hoisted(() => ({ serverId: '', accountId: 'conversations-account' }));
 const discussionApi = vi.hoisted(() => ({ list: vi.fn() }));
@@ -68,6 +71,11 @@ afterEach(() => {
     vi.restoreAllMocks();
 });
 
+function PaneSelectionProbe(props: Readonly<{ serverId: string }>) {
+    const pane = useAppPaneScope(createSessionPaneScopeId('conversation-session', props.serverId));
+    return <React.Fragment>{React.createElement('PaneSelectionProbe', { activeTabKey: pane.scopeState?.details.activeTabKey })}</React.Fragment>;
+}
+
 async function renderConversations(options: Readonly<{
     activeDifferentHome?: boolean;
     conversationsEnabled?: boolean;
@@ -93,6 +101,7 @@ async function renderConversations(options: Readonly<{
 
     const screen = await renderScreen(
         <AppPaneProvider>
+            <PaneSelectionProbe serverId={profile.id} />
             <SessionConversationsBody
                 address={{ serverId: profile.id, sessionId: 'conversation-session' }}
                 scope={{ serverId: profile.id, accountId: options.requestedAccountId ?? credentials.accountId }}
@@ -329,8 +338,9 @@ describe('SessionConversationsBody (Lane 05 canonical Conversations body)', () =
 
         await screen.pressByTestIdAsync('session-discussion-row-discussion-active-2');
         await vi.waitFor(() => expect(
-            screen.findByTestId('session-discussion-row-discussion-active-2')?.props.accessibilityState,
-        ).toEqual({ selected: true }));
+            screen.root.findAll((node) => node.props.discussion?.id === 'discussion-active-2' && typeof node.props.selected === 'boolean').map((row) => row.props.selected),
+        ).toEqual([true]));
+        expect(screen.root.findByType('PaneSelectionProbe').props.activeTabKey).toBe(`discussion:${sessionAddressKey({ serverId: credentials.serverId, sessionId: 'conversation-session' })}:discussion-active-2`);
     });
 
     it('renders the bounded recent-author projection as a compact accessible avatar stack', async () => {
@@ -381,8 +391,9 @@ describe('SessionConversationsBody (Lane 05 canonical Conversations body)', () =
 
         await screen.pressByTestIdAsync('session-discussion-row-discussion-archived-2');
         await vi.waitFor(() => expect(
-            screen.findByTestId('session-discussion-row-discussion-archived-2')?.props.accessibilityState,
-        ).toEqual({ selected: true }));
+            screen.root.findAll((node) => node.props.discussion?.id === 'discussion-archived-2' && typeof node.props.selected === 'boolean').map((row) => row.props.selected),
+        ).toEqual([true]));
+        expect(screen.root.findByType('PaneSelectionProbe').props.activeTabKey).toBe(`discussion:${sessionAddressKey({ serverId: credentials.serverId, sessionId: 'conversation-session' })}:discussion-archived-2`);
         expect(consoleError.mock.calls.some((args) => args.some((value) => (
             typeof value === 'string' && value.includes('Cannot update a component')
         )))).toBe(false);

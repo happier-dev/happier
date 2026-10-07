@@ -1,10 +1,8 @@
 import { renderWithSessionTranscriptSource, createTestSessionTranscriptSource } from '@/dev/testkit';
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Message, ToolCall, ToolCallMessage } from "@happier-dev/session-core/messages";
-import { renderScreen } from '@/dev/testkit';
 import { installWorkflowRendererCommonModuleMocks } from './workflowRendererTestHelpers';
 
 
@@ -77,10 +75,10 @@ function makeToolCallMessage(id: string, tool: ToolCall): ToolCallMessage {
     };
 }
 
+const { SubAgentSummarySection } = await import('./SubAgentSummarySection');
+
 describe('SubAgentSummarySection (+N more tools row)', () => {
     it('does not crash when detailLevel changes from title to summary', async () => {
-        const { SubAgentSummarySection } = await import('./SubAgentSummarySection');
-
         const taskTool = makeToolCall({
             name: 'Task',
             state: 'running',
@@ -92,19 +90,16 @@ describe('SubAgentSummarySection (+N more tools row)', () => {
 
         const toolMessages: Message[] = [];
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderWithSessionTranscriptSource(<SubAgentSummarySection
+        const screen = await renderWithSessionTranscriptSource(<SubAgentSummarySection
                     tool={taskTool}
                     metadata={null}
                     messages={toolMessages}
                     detailLevel="title"
                     sessionId="s1"
                     messageId="msg-task-1"
-                />, createTestSessionTranscriptSource({ navigate: pushSpy }))).tree;
+                />, createTestSessionTranscriptSource({ navigate: pushSpy }));
 
-        expect(() => {
-            act(() => {
-                tree!.update(
+        await expect(screen.update(
                     <SubAgentSummarySection
                         tool={taskTool}
                         metadata={null}
@@ -113,14 +108,10 @@ describe('SubAgentSummarySection (+N more tools row)', () => {
                         sessionId="s1"
                         messageId="msg-task-1"
                     />,
-                );
-            });
-        }).not.toThrow();
+        )).resolves.toBeUndefined();
     });
 
     it('does not crash when content appears after an initially empty render', async () => {
-        const { SubAgentSummarySection } = await import('./SubAgentSummarySection');
-
         const emptyTool = makeToolCall({
             name: 'Task',
             state: 'running',
@@ -133,19 +124,16 @@ describe('SubAgentSummarySection (+N more tools row)', () => {
 
         const toolMessages: Message[] = [];
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderWithSessionTranscriptSource(<SubAgentSummarySection
+        const screen = await renderWithSessionTranscriptSource(<SubAgentSummarySection
                     tool={emptyTool}
                     metadata={null}
                     messages={toolMessages}
                     detailLevel="summary"
                     sessionId="s1"
                     messageId="msg-task-1"
-                />, createTestSessionTranscriptSource({ navigate: pushSpy }))).tree;
+                />, createTestSessionTranscriptSource({ navigate: pushSpy }));
 
-        expect(() => {
-            act(() => {
-                tree!.update(
+        await expect(screen.update(
                     <SubAgentSummarySection
                         tool={toolWithContent}
                         metadata={null}
@@ -154,15 +142,12 @@ describe('SubAgentSummarySection (+N more tools row)', () => {
                         sessionId="s1"
                         messageId="msg-task-1"
                     />,
-                );
-            });
-        }).not.toThrow();
+        )).resolves.toBeUndefined();
     });
 
     it('renders the +N more tools row above the visible tools (and makes it tappable)', async () => {
         pushSpy.mockClear();
         navigateWithBlurOnWebSpy.mockClear();
-        const { SubAgentSummarySection } = await import('./SubAgentSummarySection');
 
         const taskTool = makeToolCall({
             name: 'Task',

@@ -1,36 +1,27 @@
 import * as React from 'react';
+import { StyleSheet } from 'react-native';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-
-import { renderScreen } from '@/dev/testkit';
+import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
+import { flushHookEffects, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storageStore';
+import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
+import { AppShellPluginUiProjectionValueProvider } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { PluginAppPageLaunchInputScope } from '@/components/appShell/plugins/pluginAppPageNavigation';
+import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiProjectionModel, type PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
 import type { PluginAppPage } from '@/components/appShell/plugins/pluginAppPages';
-import type { RightSidebarPluginTabDefinition } from '@/components/appShell/rightSidebar/rightSidebarBuiltinTabs';
 import { UniversalSearchRuntimeProvider } from '@/components/appShell/search/UniversalSearchRuntimeContext';
+import { Item } from '@/components/ui/lists/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { resolveSessionListDensityViewState } from '@/components/sessions/shell/resolveSessionListDensityViewState';
 import { NavigationSurfacePlacementsV1Schema, type NavigationSurfacePlacementsV1 } from '@/sync/domains/settings/mobileSurfacePinning';
-import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 
-import {
-    resolveCompactAppDestinations,
-    type CompactAppDestination,
-} from './compactAppDestinationCatalog';
-
-const routeState = vi.hoisted(() => ({
-    push: vi.fn(),
-    pathname: '/',
-}));
+const routeState = vi.hoisted(() => ({ push: vi.fn(), pathname: '/' }));
 const openUniversalSearch = vi.hoisted(() => vi.fn());
-const surfaceState = vi.hoisted(() => {
-    const localSettings: Pick<LocalSettings, 'navigationSurfacePlacementsV1'> = { navigationSurfacePlacementsV1: {} };
-    return {
-        platformOS: 'web' as 'web' | 'ios' | 'android',
-        isTablet: false,
-        sessionListDensity: 'narrow' as string,
-        localSettings,
-    };
-});
-const catalogState = vi.hoisted(() => ({ value: [] as readonly CompactAppDestination[] }));
-
+const surfaceState = vi.hoisted(() => ({
+    platformOS: 'web' as 'web' | 'ios' | 'android',
+    isTablet: false,
+}));
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock({
@@ -44,113 +35,97 @@ vi.mock('@/text', async () => {
 });
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    // One runtime that can report either surface, so the desktop-web row and the native touch
-    // floor are asserted against the same rendered component rather than two harnesses.
+    const dimensions = () => ({ width: surfaceState.isTablet ? 840 : 390, height: 900, scale: 1, fontScale: 1 });
     return createReactNativeWebMock({
         Platform: {
-            get OS() {
-                return surfaceState.platformOS;
-            },
+            get OS() { return surfaceState.platformOS; },
+            get isPad() { return surfaceState.isTablet; },
             select: <T,>(choices: { web?: T; default?: T; native?: T; ios?: T; android?: T }) => (
-                surfaceState.platformOS === 'web'
-                    ? choices?.web ?? choices?.default
-                    : choices?.[surfaceState.platformOS] ?? choices?.native ?? choices?.default
+                surfaceState.platformOS === 'web' ? choices.web ?? choices.default
+                    : choices[surfaceState.platformOS] ?? choices.native ?? choices.default
             ),
         },
-    });
-});
-vi.mock('@/utils/platform/responsive', async (importOriginal) => ({
-    ...(await importOriginal<typeof import('@/utils/platform/responsive')>()),
-    useIsTablet: () => surfaceState.isTablet,
-}));
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock, createUseLocalSettingMock, createUseLocalSettingMutableMock } = await import('@/dev/testkit/mocks/storage');
-    const useLocalSetting = createUseLocalSettingMock({ values: surfaceState.localSettings });
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useLocalSetting,
-            useLocalSettingMutable: createUseLocalSettingMutableMock(useLocalSetting),
-            useSetting: ((key: string) => (
-                key === 'sessionListDensity' ? surfaceState.sessionListDensity : undefined
-            )) as typeof import('@/sync/domains/state/storage')['useSetting'],
-        },
+        useWindowDimensions: dimensions,
+        Dimensions: { get: dimensions },
     });
 });
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return createUnistylesMock();
 });
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: Record<string, unknown>) => React.createElement('Item', props),
-}));
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: (props: React.PropsWithChildren<Record<string, unknown>>) =>
-        React.createElement('ItemGroup', props, props.children),
-}));
-// The catalog's projection-backed hook is replaced by the real catalog resolver over fixed inputs.
-vi.mock('./compactAppDestinationCatalog', async (importOriginal) => ({
-    ...(await importOriginal<typeof import('./compactAppDestinationCatalog')>()),
-    useCompactAppDestinations: () => catalogState.value,
-}));
+const runtime = installSessionPaneRuntimeTestHarness({ scopeId: 'app' });
+let projection: PluginUiProjectionModel;
 
-function page(localId: string, extra: Partial<PluginAppPage> = {}): PluginAppPage {
+function placement(localId: string, container: 'appPage' | 'rightSidebarTab',
+    extra: Partial<Pick<PluginAppPage, 'requestedPlacement' | 'disabledReason'>> = {}): PluginUiSurfacePlacementProjection {
+    const pluginId = container === 'rightSidebarTab' ? 'acme.review' : `acme.${localId}`;
+    const binding = normalizePluginUiDestinationBindingV1({
+        pluginId, destinationId: localId, rendererId: localId, container, target: { kind: 'app' },
+    });
+    if (!binding) throw new Error('invalid destination fixture');
     return {
-        id: `plugin:acme.${localId}:${localId}`,
-        pluginId: `acme.${localId}`,
-        descriptorId: localId,
-        localId,
-        label: localId,
-        icon: 'note',
-        order: 10,
-        disabledReason: null,
-        placement: {} as PluginAppPage['placement'],
-        routePath: `/plugins/acme.${localId}/${localId}`,
-        ...extra,
-    } as PluginAppPage;
+        id: `surfacePlacement:${pluginId}:${localId}`, pluginId, occurrenceId: `${pluginId}-occurrence`,
+        contributionKind: 'surfacePlacement', descriptorId: localId, binding, target: { kind: 'app' },
+        renderer: { kind: 'host', rendererId: localId },
+        display: { developerFallback: localId, ...(extra.requestedPlacement ? { placement: extra.requestedPlacement } : {}) },
+        availability: extra.disabledReason
+            ? { state: 'disabled', reason: extra.disabledReason, diagnostics: [] }
+            : { state: 'available', reason: 'available', diagnostics: [] },
+        headerActions: [],
+        ...(container === 'rightSidebarTab' ? { rightSidebar: { tabId: localId, scopes: ['app'] } } : {}),
+    };
 }
-
-const reviewTab = {
-    id: 'plugin:acme.review:review-panel',
-    owner: 'plugin',
-    label: 'Review',
-    icon: 'check-square',
-    order: 50,
-    scopes: ['app'],
-    placement: { binding: { destination: { pluginId: 'acme.review', localId: 'review-panel' } } },
-} as unknown as RightSidebarPluginTabDefinition;
+function page(localId: string, extra: Partial<Pick<PluginAppPage, 'requestedPlacement' | 'disabledReason'>> = {}) {
+    return placement(localId, 'appPage', extra);
+}
+const reviewTab = placement('review-panel', 'rightSidebarTab');
 
 function setCatalog(input: Readonly<{
-    pages?: readonly PluginAppPage[];
+    pages?: readonly PluginUiSurfacePlacementProjection[];
     externalSessions?: boolean;
-    tabs?: readonly RightSidebarPluginTabDefinition[];
+    tabs?: readonly PluginUiSurfacePlacementProjection[];
     navigationPlacements?: NavigationSurfacePlacementsV1;
 }>) {
-    surfaceState.localSettings.navigationSurfacePlacementsV1 = NavigationSurfacePlacementsV1Schema.parse(input.navigationPlacements ?? {});
-    catalogState.value = resolveCompactAppDestinations({
-        builtins: { externalSessions: input.externalSessions ?? true, inbox: true, workflows: true, friends: true },
-        pages: input.pages ?? [],
-        ...(input.tabs ? { rightSidebarTabs: input.tabs } : {}),
+    const placements = [...(input.pages ?? []), ...(input.tabs ?? [])];
+    projection = { ...EMPTY_PLUGIN_UI_PROJECTION, generation: 1,
+        surfacePlacementsById: Object.fromEntries(placements.map(entry => [entry.id, entry])) };
+    storage.setState({
+        settings: { ...storage.getState().settings, sessionListDensity: 'narrow',
+            featureToggles: { ...storage.getState().settings.featureToggles, 'sessions.direct': input.externalSessions ?? true } },
+        localSettings: { ...storage.getState().localSettings,
+            navigationSurfacePlacementsV1: NavigationSurfacePlacementsV1Schema.parse(input.navigationPlacements ?? {}) },
     });
 }
-
-async function render(element: React.ReactElement) {
-    return renderScreen(
+function Wrapper({ children }: React.PropsWithChildren) {
+    return <runtime.Wrapper><AppShellPluginUiProjectionValueProvider value={{
+        pluginUiProjection: projection, pluginBrowserProjection: null, phase: 'current',
+        interactionEnabled: true, machineId: null, serverId: runtime.serverId, platform: surfaceState.platformOS,
+        clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {},
+        reloadConnectedAccountProjection: () => {},
+    }}><PluginAppPageLaunchInputScope pluginUiProjection={projection}>
         <UniversalSearchRuntimeProvider value={{ open: openUniversalSearch, buildCommands: () => [] }}>
-            {element}
-        </UniversalSearchRuntimeProvider>,
-    );
+            {children}
+        </UniversalSearchRuntimeProvider>
+    </PluginAppPageLaunchInputScope></AppShellPluginUiProjectionValueProvider></runtime.Wrapper>;
 }
-
+async function render(element: React.ReactElement) {
+    const screen = await renderScreen(element, { wrapper: Wrapper });
+    await flushHookEffects();
+    return screen;
+}
 const rowIds = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.root
-    .findAll((node) => node.type === ('Item' as never))
-    .map((node) => String(node.props.testID));
-
-async function renderActionRowStyle(): Promise<Record<string, number>> {
+    .findAllByType(Item).map(node => String(node.props.testID));
+function rowFor(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string) {
+    return screen.root.findAllByType<typeof Item>(Item).find(node => node.props.testID === testID);
+}
+async function renderActionRowStyle() {
     const { ColumnDestinationRows } = await import('./ColumnDestinationRows');
     const screen = await render(<ColumnDestinationRows column="sessions" />);
-    const row = screen.findByTestId('compact-app-destination:plugin:acme.notes:notes');
-    return row?.props.style as Record<string, number>;
+    const row = rowFor(screen, 'compact-app-destination:plugin:acme.notes:notes');
+    if (!row) throw new Error('Expected the notes destination row');
+    const style = StyleSheet.flatten(row.props.style);
+    if (!style) throw new Error('Expected the notes destination row-size style');
+    return style;
 }
 
 describe('ColumnDestinationRows', () => {
@@ -160,7 +135,6 @@ describe('ColumnDestinationRows', () => {
         openUniversalSearch.mockReset();
         surfaceState.platformOS = 'web';
         surfaceState.isTablet = false;
-        surfaceState.sessionListDensity = 'narrow';
         setCatalog({ pages: [page('notes', { requestedPlacement: { kind: 'column', column: 'sessions' } })] });
     });
 
@@ -177,10 +151,10 @@ describe('ColumnDestinationRows', () => {
 
         const sessions = await render(<ColumnDestinationRows column="sessions" />);
         expect(rowIds(sessions)).toEqual(['external-sessions-browse-button', 'compact-app-destination:plugin:acme.log:log']);
-        expect(sessions.findByTestId('compact-app-destination:plugin:acme.log:log')?.props.selected).toBe(true);
-        expect(sessions.findByTestId('external-sessions-browse-button')?.props.selected).toBe(false);
+        expect(rowFor(sessions, 'compact-app-destination:plugin:acme.log:log')?.props.selected).toBe(true);
+        expect(rowFor(sessions, 'external-sessions-browse-button')?.props.selected).toBe(false);
         // Destinations are not sessions: quiet navigation rows on the column's surface, never a sheet.
-        expect(sessions.root.findByType('ItemGroup' as never).props.surface).toBe('none');
+        expect(sessions.root.findByType(ItemGroup).props.surface).toBe('none');
 
         // A column with nothing placed in it draws no rows at all.
         const plugins = await render(<ColumnDestinationRows column="plugins" />);
@@ -212,12 +186,12 @@ describe('ColumnDestinationRows', () => {
         const scope = { accountId: 'account-b', serverId: 'home-b', sessionId: null, machineId: null, rootPath: null } as const;
         const screen = await render(<ColumnDestinationRows universalSearchScope={scope} />);
 
-        screen.findByTestId('sessions-search-all-button')?.props.onPress();
+        await pressTestInstanceAsync(rowFor(screen, 'sessions-search-all-button'));
         expect(openUniversalSearch).toHaveBeenCalledWith(undefined, scope);
         expect(routeState.push).not.toHaveBeenCalled();
 
-        screen.findByTestId('compact-app-destination:plugins')?.props.onPress();
-        screen.findByTestId('compact-app-destination:plugin:acme.notes:notes')?.props.onPress();
+        await pressTestInstanceAsync(rowFor(screen, 'compact-app-destination:plugins'));
+        await pressTestInstanceAsync(rowFor(screen, 'compact-app-destination:plugin:acme.notes:notes'));
         expect(routeState.push.mock.calls.map(([href]) => href)).toEqual(['/plugins', '/plugins/acme.notes/notes']);
     });
 
@@ -262,7 +236,7 @@ describe('ColumnDestinationRows', () => {
         setCatalog({ pages: [page('notes', { requestedPlacement: { kind: 'column', column: 'sessions' }, disabledReason: 'feature_disabled' })] });
         const { ColumnDestinationRows } = await import('./ColumnDestinationRows');
         const screen = await render(<ColumnDestinationRows column="sessions" />);
-        const row = screen.findByTestId('compact-app-destination:plugin:acme.notes:notes');
+        const row = rowFor(screen, 'compact-app-destination:plugin:acme.notes:notes');
 
         expect(row?.props.disabled).toBe(true);
         expect(row?.props.subtitle).toEqual(expect.any(String));

@@ -2,19 +2,23 @@ import * as React from 'react';
 import { StyleSheet } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { StoreApi, UseBoundStore } from 'zustand';
 
 import {
     createDeferred,
     createSessionFixture as createBaseSessionFixture,
     flushHookEffects,
     invokeTestInstanceHandler,
-    renderScreen,
+    renderScreen as renderTestkitScreen,
     standardCleanup,
 } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { resolveBuiltInPetPackage } from '@/components/pets/builtIns/builtInPetRegistry';
-import type { StorageState } from '@/sync/store/types';
+import { storage } from '@/sync/domains/state/storageStore';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
+import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { resetRuntimeFetch, setRuntimeFetch, type RuntimeFetch } from '@/utils/system/runtimeFetch';
 import type { LocalPetSourceMetadata } from '@/sync/domains/pets/localPetSourceTypes';
 import { createReducer } from "@happier-dev/session-core/reducer";
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
@@ -97,9 +101,10 @@ type TestDesktopPetOverlayWindowStatePayload = Readonly<{
     activity?: unknown;
     layout?: unknown;
 }>;
-const serverFetchMock = vi.hoisted(() => vi.fn());
+const runtimeFetchMock = vi.hoisted(() => vi.fn<RuntimeFetch>());
 const getCredentialsMock = vi.hoisted(() => vi.fn());
-const fetchAccountEncryptionCurrentnessMock = vi.hoisted(() => vi.fn());
+const currentnessResponse = vi.hoisted(() => ({ current: null as Response | null }));
+const assetResponseMock = vi.hoisted(() => vi.fn());
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
 const startDesktopPetOverlayDragSessionMock = vi.hoisted(() => vi.fn());
 const applyDesktopPetOverlayDragDeltaMock = vi.hoisted(() => vi.fn());
@@ -190,14 +195,6 @@ vi.mock('@/hooks/server/useFeatureDecision', () => ({
     },
 }));
 
-vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({
-    useActiveServerSnapshot: () => activeServerSnapshotState.current,
-}));
-
-vi.mock('@/sync/http/client', () => ({
-    serverFetch: serverFetchMock,
-}));
-
 vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/auth/storage/tokenStorage')>();
     return {
@@ -208,10 +205,6 @@ vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
         },
     };
 });
-
-vi.mock('@/sync/api/account/apiAccountEncryptionMode', () => ({
-    fetchAccountEncryptionCurrentness: fetchAccountEncryptionCurrentnessMock,
-}));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
     machineRpcWithServerScope: machineRpcWithServerScopeMock,
@@ -243,26 +236,17 @@ vi.mock('@/sync/store/settingsWriters', () => ({
     useApplyLocalSettings: () => applyLocalSettingsMock,
 }));
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
-    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
-    const { settingsDefaults } = await import('@/sync/domains/settings/settings');
-    const { localSettingsDefaults } = await import('@/sync/domains/settings/localSettings');
-    const readAccountSettings = (): typeof settingsDefaults => ({
-        ...settingsDefaults,
-        ...settingsState.current,
-    });
-    const readLocalSettings = (): typeof localSettingsDefaults => ({
-        ...localSettingsDefaults,
-        ...localSettingsState.current,
-    });
+const initialStorageState = storage.getState();
 
-    const createPetsStorageStore = () => {
+function seedPetsStorage() {
         const sessions = createPetsStorageSessions();
         const serverId = activeServerSnapshotState.current.serverId;
-        return createStorageStoreMock({
+        storage.setState({
+            settings: { ...settingsDefaults, ...settingsState.current },
+            localSettings: { ...localSettingsDefaults, ...localSettingsState.current },
+            machines: { 'machine-pets': createMachineFixture({ id: 'machine-pets' }) },
             isDataReady: true,
-            sessions: Object.fromEntries(sessions.map((session) => [session.id, session])),
+            sessions: Object.fromEntries(sessions.map((session) => [session.id, { ...session, serverId }])),
             sessionListRowsByServerId: {
                 [serverId]: Object.fromEntries(
                     sessions.map((session) => [session.id, buildSessionListRenderableFromSession(session)]),
@@ -286,15 +270,18 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
                         [`message-${sessionId}`]: {
                             id: `message-${sessionId}`,
                             localId: `message-${sessionId}`,
-                            kind: 'agent-text',
+                            kind: 'agent-text' as const,
                             text: signals.latestMessageText,
                             createdAt: signals.latestMeaningfulActivityAtMs ?? 1,
+                            isThinking: false,
                         },
                     } : {},
                     messagesMap: {},
                     reducerState: createReducer(),
                     latestThinkingMessageId: null,
                     latestThinkingMessageActivityAtMs: signals.latestThinkingActivityAtMs ?? null,
+                    latestReadyEventSeq: null,
+                    latestReadyEventAt: null,
                     messagesVersion: 1,
                     isLoaded: true,
                 }]),
@@ -303,54 +290,15 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
             accountPetsById: accountPetsState.current,
             localPetSourcesBySourceKey: localPetSourcesState.current,
         });
-    };
-    function storageStub(): StorageState;
-    function storageStub<U>(selector: (state: StorageState) => U): U;
-    function storageStub<U>(selector?: (state: StorageState) => U): StorageState | U {
-        const store = createPetsStorageStore();
-        return selector ? store(selector) : store();
-    }
-    const storage = Object.assign(storageStub, {
-        getState: () => createPetsStorageStore().getState(),
-        getInitialState: () => createPetsStorageStore().getInitialState(),
-        setState: () => undefined,
-        subscribe: () => () => undefined,
-        destroy: () => undefined,
-    }) satisfies UseBoundStore<StoreApi<StorageState>>;
+}
 
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            ...actual,
-            useSettings: readAccountSettings,
-            useSetting: ((name) => readAccountSettings()[name]) as typeof actual.useSetting,
-            useLocalSettings: readLocalSettings,
-            useLocalSetting: ((name) => readLocalSettings()[name]) as typeof actual.useLocalSetting,
-            useAllMachines: () => [createMachineFixture({ id: 'machine-pets' })],
-            useAllSessions: () => sessionsState.current,
-            useHasUnreadMessages: (sessionId: string) =>
-                sessionSignalsState.current[sessionId]?.hasUnreadMessages === true,
-            useSessionLatestThinkingMessageActivityAtMs: (sessionId: string) =>
-                sessionSignalsState.current[sessionId]?.latestThinkingActivityAtMs ?? null,
-            useSessionListMeaningfulActivityAt: (sessionId: string) =>
-                sessionSignalsState.current[sessionId]?.latestMeaningfulActivityAtMs ?? null,
-            useSessionPendingMessages: () => ({
-                messages: [],
-                discarded: [],
-                isLoaded: true,
-            }),
-            storage,
-        },
-    });
-});
+async function renderScreen(...args: Parameters<typeof renderTestkitScreen>) {
+    seedPetsStorage();
+    return renderTestkitScreen(...args);
+}
 
 function responseWithAsset(mediaType: string, bytes: readonly number[]) {
-    return {
-        ok: true,
-        status: 200,
-        headers: new Headers({ 'Content-Type': mediaType }),
-        arrayBuffer: async () => Uint8Array.from(bytes).buffer,
-    };
+    return new Response(Uint8Array.from(bytes).buffer, { headers: { 'Content-Type': mediaType } });
 }
 
 function resolvePressableStyle(style: unknown): Record<string, unknown> {
@@ -427,22 +375,27 @@ function installDesktopPetOverlayMeasurementHarness() {
 }
 
 describe('DesktopPetOverlayRoute selectors', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+        await upsertAndActivateServer({ serverUrl: 'https://server-pets', scope: 'tab' });
         vi.useFakeTimers();
         vi.setSystemTime(12_000);
         getCredentialsMock.mockResolvedValue({ token: 'pet-token' });
-        fetchAccountEncryptionCurrentnessMock.mockResolvedValue({
-            mode: 'plain',
-            version: 1,
-            signingKeyFingerprint: null,
-            contentKeyFingerprint: null,
-            updatedAt: 1,
+        currentnessResponse.current = Response.json(createPlainAccountEncryptionCurrentnessFixture());
+        runtimeFetchMock.mockImplementation(async (input) => {
+            const path = new URL(String(input)).pathname;
+            if (path === '/v1/account/encryption/currentness') {
+                if (!currentnessResponse.current) throw new Error('Missing currentness response fixture');
+                return currentnessResponse.current.clone();
+            }
+            return assetResponseMock(path);
         });
+        setRuntimeFetch(runtimeFetchMock);
     });
 
     afterEach(() => {
         vi.useRealTimers();
         standardCleanup();
+        storage.setState(initialStorageState, true);
         settingsState.current = {
             petsEnabled: true,
             petsSelectedPetRef: { kind: 'builtIn', petId: 'blink' },
@@ -458,9 +411,10 @@ describe('DesktopPetOverlayRoute selectors', () => {
         localPetSourcesState.current = {};
         sessionsState.current = [];
         sessionSignalsState.current = {};
-        serverFetchMock.mockReset();
+        resetRuntimeFetch();
+        runtimeFetchMock.mockReset();
         getCredentialsMock.mockReset();
-        fetchAccountEncryptionCurrentnessMock.mockReset();
+        assetResponseMock.mockReset();
         machineRpcWithServerScopeMock.mockReset();
         startDesktopPetOverlayDragSessionMock.mockReset();
         applyDesktopPetOverlayDragDeltaMock.mockReset();
@@ -1341,6 +1295,7 @@ describe('DesktopPetOverlayRoute selectors', () => {
                 thinkingAt: 2_000,
             }),
         ];
+        await act(async () => seedPetsStorage());
         await screen.update(<DesktopPetOverlayRoute />);
 
         expect(screen.findByTestId('desktop-pet-overlay-tray-item-session-stable-reply')?.props['data-pet-reply-expanded']).toBe(
@@ -1440,6 +1395,7 @@ describe('DesktopPetOverlayRoute selectors', () => {
                 meaningfulActivityAt: 2_000,
             }),
         ];
+        await act(async () => seedPetsStorage());
         await screen.update(<DesktopPetOverlayRoute />);
 
         expect(screen.findByTestId('desktop-pet-overlay-tray-item-session-dismissed')).not.toBeNull();
@@ -2383,7 +2339,7 @@ describe('DesktopPetOverlayRoute selectors', () => {
         accountPetsState.current = {
             [accountPet.accountPetId]: accountPet,
         };
-        serverFetchMock.mockResolvedValue(responseWithAsset('image/webp', [1, 2, 3]));
+        assetResponseMock.mockResolvedValue(responseWithAsset('image/webp', [1, 2, 3]));
 
         const { DesktopPetOverlayRoute } = await import('./DesktopPetOverlayRoute');
         const screen = await renderScreen(
@@ -2400,16 +2356,14 @@ describe('DesktopPetOverlayRoute selectors', () => {
         );
         await flushHookEffects();
 
-        expect(serverFetchMock).toHaveBeenCalledWith(
-            `/v1/account/pets/${accountPet.accountPetId}/spritesheet`,
-            {
-                headers: {
-                    Authorization: 'Bearer pet-token',
-                },
-            },
-            { includeAuth: false, retry: 'none' },
-        );
-        expect(fetchAccountEncryptionCurrentnessMock).toHaveBeenCalledWith({ token: 'pet-token' });
+        const assetRequest = runtimeFetchMock.mock.calls.find(([input]) =>
+            new URL(String(input)).pathname === `/v1/account/pets/${accountPet.accountPetId}/spritesheet`);
+        expect(assetRequest).toBeDefined();
+        expect(new Headers(assetRequest?.[1]?.headers).get('Authorization')).toBe('Bearer pet-token');
+        const currentnessRequest = runtimeFetchMock.mock.calls.find(([input]) =>
+            new URL(String(input)).pathname === '/v1/account/encryption/currentness');
+        expect(currentnessRequest).toBeDefined();
+        expect(new Headers(currentnessRequest?.[1]?.headers).get('Authorization')).toBe('Bearer pet-token');
         expect(screen.root.findAllByType('Image')[0]?.props.source).toBe('data:image/webp;base64,AQID');
     });
 
@@ -2421,7 +2375,7 @@ describe('DesktopPetOverlayRoute selectors', () => {
         accountPetsState.current = {
             [accountPet.accountPetId]: accountPet,
         };
-        fetchAccountEncryptionCurrentnessMock.mockResolvedValue({
+        currentnessResponse.current = Response.json({
             mode: 'e2ee',
             version: 2,
             signingKeyFingerprint: 'signing-fingerprint',
@@ -2433,8 +2387,11 @@ describe('DesktopPetOverlayRoute selectors', () => {
         const screen = await renderScreen(<DesktopPetOverlayRoute />);
         await flushHookEffects();
 
-        expect(fetchAccountEncryptionCurrentnessMock).toHaveBeenCalledWith({ token: 'pet-token' });
-        expect(serverFetchMock).not.toHaveBeenCalled();
+        const currentnessRequest = runtimeFetchMock.mock.calls.find(([input]) =>
+            new URL(String(input)).pathname === '/v1/account/encryption/currentness');
+        expect(currentnessRequest).toBeDefined();
+        expect(new Headers(currentnessRequest?.[1]?.headers).get('Authorization')).toBe('Bearer pet-token');
+        expect(assetResponseMock).not.toHaveBeenCalled();
         expect(screen.root.findAllByType('Image')[0]?.props.source).toBe(
             resolveBuiltInPetPackage('blink').spritesheetSource,
         );
@@ -2448,15 +2405,13 @@ describe('DesktopPetOverlayRoute selectors', () => {
         accountPetsState.current = {
             [accountPet.accountPetId]: accountPet,
         };
-        fetchAccountEncryptionCurrentnessMock.mockRejectedValue(
-            new Error('account-encryption-currentness-unavailable'),
-        );
+        currentnessResponse.current = Response.json({ error: 'not_found' }, { status: 404 });
 
         const { DesktopPetOverlayRoute } = await import('./DesktopPetOverlayRoute');
         const screen = await renderScreen(<DesktopPetOverlayRoute />);
         await flushHookEffects();
 
-        expect(serverFetchMock).not.toHaveBeenCalled();
+        expect(assetResponseMock).not.toHaveBeenCalled();
         expect(screen.root.findAllByType('Image')[0]?.props.source).toBe(
             resolveBuiltInPetPackage('blink').spritesheetSource,
         );
@@ -2470,7 +2425,7 @@ describe('DesktopPetOverlayRoute selectors', () => {
         accountPetsState.current = {
             [accountPet.accountPetId]: accountPet,
         };
-        serverFetchMock.mockResolvedValue(responseWithAsset('image/svg+xml', [1, 2, 3]));
+        assetResponseMock.mockResolvedValue(responseWithAsset('image/svg+xml', [1, 2, 3]));
 
         const { DesktopPetOverlayRoute } = await import('./DesktopPetOverlayRoute');
         const screen = await renderScreen(<DesktopPetOverlayRoute />);

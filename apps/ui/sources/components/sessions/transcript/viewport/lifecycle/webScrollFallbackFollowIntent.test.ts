@@ -74,6 +74,7 @@ describe('web scroll fallback follow intent', () => {
                         viewportState: {
                             isPinned: false,
                             offsetY: 96,
+                            shouldPersistViewport: false,
                             shouldRestoreViewport: true,
                         },
                     },
@@ -93,6 +94,7 @@ describe('web scroll fallback follow intent', () => {
                     viewportState: {
                         isPinned: false,
                         offsetY: 96,
+                        shouldPersistViewport: false,
                         shouldRestoreViewport: true,
                     },
                     wantsPinned: false,
@@ -118,6 +120,7 @@ describe('web scroll fallback follow intent', () => {
             },
             viewportState: {
                 isPinned: false,
+                shouldPersistViewport: false,
                 shouldRestoreViewport: false,
             },
             wantsPinned: true,
@@ -148,6 +151,7 @@ describe('web scroll fallback follow intent', () => {
             viewportState: {
                 isPinned: true,
                 offsetY: 24,
+                shouldPersistViewport: false,
                 shouldRestoreViewport: false,
             },
             wantsPinned: true,

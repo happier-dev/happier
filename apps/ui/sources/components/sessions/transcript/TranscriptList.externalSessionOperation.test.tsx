@@ -7,6 +7,8 @@ import {
 } from '@happier-dev/protocol';
 
 import { createTestSessionTranscriptSource, renderWithSessionTranscriptSource } from '@/dev/testkit';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import type { Message } from '@happier-dev/session-core/messages';
 import {
     installTranscriptCommonModuleMocks,
@@ -95,6 +97,9 @@ vi.mock('./MessageView', () => ({
             testID: 'captured-transcript-message',
         }),
 }));
+
+installDisconnectedServerSocketBoundary();
+await loadSyncSingletonForTests();
 
 describe('TranscriptList external session operation presentation', () => {
     beforeEach(() => {

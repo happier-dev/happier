@@ -22,6 +22,7 @@ import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigati
 import { Icon } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 
 
 export default React.memo(function PathPickerScreen() {
@@ -121,7 +122,7 @@ export default React.memo(function PathPickerScreen() {
     });
 
 
-    const handleSelectDirectory = React.useCallback((intent: SessionDirectoryIntentV1) => {
+    const handleSelectDirectory = useEventCallback((intent: SessionDirectoryIntentV1) => {
         const directoryParams = {
             directoryKind: intent.kind,
             directory: intent.kind === 'path' ? intent.path : undefined,
@@ -162,26 +163,15 @@ export default React.memo(function PathPickerScreen() {
         announceAccessibilityMessage(intent.kind === 'managed'
             ? t('newSession.folder.a11y.removed')
             : t('newSession.folder.a11y.set', { path: intent.path }));
-    }, [
-        currentRouteParams,
-        navigation,
-        params.agentType,
-        params.backendTarget,
-        params.backendTargetKey,
-        params.dataId,
-        params.machineId,
-        router,
-        preferredBackendTarget,
-        spawnServerId,
-    ]);
+    });
     const handleSelectPath = React.useCallback((pathOverride?: string) => {
         const rawPath = typeof pathOverride === 'string' ? pathOverride : customPathRef.current;
         handleSelectDirectory({ kind: 'path', path: rawPath.trim() || machineHomeDir });
     }, [handleSelectDirectory, machineHomeDir]);
 
-    const handleBackPress = React.useCallback(() => {
+    const handleBackPress = useEventCallback(() => {
         safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
-    }, [navigation, pickerFallbackHref, router]);
+    });
 
     React.useEffect(() => {
         if (hasUsableRouteState) return;

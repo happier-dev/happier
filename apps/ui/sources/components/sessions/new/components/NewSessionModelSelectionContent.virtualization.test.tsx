@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { ProviderConnectionIdSchema, type SessionModelSelectionV1 } from '@happier-dev/protocol';
+import { DaemonProviderModelProjectionGroupV1Schema } from '@happier-dev/protocol/rpc';
 
 import { createResolvedAgentCatalogEntryFixture } from '@/dev/testkit/fixtures/agentCatalogFixtures';
 import {
@@ -12,11 +13,13 @@ import {
 import type { SessionModelProjectionGroup } from '@/components/sessions/modelPicker/buildSessionModelPickerSections';
 import { sessionModelSelectionKey } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import type { SelectionListBodyVirtualizedItem } from '@/components/ui/selectionList/SelectionListVirtualizedBody';
 import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 
 installNewSessionComponentsCommonModuleMocks({
+    storage: async (importOriginal) => importOriginal(),
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ translate: (key) => key });
@@ -50,7 +53,7 @@ const CODEX_BACKEND_ENTRY: ResolvedBackendCatalogEntry = {
 };
 
 function providerGroup(count: number): SessionModelProjectionGroup {
-    return {
+    return DaemonProviderModelProjectionGroupV1Schema.parse({
         connectionId: CONNECTION_ID,
         providerName: 'Large catalog',
         connectionName: 'Work',
@@ -91,7 +94,12 @@ function providerGroup(count: number): SessionModelProjectionGroup {
                 visibility: 'visible',
             };
         }),
-    } as SessionModelProjectionGroup;
+    });
+}
+
+function expectCompleteModelCatalog() {
+    const rows: readonly SelectionListBodyVirtualizedItem[] = legendListState.props?.data ?? [];
+    expect(rows.filter((row) => row.kind === 'option')).toHaveLength(5_000);
 }
 
 function LargeCatalogHarness(props: Readonly<{ count: number }>) {
@@ -130,7 +138,7 @@ describe('NewSessionModelSelectionContent canonical virtualized renderer', () =>
             await screen.pressByTestIdAsync('new-session-model-dropdown-trigger');
 
             expect(screen.findByTestId('model-picker-overlay-selection-list')).toBeTruthy();
-            expect(legendListState.props?.data).toHaveLength(5_000);
+            expectCompleteModelCatalog();
             expect(screen.tree.root.findAllByType('LegendListItem')).toHaveLength(12);
 
             act(() => screen.changeTextByTestId('model-picker-overlay-search', 'Provider model 0007'));
@@ -149,7 +157,7 @@ describe('NewSessionModelSelectionContent canonical virtualized renderer', () =>
 
             await screen.pressByTestIdAsync('new-session-model-dropdown-trigger');
 
-            expect(legendListState.props?.data).toHaveLength(5_000);
+            expectCompleteModelCatalog();
             expect(screen.findByTestId(
                 `model-picker-overlay-option-selected-indicator:${JSON.stringify([
                     TARGET_KEY,
@@ -160,7 +168,7 @@ describe('NewSessionModelSelectionContent canonical virtualized renderer', () =>
 
             act(() => screen.changeTextByTestId('model-picker-overlay-search', 'Provider model 0007'));
             act(() => screen.changeTextByTestId('model-picker-overlay-search', ''));
-            expect(legendListState.props?.data).toHaveLength(5_000);
+            expectCompleteModelCatalog();
         });
     });
 });

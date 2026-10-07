@@ -1,24 +1,21 @@
+// @vitest-environment jsdom
 import React from 'react';
 import { act, type ReactTestInstance } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { storage } from '@/sync/domains/state/storageStore';
+import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
-import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
-import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 import { projectAgentInputAttachmentRowItems } from './agentInputContracts';
+import { findAllHostTestInstances } from '@/dev/testkit';
+import { createLayoutChangeEvent } from '@/dev/testkit/fixtures/nativeEventFixtures';
 
 vi.mock('expo-haptics', () => ({
     impactAsync: vi.fn(async () => {}),
     notificationAsync: vi.fn(async () => {}),
     ImpactFeedbackStyle: { Light: 'Light' },
     NotificationFeedbackType: { Error: 'Error' },
-}));
-
-const keyboardMockState = vi.hoisted(() => ({
-    callCount: 0,
-    height: 0,
 }));
 
 const layoutMockState = vi.hoisted(() => ({
@@ -42,7 +39,7 @@ const createAgentInputReactNativeModule = async () => {
             get OS() {
                 return layoutMockState.platform;
             },
-            select: (v: any) => v?.[layoutMockState.platform] ?? v?.default ?? v?.ios,
+            select: <T,>(v: Partial<Record<'ios' | 'web' | 'default', T>>) => v[layoutMockState.platform] ?? v.default ?? v.ios,
         },
         useWindowDimensions: () => ({ width: layoutMockState.width, height: layoutMockState.height }),
         Dimensions: {
@@ -54,16 +51,8 @@ const createAgentInputReactNativeModule = async () => {
     });
 };
 
-vi.mock('@/hooks/ui/useKeyboardHeight', () => ({
-    useKeyboardHeight: () => {
-        keyboardMockState.callCount += 1;
-        return keyboardMockState.height;
-    },
-}));
-
 let storageSettings: Settings = {
     ...settingsDefaults,
-    profiles: [],
     agentInputEnterToSend: true,
     agentInputActionBarLayout: 'auto',
     agentInputChipDensity: 'labels',
@@ -92,72 +81,21 @@ function findNearestHostParent(node: ReactTestInstance | null | undefined): Reac
 
 async function renderAgentInput(element: React.ReactElement) {
     const { renderScreen } = await import('@/dev/testkit/render/renderScreen');
-    return renderScreen(element);
+    storage.setState({ settings: storageSettings });
+    return renderScreen(element, { wrapper: runtime.Wrapper });
 }
 
-const agentInputCommonModuleMockOptions = {
-    icons: async () => ({
-        Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props, null),
-        Octicons: (props: Record<string, unknown>) => React.createElement('Octicons', props, null),
-    }),
-    text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock();
-    },
-    storage: async (importOriginal: <T = unknown>() => Promise<T>) => {
-        const { createStorageModuleMock, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleMock({
-            importOriginal,
-            overrides: {
-                storage: createStorageStoreMock({
-                    settings: storageSettings,
-                    sessionMessages: {},
-                    localSettings: { ...localSettingsDefaults, uiFontScale: 1 },
-                    getSessionProjectScmSnapshot: () => null,
-                }),
-                useSetting: createUseSettingMock({
-                    fallback: (key) => storageSettings[key],
-                }),
-                useSettings: () => storageSettings,
-                useSessionMessages: () => ({ messages: [], isLoaded: true }),
-                useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-                useSessionMessagesById: () => ({}),
-                useSessionMessagesVersion: () => 0,
-            },
-        });
-    },
-    storageStore: async () => {
-        const state = {
-            settings: storageSettings,
-            sessionMessages: {},
-            localSettings: { uiFontScale: 1 },
-            getProjectScmSnapshot: () => null,
-            getSessionProjectScmSnapshot: () => null,
-        };
-        const storage = Object.assign(
-            (selector?: (nextState: typeof state) => unknown) => (
-                typeof selector === 'function' ? selector(state) : state
-            ),
-            {
-                getState: () => state,
-                subscribe: () => () => {},
-            },
-        );
-        return { getStorage: () => storage };
-    },
-};
+installAgentInputCommonModuleMocks({ reactNative: createAgentInputReactNativeModule });
+const runtime = installSessionPaneRuntimeTestHarness({ sessionId: 'session-1' });
 
-installAgentInputCommonModuleMocks(agentInputCommonModuleMockOptions);
-vi.doMock('react-native', createAgentInputReactNativeModule);
+let restoreViewport: (() => void) | undefined;
+afterEach(() => { restoreViewport?.(); restoreViewport = undefined; });
 
 describe('AgentInput (action bar auto layout)', () => {
-    afterEach(() => {
-        standardCleanup();
-    });
-
     beforeEach(() => {
-        keyboardMockState.callCount = 0;
-        keyboardMockState.height = 0;
+        storageSettings = { ...settingsDefaults, agentInputEnterToSend: true,
+            agentInputActionBarLayout: 'auto', agentInputChipDensity: 'labels',
+            sessionPermissionModeApplyTiming: 'immediate' };
         layoutMockState.platform = 'ios';
         layoutMockState.width = 700;
         layoutMockState.height = 800;
@@ -165,7 +103,16 @@ describe('AgentInput (action bar auto layout)', () => {
 
     it('does not subscribe to passive keyboard height while rendering the native composer', async () => {
         layoutMockState.platform = 'ios';
-        keyboardMockState.height = 320;
+        const viewport = Object.assign(new EventTarget(), {
+            width: 420, height: 480, offsetTop: 0,
+        });
+        const previous = Object.getOwnPropertyDescriptor(window, 'visualViewport');
+        Object.defineProperty(window, 'visualViewport', { configurable: true, value: viewport });
+        restoreViewport = () => {
+            if (previous) Object.defineProperty(window, 'visualViewport', previous);
+            else Reflect.deleteProperty(window, 'visualViewport');
+        };
+        const subscribe = vi.spyOn(viewport, 'addEventListener');
         const { AgentInput } = await import('./AgentInput');
 
         await renderAgentInput(
@@ -185,7 +132,7 @@ describe('AgentInput (action bar auto layout)', () => {
             />,
         );
 
-        expect(keyboardMockState.callCount).toBe(0);
+        expect(subscribe.mock.calls.filter(([event]) => event === 'resize' || event === 'scroll')).toEqual([]);
     });
 
     it('uses the scrollable action bar layout in auto mode on sub-tablet widths', async () => {
@@ -208,7 +155,7 @@ describe('AgentInput (action bar auto layout)', () => {
             />,
         );
 
-        const scrollViews = screen.tree.root.findAll((node: any) => (
+        const scrollViews = findAllHostTestInstances(screen.tree.root, (node) => (
             node?.type === 'ScrollView' && node?.props?.horizontal === true
         ));
         expect(scrollViews.length).toBeGreaterThan(0);
@@ -244,6 +191,7 @@ describe('AgentInput (action bar auto layout)', () => {
             ...storageSettings,
             agentInputActionBarLayout: 'collapsed',
         };
+        await act(async () => { storage.setState({ settings: storageSettings }); });
         renderRevision += 1;
         await screen.update(render());
 
@@ -277,7 +225,7 @@ describe('AgentInput (action bar auto layout)', () => {
             />,
         );
 
-        const panel = screen.tree.root.findByType(WebDropTargetView as any);
+        const panel = screen.tree.root.findByType(WebDropTargetView);
         const panelStyle = Object.assign(
             {},
             ...(Array.isArray(panel.props.style) ? panel.props.style : [panel.props.style]).filter(Boolean),
@@ -314,7 +262,7 @@ describe('AgentInput (action bar auto layout)', () => {
             />,
         );
 
-        const panel = screen.tree.root.findByType(WebDropTargetView as any);
+        const panel = screen.tree.root.findByType(WebDropTargetView);
         const panelStyle = Object.assign(
             {},
             ...(Array.isArray(panel.props.style) ? panel.props.style : [panel.props.style]).filter(Boolean),
@@ -323,7 +271,7 @@ describe('AgentInput (action bar auto layout)', () => {
 
         const input = screen.tree.root.findByProps({ testID: 'new-session-composer-input' });
         const inputContainer = input.parent;
-        const actionFooter = screen.tree.root.findAll((node: any) => {
+        const actionFooter = screen.tree.root.findAll((node) => {
             const style = Array.isArray(node?.props?.style)
                 ? node.props.style
                 : [node?.props?.style];
@@ -338,12 +286,14 @@ describe('AgentInput (action bar auto layout)', () => {
         const variableContentBeforeInput = screen.tree.root.findAllByProps({
             testID: 'agent-input-variable-content-before-input',
         })[0];
+        const onPanelLayout = panel.props.onLayout;
+        if (!onPanelLayout) throw new Error('Expected the composer panel to report its layout');
 
         await act(async () => {
-            panel.props.onLayout({ nativeEvent: { layout: { height: 640 } } });
-            inputContainer?.props.onLayout({ nativeEvent: { layout: { height: 520 } } });
-            actionFooter?.props.onLayout({ nativeEvent: { layout: { height: 80 } } });
-            variableContentBeforeInput?.props.onLayout?.({ nativeEvent: { layout: { height: 70 } } });
+            onPanelLayout(createLayoutChangeEvent({ x: 0, y: 0, width: layoutMockState.width, height: 640 }));
+            inputContainer?.props.onLayout(createLayoutChangeEvent({ x: 0, y: 0, width: layoutMockState.width, height: 520 }));
+            actionFooter?.props.onLayout(createLayoutChangeEvent({ x: 0, y: 0, width: layoutMockState.width, height: 80 }));
+            variableContentBeforeInput?.props.onLayout?.(createLayoutChangeEvent({ x: 0, y: 0, width: layoutMockState.width, height: 70 }));
         });
 
         expect(screen.tree.root.findByProps({ testID: 'new-session-composer-input' }).props.maxHeight).toBe(468);
@@ -368,7 +318,7 @@ describe('AgentInput (action bar auto layout)', () => {
             />,
         );
 
-        const panel = screen.tree.root.findByType(WebDropTargetView as any);
+        const panel = screen.tree.root.findByType(WebDropTargetView);
         const panelStyle = Object.assign(
             {},
             ...(Array.isArray(panel.props.style) ? panel.props.style : [panel.props.style]).filter(Boolean),
@@ -396,12 +346,12 @@ describe('AgentInput (action bar auto layout)', () => {
             />,
         );
 
-        const verticalScrollViews = screen.tree.root.findAll((node: any) => (
+        const verticalScrollViews = findAllHostTestInstances(screen.tree.root, (node) => (
             node?.type === 'ScrollView' && node?.props?.horizontal !== true
         ));
         expect(verticalScrollViews.length).toBeGreaterThan(0);
 
-        const actionFooter = screen.tree.root.findAll((node: any) => {
+        const actionFooter = screen.tree.root.findAll((node) => {
             const style = Array.isArray(node?.props?.style)
                 ? node.props.style
                 : [node?.props?.style];
@@ -433,7 +383,7 @@ describe('AgentInput (action bar auto layout)', () => {
             />,
         );
 
-        const verticalScrollViews = screen.tree.root.findAll((node: any) => (
+        const verticalScrollViews = findAllHostTestInstances(screen.tree.root, (node) => (
             node?.type === 'ScrollView' && node?.props?.horizontal !== true
         ));
         expect(verticalScrollViews).toHaveLength(0);
@@ -466,11 +416,11 @@ describe('AgentInput (action bar auto layout)', () => {
                 attachmentRowItems={attachmentRowItems}
             />,
         );
-        const mountedBodies = screen.tree.root.findAll((node: any) => (
+        const mountedBodies = screen.tree.root.findAll((node) => (
             typeof node?.props?.testID === 'string'
             && node.props.testID.startsWith('native-content-body:')
         ));
-        const verticalScrollViews = screen.tree.root.findAll((node: any) => (
+        const verticalScrollViews = findAllHostTestInstances(screen.tree.root, (node) => (
             node?.type === 'ScrollView' && node?.props?.horizontal !== true
         ));
 
@@ -580,7 +530,7 @@ describe('AgentInput (action bar auto layout)', () => {
             />,
         );
 
-        const findExpansionToggleButtons = () => screen.tree.root.findAll((node: any) => (
+        const findExpansionToggleButtons = () => screen.tree.root.findAll((node) => (
             node.props?.testID === 'agent-input-expand-toggle'
             && node.props?.accessibilityRole === 'button'
         ));
@@ -659,13 +609,15 @@ describe('AgentInput (action bar auto layout)', () => {
             />,
         );
 
-        const panel = screen.tree.root.findByType(WebDropTargetView as any);
+        const panel = screen.tree.root.findByType(WebDropTargetView);
         const input = screen.tree.root.findByProps({ testID: 'session-composer-input' });
         const inputContainer = input.parent;
+        const onPanelLayout = panel.props.onLayout;
+        if (!onPanelLayout) throw new Error('Expected the composer panel to report its layout');
 
         await act(async () => {
-            panel.props.onLayout({ nativeEvent: { layout: { height: 220 } } });
-            inputContainer?.props.onLayout({ nativeEvent: { layout: { height: 60 } } });
+            onPanelLayout(createLayoutChangeEvent({ x: 0, y: 0, width: layoutMockState.width, height: 220 }));
+            inputContainer?.props.onLayout(createLayoutChangeEvent({ x: 0, y: 0, width: layoutMockState.width, height: 60 }));
         });
 
         expect(screen.tree.root.findByProps({ testID: 'session-composer-input' }).props.maxHeight).toBe(245);
@@ -692,13 +644,15 @@ describe('AgentInput (action bar auto layout)', () => {
             />,
         );
 
-        const panel = screen.tree.root.findByType(WebDropTargetView as any);
+        const panel = screen.tree.root.findByType(WebDropTargetView);
         const input = screen.tree.root.findByProps({ testID: 'new-session-composer-input' });
         const inputContainer = input.parent;
+        const onPanelLayout = panel.props.onLayout;
+        if (!onPanelLayout) throw new Error('Expected the composer panel to report its layout');
 
         await act(async () => {
-            panel.props.onLayout({ nativeEvent: { layout: { height: 436 } } });
-            inputContainer?.props.onLayout({ nativeEvent: { layout: { height: 358 } } });
+            onPanelLayout(createLayoutChangeEvent({ x: 0, y: 0, width: layoutMockState.width, height: 436 }));
+            inputContainer?.props.onLayout(createLayoutChangeEvent({ x: 0, y: 0, width: layoutMockState.width, height: 358 }));
         });
 
         expect(screen.tree.root.findByProps({ testID: 'new-session-composer-input' }).props.maxHeight).toBe(614);
@@ -725,7 +679,7 @@ describe('AgentInput (action bar auto layout)', () => {
         );
 
         const pathChip = screen.tree.root.findByProps({ testID: 'agent-input-path-chip' });
-        const textNodes = pathChip.findAll((node: any) => node?.type === 'Text');
+        const textNodes = findAllHostTestInstances(pathChip, (node) => node?.type === 'Text');
         expect(textNodes.length).toBeGreaterThan(0);
         storageSettings = { ...storageSettings, agentInputChipDensity: 'labels' };
     });

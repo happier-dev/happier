@@ -293,7 +293,9 @@ describe('Files reads the canonical captured comparison through authenticated RP
         const owner = screen.findByType((await import('@/components/sessions/files/views/SessionCapturedScmReviewDetailsView')).SessionCapturedScmReviewDetailsView);
         await act(async () => owner.findAll((node) => typeof node.props.onLayout === 'function')[0]!
             .props.onLayout({ nativeEvent: { layout: { width: 390 } } }));
-        expect(screen.getTextContent()).toContain(SPECIMEN_WALKTHROUGH.title);
+        // Captured Files can render from cache before the saved reading's
+        // credential-backed Account binding has finished resolving.
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(SPECIMEN_WALKTHROUGH.title));
         expect(screen.findByTestId('walkthrough-analysis-fact')).toBeTruthy();
         expect(screen.findByTestId('scm-comparison-explain')?.props.accessibilityState?.checked).toBe(false);
         expect(screen.findByTestId('scm-comparison-layout:list')).toBeTruthy();

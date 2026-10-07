@@ -12,7 +12,7 @@ import {
     installPickerCommonModuleMocks,
     PICKER_THEME_COLORS,
 } from './testHarness';
-import { createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
+import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 
 enableReactActEnvironment();
 
@@ -47,18 +47,9 @@ installPickerCommonModuleMocks({
             },
             stackOptionsCapture,
         }).module,
-    storage: async (importOriginal) =>
-        (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
-            importOriginal,
-            overrides: {
-                useSettingMutable: createUseSettingMutableMockFromReader(() => [[], vi.fn()]),
-            },
-        }),
 });
 
-vi.mock('@/components/secrets/SecretsList', () => ({
-    SecretsList: () => null,
-}));
+const runtime = installSessionPaneRuntimeTestHarness();
 
 describe('SecretPickerScreen (iOS presentation)', () => {
     afterEach(() => {
@@ -78,7 +69,7 @@ describe('SecretPickerScreen (iOS presentation)', () => {
 
     it('presents as containedModal on iOS and provides an explicit header back button', async () => {
         const SecretPickerScreen = (await import('@/app/(app)/new/pick/secret')).default;
-        await renderScreen(React.createElement(SecretPickerScreen));
+        await renderScreen(React.createElement(runtime.Wrapper, null, React.createElement(SecretPickerScreen)));
 
         const options = stackOptionsCapture.getResolved();
         expect(options?.presentation).toBe('containedModal');

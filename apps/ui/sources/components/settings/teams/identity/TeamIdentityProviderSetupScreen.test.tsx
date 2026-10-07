@@ -180,14 +180,12 @@ describe('TeamIdentityProviderSetupScreen', () => {
     it('finishes Team attachment when the approved connection Action returns its result', async () => {
         providerExecuteMock.mockResolvedValue({ kind: 'succeeded', value: provider() });
         let complete: ((value: Readonly<{ connection: Readonly<{ id: string }> }>) => void | Promise<void>) | undefined;
-        let fail: ((code: string) => void) | undefined;
         identityExecuteMock.mockImplementationOnce(async (
             _actionId: string,
             _input: unknown,
-            options?: Readonly<{ onApprovalSucceeded?: typeof complete; onApprovalFailed?: typeof fail }>,
+            options?: Readonly<{ onApprovalSucceeded?: typeof complete }>,
         ) => {
             complete = options?.onApprovalSucceeded;
-            fail = options?.onApprovalFailed;
             return {
                 ok: false,
                 approvalPending: true,
@@ -203,19 +201,45 @@ describe('TeamIdentityProviderSetupScreen', () => {
         await screen.pressByTestIdAsync('team-oidc-create');
         expect(routerReplaceMock).not.toHaveBeenCalled();
         expect(complete).toBeTypeOf('function');
-        expect(screen.findByTestId('team-oidc-create')?.parent?.props.description)
-            .not.toBe('identityAdministration.error');
+        expect(screen.tree.root.findAllByType('ItemGroup').map((group) => group.props.description))
+            .not.toContain('identityAdministration.error');
 
-        await act(async () => fail?.('approval_rejected'));
-        await vi.waitFor(() => expect(screen.findByTestId('team-oidc-create')?.props.disabled).toBe(false));
-        expect(screen.findByTestId('team-oidc-create')?.parent?.props.description)
-            .toBe('identityAdministration.error');
-
-        await complete?.({ connection: { id: 'connection-approved' } });
+        await act(async () => complete?.({ connection: { id: 'connection-approved' } }));
         expect(routerReplaceMock).toHaveBeenCalledWith(
             '/settings/teams/home-1/team-1/authentication/connection-approved',
         );
         expect(routerReplaceMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('makes Team attachment retryable when the connection approval is rejected', async () => {
+        providerExecuteMock.mockResolvedValue({ kind: 'succeeded', value: provider() });
+        let fail: ((code: string) => void) | undefined;
+        identityExecuteMock.mockImplementationOnce(async (
+            _actionId: string,
+            _input: unknown,
+            options?: Readonly<{ onApprovalFailed?: typeof fail }>,
+        ) => {
+            fail = options?.onApprovalFailed;
+            return {
+                ok: false,
+                approvalPending: true,
+                artifactId: 'approval-attach-rejected',
+                failure: { code: 'approval_pending', retryable: false },
+            };
+        });
+        const screen = await renderScreen(<TeamIdentityProviderSetupScreen
+            serverId="home-1" teamId="team-1" providerKind="oidc"
+        />);
+
+        await fillOidc(screen);
+        await screen.pressByTestIdAsync('team-oidc-create');
+        expect(fail).toBeTypeOf('function');
+        await act(async () => fail?.('approval_rejected'));
+
+        expect(screen.findByTestId('team-oidc-create')?.props.disabled).toBe(false);
+        expect(screen.tree.root.findAllByType('ItemGroup').map((group) => group.props.description))
+            .toContain('identityAdministration.error');
+        expect(routerReplaceMock).not.toHaveBeenCalled();
     });
 
     it('starts Team attachment once when the deferred provider Action returns its result', async () => {

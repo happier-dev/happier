@@ -223,12 +223,12 @@ describe('featureLocalPolicy', () => {
         })).toBe(true);
     });
 
-    it('disables automations when experiments are off', () => {
+    it('keeps graduated automations available when experiments are off', () => {
         expect(resolveLocalFeaturePolicyEnabled('automations', {
             ...settingsDefaults,
             experiments: false,
             featureToggles: { automations: true },
-        })).toBe(false);
+        })).toBe(true);
     });
 
     it('respects explicit featureToggles overrides', () => {

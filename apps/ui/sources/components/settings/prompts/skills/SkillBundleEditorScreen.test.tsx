@@ -4,8 +4,9 @@ import {
 } from '@/dev/testkit';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { clearActiveUnsavedChangesGuard } from '@/utils/navigation/runGuardedNavigation';
 import {
     installSkillBundleCommonModuleMocks,
     skillBundleRouterBackSpy,
@@ -18,7 +19,7 @@ import {
 const createSkillPromptBundleSpy = vi.fn(async () => 'new-bundle');
 const updateSkillPromptBundleSpy = vi.fn(async () => {});
 const setPromptFoldersSpy = vi.fn();
-let latestFocusEffect: (() => void) | undefined;
+const routeFocusState = vi.hoisted(() => ({ focused: true }));
 const fetchArtifactWithBodySpy = vi.fn(async () => null);
 const promptExternalLinksState = vi.hoisted(() => ({
     value: {
@@ -109,15 +110,11 @@ vi.mock('@react-navigation/native', async () => {
     const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
     return {
         ...createReactNavigationNativeMock(),
+        NavigationContext: React.createContext({}),
+        useIsFocused: () => routeFocusState.focused,
         // The navigator's remove interception is the navigation library boundary; record what the screen asks for.
         usePreventRemove: (preventRemove: boolean) => {
             preventRemoveState.last = preventRemove;
-        },
-        useFocusEffect: (callback: () => void) => {
-            latestFocusEffect = callback;
-            React.useEffect(() => {
-                callback();
-            }, [callback]);
         },
     };
 });
@@ -184,7 +181,13 @@ async function renderSkillBundleEditor(artifactId: string | null) {
 }
 
 describe('SkillBundleEditorScreen', () => {
+    afterEach(async () => {
+        await standardCleanup();
+        clearActiveUnsavedChangesGuard();
+    });
+
     beforeEach(() => {
+        clearActiveUnsavedChangesGuard();
         skillBundleRouterBackSpy.mockReset();
         skillBundleRouterReplaceSpy.mockReset();
         skillBundleRouterPushSpy.mockReset();
@@ -192,7 +195,7 @@ describe('SkillBundleEditorScreen', () => {
         updateSkillPromptBundleSpy.mockClear();
         fetchArtifactWithBodySpy.mockClear();
         setPromptFoldersSpy.mockClear();
-        latestFocusEffect = undefined;
+        routeFocusState.focused = true;
         promptFoldersState.value = {
             v: 1,
             folders: [
@@ -340,6 +343,9 @@ describe('SkillBundleEditorScreen', () => {
         const screen = await renderSkillBundleEditor('bundle-1');
 
         expect(screen.findAllByTestId('skillBundle.supportingFile.1')).toHaveLength(0);
+        const { SkillBundleEditorScreen } = await import('./SkillBundleEditorScreen');
+        routeFocusState.focused = false;
+        await screen.update(React.createElement(SkillBundleEditorScreen, { artifactId: 'bundle-1' }));
 
         artifactBodiesState.value = {
             ...artifactBodiesState.value,
@@ -371,12 +377,10 @@ describe('SkillBundleEditorScreen', () => {
             },
         };
 
-        await act(async () => {
-            latestFocusEffect?.();
-            await flushHookEffects({ cycles: 1, turns: 1 });
-        });
+        routeFocusState.focused = true;
+        await screen.update(React.createElement(SkillBundleEditorScreen, { artifactId: 'bundle-1' }));
 
-        expect(rowProps(screen, 'skillBundle.supportingFile.1')?.title).toBe('templates/checklist.md');
+        await vi.waitFor(() => expect(rowProps(screen, 'skillBundle.supportingFile.1')?.title).toBe('templates/checklist.md'));
     });
 
     it('preserves dirty skill fields when prompt-folder settings refresh', async () => {

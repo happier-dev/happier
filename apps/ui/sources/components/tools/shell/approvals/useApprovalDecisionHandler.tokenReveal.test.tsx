@@ -1,10 +1,11 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { API_TOKEN_FULL_GRANT_V1, ApprovalRequestSchema } from '@happier-dev/protocol';
 
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import type { ApiTokenSettingsController } from '@/components/settings/apiTokens/apiTokenSettingsController';
+import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 
 const modal = vi.hoisted(() => ({ boundary: null as ReturnType<typeof import('@/dev/testkit/mocks/modal').createModalModuleMock> | null }));
 vi.mock('@/modal', async () => {
@@ -16,18 +17,13 @@ vi.mock('@/modal', async () => {
 // Only the Home network, device credential store and modal host are replaced.
 // The Action executor, Artifact codec/claim, decision hook and reveal controller run for real.
 const home = createHomeGovernanceHarness();
+let webLocks: ReturnType<typeof installWebLockManagerMock> | undefined;
 installHomeGovernanceBoundaries(home);
-let createDefaultActionExecutor: typeof import('@/sync/ops/actions/defaultActionExecutor').createDefaultActionExecutor;
-let useApprovalDecisionHandler: typeof import('./useApprovalDecisionHandler').useApprovalDecisionHandler;
 // Import the real host graph after transport mocks are installed, as explicit
 // setup. A transform/fetch timeout must not be mistaken for a hung approval.
-beforeAll(async () => {
-    const [actions, handler] = await Promise.all([
-        import('@/sync/ops/actions/defaultActionExecutor'), import('./useApprovalDecisionHandler'),
-    ]);
-    createDefaultActionExecutor = actions.createDefaultActionExecutor;
-    useApprovalDecisionHandler = handler.useApprovalDecisionHandler;
-});
+const [{ createDefaultActionExecutor }, { useApprovalDecisionHandler }] = await Promise.all([
+    import('@/sync/ops/actions/defaultActionExecutor'), import('./useApprovalDecisionHandler'),
+]);
 const tokenId = '11111111-1111-4111-8111-111111111111';
 const token = `hap_v1_${tokenId}_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`;
 const summary = { tokenId, label: 'Requested token', displayPrefix: 'hap_v1_11111111',
@@ -54,8 +50,16 @@ async function createRequestedTokenApproval() {
     return { serverId, artifactId, approval };
 }
 
-beforeEach(async () => { await home.reset(); modal.boundary?.spies.show.mockClear(); });
-afterEach(() => standardCleanup());
+beforeEach(async () => {
+    webLocks = installWebLockManagerMock();
+    await home.reset();
+    modal.boundary?.spies.show.mockClear();
+});
+afterEach(() => {
+    standardCleanup();
+    webLocks?.restore();
+    webLocks = undefined;
+});
 
 describe('approved API token reveal', () => {
     it('shows the human live result through the canonical show-once controller without another mint or persistence', async () => {

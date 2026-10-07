@@ -15,41 +15,37 @@ const serverFetchMock = vi.hoisted(() => vi.fn());
 const runtimeFetchMock = vi.hoisted(() => vi.fn());
 const getCredentialsForServerUrlMock = vi.hoisted(() => vi.fn());
 
-vi.mock('@/sync/http/client', () => ({
-    serverFetch: serverFetchMock,
-    createServerFetchAtEndpoint: () => async (path: string, init?: RequestInit) => {
-        if (path.startsWith('/v1/account/encryption')) {
-            return new Response(JSON.stringify({ mode: 'plain', updatedAt: 0 }), { status: 200 });
-        }
-        if (path.startsWith('/v2/account/settings')) {
-            return new Response(JSON.stringify({ content: null, version: 0 }), { status: 200 });
-        }
-        if (path === '/v1/features') {
-            return new Response(JSON.stringify({
-                features: {},
-                capabilities: {
-                    accountStoredContentCompatibility: {
-                        v: 1,
-                        minimumProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
-                        currentProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
-                        declarationTransport: 'http-header-and-socket-auth-v1',
+vi.mock('@/sync/http/client', async () => {
+    const { createArtifactStoreBoundary } = await import('@/dev/testkit/harness/artifactStoreBoundary');
+    const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-1', encryptionMode: 'plain' });
+    return {
+        serverFetch: serverFetchMock,
+        createServerFetchAtEndpoint: () => async (path: string, init?: RequestInit) => {
+            if (path.startsWith('/v1/account/encryption')) {
+                return new Response(JSON.stringify({ mode: 'plain', updatedAt: 0 }), { status: 200 });
+            }
+            if (path.startsWith('/v2/account/settings')) {
+                return new Response(JSON.stringify({ content: null, version: 0 }), { status: 200 });
+            }
+            if (path === '/v1/features') {
+                return new Response(JSON.stringify({
+                    features: {},
+                    capabilities: {
+                        accountStoredContentCompatibility: {
+                            v: 1,
+                            minimumProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+                            currentProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+                            declarationTransport: 'http-header-and-socket-auth-v1',
+                        },
                     },
-                },
-            }), { status: 200 });
-        }
-        if (path === '/v1/artifacts' && init?.method === 'POST') {
-            return new Response(JSON.stringify({
-                ...JSON.parse(String(init.body)),
-                headerVersion: 1,
-                bodyVersion: 1,
-                seq: 1,
-                createdAt: 1,
-                updatedAt: 1,
-            }), { status: 200 });
-        }
-        return new Response(JSON.stringify({ error: 'not_found' }), { status: 404 });
-    },
-}));
+                }), { status: 200 });
+            }
+            const artifactResponse = artifacts.handle(path, init);
+            if (artifactResponse) return artifactResponse;
+            return new Response(JSON.stringify({ error: 'not_found' }), { status: 404 });
+        },
+    };
+});
 vi.mock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch', () => ({
     runtimeFetchWithServerReachability: runtimeFetchMock,
 }));
@@ -67,6 +63,7 @@ import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { createIdentityAdministrationClient } from './identityAdministrationClient';
 import { resetScopedHomeActionExecutorsForTests } from '@/sync/ops/actions/scopedHomeActionExecutor';
 import { storage } from '@/sync/domains/state/storage';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 function tokenForSub(sub: string): string {
@@ -594,6 +591,7 @@ describe('createIdentityAdministrationClient', () => {
         storage.setState({
             settingsScope: scope,
             settings: {
+                ...settingsDefaults,
                 actionsSettingsV1: {
                     ...DEFAULT_ACTIONS_SETTINGS_V1,
                     actions: {
@@ -604,7 +602,7 @@ describe('createIdentityAdministrationClient', () => {
                         },
                     },
                 },
-            } as never,
+            },
         });
         const onApprovalPending = vi.fn();
         const result = await createIdentityAdministrationClient(scope, { onApprovalPending }).execute(
@@ -635,6 +633,7 @@ describe('createIdentityAdministrationClient', () => {
         storage.setState({
             settingsScope: scope,
             settings: {
+                ...settingsDefaults,
                 actionsSettingsV1: {
                     ...DEFAULT_ACTIONS_SETTINGS_V1,
                     actions: {
@@ -649,7 +648,7 @@ describe('createIdentityAdministrationClient', () => {
                         },
                     },
                 },
-            } as never,
+            },
         });
         const onApprovalPending = vi.fn();
         const sourceFailure = vi.fn();

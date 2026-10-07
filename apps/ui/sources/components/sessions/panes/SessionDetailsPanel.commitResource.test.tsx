@@ -1,96 +1,26 @@
 import * as React from 'react';
-import renderer from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { describe, expect, it } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
+import { installSessionPaneRuntimeTestHarness } from './sessionPaneRuntimeTestHarness';
 
-
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-installSessionDetailsPanelCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            Platform: {
-                OS: 'web',
-                select: (_: any) => 1,
-            },
-            ActivityIndicator: 'ActivityIndicator',
-            View: 'View',
-            Pressable: 'Pressable',
-            ScrollView: 'ScrollView',
-            AppState: {
-                currentState: 'active',
-                addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-            },
-        });
-    },
-    text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({ translate: (key) => key });
-    },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            useLocalSetting: (key: string) => {
-                return null;
-            },
-            useLocalSettingMutable: () => [false, vi.fn()],
-        });
-    },
-});
-
-const closeDetailsSpy = vi.fn();
-const closeDetailsTabSpy = vi.fn();
-const setActiveDetailsTabSpy = vi.fn();
-
-vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
-    useAppPaneScope: () => ({
-        closeDetails: closeDetailsSpy,
-        closeDetailsTab: closeDetailsTabSpy,
-        pinDetailsTab: vi.fn(),
-        setActiveDetailsTab: setActiveDetailsTabSpy,
-        scopeState: {
-            details: {
-                isOpen: true,
-                activeTabKey: 'commit:abc',
-                tabs: [
-                    {
-                        key: 'commit:abc',
-                        kind: 'commit',
-                        title: 'abc1234',
-                        isPinned: true,
-                        isPreview: false,
-                        resource: { kind: 'commit', sha: 'abc1234' },
-                    },
-                ],
-            },
-        },
-    }),
-}));
-
-const commitViewSpy = vi.fn();
-vi.mock('@/components/sessions/files/views/SessionCommitDetailsView', () => ({
-    SessionCommitDetailsView: (props: any) => {
-        commitViewSpy(props);
-        return React.createElement('SessionCommitDetailsView');
-    },
-}));
-
-vi.mock('@/components/sessions/files/views/SessionFileDetailsView', () => ({
-    SessionFileDetailsView: () => React.createElement('SessionFileDetailsView'),
-}));
+installSessionDetailsPanelCommonModuleMocks();
+const runtime = installSessionPaneRuntimeTestHarness();
 
 describe('SessionDetailsPanel (commit resource)', () => {
-    it('renders SessionCommitDetailsView for commit tabs that store sha in resource', async () => {
+    it('renders the stored commit resource through the scoped Session surface', async () => {
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
-        commitViewSpy.mockClear();
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />)).tree;
-
-        expect(tree).toBeTruthy();
-        expect(commitViewSpy).toHaveBeenCalledTimes(1);
-        expect(commitViewSpy.mock.calls[0]?.[0]?.sha).toBe('abc1234');
+        const { SessionCommitDetailsView } = await import('@/components/sessions/files/views/SessionCommitDetailsView');
+        const screen = await renderScreen(<runtime.Wrapper>
+            <SessionDetailsPanel sessionId="s1" routeServerId={runtime.serverId} scopeId="session:s1" />
+        </runtime.Wrapper>);
+        await act(async () => runtime.pane.openDetailsTab({
+            key: 'commit:abc', kind: 'commit', title: 'abc1234',
+            resource: { kind: 'commit', sha: 'abc1234' },
+        }, { intent: 'pinned' }));
+        const views = screen.tree.findAllByType(SessionCommitDetailsView);
+        expect(views).toHaveLength(1);
+        expect(views[0].props).toMatchObject({ sessionId: 's1', serverId: runtime.serverId, sha: 'abc1234' });
     });
 });

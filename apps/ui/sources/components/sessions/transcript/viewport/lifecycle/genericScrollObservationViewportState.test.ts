@@ -71,6 +71,7 @@ describe('generic scroll observation viewport state', () => {
                 viewportState: {
                     isPinned: false,
                     offsetY: 12.8,
+                    shouldPersistViewport: false,
                     shouldRestoreViewport: true,
                 },
             },
@@ -90,6 +91,7 @@ describe('generic scroll observation viewport state', () => {
             viewportState: {
                 isPinned: false,
                 offsetY: 12.8,
+                shouldPersistViewport: false,
                 shouldRestoreViewport: true,
             },
             wantsPinned: false,
@@ -111,6 +113,7 @@ describe('generic scroll observation viewport state', () => {
         expect(state.viewportState).toEqual({
             isPinned: true,
             offsetY: 0,
+            shouldPersistViewport: false,
             shouldRestoreViewport: false,
         });
         expect(state.scrollPinEvent).toEqual({

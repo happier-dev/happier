@@ -177,9 +177,17 @@ describe('VoiceComposerPlanet', () => {
             });
             await act(async () => {
                 if (outcome === 'jitter') gesture.props.onTouchMove?.();
-                if (outcome === 'drag') tree!.root.findByType(IconButton).props.onPressOut({ type: 'touchmove' });
+                if (outcome === 'drag') {
+                    const onPressOut = tree!.root.findByType(IconButton).props.onPressOut;
+                    if (!onPressOut) throw new Error('Expected the held Voice button to handle press-out');
+                    onPressOut({ nativeEvent: { type: 'touchmove' } });
+                }
                 if (outcome === 'cancel') gesture.props.onTouchCancel();
-                if (outcome === 'blur') tree!.root.findByType(IconButton).props.onFocusChange(false);
+                if (outcome === 'blur') {
+                    const onFocusChange = tree!.root.findByType(IconButton).props.onFocusChange;
+                    if (!onFocusChange) throw new Error('Expected the held Voice button to handle focus changes');
+                    onFocusChange(false);
+                }
                 gesture.props.onTouchEnd();
                 gesture.props.onPointerUp();
             });

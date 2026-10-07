@@ -1,292 +1,160 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { renderScreen } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storageStore';
+import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
+import type { IModal } from '@/modal';
 import {
-    createDeferred,
-    renderScreen,
-    standardCleanup,
-} from '@/dev/testkit';
-import {
-    createNavigationMock,
-    createRouterMock,
-    createStackOptionsCapture,
-    enableReactActEnvironment,
-    installPickerCommonModuleMocks,
-    PICKER_NAV_STATE,
-    PICKER_THEME_COLORS,
+    createNavigationMock, createRouterMock, createStackOptionsCapture,
+    enableReactActEnvironment, installPickerCommonModuleMocks,
 } from './testHarness';
-import { createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
-import type { UnsavedChangesDecision } from '@/utils/ui/promptUnsavedChangesAlert';
 
 enableReactActEnvironment();
-
-type KeyboardAvoidingViewProps = Readonly<{
-    children?: React.ReactNode;
-} & Record<string, unknown>>;
-
-type ProfileEditFormProps = Readonly<{
-    onDirtyChange: (isDirty: boolean) => void;
-    saveRef: React.MutableRefObject<(() => boolean) | null>;
-}>;
-
-
-vi.mock('expo-constants', () => ({
-    default: { statusBarHeight: 0 },
-}));
-
-vi.mock('@react-navigation/elements', () => ({
-    useHeaderHeight: () => 0,
-}));
-
 const routerMock = createRouterMock();
-const navigationMock = createNavigationMock() as ReturnType<typeof createNavigationMock> & {
-    setOptions: ReturnType<typeof vi.fn>;
-    addListener: ReturnType<typeof vi.fn>;
+const navigationMock = {
+    ...createNavigationMock(), setOptions: vi.fn(), addListener: vi.fn(() => () => {}),
 };
-navigationMock.setOptions = vi.fn();
-navigationMock.addListener = vi.fn(() => ({ remove: vi.fn() }));
 const stackOptionsCapture = createStackOptionsCapture();
-const promptUnsavedChangesAlertSpy = vi.hoisted(() => vi.fn());
-const profileRouteParamsState = vi.hoisted(() => ({
-    profileData: JSON.stringify({
-        id: 'p1',
-        name: 'Test profile',
-        isBuiltIn: false,
-        compatibility: { claude: true, codex: true, gemini: true },
-    }),
-}));
+const alertSpy = vi.fn<IModal['alert']>();
+let profileData = '';
+
+vi.mock('expo-constants', () => ({ default: { statusBarHeight: 0 } }));
+vi.mock('@react-navigation/elements', () => ({ useHeaderHeight: () => 0 }));
 
 installPickerCommonModuleMocks({
-    reactNative: async () =>
-        (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
-            KeyboardAvoidingView: (props: KeyboardAvoidingViewProps) =>
-                React.createElement('KeyboardAvoidingView', props, props.children),
-            Platform: { OS: 'ios' },
-            useWindowDimensions: () => ({ width: 390, height: 844 }),
-        }),
-    expoRouter: async () =>
-        (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
-            navigation: navigationMock,
-            params: () => ({ profileData: profileRouteParamsState.profileData }),
-            router: {
-                push: routerMock.push,
-                back: routerMock.back,
-                replace: routerMock.replace,
-                setParams: routerMock.setParams,
-            },
-            stackOptionsCapture,
-        }).module,
-    unistyles: async () =>
-        (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock({
-            theme: {
-                colors: {
-                    background: PICKER_THEME_COLORS.background,
-                    chrome: PICKER_THEME_COLORS.chrome,
-                },
-            },
-            runtime: { insets: { bottom: 0 } },
-        }),
+    reactNative: async () => {
+        const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeNativeMock({ platformOS: 'ios' }, {
+            Platform: { isPad: false },
+            useWindowDimensions: () => ({ width: 390, height: 844, scale: 1, fontScale: 1 }),
+        });
+    },
+    expoRouter: async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
+        navigation: navigationMock,
+        params: () => ({ profileData }),
+        router: { push: routerMock.push, back: routerMock.back, replace: routerMock.replace, setParams: routerMock.setParams },
+        stackOptionsCapture,
+    }).module,
     text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
-    storage: async (importOriginal) =>
-        (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
-            importOriginal,
-            overrides: {
-                useSettingMutable: createUseSettingMutableMockFromReader(() => [[], vi.fn()]),
-            },
-        }),
-    modal: async () =>
-        (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
-            spies: {
-                alert: vi.fn(),
-                show: vi.fn(),
-            },
-        }).module,
+    modal: async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
+        spies: { alert: alertSpy },
+    }).module,
 });
+const runtime = installSessionPaneRuntimeTestHarness();
 
-vi.mock('@/components/profiles/edit', () => ({
-    LaunchProfileEditForm: (props: ProfileEditFormProps) => React.createElement('LaunchProfileEditForm', props),
-}));
-
-vi.mock('@/components/ui/layout/layout', () => ({
-    layout: { maxWidth: 1024 },
-    useLayoutMaxWidth: () => 1024,
-    useLayoutMaxWidthStyle: () => ({ maxWidth: 1024 }),
-}));
-
-vi.mock('@/sync/domains/profiles/profileUtils', () => ({
-    DEFAULT_PROFILES: [],
-    getBuiltInProfile: () => null,
-    getBuiltInProfileNameKey: () => null,
-    resolveProfileById: () => null,
-}));
-
-vi.mock('@/sync/domains/profiles/profileMutations', () => ({
-    convertBuiltInProfileToCustom: <T,>(profile: T) => profile,
-    createEmptyCustomProfile: () => ({ id: 'new', name: '', isBuiltIn: false, compatibility: { claude: true, codex: true, gemini: true } }),
-    duplicateProfileForEdit: <T,>(profile: T) => profile,
-}));
-
-vi.mock('@/utils/ui/promptUnsavedChangesAlert', () => ({
-    promptUnsavedChangesAlert: (...args: unknown[]) => promptUnsavedChangesAlertSpy(...args),
-}));
-
-vi.mock('@/components/ui/keyboardAvoidance', () => ({
-    KeyboardAwareScreen: ({ children, ...props }: any) =>
-        React.createElement('KeyboardAwareScreen', props, props.children ?? children),
-}));
+beforeEach(async () => {
+    const { createEmptyCustomProfile } = await import('@/sync/domains/profiles/profileMutations');
+    profileData = JSON.stringify({ ...createEmptyCustomProfile(), id: 'p1', name: 'Test profile' });
+    storage.getState().applySettingsLocal({ profiles: [] });
+    stackOptionsCapture.reset();
+    alertSpy.mockClear();
+    navigationMock.goBack.mockClear();
+    navigationMock.dispatch.mockClear();
+    navigationMock.setOptions.mockClear();
+    routerMock.back.mockClear();
+    routerMock.replace.mockClear();
+});
 
 async function renderProfileEditor() {
     const ProfileEditScreen = (await import('@/app/(app)/new/pick/profile-edit')).default;
-    const screen = await renderScreen(React.createElement(ProfileEditScreen));
-    const form = screen.findByType('LaunchProfileEditForm' as any);
-    return {
-        form: form.props as ProfileEditFormProps,
-        screen,
-    };
+    const screen = await renderScreen(React.createElement(runtime.Wrapper, {
+        children: React.createElement(ProfileEditScreen),
+    }));
+    return screen;
 }
 
-async function markDirty(form: ProfileEditFormProps): Promise<void> {
-    await act(async () => {
-        form.onDirtyChange(true);
-    });
+function pressHeaderClose() {
+    const button = stackOptionsCapture.getResolved()?.headerLeft?.();
+    if (!button?.props.onPress) throw new Error('Expected editor close action');
+    button.props.onPress();
 }
-
-function pressHeaderClose(): void {
-    const closeButton = stackOptionsCapture.getResolved()?.headerLeft?.();
-    if (!closeButton?.props.onPress) {
-        throw new Error('Expected the Profile editor header close button');
-    }
-    closeButton.props.onPress();
+async function closeAndFlush() {
+    await act(async () => { pressHeaderClose(); });
 }
-
-async function pressHeaderCloseAndFlush(): Promise<void> {
-    await act(async () => {
-        pressHeaderClose();
-        await Promise.resolve();
-        await Promise.resolve();
-    });
+async function editName(screen: Awaited<ReturnType<typeof renderProfileEditor>>, name = 'Edited profile') {
+    const field = screen.findHostByTestId('profile-slim-name') ?? screen.findHostByTestId('profile-legacy-name');
+    if (!field || typeof field.props.onChangeText !== 'function') throw new Error('Expected actual profile name input');
+    await act(async () => field.props.onChangeText(name));
+    expect(stackOptionsCapture.getResolved()?.headerRight?.()?.props.disabled).toBe(false);
+}
+async function chooseDecision(text: string) {
+    const buttons = alertSpy.mock.calls.at(-1)?.[2];
+    const button = buttons?.find((candidate) => candidate.text === text);
+    if (!button?.onPress) throw new Error('Expected unsaved-changes decision: ' + text);
+    await act(async () => { button.onPress?.(); });
+}
+function savedProfiles() {
+    return storage.getState().settings.profiles;
 }
 
 describe('ProfileEditScreen (header buttons)', () => {
-    afterEach(() => {
-        standardCleanup();
-    });
-
-    beforeEach(() => {
-        stackOptionsCapture.reset();
-        promptUnsavedChangesAlertSpy.mockReset();
-        promptUnsavedChangesAlertSpy.mockResolvedValue('keepEditing');
-        profileRouteParamsState.profileData = JSON.stringify({
-            id: 'p1',
-            name: 'Test profile',
-            isBuiltIn: false,
-            compatibility: { claude: true, codex: true, gemini: true },
-        });
-        navigationMock.dispatch.mockReset();
-        navigationMock.goBack.mockReset();
-        navigationMock.setOptions.mockReset();
-        routerMock.back.mockReset();
-        routerMock.replace.mockReset();
-        navigationMock.getState = vi.fn(() => ({
-            index: PICKER_NAV_STATE.index,
-            routes: PICKER_NAV_STATE.routes.map((route) => ({ key: route.key })),
-        }));
-    });
-
-    it('renders a header close button even when the form is pristine', async () => {
-        const { screen } = await renderProfileEditor();
-
-        expect(screen.findAllByType('KeyboardAwareScreen' as any)).toHaveLength(1);
-        expect(screen.findAllByType('KeyboardAvoidingView' as any)).toHaveLength(0);
-
-        const options = stackOptionsCapture.getResolved();
-        expect(typeof options?.headerLeft).toBe('function');
-
-        await pressHeaderCloseAndFlush();
-
-        expect(promptUnsavedChangesAlertSpy).not.toHaveBeenCalled();
+    it('renders a pristine close action through the real keyboard-aware form', async () => {
+        const screen = await renderProfileEditor();
+        const { KeyboardAwareScreen } = await import('@/components/ui/keyboardAvoidance');
+        expect(screen.findAllByType(KeyboardAwareScreen)).toHaveLength(1);
+        expect(typeof stackOptionsCapture.getResolved()?.headerLeft).toBe('function');
+        await closeAndFlush();
+        expect(alertSpy).not.toHaveBeenCalled();
         expect(navigationMock.goBack).toHaveBeenCalledOnce();
     });
 
-    it('renders a disabled header save button when the form is pristine', async () => {
+    it('disables the actual header save action while the form is pristine', async () => {
         await renderProfileEditor();
-
-        const options = stackOptionsCapture.getResolved();
-        expect(typeof options?.headerRight).toBe('function');
-
-        const headerRight = options?.headerRight;
-        const saveButton = headerRight?.();
-        expect(saveButton?.props?.disabled).toBe(true);
+        expect(typeof stackOptionsCapture.getResolved()?.headerRight).toBe('function');
+        expect(stackOptionsCapture.getResolved()?.headerRight?.()?.props.disabled).toBe(true);
     });
 
-    it('serializes repeated dirty close presses into one prompt and one discarded continuation', async () => {
-        const decision = createDeferred<UnsavedChangesDecision>();
-        promptUnsavedChangesAlertSpy.mockReturnValue(decision.promise);
-        const { form } = await renderProfileEditor();
-        await markDirty(form);
-
-        await act(async () => {
-            pressHeaderClose();
-            pressHeaderClose();
-            await Promise.resolve();
-        });
-
-        expect(promptUnsavedChangesAlertSpy).toHaveBeenCalledOnce();
+    it('serializes repeated dirty closes into one presented prompt and discarded continuation', async () => {
+        const screen = await renderProfileEditor();
+        await editName(screen);
+        await act(async () => { pressHeaderClose(); pressHeaderClose(); });
+        expect(alertSpy).toHaveBeenCalledOnce();
         expect(navigationMock.goBack).not.toHaveBeenCalled();
-
-        await act(async () => {
-            decision.resolve('discard');
-            await decision.promise;
-            await Promise.resolve();
-        });
-
+        await chooseDecision('common.discard');
         expect(navigationMock.goBack).toHaveBeenCalledOnce();
+        expect(savedProfiles()).toEqual([]);
     });
 
-    it('keeps editing without continuing a dirty close', async () => {
-        promptUnsavedChangesAlertSpy.mockResolvedValue('keepEditing');
-        const { form } = await renderProfileEditor();
-        await markDirty(form);
-
-        await pressHeaderCloseAndFlush();
-
-        expect(promptUnsavedChangesAlertSpy).toHaveBeenCalledOnce();
+    it('keeps the dirty editor open after the presented keep-editing decision', async () => {
+        const screen = await renderProfileEditor();
+        await editName(screen);
+        await closeAndFlush();
+        expect(alertSpy).toHaveBeenCalledOnce();
+        await chooseDecision('common.keepEditing');
         expect(navigationMock.goBack).not.toHaveBeenCalled();
+        expect(routerMock.replace).not.toHaveBeenCalled();
+        expect(savedProfiles()).toEqual([]);
     });
 
-    it('lets a successful save own its destination instead of continuing the dirty close', async () => {
-        promptUnsavedChangesAlertSpy.mockResolvedValue('save');
-        const save = vi.fn(() => true);
-        const { form } = await renderProfileEditor();
-        form.saveRef.current = save;
-        await markDirty(form);
-
-        await pressHeaderCloseAndFlush();
-
-        expect(save).toHaveBeenCalledOnce();
+    it('lets a real successful save own the destination instead of continuing dirty close', async () => {
+        const screen = await renderProfileEditor();
+        await editName(screen);
+        await closeAndFlush();
+        await chooseDecision('common.save');
+        expect(savedProfiles()).toEqual([expect.objectContaining({ id: 'p1', v: 2, name: 'Edited profile' })]);
         expect(navigationMock.goBack).not.toHaveBeenCalled();
+        expect(routerMock.replace).toHaveBeenCalledWith({ pathname: '/new', params: expect.objectContaining({ profileId: 'p1' }) });
     });
 
-    it('preserves built-in Save As behavior through the same guarded close transaction', async () => {
-        profileRouteParamsState.profileData = JSON.stringify({
-            id: 'builtin-test',
-            name: 'Built-in test profile',
-            isBuiltIn: true,
-            compatibility: { claude: true, codex: true, gemini: true },
-        });
-        promptUnsavedChangesAlertSpy.mockResolvedValue('save');
-        const saveAs = vi.fn(() => true);
-        const { form } = await renderProfileEditor();
-        form.saveRef.current = saveAs;
-        await markDirty(form);
-
-        await pressHeaderCloseAndFlush();
-
-        expect(promptUnsavedChangesAlertSpy).toHaveBeenCalledWith(
-            expect.any(Function),
-            expect.objectContaining({ saveText: 'common.saveAs' }),
-        );
-        expect(saveAs).toHaveBeenCalledOnce();
+    it('saves a built-in as a new current profile through the same presented guard', async () => {
+        const { DEFAULT_PROFILES, getBuiltInProfile } = await import('@/sync/domains/profiles/profileUtils');
+        const builtIn = getBuiltInProfile(DEFAULT_PROFILES[0].id);
+        if (!builtIn) throw new Error('Expected canonical built-in profile');
+        profileData = JSON.stringify(builtIn);
+        const screen = await renderProfileEditor();
+        await editName(screen, 'Saved built-in copy');
+        await closeAndFlush();
+        expect(alertSpy.mock.calls.at(-1)?.[2]?.some((button) => button.text === 'common.saveAs')).toBe(true);
+        await chooseDecision('common.saveAs');
+        expect(savedProfiles()).toEqual([expect.objectContaining({ v: 2, name: 'Saved built-in copy' })]);
+        const { readAiLaunchProfileCollection } = await import('@happier-dev/protocol');
+        const entry = readAiLaunchProfileCollection(savedProfiles()).entries[0];
+        if (!entry || entry.kind === 'opaque') throw new Error('Expected saved current profile');
+        expect(entry.profile.id).not.toBe(builtIn.id);
+        expect(getBuiltInProfile(builtIn.id)).toEqual(builtIn);
         expect(navigationMock.goBack).not.toHaveBeenCalled();
+        expect(routerMock.replace).toHaveBeenCalledWith({ pathname: '/new', params: expect.objectContaining({ profileId: entry.profile.id }) });
     });
 });

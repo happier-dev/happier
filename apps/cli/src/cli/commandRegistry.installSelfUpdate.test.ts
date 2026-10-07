@@ -1,39 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
-
-const { kiroHandlerSpy, resolveMergedContributionRegistryMock } = vi.hoisted(() => ({
-  kiroHandlerSpy: vi.fn(async () => {}),
-  resolveMergedContributionRegistryMock: vi.fn(async () => ({
-    commands: [],
-    catalogEntriesById: {
-      kiro: {
-        id: 'kiro',
-        cliSubcommand: 'kiro',
-        getCliCommandHandler: async () => kiroHandlerSpy,
-      },
-    },
-    agentDefinitionsById: new Map(),
-  })),
-}));
-
-vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', () => ({
-  getResolvedContributionRegistry: () => ({
-    catalogEntriesById: {
-      kiro: {
-        id: 'kiro',
-        cliSubcommand: 'kiro',
-        getCliCommandHandler: async () => kiroHandlerSpy,
-      },
-    },
-    agentDefinitionsById: new Map(),
-  }),
-  resolveMergedContributionRegistry: resolveMergedContributionRegistryMock,
-}));
-
-vi.mock('@/configuration', () => ({
-  configuration: {
-    happyHomeDir: '/tmp/happier-test',
-  },
-}));
+import { describe, expect, it } from 'vitest';
 
 import {
   commandRegistry,
@@ -95,7 +60,7 @@ describe('commandRegistry install/update aliases', () => {
     expect(commandRegistry.machine).toBeTypeOf('function');
   });
 
-  it('keeps root actions and machines aligned across dispatch, help, and completion', () => {
+  it('keeps root actions and machines aligned across dispatch, help, and completion', async () => {
     const surfaceCatalog = resolveCommandSurfaceCatalog();
 
     for (const command of ['actions', 'machines']) {
@@ -104,7 +69,7 @@ describe('commandRegistry install/update aliases', () => {
         command,
         rootHelpLabel: `happier ${command}`,
       });
-      expect(resolveCommandCompletionCandidates([command.slice(0, 3)])).toContain(command);
+      expect(await resolveCommandCompletionCandidates([command.slice(0, 3)])).toContain(command);
     }
   });
 
@@ -123,9 +88,8 @@ describe('commandRegistry install/update aliases', () => {
   it('loads built-in agent commands without a customAcp built-in shim', async () => {
     await ensureMergedAgentCommandRegistryLoaded();
 
-    const registry = commandRegistry as Record<string, unknown>;
-    expect(registry.customAcp).toBeUndefined();
-    expect(registry.kiro).toBeTypeOf('function');
+    expect(commandRegistry.customAcp).toBeUndefined();
+    expect(commandRegistry.kiro).toBeTypeOf('function');
   });
 
   it('registers the configured ACP catalog command namespace', () => {

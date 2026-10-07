@@ -11,6 +11,8 @@ import {
     PluginProjectionV2Schema,
     PluginProjectionInstalledPackageV2Schema,
     PluginProjectedActionV2Schema,
+    DaemonPluginActionSchemasReadRequestSchema,
+    MACHINE_PLAIN_DATA_KEY_MARKER,
     type PluginMachineExecutionOriginV1,
 } from '@happier-dev/protocol';
 import {
@@ -22,9 +24,18 @@ import {
     type PluginUiSurfaceContextV1,
 } from '@happier-dev/protocol/plugins/ui';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createPluginSurfaceContextFixture } from '@/dev/testkit/fixtures/pluginSurfaceContextFixture';
 import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { MainAppTabStateProvider } from '@/components/navigation/mobile/chrome/MainAppTabStateProvider';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { PluginSurfacePlacementHost } from '@/components/plugins/surfaces/PluginSurfaceHost';
@@ -52,17 +63,15 @@ import { PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY } from '@/sync/domains/plugins/ui/pro
 import type { PluginReactNativeBundleCacheIdentity } from '@/sync/domains/plugins/ui/reactNativeRuntime';
 import {
     clearTabActiveServerId,
-    setActiveServerId,
+    getServerProfileById,
     upsertServerProfile,
 } from '@/sync/domains/server/serverProfiles';
-import { registerStorageStateReader } from '@/sync/domains/state/storageStateReaderBridge';
 import { storage } from '@/sync/domains/state/storage';
 import {
     captureActiveServerAccountScopeLifetime,
     retireActiveServerAccountScopeLifetime,
 } from '@/sync/domains/scope/activeServerAccountScope';
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
-import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
 
 import {
     CurrentUiContextProvider,
@@ -73,15 +82,28 @@ import { createCurrentUiContextVoiceToolPort } from './currentUiContextVoiceTool
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const accountCredentials = vi.hoisted(() => ({
-    value: { token: 'acme.current-ui-composition-test-token' } as Readonly<{ token: string }> | null,
-}));
+const daemonRpcBoundary = vi.hoisted(() => vi.fn<(method: string, payload: unknown) => Promise<unknown>>());
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
 
-const accountServerFetch = vi.hoisted(() => vi.fn<
-    typeof import('@/sync/http/client').serverFetch
->());
-
-const contributionProjectionDescribe = vi.hoisted(() => vi.fn());
+// Only the external Socket transport answers for the daemon. Projection reads,
+// scoped routing, Sync and the applied Account lifetime remain real.
+installDisconnectedServerSocketBoundary((socket) => {
+    vi.mocked(socket.connect).mockImplementation(() => {
+        socket.connected = true;
+        for (const listener of socket.listeners('connect')) listener();
+        return socket;
+    });
+    vi.spyOn(socket, 'emit').mockReturnValue(socket);
+    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event, payload: unknown) => {
+        if (event !== 'rpc-call') return { v: 1, ok: true, admittedSessionIds: [] };
+        if (!payload || typeof payload !== 'object' || !('method' in payload)
+            || typeof payload.method !== 'string' || !('params' in payload)) {
+            throw new Error('Malformed daemon transport request');
+        }
+        const method = payload.method.slice(payload.method.indexOf(':') + 1);
+        return { ok: true, result: await daemonRpcBoundary(method, payload.params) };
+    });
+});
 
 const nativeHostLifecycle = vi.hoisted(() => ({
     appState: 'active' as 'active' | 'background',
@@ -122,77 +144,6 @@ vi.mock('react-native', async () => {
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return await createUnistylesMock();
-});
-
-vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
-    useReducedMotionPreference: () => false,
-}));
-
-vi.mock('@/hooks/ui/useScreenReaderEnabled', () => ({
-    useScreenReaderEnabled: () => false,
-}));
-
-vi.mock('@/hooks/ui/useHighContrastPreference', () => ({
-    useHighContrastPreference: () => false,
-}));
-
-vi.mock('@/components/navigation/mobile/chrome/MainAppTabStateProvider', async () => {
-    const { createMainAppTabStateProviderMock } = await import(
-        '@/dev/testkit/mocks/mainAppTabState'
-    );
-    return createMainAppTabStateProviderMock().module;
-});
-
-vi.mock('@/sync/http/client', async (importOriginal) => {
-    const original = await importOriginal<typeof import('@/sync/http/client')>();
-    return {
-        ...original,
-        serverFetch: (...args: Parameters<typeof original.serverFetch>) => (
-            accountServerFetch(...args)
-        ),
-    };
-});
-
-vi.mock('@/sync/ops/machineContributionRegistryProjection', async (importOriginal) => ({
-    ...(await importOriginal<typeof import('@/sync/ops/machineContributionRegistryProjection')>()),
-    machineContributionRegistryProjectionDescribe: (...args: unknown[]) => (
-        contributionProjectionDescribe(...args)
-    ),
-    // One daemon answer per case: the per-mount read returns its target slice.
-    machinePluginUiTargetedContributionsRead: async (machineId: string) => {
-        const answer = await contributionProjectionDescribe(machineId) as Readonly<{
-            supported?: boolean;
-            targetedContributions?: unknown;
-            targetedSurfaceMounts?: readonly unknown[];
-        }>;
-        return answer?.supported === true && answer.targetedContributions
-            ? {
-                supported: true,
-                targetedContributions: answer.targetedContributions,
-                targetedSurfaceMounts: answer.targetedSurfaceMounts ?? [],
-            }
-            : { supported: false, reason: 'error' };
-    },
-}));
-
-vi.mock('@/sync/sync', async (importOriginal) => {
-    const original = await importOriginal<typeof import('@/sync/sync')>();
-    return {
-        ...original,
-        syncSwitchServer: async () => undefined,
-        syncRestore: async () => undefined,
-        // Credentials are a process boundary. Keep the real Sync owner for
-        // every other method while the account-mode request stays deterministic.
-        sync: new Proxy(original.sync, {
-            get(target, property) {
-                if (property === 'getCredentials') {
-                    return () => accountCredentials.value;
-                }
-                const value = Reflect.get(target, property, target);
-                return typeof value === 'function' ? value.bind(target) : value;
-            },
-        }),
-    };
 });
 
 type HostedWebPaneBoundaryProps = Readonly<{
@@ -395,7 +346,6 @@ const CLIENT_ACTION_TARGET = Object.freeze({
 });
 const CLIENT_ACTION_ORIGIN_PROJECTION = Object.freeze({
     machineId: CLIENT_ACTION_ORIGIN.materializationRef.machineId,
-    serverId: 'server-current-ui-context-client-action',
     generation: projectionGeneration,
     interactionEnabled: true,
     phase: 'current' as const,
@@ -442,7 +392,7 @@ function createMountedClientActionFixture(handler: PluginClientActionHandler): R
     });
     const projectedAction = Object.freeze({
         ...action,
-        [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: CLIENT_ACTION_ORIGIN_PROJECTION,
+        [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: { ...CLIENT_ACTION_ORIGIN_PROJECTION, serverId: connection!.home.id },
     });
     const artifactGraph = PluginUiArtifactsManifestEntryV2Schema.parse({
         artifactId: CLIENT_ACTION_TARGET.artifactId,
@@ -495,7 +445,7 @@ function createMountedClientActionFixture(handler: PluginClientActionHandler): R
                     loadPolicy: Object.freeze({ source: 'installedArtifact' }),
                     cacheIdentity: Object.freeze({ artifactDigest: artifactGraph.digest }),
                 }),
-                [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: CLIENT_ACTION_ORIGIN_PROJECTION,
+                [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: { ...CLIENT_ACTION_ORIGIN_PROJECTION, serverId: connection!.home.id },
             }),
         }),
     }) satisfies PluginUiProjectionModel;
@@ -562,33 +512,59 @@ function renderComposedSurface(input: Readonly<{
 }>): React.ReactElement {
     const focusEligible = input.focusEligible ?? true;
     return (
-        <AppPaneProvider>
-            <CurrentUiContextProvider>
-                <PluginSurfaceFocusEligibilityProvider
-                    active={focusEligible}
-                    currentUiContextActive={focusEligible}
-                >
-                    {input.showSurface !== false ? (
-                        <PluginSurfacePlacementHost
-                            placement={placement}
-                            machineId="machine-current-ui-composition"
-                            serverId={input.serverId}
-                            pluginUiProjection={input.pluginUiProjection ?? projection}
-                            platform="web"
-                            projectionInteractionEnabled
-                            subPath={input.subPath}
-                        />
-                    ) : null}
-                </PluginSurfaceFocusEligibilityProvider>
-                <CurrentUiReaderProbe onReader={input.onReader} />
-            </CurrentUiContextProvider>
-        </AppPaneProvider>
+        <InjectedAuthProvider credentials={connection?.credentials ?? null}>
+            <MainAppTabStateProvider>
+                <AppPaneProvider>
+                    <CurrentUiContextProvider>
+                        <PluginSurfaceFocusEligibilityProvider
+                            active={focusEligible}
+                            currentUiContextActive={focusEligible}
+                        >
+                            {input.showSurface !== false ? (
+                                <PluginSurfacePlacementHost
+                                    placement={placement}
+                                    machineId="machine-current-ui-composition"
+                                    serverId={input.serverId}
+                                    pluginUiProjection={input.pluginUiProjection ?? projection}
+                                    platform="web"
+                                    projectionInteractionEnabled
+                                    subPath={input.subPath}
+                                />
+                            ) : null}
+                        </PluginSurfaceFocusEligibilityProvider>
+                        <CurrentUiReaderProbe onReader={input.onReader} />
+                    </CurrentUiContextProvider>
+                </AppPaneProvider>
+            </MainAppTabStateProvider>
+        </InjectedAuthProvider>
     );
 }
 
-async function establishActiveServer(serverId: string): Promise<void> {
-    await setActiveServerId(serverId, { scope: 'device' });
-    await switchConnectionToActiveServer();
+async function establishActiveServer(serverId: string, accountId: string): Promise<void> {
+    const profile = getServerProfileById(serverId);
+    if (!profile) throw new Error('Expected the saved fixture Home.');
+    connection = await restoreServerAccountForTest({
+        serverUrl: profile.serverUrl,
+        accountId,
+        request: async (url) => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/health') return Response.json({ status: 'ok' });
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+            if (path === '/v1/kv/bulk') return Response.json({ values: [] });
+            if (path.startsWith('/v1/machines/')) return Response.json({ machine: {
+                id: decodeURIComponent(path.slice('/v1/machines/'.length)),
+                dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+            } });
+            return Response.json({}, { status: 404 });
+        },
+    });
+    expect(connection.home.id).toBe(serverId);
+    storage.getState().applyMachines([createMachineFixture({
+        id: CLIENT_ACTION_ORIGIN.materializationRef.machineId,
+        activeAt: Date.now(),
+    })], true, { sourceServerId: serverId });
 }
 
 async function loadPackedExternalVoiceFixtureRenderSurface(): Promise<(
@@ -628,6 +604,7 @@ async function loadPackedExternalVoiceFixtureRenderSurface(): Promise<(
 }
 
 beforeEach(async () => {
+    await loadSyncSingletonForTests();
     await getInstalledPluginUiClientExecutableComposition().unload();
     nativeHostLifecycle.appState = 'active';
     hostedRenderer.currentUiReader = null;
@@ -636,45 +613,46 @@ beforeEach(async () => {
     hostedRenderer.packedRenderSurface = null;
     hostedRenderer.surfaceContext = null;
     hostedRenderer.responses.length = 0;
-    accountCredentials.value = { token: 'acme.current-ui-composition-test-token' };
-    accountServerFetch.mockReset();
-    contributionProjectionDescribe.mockReset();
-    contributionProjectionDescribe.mockResolvedValue({
-        supported: true,
-        projection: PluginProjectionV2Schema.parse({
-            v: 2,
-            generation: projectionGeneration,
-            installedPackagesById: {},
-            agentsById: {},
-            actionsById: {},
-            toolsById: {},
-            commandsById: {},
-            resourcesById: {},
-            settingsById: {},
-            familiesById: {},
-            diagnostics: [],
-        }),
-        targetedContributions: {
-            target: {
-                pluginId: placement.pluginId,
-                occurrenceId: PLUGIN_OCCURRENCE_ID,
-                sourceCustody: {
-                    kind: 'development',
-                    registeredRootId: 'current-ui-composition-root',
-                },
-            },
-            points: [],
-        },
-        targetedSurfaceMounts: [],
-    });
-    accountServerFetch.mockImplementation(async (path) => {
-        if (path !== '/v1/account/encryption') {
-            throw new Error(`Unexpected network request: ${path}`);
+    daemonRpcBoundary.mockReset();
+    daemonRpcBoundary.mockImplementation(async (method, payload) => {
+        if (method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ) {
+            const request = DaemonPluginActionSchemasReadRequestSchema.parse(payload);
+            expect(request.expectedOccurrenceId).toBe(PLUGIN_OCCURRENCE_ID);
+            expect(request.qualifiedActionId).toBe(`${placement.pluginId}/${CLIENT_ACTION_ID}`);
+            return { ok: true, inputSchema: { type: 'null' } };
         }
-        return new Response(JSON.stringify({ mode: 'plain', updatedAt: 1 }), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-        });
+        if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return {
+            protocolVersion: 1,
+            projection: PluginProjectionV2Schema.parse({
+                v: 2,
+                generation: projectionGeneration,
+                installedPackagesById: {},
+                agentsById: {},
+                actionsById: {},
+                toolsById: {},
+                commandsById: {},
+                resourcesById: {},
+                settingsById: {},
+                familiesById: {},
+                diagnostics: [],
+            }),
+        };
+        if (method === RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ) return {
+            status: 'current',
+            targetedContributions: {
+                target: {
+                    pluginId: placement.pluginId,
+                    occurrenceId: PLUGIN_OCCURRENCE_ID,
+                    sourceCustody: {
+                        kind: 'development',
+                        registeredRootId: 'current-ui-composition-root',
+                    },
+                },
+                points: [],
+            },
+            targetedSurfaceMounts: [],
+        };
+        throw new Error(`Unexpected daemon transport method: ${method}`);
     });
     invalidateAccountEncryptionModeCache();
 });
@@ -682,13 +660,14 @@ beforeEach(async () => {
 afterEach(async () => {
     standardCleanup();
     await getInstalledPluginUiClientExecutableComposition().unload();
+    if (connection) storage.getState().applyMachines([], true, { sourceServerId: connection.home.id });
+    await connection?.dispose();
+    connection = null;
     retireActiveServerAccountScopeLifetime();
     storage.getState().clearProfileScope();
     clearTabActiveServerId();
-    registerStorageStateReader(() => storage.getState());
     invalidateAccountEncryptionModeCache();
-    accountCredentials.value = null;
-    accountServerFetch.mockReset();
+    daemonRpcBoundary.mockReset();
     hostedRenderer.currentUiReader = null;
     hostedRenderer.currentUiLabelBeforeBPublication = undefined;
     hostedRenderer.hostApi = null;
@@ -704,13 +683,12 @@ describe('CurrentUiContextProvider + PluginSurfaceHost composition', () => {
             serverUrl: 'https://acme.current-ui-client-action.test',
             name: 'Current UI client Action',
         });
-        await establishActiveServer(profile.id);
+        await establishActiveServer(profile.id, 'acme.current-ui-client-action-account');
         const accountScope = Object.freeze({
             serverId: profile.id,
             accountId: 'acme.current-ui-client-action-account',
         });
         storage.getState().activateProfileScope(accountScope);
-        registerStorageStateReader(() => storage.getState());
 
         let handlerCalls = 0;
         let receivedContext: CurrentUiContextSnapshotV1 | undefined;
@@ -760,13 +738,12 @@ describe('CurrentUiContextProvider + PluginSurfaceHost composition', () => {
             serverUrl: 'https://packed-external-voice-current-context.test',
             name: 'Packed external Voice current context',
         });
-        await establishActiveServer(profile.id);
+        await establishActiveServer(profile.id, 'packed-external-voice-current-context-account');
         const accountScope = Object.freeze({
             serverId: profile.id,
             accountId: 'packed-external-voice-current-context-account',
         });
         storage.getState().activateProfileScope(accountScope);
-        registerStorageStateReader(() => storage.getState());
 
         hostedRenderer.packedRenderSurface = await loadPackedExternalVoiceFixtureRenderSurface();
         let reader: CurrentUiContextReader | null = null;
@@ -846,13 +823,12 @@ describe('CurrentUiContextProvider + PluginSurfaceHost composition', () => {
         });
         // This test's native host has no tab-scoped server selection, so use
         // the real device-default selection that the Account lifetime reads.
-        await establishActiveServer(profile.id);
+        await establishActiveServer(profile.id, 'acme.current-ui-composition-account');
         const accountScope = Object.freeze({
             serverId: profile.id,
             accountId: 'acme.current-ui-composition-account',
         });
         storage.getState().activateProfileScope(accountScope);
-        registerStorageStateReader(() => storage.getState());
         expect(storage.getState().profileScope).toEqual(accountScope);
         expect(captureActiveServerAccountScopeLifetime()?.isCurrent()).toBe(true);
 
@@ -928,13 +904,12 @@ describe('CurrentUiContextProvider + PluginSurfaceHost composition', () => {
             serverUrl: 'https://acme.current-ui-insertion-disposal.test',
             name: 'Current UI insertion disposal',
         });
-        await establishActiveServer(profile.id);
+        await establishActiveServer(profile.id, 'acme.current-ui-insertion-disposal-account');
         const accountScope = Object.freeze({
             serverId: profile.id,
             accountId: 'acme.current-ui-insertion-disposal-account',
         });
         storage.getState().activateProfileScope(accountScope);
-        registerStorageStateReader(() => storage.getState());
 
         let reader: CurrentUiContextReader | null = null;
         const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -997,13 +972,12 @@ describe('CurrentUiContextProvider + PluginSurfaceHost composition', () => {
             serverUrl: 'https://acme.current-ui-strict-composition.test',
             name: 'Current UI StrictMode composition',
         });
-        await establishActiveServer(profile.id);
+        await establishActiveServer(profile.id, 'acme.current-ui-strict-composition-account');
         const accountScope = Object.freeze({
             serverId: profile.id,
             accountId: 'acme.current-ui-strict-composition-account',
         });
         storage.getState().activateProfileScope(accountScope);
-        registerStorageStateReader(() => storage.getState());
 
         let reader: CurrentUiContextReader | null = null;
         const screen = await renderScreen(
@@ -1033,13 +1007,12 @@ describe('CurrentUiContextProvider + PluginSurfaceHost composition', () => {
             serverUrl: 'https://acme.current-ui-native-composition.test',
             name: 'Current UI native composition',
         });
-        await establishActiveServer(profile.id);
+        await establishActiveServer(profile.id, 'acme.current-ui-native-composition-account');
         const accountScope = Object.freeze({
             serverId: profile.id,
             accountId: 'acme.current-ui-native-composition-account',
         });
         storage.getState().activateProfileScope(accountScope);
-        registerStorageStateReader(() => storage.getState());
 
         let reader: CurrentUiContextReader | null = null;
         const LifecycleBoundSurface = (): React.ReactElement => {

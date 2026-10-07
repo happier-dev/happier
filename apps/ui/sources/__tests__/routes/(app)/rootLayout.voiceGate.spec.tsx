@@ -1,28 +1,62 @@
 import React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
-import type { LocalSettings } from '@/sync/domains/settings/localSettings';
-import type { Settings } from '@/sync/domains/settings/settings';
-import { installRootLayoutRouteCommonModuleMocks } from './rootLayoutRouteTestHelpers';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { initializeTerminalRouteRuntimeForTests, installTerminalRouteCommonModuleMocks } from './terminal/terminalRouteTestHelpers';
+import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
+import { storage } from '@/sync/domains/state/storage';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 
+installTerminalRouteCommonModuleMocks({
+    router: async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
+        pathname: '/', segments: ['(app)'],
+    }).module,
+});
+vi.mock('@react-navigation/native', async () => (await import('@/dev/testkit/mocks/reactNavigation')).createReactNavigationNativeMock());
+vi.mock('react-native-reanimated', async () => (await import('@/dev/testkit/mocks/reanimated')).createReanimatedModuleMock());
+await initializeTerminalRouteRuntimeForTests();
+const RootLayout = (await import('@/app/(app)/_layout')).default;
 
-type ReactActEnvironmentGlobal = typeof globalThis & {
-    IS_REACT_ACT_ENVIRONMENT?: boolean;
-};
-(globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+let pendingFeatures: ReturnType<typeof createDeferred<Response>> | undefined;
+beforeEach(() => { resetServerFeaturesClientForTests(); });
+afterEach(async () => {
+    pendingFeatures?.resolve(new Response('{}', { status: 503 }));
+    pendingFeatures = undefined;
+    await standardCleanup();
+    await connection?.dispose();
+    connection = undefined;
+    resetServerFeaturesClientForTests();
+});
 
-const { applySettings, happierVoiceSupportState, mockLocalSettings, mockSettings } = await vi.hoisted(async () => {
-    const { localSettingsDefaults } = await import('@/sync/domains/settings/localSettings');
-    const { settingsDefaults } = await import('@/sync/domains/settings/settings');
-    return {
-        applySettings: vi.fn(),
-        happierVoiceSupportState: { current: false as boolean | null },
-        mockLocalSettings: {
-            ...localSettingsDefaults,
-            activityBadgesEnabled: false,
-        } satisfies LocalSettings,
-        mockSettings: {
-            ...settingsDefaults,
+async function arrangeVoiceHome(supported: boolean) {
+    const state = { supported, defer: false, pendingObserved: false };
+    pendingFeatures = createDeferred<Response>();
+    connection = await restoreServerAccountForTest({
+        serverUrl: 'https://voice-gate.example.test', accountId: 'voice-viewer',
+        request: async input => {
+            const path = new URL(String(input)).pathname;
+            if (path === '/v1/features' && state.defer) {
+                state.pendingObserved = true;
+                return pendingFeatures!.promise;
+            }
+            if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({
+                features: {
+                    pets: { companion: { enabled: true } },
+                    voice: { enabled: state.supported, happierVoice: { enabled: state.supported } },
+                },
+            }));
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            return new Response('{}', { status: 404 });
+        },
+    });
+    storage.setState({
+        settings: {
+            ...settingsDefaults, petsEnabled: true,
             voice: {
                 ...settingsDefaults.voice,
                 providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
@@ -31,127 +65,49 @@ const { applySettings, happierVoiceSupportState, mockLocalSettings, mockSettings
                     'happier.voice.elevenlabs/realtime-elevenlabs': { schemaVersion: 2, config: { billingMode: 'happier' } },
                 },
             },
-        } satisfies Settings,
-    };
-});
-
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-installRootLayoutRouteCommonModuleMocks({
-    modal: async () => vi.importActual<typeof import('@/modal')>('@/modal'),
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            Platform: {
-                OS: 'ios',
-            },
-            TouchableOpacity: 'TouchableOpacity',
-            Text: 'Text',
-            AppState: {
-                addEventListener: () => ({ remove: () => {} }),
-            },
-        });
-    },
-    unistyles: async () => {
-        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-        return createUnistylesMock({
-            theme: { colors: { surface: '#fff', header: { background: '#fff', tint: '#000' } } },
-        });
-    },
-    text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({ translate: (key: string) => key });
-    },
-});
-
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ isAuthenticated: true }),
-}));
-
-vi.mock('@/auth/routing/authRouting', () => ({
-    isPublicRouteForUnauthenticated: () => true,
-}));
-
-vi.mock('@/utils/platform/platform', () => ({
-    isRunningOnMac: () => false,
-}));
-
-vi.mock('@/components/navigation/Header', () => ({
-    createHeader: () => null,
-}));
-
-vi.mock('@/components/pets/runtime/PetAppShellCompanionMount', () => ({
-    PetAppShellCompanionMount: () => React.createElement('PetAppShellCompanionMount', {
-        testID: 'pet-app-shell-companion-mount',
-    }),
-}));
-
-vi.mock('@/sync/sync', () => ({
-    sync: { applySettings: (delta: Record<string, unknown>) => applySettings(delta) },
-}));
-
-vi.mock('@/hooks/server/useHappierVoiceSupport', () => ({
-    useHappierVoiceSupport: () => happierVoiceSupportState.current,
-}));
-
-beforeEach(async () => {
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({ settings: mockSettings, localSettings: mockLocalSettings });
-});
+        },
+        localSettings: { ...localSettingsDefaults, activityBadgesEnabled: false },
+    });
+    const configuredVoice = storage.getState().settings.voice;
+    const render = () => renderScreen(<InjectedAuthProvider credentials={connection!.credentials}><RootLayout /></InjectedAuthProvider>);
+    return { state, configuredVoice, render, home: connection.home };
+}
 
 describe('RootLayout voice gating', () => {
-    it('mounts the in-window pet companion surface for ordinary web clients', async () => {
-        const RootLayout = (await import('@/app/(app)/_layout')).default;
-
-        const screen = await renderRootLayout(React.createElement(RootLayout));
-
-        expect(screen.findByTestId('pet-app-shell-companion-mount')).not.toBeNull();
+    it('mounts the enabled in-window pet companion for an ordinary web client', async () => {
+        const { render, home } = await arrangeVoiceHome(false);
+        expect((await getServerFeaturesSnapshot({ serverId: home.id, force: true })).status).toBe('ready');
+        const screen = await render();
+        await vi.waitFor(() => expect(screen.findByTestId('pet-app-shell-companion-root')).not.toBeNull());
     });
 
-    it('keeps a configured hosted voice selection inert when server reports voice unsupported', async () => {
-        happierVoiceSupportState.current = false;
-        applySettings.mockClear();
-
-        const RootLayout = (await import('@/app/(app)/_layout')).default;
-
-        await renderRootLayout(React.createElement(RootLayout));
-
-        expect(applySettings).not.toHaveBeenCalled();
+    it('keeps a configured hosted voice selection inert when the Home reports voice unsupported', async () => {
+        const { configuredVoice, render, home } = await arrangeVoiceHome(false);
+        const observed = await getServerFeaturesSnapshot({ serverId: home.id, force: true });
+        expect(observed).toMatchObject({ status: 'ready', features: { features: { voice: { happierVoice: { enabled: false } } } } });
+        await render();
+        expect(storage.getState().settings.voice).toBe(configuredVoice);
     });
 
-    it('does not permanently disable Happier voice while support is still unknown', async () => {
-        happierVoiceSupportState.current = null;
-        applySettings.mockClear();
-
-        const RootLayout = (await import('@/app/(app)/_layout')).default;
-
-        await renderRootLayout(React.createElement(RootLayout));
-
-        expect(applySettings).not.toHaveBeenCalled();
+    it('does not permanently disable hosted Voice while the real feature observation is pending', async () => {
+        const { configuredVoice, render, state } = await arrangeVoiceHome(true);
+        state.defer = true;
+        resetServerFeaturesClientForTests();
+        await render();
+        await vi.waitFor(() => expect(state.pendingObserved).toBe(true));
+        expect(storage.getState().settings.voice).toBe(configuredVoice);
     });
 
-    it('reacts when active server support changes after mount', async () => {
-        happierVoiceSupportState.current = true;
-        applySettings.mockClear();
-
-        const RootLayout = (await import('@/app/(app)/_layout')).default;
-        const screen = await renderRootLayout(React.createElement(RootLayout));
-
-        expect(applySettings).not.toHaveBeenCalled();
-
-        happierVoiceSupportState.current = false;
-        await screen.update(React.createElement(RootLayout));
-
-        expect(applySettings).not.toHaveBeenCalled();
+    it('retains the configured selection when the exact Home feature observation changes after mount', async () => {
+        const { configuredVoice, render, state, home } = await arrangeVoiceHome(true);
+        expect(await getServerFeaturesSnapshot({ serverId: home.id, force: true })).toMatchObject({
+            status: 'ready', features: { features: { voice: { happierVoice: { enabled: true } } } },
+        });
+        await render();
+        state.supported = false;
+        expect(await getServerFeaturesSnapshot({ serverId: home.id, force: true })).toMatchObject({
+            status: 'ready', features: { features: { voice: { happierVoice: { enabled: false } } } },
+        });
+        expect(storage.getState().settings.voice).toBe(configuredVoice);
     });
 });
-
-async function renderRootLayout(element: React.ReactElement) {
-    const { ModalProvider } = await import('@/modal');
-    return renderScreen(element, {
-        wrapper: ({ children }) => React.createElement(ModalProvider, { children }),
-    });
-}

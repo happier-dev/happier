@@ -129,7 +129,7 @@ describe('plugin invocation SCM actions', () => {
                 resolveCurrentPluginMaterializationRef:
                     scmMaterialization.resolveCurrentPluginMaterializationRef,
                 occurrenceId: 'occurrenceId-1',
-                surface: 'agent',
+                surface: 'plugin',
                 session: { id: 'session-1' },
                 signal: new AbortController().signal,
                 isOccurrenceCurrent: () => true,
@@ -312,7 +312,7 @@ describe('plugin invocation SCM actions', () => {
                 resolveCurrentPluginMaterializationRef:
                     scmMaterialization.resolveCurrentPluginMaterializationRef,
                 occurrenceId: 'occurrenceId-1',
-                surface: 'agent',
+                surface: 'plugin',
                 session: { id: 'session-1' },
                 signal: new AbortController().signal,
                 isOccurrenceCurrent: () => true,

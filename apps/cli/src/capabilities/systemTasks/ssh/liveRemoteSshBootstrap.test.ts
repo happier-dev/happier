@@ -637,24 +637,6 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
     process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT = localPayloadRoot;
     try {
       const kind = createLiveRemoteSshBootstrapTaskKind();
-      const previousImplementation = spawnSync.getMockImplementation();
-      if (!previousImplementation) {
-        throw new Error('Missing spawnSync mock implementation');
-      }
-      let serverConfigureAttempts = 0;
-      spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
-        if (command === 'ssh') {
-          const remoteCommand = String(args.at(-1) ?? '');
-          if (remoteCommand.includes('server set') && serverConfigureAttempts++ === 0) {
-            return {
-              status: 127,
-              stdout: '',
-              stderr: 'bash: happier: command not found\n',
-            };
-          }
-        }
-        return previousImplementation(command, args as any);
-      });
 
       await kind.run({
         params: {
@@ -699,24 +681,6 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
     delete process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT;
     try {
       const kind = createLiveRemoteSshBootstrapTaskKind();
-      const previousImplementation = spawnSync.getMockImplementation();
-      if (!previousImplementation) {
-        throw new Error('Missing spawnSync mock implementation');
-      }
-      let serverConfigureAttempts = 0;
-      spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
-        if (command === 'ssh') {
-          const remoteCommand = String(args.at(-1) ?? '');
-          if (remoteCommand.includes('server set') && serverConfigureAttempts++ === 0) {
-            return {
-              status: 127,
-              stdout: '',
-              stderr: 'bash: happier: command not found\n',
-            };
-          }
-        }
-        return previousImplementation(command, args as any);
-      });
 
       await kind.run({
         params: {
@@ -875,24 +839,6 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
   it('installs the remote CLI from the verified payload path instead of curl-bash', async () => {
     const kind = createLiveRemoteSshBootstrapTaskKind();
     const controller = new AbortController();
-    const previousImplementation = spawnSync.getMockImplementation();
-    if (!previousImplementation) {
-      throw new Error('Missing spawnSync mock implementation');
-    }
-    let serverConfigureAttempts = 0;
-    spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
-      if (command === 'ssh') {
-        const remoteCommand = String(args.at(-1) ?? '');
-        if (remoteCommand.includes('server set') && serverConfigureAttempts++ === 0) {
-          return {
-            status: 127,
-            stdout: '',
-            stderr: 'bash: happier: command not found\n',
-          };
-        }
-      }
-      return previousImplementation(command, args as any);
-    });
 
     await kind.run({
       params: {

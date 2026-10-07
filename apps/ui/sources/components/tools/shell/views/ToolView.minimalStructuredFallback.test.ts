@@ -1,7 +1,7 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-    renderScreen,
+    renderWithSessionTranscriptSource as renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
 import {
@@ -98,13 +98,14 @@ vi.mock('@/agents/catalog/catalog', () => ({
     resolveAgentIdFromFlavor: () => null,
 }));
 
+const { ToolView } = await import('./ToolView');
+
 describe('ToolView (minimal tools)', () => {
     afterEach(() => {
         standardCleanup();
     });
 
     it('renders a structured fallback view for minimal tools without a specific view', async () => {
-        const { ToolView } = await import('./ToolView');
 
         const tool = makeToolCall({
             name: 'Bash',
@@ -123,7 +124,6 @@ describe('ToolView (minimal tools)', () => {
     });
 
     it('hides body for minimal tools with no output payload', async () => {
-        const { ToolView } = await import('./ToolView');
 
         const tool = makeToolCall({
             name: 'Bash',

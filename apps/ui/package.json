@@ -337,6 +337,7 @@
     "@expo/config-plugins": "~55.0.7",
     "@expo/ngrok": "^4.1.0",
     "@happier-dev/channels-protocol": "0.0.0",
+    "@happier-dev/plugins-grok": "0.0.0",
     "@material/material-color-utilities": "^0.3.0",
     "@stablelib/hex": "^2.0.1",
     "@types/react": "~19.2.10",

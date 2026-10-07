@@ -1,494 +1,230 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ManagedConnectionState } from '@happier-dev/connection-supervisor';
-import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { AccountPetLibraryEntryV1Schema } from '@happier-dev/protocol/pets';
+import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { flushHookEffects } from '@/dev/testkit';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
-// Sync imports persistence, which instantiates MMKV. Mock it for deterministic tests.
-const kvStore = vi.hoisted(() => new Map<string, string>());
-vi.mock('react-native-mmkv', () => {
-    class MMKV {
-        getString(key: string) {
-            return kvStore.get(key);
-        }
-        set(key: string, value: string) {
-            kvStore.set(key, value);
-        }
-        delete(key: string) {
-            kvStore.delete(key);
-        }
-        clearAll() {
-            kvStore.clear();
-        }
-    }
-
-    return { MMKV };
-});
-
-const appStateAddListener = vi.hoisted(() => vi.fn(() => ({ remove: vi.fn() })));
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                            Platform: {
-                                                OS: 'web',
-                                            },
-                                            AppState: {
-                                                addEventListener: appStateAddListener as any,
-                                            },
-                                        }
-    );
+    return createReactNativeWebMock();
 });
 
-vi.mock('@/log', () => ({
-    log: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
-}));
-
-vi.mock('@/voice/context/voiceHooks', () => ({
-    voiceHooks: {
-        onSessionFocus: vi.fn(),
-        onSessionOffline: vi.fn(),
-        onSessionOnline: vi.fn(),
-        onMessages: vi.fn(),
-        reportContextualUpdate: vi.fn(),
+const pet = AccountPetLibraryEntryV1Schema.parse({
+    accountPetId: 'pet-1',
+    packageFormat: 'codex-compatible-atlas-v1',
+    manifest: {
+        id: 'blink', displayName: 'Blink', description: 'Built-in compatible pet',
+        spritesheetPath: 'spritesheet.webp',
     },
-}));
-
-const trackMocks = vi.hoisted(() => ({
-    initializeTracking: vi.fn(),
-}));
-
-vi.mock('@/track', () => ({
-    initializeTracking: trackMocks.initializeTracking,
-    tracking: null,
-    trackPaywallPresented: vi.fn(),
-    trackPaywallPurchased: vi.fn(),
-    trackPaywallCancelled: vi.fn(),
-    trackPaywallRestored: vi.fn(),
-    trackPaywallError: vi.fn(),
-}));
-
-const connectionStateListeners = vi.hoisted(() => new Set<(state: ManagedConnectionState) => void>());
-const socketStatusListeners = vi.hoisted(() => new Set<(status: 'disconnected' | 'connecting' | 'connected' | 'error') => void>());
-
-vi.mock('@/sync/api/session/apiSocket', () => ({
-    apiSocket: {
-        onMessage: vi.fn(),
-        onError: vi.fn(),
-        onReconnected: vi.fn(),
-        onStatusChange: vi.fn((listener: (status: 'disconnected' | 'connecting' | 'connected' | 'error') => void) => {
-            socketStatusListeners.add(listener);
-            listener('disconnected');
-            return () => socketStatusListeners.delete(listener);
-        }),
-        onConnectionStateChange: vi.fn((listener: (state: ManagedConnectionState) => void) => {
-            connectionStateListeners.add(listener);
-            listener({
-                phase: 'idle',
-                reason: null,
-                attempt: 0,
-                nextRetryAt: null,
-                lastConnectedAt: null,
-                lastDisconnectedAt: null,
-                lastErrorMessage: null,
-            });
-            return () => connectionStateListeners.delete(listener);
-        }),
-        connect: vi.fn(),
-        disconnect: vi.fn(),
-        initialize: vi.fn(),
-        request: vi.fn(async () => new Response('ok', { status: 200 })),
-    },
-}));
-
-import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { TokenStorage } from '@/auth/storage/tokenStorage';
-import { flushHookEffects } from '@/dev/testkit';
-import { encodeBase64 } from '@/encryption/base64';
-import { encodeUTF8 } from '@/encryption/text';
-import { Encryption } from '@/sync/encryption/encryption';
-import { apiSocket } from '@/sync/api/session/apiSocket';
-import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
-import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
-import { storage } from '@/sync/domains/state/storage';
-import type { SyncTuning } from '@/sync/runtime/syncTuning';
-
-function buildTokenWithSub(sub: string): string {
-    const payload = encodeBase64(encodeUTF8(JSON.stringify({ sub })), 'base64');
-    return `hdr.${payload}.sig`;
-}
-
-function installLocalStorage(): void {
-    if (typeof (globalThis as any).localStorage !== 'undefined') return;
-
-    const store = new Map<string, string>();
-    (globalThis as any).localStorage = {
-        get length() {
-            return store.size;
-        },
-        clear() {
-            store.clear();
-        },
-        getItem(key: string) {
-            return store.has(key) ? store.get(key)! : null;
-        },
-        key(index: number) {
-            const keys = [...store.keys()];
-            return typeof keys[index] === 'string' ? keys[index] : null;
-        },
-        removeItem(key: string) {
-            store.delete(key);
-        },
-        setItem(key: string, value: string) {
-            store.set(String(key), String(value));
-        },
-    };
-}
-
-function publishConnectionState(state: ManagedConnectionState): void {
-    for (const listener of Array.from(connectionStateListeners)) {
-        listener(state);
-    }
-}
-
-function jsonResponse(body: unknown, init?: ResponseInit): Response {
-    return new Response(JSON.stringify(body), {
-        ...init,
-        headers: {
-            'content-type': 'application/json',
-            ...(init?.headers ?? {}),
-        },
-    });
-}
-
-function accountPetMetadata(accountPetId: string) {
-    return {
-        accountPetId,
-        packageFormat: 'codex-compatible-atlas-v1',
-        manifest: {
-            id: 'blink',
-            displayName: 'Blink',
-            description: 'Built-in compatible pet',
-            spritesheetPath: 'spritesheet.webp',
-        },
-        spritesheetAssetRef: {
-            assetId: 'asset-1',
-            mediaType: 'image/webp',
-            digest: 'sha256:abc',
-            sizeBytes: 3,
-        },
-        digest: 'sha256:pkg',
-        sizeBytes: 128,
-        createdAt: 1,
-        updatedAt: 2,
-        origin: { kind: 'manualImport' },
-    };
-}
+    spritesheetAssetRef: { assetId: 'asset-1', mediaType: 'image/webp', digest: 'sha256:abc', sizeBytes: 3 },
+    digest: 'sha256:pkg', sizeBytes: 128, createdAt: 1, updatedAt: 2,
+    origin: { kind: 'manualImport' },
+});
 
 describe('sync.create initial awaits', () => {
-    beforeEach(() => {
+    let network: Awaited<ReturnType<typeof installSessionOpsNetworkBoundary>>;
+    let home: Awaited<ReturnType<typeof network.addHome>>;
+    let stallCore: boolean;
+    let petsEnabled: boolean;
+    let authPing: 'ready' | 'offline' | 'auth-failed';
+    let cleanupStateSubscription: (() => void) | undefined;
+
+    beforeEach(async () => {
+        vi.resetModules();
         vi.useFakeTimers();
-        kvStore.clear();
-        appStateAddListener.mockClear();
-        trackMocks.initializeTracking.mockReset();
-        connectionStateListeners.clear();
-        socketStatusListeners.clear();
-        resetServerFeaturesClientForTests();
-        storage.getState().resetEndpointConnectivity();
-        installLocalStorage();
-    });
-
-    afterEach(() => {
-        vi.useRealTimers();
-        vi.unstubAllGlobals();
-        resetServerFeaturesClientForTests();
-    });
-
-    it('materializes account pets during initial sync when pets.sync is enabled', async () => {
-        vi.spyOn(console, 'error').mockImplementation(() => {});
-        const pet = accountPetMetadata('pet-1');
-        const features = FeaturesResponseSchema.parse({
-            features: {
-                pets: {
-                    sync: { enabled: true },
-                },
-            },
-            capabilities: {},
-        });
-        const fetchSpy = vi.fn<typeof fetch>(async (input) => {
-            const url = String(input);
-            if (url.endsWith('/health')) {
-                return jsonResponse({ status: 'ok' });
+        stallCore = false;
+        petsEnabled = false;
+        authPing = 'ready';
+        cleanupStateSubscription = undefined;
+        network = await installSessionOpsNetworkBoundary();
+        home = await network.addHome('https://initial-sync.example.test', 'plain-account');
+        const { profileDefaults } = await import('./domains/profiles/profile');
+        network.setHttpResponder(async (input, init) => {
+            const path = new URL(String(input)).pathname;
+            if (path === '/v1/auth/ping') {
+                if (authPing === 'offline') throw new Error('Network request failed');
+                return Response.json({}, { status: authPing === 'auth-failed' ? 401 : 200 });
             }
-            if (url.includes('/v1/auth/ping')) {
-                return jsonResponse({ status: 'ok' });
+            if (path === '/v1/features' || path === '/v1/features/authenticated') {
+                return Response.json(createRootLayoutFeaturesResponse({ features: { pets: { sync: { enabled: petsEnabled } } } }));
             }
-            if (url.includes('/v1/features')) {
-                return jsonResponse(features);
-            }
-            if (url.includes('/v1/account/encryption/currentness')) {
-                return jsonResponse({
-                    mode: 'plain',
-                    version: 1,
-                    signingKeyFingerprint: null,
-                    contentKeyFingerprint: null,
-                    updatedAt: 1,
+            // Hold genuine HTTP, not an internal queue or cipher owner. Honor
+            // transport cancellation so retiring an Account settles its requests.
+            if (stallCore && (path === '/v2/account/settings' || path === '/v1/account/profile' || path === '/v1/account/encryption/currentness')) {
+                return await new Promise<Response>((_resolve, reject) => {
+                    const abort = () => reject(new Error('Test HTTP request aborted'));
+                    if (init?.signal?.aborted) abort();
+                    else init?.signal?.addEventListener('abort', abort, { once: true });
                 });
             }
-            if (url.includes('/v1/account/pets')) {
-                return jsonResponse({ ok: true, pets: [pet] });
-            }
-            return jsonResponse({ error: 'not_found' }, { status: 404 });
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            if (path === '/v1/account/profile') return Response.json({ ...profileDefaults, id: home.accountId });
+            if (path === '/v1/account/pets') return Response.json({ ok: true, pets: [pet] });
+            if (path === '/v2/sessions') return Response.json({ sessions: [], nextCursor: null, hasNext: false });
+            if (path === '/v1/sessions/active') return Response.json({ sessions: [] });
+            if (path === '/v1/machines') return Response.json([]);
+            if (path === '/v1/artifacts') return Response.json([]);
+            if (path === '/v1/friends') return Response.json({ friends: [] });
+            if (path === '/v1/kv') return Response.json({ items: [] });
+            if (path === '/v2/cursor') return Response.json({ cursor: 0 });
+            if (path === '/v2/changes') return Response.json({ changes: [], nextCursor: 0 });
+            return null;
         });
-        vi.stubGlobal('fetch', fetchSpy);
+        await loadSyncSingletonForTests();
+        const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+        await upsertAndActivateServer({ serverUrl: home.serverUrl });
+    });
 
-        await upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'device' });
-        expect(getActiveServerSnapshot().serverUrl).toBe('http://localhost:53288');
+    afterEach(async () => {
+        cleanupStateSubscription?.();
+        const { syncSwitchServer } = await import('./sync');
+        await syncSwitchServer(null);
+        const { apiSocket } = await import('@/sync/api/session/apiSocket');
+        apiSocket.disconnect();
+        network.dispose();
+        vi.restoreAllMocks();
+        vi.useRealTimers();
+    });
 
-        const encryption = await Encryption.create(new Uint8Array(32).fill(9));
-        const { sync } = await import('./syncEngine');
-        const syncWithTuning = sync as unknown as {
-            syncTuning: SyncTuning;
-        };
-        syncWithTuning.syncTuning = {
-            ...sync.getSyncTuning(),
-            invalidateSyncAwaitTimeoutMs: 1,
-            bootstrapConcurrencyLimit: 4,
-            resumeConcurrencyLimit: 4,
-        };
+    async function finishInitialCreate(credentials: AuthCredentials = { token: home.token }) {
+        const { syncCreate } = await import('./sync');
+        const pending = syncCreate(credentials);
+        await flushHookEffects({ cycles: 8, turns: 2 });
+        await flushHookEffects({ cycles: 1, turns: 2, advanceTimersMs: 2_500 });
+        await pending;
+        await flushHookEffects({ cycles: 8, turns: 2 });
+    }
 
-        const credentials: AuthCredentials = {
-            token: buildTokenWithSub('server-pets'),
-            secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url'),
-        };
+    it('materializes account pets during initial sync when pets.sync is enabled', async () => {
+        petsEnabled = true;
+        await finishInitialCreate();
 
-        const createPromise = sync.create(credentials, encryption);
-        await flushHookEffects({ cycles: 8, turns: 2, advanceTimersMs: 2_500 });
-        await createPromise;
-        await flushHookEffects({ cycles: 8, turns: 2, advanceTimersMs: 10 });
-
+        const { storage } = await import('./domains/state/storage');
+        const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
         expect(storage.getState().syncError).toBeNull();
-        await expect(getServerFeaturesSnapshot({
-            serverId: getActiveServerSnapshot().serverId,
-        })).resolves.toMatchObject({ status: 'ready' });
-
-        const requestedUrls = fetchSpy.mock.calls.map(([input]) => String(input));
-        expect(requestedUrls).toEqual(expect.arrayContaining([
-            expect.stringContaining('/v1/account/encryption/currentness'),
-            expect.stringContaining('/v1/account/pets'),
-        ]));
+        await expect(getServerFeaturesSnapshot({ serverId: home.id })).resolves.toMatchObject({ status: 'ready' });
         expect(storage.getState().accountPetsById['pet-1']).toMatchObject({
-            accountPetId: 'pet-1',
-            digest: 'sha256:pkg',
+            accountPetId: 'pet-1', digest: 'sha256:pkg',
         });
-        const currentnessCallIndex = fetchSpy.mock.calls.findIndex(([input]) =>
-            String(input).includes('/v1/account/encryption/currentness'),
-        );
-        const petsCallIndex = fetchSpy.mock.calls.findIndex(([input]) =>
-            String(input).includes('/v1/account/pets'),
-        );
-        expect(currentnessCallIndex).toBeGreaterThanOrEqual(0);
-        expect(petsCallIndex).toBeGreaterThan(currentnessCallIndex);
-        expect(fetchSpy.mock.calls.some(([input]) => String(input).includes('/v1/account/pets'))).toBe(true);
+        const currentnessIndex = network.httpRequests.findIndex(({ url }) => new URL(url).pathname === '/v1/account/encryption/currentness');
+        const petsIndex = network.httpRequests.findIndex(({ url }) => new URL(url).pathname === '/v1/account/pets');
+        expect(currentnessIndex).toBeGreaterThanOrEqual(0);
+        expect(petsIndex).toBeGreaterThan(currentnessIndex);
+        expect(network.httpRequests[petsIndex]?.token).toBe(`Bearer ${home.token}`);
     });
 
     it('does not hang forever waiting for initial sync queues', async () => {
-        // Simulate a network stall: fetch never resolves.
-        vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
-
-        upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
-
-        const encryption = await Encryption.create(new Uint8Array(32).fill(9));
-        const configureNativeCryptoWorkerSpy = vi.spyOn(encryption, 'configureNativeCryptoWorker');
-        const warmNativeCryptoWorkerSpy = vi
-            .spyOn(encryption, 'warmNativeCryptoWorkerForDiagnostics')
-            .mockResolvedValue(null);
-        const { sync } = await import('./sync');
-        const syncWithTuning = sync as unknown as {
-            syncTuning: SyncTuning;
-        };
-        syncWithTuning.syncTuning = {
-            ...sync.getSyncTuning(),
-            nativeCryptoWorkerMode: 'auto',
-            nativeCryptoWorkerMaxBatchSize: 32,
-            nativeCryptoWorkerMinBatchSize: 2,
-            nativeCryptoWorkerMinPayloadBytes: 0,
-            nativeCryptoWorkerTimeoutMs: 1234,
-            nativeCryptoWorkerLogFallbacks: true,
-            nativeCryptoWorkerTelemetryEnabled: true,
-            nativeCryptoWorkerStreamingSampleRate: 0.5,
-            nativeCryptoWorkerCapabilityStalenessMs: 60_000,
-        };
-
-        const credentials: AuthCredentials = {
-            token: buildTokenWithSub('server-test'),
-            secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url'),
-        };
-
-        await TokenStorage.setCredentials(credentials);
-
+        stallCore = true;
+        const { syncCreate, sync } = await import('./sync');
+        const { encodeBase64 } = await import('@/encryption/base64');
+        const { Encryption } = await import('@/sync/encryption/encryption');
+        const configure = vi.spyOn(Encryption.prototype, 'configureNativeCryptoWorker');
+        const warm = vi.spyOn(Encryption.prototype, 'warmNativeCryptoWorkerForDiagnostics');
+        const credentials: AuthCredentials = { token: home.token, secret: encodeBase64(new Uint8Array(32).fill(9), 'base64url') };
         let resolved = false;
-        const promise = sync.create(credentials, encryption).then(() => {
-            resolved = true;
-        });
+        const pending = syncCreate(credentials).then(() => { resolved = true; });
+        await flushHookEffects({ cycles: 8, turns: 2 });
 
-        // Current behavior (pre-fix) hangs forever; expected behavior resolves via the 2500ms awaitQueue timeout.
-        await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 2_500 });
+        expect(resolved).toBe(false);
+        await flushHookEffects({ cycles: 1, turns: 2, advanceTimersMs: 2_499 });
+        expect(resolved).toBe(false);
+        await flushHookEffects({ cycles: 1, turns: 2, advanceTimersMs: 1 });
         expect(resolved).toBe(true);
-
-        await promise;
-        // Routing is no longer forwarded from here: Encryption resolves it from SyncTuning
-        // at construction, so it reaches every instance instead of only this one. What sync
-        // still owns — and what this pins — is the active account's scope binding.
-        expect(configureNativeCryptoWorkerSpy).toHaveBeenCalledWith({
-            scope: {
-                accountId: 'server-test',
-                serverId: expect.any(String),
-                generation: 0,
-            },
+        await pending;
+        expect(sync.encryption).not.toBeNull();
+        expect(configure).toHaveBeenCalledWith({
+            scope: { accountId: home.accountId, serverId: home.id, generation: 0 },
         });
-        expect(warmNativeCryptoWorkerSpy).toHaveBeenCalledTimes(1);
+        expect(warm).toHaveBeenCalledTimes(1);
     });
 
     it('rebinds the tracking identity when switching to a different authenticated account', async () => {
-        vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
-
-        upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
-
+        stallCore = true;
+        const { encodeBase64 } = await import('@/encryption/base64');
+        const { Encryption } = await import('@/sync/encryption/encryption');
+        const { getTrackingAnonymousUserId } = await import('@/track');
+        const { sync } = await import('./sync');
         const secretA = new Uint8Array(32).fill(7);
         const secretB = new Uint8Array(32).fill(8);
         const encryptionA = await Encryption.create(secretA);
         const encryptionB = await Encryption.create(secretB);
-        const { sync } = await import('./sync');
+        network.setAccount(home.serverUrl, 'account-a');
+        await finishInitialCreate({ token: createAccountTokenForTests('account-a'), secret: encodeBase64(secretA, 'base64url') });
+        expect(getTrackingAnonymousUserId()).toBe(encryptionA.anonID);
 
-        const credentialsA: AuthCredentials = {
-            token: buildTokenWithSub('server-a'),
-            secret: encodeBase64(secretA, 'base64url'),
-        };
-        const credentialsB: AuthCredentials = {
-            token: buildTokenWithSub('server-b'),
-            secret: encodeBase64(secretB, 'base64url'),
-        };
+        network.setAccount(home.serverUrl, 'account-b');
+        await sync.switchServer({ token: createAccountTokenForTests('account-b'), secret: encodeBase64(secretB, 'base64url') });
 
-        await TokenStorage.setCredentials(credentialsA);
-
-        const createPromise = sync.create(credentialsA, encryptionA);
-        await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 2_500 });
-        await createPromise;
-
-        await sync.switchServer(credentialsB);
-
-        expect(trackMocks.initializeTracking).toHaveBeenNthCalledWith(1, encryptionA.anonID);
-        expect(trackMocks.initializeTracking).toHaveBeenNthCalledWith(2, encryptionB.anonID);
+        expect(getTrackingAnonymousUserId()).toBe(encryptionB.anonID);
+        expect(sync.getCredentials()?.token).toBe(createAccountTokenForTests('account-b'));
     });
 
     it('mirrors auth-failed connection state into endpoint connectivity storage', async () => {
-        vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
+        await finishInitialCreate();
+        const { apiSocket } = await import('@/sync/api/session/apiSocket');
+        const { storage } = await import('./domains/state/storage');
+        const { invalidateAllServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+        let observed: ManagedConnectionState | undefined;
+        cleanupStateSubscription = apiSocket.onConnectionStateChange((state) => { observed = state; });
+        authPing = 'auth-failed';
 
-        upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
+        await invalidateAllServerReachabilitySupervisors();
+        await flushHookEffects({ cycles: 8, turns: 2 });
 
-        const { syncCreate, syncSwitchServer } = await import('./syncEngine');
-
-        const credentials: AuthCredentials = {
-            token: buildTokenWithSub('server-auth-failed'),
-            secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url'),
-        };
-
-        await TokenStorage.setCredentials(credentials);
-
-        await syncSwitchServer(null);
-        const createPromise = syncCreate(credentials);
-        await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 2_500 });
-        await createPromise;
-
-        publishConnectionState({
-            phase: 'auth_failed',
-            reason: 'auth_invalid',
-            attempt: 3,
-            nextRetryAt: null,
-            lastConnectedAt: 123,
-            lastDisconnectedAt: 456,
-            lastErrorMessage: 'HTTP 401',
-        });
-
+        expect(observed).toMatchObject({ phase: 'auth_failed', reason: 'auth_invalid', nextRetryAt: null });
         expect(storage.getState()).toMatchObject({
-            endpointStatus: 'auth_failed',
-            endpointReason: 'auth_invalid',
-            endpointAttempt: 3,
-            endpointNextRetryAt: null,
-            endpointLastConnectedAt: 123,
-            endpointLastDisconnectedAt: 456,
-            endpointLastErrorMessage: 'HTTP 401',
+            endpointStatus: observed!.phase, endpointReason: observed!.reason,
+            endpointAttempt: observed!.attempt, endpointNextRetryAt: observed!.nextRetryAt,
+            endpointLastConnectedAt: observed!.lastConnectedAt,
+            endpointLastDisconnectedAt: observed!.lastDisconnectedAt,
+            endpointLastErrorMessage: observed!.lastErrorMessage,
         });
+        expect(network.httpRequests.filter(({ url }) => new URL(url).pathname === '/v1/auth/ping').every(({ token }) => token === `Bearer ${home.token}`)).toBe(true);
     });
 
     it('resumes sync when server reachability returns online after an outage', async () => {
-        vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
-
-        upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
-
-        const { sync, syncCreate, syncSwitchServer } = await import('./syncEngine');
-        const resumeSpy = vi.fn(async () => {});
-        (sync as unknown as { resumeSync: (reason: string) => Promise<void> }).resumeSync = resumeSpy;
-
-        const credentials: AuthCredentials = {
-            token: buildTokenWithSub('server-reachable-again'),
-            secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url'),
-        };
-
-        await TokenStorage.setCredentials(credentials);
-
-        await syncSwitchServer(null);
-        const createPromise = syncCreate(credentials);
-        await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 2_500 });
-        await createPromise;
-
-        publishConnectionState({
-            phase: 'offline',
-            reason: 'server_unreachable',
-            attempt: 2,
-            nextRetryAt: Date.now() + 1000,
-            lastConnectedAt: null,
-            lastDisconnectedAt: Date.now(),
-            lastErrorMessage: 'Network request failed',
-        });
+        await finishInitialCreate();
+        const { sync } = await import('./sync');
+        const { storage } = await import('./domains/state/storage');
+        const { invalidateAllServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+        const resume = vi.spyOn(sync, 'resumeSync');
+        authPing = 'offline';
+        await invalidateAllServerReachabilitySupervisors();
+        await flushHookEffects({ cycles: 8, turns: 2 });
         expect(storage.getState().endpointStatus).toBe('offline');
+        network.httpRequests.length = 0;
+        authPing = 'ready';
 
-        publishConnectionState({
-            phase: 'online',
-            reason: null,
-            attempt: 2,
-            nextRetryAt: null,
-            lastConnectedAt: Date.now(),
-            lastDisconnectedAt: Date.now() - 1000,
-            lastErrorMessage: null,
-        });
-        await new Promise<void>((resolve) => queueMicrotask(resolve));
+        await invalidateAllServerReachabilitySupervisors();
+        await flushHookEffects({ cycles: 8, turns: 2 });
 
         expect(storage.getState().endpointStatus).toBe('online');
-        expect(resumeSpy).toHaveBeenCalledWith('server-reachable');
+        expect(resume).toHaveBeenCalledWith('server-reachable');
+        const recovered = resume.mock.calls.findIndex(([reason]) => reason === 'server-reachable');
+        await resume.mock.results[recovered]?.value;
+        expect(network.httpRequests.map(({ url }) => new URL(url).pathname)).toContain('/v2/changes');
     });
 
     it('starts a token-only plaintext account without constructing account encryption material', async () => {
-        vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
+        const { Encryption } = await import('@/sync/encryption/encryption');
+        const createEncryption = vi.spyOn(Encryption, 'create');
+        const { getTrackingAnonymousUserId } = await import('@/track');
+        const { sync } = await import('./sync');
 
-        upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
-
-        const { sync, syncCreate, syncSwitchServer } = await import('./sync');
-        const credentials: AuthCredentials = {
-            token: buildTokenWithSub('plain-account'),
-        };
-
-        await TokenStorage.setCredentials(credentials);
-        await syncSwitchServer(null);
-
-        const createPromise = syncCreate(credentials);
-        await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 2_500 });
-        await createPromise;
+        await finishInitialCreate();
 
         expect(sync.encryption).toBeNull();
-        expect(trackMocks.initializeTracking).not.toHaveBeenCalled();
-        expect(apiSocket.initialize).toHaveBeenLastCalledWith(
-            expect.objectContaining({ token: credentials.token }),
-            null,
-        );
+        expect(createEncryption).not.toHaveBeenCalled();
+        expect(getTrackingAnonymousUserId()).toBeNull();
+        expect(sync.getCredentials()).toEqual({ token: home.token });
+        expect(network.socketBoundaries.some(({ token }) => token === home.token)).toBe(true);
+        expect(network.httpRequests.some(({ url, token }) => new URL(url).pathname === '/v1/account/encryption/currentness' && token === `Bearer ${home.token}`)).toBe(true);
     });
 });

@@ -1,4 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import React from 'react';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import type { RenderScreenResult } from '@/dev/testkit/render/renderScreen';
 import { act } from 'react-test-renderer';
 import { renderHook, standardCleanup } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -2311,40 +2318,6 @@ describe('sync.sendMessage optimistic thinking', () => {
         ]);
     });
 
-    it('removes the direct-send local pending row when the server rejects the message', async () => {
-        const sessionId = 's_pending_rejected';
-        storage.getState().applySessions([createSession({ sessionId, metadata: { version: '0.0.9' } as Session['metadata'] })]);
-
-        const encryption = await Encryption.create(new Uint8Array(32).fill(9));
-        await encryption.initializeSessions(new Map([[sessionId, null]]));
-
-        const rawRecord = {
-            role: 'user',
-            content: { type: 'text', text: 'hello' },
-            meta: {},
-        } as const;
-
-
-        vi.spyOn(apiSocket, 'request').mockResolvedValue(Response.json(
-            { error: 'rejected' },
-            { status: 409 },
-        ));
-        const emitWithAck = vi.fn();
-
-        const { sync } = await import('./sync');
-        sync.encryption = encryption;
-        sync.setMessageTransport({
-            emitWithAck,
-            send: vi.fn(),
-        });
-
-        await expect(sync.sendMessage(sessionId, 'hello', undefined, rawRecord.meta, { localId: 'p-reject' })).rejects.toThrow('rejected');
-
-        expect(emitWithAck).toHaveBeenCalledWith('message', expect.objectContaining({ localId: 'p-reject', messageRole: 'user' }), expect.anything());
-        expect(storage.getState().sessionPending[sessionId]?.messages ?? []).toEqual([]);
-        expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).toBeNull();
-    });
-
     it('keeps and retries a server-pending enqueue when the pending POST fails from transient connectivity', async () => {
         const { deleteServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
         const featureServerId = getActiveServerSnapshot().serverId;
@@ -2441,138 +2414,6 @@ describe('sync.sendMessage optimistic thinking', () => {
         } finally {
             deleteServerFeaturesSnapshot({ serverId: featureServerId });
             vi.unstubAllGlobals();
-            vi.useRealTimers();
-        }
-    });
-
-    it('removes only the retried local pending row when retry discovers terminal auth', async () => {
-        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
-        try {
-            const sessionId = 's_pending_retry_auth';
-            storage.getState().applySessions([createSession({ sessionId, metadata: { version: '0.0.9' } as Session['metadata'] })]);
-
-            const encryption = await Encryption.create(new Uint8Array(32).fill(9));
-            await encryption.initializeSessions(new Map([[sessionId, null]]));
-
-            const retryRawRecord = {
-                role: 'user',
-                content: { type: 'text', text: 'retry me' },
-                meta: {},
-            } as const;
-            const persistedRawRecord = {
-                role: 'user',
-                content: { type: 'text', text: 'keep me' },
-                meta: {},
-            } as const;
-
-            storage.getState().upsertPendingMessage(sessionId, {
-                id: 'p-persisted',
-                localId: 'p-persisted',
-                createdAt: 222,
-                updatedAt: 222,
-                text: 'keep me',
-                rawRecord: persistedRawRecord,
-            });
-
-            const emitWithAck = vi.fn()
-                .mockRejectedValueOnce(new HappyError('Authentication required', false, {
-                    kind: 'auth',
-                    code: 'not_authenticated',
-                    status: 401,
-                }));
-
-            const { sync } = await import('./sync');
-            sync.encryption = encryption;
-            sync.setMessageTransport({
-                emitWithAck: emitWithAck as any,
-                send: vi.fn(),
-            });
-
-            await sync.sendMessage(sessionId, 'retry me', undefined, retryRawRecord.meta, { localId: 'p-retry-auth' });
-            storage.getState().markSessionOptimisticThinking(sessionId);
-
-            await vi.advanceTimersByTimeAsync(1_000);
-            await flushPendingOutboxRetryMicrotasks();
-
-            expect(emitWithAck).toHaveBeenCalledTimes(1);
-            expect(emitWithAck.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
-                localId: 'p-retry-auth',
-                messageRole: 'user',
-            }));
-            expect((sync as any).pendingMessageCommitRetryTimers.has(`${sessionId}:p-retry-auth`)).toBe(false);
-            expect(storage.getState().sessionPending[sessionId]?.messages.map((message) => message.id)).toEqual(['p-persisted']);
-            expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).toBeNull();
-            expect(storage.getState().syncError).toMatchObject({
-                kind: 'auth',
-                retryable: false,
-                message: 'Authentication required',
-            });
-        } finally {
-            vi.useRealTimers();
-        }
-    });
-
-    it('forces endpoint auth convergence before retrying a pending local row again', async () => {
-        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
-        try {
-            const sessionId = 's_pending_retry_auth_probe';
-            storage.getState().applySessions([createSession({ sessionId, metadata: { version: '0.0.9' } as Session['metadata'] })]);
-
-            const encryption = await Encryption.create(new Uint8Array(32).fill(9));
-            await encryption.initializeSessions(new Map([[sessionId, null]]));
-
-            const retryRawRecord = {
-                role: 'user',
-                content: { type: 'text', text: 'retry me' },
-                meta: {},
-            } as const;
-            const persistedRawRecord = {
-                role: 'user',
-                content: { type: 'text', text: 'keep me' },
-                meta: {},
-            } as const;
-
-            storage.getState().upsertPendingMessage(sessionId, {
-                id: 'p-persisted',
-                localId: 'p-persisted',
-                createdAt: 222,
-                updatedAt: 222,
-                text: 'keep me',
-                rawRecord: persistedRawRecord,
-            });
-
-            const supervisor = createAuthProbeEndpointSupervisor();
-            const endpointSupervisorPool = await import('@/sync/runtime/connectivity/endpointSupervisorPool');
-            vi.spyOn(endpointSupervisorPool, 'getEndpointSupervisorForServer')
-                .mockReturnValue(supervisor);
-
-            const emitWithAck = vi.fn()
-                .mockRejectedValueOnce(new Error('operation has timed out'));
-
-            const { sync } = await import('./sync');
-            sync.encryption = encryption;
-            sync.setMessageTransport({
-                emitWithAck: emitWithAck as any,
-                send: vi.fn(),
-            });
-
-            await sync.sendMessage(sessionId, 'retry me', undefined, retryRawRecord.meta, { localId: 'p-retry-auth-probe' });
-            storage.getState().markSessionOptimisticThinking(sessionId);
-
-            await vi.advanceTimersByTimeAsync(1_000);
-            await flushPendingOutboxRetryMicrotasks();
-
-            expect(emitWithAck).toHaveBeenCalledTimes(1);
-            expect(supervisor.invalidate).toHaveBeenCalledTimes(1);
-            expect((sync as any).pendingMessageCommitRetryTimers.has(`${sessionId}:p-retry-auth-probe`)).toBe(false);
-            expect(storage.getState().sessionPending[sessionId]?.messages.map((message) => message.id)).toEqual(['p-persisted']);
-            expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).toBeNull();
-            expect(storage.getState().syncError).toMatchObject({
-                kind: 'auth',
-                retryable: false,
-                message: 'Authentication required',
-            });
-        } finally {
             vi.useRealTimers();
         }
     });
@@ -3706,5 +3547,186 @@ describe('sync.sendMessage optimistic thinking', () => {
         await sync.sendMessage(sessionId, 'hello');
 
         expect(publish).not.toHaveBeenCalled();
+    });
+});
+
+/**
+ * These deciding rejection/auth cases exercise real Account, readiness and Sync owners.
+ * The older unrelated direct-Sync family above remains a separately scoped harness migration.
+ */
+const accountTransport = vi.hoisted(() => ({ enabled: false, ack: vi.fn(), emitted: vi.fn() }));
+installDisconnectedServerSocketBoundary((socket) => {
+    socket.connected = accountTransport.enabled;
+    vi.spyOn(socket, 'timeout').mockReturnValue(socket);
+    vi.spyOn(socket, 'emit').mockImplementation((event: string, ...args: unknown[]) => {
+        accountTransport.emitted(event, ...args);
+        return socket;
+    });
+    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event: string, payload: unknown) =>
+        accountTransport.ack(event, payload));
+});
+
+describe('sync.sendMessage rejection and auth through the applied Account', () => {
+    let restored: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+    let authScreen: RenderScreenResult | undefined;
+    let webLocks: ReturnType<typeof installWebLockManagerMock>;
+    let state: typeof storage;
+    let runtime: typeof import('./syncEngine')['sync'];
+    let authDenied: boolean;
+    let authProbeStatuses: number[];
+
+    const request = async (url: RequestInfo | URL): Promise<Response> => {
+        const path = new URL(String(url)).pathname;
+        if (path === '/health') return Response.json({});
+        if (path === '/v1/auth/ping') {
+            const status = authDenied ? 401 : 200;
+            authProbeStatuses.push(status);
+            return Response.json({}, { status });
+        }
+        if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+        if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+        if (path === '/v1/account/encryption/currentness') return Response.json({
+            mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null,
+            updatedAt: 1, recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' },
+        });
+        if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
+        if (path === '/v2/cursor') return Response.json({ cursor: 0, changesFloor: 0 });
+        return Response.json({ error: 'not_found' }, { status: 404 });
+    };
+
+    beforeEach(async () => {
+        // Keep the untouched legacy family isolated; none of its internal fakes can
+        // participate in the deciding Account/HTTP/Socket corridor below.
+        vi.restoreAllMocks();
+        vi.resetModules();
+        vi.doUnmock('@/sync/runtime/orchestration/connectionManager');
+        vi.doUnmock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch');
+        vi.doUnmock('@/sync/ops');
+        vi.doUnmock('@/agents/catalog/registryCore');
+        vi.doUnmock('@/voice/context/voiceHooks');
+        vi.doUnmock('@/log');
+        vi.doUnmock('@/track');
+        webLocks = installWebLockManagerMock();
+        vi.stubGlobal('indexedDB', new IDBFactory());
+        accountTransport.enabled = true;
+        accountTransport.ack.mockReset();
+        accountTransport.emitted.mockReset();
+        authDenied = false;
+        authProbeStatuses = [];
+        await loadSyncSingletonForTests();
+        state = (await import('./domains/state/storage')).storage;
+        restored = await restoreServerAccountForTest({
+            serverUrl: 'https://optimistic-account.example.test',
+            accountId: 'sync-test-account',
+            request,
+        });
+        // The readiness adapter, including authenticated probes, remains real.
+        (await import('@/utils/system/runtimeFetch')).setRuntimeFetch(request);
+        runtime = (await import('./syncEngine')).sync;
+        const { AuthProvider } = await import('@/auth/context/AuthContext');
+        const { renderScreen } = await import('@/dev/testkit/render/renderScreen');
+        authScreen = await renderScreen(React.createElement(AuthProvider, {
+            initialCredentials: restored.credentials, children: null,
+        }));
+    });
+
+    afterEach(async () => {
+        vi.useRealTimers();
+        await authScreen?.unmount();
+        authScreen = undefined;
+        await restored?.dispose();
+        restored = undefined;
+        accountTransport.enabled = false;
+        webLocks.restore();
+        vi.restoreAllMocks();
+        vi.unstubAllGlobals();
+    });
+
+    function installSession(sessionId: string): void {
+        state.getState().applySessions([createSessionFixture({
+            id: sessionId, serverId: restored!.home.id, active: true,
+            metadata: { path: '/repo', host: 'test-host', version: '0.0.9' },
+        })]);
+    }
+
+    function retainUnrelatedPending(sessionId: string): void {
+        state.getState().upsertPendingMessage(sessionId, {
+            id: 'p-persisted', localId: 'p-persisted', createdAt: 222, updatedAt: 222,
+            text: 'keep me',
+            rawRecord: { role: 'user', content: { type: 'text', text: 'keep me' }, meta: {} },
+        });
+    }
+
+    it('removes the direct-send local pending row when the server rejects the message', async () => {
+        const sessionId = 's_pending_rejected';
+        installSession(sessionId);
+        accountTransport.ack.mockResolvedValue({ ok: false, error: 'rejected' });
+
+        await expect(runtime.sendMessage(sessionId, 'hello', undefined, {}, { localId: 'p-reject' }))
+            .rejects.toThrow('rejected');
+
+        expect(accountTransport.ack).toHaveBeenCalledWith('message', expect.objectContaining({
+            localId: 'p-reject', messageRole: 'user',
+            message: { t: 'plain', v: expect.objectContaining({ content: { type: 'text', text: 'hello' } }) },
+        }));
+        expect(state.getState().sessionPending[sessionId]?.messages ?? []).toEqual([]);
+        expect(state.getState().sessions[sessionId].optimisticThinkingAt ?? null).toBeNull();
+    });
+
+    it('removes only the retried local pending row when retry discovers terminal auth', async () => {
+        const sessionId = 's_pending_retry_auth';
+        installSession(sessionId);
+        retainUnrelatedPending(sessionId);
+        accountTransport.ack.mockResolvedValue(null);
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+
+        await expect(runtime.sendMessage(sessionId, 'retry me', undefined, {}, { localId: 'p-retry-auth' }))
+            .resolves.toEqual({ localId: 'p-retry-auth', persistence: 'pending' });
+        state.getState().markSessionOptimisticThinking(sessionId);
+        authDenied = true;
+        const { getEndpointSupervisorForServer } = await import('@/sync/runtime/connectivity/endpointSupervisorPool');
+        const supervisor = getEndpointSupervisorForServer({
+            serverId: restored!.home.id, serverUrl: 'https://optimistic-account.example.test',
+        });
+        expect(supervisor).not.toBeNull();
+        supervisor!.invalidate();
+        await vi.waitFor(() => expect(supervisor!.getState().phase).toBe('auth_failed'));
+        await vi.advanceTimersByTimeAsync(1_000);
+        await flushPendingOutboxRetryMicrotasks();
+
+        expect(accountTransport.ack).toHaveBeenCalledTimes(1);
+        expect(authProbeStatuses).toContain(401);
+        expect(state.getState().sessionPending[sessionId]?.messages.map((message) => message.id)).toEqual(['p-persisted']);
+        expect(state.getState().sessions[sessionId].optimisticThinkingAt ?? null).toBeNull();
+        expect(state.getState().syncError).toMatchObject({ kind: 'auth', retryable: false });
+        expect((runtime as unknown as { pendingMessageCommitRetryTimers: Map<string, unknown> })
+            .pendingMessageCommitRetryTimers.has(`${sessionId}:p-retry-auth`)).toBe(false);
+    });
+
+    it('forces endpoint auth convergence before retrying a pending local row again', async () => {
+        const sessionId = 's_pending_retry_auth_probe';
+        installSession(sessionId);
+        retainUnrelatedPending(sessionId);
+        accountTransport.ack.mockResolvedValueOnce(null)
+            .mockRejectedValueOnce(createSocketIoAckTimeoutError());
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+
+        await expect(runtime.sendMessage(sessionId, 'retry me', undefined, {}, { localId: 'p-retry-auth-probe' }))
+            .resolves.toEqual({ localId: 'p-retry-auth-probe', persistence: 'pending' });
+        state.getState().markSessionOptimisticThinking(sessionId);
+        authDenied = true;
+        await vi.advanceTimersByTimeAsync(1_000);
+        await flushPendingOutboxRetryMicrotasks();
+
+        expect(accountTransport.ack).toHaveBeenCalledTimes(2);
+        expect(accountTransport.ack.mock.calls[1]?.[1]).toEqual(expect.objectContaining({
+            localId: 'p-retry-auth-probe', sentFrom: 'retry', messageRole: 'user',
+        }));
+        expect(authProbeStatuses).toContain(401);
+        expect(state.getState().sessionPending[sessionId]?.messages.map((message) => message.id)).toEqual(['p-persisted']);
+        expect(state.getState().sessions[sessionId].optimisticThinkingAt ?? null).toBeNull();
+        expect(state.getState().syncError).toMatchObject({ kind: 'auth', retryable: false });
+        expect((runtime as unknown as { pendingMessageCommitRetryTimers: Map<string, unknown> })
+            .pendingMessageCommitRetryTimers.has(`${sessionId}:p-retry-auth-probe`)).toBe(false);
     });
 });

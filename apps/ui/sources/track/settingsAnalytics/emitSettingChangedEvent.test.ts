@@ -121,6 +121,7 @@ describe('emitAccountSettingChangedEvents', () => {
             previousSettings: settingsDefaults,
             nextSettings: {
                 ...settingsDefaults,
+                newSessionDefaultPersistenceModeV1: 'direct',
                 newSessionDefaultPersistenceModeByTargetKeyV1: {
                     [configuredTargetKey]: 'direct',
                 },
@@ -136,6 +137,17 @@ describe('emitAccountSettingChangedEvents', () => {
                 identity_scope: 'person',
                 source: 'ui',
                 prev_value: null,
+                next_value: 'direct',
+            }),
+        );
+        expect(mocks.tracking.capture).toHaveBeenCalledWith(
+            'setting_changed',
+            expect.objectContaining({
+                setting_key: 'newSessionDefaultPersistenceModeV1',
+                scope: 'account_setting',
+                identity_scope: 'person',
+                source: 'ui',
+                prev_value: 'persisted',
                 next_value: 'direct',
             }),
         );

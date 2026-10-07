@@ -84,6 +84,8 @@ export async function prepareStandaloneVoicePolicyHarness() {
 export async function createStandaloneVoicePolicyHarness(params: Readonly<{
     mode: 'off' | 'immediate' | 'on_first_turn';
     dispatch: (method: string, input: unknown) => Promise<unknown>;
+    existingSession?: Parameters<typeof createSessionFixture>[0];
+    initializeSessionId?: string;
 }>) {
     dispatch = params.dispatch;
     await prepareStandaloneVoicePolicyHarness();
@@ -95,7 +97,8 @@ export async function createStandaloneVoicePolicyHarness(params: Readonly<{
     const { DaemonVoiceAgentClient } = await import('@/voice/agent/daemonVoiceAgentClient');
     const { createVoiceWelcomePolicy } = await import('@/voice/runtime/execution/voiceWelcomePolicy');
     let session = createSessionFixture({ id: 'voice-parent', active: true,
-        metadata: { path: '/voice', host: 'voice.test', flavor: 'claude', agentRuntimeCapabilitiesV1: { localControl: { supported: true } } } });
+        metadata: { path: '/voice', host: 'voice.test', flavor: 'claude', agentRuntimeCapabilitiesV1: { localControl: { supported: true } } },
+        ...params.existingSession });
     let wireSession = SessionCurrentProjectionRecordV1Schema.parse({
         ...session, metadataLayoutVersion: 0, metadata: JSON.stringify(session.metadata),
         effectiveAccess: { v: 1, level: session.access!.level, sources: [{ kind: 'owner' }], capabilities: session.access!.capabilities },
@@ -138,7 +141,7 @@ export async function createStandaloneVoicePolicyHarness(params: Readonly<{
     storage.setState({ sessions: { [session.id]: session }, sessionListRowsByServerId: { [connection.home.id]: { [session.id]: session } },
         ordinarySessionListMembershipByServerId: { [connection.home.id]: [session.id] },
         sessionListIndexByServerId: { [connection.home.id]: [{ type: 'session', sessionId: session.id, serverId: connection.home.id, serverName: 'Voice' }] } });
-    const initialize = () => initializeVoiceAgentHandle({ sessionId: session.id,
+    const initialize = () => initializeVoiceAgentHandle({ sessionId: params.initializeSessionId ?? session.id,
         getDaemonVoiceAgentClient: (scope) => new DaemonVoiceAgentClient(scope), setDeferredTargetSessionContext: () => {} });
     const handle = await initialize().catch(async (error: unknown) => {
         await connection.dispose();

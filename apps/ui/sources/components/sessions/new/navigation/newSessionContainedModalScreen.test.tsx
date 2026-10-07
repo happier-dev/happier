@@ -21,9 +21,13 @@ vi.mock('react-native', async () => {
     });
 });
 
-vi.mock('@react-navigation/native', () => ({
-    useIsFocused: () => navigationMock.isFocused,
-}));
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return {
+        ...createReactNavigationNativeMock(),
+        useIsFocused: () => navigationMock.isFocused,
+    };
+});
 
 vi.mock('@/components/ui/popover', () => ({
     PopoverScope: ({ children }: React.PropsWithChildren<Record<string, never>>) =>
@@ -61,11 +65,14 @@ describe('newSessionContainedModalScreen helpers', () => {
 
     it('scopes children with the shared popover and modal providers', async () => {
         const { NewSessionScreenPortalScope } = await import('./newSessionContainedModalScreen');
+        const { NavigationContext } = await import('@react-navigation/native');
+        // SDK boundary fixture: this owner reads only navigator presence, not its methods.
+        const navigation = {} as React.ContextType<typeof NavigationContext>;
 
         const screen = await renderScreen(
-            <NewSessionScreenPortalScope>
+            <NavigationContext.Provider value={navigation}><NewSessionScreenPortalScope>
                 {React.createElement('Child')}
-            </NewSessionScreenPortalScope>,
+            </NewSessionScreenPortalScope></NavigationContext.Provider>,
         );
 
         expect(screen.findAllByType('PopoverScope' as any)).toHaveLength(1);
@@ -77,11 +84,14 @@ describe('newSessionContainedModalScreen helpers', () => {
         navigationMock.isFocused = false;
 
         const { NewSessionScreenPortalScope } = await import('./newSessionContainedModalScreen');
+        const { NavigationContext } = await import('@react-navigation/native');
+        // SDK boundary fixture: this owner reads only navigator presence, not its methods.
+        const navigation = {} as React.ContextType<typeof NavigationContext>;
 
         const screen = await renderScreen(
-            <NewSessionScreenPortalScope>
+            <NavigationContext.Provider value={navigation}><NewSessionScreenPortalScope>
                 {React.createElement('Child')}
-            </NewSessionScreenPortalScope>,
+            </NewSessionScreenPortalScope></NavigationContext.Provider>,
         );
 
         expect(screen.findByType('ModalProvider' as any).props.active).toBe(false);

@@ -1,30 +1,23 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
-const fixture = vi.hoisted(() => ({
-    cache: null as unknown,
-    lifetime: null as unknown,
-}));
+import { installPluginArtifactCacheBoundary } from '@/dev/testkit/harness/pluginArtifactCacheHarness';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { computePluginUiArtifactFileSetSha256DigestV1, computePluginUiArtifactSha256DigestV1 } from '@happier-dev/protocol/plugins/ui';
 
-vi.mock('@/components/plugins/reactNative/bundleCache', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/components/plugins/reactNative/bundleCache')>();
-    return {
-        ...actual,
-        getInstalledPluginNativeArtifactResources: () => null,
-        getInstalledPluginReactNativeBundleCache: () => (
-            fixture.cache ?? actual.getInstalledPluginReactNativeBundleCache()
-        ),
-    };
-});
-
-vi.mock('@/sync/domains/scope/activeServerAccountScope', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/scope/activeServerAccountScope')>();
-    return {
-        ...actual,
-        captureActiveServerAccountScopeLifetime: () => fixture.lifetime,
-    };
-});
+const persistence = installPluginArtifactCacheBoundary();
+afterAll(() => persistence.dispose());
+const harness = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(harness);
+installDisconnectedServerSocketBoundary();
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
+const { getInstalledPluginReactNativeBundleCache } = await import('@/components/plugins/reactNative/bundleCache');
+const cache = getInstalledPluginReactNativeBundleCache();
+const { createBrowserPluginUiPersistentArtifactStore } = await import('@/sync/domains/plugins/ui/artifactByteCache.browser');
+const physicalStore = createBrowserPluginUiPersistentArtifactStore(persistence.caches);
 
 import { PluginProjectionV2Schema } from '@happier-dev/protocol';
 
@@ -34,11 +27,11 @@ import {
     savePluginUiProjectionAdmissionSnapshot,
 } from '@/sync/domains/plugins/ui/projectionWarmCache';
 
-import {
+const {
     clearPluginAccountAvailabilityProjection,
     forgetPluginAccountAvailabilityArtifacts,
     replacePluginAccountAvailabilityProjection,
-} from './projection';
+} = await import('./projection');
 import type { PluginAccountAvailabilitySnapshot } from './reader';
 
 const scope: ServerAccountScope = Object.freeze({ serverId: 'server-a', accountId: 'account-a' });
@@ -50,80 +43,58 @@ const emptySnapshot: PluginAccountAvailabilitySnapshot = Object.freeze({
     snapshots: Object.freeze([]),
 });
 
-function createCacheFixture() {
-    const removePersistentArtifactsForAccount = vi.fn(async () => undefined);
-    const removePersistentArtifact = vi.fn(async () => undefined);
-    let retire: (() => void) | null = null;
-    const cache = {
-        bindAccountLifetime: vi.fn((lifetime: Readonly<{
-            scope: ServerAccountScope;
-            isCurrent: () => boolean;
-            onRetire: (cancel: () => void) => Readonly<{ dispose: () => void }>;
-        }>) => {
-            lifetime.onRetire(() => {
-                // The cache owner's own retirement path: it evicts and retires
-                // reachability. It deliberately does not delete bytes.
-            });
-        }),
-        removePersistentArtifact,
-        removePersistentArtifactsForAccount,
-    };
-    return {
-        cache,
-        removePersistentArtifactsForAccount,
-        retireAccountLifetime: () => retire?.(),
-        setRetire: (fn: () => void) => { retire = fn; },
-    };
-}
-
-function createLifetimeFixture(cacheFixture: ReturnType<typeof createCacheFixture>) {
-    let current = true;
-    return Object.freeze({
-        scope,
-        isCurrent: () => current,
-        onRetire: (cancel: () => void) => {
-            cacheFixture.setRetire(() => {
-                current = false;
-                cancel();
-            });
-            return Object.freeze({ dispose: () => {} });
-        },
-    });
+async function seedArtifact() {
+    const bytes = new TextEncoder().encode('// retained Account artifact');
+    const persistentIdentity = { accountScope: scope, artifactDigest: computePluginUiArtifactFileSetSha256DigestV1([{ relativePath: 'entry.js', bytes }]) };
+    expect(await cache.writePersistentArtifact({ persistentIdentity, bytes, entryRelativePath: 'entry.js', files: [{ relativePath: 'entry.js', digest: computePluginUiArtifactSha256DigestV1(bytes), byteSize: bytes.byteLength, bytes }] })).toBe(true);
+    return { persistentIdentity, bytes };
 }
 
 describe('Account artifact-byte lifecycle', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
         clearPluginAccountAvailabilityProjection();
-        fixture.cache = null;
-        fixture.lifetime = null;
+        persistence.reset();
+        await harness.reset();
+        await loadSyncSingletonForTests();
+        await harness.addHome({ name: 'Account artifact custody', serverUrl: 'https://artifact-lifecycle.test', serverIdentityId: scope.serverId, accountId: scope.accountId });
+        connection = await restoreServerAccountForTest({ serverUrl: 'https://artifact-lifecycle.test', accountId: scope.accountId });
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { profileDefaults } = await import('@/sync/domains/profiles/profile');
+        storage.setState({ profileScope: scope, settingsScope: scope, profile: { ...profileDefaults, id: scope.accountId }, isDataReady: true });
+        replacePluginAccountAvailabilityProjection({ scope, snapshot: emptySnapshot });
     });
 
-    it('retires an Account switch without deleting its bytes and deletes them only when the Account is forgotten', () => {
-        const cacheFixture = createCacheFixture();
-        fixture.cache = cacheFixture.cache;
-        fixture.lifetime = createLifetimeFixture(cacheFixture);
+    afterEach(async () => {
+        persistence.rejectDeletes(false);
+        await cache.removePersistentArtifactsForAccount(scope);
+        await connection?.dispose();
+        connection = null;
+        clearPluginAccountAvailabilityProjection();
+        await harness.reset();
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.setState(storage.getInitialState(), true);
+    });
 
-        replacePluginAccountAvailabilityProjection({ scope, snapshot: emptySnapshot });
-        expect(cacheFixture.cache.bindAccountLifetime).toHaveBeenCalledTimes(1);
+    it('retires an Account switch without deleting its bytes and deletes them only when the Account is forgotten', async () => {
+        const artifact = await seedArtifact();
+        expect(cache.isAccountCurrent(scope)).toBe(true);
 
         // Account switch / deactivation: reachability retires immediately and
         // the Account-qualified bytes stay inert so returning to the same
         // Account does not force a full re-download.
-        cacheFixture.retireAccountLifetime();
+        await connection?.dispose();
         clearPluginAccountAvailabilityProjection();
-        expect(cacheFixture.removePersistentArtifactsForAccount).not.toHaveBeenCalled();
+        expect(cache.isAccountCurrent(scope)).toBe(false);
+        await expect(cache.readPersistentArtifact(artifact.persistentIdentity)).resolves.toBeNull();
+        await expect(physicalStore.read(artifact.persistentIdentity)).resolves.toMatchObject({ bytes: artifact.bytes });
 
         // Logout / forget Account / explicit clear: the same bytes are deleted.
         forgetPluginAccountAvailabilityArtifacts(scope);
-        expect(cacheFixture.removePersistentArtifactsForAccount).toHaveBeenCalledTimes(1);
-        expect(cacheFixture.removePersistentArtifactsForAccount).toHaveBeenCalledWith(scope);
+        await waitForHomeGovernance(async () => expect(await physicalStore.read(artifact.persistentIdentity)).toBeNull());
     });
 
     it('keeps the retained admission snapshot across a switch and drops it when the Account is forgotten', async () => {
         await prepareWarmCacheEncryptionKey();
-        const cacheFixture = createCacheFixture();
-        fixture.cache = cacheFixture.cache;
-        fixture.lifetime = createLifetimeFixture(cacheFixture);
         const target = { targetKey: 'server-a:machine-a', machineId: 'machine-a' } as const;
         savePluginUiProjectionAdmissionSnapshot({
             scope,
@@ -138,6 +109,7 @@ describe('Account artifact-byte lifecycle', () => {
                             'translations:acme.preview': {
                                 id: 'translations:acme.preview',
                                 pluginId: 'acme.preview',
+                                occurrenceId: 'preview-occurrence',
                                 contributionKind: 'translations',
                                 locales: ['en'],
                                 bundles: { en: { title: 'Retained' } },
@@ -150,7 +122,7 @@ describe('Account artifact-byte lifecycle', () => {
         expect(readPluginUiProjectionAdmissionSnapshot({ scope, ...target })).not.toBeNull();
 
         // Account switch / deactivation retires reachability only.
-        cacheFixture.retireAccountLifetime();
+        await connection?.dispose();
         clearPluginAccountAvailabilityProjection();
         expect(readPluginUiProjectionAdmissionSnapshot({ scope, ...target })).not.toBeNull();
 
@@ -159,15 +131,13 @@ describe('Account artifact-byte lifecycle', () => {
     });
 
     it('does not let a failed Account deletion escape the cache owner', async () => {
-        const cacheFixture = createCacheFixture();
-        cacheFixture.removePersistentArtifactsForAccount.mockRejectedValueOnce(
-            new Error('cache_delete_failed'),
-        );
-        fixture.cache = cacheFixture.cache;
-        fixture.lifetime = createLifetimeFixture(cacheFixture);
+        const artifact = await seedArtifact();
+        persistence.rejectDeletes(true);
 
         expect(() => forgetPluginAccountAvailabilityArtifacts(scope)).not.toThrow();
-        await Promise.resolve();
-        expect(cacheFixture.removePersistentArtifactsForAccount).toHaveBeenCalledWith(scope);
+        await waitForHomeGovernance(() => expect(persistence.deletionAttempts).toBeGreaterThan(0));
+        // Failed physical deletion leaves bytes in the SDK, but the real
+        // custody quarantine must make those forgotten bytes unreadable.
+        await expect(cache.readPersistentArtifact(artifact.persistentIdentity)).resolves.toBeNull();
     });
 });

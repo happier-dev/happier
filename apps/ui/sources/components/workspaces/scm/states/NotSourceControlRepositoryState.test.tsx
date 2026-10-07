@@ -41,7 +41,7 @@ describe('NotSourceControlRepositoryState', () => {
             onRefresh,
         }));
 
-        await screen.pressByTestIdAsync('scm-repository-init');
+        await screen.pressByTestIdAsync('scm-not-repository-action');
 
         expect(modalState.confirm).toHaveBeenCalledTimes(1);
         expect(onInitializeRepository).toHaveBeenCalledTimes(1);
@@ -56,6 +56,6 @@ describe('NotSourceControlRepositoryState', () => {
             onRefresh: vi.fn(),
         }));
 
-        expect(screen.findByTestId('scm-repository-init')).toBeNull();
+        expect(screen.findByTestId('scm-not-repository-action')).toBeNull();
     });
 });

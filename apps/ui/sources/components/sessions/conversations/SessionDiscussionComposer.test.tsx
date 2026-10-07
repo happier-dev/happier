@@ -11,7 +11,7 @@ import type { ComposerStructuredInputMention } from '@/components/sessions/agent
 
 import { SessionDiscussionComposer, type SessionDiscussionComposerValue } from './SessionDiscussionComposer';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 /**
  * The discussion composer is the one composer (`AgentInput`) hosting the human-discussion adapter:
@@ -140,7 +140,8 @@ describe('SessionDiscussionComposer (the one composer with the discussion adapte
         expect(composer().sessionId).toBeUndefined();
         // An empty draft stays editable; Send's emptiness is the composer's own decision.
         expect(composer().disabled).toBe(false);
-        expect(composer().inputAccessibilityLabel).toBe('Write a message…');
+        expect(composer().inputAccessibilityLabel).toBeTruthy();
+        expect(composer().inputAccessibilityLabel).toBe(composer().placeholder);
         expect(typeof composer().onSend).toBe('function');
     });
 

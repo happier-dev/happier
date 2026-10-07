@@ -1,186 +1,85 @@
 import * as React from 'react';
-import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { tryWriteServerEnabledBitInPlace, type HomeQrInviteV2 } from '@happier-dev/protocol';
+
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { buildHomeQrInviteDeepLink } from '@/auth/pairing/pairingUrl';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { initializeTerminalRouteRuntimeForTests } from '@/__tests__/routes/(app)/terminal/terminalRouteTestHelpers';
+import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
+import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
+import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { installRestoreScanComputerQrViewCommonModuleMocks } from './restoreScanComputerQrViewTestHelpers';
+import { RestoreScanComputerQrView } from './RestoreScanComputerQrView';
 
-type ReactActEnvironmentGlobal = typeof globalThis & {
-    IS_REACT_ACT_ENVIRONMENT?: boolean;
-    __DEV__?: boolean;
-};
-(globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
-(globalThis as ReactActEnvironmentGlobal).__DEV__ = true;
-type ExpoGlobalShim = NonNullable<typeof globalThis.expo>;
-const expoShim = {
-    EventEmitter: class {} as unknown as ExpoGlobalShim['EventEmitter'],
-    SharedRef: class {} as unknown as ExpoGlobalShim['SharedRef'],
-    SharedObject: class {} as unknown as ExpoGlobalShim['SharedObject'],
-    NativeModule: class {} as unknown as ExpoGlobalShim['NativeModule'],
-    modules: {} as ExpoGlobalShim['modules'],
-} satisfies Partial<ExpoGlobalShim>;
-(globalThis as typeof globalThis & { expo: ExpoGlobalShim }).expo = expoShim as ExpoGlobalShim;
-process.env.EXPO_OS = 'web';
-
-vi.mock('@/dev/reactNativeStub', async () => await import('../../../dev/reactNativeStub'));
-vi.mock('@/dev/testkit/mocks/reactNative', async () => await import('../../../dev/testkit/mocks/reactNative'));
-vi.mock('@/dev/testkit/mocks/router', async () => await import('../../../dev/testkit/mocks/router'));
-vi.mock('@/dev/testkit/mocks/modal', async () => await import('../../../dev/testkit/mocks/modal'));
-vi.mock('@/dev/testkit/mocks/text', async () => await import('../../../dev/testkit/mocks/text'));
-vi.mock('@/dev/testkit/mocks/unistyles', async () => await import('../../../dev/testkit/mocks/unistyles'));
-vi.mock('@/theme', async () => await import('../../../theme'));
-
+const modalAlertAsyncSpy = vi.hoisted(() => vi.fn(async () => {}));
 installRestoreScanComputerQrViewCommonModuleMocks({
-    modal: async () => {
-        const { createModalModuleMock } = await import('../../../dev/testkit/mocks/modal');
-        return createModalModuleMock({
-            spies: {
-                alertAsync: modalAlertAsyncSpy,
-                prompt: vi.fn(async () => null),
-            },
-        }).module;
-    },
-    unistyles: async () => {
-        const { createUnistylesMock } = await import('../../../dev/testkit/mocks/unistyles');
-        return createUnistylesMock({
-            theme: {
-                colors: {
-                    surface: '#fff',
-                    text: '#000',
-                    textSecondary: '#666',
-                    divider: '#ddd',
-                    overlay: {
-                        scrim: 'rgba(0,0,0,0.3)',
-                        scrimStrong: 'rgba(0,0,0,0.55)',
-                        text: '#fff',
-                        textSecondary: 'rgba(255,255,255,0.85)',
-                    },
-                },
-            },
-        });
-    },
+    modal: async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
+        spies: { alertAsync: modalAlertAsyncSpy },
+    }).module,
 });
+// Only camera permission/preview and device identification cross native SDKs.
+vi.mock('expo-camera', () => ({ CameraView: 'CameraView', useCameraPermissions: () => [
+    { granted: false, canAskAgain: false }, async () => ({ granted: false, canAskAgain: false }),
+] }));
+vi.mock('expo-device', () => ({ isDevice: false }));
+vi.mock('expo-constants', () => ({ default: { deviceName: undefined } }));
+vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
-vi.mock('@/hooks/server/useFeatureDecision', () => ({
-    useFeatureDecision: () => ({ state: 'enabled' }),
-}));
-
-vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
-    probeServerFeaturesAtUrl: async () => ({
-        status: 'ready',
-        serverIdentityId: 'srv_test',
-        features: {
-            features: {
-                auth: { pairing: { desktopQrMobileScan: { enabled: true }, boundQrV2: { enabled: true } } },
-            },
-            homeConnectionDescriptor: {
-                v: 1,
-                homeServerIdentityId: 'srv_test',
-                canonicalServerUrl: 'https://stack.example.test',
-                revision: 1,
-                endpoints: [{ kind: 'https', url: 'https://stack.example.test' }],
-            },
-        },
-    }),
-}));
-
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ login: vi.fn(async () => {}), refreshFromActiveServer: vi.fn(async () => {}) }),
-}));
-
-const modalAlertAsyncSpy = vi.fn(async () => {});
-
-vi.mock('expo-constants', () => ({
-    default: {
-        deviceName: undefined,
-    },
-}));
-
-vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    getActiveServerUrl: () => 'https://stack.example.test',
-}));
-
-vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
-    normalizeServerUrl: (s: string) => s,
-    upsertActivateAndSwitchServer: vi.fn(async () => {}),
-}));
-
-vi.mock('@/sync/domains/server/url/serverUrlOverridePolicy', () => ({
-    resolveEffectiveServerUrlOverride: () => null,
-}));
-
-vi.mock('@/sync/domains/server/url/serverUrlClassification', () => ({
-    isLoopbackServerUrl: () => false,
-}));
-
-vi.mock('@/auth/pairing/pairingUrl', () => ({
-    classifyLegacyPairingDeepLink: () => null,
-    parseHomeQrInviteDeepLink: () => ({
-        invite: {
-            v: 2,
-            intent: 'home_device',
-            direction: 'trusted_home_displays',
-            pairId: 'pair_123',
-            home: {
-                v: 1,
-                homeServerIdentityId: 'srv_test',
-                canonicalServerUrl: 'https://stack.example.test',
-                revision: 1,
-                endpoints: [{ kind: 'https', url: 'https://stack.example.test' }],
-            },
-            qrSecretBase64Url: 'BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc',
-            issuedAtMs: Date.now() - 1_000,
-            expiresAtMs: Date.now() + 60_000,
-        },
-    }),
-}));
-
-vi.mock('@/sync/api/account/apiPairingAuth', () => ({
-    pairingConsume: vi.fn(async () => ({ ok: true })),
-    pairingRequest: vi.fn(async () => ({ ok: false, reason: 'already_requested', status: 401 })),
-}));
-
-vi.mock('@/auth/flows/qrStart', () => ({
-    generateAuthKeyPair: () => ({ publicKey: new Uint8Array(32).fill(1), secretKey: new Uint8Array(32).fill(2) }),
-    authQRStart: vi.fn(async () => ({ ok: true })),
-}));
-
-vi.mock('@/auth/flows/qrWait', () => ({
-    authQRWait: vi.fn(async () => null),
-}));
-
-let lastScannerProps: any = null;
-vi.mock('@/components/qr/QrCodeScannerView', () => ({
-    QrCodeScannerView: (props: any) => {
-        lastScannerProps = props;
-        return React.createElement('QrCodeScannerView', props);
-    },
-}));
+await initializeTerminalRouteRuntimeForTests();
+afterEach(async () => { await standardCleanup(); resetServerFeaturesClientForTests(); });
 
 describe('RestoreScanComputerQrView (already requested)', () => {
     it('renders precise retry guidance when the pairing session already has a requested device', async () => {
-        vi.resetModules();
+        const targetUrl = 'https://stack.example.test';
+        const invite = {
+            v: 2, intent: 'home_device', direction: 'trusted_home_displays', pairId: 'pair_123',
+            home: { v: 1, homeServerIdentityId: 'srv_test', canonicalServerUrl: targetUrl, revision: 1,
+                endpoints: [{ kind: 'https', url: targetUrl }] },
+            qrSecretBase64Url: 'BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc',
+            issuedAtMs: Date.now() - 1_000, expiresAtMs: Date.now() + 60_000,
+        } satisfies HomeQrInviteV2;
+        const pairingRequests: Array<{ origin: string; init?: RequestInit }> = [];
+        setRuntimeFetch(async (input, init) => {
+            const url = new URL(String(input));
+            if (url.pathname === '/v1/features') {
+                const isTarget = url.origin === targetUrl;
+                const features = createRootLayoutFeaturesResponse({
+                    capabilities: { serverIdentity: { serverIdentityId: isTarget ? 'srv_test' : 'srv_retained' },
+                        server: { canonicalServerUrl: url.origin } },
+                    ...(isTarget ? { homeConnectionDescriptor: invite.home } : {}),
+                });
+                if (!tryWriteServerEnabledBitInPlace(features, 'auth.pairing.boundQrV2', true)) throw new Error('Expected canonical pairing feature');
+                return Response.json(features);
+            }
+            if (url.origin === targetUrl && url.pathname === '/v2/auth/account/request') return Response.json({});
+            if (url.origin === targetUrl && url.pathname === '/v1/auth/pairing/request') {
+                pairingRequests.push({ origin: url.origin, init });
+                return Response.json({ error: 'already_requested' }, { status: 409 });
+            }
+            return new Response('{}', { status: 404 });
+        });
+        const home = await upsertAndActivateServer({ serverUrl: 'https://retained-restore.example.test', source: 'manual', scope: 'device' });
+        expect((await getServerFeaturesSnapshot({ serverId: home.id, force: true })).status).toBe('ready');
+        const focusBefore = getActiveServerSnapshot();
         modalAlertAsyncSpy.mockClear();
-        lastScannerProps = null;
+        const screen = await renderScreen(<InjectedAuthProvider credentials={null}>
+            <RestoreScanComputerQrView entryIntent="add_home" initialPairingLink={buildHomeQrInviteDeepLink({ invite })} />
+        </InjectedAuthProvider>);
 
-        const { RestoreScanComputerQrView } = await import('./RestoreScanComputerQrView');
-
-        let tree!: ReactTestRenderer;
-        try {
-            await act(async () => {
-                tree = create(<RestoreScanComputerQrView entryIntent="add_home" />);
-            });
-            expect(typeof lastScannerProps?.onScan).toBe('function');
-
-            await act(async () => {
-                await lastScannerProps.onScan('happier:///pair?v=2&data=canonical-v2-fixture');
-            });
-
-            expect(modalAlertAsyncSpy).not.toHaveBeenCalled();
-            expect(tree.root.findAllByProps({ testID: 'restore-enrollment-retry' })).toHaveLength(1);
-            expect(tree.root.findAll((node) => node.children.includes('connect.pairingAlreadyRequestedBody'))).not.toHaveLength(0);
-        } finally {
-            act(() => {
-                tree.unmount();
-            });
-        }
+        await vi.waitFor(() => expect(screen.findByTestId('restore-enrollment-retry')).not.toBeNull());
+        expect(screen.getTextContent()).toContain('connect.pairingAlreadyRequestedBody');
+        expect(modalAlertAsyncSpy).not.toHaveBeenCalled();
+        expect(pairingRequests).toHaveLength(1);
+        expect(pairingRequests[0]?.origin).toBe(targetUrl);
+        expect(new Headers(pairingRequests[0]?.init?.headers).has('Authorization')).toBe(false);
+        expect(JSON.parse(String(pairingRequests[0]?.init?.body))).toMatchObject({
+            pairId: invite.pairId, homeServerIdentityId: invite.home.homeServerIdentityId,
+            expiresAtMs: invite.expiresAtMs, publicKey: expect.any(String), bindingProof: expect.any(String),
+        });
+        expect(getActiveServerSnapshot()).toEqual(focusBefore);
+        expect(listServerProfiles().some(profile => profile.serverUrl === targetUrl)).toBe(false);
     });
 });

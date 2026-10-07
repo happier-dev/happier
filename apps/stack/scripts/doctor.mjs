@@ -245,12 +245,13 @@ async function main() {
         '--target=mac-host', '--', 'node', 'apps/stack/scripts/ghops_credential_broker.mjs', '--status',
       ], { env: { ...process.env, HAPPIER_EXEC_CONFIG_PATH: path } });
       if (result.exitCode === 0) broker = JSON.parse(result.out);
-      else broker = { health: { ok: false }, status: 'unavailable', fixCommand: GHOPS_BROKER_FIX_COMMAND };
+      else broker = { health: { ok: false }, status: 'unavailable' };
+      broker.fixCommand = `./apps/stack/bin/hstack-exec --target=mac-host -- ${GHOPS_BROKER_FIX_COMMAND}`;
     }
   }
   if (broker) {
     report.checks.executionHostGhopsBroker = { ...broker, ok: broker.health.ok };
-    if (!json) console.log(`${broker.health.ok ? green('✓') : red('x')} execution-host ghops broker: ${broker.status ?? `installed=${broker.installed}, loaded=${broker.launchAgent.loaded}, socket-live=${broker.socketLive}`} → ${cmd(broker.fixCommand)} (on Mac)`);
+    if (!json) console.log(`${broker.health.ok ? green('✓') : red('x')} execution-host ghops broker: ${broker.status ?? `installed=${broker.installed}, loaded=${broker.launchAgent.loaded}, socket-live=${broker.socketLive}`} → ${cmd(broker.fixCommand)} (from the 0.3 checkout)`);
   }
   if (!(await pathExists(cliDir))) {
     report.checks.cliDir = { ok: false, missing: cliDir };

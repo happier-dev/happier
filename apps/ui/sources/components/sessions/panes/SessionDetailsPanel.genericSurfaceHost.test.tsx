@@ -1,94 +1,31 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-
+import { act } from 'react-test-renderer';
+import { describe, expect, it } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
-
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+import { installSessionPaneRuntimeTestHarness } from './sessionPaneRuntimeTestHarness';
 
 installSessionDetailsPanelCommonModuleMocks();
-
-const detailsSurfaceHostSpy = vi.hoisted(() => vi.fn((props: unknown) => React.createElement('DetailsSurfaceHostMock', { props })));
-
-vi.mock('@/components/appShell/panes/details/surfaces', () => ({
-    DetailsSurfaceHost: (props: unknown) => detailsSurfaceHostSpy(props),
-    createDetailsSurfacePaneCallbacks: (callbacks: unknown) => callbacks,
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-    TextInput: 'TextInput',
-}));
-
-vi.mock('@/constants/Typography', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/constants/Typography')>();
-    return {
-        ...actual,
-        Typography: {
-            ...actual.Typography,
-            default: () => ({}),
-        },
-    };
-});
-
-vi.mock('@/components/sessions/terminal/SessionEmbeddedTerminalPane', () => ({
-    SessionEmbeddedTerminalPane: () => React.createElement('SessionEmbeddedTerminalPane'),
-}));
-
-vi.mock('./SessionDetailsPanelDetailViews', () => ({
-    SessionCommitDetailsViewForPanel: () => React.createElement('SessionCommitDetailsViewForPanel'),
-    SessionFileDetailsViewForPanel: () => React.createElement('SessionFileDetailsViewForPanel'),
-    SessionScmReviewDetailsViewForPanel: () => React.createElement('SessionScmReviewDetailsViewForPanel'),
-    SessionScmStashDetailsViewForPanel: () => React.createElement('SessionScmStashDetailsViewForPanel'),
-    SessionSubagentDetailsViewForPanel: () => React.createElement('SessionSubagentDetailsViewForPanel'),
-}));
-
-vi.mock('@/agents/registry/sessionSubagentUiBehavior', () => ({
-    renderProviderSessionDetailsTab: () => null,
-    resolveProviderSessionDetailsTabIconName: () => null,
-}));
-
-vi.mock('./registry/sessionSurfaces', () => ({
-    renderSessionSurfaceTab: () => null,
-    resolveSessionSurfaceTabIconName: () => null,
-}));
-
-vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
-    useAppPaneScope: () => ({
-        closeDetails: vi.fn(),
-        closeDetailsTab: vi.fn(),
-        pinDetailsTab: vi.fn(),
-        setActiveDetailsTab: vi.fn(),
-        scopeState: {
-            details: {
-                isOpen: true,
-                activeTabKey: 'terminal:term-1',
-                tabs: [
-                    {
-                        key: 'terminal:term-1',
-                        kind: 'terminal',
-                        title: 'Terminal',
-                        isPinned: true,
-                        isPreview: false,
-                        resource: { kind: 'terminal', terminalInstanceId: 'term-1' },
-                    },
-                ],
-            },
-        },
-    }),
-}));
+const runtime = installSessionPaneRuntimeTestHarness();
 
 describe('SessionDetailsPanel generic details surface host adapter', () => {
-    it('routes session detail tabs through the app-shell details surface host', async () => {
+    it('routes scoped tabs through the shared host and visibly rejects an unsupported resource', async () => {
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
-        detailsSurfaceHostSpy.mockClear();
-
-        await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
-
-        expect(detailsSurfaceHostSpy).toHaveBeenCalledWith(expect.objectContaining({
-            scope: expect.objectContaining({ kind: 'session', sessionId: 's1' }),
-            region: 'details',
-            tab: expect.objectContaining({ key: 'terminal:term-1' }),
-        }));
+        const { DetailsSurfaceHost } = await import('@/components/appShell/panes/details/surfaces');
+        const screen = await renderScreen(<runtime.Wrapper>
+            <SessionDetailsPanel sessionId="s1" routeServerId={runtime.serverId} scopeId="session:s1" />
+        </runtime.Wrapper>);
+        await act(async () => runtime.pane.openDetailsTab({
+            key: 'unsupported:one', kind: 'unsupported', title: 'Unsupported surface',
+            resource: { kind: 'unsupported' },
+        }, { intent: 'pinned' }));
+        const hosts = screen.tree.findAllByType(DetailsSurfaceHost);
+        expect(hosts).toHaveLength(1);
+        expect(hosts[0].props).toMatchObject({
+            scope: { kind: 'session', sessionId: 's1', serverId: runtime.serverId },
+            region: 'details', tab: { key: 'unsupported:one' },
+        });
+        expect(screen.findHostByTestId('details-surface-fallback-unsupported')).not.toBeNull();
+        expect(screen.findHostByTestId('details-surface-fallback-pending')).toBeNull();
     });
 });

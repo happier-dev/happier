@@ -116,7 +116,7 @@ test('install.ps1 runs payload promotion from a runner outside the extracted pay
   assert.ok(helper, 'expected Invoke-InstallerPayloadPromotionWithTimeout to exist');
   assert.match(
     helper[0],
-    /\$runnerBinaryPath\s*=\s*Join-Path\s+\$env:TEMP\s+"happier-payload-promotion-\$runToken\.exe"/i,
+    /\$runnerBinaryPath\s*=\s*Join-Path\s+\$InstallerTempDir\s+"happier-payload-promotion-\$runToken\.exe"/i,
     'expected installer to allocate a temporary promotion runner outside the extracted payload root',
   );
   assert.match(
@@ -136,9 +136,20 @@ test('install.ps1 runs payload promotion from a runner outside the extracted pay
   );
   assert.match(
     helper[0],
-    /Remove-Item\s+-Path\s+\$runnerBinaryPath\s+-Force\s+-ErrorAction\s+SilentlyContinue/i,
+    /Remove-InstallerTemporaryFiles\s+-Paths\s+@\(\$runnerBinaryPath,/i,
     'expected temporary promotion runner cleanup',
   );
+});
+
+test('install.ps1 keeps temporary files out of short-name provider cleanup', async () => {
+  const raw = await readInstallerSource(join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1'));
+  assert.doesNotMatch(raw, /Join-Path\s+\$env:TEMP\b/i);
+  assert.match(raw, /\$InstallerTempDir\s*=\s*\(Get-Item\s+-LiteralPath\s+\(\[System\.IO\.Path\]::GetTempPath\(\)\)\)\.FullName/i);
+  for (const name of ['Invoke-InstallerCommandWithDaemonServiceContextCapturingOutputWithTimeout', 'Invoke-InstallerPayloadPromotionWithTimeout']) {
+    const body = raw.match(new RegExp(`function ${name}\\s*\\{[\\s\\S]*?\\n\\}(?=\\n\\nfunction )`))[0];
+    assert.doesNotMatch(body, /Remove-Item\s+-Path\s+\$(?:runnerBinaryPath|runnerScriptPath|stdoutPath|stderrPath)/i);
+    assert.match(body, /Remove-InstallerTemporaryFiles\s+-Paths/);
+  }
 });
 
 for (const runnerTempName of ['runner-temp', 'runner temp', 'Reporter long profile.HEC']) {
@@ -152,6 +163,18 @@ test(`install.ps1 runs lock hygiene and promotes from ${runnerTempName} under ${
     'Resolve-InstallerPayloadPromotionTimeoutMs',
     'Resolve-InstallerPowerShellExecutablePath',
     'Stop-InstallerProcessTree',
+    'Remove-InstallerTemporaryFiles',
+    'Invoke-NativeCommandCapturingOutput',
+    'Invoke-InstallerCommandWithDaemonServiceContext',
+    'Test-DoctorRepairPreflightLooksLikePlainDoctorReport',
+    'Test-DoctorRepairPreflightJsonIsSupported',
+    'Test-InstallerCommandLooksUnsupported',
+    'Get-InstalledBackgroundServiceInventory',
+    'Test-BackgroundServiceInventoryHasDefaultFollowing',
+    'Get-InstallerDisplayChannelLabel',
+    'Get-BackgroundServiceDefaultFollowingChannel',
+    'Test-BackgroundServiceInventoryHasMatchingDefaultFollowing',
+    'Resolve-ExistingBackgroundServiceInstallStrategy',
     'Invoke-InstallerCommandWithDaemonServiceContextCapturingOutputWithTimeout',
     'Invoke-InstallerPayloadPromotionWithTimeout',
   ].map((name) => {
@@ -176,13 +199,26 @@ using System;
 using System.IO;
 class Fixture {
   static int Main(string[] args) {
+    if (args.Length > 0 && args[0] == "doctor") {
+      if (Environment.GetEnvironmentVariable("HAPPIER_TEST_LEGACY_INVENTORY") == "1") {
+        Console.Error.WriteLine("unknown command");
+        return 1;
+      }
+      Console.WriteLine(Environment.GetEnvironmentVariable("HAPPIER_TEST_INVENTORY_JSON"));
+      return 0;
+    }
+    if (args.Length > 1 && args[0] == "service" && args[1] == "list") {
+      Console.WriteLine(Environment.GetEnvironmentVariable("HAPPIER_TEST_INVENTORY_JSON"));
+      return 0;
+    }
     if (args.Length > 0 && (args[0] == "service" || args[0] == "daemon")) {
       Console.WriteLine(String.Join(" ", args));
       Console.WriteLine(Environment.GetEnvironmentVariable("HAPPIER_HOME_DIR"));
-      return 0;
+      return Environment.GetEnvironmentVariable("HAPPIER_TEST_HYGIENE_FAIL") == "1" ? 19 : 0;
     }
     if (args.Length < 2 || args[0] != "self" || args[1] != "__install-payload") return 3;
     Console.WriteLine("promotion-ready");
+    if (Environment.GetEnvironmentVariable("HAPPIER_TEST_PROMOTION_FAIL") == "1") return 17;
     int payloadIndex = Array.IndexOf(args, "--payload-root");
     if (payloadIndex < 0 || payloadIndex + 1 >= args.Length) return 4;
     string payload = args[payloadIndex + 1];
@@ -201,15 +237,74 @@ class Fixture {
     "$ErrorActionPreference = 'Stop'",
     ...functions,
     "$Channel = 'stable'",
+    "$Noninteractive = '0'",
+    `$DaemonServiceStateHomeDir = ${quote(join(scratch, 'home'))}`,
     runnerTempName.endsWith('.HEC')
       ? `$env:TEMP = (New-Object -ComObject Scripting.FileSystemObject).GetFolder(${quote(runnerTemp)}).ShortPath`
       : `$env:TEMP = ${quote(runnerTemp)}`,
+    '$env:TMP = $env:TEMP',
+    raw.match(/^\$InstallerTempDir\s*=.*$/m)[0],
+    `$expectedRunnerTemp = (Get-Item -LiteralPath ${quote(runnerTemp)}).FullName`,
+    `if ($InstallerTempDir.TrimEnd('\\') -ne $expectedRunnerTemp.TrimEnd('\\')) { throw ('Installer did not resolve the long temporary directory: expected ' + $expectedRunnerTemp + ', got ' + $InstallerTempDir) }`,
+    // FileSystem-provider enumeration is the OS boundary that fails on the
+    // reporter's Insider build. Keep all other filesystem/process logic real.
+    `function Remove-Item {
+      param($Path, [switch] $Force, $ErrorAction)
+      if ($Path -like '*happier-pre-install-*' -or $Path -like '*happier-payload-promotion-*') {
+        throw (New-Object System.Management.Automation.PSArgumentException 'Short-name enumeration failed')
+      }
+      Microsoft.PowerShell.Management\\Remove-Item @PSBoundParameters
+    }`,
     '$env:HAPPIER_HOME_DIR = "prior-home"',
     `foreach ($command in @(@('service', 'stop', '--json'), @('daemon', 'stop', '--all', '--kill-sessions', '--json'))) {
       $stopped = Invoke-InstallerCommandWithDaemonServiceContextCapturingOutputWithTimeout -CliPath ${quote(binary)} -CommandArgs $command -HomeDir ${quote(join(scratch, 'home'))} -TimeoutMs 30000
       if ($stopped.ExitCode -ne 0 -or $stopped.TimedOut -or -not $stopped.Output.Contains(($command -join ' ')) -or -not $stopped.Output.Contains(${quote(join(scratch, 'home'))})) { throw ('Lock hygiene failed: ' + ($stopped | ConvertTo-Json -Compress)) }
       if ($env:HAPPIER_HOME_DIR -ne 'prior-home') { throw 'Lock hygiene did not restore the caller home' }
+      $env:HAPPIER_TEST_HYGIENE_FAIL = '1'
+      try {
+        $failedStop = Invoke-InstallerCommandWithDaemonServiceContextCapturingOutputWithTimeout -CliPath ${quote(binary)} -CommandArgs $command -HomeDir ${quote(join(scratch, 'home'))} -TimeoutMs 30000
+        if ($failedStop.ExitCode -ne 19 -or $failedStop.TimedOut -or -not $failedStop.Output.Contains(($command -join ' '))) { throw ('Failed lock hygiene result was not preserved: ' + ($failedStop | ConvertTo-Json -Compress)) }
+        if ($env:HAPPIER_HOME_DIR -ne 'prior-home') { throw 'Failed lock hygiene did not restore the caller home' }
+      } finally { $env:HAPPIER_TEST_HYGIENE_FAIL = '0' }
     }`,
+    '$lockedPath = Join-Path $InstallerTempDir "locked.log"',
+    '$locked = [IO.File]::Open($lockedPath, [IO.FileMode]::Create, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)',
+    `try {
+      $caught = $null
+      try {
+        try { throw 'promotion-exception-sentinel' }
+        finally { Remove-InstallerTemporaryFiles -Paths @($lockedPath, (Join-Path $InstallerTempDir "missing.log")) }
+      } catch { $caught = $_ }
+      if ($null -eq $caught -or $caught.Exception.Message -ne 'promotion-exception-sentinel') { throw ('Cleanup replaced the original exception: ' + $caught) }
+    } finally { $locked.Dispose() }`,
+    'Remove-InstallerTemporaryFiles -Paths @($lockedPath)',
+    `foreach ($legacy in @('0', '1')) {
+      $env:HAPPIER_TEST_LEGACY_INVENTORY = $legacy
+      foreach ($json in @('{"entries":[]}', '{"services":[]}', '{"entries":[],"services":[],"relays":[]}')) {
+        $env:HAPPIER_TEST_INVENTORY_JSON = $json
+        $inventory = Get-InstalledBackgroundServiceInventory -CliPath ${quote(binary)}
+        if (-not $inventory.Supported -or $inventory.Entries -isnot [object[]] -or $inventory.Entries.Count -ne 0 -or $inventory.Services -isnot [object[]] -or $inventory.Relays -isnot [object[]]) { throw 'Fresh inventory must contain empty arrays' }
+        if (Test-BackgroundServiceInventoryHasDefaultFollowing -Entries $inventory.Entries) { throw 'Empty inventory has no default' }
+        if ((Get-BackgroundServiceDefaultFollowingChannel -Entries $inventory.Entries) -ne '') { throw 'Empty inventory has no channel' }
+        if (Test-BackgroundServiceInventoryHasMatchingDefaultFollowing -Entries $inventory.Entries) { throw 'Empty inventory cannot match' }
+        if ((Resolve-ExistingBackgroundServiceInstallStrategy -Entries $inventory.Entries) -ne '') { throw 'Fresh install must not replace a service' }
+      }
+    }
+    $env:HAPPIER_TEST_LEGACY_INVENTORY = '0'
+    $env:HAPPIER_TEST_INVENTORY_JSON = '{"existingServices":[]}'
+    $inventory = Get-InstalledBackgroundServiceInventory -CliPath ${quote(binary)}
+    if (-not $inventory.Supported -or $inventory.Entries -isnot [object[]] -or $inventory.Services -isnot [object[]]) { throw 'Legacy doctor inventory must retain empty arrays' }
+    foreach ($key in @('entries', 'services', 'existingServices')) {
+      $env:HAPPIER_TEST_INVENTORY_JSON = '{"' + $key + '":[{"targetMode":"default-following","releaseChannel":"stable"}]}'
+      $inventory = Get-InstalledBackgroundServiceInventory -CliPath ${quote(binary)}
+      if ($inventory.Entries -isnot [object[]] -or $inventory.Entries.Count -ne 1 -or -not (Test-BackgroundServiceInventoryHasDefaultFollowing -Entries $inventory.Entries)) { throw 'Singleton inventory must retain its service' }
+      if ((Get-BackgroundServiceDefaultFollowingChannel -Entries $inventory.Entries) -ne 'stable') { throw 'Singleton inventory must retain its channel' }
+      if ((Resolve-ExistingBackgroundServiceInstallStrategy -Entries $inventory.Entries -DefaultFollowingMatchesSelectedReleaseChannel $true) -ne 'skip') { throw 'Matching inventory must preserve its service' }
+    }`,
+    '$env:HAPPIER_TEST_PROMOTION_FAIL = "1"',
+    `$failed = Invoke-InstallerPayloadPromotionWithTimeout -BinaryPath ${quote(binary)} -PayloadRoot ${quote(payload)} -Version '1.2.3' -ChannelValue 'dev' -InstallHomeDir ${quote(join(scratch, 'home'))}`,
+    'if ($failed.ExitCode -ne 17 -or $failed.TimedOut -or -not $failed.Output.Contains("promotion-ready")) { throw ("Failed promotion result was not preserved: " + ($failed | ConvertTo-Json -Compress)) }',
+    '$env:HAPPIER_TEST_PROMOTION_FAIL = "0"',
     `$result = Invoke-InstallerPayloadPromotionWithTimeout -BinaryPath ${quote(binary)} -PayloadRoot ${quote(payload)} -Version '1.2.3' -ChannelValue 'dev' -InstallHomeDir ${quote(join(scratch, 'home'))}`,
     '$result | ConvertTo-Json -Compress',
   ].join('\n'));

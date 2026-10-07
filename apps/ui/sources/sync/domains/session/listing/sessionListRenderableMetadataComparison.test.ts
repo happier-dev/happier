@@ -141,6 +141,7 @@ describe('sessionListRenderableMetadataComparison', () => {
             externalSessionV1: canonicalExternalSessionLink,
             externalAgentObservationV1: null,
             readStateV1: null,
+            sessionDirectoryV1: null,
             hiddenSystemSession: true,
             terminalControlServiceabilityV1: null,
         });

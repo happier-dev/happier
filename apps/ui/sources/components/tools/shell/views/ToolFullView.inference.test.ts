@@ -1,7 +1,7 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-    renderScreen,
+    renderWithSessionTranscriptSource as renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
@@ -79,6 +79,8 @@ vi.mock('../permissions/PermissionFooter', () => ({
     PermissionFooter: () => null,
 }));
 
+const { ToolFullView } = await import('./ToolFullView');
+
 describe('ToolFullView (inference + view selection)', () => {
     afterEach(() => {
         standardCleanup();
@@ -88,7 +90,6 @@ describe('ToolFullView (inference + view selection)', () => {
         renderedFullViewSpy.mockReset();
         renderedViewSpy.mockReset();
         getToolViewComponentSpy.mockClear();
-        const { ToolFullView } = await import('./ToolFullView');
 
         const tool = makeToolCall({
             name: 'Run echo hello',
@@ -100,6 +101,7 @@ describe('ToolFullView (inference + view selection)', () => {
         const screen = await renderScreen(React.createElement(ToolFullView, {
             tool,
             owningMessageId: 'tool-message-1',
+            sessionId: 's1',
             metadata: null,
             messages: [],
         }));
@@ -114,7 +116,6 @@ describe('ToolFullView (inference + view selection)', () => {
         renderedFullViewSpy.mockReset();
         renderedViewSpy.mockReset();
         getToolViewComponentSpy.mockClear();
-        const { ToolFullView } = await import('./ToolFullView');
 
         const tool = makeToolCall({
             name: 'Read',
@@ -125,6 +126,7 @@ describe('ToolFullView (inference + view selection)', () => {
         const screen = await renderScreen(React.createElement(ToolFullView, {
             tool,
             owningMessageId: 'tool-message-2',
+            sessionId: 's1',
             metadata: null,
             messages: [],
         }));

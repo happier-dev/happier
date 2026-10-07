@@ -106,7 +106,7 @@ describe('TranscriptEventRow', () => {
         }} /></AppSessionTranscriptSourceProvider>);
         expect(screen.findByTestId('worker-update:run_new')).not.toBeNull();
         expect(screen.findByTestId('worker-update-result')?.props.children).toBe('A regression needs attention.');
-        expect(screen.findByTestId('worker-update-engine')?.props.children.join('')).toContain('effective-model');
+        expect(screen.findByTestId('worker-update-engine')?.children.join('')).toContain('effective-model');
         expect(screen.findByTestId('worker-update-pointer')).toBeNull();
         expect(screen.getTextContent()).not.toContain('run_new');
         expect(screen.findByTestId('worker-update-truncated')).not.toBeNull();
@@ -298,7 +298,7 @@ describe('TranscriptEventRow', () => {
         const serialized = JSON.stringify(screen.tree.toJSON());
         expect(screen.findByProps({ testID: 'transcript-event-connected-service-account-switch' })).toBeTruthy();
         expect(screen.findByProps({ testID: 'session-event-connected-service-account-switch' })).toBeTruthy();
-        expect(serialized).toContain('Switched Codex group Happier from team@happier.dev to leeroy.brun@gmail.com');
+        expect(serialized).toContain('Switched ChatGPT group Happier from team@happier.dev to leeroy.brun@gmail.com');
         expect(serialized).not.toContain('from group');
         expect(serialized).not.toContain('to profile');
     });
@@ -529,8 +529,7 @@ describe('TranscriptEventRow', () => {
 
         const serialized = JSON.stringify(screen.tree.toJSON());
         expect(screen.findByProps({ testID: 'transcript-event-connected-service-account-switch-attempt' })).toBeTruthy();
-        expect(serialized).toContain('information-circle-outline');
-        expect(serialized).not.toContain('checkmark-circle-outline');
+        expect(screen.findByType('Icon').props.name).toBe('info');
         expect(serialized).toContain(t('connectedServices.authSwitch.status.appliesOnNextResume'));
     });
 
@@ -561,7 +560,7 @@ describe('TranscriptEventRow', () => {
 
         const serialized = JSON.stringify(screen.tree.toJSON());
         expect(screen.findByProps({ testID: 'transcript-event-connected-service-runtime-auth-recovery' })).toBeTruthy();
-        expect(serialized).toContain('time-outline');
+        expect(screen.findByType('Icon').props.name).toBe('clock');
         expect(serialized).toContain(t('connectedServices.diagnostics.status.recovery_retry_scheduled'));
         expect(serialized).not.toContain(t('message.unknownEvent'));
     });

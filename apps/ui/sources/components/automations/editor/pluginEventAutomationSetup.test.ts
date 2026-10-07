@@ -32,6 +32,23 @@ const SERVER_IDENTITY_ID = 'srv_account_a';
 const MATERIALIZATION_ID = 'github-materialization-a';
 const GENERATION = 17;
 
+// The daemon owns Action schemas; exercise the real schema reader below its RPC transport.
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
+    const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+    return {
+        machineRpcWithServerScope: async (request: Readonly<{
+            method: string;
+            payload: Readonly<{ qualifiedActionId: string }>;
+        }>) => {
+            const action = eligibleEvent().setupAction;
+            return request.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ
+                && request.payload.qualifiedActionId === action.id
+                ? { ok: true, inputSchema: action.inputSchema }
+                : { ok: false, code: 'plugin_action_schemas_unavailable' };
+        },
+    };
+});
+
 const ACCOUNT = {
     service: { pluginId: 'com.acme.accounts', localId: 'github' },
     accountId: 'account-a',
@@ -469,10 +486,12 @@ describe('Plugin Event Automation setup orchestration', () => {
                 repository: 'happier-dev/happier',
                 credentialRef: ACCOUNT,
             },
-            contributedAction: expect.objectContaining({
-                expectedOccurrenceId: 'github-occurrence-a',
-            }),
+            contributedAction: { machineId: MACHINE_ID, serverId: SERVER_ID },
         }));
+        expect(dispatch.mock.calls[0]?.[0]?.resolveContributedAction?.({
+            pluginId: PLUGIN_ID,
+            localId: SETUP_ACTION_LOCAL_ID,
+        })).toMatchObject({ occurrenceId: 'github-occurrence-a' });
     });
 
     it('rejects invalid or cancelled custom-surface input without dispatching the setup Action', async () => {
@@ -697,7 +716,6 @@ describe('Plugin Event Automation setup orchestration', () => {
             contributedAction: {
                 machineId: MACHINE_ID,
                 serverId: SERVER_ID,
-                expectedOccurrenceId: 'github-occurrence-a',
             },
         }));
         const dispatched = dispatch.mock.calls[0]?.[0];
@@ -706,7 +724,10 @@ describe('Plugin Event Automation setup orchestration', () => {
         expect(dispatched?.resolveContributedAction?.({
             pluginId: PLUGIN_ID,
             localId: SETUP_ACTION_LOCAL_ID,
-        })).toMatchObject({ execution: { target: 'daemon' } });
+        })).toMatchObject({
+            occurrenceId: 'github-occurrence-a',
+            execution: { target: 'daemon' },
+        });
 
         if (result.kind !== 'configured') throw new Error('expected configured Event setup');
         selectedOrigin = executionOrigin('github-materialization-b');

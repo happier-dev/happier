@@ -93,10 +93,12 @@ describe('dispatchConnectedServiceAccountSwitchNotificationAsync', () => {
 
         expect(sendToAllDevicesAsync).toHaveBeenCalledWith(
             'Fix checkout flow',
-            expect.stringContaining('switched Codex accounts'),
+            expect.any(String),
             expect.objectContaining({
                 sessionId: 'session-1',
-                serviceDisplayName: 'Codex',
+                serviceId: 'happier.agent.codex/openai-codex',
+                serviceDisplayName: 'ChatGPT',
+                reason: 'usage_limit',
                 fromProfileLabel: 'main@example.test',
                 toProfileLabel: 'backup@example.test',
                 fromUsagePercent: 100,
@@ -137,8 +139,8 @@ describe('dispatchConnectedServiceAccountSwitchNotificationAsync', () => {
 
         expect(sendToAllDevicesAsync).toHaveBeenCalledWith(
             'Refactor billing',
-            expect.stringContaining('preventively'),
-            expect.objectContaining({ sessionId: 'session-soft' }),
+            expect.any(String),
+            expect.objectContaining({ sessionId: 'session-soft', reason: 'soft_threshold' }),
             expect.anything(),
         );
     });

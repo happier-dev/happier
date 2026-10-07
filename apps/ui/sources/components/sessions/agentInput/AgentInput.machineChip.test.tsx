@@ -1,419 +1,120 @@
 import React from 'react';
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer from 'react-test-renderer';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ReactTestRendererJSON } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storageStore';
+import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
-
-
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const mockEnv = vi.hoisted(() => ({
     windowWidth: 800,
     agentInputChipDensity: 'labels' as 'auto' | 'labels' | 'icons',
     iconsRenderAsText: false,
 }));
-
-function collectText(node: any, out: string[] = []): string[] {
-    if (node === null || node === undefined) return out;
-    if (typeof node === 'string' || typeof node === 'number') {
-        out.push(String(node));
-        return out;
-    }
-    if (Array.isArray(node)) {
-        for (const item of node) collectText(item, out);
-        return out;
-    }
-    if (typeof node === 'object') {
-        if (node.children) collectText(node.children, out);
-        return out;
-    }
-    return out;
-}
-
-function collectBadRawTextNodes(node: any, parentType: string | null = null, out: Array<{ parent: string | null; value: string }> = []) {
-    if (node === null || node === undefined) return out;
-    if (typeof node === 'string' || typeof node === 'number') {
-        const value = String(node);
-        if (parentType !== 'Text' && value.trim().length > 0) out.push({ parent: parentType, value });
-        return out;
-    }
-    if (Array.isArray(node)) {
-        for (const item of node) collectBadRawTextNodes(item, parentType, out);
-        return out;
-    }
-    if (typeof node === 'object') {
-        const nextParent = typeof node.type === 'string' ? node.type : parentType;
-        if (node.children) collectBadRawTextNodes(node.children, nextParent, out);
-        return out;
-    }
-    return out;
-}
-
 installAgentInputCommonModuleMocks({
-    icons: () => ({
-        Ionicons: (props: Record<string, unknown>) => (
-            mockEnv.iconsRenderAsText ? <>{'.'}</> : React.createElement('Ionicons', props, null)
-        ),
-        Octicons: (props: Record<string, unknown>) => (
-            mockEnv.iconsRenderAsText ? <>{'.'}</> : React.createElement('Octicons', props, null)
-        ),
-    }),
+    icons: async () => {
+        const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
+        const icons = createExpoVectorIconsMock();
+        return {
+            ...icons,
+            Ionicons: (props: Record<string, unknown>) => mockEnv.iconsRenderAsText
+                ? <>{'.'}</> : React.createElement(icons.Ionicons, props),
+            Octicons: (props: Record<string, unknown>) => mockEnv.iconsRenderAsText
+                ? <>{'.'}</> : React.createElement(icons.Octicons, props),
+        };
+    },
     reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                React.createElement('View', props, props.children),
-            Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                React.createElement('Text', props, props.children),
-            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                React.createElement('Pressable', props, props.children),
-            ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                React.createElement('ScrollView', props, props.children),
-            ActivityIndicator: (props: Record<string, unknown>) => React.createElement('ActivityIndicator', props, null),
-            Platform: {
-                OS: 'ios',
-                select: (v: any) => v.ios,
-            },
-            AppState: {
-                addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-            },
-            useWindowDimensions: () => ({ width: mockEnv.windowWidth, height: 600 }),
-            Dimensions: {
-                get: () => ({ width: mockEnv.windowWidth, height: 600, scale: 1, fontScale: 1 }),
-            },
-        });
-    },
-    text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({ translate: (key) => key });
-    },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            useSetting: (key: string) => {
-                if (key === 'profiles') return [];
-                if (key === 'agentInputEnterToSend') return true;
-                if (key === 'agentInputActionBarLayout') return 'wrap';
-                if (key === 'agentInputChipDensity') return mockEnv.agentInputChipDensity;
-                if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
-                return null;
-            },
-            useSettings: () => ({
-                profiles: [],
-                agentInputEnterToSend: true,
-                agentInputActionBarLayout: 'wrap',
-                agentInputChipDensity: mockEnv.agentInputChipDensity,
-                sessionPermissionModeApplyTiming: 'immediate',
-            }),
-            useSessionMessages: () => ({ messages: [], isLoaded: true }),
-            useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-            useSessionMessagesById: () => ({}),
-            useSessionMessagesVersion: () => 0,
-            useSessionMessagesReducerState: () => null,
+        const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeNativeMock({ platformOS: 'ios' }, {
+            useWindowDimensions: () => ({ width: mockEnv.windowWidth, height: 600, scale: 1, fontScale: 1 }),
         });
     },
 });
-
-vi.mock('expo-image', () => ({
-    Image: (props: Record<string, unknown>) => React.createElement('Image', props, null),
-}));
-
-vi.mock('@/components/tools/shell/permissions/PermissionFooter', () => ({
-    PermissionFooter: () => null,
-}));
-
-vi.mock('@/sync/domains/state/storageStore', () => {
-    const storage = Object.assign(
-        (selector?: (state: Record<string, unknown>) => unknown) => (
-            typeof selector === 'function'
-                ? selector({
-                    sessionMessages: {},
-                    localSettings: {
-                        uiContentWidthMode: 'default',
-                    },
-                })
-                : {
-                    sessionMessages: {},
-                    localSettings: {
-                        uiContentWidthMode: 'default',
-                    },
-                }
-        ),
-        {
-            getState: () => ({
-                sessionMessages: {},
-                localSettings: {
-                    uiContentWidthMode: 'default',
-                },
-            }),
-        },
-    );
-    return {
-        storage,
-        getStorage: () => storage,
-    };
+const runtime = installSessionPaneRuntimeTestHarness();
+let AgentInput: typeof import('./AgentInput')['AgentInput'];
+beforeEach(async () => {
+    ({ AgentInput } = await import('./AgentInput'));
+    mockEnv.windowWidth = 800;
+    mockEnv.agentInputChipDensity = 'labels';
+    mockEnv.iconsRenderAsText = false;
 });
 
-vi.mock('@/sync/store/hooks', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/store/hooks')>();
-    return {
-        ...actual,
-        useLocalSetting: () => 1,
-        useSessionServerId: () => null,
-    };
-});
+function collectBadRawTextNodes(
+    node: ReactTestRendererJSON | readonly ReactTestRendererJSON[] | string | number | null,
+    parentType: string | null = null,
+    out: Array<{ parent: string | null; value: string }> = [],
+): Array<{ parent: string | null; value: string }> {
+    if (node === null) return out;
+    if (typeof node === 'string' || typeof node === 'number') {
+        if (parentType !== 'Text' && String(node).trim()) out.push({ parent: parentType, value: String(node) });
+    } else if (Array.isArray(node)) {
+        for (const item of node) collectBadRawTextNodes(item, parentType, out);
+    } else if ('children' in node) {
+        for (const child of node.children ?? []) collectBadRawTextNodes(child, node.type, out);
+    }
+    return out;
+}
 
-vi.mock('@/agents/catalog/catalog', () => ({
-    getAgentIconSvgXml: () => null,
-    getAgentIconSource: () => null,
-    getAgentIconTintColor: () => undefined,
-    AGENT_IDS: ['codex', 'claude', 'opencode', 'gemini'],
-    DEFAULT_AGENT_ID: 'codex',
-    resolveAgentIdFromFlavor: () => null,
-    getAgentCore: () => ({ displayNameKey: 'agents.codex', toolRendering: { hideUnknownToolsByDefault: false } }),
-}));
-
-vi.mock('@/sync/domains/models/modelOptions', () => ({
-    findModelOptionForEffectiveModelId: (options: any, effectiveModelId: any) =>
-        options?.find?.((option: any) => option.value === effectiveModelId)
-            ?? options?.find?.((option: any) => option.value === String(effectiveModelId ?? '').replace(/\[[^\]]*\]$/u, ''))
-            ?? null,
-    getModelOptionsForSession: () => [{ value: 'default', label: 'Default' }],
-    supportsFreeformModelSelectionForSession: () => false,
-}));
-
-vi.mock('@/sync/domains/models/describeEffectiveModelMode', () => ({
-    describeEffectiveModelMode: () => ({ selectedModelId: 'default', appliedModelId: null, effectiveModelId: 'default' }),
-}));
-
-vi.mock('@/sync/domains/permissions/permissionModeOptions', () => ({
-    getPermissionModeBadgeLabelForAgentType: () => 'Default',
-    getPermissionModeLabelForAgentType: () => 'Default',
-    getPermissionModeOptionsForSession: () => [{ value: 'default', label: 'Default' }],
-    getPermissionModeTitleForAgentType: () => 'Permissions',
-}));
-
-vi.mock('@/sync/domains/permissions/describeEffectivePermissionMode', () => ({
-    describeEffectivePermissionMode: () => ({ effectiveMode: 'default' }),
-}));
-
-vi.mock('@/components/ui/forms/MultiTextInput', () => ({
-    MultiTextInput: (props: Record<string, unknown>) => React.createElement('MultiTextInput', props, null),
-}));
-
-vi.mock('@/components/ui/forms/Switch', () => ({
-    Switch: (props: Record<string, unknown>) => React.createElement('Switch', props, null),
-}));
-
-vi.mock('@/components/ui/theme/haptics', () => ({
-    hapticsLight: () => {},
-    hapticsError: () => {},
-}));
-
-vi.mock('@/components/ui/feedback/Shaker', () => ({
-    Shaker: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement(React.Fragment, null, props.children),
-}));
-
-vi.mock('@/components/ui/status/StatusDot', () => ({
-    StatusDot: () => null,
-}));
-
-vi.mock('@/components/autocomplete/useActiveSuggestions', () => ({
-    useActiveSuggestions: () => [[], 0, () => {}, () => {}],
-}));
-
-vi.mock('@/components/autocomplete/applySuggestion', () => ({
-    applySuggestion: (text: string) => ({ text, cursorPosition: text.length }),
-}));
-
-vi.mock('@/components/ui/popover', () => ({
-    Popover: () => null,
-    PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
-}));
-
-vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
-    FloatingOverlay: () => null,
-}));
-
-vi.mock('@/components/ui/scroll/useScrollEdgeFades', () => ({
-    useScrollEdgeFades: () => ({
-        canScrollX: false,
-        visibility: { left: false, right: false },
-        onViewportLayout: () => {},
-        onContentSizeChange: () => {},
-        onScroll: () => {},
-        onMomentumScrollEnd: () => {},
-    }),
-}));
-
-vi.mock('@/components/ui/scroll/ScrollEdgeFades', () => ({
-    ScrollEdgeFades: () => null,
-}));
-
-vi.mock('@/components/ui/scroll/ScrollEdgeIndicators', () => ({
-    ScrollEdgeIndicators: () => null,
-}));
-
-vi.mock('@/components/sessions/sourceControl/status', () => ({
-    SourceControlStatusBadge: () => null,
-    useHasMeaningfulScmStatus: () => false,
-}));
-
-vi.mock('@/components/sessions/pickers/OptionPickerOverlay', () => ({
-    OptionPickerOverlay: () => null,
-}));
-
-vi.mock('@/hooks/ui/useKeyboardHeight', () => ({
-    useKeyboardHeight: () => 0,
-}));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
-});
-
-vi.mock('@/sync/domains/sessionControl/sessionModeControl', () => ({
-    computeSessionModePickerControl: () => null,
-}));
-
-vi.mock('@/sync/domains/sessionControl/configOptionsControl', () => ({
-    computeSessionConfigOptionControls: () => null,
-}));
+async function mount(params: Partial<React.ComponentProps<typeof AgentInput>> = {}) {
+    storage.setState({ settings: {
+        ...storage.getState().settings,
+        agentInputEnterToSend: true,
+        agentInputActionBarLayout: 'wrap',
+        agentInputChipDensity: mockEnv.agentInputChipDensity,
+        sessionPermissionModeApplyTiming: 'immediate',
+    } });
+    return renderScreen(<AgentInput value="hello" placeholder="placeholder"
+        onChangeText={() => {}} onSend={() => {}} autocompleteKinds={[]}
+        autocompleteSuggestions={async () => []} {...params}
+    />, { wrapper: runtime.Wrapper });
+}
 
 describe('AgentInput (machine chip)', () => {
-    let AgentInput: (typeof import('./AgentInput'))['AgentInput'];
-    let tree: renderer.ReactTestRenderer | null = null;
-
-    beforeAll(async () => {
-        const imported = await import('./AgentInput');
-        AgentInput = imported.AgentInput;
-    }, 120_000);
-
-    beforeEach(() => {
-        mockEnv.windowWidth = 800;
-        mockEnv.agentInputChipDensity = 'labels';
-        mockEnv.iconsRenderAsText = false;
-    });
-
-    afterEach(() => {
-        standardCleanup();
-    });
-
     it('renders a select-machine label when machine is not yet selected', async () => {
-        tree = (await renderScreen(React.createElement(AgentInput, {
-                    value: 'hello',
-                    placeholder: 'placeholder',
-                    onChangeText: () => {},
-                    onSend: () => {},
-                    autocompleteKinds: [],
-                    autocompleteSuggestions: async () => [],
-                    onMachineClick: () => {},
-                    currentPath: '/tmp',
-                    onPathClick: () => {},
-                }))).tree;
-
-        const text = collectText(tree?.toJSON());
-        expect(text.join(' ')).toContain('newSession.selectMachineTitle');
+        const screen = await mount({ onMachineClick: () => {}, currentPath: '/tmp', onPathClick: () => {} });
+        expect(screen.getTextContent()).toContain('newSession.selectMachineTitle');
     });
 
     it('does not emit raw text nodes under non-Text parents when chip icons render as text', async () => {
+        // A native icon adapter may emit text: the chip must still provide a Text ancestor.
         mockEnv.iconsRenderAsText = true;
-
-        tree = (await renderScreen(React.createElement(AgentInput, {
-                    value: 'hello',
-                    placeholder: 'placeholder',
-                    onChangeText: () => {},
-                    onSend: () => {},
-                    onPermissionClick: () => {},
-                    agentType: 'codex',
-                    onAgentClick: () => {},
-                    machineName: 'Machine One',
-                    onMachineClick: () => {},
-                    currentPath: '/tmp/project',
-                    onPathClick: () => {},
-                    autocompleteKinds: [],
-                    autocompleteSuggestions: async () => [],
-                }))).tree;
-
-        const badNodes = collectBadRawTextNodes(tree?.toJSON());
-        expect(badNodes).toEqual([]);
+        const screen = await mount({ onPermissionClick: () => {}, agentType: 'codex', onAgentClick: () => {},
+            machineName: 'Machine One', onMachineClick: () => {}, currentPath: '/tmp/project', onPathClick: () => {} });
+        expect(collectBadRawTextNodes(screen.tree.toJSON())).toEqual([]);
     });
 
     it('shows labels on narrow screens when chip density is auto', async () => {
         mockEnv.windowWidth = 390;
         mockEnv.agentInputChipDensity = 'auto';
-        tree = (await renderScreen(React.createElement(AgentInput, {
-                    value: 'hello',
-                    placeholder: 'placeholder',
-                    onChangeText: () => {},
-                    onSend: () => {},
-                    autocompleteKinds: [],
-                    autocompleteSuggestions: async () => [],
-                    onMachineClick: () => {},
-                    currentPath: '/tmp',
-                    onPathClick: () => {},
-                }))).tree;
-
-        const text = collectText(tree?.toJSON());
-        expect(text.join(' ')).toContain('newSession.selectMachineTitle');
+        const screen = await mount({ onMachineClick: () => {}, currentPath: '/tmp', onPathClick: () => {} });
+        expect(screen.getTextContent()).toContain('newSession.selectMachineTitle');
     });
 
     it('keeps the full exact Machine name in both visible and accessible chip labels', async () => {
-        const fullMachineName = 'Mac Studio in the downstairs development rack';
-        const screen = await renderScreen(React.createElement(AgentInput, {
-            value: 'hello',
-            placeholder: 'placeholder',
-            onChangeText: () => {},
-            onSend: () => {},
-            autocompleteKinds: [],
-            autocompleteSuggestions: async () => [],
-            machineName: fullMachineName,
-            onMachineClick: () => {},
-        }));
-
+        const machineName = 'Mac Studio in the downstairs development rack';
+        const onMachineClick = vi.fn();
+        const screen = await mount({ machineName, onMachineClick });
         const machineChip = screen.findByTestId('agent-input-machine-chip');
-        expect(screen.getTextContent()).toContain(fullMachineName);
-        expect(machineChip?.props.accessibilityLabel).toContain(fullMachineName);
+        expect(screen.getTextContent()).toContain(machineName);
+        expect(machineChip?.props.accessibilityLabel).toContain(machineName);
+        await act(async () => { machineChip?.props.onPress(); });
+        expect(onMachineClick).toHaveBeenCalledTimes(1);
     });
 
     it('shows the folder as loading, never “Add folder”, while the path is not yet resolved (new-session bootstrap)', async () => {
-        const screen = await renderScreen(React.createElement(AgentInput, {
-                    value: 'hello',
-                    placeholder: 'placeholder',
-                    onChangeText: () => {},
-                    onSend: () => {},
-                    autocompleteKinds: [],
-                    autocompleteSuggestions: async () => [],
-                    onMachineClick: () => {},
-                    currentPath: '',
-                    onPathClick: () => {},
-                }));
-
-        // One folder chip in the layout, whichever row renders it.
+        const screen = await mount({ onMachineClick: () => {}, currentPath: '', onPathClick: () => {} });
         expect(screen.findAllHostsByTestId('agent-input-path-chip')).toHaveLength(1);
         expect(screen.findByTestId('agent-input-path-chip')?.props.accessibilityLabel).toBe('newSession.folder.a11y.loading');
         expect(screen.getTextContent()).not.toContain('newSession.folder.addFolder');
     });
 
     it('exposes a stable testID for the connection status text (UI e2e locator)', async () => {
-        const screen = await renderScreen(React.createElement(AgentInput, {
-                    value: '',
-                    placeholder: 'placeholder',
-                    onChangeText: () => {},
-                    onSend: () => {},
-                    autocompleteKinds: [],
-                    autocompleteSuggestions: async () => [],
-                    connectionStatus: {
-                        text: 'online',
-                        color: '#0a0',
-                        dotColor: '#0a0',
-                        isPulsing: false,
-                    },
-                }));
-
+        const screen = await mount({ value: '', connectionStatus: {
+            text: 'online', color: '#0a0', dotColor: '#0a0', isPulsing: false,
+        } });
         const connectionStatus = screen.findByTestId('agent-input-connection-status-text');
         expect(connectionStatus).toBeTruthy();
-        expect(collectText(connectionStatus?.props?.children).join(' ')).toContain('online');
+        expect(screen.getTextContent()).toContain('online');
     });
 });

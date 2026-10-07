@@ -3271,6 +3271,7 @@
     "sources/dev/jsdom.d.ts",
     "sources/dev/why-is-node-running.d.ts",
     "sources/types/expo-router-routes.d.ts",
+    "sources/types/fake-indexeddb-auto.d.ts",
     "sources/types/react-native-svg.d.ts",
     "sources/types/react-native-web.d.ts",
     "sources/types/react-native-webrtc-web-shim.d.ts",

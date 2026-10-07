@@ -12,29 +12,24 @@ import {
   vi,
 } from 'vitest';
 
-import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
-import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 
 import { importSessionHandoffAgentBundle } from './import';
 
 describe('Codex session handoff production reachability', () => {
-  let runtimeRegistryLease: PluginRuntimeRegistryLease | null = null;
+  let runtimeFixture: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | null = null;
 
   beforeAll(async () => {
-    runtimeRegistryLease = await pluginReloadController.acquireRuntimeRegistry({
-      resolveRuntimeRegistry: async () => await resolveExecutablePluginRuntimeRegistry({
-        contributes: getResolvedContributionRegistry(),
-        pluginIds: ['happier.agent.codex'],
-      }),
+    runtimeFixture = await createAdmittedPluginRuntimeFixture({
+      controller: pluginReloadController,
+      runtimeOptions: { pluginIds: ['happier.agent.codex'] },
     });
   });
 
   afterAll(async () => {
-    await runtimeRegistryLease?.release();
-    runtimeRegistryLease = null;
-    await pluginReloadController.shutdown({ timeoutMs: 5_000 });
+    await runtimeFixture?.dispose();
+    runtimeFixture = null;
   });
 
   afterEach(() => {

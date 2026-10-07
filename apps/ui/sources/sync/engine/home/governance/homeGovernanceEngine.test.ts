@@ -4,17 +4,19 @@ import {
     type HomeGovernanceProjectionV1,
 } from '@happier-dev/protocol/home/governance';
 
-const serverFetchMock = vi.hoisted(() => vi.fn());
 const runtimeFetchMock = vi.hoisted(() => vi.fn());
 const getCredentialsForServerUrlMock = vi.hoisted(() => vi.fn());
 
-vi.mock('@/sync/http/client', () => ({
-    serverFetch: serverFetchMock,
-}));
-
-vi.mock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch', () => ({
-    runtimeFetchWithServerReachability: runtimeFetchMock,
-}));
+vi.mock('@/utils/system/runtimeFetch', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/utils/system/runtimeFetch')>();
+    return {
+        ...actual,
+        runtimeFetch: async (input: Parameters<typeof actual.runtimeFetch>[0], init?: RequestInit) => {
+            if (new URL(String(input)).pathname === '/v1/auth/ping') return Response.json({});
+            return await runtimeFetchMock({ url: input, init });
+        },
+    };
+});
 
 vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
     const { createTokenStorageModuleMock } = await import('@/dev/testkit/mocks/tokenStorage');
@@ -84,7 +86,6 @@ function governanceCallCount(host: string): number {
 }
 
 beforeEach(() => {
-    serverFetchMock.mockReset();
     runtimeFetchMock.mockReset();
     getCredentialsForServerUrlMock.mockReset();
     getCredentialsForServerUrlMock.mockResolvedValue({ token: tokenForSub('account') });
@@ -228,7 +229,9 @@ describe('homeGovernanceEngine', () => {
         expect(interim?.data?.activeOwnerCount).toBe(1);
         expect(interim?.stale).toBe(true);
         expect(resolveHomeGovernanceViewState(interim).kind).toBe('ready');
-        expect(resolveHomeGovernanceViewState(interim)).toMatchObject({ mutationsAvailable: false });
+        expect(resolveHomeGovernanceViewState(interim)).toMatchObject({
+            mutationsAvailable: true, updating: true, stale: true, readFailed: false,
+        });
 
         releaseTrailingResponse!();
 
@@ -300,7 +303,9 @@ describe('homeGovernanceEngine', () => {
         const interim = getHomeGovernanceSnapshot(scope);
         expect(interim?.data?.activeOwnerCount).toBe(1);
         expect(interim?.stale).toBe(true);
-        expect(resolveHomeGovernanceViewState(interim)).toMatchObject({ mutationsAvailable: false });
+        expect(resolveHomeGovernanceViewState(interim)).toMatchObject({
+            mutationsAvailable: true, updating: true, stale: true, readFailed: false,
+        });
 
         releaseRemountResponse!();
         await vi.waitFor(() => {
@@ -330,7 +335,8 @@ describe('homeGovernanceEngine', () => {
         // The surface keeps rendering the last truth rather than flashing empty.
         expect(snapshot?.data).toEqual(projection());
         expect(snapshot?.stale).toBe(true);
-        expect(snapshot?.error).toEqual({ kind: 'unreachable', retryable: true });
+        expect(snapshot?.error).toEqual({ kind: 'unreachable', retryable: true, code: null });
+        expect(resolveHomeGovernanceViewState(snapshot)).toMatchObject({ mutationsAvailable: false });
         release();
     });
 
@@ -413,6 +419,7 @@ describe('homeGovernanceEngine', () => {
         expect(getHomeGovernanceSnapshot(scope)?.error).toEqual({
             kind: 'unsupported',
             retryable: false,
+            code: null,
         });
         // An answering Home is reachable even when it lacks the operation.
         expect(getHomeGovernanceSnapshot(scope)?.reachability).toBe('reachable');

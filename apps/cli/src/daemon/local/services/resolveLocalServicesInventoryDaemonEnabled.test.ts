@@ -1,21 +1,23 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 
 import { resolveLocalServicesInventoryDaemonEnabled } from './resolveLocalServicesInventoryDaemonEnabled';
+import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 
 describe('resolveLocalServicesInventoryDaemonEnabled', () => {
+    afterEach(() => {
+        resetServerFeaturesClientForTests();
+        vi.unstubAllGlobals();
+    });
+
     it('returns true when the server reports localServices inventory enabled (default-allow)', async () => {
         vi.stubGlobal(
             'fetch',
-            vi.fn(async () => ({
-                ok: true,
-                status: 200,
-                json: async () =>
+            vi.fn<typeof fetch>(async () => new Response(JSON.stringify(
                     FeaturesResponseSchema.parse({
                         features: { localServices: { enabled: true, inventory: { enabled: true } } },
                         capabilities: {},
-                    }),
-            })) as unknown as typeof fetch,
+                    })), { status: 200, headers: { 'content-type': 'application/json' } })),
         );
 
         const enabled = await resolveLocalServicesInventoryDaemonEnabled({
@@ -30,15 +32,11 @@ describe('resolveLocalServicesInventoryDaemonEnabled', () => {
     it('returns false when the server reports localServices inventory disabled', async () => {
         vi.stubGlobal(
             'fetch',
-            vi.fn(async () => ({
-                ok: true,
-                status: 200,
-                json: async () =>
+            vi.fn<typeof fetch>(async () => new Response(JSON.stringify(
                     FeaturesResponseSchema.parse({
                         features: { localServices: { enabled: false, inventory: { enabled: false } } },
                         capabilities: {},
-                    }),
-            })) as unknown as typeof fetch,
+                    })), { status: 200, headers: { 'content-type': 'application/json' } })),
         );
 
         const enabled = await resolveLocalServicesInventoryDaemonEnabled({
@@ -53,9 +51,9 @@ describe('resolveLocalServicesInventoryDaemonEnabled', () => {
     it('fails closed when the server features endpoint is unreachable', async () => {
         vi.stubGlobal(
             'fetch',
-            vi.fn(async () => {
+            vi.fn<typeof fetch>(async () => {
                 throw new Error('network down');
-            }) as unknown as typeof fetch,
+            }),
         );
 
         const enabled = await resolveLocalServicesInventoryDaemonEnabled({

@@ -88,6 +88,35 @@ describe('locked shared title projection', () => {
 });
 
 describe('buildSessionFromListRenderable', () => {
+    it('keeps legacy row metadata readable without reviving an unavailable layout-v1 owner view', () => {
+        const legacy = createSessionFixture({
+            metadata: {
+                path: '/home/alice/project',
+                host: 'workstation',
+                machineId: 'machine-a',
+                systemSessionV1: { v: 1, key: 'voice_conversation_retired', hidden: true },
+            },
+        });
+        const row = buildSessionListRenderableFromSession(legacy);
+        const reconstructed = buildSessionFromListRenderable(row);
+        expect(readSessionOwnerMetadataView(reconstructed)).toMatchObject({
+            path: '/home/alice/project',
+            machineId: 'machine-a',
+            hiddenSystemSession: true,
+        });
+
+        const unavailable = buildSessionFromListRenderable({
+            ...row,
+            metadataLayoutVersion: 1,
+            metadataUnavailable: true,
+        });
+        expect(readSessionOwnerMetadataView(unavailable)).toBeNull();
+        expect(readSessionOwnerMetadataView(buildSessionFromListRenderable({
+            ...row,
+            metadataUnavailable: true,
+        }))).toBeNull();
+    });
+
     it('preserves the safe responsible Account summary through list renderable reconstruction', () => {
         const responsibleAccount = {
             kind: 'account' as const,

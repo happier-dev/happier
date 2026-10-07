@@ -147,6 +147,7 @@ describe('happier server --json', () => {
         '--webapp-url',
         'https://app.company.example',
         '--use',
+        '--yes',
         '--json',
       ]);
 

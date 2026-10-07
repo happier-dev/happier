@@ -29,14 +29,18 @@ import {
   removeExternalVoiceProviderRegistration,
 } from '@/voice/registry/externalVoiceProviderRegistrations';
 import { BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES } from '@/voice/registry/generatedBundledVoiceRuntimeEntries';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createVoiceSettingsAccountTestHarness } from './voiceSettingsAccountTestHarness';
+import 'fake-indexeddb/auto';
 
 import { BundledConversationSettingsSection } from './BundledConversationSettingsSection';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+installDisconnectedServerSocketBoundary();
 
 const fixtureState = vi.hoisted(() => ({
   settings: null as unknown as Settings,
-  settingsVersion: 4,
 }));
 
 vi.mock('react-native', async () => {
@@ -56,12 +60,6 @@ vi.mock('@expo/vector-icons', () => ({
   Ionicons: () => null,
 }));
 
-vi.mock('@/components/ui/icons/Icon', async (importOriginal) => ({
-  ...await importOriginal(),
-  // This DOM integration test exercises the provider action leaf, not icon rendering.
-  Icon: () => null,
-}));
-
 vi.mock('react-native-unistyles', async () => {
   const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
   return createUnistylesMock();
@@ -77,48 +75,21 @@ vi.mock('@/modal', async () => {
   return createModalModuleMock({ confirmResult: true }).module;
 });
 
-vi.mock('@/sync/runtime/getSyncSingleton', () => ({
-  getSyncSingleton: () => ({
-    prepareAccountSettingsForDaemonSpawn: vi.fn(async () => ({
-      accountSettingsVersionHint: fixtureState.settingsVersion,
-    })),
-    mutateAccountSettingsOnce: vi.fn(async (input: Readonly<{
-      expectedSettingsVersion: number;
-      mutate(raw: Readonly<Record<string, unknown>>): Readonly<{
-        settings: Record<string, unknown>;
-        value: unknown;
-      }>;
-    }>) => {
-      if (input.expectedSettingsVersion !== fixtureState.settingsVersion) {
-        return { status: 'conflict', currentSettingsVersion: fixtureState.settingsVersion };
-      }
-      const result = input.mutate({ voiceSettingsV1: fixtureState.settings.voice });
-      fixtureState.settings = { ...fixtureState.settings, voice: result.settings.voiceSettingsV1 } as Settings;
-      fixtureState.settingsVersion += 1;
-      storage.setState({ settings: fixtureState.settings, settingsVersion: fixtureState.settingsVersion });
-      return { status: 'applied', settingsVersion: fixtureState.settingsVersion, value: result.value };
-    }),
-  }),
-}));
-
 vi.mock('@elevenlabs/client', () => ({
   Conversation: {
     startSession: vi.fn(),
   },
 }));
+await loadSyncSingletonForTests();
 
 const { storage } = await import('@/sync/domains/state/storage');
-const { createAccountSettingsScope } = await import('@/sync/domains/settings/scope/accountSettingsScope');
 const initialStorageState = storage.getState();
-const settingsScope = createAccountSettingsScope('server-1', 'account-1');
-if (!settingsScope) throw new Error('expected Account settings fixture scope');
 
 describe('ElevenLabs settings provisioning composed path', () => {
   const disposals: Array<() => void | Promise<void>> = [];
 
   beforeEach(() => {
     fixtureState.settings = null as unknown as Settings;
-    fixtureState.settingsVersion = 4;
   });
 
   afterEach(async () => {
@@ -128,7 +99,7 @@ describe('ElevenLabs settings provisioning composed path', () => {
     storage.setState(initialStorageState, true);
   });
 
-  it('keeps Create available and blocks direct Update until an Agent ID exists', async () => {
+  it('offers Create until provisioning persists an Agent ID, then offers Update', async () => {
     const entry = BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES.find(
       (candidate) => candidate.declaration.id === 'realtime-elevenlabs',
     );
@@ -182,8 +153,8 @@ describe('ElevenLabs settings provisioning composed path', () => {
       approvedRecipientContractDigest:
         createRecipientContractDigestV1(recipientContract),
     }).settings;
-    // Mounted scope readers and async action currentness read one real store.
-    storage.setState({ settings: fixtureState.settings, settingsVersion: fixtureState.settingsVersion, settingsScope });
+    const account = await createVoiceSettingsAccountTestHarness(fixtureState.settings);
+    disposals.push(account.dispose);
     const registeredRuntimes: Parameters<PluginApi['voiceProviders']['register']>[1][] = [];
     entry.activate({
       voiceProviders: {
@@ -306,8 +277,7 @@ describe('ElevenLabs settings provisioning composed path', () => {
     );
     expect(createRow).toBeInstanceOf(HTMLButtonElement);
     expect(createRow?.disabled).toBe(false);
-    expect(updateRow).toBeInstanceOf(HTMLButtonElement);
-    expect(updateRow?.disabled).toBe(true);
+    expect(updateRow).toBeNull();
 
     await act(async () => {
       createRow?.click();
@@ -326,16 +296,17 @@ describe('ElevenLabs settings provisioning composed path', () => {
         }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
         expect(operationIds).toContain('create-tool');
         expect(operationIds.at(-1)).toBe('create-agent');
-        expect(fixtureState.settings.voice.providers[providerId]?.config).toEqual(
+        expect(account.settings.voice.providers[providerId]?.config).toEqual(
           expect.objectContaining({ agentId: 'agent_created_from_rendered_press' }),
         );
       });
     });
-    await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector<HTMLButtonElement>(
-        '[data-testid="voice-settings-action-create-agent"]',
-      )?.disabled).toBe(false));
-    });
+    expect(account.writes).toHaveLength(1);
+    await act(async () => root.render(
+      <BundledConversationSettingsSection voice={account.settings.voice} setVoice={setVoice} />,
+    ));
+    expect(host.querySelector('[data-testid="voice-settings-action-create-agent"]')).toBeNull();
+    expect(host.querySelector<HTMLButtonElement>('[data-testid="voice-settings-action-update-agent"]')?.disabled).toBe(false);
 
   });
 

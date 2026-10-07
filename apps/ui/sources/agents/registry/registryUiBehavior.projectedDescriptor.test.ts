@@ -20,6 +20,11 @@ import {
 import { makeSettings } from './registryUiBehavior.testHelpers';
 import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
 import { createSessionFixture } from '@/dev/testkit';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+
+installDisconnectedServerSocketBoundary();
+const accountConnections: Awaited<ReturnType<typeof restoreServerAccountForTest>>[] = [];
 
 const EXTERNAL_AGENT_ID = 'acme.agent';
 
@@ -30,22 +35,14 @@ function supportsStorageMode(agentId: string, storageMode: 'persisted' | 'direct
 
 /**
  * Drives the canonical active-scope owner through its own production seams
- * (server activation plus the registered storage-state reader) rather than
+ * (Account restore through the disconnected transport boundary) rather than
  * mocking it: the Account fence under test IS that owner's answer.
  */
 async function activateServerAccount(serverUrl: string, accountId: string): Promise<void> {
-    const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
-    const { createServerAccountScope } = await import('@/sync/domains/scope/serverAccountScope');
-    const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
-    const server = await upsertAndActivateServer({
-        serverUrl,
-        source: 'manual',
-        scope: 'device',
-        replaceEquivalentStoredUrl: true,
-    });
-    const scope = createServerAccountScope(server.id, accountId);
-    expect(scope).not.toBeNull();
-    registerStorageStateReader(() => ({ profileScope: scope } as never));
+    await loadSyncSingletonForTests();
+    accountConnections.push(await restoreServerAccountForTest({ serverUrl, accountId }));
+    const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
+    expect(getActiveServerAccountScope()?.accountId).toBe(accountId);
 }
 
 function footerDescriptor(usePermissionUpdates: boolean): Readonly<Record<string, unknown>> {
@@ -72,8 +69,9 @@ function sessionOnMachine(machineId: string): Readonly<Record<string, unknown>> 
 }
 
 describe('daemon-projected agent UI behavior descriptors', () => {
-    afterEach(() => {
+    afterEach(async () => {
         clearProjectedAgentUiBehaviorDescriptors();
+        for (const connection of accountConnections.splice(0).reverse()) await connection.dispose();
     });
 
     it('exposes the parsed Agent-owned portable runtime choice without inventing presentation', () => {

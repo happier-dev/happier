@@ -1,485 +1,159 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import type { ComposerContentHandleV1 } from '@happier-dev/protocol';
 
-import { createDeferred, flushHookEffects, renderHook } from '@/dev/testkit';
+import { renderHook } from '@/dev/testkit';
+import { createSessionFileNativeTransferBoundary } from '../../sessionFileNativeTransferTestkit';
+import { createSessionFilesViewFixture, prepareSessionFilesViewTestkit } from '../../views/sessionFilesViewTestkit';
+import { useSessionImagePreview } from './useSessionImagePreview';
 
-const workspaceReadFileSpy = vi.hoisted(() => vi.fn());
-const createSessionFilePreviewSourceSpy = vi.hoisted(() => vi.fn());
-const createComposerStagedMediaPreviewSourceSpy = vi.hoisted(() => vi.fn());
-
-const sessionState = vi.hoisted(() => ({
-    current: null as null | {
-        active: boolean;
-        serverId: string;
-        metadata: {
-            machineId?: string | null;
-            path?: string | null;
-            host?: string | null;
-            homeDir?: string | null;
-        };
+const files = vi.hoisted(() => new Map<string, { exists: boolean; chunks: Uint8Array[]; closed: number; deletes: number }>());
+vi.mock('react-native', async () => {
+    const { createReactNativeNativeMock } = await import('@/dev/testkit');
+    return createReactNativeNativeMock({ platformOS: 'ios' });
+});
+// Expo's OS-backed file API is the sink boundary. The real preview source owns custody.
+vi.mock('expo-file-system', () => ({
+    Paths: { cache: 'file:///preview-cache' },
+    Directory: class Directory {
+        readonly uri: string;
+        constructor(parent: string | { uri: string }, name?: string) { this.uri = (typeof parent === 'string' ? parent : parent.uri) + (name ? '/' + name : ''); }
+        create() {}
+    },
+    File: class File {
+        readonly uri: string;
+        constructor(parent: string | { uri: string }, name?: string) {
+            this.uri = (typeof parent === 'string' ? parent : parent.uri) + (name ? '/' + name : '');
+            if (!files.has(this.uri)) files.set(this.uri, { exists: false, chunks: [], closed: 0, deletes: 0 });
+        }
+        create() { files.get(this.uri)!.exists = true; }
+        delete() { const file = files.get(this.uri)!; file.exists = false; file.deletes++; }
+        open() { const file = files.get(this.uri)!; return {
+            offset: 0,
+            writeBytes: (bytes: Uint8Array) => file.chunks.push(new Uint8Array(bytes)),
+            close: () => { file.closed++; },
+        }; }
     },
 }));
 
-const allSessionsState = vi.hoisted(() => ({
-    current: [] as Array<{
-        id: string;
-        active: boolean;
-        serverId: string;
-        metadata: {
-            machineId?: string | null;
-            path?: string | null;
-            host?: string | null;
-            homeDir?: string | null;
-        };
-    }>,
-}));
-
-const allMachinesState = vi.hoisted(() => ({
-    current: [] as Array<{
-        id: string;
-        active: boolean;
-        activeAt: number;
-        metadata: {
-            host?: string | null;
-            homeDir?: string | null;
-        };
-    }>,
-}));
-
-const storageSnapshotState = vi.hoisted(() => ({
-	    current: {
-	        sessions: {} as Record<string, unknown>,
-	        machines: {} as Record<string, unknown>,
-	        concurrentSessionListCacheByServerId: {} as Record<string, unknown>,
-	        getProjectForSession: (_sessionId: string) => null,
-	        applySessionListRenderablePatches: () => undefined,
-	    },
-	}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('@/sync/ops/workspaceFileSystem', () => ({
-    workspaceReadFile: (...args: unknown[]) => workspaceReadFileSpy(...args),
-}));
-
-vi.mock('@/sync/domains/sessionFilePreviews/createSessionFilePreviewSource', () => ({
-    createSessionFilePreviewSource: (...args: unknown[]) => createSessionFilePreviewSourceSpy(...args),
-    createComposerStagedMediaPreviewSource: (...args: unknown[]) => createComposerStagedMediaPreviewSourceSpy(...args),
-}));
-
-vi.mock('@/sync/store/hooks', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/store/hooks')>();
-    return {
-        ...actual,
-        useSessionServerId: () => sessionState.current?.serverId ?? null,
-    };
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-
-        return createStorageModuleStub({
-            storage: Object.assign(
-                ((selector?: (value: typeof storageSnapshotState.current) => unknown) =>
-                    typeof selector === 'function' ? selector(storageSnapshotState.current) : storageSnapshotState.current),
-                {
-                getState: () => storageSnapshotState.current,
-                getInitialState: () => storageSnapshotState.current,
-                setState: () => undefined,
-                subscribe: () => () => undefined,
-                destroy: () => undefined,
-            },
-            ),
-            useSetting: (key: string) => {
-                if (key === 'filesImagePreviewCacheMaxEntries') return 10;
-                if (key === 'filesImagePreviewCacheMaxTotalBytes') return 1_000_000;
-                if (key === 'filesImagePreviewMaxBytes') return 1_000_000;
-                return null;
-            },
-            useSession: () => sessionState.current,
-            useAllSessions: () => allSessionsState.current,
-            useAllMachines: () => allMachinesState.current,
-        useProjectForSession: () => null,
-    });
-});
-
-function setSessionWorkspaceUnavailable() {
-    sessionState.current = {
-        active: true,
-        serverId: 'server-1',
-        metadata: {
-            machineId: null,
-            path: null,
-            host: 'mbp',
-            homeDir: '/Users/test',
-        },
-    };
-    allSessionsState.current = [{
-        id: 's1',
-        active: true,
-        serverId: 'server-1',
-        metadata: {
-            machineId: null,
-            path: null,
-            host: 'mbp',
-            homeDir: '/Users/test',
-        },
-    }];
-    allMachinesState.current = [{
-        id: 'm1',
-        active: true,
-        activeAt: 1,
-        metadata: {
-            host: 'mbp',
-            homeDir: '/Users/test',
-        },
-    }];
-    storageSnapshotState.current = {
-        ...storageSnapshotState.current,
-        sessions: {
-            s1: sessionState.current,
-        },
-        machines: {
-            m1: allMachinesState.current[0]!,
-        },
-    };
-}
-
-function setSessionWorkspaceAvailable() {
-    sessionState.current = {
-        active: true,
-        serverId: 'server-1',
-        metadata: {
-            machineId: 'm1',
-            path: '/repo',
-            host: 'mbp',
-            homeDir: '/Users/test',
-        },
-    };
-    allSessionsState.current = [{
-        id: 's1',
-        active: true,
-        serverId: 'server-1',
-        metadata: {
-            machineId: 'm1',
-            path: '/repo',
-            host: 'mbp',
-            homeDir: '/Users/test',
-        },
-    }];
-    allMachinesState.current = [{
-        id: 'm1',
-        active: true,
-        activeAt: 1,
-        metadata: {
-            host: 'mbp',
-            homeDir: '/Users/test',
-        },
-    }];
-    storageSnapshotState.current = {
-        ...storageSnapshotState.current,
-        sessions: {
-            s1: sessionState.current,
-        },
-        machines: {
-            m1: allMachinesState.current[0]!,
-        },
-    };
-}
-
 describe('useSessionImagePreview', () => {
-    beforeEach(() => {
-        workspaceReadFileSpy.mockReset();
-        workspaceReadFileSpy.mockResolvedValue({ success: true, content: 'YWJj' });
-        createSessionFilePreviewSourceSpy.mockReset();
-        createSessionFilePreviewSourceSpy.mockResolvedValue({
-            ok: true,
-            source: {
-                kind: 'object-url',
-                uri: 'blob:session-preview',
-                byteLength: 3,
-                mimeType: 'image/png',
-                revoke: vi.fn(),
-            },
+    let transfer: ReturnType<typeof createSessionFileNativeTransferBoundary>;
+    let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>>;
+    beforeAll(prepareSessionFilesViewTestkit);
+    beforeEach(async () => {
+        files.clear();
+        transfer = createSessionFileNativeTransferBoundary();
+        fixture = await createSessionFilesViewFixture({ rootPath: '/repo', machineCarrierOrigin: transfer.origin, rpc: transfer.rpc, request: transfer.request });
+        fixture.storage.getState().applySettingsLocal({
+            filesImagePreviewCacheMaxEntries: 10, filesImagePreviewCacheMaxTotalBytes: 1_000_000, filesImagePreviewMaxBytes: 1_000_000,
         });
-        createComposerStagedMediaPreviewSourceSpy.mockReset();
-        createComposerStagedMediaPreviewSourceSpy.mockResolvedValue({
-            ok: true,
-            source: {
-                kind: 'object-url',
-                uri: 'blob:composer-stage-preview',
-                byteLength: 3,
-                mimeType: 'image/png',
-                revoke: vi.fn(),
-            },
-        });
-        setSessionWorkspaceUnavailable();
     });
-
-    afterEach(() => {
-        vi.resetModules();
-    });
+    afterEach(async () => { await fixture.dispose(); });
 
     it('waits for the session workspace target and retries once it becomes available', async () => {
-        const { useSessionImagePreview } = await import('./useSessionImagePreview');
-
+        fixture.storage.getState().applySessions([{ ...fixture.session, metadata: null }]);
         const hook = await renderHook(() => useSessionImagePreview({
-            sessionId: 's1',
-            filePath: '.happier/uploads/messages/m1/file.png',
-            enabled: true,
-            cacheKey: 'sha-1',
-            mimeType: 'image/png',
-            sizeBytes: 3,
+            sessionId: fixture.session.id, filePath: '.happier/uploads/messages/m1/file.png',
+            enabled: true, cacheKey: 'sha-1', mimeType: 'image/png', sizeBytes: 3,
         }));
+        expect(hook.getCurrent()).toEqual({ status: 'loading', uri: null, error: null });
+        expect(transfer.prepares).toEqual([]);
 
-        await flushHookEffects({ cycles: 1, turns: 2 });
-
-        expect(hook.getCurrent()).toMatchObject({
-            status: 'loading',
-            uri: null,
-            error: null,
-        });
-        expect(workspaceReadFileSpy).not.toHaveBeenCalled();
-
-        setSessionWorkspaceAvailable();
-        await hook.rerender();
-        await flushHookEffects({ cycles: 1, turns: 2 });
-
-        expect(workspaceReadFileSpy).not.toHaveBeenCalled();
-        expect(createSessionFilePreviewSourceSpy).toHaveBeenCalledWith(expect.objectContaining({
-            scope: expect.objectContaining({
-                machineId: 'm1',
-                rootPath: '/repo',
-                serverId: 'server-1',
-            }),
-            filePath: '.happier/uploads/messages/m1/file.png',
-            mimeType: 'image/png',
-            maxBytes: 1_000_000,
-            expectedSizeBytes: 3,
-        }));
-        expect(hook.getCurrent()).toMatchObject({
-            status: 'loaded',
-            uri: 'blob:session-preview',
-            error: null,
-        });
+        await act(async () => fixture.storage.getState().applySessions([fixture.session]));
+        await vi.waitFor(() => expect(hook.getCurrent().status).toBe('loaded'));
+        expect(transfer.prepares.map((request) => request.payload)).toEqual([{
+            t: 'workspace_file_download_v1', workingDirectory: '/repo',
+            path: '/repo/.happier/uploads/messages/m1/file.png', asZip: false,
+        }]);
+        expect(transfer.prepares[0]?.targetId).toBe(fixture.scope.machineId);
         expect(hook.getCurrent().uri?.startsWith('data:')).toBe(false);
+        const file = files.get(hook.getCurrent().uri!);
+        expect(file?.chunks.flatMap((chunk) => [...chunk])).toEqual([97, 98, 99]);
+        await hook.unmount();
     });
 
     it('loads an opaque staged composer image through the incumbent preview cache without resolving a session workspace path', async () => {
-        const handle = {
-            v: 1,
-            id: 'stage_42',
-            executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
-            owner: { pluginId: 'acme.images', localId: 'image' },
-            mediaKind: 'image',
-            mimeType: 'image/png',
-            name: 'incident.png',
-            sizeBytes: 3,
-            sha256: 'a'.repeat(64),
-        } as const;
-        const { useSessionImagePreview } = await import('./useSessionImagePreview');
-        const usePreviewWithStagedMedia = useSessionImagePreview as unknown as (input: Parameters<typeof useSessionImagePreview>[0] & Readonly<{
-            composerStagedMedia: typeof handle;
-        }>) => ReturnType<typeof useSessionImagePreview>;
-
-        const hook = await renderHook(() => usePreviewWithStagedMedia({
-            sessionId: '',
-            filePath: handle.name,
-            enabled: true,
-            cacheKey: handle.sha256,
-            mimeType: handle.mimeType,
-            sizeBytes: handle.sizeBytes,
-            composerStagedMedia: handle,
-        }));
-
-        await flushHookEffects({ cycles: 1, turns: 2 });
-
-        expect(workspaceReadFileSpy).not.toHaveBeenCalled();
-        expect(createSessionFilePreviewSourceSpy).not.toHaveBeenCalled();
-        expect(createComposerStagedMediaPreviewSourceSpy).toHaveBeenCalledWith(expect.objectContaining({
-            handle,
-            maxBytes: 1_000_000,
-            signal: expect.any(AbortSignal),
-        }));
-        expect(hook.getCurrent()).toEqual({
-            status: 'loaded',
-            uri: 'blob:composer-stage-preview',
-            error: null,
-        });
-
+        const handle: ComposerContentHandleV1 = {
+            v: 1, id: 'stage_42', executionTarget: { serverId: fixture.scope.serverId, machineId: fixture.scope.machineId },
+            owner: { pluginId: 'acme.images', localId: 'image' }, mediaKind: 'image',
+            mimeType: 'image/png', name: 'incident.png', sizeBytes: 3, sha256: 'a'.repeat(64),
+        };
+        fixture.storage.getState().applySessions([{ ...fixture.session, metadata: null }]);
+        const hook = await renderHook(({ staged }: { staged: ComposerContentHandleV1 }) => useSessionImagePreview({
+            sessionId: '', filePath: staged.name, enabled: true, composerStagedMedia: staged,
+        }), { initialProps: { staged: handle } });
+        await vi.waitFor(() => expect(hook.getCurrent().status).toBe('loaded'));
+        expect(transfer.prepares.map((request) => request.payload)).toEqual([{
+            t: 'composer_media_stage_inspect_v1', handle, offset: 0, maxBytes: 3,
+        }]);
+        expect(files.get(hook.getCurrent().uri!)?.chunks.flatMap((chunk) => [...chunk])).toEqual([97, 98, 99]);
+        // A replacement opaque stage is cancelled at the real HTTP boundary,
+        // not inferred from a settled request's already-disposed signal.
+        const gate = transfer.deferNextOpen();
+        await hook.rerender({ staged: { ...handle, id: 'stage_43', sha256: 'b'.repeat(64) } });
+        await vi.waitFor(() => expect(transfer.prepares).toHaveLength(2));
+        await vi.waitFor(() => expect(transfer.httpRequests.filter((request) => request.url.endsWith('/open'))).toHaveLength(2));
+        const pendingRequest = transfer.httpRequests.at(-1)!;
         await hook.unmount();
-        const stagedRequest = createComposerStagedMediaPreviewSourceSpy.mock.calls[0]?.[0] as {
-            signal?: AbortSignal | null;
-        } | undefined;
-        expect(stagedRequest?.signal?.aborted).toBe(true);
+        expect(pendingRequest.signal?.aborted).toBe(true);
+        gate.resolve();
+        await vi.waitFor(() => expect(transfer.nativeStops).toHaveBeenCalledTimes(2));
     });
 
-    it('cleans up a preview source that resolves after unmount', async () => {
-        setSessionWorkspaceAvailable();
-        const revoke = vi.fn();
-        const transfer: { signal: AbortSignal | null } = { signal: null };
-        let resolvePreview!: (value: unknown) => void;
-        createSessionFilePreviewSourceSpy.mockImplementation((input: { signal?: AbortSignal }) => new Promise((resolve) => {
-            transfer.signal = input.signal ?? null;
-            resolvePreview = resolve;
-        }));
-
-        const { useSessionImagePreview } = await import('./useSessionImagePreview');
+    it('cleans up a preview source when its transfer resolves after unmount', async () => {
+        const gate = transfer.deferNextOpen();
         const hook = await renderHook(() => useSessionImagePreview({
-            sessionId: 's1',
-            filePath: '.happier/uploads/messages/m1/file.png',
-            enabled: true,
-            cacheKey: null,
-            mimeType: 'image/png',
-            sizeBytes: 3,
+            sessionId: fixture.session.id, filePath: '.happier/uploads/messages/m1/file.png',
+            enabled: true, cacheKey: null, mimeType: 'image/png', sizeBytes: 3,
         }));
-
+        await vi.waitFor(() => expect(transfer.httpRequests.some((request) => request.url.endsWith('/open'))).toBe(true));
+        expect([...files.values()].some((file) => file.exists)).toBe(true);
         await hook.unmount();
-        expect(transfer.signal?.aborted).toBe(true);
-        resolvePreview({
-            ok: true,
-            source: {
-                kind: 'object-url',
-                uri: 'blob:late-preview',
-                byteLength: 3,
-                mimeType: 'image/png',
-                revoke,
-            },
-        });
-        await flushHookEffects({ cycles: 2, turns: 2 });
-
-        expect(revoke).toHaveBeenCalledTimes(1);
+        expect(transfer.httpRequests[0]?.signal?.aborted).toBe(true);
+        gate.resolve();
+        await vi.waitFor(() => expect([...files.values()].every((file) => !file.exists)).toBe(true));
+        expect([...files.values()].every((file) => file.closed === 1 && file.deletes >= 2)).toBe(true);
+        await vi.waitFor(() => expect(transfer.nativeStops).toHaveBeenCalledTimes(1));
     });
 
     it('keeps one in-flight transfer for equivalent workspace scope objects and publishes its URI once', async () => {
-        const preview = createDeferred<{
-            ok: true;
-            source: {
-                kind: 'object-url';
-                uri: string;
-                byteLength: number;
-                mimeType: string;
-                revoke: () => void;
-            };
-        }>();
-        const revoke = vi.fn();
-        createSessionFilePreviewSourceSpy.mockReturnValue(preview.promise);
-
-        const { useSessionImagePreview } = await import('./useSessionImagePreview');
-        const hook = await renderHook(
-            ({ workspaceScope }: {
-                workspaceScope: { serverId: string; machineId: string; rootPath: string };
-            }) => useSessionImagePreview({
-                sessionId: 's1',
-                filePath: '.happier/uploads/messages/m1/file.png',
-                enabled: true,
-                cacheKey: null,
-                mimeType: 'image/png',
-                sizeBytes: 3,
-                workspaceScope,
-                cacheScopeId: 'server-1:m1:/repo',
-            }),
-            {
-                initialProps: {
-                    workspaceScope: { serverId: 'server-1', machineId: 'm1', rootPath: '/repo' },
-                },
-            },
-        );
-
-        expect(createSessionFilePreviewSourceSpy).toHaveBeenCalledTimes(1);
-
-        await hook.rerender({
-            workspaceScope: { serverId: 'server-1', machineId: 'm1', rootPath: '/repo' },
-        });
-
-        expect(createSessionFilePreviewSourceSpy).toHaveBeenCalledTimes(1);
-
-        preview.resolve({
-            ok: true,
-            source: {
-                kind: 'object-url',
-                uri: 'blob:stable-preview',
-                byteLength: 3,
-                mimeType: 'image/png',
-                revoke,
-            },
-        });
-        await flushHookEffects({ cycles: 2, turns: 2 });
-
-        expect(hook.getCurrent()).toEqual({
-            status: 'loaded',
-            uri: 'blob:stable-preview',
-            error: null,
-        });
-        expect(revoke).not.toHaveBeenCalled();
-
+        const gate = transfer.deferNextOpen();
+        const hook = await renderHook(({ workspaceScope }: { workspaceScope: typeof fixture.scope }) => useSessionImagePreview({
+            sessionId: fixture.session.id, filePath: '.happier/uploads/messages/m1/file.png',
+            enabled: true, cacheKey: null, mimeType: 'image/png', sizeBytes: 3, workspaceScope,
+            cacheScopeId: 'stable-scope',
+        }), { initialProps: { workspaceScope: { ...fixture.scope } } });
+        await vi.waitFor(() => expect(transfer.prepares).toHaveLength(1));
+        await hook.rerender({ workspaceScope: { ...fixture.scope } });
+        expect(transfer.prepares).toHaveLength(1);
+        gate.resolve();
+        await vi.waitFor(() => expect(hook.getCurrent().status).toBe('loaded'));
+        const uri = hook.getCurrent().uri!;
+        expect(files.get(uri)?.exists).toBe(true);
+        expect(files.get(uri)?.deletes).toBe(1);
         await hook.unmount();
-        expect(revoke).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(files.get(uri)?.exists).toBe(false));
+        expect(files.get(uri)?.closed).toBe(1);
     });
 
     it('releases the prior uncached source when the logical file identity changes', async () => {
-        const revokeFirst = vi.fn();
-        const revokeSecond = vi.fn();
-        createSessionFilePreviewSourceSpy
-            .mockResolvedValueOnce({
-                ok: true,
-                source: {
-                    kind: 'object-url',
-                    uri: 'blob:first-preview',
-                    byteLength: 3,
-                    mimeType: 'image/png',
-                    revoke: revokeFirst,
-                },
-            })
-            .mockResolvedValueOnce({
-                ok: true,
-                source: {
-                    kind: 'object-url',
-                    uri: 'blob:second-preview',
-                    byteLength: 4,
-                    mimeType: 'image/png',
-                    revoke: revokeSecond,
-                },
-            });
-
-        const workspaceScope = { serverId: 'server-1', machineId: 'm1', rootPath: '/repo' };
-        const { useSessionImagePreview } = await import('./useSessionImagePreview');
-        const hook = await renderHook(
-            ({ filePath }: { filePath: string }) => useSessionImagePreview({
-                sessionId: 's1',
-                filePath,
-                enabled: true,
-                cacheKey: null,
-                mimeType: 'image/png',
-                workspaceScope,
-                cacheScopeId: 'server-1:m1:/repo',
-            }),
-            {
-                initialProps: {
-                    filePath: '.happier/uploads/messages/m1/first.png',
-                },
-            },
-        );
-
-        expect(hook.getCurrent()).toMatchObject({
-            status: 'loaded',
-            uri: 'blob:first-preview',
-        });
-
-        await hook.rerender({
-            filePath: '.happier/uploads/messages/m1/second.png',
-        });
-
-        expect(createSessionFilePreviewSourceSpy).toHaveBeenCalledTimes(2);
-        expect(revokeFirst).toHaveBeenCalledTimes(1);
-        expect(hook.getCurrent()).toMatchObject({
-            status: 'loaded',
-            uri: 'blob:second-preview',
-        });
-
+        const hook = await renderHook(({ filePath }: { filePath: string }) => useSessionImagePreview({
+            sessionId: fixture.session.id, filePath, enabled: true, cacheKey: null, mimeType: 'image/png',
+            workspaceScope: fixture.scope, cacheScopeId: 'identity-scope',
+        }), { initialProps: { filePath: '.happier/uploads/messages/m1/first.png' } });
+        await vi.waitFor(() => expect(hook.getCurrent().status).toBe('loaded'));
+        const firstUri = hook.getCurrent().uri!;
+        transfer.setPayload(new Uint8Array([97, 98, 99, 100]), 'second.png');
+        await hook.rerender({ filePath: '.happier/uploads/messages/m1/second.png' });
+        await vi.waitFor(() => expect(hook.getCurrent().status).toBe('loaded'));
+        const secondUri = hook.getCurrent().uri!;
+        expect(transfer.prepares).toHaveLength(2);
+        expect(secondUri).not.toBe(firstUri);
+        expect(files.get(firstUri)?.exists).toBe(false);
+        expect(files.get(firstUri)?.closed).toBe(1);
+        expect(files.get(secondUri)?.chunks.flatMap((chunk) => [...chunk])).toEqual([97, 98, 99, 100]);
         await hook.unmount();
-        expect(revokeSecond).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(files.get(secondUri)?.exists).toBe(false));
+        expect(files.get(secondUri)?.closed).toBe(1);
     });
 });

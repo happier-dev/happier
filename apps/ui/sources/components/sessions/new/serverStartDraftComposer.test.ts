@@ -128,7 +128,7 @@ describe('Session server-start draft composer', () => {
     it('rejects an over-bound settled draft instead of returning it to the host', async () => {
         const present = vi.fn(() => presentResolved({
             ...serverStartDraft,
-            directory: 'x'.repeat(8_193),
+            directory: { kind: 'path', path: 'x'.repeat(8_193) },
         }));
 
         await expect(composeSessionServerStartDraft({ isCurrent: () => true, target, present }))
@@ -212,7 +212,7 @@ describe('Session server-start draft composer', () => {
         const selectedDraft = {
             ...serverStartDraft,
             executionTarget: { serverId: 'server-2', machineId: 'machine-1' },
-            directory: '/server-two/api',
+            directory: { kind: 'path', path: '/server-two/api' },
         };
         const present = vi.fn(() => presentResolved(selectedDraft));
 

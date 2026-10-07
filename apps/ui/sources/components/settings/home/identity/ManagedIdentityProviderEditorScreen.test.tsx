@@ -234,7 +234,7 @@ describe('ManagedOidcProviderEditorContent', () => {
             expectedRevision: 5,
             displayName: 'Edited OIDC',
         }), expect.anything());
-        expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ revision: 6 }));
+        expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ revision: 6 }), expect.objectContaining({ onApprovalFailed: expect.any(Function) }));
     });
 
     it('preserves an edited draft until an explicit reload, then requires reapplying it before CAS save', async () => {
@@ -275,7 +275,7 @@ describe('ManagedOidcProviderEditorContent', () => {
             displayName: 'Edited OIDC',
         }), expect.anything());
         expect(executeMock).not.toHaveBeenCalledWith('identity.providers.secret.replace', expect.anything());
-        expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ revision: 6 }));
+        expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ revision: 6 }), expect.objectContaining({ onApprovalFailed: expect.any(Function) }));
     });
 
     it('retries a failed secret step from the provider revision and config the update committed', async () => {
@@ -318,7 +318,7 @@ describe('ManagedOidcProviderEditorContent', () => {
             expectedRevision: 6,
             clientSecret: 'replacement-secret',
         }), expect.anything());
-        expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ revision: 7, securityRevision: 4 }));
+        expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ revision: 7, securityRevision: 4 }), expect.objectContaining({ onApprovalFailed: expect.any(Function) }));
     });
 
     it('refreshes and blocks retry when the secret-repair CAS loses', async () => {

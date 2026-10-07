@@ -9,10 +9,10 @@ const setClipboardMock = vi.hoisted(() => vi.fn(async () => true));
 const callbackUrlMock = vi.hoisted(() => ({ value: 'https://home.example.test/v1/oauth/github-app/callback' as string | undefined }));
 
 vi.mock('@/utils/ui/clipboard', () => ({ setClipboardStringSafe: setClipboardMock }));
-vi.mock('expo-router', () => ({
-    useNavigation: () => ({ isFocused: () => true, addListener: () => () => {}, dispatch: vi.fn() }),
-    useRouter: () => ({ replace: vi.fn(), push: vi.fn(), back: vi.fn() }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock().module;
+});
 vi.mock('@/components/ui/forms/FieldItem', () => ({ FieldItem: 'FieldItem' }));
 vi.mock('@/components/ui/feedback/ActivitySpinner', () => ({ ActivitySpinner: 'ActivitySpinner' }));
 // Rows render their right-hand control, as the real row does; page fields are text inputs.

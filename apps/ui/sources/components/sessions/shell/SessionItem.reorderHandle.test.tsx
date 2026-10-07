@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 import type { ReactTestInstance } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createSessionFixture, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createModelBackedSessionItemTestComponent } from './sessionItemRowViewModelTestFixture';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
@@ -41,28 +41,12 @@ installSessionShellCommonModuleMocks({
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
         return createModalModuleMock().module;
     },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            useHasUnreadMessages: () => false,
-            useProfile: () => ({
-                id: 'u1',
-                timestamp: 0,
-                firstName: null,
-                lastName: null,
-                username: null,
-                avatar: null,
-                linkedProviders: [],
-                connectedServices: [],
-                connectedServicesV2: [],
-                connectedServiceCredentialRevisionsV1: [],
-            }),
-            useSession: () => null,
-            useSessionListMeaningfulActivityAt: () => null,
-        });
-    },
+    storage: async (importOriginal) => importOriginal(),
 });
 
+vi.doUnmock('@/sync/domains/state/storage');
+vi.doUnmock('@/hooks/session/useDraft');
+vi.doUnmock('@/agents/registry/registryUiBehavior');
 
 vi.mock('@/components/ui/avatar/Avatar', () => ({
     Avatar: 'Avatar',
@@ -85,11 +69,6 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
     useHappyAction: (_fn: unknown) => [false, vi.fn()],
 }));
 
-vi.mock('@/sync/ops', () => ({
-    sessionStopWithServerScope: vi.fn(async () => ({ success: true })),
-    sessionArchiveWithServerScope: vi.fn(async () => ({ success: true })),
-}));
-
 const sessionItemModulePromise = import('./SessionItem').then(({ SessionItem }) => (
     createModelBackedSessionItemTestComponent(SessionItem)
 ));
@@ -100,7 +79,7 @@ function triggerHoverEnter(node: ReactTestInstance) {
     node.props.onPointerEnter?.();
 }
 
-const SESSION = {
+const SESSION = createSessionFixture({
     seq: 1,
     createdAt: 1,
     updatedAt: 1,
@@ -113,7 +92,7 @@ const SESSION = {
     thinking: false,
     thinkingAt: 0,
     presence: 'online',
-} as const;
+});
 
 async function hoverAll(screen: Awaited<ReturnType<typeof renderScreen>>): Promise<void> {
     const hoverTargets = screen.tree.root.findAll((node) => (
@@ -136,7 +115,7 @@ describe('SessionItem desktop carry (E1)', () => {
         const SessionItem = await sessionItemModulePromise;
         const screen = await renderScreen(
             <SessionItem
-                session={{ ...SESSION, id: 'sess_1' } as any}
+                session={{ ...SESSION, id: 'sess_1' }}
                 serverId="server_a"
                 serverName="Server A"
                 showServerBadge={true}

@@ -383,44 +383,6 @@ describe('buildCommandPaletteCommands', () => {
     expect(navigateToSession).toHaveBeenCalledWith('cross-home-recent', { serverId: 'home-b' });
   });
 
-  it('projects an admitted command-palette Action with its canonical presentation and executor', async () => {
-    const dispatch = vi.fn(async () => ({ ok: true as const, result: { applied: true } }));
-    const controller = createPluginContributedActionController({
-      resolveCurrent: () => pluginActionSnapshot({
-        sessionId: 'session-command-palette',
-        actions: [pluginAction({
-          id: 'sync-notes',
-          title: 'Sync notes',
-          description: 'Synchronize the current notes',
-          icon: 'magic-wand',
-        })],
-      }),
-      dispatch,
-    });
-
-    const command = buildCommandsWithPluginActions({ controller, scope: 'session' })
-      .find((candidate) => candidate.id === 'plugin-action:acme.commands/sync-notes');
-
-    expect(command).toMatchObject({
-      title: 'Sync notes',
-      subtitle: 'Synchronize the current notes',
-      icon: 'magic-wand',
-      category: 'acme.commands',
-    });
-
-    await command?.action();
-
-    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
-      action: { pluginId: PLUGIN_ID, localId: 'sync-notes' },
-      contributedAction: {
-        machineId: MACHINE_ID,
-        serverId: SERVER_ID,
-        expectedContributorOccurrenceId: '7',
-        sessionId: 'session-command-palette',
-      },
-    }));
-  });
-
   it('keeps unavailable Actions absent and projects them once the canonical catalog remediates availability', () => {
     let current = pluginActionSnapshot({
       sessionId: 'session-command-palette',

@@ -27,7 +27,8 @@ function themeFixture(): SourceControlUpdateTheme {
 /** Query the way an assistive technology does: find the control by ROLE, then read its name. */
 function findSwitchControls(screen: RenderScreenResult): ReactTestInstance[] {
     return screen.findAll((node) => (
-        node.props?.role === 'switch' || node.props?.accessibilityRole === 'switch'
+        typeof node.type === 'string'
+        && (node.props?.role === 'switch' || node.props?.accessibilityRole === 'switch')
     ));
 }
 

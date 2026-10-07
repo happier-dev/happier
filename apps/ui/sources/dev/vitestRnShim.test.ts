@@ -1,6 +1,11 @@
+// @vitest-environment jsdom
+
 import { describe, expect, it } from 'vitest';
 import * as typedModule from './vitestRnShim.fixture';
 import { loadVitestModuleForNodeRequire } from './vitestRnShim';
+import { getVitestNodeBuiltin } from './vitestNodeBuiltins';
+
+const { URL: NodeURL } = getVitestNodeBuiltin<typeof import('node:url')>('node:url');
 
 const nodeRuntime = globalThis as typeof globalThis & { require: (id: string) => unknown };
 
@@ -26,7 +31,7 @@ describe('vitestRnShim', () => {
 
     it('keeps relative CJS requires in the successfully imported Vitest module graph', async () => {
         const bridge = await loadVitestModuleForNodeRequire(
-            new URL('./vitestRnShim.fixture.ts', import.meta.url),
+            new NodeURL('./vitestRnShim.fixture.ts', import.meta.url),
             () => import('./vitestRnShim.fixture'),
         );
         try {
@@ -48,6 +53,28 @@ describe('vitestRnShim', () => {
         )).rejects.toThrow('fixture evaluation failed');
 
         expect(() => require('./vitestRnShim.failure.fixture.ts')).toThrow();
+    });
+
+    it('bridges a browser-realm file URL to the real Node module cache', async () => {
+        // Vitest retains Node's URL on its global; an iframe supplies a genuine browser realm.
+        const frame = document.createElement('iframe');
+        document.body.append(frame);
+        try {
+            const browserWindow = frame.contentWindow?.window;
+            if (!browserWindow) throw new Error('Browser realm did not initialize');
+            const moduleUrl = new browserWindow.URL('./vitestRnShim.fixture.ts', import.meta.url);
+            expect(moduleUrl instanceof NodeURL).toBe(false);
+            const bridge = await loadVitestModuleForNodeRequire(moduleUrl, () => import('./vitestRnShim.fixture'));
+            try {
+                expect(require('./vitestRnShim.fixture.ts')).toBe(typedModule);
+                expect(bridge.module).toBe(typedModule);
+            } finally {
+                bridge.dispose();
+            }
+            expect(() => require('./vitestRnShim.fixture.ts')).toThrow();
+        } finally {
+            frame.remove();
+        }
     });
 
     it('names the escaping first-party require when a relative source require fails to load', () => {

@@ -26,14 +26,13 @@ vi.mock('@/utils/platform/desktopHost', async (importOriginal) => ({
 }));
 
 describe('Machines settings routes', () => {
-    it('offers the SSH setup wizard, not this computer, on the add-machine route on desktop', async () => {
+    it('offers this computer and SSH in the add-machine draft on desktop', async () => {
         isDesktopHostMock.mockReturnValue(true);
         const AddMachineRoute = (await import('@/app/(app)/settings/machines/add')).default;
         const screen = await renderScreen(React.createElement(AddMachineRoute));
 
-        expect(screen.tree.findByProps({ testID: 'settings.machineSetup:ssh' })).toBeTruthy();
-        expect(screen.tree.findAll((node) => node.props?.testID === 'settings.machineSetup:thisComputer')).toHaveLength(0);
-        expect(screen.tree.findAll((node) => node.props?.children === 'Set up a new machine').length).toBeGreaterThan(0);
+        expect(screen.findByTestId('settings.machines.draft.form.path:ssh')).toBeTruthy();
+        expect(screen.findByTestId('settings.machines.draft.form.path:thisComputer')).toBeTruthy();
     });
 
     it('renders a setup wizard launcher for this-computer route on desktop', async () => {
@@ -49,8 +48,8 @@ describe('Machines settings routes', () => {
         const AddMachineRoute = (await import('@/app/(app)/settings/machines/add')).default;
         const screen = await renderScreen(React.createElement(AddMachineRoute));
 
-        expect(screen.tree.findByProps({ testID: 'settings.machineSetup:thisComputer' })).toBeTruthy();
-        expect(screen.tree.findByProps({ testID: 'settings.machineSetup:ssh' })).toBeTruthy();
+        expect(screen.findByTestId('settings.machines.draft.form.path:thisComputer')).toBeTruthy();
+        expect(screen.findByTestId('settings.machines.draft.form.path:ssh')).toBeTruthy();
     });
 
     it('renders a setup wizard launcher for this-computer route on web', async () => {

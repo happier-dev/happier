@@ -5,12 +5,8 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
-import {
-  createPluginReloadController,
-  type PluginReloadController,
-  type PluginRuntimeRegistryLease,
-} from '@/plugins/runtime/reload/controller';
 import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/currentState.testkit';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { resolveSpawnChildEnvironment } from './resolveSpawnChildEnvironment';
 
@@ -53,29 +49,15 @@ async function seedEnabledLocalExtensionPackageStates(params: Readonly<{
   }
 }
 
-type AppliedPluginRuntime = Readonly<{
-  controller: PluginReloadController;
-  lease: PluginRuntimeRegistryLease;
-}>;
+type AppliedPluginRuntime = Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
 
 async function acquireAppliedPluginRuntime(happyHomeDir: string): Promise<AppliedPluginRuntime> {
-  const controller = createPluginReloadController({ happyHomeDir });
-  const lease = await controller.acquireRuntimeRegistry();
-  if (lease.source !== 'active' || !controller.isRuntimeRegistryCurrent(lease.registry)) {
-    await lease.release();
-    await controller.shutdown();
-    throw new Error('Spawn-hook fixture did not publish an active plugin runtime registry');
-  }
-  return { controller, lease };
+  return await createAdmittedPluginRuntimeFixture({ happyHomeDir });
 }
 
 async function releaseAppliedPluginRuntime(runtime: AppliedPluginRuntime | null): Promise<void> {
   if (!runtime) return;
-  try {
-    await runtime.lease.release();
-  } finally {
-    await runtime.controller.shutdown();
-  }
+  await runtime.dispose();
 }
 
 async function writeSpawnHookPluginFixture(params: Readonly<{

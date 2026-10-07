@@ -5,6 +5,14 @@ import * as agentCatalogProjection from '@/agents/backendCatalog/agentCatalogPro
 import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { AgentCatalogIdentityIcon } from '@/agents/presentation/AgentCatalogIdentityIcon';
 import { standardCleanup } from '@/dev/testkit';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { clearActiveUnsavedChangesGuard } from '@/utils/navigation/runGuardedNavigation';
+import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol';
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
 import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '@/dev/testkit/fixtures/pluginProviderDaemonProjection';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -17,7 +25,7 @@ import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const machineContributionRegistryProjectionDescribeMock = vi.hoisted(() => vi.fn());
+const daemonProjectionResponseBoundary = vi.hoisted(() => vi.fn());
 const administrationTargetState = vi.hoisted(() => ({
     selectedTarget: {
         serverIdentityId: 'server-a',
@@ -154,17 +162,21 @@ vi.mock('@/components/settings/machines/MachineAdministrationTargetSelector', ()
     ),
 }));
 
-vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
-    getMachineContributionRegistryProjectionRevision: () => 0,
-    subscribeMachineContributionRegistryProjectionInvalidation: () => () => {},
-    machineContributionRegistryProjectionDescribe: (...args: unknown[]) =>
-        machineContributionRegistryProjectionDescribeMock(...args),
-    machinePluginSecretStatus: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
-    machinePluginSecretSet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
-    machinePluginSecretDelete: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
-    machinePluginSettingsGet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
-    machinePluginSettingsSet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
-}));
+// The daemon RPC boundary publishes schema-valid envelopes; projection parsing,
+// Account binding, invalidation and catalog loading remain the real owners.
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
+    const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
+    return createServerScopedMachineRpcBoundaryMock(async (params) => {
+        if (params.method !== RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+            throw new Error(`Unexpected Agent index RPC: ${params.method}`);
+        }
+        const response = await daemonProjectionResponseBoundary(params.machineId, { serverId: params.serverId });
+        if (response.supported !== true) return { error: RPC_ERROR_MESSAGES.METHOD_NOT_FOUND, errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
+        return DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+            protocolVersion: 1, projection: response.projection,
+        });
+    });
+});
 
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['legacy.codex', 'legacy.claude'],
@@ -191,7 +203,19 @@ function readIdentityIcon(icon: React.ReactElement<{ children?: React.ReactNode 
         .find((child) => React.isValidElement(child) && child.type === AgentCatalogIdentityIcon);
 }
 
-beforeEach(() => {
+installDisconnectedServerSocketBoundary();
+let restoreCredentials: (() => void) | undefined;
+
+beforeEach(async () => {
+    await loadSyncSingletonForTests();
+    for (const id of ['server-a', 'server-x', 'server-y', 'server-b', 'server-selected']) {
+        const home = await upsertServerProfile({ serverUrl: `https://${id}`, name: id });
+        if (home.id !== id) throw new Error(`Unexpected test Home id: ${home.id}`);
+    }
+    const credentialBoundary = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl')
+        .mockResolvedValue({ token: createAccountTokenForTests('account-a') });
+    restoreCredentials = () => credentialBoundary.mockRestore();
+    clearActiveUnsavedChangesGuard();
     administrationTargetState.selectedTarget = {
         serverIdentityId: 'server-a',
         machineId: 'machine-1',
@@ -215,6 +239,9 @@ afterEach(() => {
     clearDaemonMergedProjectionCacheForTests();
     resetSessionSettingsEntryState();
     standardCleanup();
+    restoreCredentials?.();
+    restoreCredentials = undefined;
+    clearActiveUnsavedChangesGuard();
 });
 
 describe('PluginAgentSettingsIndexScreen', () => {
@@ -258,8 +285,8 @@ describe('PluginAgentSettingsIndexScreen', () => {
         const Screen = (await import('@/app/(app)/settings/agents')).default;
         const projection = createQualifiedExternalAgentProjection();
 
-        machineContributionRegistryProjectionDescribeMock.mockReset();
-        machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
+        daemonProjectionResponseBoundary.mockReset();
+        daemonProjectionResponseBoundary.mockResolvedValue({
             supported: true,
             projection,
         });
@@ -273,9 +300,9 @@ describe('PluginAgentSettingsIndexScreen', () => {
         // Proves the screen is wired to the daemon-fed merged projection inputs (Packet E/B7),
         // even though this test mocks agentCatalogProjection output.
         await act(async () => {});
-        expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledWith('machine-1', expect.objectContaining({
+        await vi.waitFor(() => expect(daemonProjectionResponseBoundary).toHaveBeenCalledWith('machine-1', expect.objectContaining({
             serverId: 'server-a',
-        }));
+        })));
         expect(getResolvedAgentCatalogEntriesSpy).toHaveBeenCalledWith(expect.objectContaining({
             mergedProviderProjectionById: expect.objectContaining({
                 'acme.review/provider': expect.objectContaining({
@@ -285,7 +312,7 @@ describe('PluginAgentSettingsIndexScreen', () => {
             }),
         }));
         expect(screen.findRowByTitle('Codex')).toBeFalsy();
-        expect(screen.findRowByTitle('Acme Review Provider')).toBeTruthy();
+        await vi.waitFor(() => expect(screen.findRowByTitle('Acme Review Provider')).toBeTruthy());
         // The machine has not reported on this agent yet: no guessed status line.
         expect(screen.findRowByTitle('Acme Review Provider')?.props.subtitle).toBeUndefined();
         expect(screen.findRowByTitle('agent.customAcp')).toBeFalsy();
@@ -363,8 +390,8 @@ describe('PluginAgentSettingsIndexScreen', () => {
                 daemonStateVersion: 0,
             },
         };
-        machineContributionRegistryProjectionDescribeMock.mockReset();
-        machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
+        daemonProjectionResponseBoundary.mockReset();
+        daemonProjectionResponseBoundary.mockResolvedValue({
             supported: true,
             projection: PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE,
         });
@@ -372,11 +399,11 @@ describe('PluginAgentSettingsIndexScreen', () => {
         const screen = await renderSettingsView(React.createElement(Screen));
         await act(async () => {});
 
-        expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledWith('machine-1', expect.objectContaining({
+        await vi.waitFor(() => expect(daemonProjectionResponseBoundary).toHaveBeenCalledWith('machine-1', expect.objectContaining({
             serverId: 'server-x',
-        }));
+        })));
 
-        machineContributionRegistryProjectionDescribeMock.mockClear();
+        daemonProjectionResponseBoundary.mockClear();
         administrationTargetState.selectedTarget = {
             serverIdentityId: 'server-y',
             machineId: 'machine-1',
@@ -399,9 +426,9 @@ describe('PluginAgentSettingsIndexScreen', () => {
         });
         await act(async () => {});
 
-        expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledWith('machine-1', expect.objectContaining({
+        await vi.waitFor(() => expect(daemonProjectionResponseBoundary).toHaveBeenCalledWith('machine-1', expect.objectContaining({
             serverId: 'server-y',
-        }));
+        })));
     });
 
     it('keeps the previous projected provider rows visible while a new canonical-target projection loads', async () => {
@@ -477,8 +504,8 @@ describe('PluginAgentSettingsIndexScreen', () => {
                 daemonStateVersion: 0,
             },
         };
-        machineContributionRegistryProjectionDescribeMock.mockReset();
-        machineContributionRegistryProjectionDescribeMock.mockResolvedValueOnce({
+        daemonProjectionResponseBoundary.mockReset();
+        daemonProjectionResponseBoundary.mockResolvedValueOnce({
             supported: true,
             projection: PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE,
         });
@@ -486,13 +513,13 @@ describe('PluginAgentSettingsIndexScreen', () => {
         const screen = await renderSettingsView(React.createElement(Screen));
         await act(async () => {});
 
-        expect(screen.findRowByTitle('Acme Review Provider')).toBeTruthy();
+        await vi.waitFor(() => expect(screen.findRowByTitle('Acme Review Provider')).toBeTruthy());
 
         let resolveReload!: (value: {
             supported: true;
             projection: typeof PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE;
         }) => void;
-        machineContributionRegistryProjectionDescribeMock.mockImplementation(() => new Promise((resolve) => {
+        daemonProjectionResponseBoundary.mockImplementation(() => new Promise((resolve) => {
             resolveReload = resolve;
         }));
         administrationTargetState.selectedTarget = {
@@ -517,9 +544,9 @@ describe('PluginAgentSettingsIndexScreen', () => {
         });
         await act(async () => {});
 
-        expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledWith('machine-2', expect.objectContaining({
+        await vi.waitFor(() => expect(daemonProjectionResponseBoundary).toHaveBeenCalledWith('machine-2', expect.objectContaining({
             serverId: 'server-y',
-        }));
+        })));
         expect(screen.findRowByTitle('Acme Review Provider')).toBeFalsy();
 
         await act(async () => {
@@ -530,7 +557,7 @@ describe('PluginAgentSettingsIndexScreen', () => {
         });
         await act(async () => {});
 
-        expect(screen.findRowByTitle('Acme Review Provider')).toBeTruthy();
+        await vi.waitFor(() => expect(screen.findRowByTitle('Acme Review Provider')).toBeTruthy());
     });
 
     it('uses the exact canonical Administration target instead of an active-server or global-machine fallback', async () => {
@@ -611,8 +638,8 @@ describe('PluginAgentSettingsIndexScreen', () => {
                 daemonStateVersion: 0,
             },
         };
-        machineContributionRegistryProjectionDescribeMock.mockReset();
-        machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
+        daemonProjectionResponseBoundary.mockReset();
+        daemonProjectionResponseBoundary.mockResolvedValue({
             supported: true,
             projection: PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE,
         });
@@ -620,10 +647,10 @@ describe('PluginAgentSettingsIndexScreen', () => {
         await renderSettingsView(React.createElement(Screen));
         await act(async () => {});
 
-        expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledWith('machine-selected', expect.objectContaining({
+        await vi.waitFor(() => expect(daemonProjectionResponseBoundary).toHaveBeenCalledWith('machine-selected', expect.objectContaining({
             serverId: 'server-selected',
-        }));
-        expect(machineContributionRegistryProjectionDescribeMock).not.toHaveBeenCalledWith('machine-other', expect.anything());
+        })));
+        expect(daemonProjectionResponseBoundary).not.toHaveBeenCalledWith('machine-other', expect.anything());
     });
 
     it('lists projected plugin agents even when they do not expose a built-in runtime carrier', async () => {

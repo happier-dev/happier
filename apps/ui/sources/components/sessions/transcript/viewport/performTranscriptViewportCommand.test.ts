@@ -26,15 +26,18 @@ import {
 
 const platformMockState = vi.hoisted(() => ({ os: 'ios' as 'web' | 'ios' }));
 
-vi.mock('react-native', () => ({
-    Platform: {
-        get OS() {
-            return platformMockState.os;
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        Platform: {
+            get OS() {
+                return platformMockState.os;
+            },
+            select: (values: Record<string, unknown>) =>
+                values?.[platformMockState.os] ?? values?.default,
         },
-        select: (values: Record<string, unknown>) =>
-            values?.[platformMockState.os] ?? values?.default,
-    },
-}));
+    });
+});
 
 const { performTranscriptViewportCommand } = await import(
     '@/components/sessions/transcript/viewport/performTranscriptViewportCommand'

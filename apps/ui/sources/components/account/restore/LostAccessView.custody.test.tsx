@@ -1,149 +1,87 @@
 import * as React from 'react';
-import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import {
-    renderScreen,
-    standardCleanup,
-} from '@/dev/testkit';
-import {
-    createModalModuleMock,
-} from '@/dev/testkit/mocks/modal';
+import { ACCOUNT_ENCRYPTION_FIRST_KEY_PENDING_TTL_MS, TokenStorage, type PendingExternalAuth } from '@/auth/storage/tokenStorage';
+import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
+import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { Modal } from '@/modal';
+import { initializeTerminalRouteRuntimeForTests } from '@/__tests__/routes/(app)/terminal/terminalRouteTestHelpers';
+import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
+import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+import { guardAccountEncryptionFirstKeyCredentialMutation } from '@/sync/ops/account/accountEncryptionFirstKeyExternalAuth';
+import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { LostAccessView } from './LostAccessView';
 
-const setPendingExternalAuthSpy =
-    vi.hoisted(() => vi.fn(async () => true));
-const getExternalAuthUrlSpy =
-    vi.hoisted(() => vi.fn(async () => 'https://oauth.example.test'));
-const guardCredentialMutationSpy =
-    vi.hoisted(() => vi.fn(async () => ({
-        kind: 'finish_encryption_setup' as const,
-        recovery: {},
-    })));
+installTokenStorageWebPlatformMocks();
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({ translate: key => key }));
+vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } =
-        await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } =
-        await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } =
-        await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key) => key,
-    });
-});
-
-const modalMock = createModalModuleMock({
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
     confirmResult: true,
-    spies: {
-        show: (config) => {
-            config.onRequestClose?.();
-            return 'modal-id';
-        },
-    },
+    // The person closes the recovery prompt without abandoning custody.
+    spies: { show: config => { config.onRequestClose?.(); return 'modal-id'; } },
+}).module);
+
+await initializeTerminalRouteRuntimeForTests();
+let localStorage: ReturnType<typeof installLocalStorageMock>;
+let locks: ReturnType<typeof installWebLockManagerMock>;
+beforeEach(() => {
+    localStorage = installLocalStorageMock();
+    locks = installWebLockManagerMock();
+    resetServerFeaturesClientForTests();
 });
-vi.mock('@/modal', () => modalMock.module);
-
-vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
-    getReadyServerFeatures: vi.fn(async () => ({
-        features: {
-            auth: {
-                recovery: {
-                    providerReset: { enabled: true },
-                },
-            },
-        },
-        capabilities: {
-            auth: {
-                recovery: {
-                    providerReset: {
-                        providers: ['github'],
-                    },
-                },
-            },
-        },
-    })),
-}));
-
-vi.mock('@/auth/providers/registry', () => ({
-    getAuthProvider: () => ({
-        displayName: 'GitHub',
-        getExternalAuthUrl: getExternalAuthUrlSpy,
-    }),
-}));
-
-vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
-    const { createTokenStorageModuleMock } = await import('@/dev/testkit/mocks/tokenStorage');
-    return createTokenStorageModuleMock({
-        importOriginal,
-        tokenStorage: {
-            setPendingExternalAuth: setPendingExternalAuthSpy,
-            clearPendingExternalAuth: vi.fn(async () => true),
-        },
-    });
-});
-
-vi.mock(
-    '@/sync/ops/account/accountEncryptionFirstKeyExternalAuth',
-    () => ({
-        guardAccountEncryptionFirstKeyCredentialMutation:
-            guardCredentialMutationSpy,
-        abandonAccountEncryptionFirstKeyExternalAuth:
-            vi.fn(async () => ({ kind: 'abandoned' })),
-    }),
-);
-
-vi.mock('@/sync/domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: () => ({
-        serverUrl: 'https://relay.example.test',
-    }),
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-}));
-
-vi.mock('@/components/ui/buttons/RoundButton', () => ({
-    RoundButton: (props: Record<string, unknown>) =>
-        React.createElement('RoundButton', props),
-}));
-
-afterEach(() => {
-    standardCleanup();
+afterEach(async () => {
+    await standardCleanup();
+    resetServerFeaturesClientForTests();
+    locks.restore();
+    localStorage.restore();
     vi.clearAllMocks();
 });
 
 describe('LostAccessView custody', () => {
     it('does not treat the generic lost-access warning as authority to replace marked custody', async () => {
-        const { LostAccessView } = await import('./LostAccessView');
-        const screen = await renderScreen(
-            <LostAccessView
-                onBack={() => {}}
-                returnTo="/restore"
-            />,
-        );
-        await act(async () => {});
-
-        const provider = screen.findByTestId(
-            'lost-access-provider-github',
-        );
-        if (!provider) {
-            throw new Error('Expected lost-access provider action');
-        }
-        await act(async () => {
-            await provider.props.action();
+        const features = createRootLayoutFeaturesResponse({
+            features: { auth: { recovery: { providerReset: { enabled: true } } } },
+            capabilities: { auth: { recovery: { providerReset: { providers: ['github'] } } } },
         });
+        const authRequests: string[] = [];
+        setRuntimeFetch(async (input) => {
+            const url = new URL(String(input));
+            if (url.pathname === '/v1/features') return Response.json(features);
+            if (url.pathname.includes('/auth/')) authRequests.push(url.href);
+            return new Response('{}', { status: 404 });
+        });
+        const home = await upsertAndActivateServer({ serverUrl: 'https://relay.example.test', source: 'manual', scope: 'device' });
+        expect((await getServerFeaturesSnapshot({ serverId: home.id, force: true })).status).toBe('ready');
+        const capturedHome = getActiveServerSnapshot();
+        const createdAt = Date.now();
+        const pending = {
+            provider: 'github', proof: 'retained-proof', secret: 'retained-secret',
+            serverId: capturedHome.serverId, serverUrl: capturedHome.serverUrl,
+            returnTo: '/settings/account',
+            accountEncryptionFirstKey: {
+                accountId: 'account-1', requestDigest: `aemrb1_${'A'.repeat(43)}`,
+                requestJson: '{"toMode":"e2ee"}', createdAt,
+                expiresAt: createdAt + ACCOUNT_ENCRYPTION_FIRST_KEY_PENDING_TTL_MS,
+                pending: 'retained-first-key', migrationSubmissionAttempted: true,
+            },
+        } satisfies PendingExternalAuth;
+        expect(await TokenStorage.setPendingExternalAuth(pending)).toBe(true);
+        expect((await guardAccountEncryptionFirstKeyCredentialMutation()).kind).toBe('finish_encryption_setup');
 
-        expect(modalMock.spies.confirm).toHaveBeenCalledTimes(1);
-        expect(modalMock.spies.show).toHaveBeenCalledTimes(1);
-        expect(setPendingExternalAuthSpy).not.toHaveBeenCalled();
-        expect(getExternalAuthUrlSpy).not.toHaveBeenCalled();
+        const screen = await renderScreen(<LostAccessView onBack={() => {}} returnTo="/restore" />);
+        await vi.waitFor(() => expect(screen.findByTestId('lost-access-provider-github')).not.toBeNull());
+        await screen.pressByTestIdAsync('lost-access-provider-github');
+
+        expect(Modal.confirm).toHaveBeenCalledOnce();
+        expect(Modal.show).toHaveBeenCalledOnce();
+        expect(await TokenStorage.readPendingExternalAuthState()).toEqual({ value: pending, serverMismatch: false });
+        expect((await guardAccountEncryptionFirstKeyCredentialMutation()).kind).toBe('finish_encryption_setup');
+        expect(getActiveServerSnapshot()).toEqual(capturedHome);
+        expect(authRequests).toEqual([]);
     });
 });

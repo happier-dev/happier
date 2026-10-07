@@ -1,225 +1,113 @@
 import React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
-import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
+import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createWelcomeFeaturesResponse } from '../index.testHelpers';
-import { installRestoreRouteCommonModuleMocks, resetRestoreRouteTestState } from './restoreRouteTestHelpers';
+import { initializeTerminalRouteRuntimeForTests } from '../terminal/terminalRouteTestHelpers';
+import { installRestoreRouteCommonModuleMocks } from './restoreRouteTestHelpers';
+import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
+import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { decodeBase64, encodeBase64 } from '@/encryption/base64';
+import sodium from '@/encryption/libsodium.lib';
 
-type ReactActEnvironmentGlobal = typeof globalThis & {
-    IS_REACT_ACT_ENVIRONMENT?: boolean;
-};
-(globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
-
-const mockState = vi.hoisted(() => ({
+const native = vi.hoisted(() => ({
+    secureValues: new Map<string, string>(),
     canOpenURL: vi.fn(async () => true),
-    clearPendingExternalAuth: vi.fn(async () => true),
-    getExternalAuthUrl: vi.fn(async (_params: unknown) => 'https://example.test/oauth'),
     openURL: vi.fn(async () => true),
-    setPendingExternalAuth: vi.fn(async () => true),
 }));
-
+installTokenStorageWebPlatformMocks({
+    // Genuine native credential persistence adapter; TokenStorage parsing and custody stay real.
+    secureStore: () => ({
+        getItemAsync: async (key: string) => native.secureValues.get(key) ?? null,
+        setItemAsync: async (key: string, value: string) => { native.secureValues.set(key, value); },
+        deleteItemAsync: async (key: string) => { native.secureValues.delete(key); },
+    }),
+});
 installRestoreRouteCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            Platform: {
-                OS: 'ios',
-                select: <T,>(spec: { ios?: T; default?: T }) => spec.ios ?? spec.default,
-            },
-            AppState: {
-                addEventListener: () => ({ remove: () => {} }),
-            },
-            Dimensions: {
-                get: () => ({ width: 800, height: 600 }),
-            },
-            ScrollView: 'ScrollView',
-            View: 'View',
-            Text: 'Text',
-            ActivityIndicator: 'ActivityIndicator',
-            Linking: {
-                canOpenURL: mockState.canOpenURL,
-                openURL: mockState.openURL,
-            },
-        });
-    },
-    router: async () => {
-        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-        const routerMock = createExpoRouterMock({
-            router: { replace: vi.fn(), back: vi.fn(), push: vi.fn() },
-        });
-        return routerMock.module;
-    },
-    modal: async () => {
-        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-        return createModalModuleMock({
-            spies: {
-                confirm: vi.fn(async () => true),
-                alert: vi.fn(async () => {}),
-            },
-        }).module;
-    },
+    reactNative: async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+        Platform: { OS: 'ios', select: <T,>(spec: { ios?: T; default?: T }) => spec.ios ?? spec.default },
+        Linking: { canOpenURL: native.canOpenURL, openURL: native.openURL },
+    }),
+    modal: async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module,
+});
+await initializeTerminalRouteRuntimeForTests();
+const Screen = (await import('@/app/(app)/restore/lost-access')).default;
+
+let localStorage: ReturnType<typeof installLocalStorageMock>;
+beforeEach(() => {
+    localStorage = installLocalStorageMock();
+    native.secureValues.clear();
+    native.openURL.mockClear();
+    native.canOpenURL.mockClear();
+    resetServerFeaturesClientForTests();
+});
+afterEach(async () => {
+    await standardCleanup();
+    resetServerFeaturesClientForTests();
+    localStorage.restore();
 });
 
-vi.mock('@/components/ui/buttons/RoundButton', () => ({
-    RoundButton: 'RoundButton',
-}));
-
-vi.mock('@/sync/domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: () => ({
-        serverId: 'server-a',
-        serverUrl: 'http://localhost:53288',
-        kind: 'custom',
-        generation: 1,
-    }),
-}));
-
-vi.mock('@/auth/storage/tokenStorage', () => ({
-    TokenStorage: {
-        setPendingExternalAuth: mockState.setPendingExternalAuth,
-        clearPendingExternalAuth: mockState.clearPendingExternalAuth,
-    },
-    isLegacyAuthCredentials: (credentials: unknown) => Boolean(credentials),
-}));
-
-vi.mock('@/platform/cryptoRandom', () => ({
-    getRandomBytes: (n: number) => new Uint8Array(n).fill(9),
-    getRandomBytesAsync: async (n: number) => new Uint8Array(n).fill(9),
-}));
-
-vi.mock('@/encryption/base64', () => ({
-    encodeBase64: (_bytes: unknown, encoding?: 'base64' | 'base64url') => {
-        if (encoding === 'base64url') return 'base64url-value';
-        return 'base64-value+slash/plus+';
-    },
-}));
-
-vi.mock('@/encryption/libsodium.lib', () => ({
-    default: {
-        crypto_sign_seed_keypair: () => ({ publicKey: new Uint8Array([1]), privateKey: new Uint8Array([2]) }),
-    },
-}));
-
-vi.mock('@/auth/providers/registry', () => ({
-    getAuthProvider: () => ({
-        id: 'github',
-        displayName: 'GitHub',
-        getExternalAuthUrl: mockState.getExternalAuthUrl,
-    }),
-}));
-
-vi.mock('@/sync/ops/account/accountEncryptionFirstKeyExternalAuth', () => ({
-    guardAccountEncryptionFirstKeyCredentialMutation: vi.fn(async () => ({
-        kind: 'allowed' as const,
-    })),
-    abandonAccountEncryptionFirstKeyExternalAuth: vi.fn(async () => ({
-        kind: 'abandoned' as const,
-    })),
-}));
-
-const baseWelcomeFeatures = createWelcomeFeaturesResponse({
-    signupMethods: [
-        { id: 'anonymous', enabled: false },
-        { id: 'github', enabled: true },
-    ],
-    requiredProviders: ['github'],
-    autoRedirectEnabled: false,
-    autoRedirectProviderId: null,
-    recoveryProviderResetEnabled: true,
-    recoveryProviderResetProviders: ['github'],
+const features = createWelcomeFeaturesResponse({
+    signupMethods: [{ id: 'anonymous', enabled: false }, { id: 'github', enabled: true }],
+    requiredProviders: ['github'], autoRedirectEnabled: false, autoRedirectProviderId: null,
+    recoveryProviderResetEnabled: true, recoveryProviderResetProviders: ['github'],
 });
 
-vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
-    getReadyServerFeatures: async () => baseWelcomeFeatures,
-}));
-
-function findProviderButtonAction(tree: renderer.ReactTestRenderer): () => Promise<void> | void {
-    const buttons = tree.findAll((node) => (node.type as unknown) === 'RoundButton');
-    const providerButton = buttons.find((button) => typeof button.props?.action === 'function');
-    expect(providerButton).toBeTruthy();
-    return providerButton!.props.action as () => Promise<void> | void;
+async function renderLostAccess(externalUrl: string) {
+    const oauthRequests: Array<{ url: URL; init?: RequestInit }> = [];
+    setRuntimeFetch(async (input, init) => {
+        const url = new URL(String(input));
+        if (url.pathname === '/v1/features') return Response.json(features);
+        if (url.pathname === '/v1/auth/external/github/params') {
+            oauthRequests.push({ url, init });
+            return Response.json({ url: externalUrl });
+        }
+        return new Response('{}', { status: 404 });
+    });
+    const home = await upsertAndActivateServer({ serverUrl: 'https://lost-access.example.test', scope: 'device' });
+    expect((await getServerFeaturesSnapshot({ serverId: home.id, force: true })).status).toBe('ready');
+    const capturedHome = getActiveServerSnapshot();
+    const screen = await renderScreen(<Screen />);
+    await vi.waitFor(() => expect(screen.findByTestId('lost-access-provider-github')).not.toBeNull());
+    return { screen, oauthRequests, capturedHome };
 }
 
-afterEach(() => {
-    vi.restoreAllMocks();
-    resetRestoreRouteTestState();
-});
-
 describe('/restore/lost-access', () => {
-    it('starts provider reset flow by setting intent=reset and opening the external signup URL', async () => {
-        vi.resetModules();
-        mockState.openURL.mockClear();
-        mockState.canOpenURL.mockClear();
-        mockState.setPendingExternalAuth.mockClear();
-        mockState.clearPendingExternalAuth.mockClear();
-        mockState.getExternalAuthUrl.mockClear();
+    it('retains reset intent and exact Home custody before opening the provider signup URL', async () => {
+        const { screen, oauthRequests, capturedHome } = await renderLostAccess('https://example.test/oauth');
+        expect(screen.findByTestId('restore-lost-access-wizard')).toBeTruthy();
+        await screen.pressByTestIdAsync('lost-access-provider-github');
 
-        const { default: Screen } = await import('@/app/(app)/restore/lost-access');
-
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        try {
-            const screen = await renderScreen(<Screen />);
-            tree = screen.tree;
-            await flushHookEffects();
-            if (!tree) {
-                throw new Error('Expected lost access screen renderer');
-            }
-            expect(screen.findByTestId('restore-lost-access-wizard')).toBeTruthy();
-
-            const triggerProviderReset = findProviderButtonAction(tree);
-            await act(async () => {
-                await triggerProviderReset();
-            });
-
-            expect(mockState.setPendingExternalAuth).toHaveBeenCalledWith(expect.objectContaining({ provider: 'github', intent: 'reset' }));
-            expect(mockState.getExternalAuthUrl).toHaveBeenCalledWith(
-                expect.objectContaining({ mode: 'keyed', publicKey: 'base64-value+slash/plus+' }),
-            );
-            expect(mockState.canOpenURL).toHaveBeenCalledWith('https://example.test/oauth');
-            expect(mockState.openURL).toHaveBeenCalledWith('https://example.test/oauth');
-        } finally {
-            act(() => {
-                tree?.unmount();
-            });
-        }
+        const pending = await TokenStorage.getPendingExternalAuth();
+        expect(pending).toMatchObject({
+            provider: 'github', intent: 'reset',
+            serverId: capturedHome.serverId, serverUrl: capturedHome.serverUrl,
+        });
+        expect(pending?.secret).toEqual(expect.any(String));
+        const encodedSecret = pending?.secret;
+        if (typeof encodedSecret !== 'string') throw new Error('Expected retained reset secret');
+        const secret = decodeBase64(encodedSecret, 'base64url');
+        expect(secret).toHaveLength(32);
+        const publicKey = encodeBase64(sodium.crypto_sign_seed_keypair(secret).publicKey);
+        expect(oauthRequests).toHaveLength(1);
+        expect(oauthRequests[0].url.origin).toBe(capturedHome.serverUrl);
+        expect(oauthRequests[0].url.searchParams.get('publicKey')).toBe(publicKey);
+        expect(new Headers(oauthRequests[0].init?.headers).has('Authorization')).toBe(false);
+        expect(native.canOpenURL).toHaveBeenCalledWith('https://example.test/oauth');
+        expect(native.openURL).toHaveBeenCalledWith('https://example.test/oauth');
+        expect(getActiveServerSnapshot()).toEqual(capturedHome);
     });
 
-    it('blocks unsafe provider URLs and clears pending state', async () => {
-        vi.resetModules();
-        mockState.openURL.mockClear();
-        mockState.canOpenURL.mockClear();
-        mockState.setPendingExternalAuth.mockClear();
-        mockState.clearPendingExternalAuth.mockClear();
+    it('rejects an unsafe provider URL without OS navigation and removes the attempted custody', async () => {
+        const { screen, capturedHome } = await renderLostAccess('javascript:alert(1)');
+        await screen.pressByTestIdAsync('lost-access-provider-github');
 
-        vi.doMock('@/auth/providers/registry', () => ({
-            getAuthProvider: () => ({
-                id: 'github',
-                displayName: 'GitHub',
-                getExternalAuthUrl: vi.fn(async () => 'javascript:alert(1)'),
-            }),
-        }));
-
-        const { default: Screen } = await import('@/app/(app)/restore/lost-access');
-
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        try {
-            tree = (await renderScreen(<Screen />)).tree;
-            await flushHookEffects();
-            if (!tree) {
-                throw new Error('Expected lost access screen renderer');
-            }
-
-            const triggerProviderReset = findProviderButtonAction(tree);
-            await act(async () => {
-                await triggerProviderReset();
-            });
-
-            expect(mockState.canOpenURL).not.toHaveBeenCalled();
-            expect(mockState.openURL).not.toHaveBeenCalled();
-            expect(mockState.clearPendingExternalAuth).toHaveBeenCalled();
-        } finally {
-            act(() => {
-                tree?.unmount();
-            });
-        }
+        expect(native.canOpenURL).not.toHaveBeenCalled();
+        expect(native.openURL).not.toHaveBeenCalled();
+        expect(await TokenStorage.getPendingExternalAuth()).toBeNull();
+        expect(getActiveServerSnapshot()).toEqual(capturedHome);
     });
 });

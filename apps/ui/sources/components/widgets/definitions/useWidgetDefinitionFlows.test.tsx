@@ -501,6 +501,7 @@ describe('widget definition flows', () => {
                     const menu = screen.tree.root.findByType(ItemRowActions);
                     const about = menu.props.actions.find((action: { id: string }) => action.id === 'about');
                     expect(about).toBeDefined();
+                    if (!about?.onPress) throw new Error('Missing widget About action handler');
                     about.onPress();
                 }
             });
@@ -639,7 +640,9 @@ describe('widget definition flows', () => {
             const save = screen.tree.root.findAllByType(ItemRowActions).flatMap(menu => menu.props.actions)
                 .find((action: { id: string }) => action.id === 'saveAsYours');
             expect(save).toBeDefined();
-            await act(async () => { save.onPress(); });
+            const onPress = save?.onPress;
+            if (!onPress) throw new Error('Missing Save as yours widget action handler');
+            await act(async () => { onPress(); });
             const panel = screen.tree.root.findByType(SaveAsWidgetPanel);
             expect(panel.props.converted).toEqual([{ path: 'session', title: 'Read Session', becomes: 'context' }]);
             const preview = screen.findByTestId('sessionCopy.save.preview');

@@ -11,12 +11,12 @@ import {
     enableReactActEnvironment,
     installPickerCommonModuleMocks,
 } from './testHarness';
-import { createUseSettingMock, createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
+import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 
 enableReactActEnvironment();
 
 const routerMock = createRouterMock();
-const navigationMock = createNavigationMock();
+const navigationMock = { ...createNavigationMock(), canGoBack: vi.fn(() => false) };
 const stackOptionsCapture = createStackOptionsCapture();
 
 installPickerCommonModuleMocks({
@@ -40,37 +40,9 @@ installPickerCommonModuleMocks({
             },
             stackOptionsCapture,
         }).module,
-    storage: async (importOriginal) =>
-        (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
-            importOriginal,
-            overrides: {
-                useAllMachines: () => [],
-                useAllSessionListRenderables: () => [],
-                useSetting: createUseSettingMock({ fallback: () => false }),
-                useSettingMutable: createUseSettingMutableMockFromReader(() => [[], vi.fn()]),
-            },
-        }),
 });
 
-vi.mock('@/components/sessions/new/components/MachineSelector', () => ({
-    MachineSelector: () => null,
-}));
-
-vi.mock('@/utils/sessions/recentMachines', () => ({
-    getRecentMachinesFromSessions: () => [],
-}));
-
-vi.mock('@/sync/sync', () => ({
-    sync: { refreshMachinesThrottled: vi.fn() },
-}));
-
-vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({
-    prefetchMachineCapabilities: vi.fn(),
-}));
-
-vi.mock('@/hooks/machine/useMachineEnvPresence', () => ({
-    invalidateMachineEnvPresence: vi.fn(),
-}));
+const runtime = installSessionPaneRuntimeTestHarness();
 
 describe('MachinePickerScreen (back fallback)', () => {
     afterEach(() => {
@@ -86,13 +58,13 @@ describe('MachinePickerScreen (back fallback)', () => {
         navigationMock.dispatch.mockClear();
         navigationMock.goBack.mockClear();
         navigationMock.setParams.mockClear();
-        (navigationMock as any).canGoBack = undefined;
+        navigationMock.canGoBack.mockReturnValue(false);
     });
 
     it('replaces to /new when it cannot go back', async () => {
-        (navigationMock as any).canGoBack = () => false;
+        navigationMock.canGoBack.mockReturnValue(false);
         const MachinePickerScreen = (await import('@/app/(app)/new/pick/machine')).default;
-        await renderScreen(React.createElement(MachinePickerScreen));
+        await renderScreen(React.createElement(runtime.Wrapper, null, React.createElement(MachinePickerScreen)));
 
         const options = stackOptionsCapture.getResolved();
         expect(typeof options?.headerLeft).toBe('function');
@@ -100,7 +72,8 @@ describe('MachinePickerScreen (back fallback)', () => {
         const backButton = options?.headerLeft?.();
         expect(typeof backButton?.props?.onPress).toBe('function');
         // K2 picker route chrome: the leading control is Cancel (the native title is the only other chrome).
-        const renderedLeading = await renderScreen(backButton as React.ReactElement);
+        if (!backButton) throw new Error('Expected native leading Cancel control');
+        const renderedLeading = await renderScreen(backButton);
         expect(renderedLeading.findByTestId('new-session-machine-picker-cancel')?.props.accessibilityLabel)
             .toBe('common.cancel');
         backButton?.props?.onPress?.();

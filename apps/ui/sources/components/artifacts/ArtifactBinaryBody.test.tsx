@@ -35,6 +35,20 @@ function binarySource(mime: string, bytes = new Uint8Array([0, 255, 128])) {
     return { reference, bytes, request, readBytes };
 }
 
+function installDownloadDocument() {
+    const anchor = { href: '', download: '', rel: '', style: {}, click: vi.fn(), remove: vi.fn() };
+    const styles = new Map<string, { id: string; textContent: string }>();
+    // This is the browser DOM boundary: downloads and the real spinner's stylesheet
+    // insertion share one document, just as they do in the browser.
+    vi.stubGlobal('document', {
+        getElementById: (id: string) => styles.get(id) ?? null,
+        createElement: (tag: string) => tag === 'a' ? anchor : { id: '', textContent: '' },
+        head: { appendChild: (style: { id: string; textContent: string }) => styles.set(style.id, style) },
+        body: { appendChild: () => {} },
+    });
+    return anchor;
+}
+
 describe('ArtifactBinaryBody', () => {
     it.each([
         ['android', 'success'], ['android', 'failure'], ['ios', 'success'], ['ios', 'failure'],
@@ -98,13 +112,7 @@ describe('ArtifactBinaryBody', () => {
         const next = binarySource('text/html');
         vi.spyOn(URL, 'createObjectURL').mockImplementation(() => 'blob:next');
         vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
-        const anchor = { href: '', download: '', rel: '', style: {}, click: vi.fn(), remove: vi.fn() };
-        vi.stubGlobal('document', {
-            createElement: (tag: string) => tag === 'a' ? anchor : { id: '', textContent: '' },
-            getElementById: () => null,
-            head: { appendChild: () => {} },
-            body: { appendChild: () => {} },
-        });
+        const anchor = installDownloadDocument();
         try {
             const screen = await renderScreen(<ArtifactBinaryBody artifactId="first" name="first.zip" {...first} />);
             await screen.pressByTestIdAsync('artifact:download');
@@ -160,13 +168,7 @@ describe('ArtifactBinaryBody', () => {
             downloaded.push(blob); return 'blob:download';
         });
         vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
-        const anchor = { href: '', download: '', rel: '', style: {}, click: vi.fn(), remove: vi.fn() };
-        vi.stubGlobal('document', {
-            createElement: (tag: string) => tag === 'a' ? anchor : { id: '', textContent: '' },
-            getElementById: () => null,
-            head: { appendChild: () => {} },
-            body: { appendChild: () => {} },
-        });
+        const anchor = installDownloadDocument();
         try {
             const screen = await renderScreen(<ArtifactBinaryBody artifactId="html" name="page.html" {...source} />);
             expect(source.request).not.toHaveBeenCalled();

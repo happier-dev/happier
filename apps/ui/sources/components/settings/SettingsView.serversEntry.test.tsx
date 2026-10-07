@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -36,7 +37,7 @@ function createPropPassthroughNode(name: string) {
 
 async function renderSettledSettingsView() {
     const { SettingsView } = await import('./SettingsView');
-    const screen = await renderSettingsView(React.createElement(SettingsView));
+    const screen = await renderSettingsView(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>);
     for (let stage = 0; stage < 4; stage += 1) {
         await act(async () => {
             await new Promise((resolve) => setTimeout(resolve, 25));
@@ -125,9 +126,10 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@react-navigation/native', () => ({
-    useFocusEffect: (_cb: () => void) => {},
-}));
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return { ...createReactNavigationNativeMock(), useFocusEffect: () => {} };
+});
 
 vi.mock('expo-constants', () => ({
     default: { expoConfig: { version: '0.0.0-test' } },
@@ -150,9 +152,6 @@ vi.mock('@/hooks/session/useConnectTerminal', () => ({
     useConnectTerminal: () => ({ connectTerminal: vi.fn(), connectWithUrl: vi.fn(), isLoading: false }),
 }));
 
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ credentials: null }),
-}));
 
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');

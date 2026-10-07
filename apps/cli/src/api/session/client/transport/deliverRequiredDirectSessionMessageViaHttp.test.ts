@@ -2,6 +2,7 @@ import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { deliverRequiredDirectSessionMessageViaHttp } from './deliverRequiredDirectSessionMessageViaHttp';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
 vi.mock('axios');
 
@@ -12,7 +13,6 @@ describe('deliverRequiredDirectSessionMessageViaHttp', () => {
     });
 
     it('keeps the released direct-message HTTP serializer outside the durable transcript outbox', async () => {
-        vi.stubEnv('HAPPIER_SERVER_URL', 'https://server.example');
         vi.mocked(axios.post).mockResolvedValue({
             data: {
                 ok: true,
@@ -20,7 +20,7 @@ describe('deliverRequiredDirectSessionMessageViaHttp', () => {
             },
         });
 
-        await expect(deliverRequiredDirectSessionMessageViaHttp({
+        await expect(runWithServerHttpBaseUrl('https://server.example', () => deliverRequiredDirectSessionMessageViaHttp({
             token: 'token',
             sessionId: 'session/one',
             message: { t: 'plain', v: { role: 'agent', content: 'hello' } },
@@ -28,7 +28,7 @@ describe('deliverRequiredDirectSessionMessageViaHttp', () => {
             sidechainId: 'sidechain-1',
             messageRole: 'agent',
             sessionEventType: 'ready',
-        })).resolves.toEqual({ id: 'message-1', seq: 7, localId: 'local-1' });
+        }))).resolves.toEqual({ id: 'message-1', seq: 7, localId: 'local-1' });
 
         expect(axios.post).toHaveBeenCalledWith(
             'https://server.example/v2/sessions/session%2Fone/messages',

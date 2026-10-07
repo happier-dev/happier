@@ -1,6 +1,6 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { findPopoverContentView, withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderScreen } from '@/dev/testkit';
@@ -8,34 +8,11 @@ import { installPopoverCommonModuleMocks } from './popoverTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/utils/web/radixCjs', () => {
-    const React = require('react');
-    return {
-        requireRadixDismissableLayer: () => ({
-            Branch: (props: any) => React.createElement('DismissableLayerBranch', props, props.children),
-        }),
-    };
-});
-
 installPopoverCommonModuleMocks({
     reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            Platform: {
-                OS: 'android',
-            },
+        const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeNativeMock({ platformOS: 'android' }, {
             useWindowDimensions: () => ({ width: 1000, height: 800 }),
-            StyleSheet: {
-                absoluteFill: {
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                },
-            },
-            View: (props: any) => React.createElement('View', props, props.children),
-            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
         });
     },
 });

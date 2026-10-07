@@ -1,113 +1,48 @@
 import * as React from 'react';
-import renderer from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { describe, expect, it } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
-
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+import { installSessionPaneRuntimeTestHarness } from './sessionPaneRuntimeTestHarness';
+import { createSessionScmReviewDetailsTab } from './details/sessionDetailsTabBuilders';
 
 installSessionDetailsPanelCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-            return createReactNativeWebMock({
-                Platform: {
-                    OS: 'ios',
-                    select: (spec: any) => spec?.ios ?? spec?.default,
-                },
-            });
-        },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            useLocalSetting: (key: string) => {
-                return null;
-            },
-            useLocalSettingMutable: () => [false, vi.fn()],
-        });
-    },
-    text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({ translate: (key) => key });
+        return createReactNativeWebMock({ Platform: { OS: 'ios' } });
     },
 });
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-}));
-
-vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
-    useAppPaneScope: () => ({
-        closeDetails: vi.fn(),
-        closeDetailsTab: vi.fn(),
-        pinDetailsTab: vi.fn(),
-        setActiveDetailsTab: vi.fn(),
-        scopeState: {
-            details: {
-                isOpen: true,
-                activeTabKey: 'scmReview:working',
-                tabs: [
-                    {
-                        key: 'scmReview:working',
-                        kind: 'scmReview',
-                        title: 'Review',
-                        isPinned: true,
-                        isPreview: false,
-                        resource: { kind: 'scmReview', scope: 'working' },
-                    },
-                ],
-            },
-        },
-    }),
-}));
-
-const reviewViewSpy = vi.fn();
-vi.mock('@/components/sessions/files/views/SessionScmReviewDetailsView', () => ({
-    SessionScmReviewDetailsView: (props: any) => {
-        reviewViewSpy(props);
-        return React.createElement('SessionScmReviewDetailsView');
-    },
-}));
-
-vi.mock('@/components/sessions/files/views/SessionCommitDetailsView', () => ({
-    SessionCommitDetailsView: () => React.createElement('SessionCommitDetailsView'),
-}));
-
-vi.mock('@/components/sessions/files/views/SessionFileDetailsView', () => ({
-    SessionFileDetailsView: () => React.createElement('SessionFileDetailsView'),
-}));
+const runtime = installSessionPaneRuntimeTestHarness();
 
 describe('SessionDetailsPanel (scm review resource)', () => {
-    it('renders SessionScmReviewDetailsView for scmReview tabs', async () => {
+    it('renders the current review resource through the scoped Session', async () => {
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
-        reviewViewSpy.mockClear();
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />)).tree;
-
-        expect(tree).toBeTruthy();
-        expect(reviewViewSpy).toHaveBeenCalledTimes(1);
-        expect(reviewViewSpy.mock.calls[0]?.[0]?.sessionId).toBe('s1');
+        const { SessionScmReviewDetailsView } = await import('@/components/sessions/files/views/SessionScmReviewDetailsView');
+        const screen = await renderScreen(<runtime.Wrapper>
+            <SessionDetailsPanel sessionId="s1" routeServerId={runtime.serverId} scopeId="session:s1" />
+        </runtime.Wrapper>);
+        await act(async () => runtime.pane.openDetailsTab(createSessionScmReviewDetailsTab(), { intent: 'pinned' }));
+        const views = screen.tree.findAllByType(SessionScmReviewDetailsView);
+        expect(views).toHaveLength(1);
+        expect(views[0].props).toMatchObject({ sessionId: 's1', serverId: runtime.serverId });
     });
 
     it('places the dedicated screen close action before the tab strip on native', async () => {
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
-
-        const screen = await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" presentation="screen" />);
-        const root = screen.findByTestId('session-details-panel-root');
-        if (!root) throw new Error('Expected session details panel root to render');
-
-        const closeButton = screen.findByTestId('session-details-close');
-        const tabChip = screen.findByTestId('session-details-tab-scmReview_working');
-        expect(closeButton).toBeTruthy();
-        expect(tabChip).toBeTruthy();
-
-        const headerNodes = root.findAll(
-            (node) => typeof node.type === 'string'
-                && (node.props?.testID === 'session-details-close' || node.props?.testID === 'session-details-tab-scmReview_working'),
-        );
-        expect(headerNodes.map((node) => node.props.testID)).toEqual([
-            'session-details-close',
-            'session-details-tab-scmReview_working',
-        ]);
+        const screen = await renderScreen(<runtime.Wrapper>
+            <SessionDetailsPanel sessionId="s1" routeServerId={runtime.serverId} scopeId="session:s1" presentation="screen" />
+        </runtime.Wrapper>);
+        await act(async () => runtime.pane.openDetailsTab(createSessionScmReviewDetailsTab(), { intent: 'pinned' }));
+        const root = screen.findHostByTestId('session-details-panel-root');
+        expect(root).not.toBeNull();
+        const close = screen.findHostByTestId('session-details-close');
+        const tab = screen.findHostByTestId('session-details-tab-scmReview_working');
+        expect(close).not.toBeNull();
+        expect(tab).not.toBeNull();
+        expect(root?.findAll((node) => typeof node.type === 'string'
+            && ['session-details-close', 'session-details-tab-scmReview_working'].includes(node.props.testID))
+            .map((node) => node.props.testID)).toEqual(['session-details-close', 'session-details-tab-scmReview_working']);
+        await act(async () => close?.props.onPress());
+        expect(runtime.pane.scopeState?.details.isOpen).toBe(false);
     });
 });

@@ -412,14 +412,10 @@ describe('Account plugin data erase Settings entries', () => {
         ))?.props).toMatchObject({
             accessibilityRole: 'header',
         });
-        // The notice is the shared AttentionBanner now, whose info row states
-        // the Account-recovery reason as its description (the bespoke notice's
-        // row-level accessibilityLabel is gone with it).
-        expect(screen.findHostByTestId('settings.plugins.detail.example.installed-plugin.accountRecovery')?.props)
-            .toMatchObject({
-                subtitle: 'settingsPlugins.readOnlyAccountRecovery',
-                mode: 'info',
-            });
+        const recoveryNotice = screen.findHostByTestId('settings.plugins.detail.example.installed-plugin.accountRecovery');
+        expect(recoveryNotice?.props.accessibilityLiveRegion).toBe('polite');
+        expect(recoveryNotice?.findAll((node) => (node.type as unknown) === 'Text')
+            .some((node) => node.props.children === 'settingsPlugins.readOnlyAccountRecovery')).toBe(true);
         expect(screen.findByTestId('settings.plugins.detail.example.installed-plugin.accountRecovery-retry')).toBeNull();
         expect(genericSettingsProps).toHaveBeenCalledWith(expect.objectContaining({
             pluginId: 'example.installed-plugin',

@@ -1,3 +1,4 @@
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import * as React from 'react';
@@ -25,7 +26,6 @@ const modalBoundary = vi.hoisted(() => ({
     alert: vi.fn(),
     confirm: vi.fn(async () => false),
 }));
-const syncSingletonHarness = vi.hoisted(() => ({ current: null as unknown }));
 const observabilityBoundary = vi.hoisted(() => ({ capture: vi.fn() }));
 const routeBoundary = vi.hoisted(() => ({
     params: {} as Record<string, string | undefined>,
@@ -72,14 +72,6 @@ vi.mock('@react-navigation/native', async (importOriginal) => {
         useIsFocused: () => true,
     };
 });
-// Vitest cannot follow the production owner's bundler-only `require('../sync.ts')` under Node.
-// Keep the owner real and inject the actual Vitest-loaded singleton through that caller seam.
-vi.mock('@/sync/runtime/getSyncSingleton', () => ({
-    getSyncSingleton: () => {
-        if (!syncSingletonHarness.current) throw new Error('Sync singleton test harness is not initialized');
-        return syncSingletonHarness.current;
-    },
-}));
 vi.mock('@/utils/system/sentry', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/utils/system/sentry')>(),
     captureExceptionIfEnabled: (error: unknown, context?: unknown) => observabilityBoundary.capture(error, context),
@@ -171,8 +163,8 @@ routeBoundary.params = {
     directory: '/workspace/project',
     spawnServerId: 'srv_home_b',
 };
+await loadSyncSingletonForTests();
 const { sync } = await import('@/sync/syncEngine');
-syncSingletonHarness.current = sync;
 const profiles = await import('@/sync/domains/server/serverProfiles');
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
@@ -244,7 +236,6 @@ describe('multi-Home Session creation composition', () => {
         if (previousScope === undefined) delete process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
         else process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = previousScope;
         socketBoundary.controls.clear();
-        syncSingletonHarness.current = null;
     });
 
     async function arrangeFocusedHomeA(fixtureSuffix = '') {

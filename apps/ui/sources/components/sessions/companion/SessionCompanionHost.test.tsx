@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { createSessionFixture } from '@/dev/testkit';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { flattenTestStyle } from '@/dev/testkit/harness/popoverHarness';
 import { readPresentationNotice, retirePresentationNotice } from '@/components/sessions/presentation/presentationNotices';
@@ -92,10 +93,10 @@ vi.mock('react-native-safe-area-context', async (importOriginal) => ({
 
 const storedPreference = { value: undefined as unknown };
 const mutate = vi.fn();
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit');
-    // Substitute device persistence while retaining the real preference/controller logic.
-    return createStorageModuleStub({
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    // Device persistence is the boundary; retain real preference/controller exports.
+    return createPartialStorageModuleMock(importOriginal, {
         useSessionCompanionPreferenceSlot: () => ({
             stored: storedPreference.value,
             storageKey: 'server-a account-a session-1',
@@ -111,14 +112,13 @@ vi.mock('@/components/sessions/board/SessionWidgetHost', () => ({
 }));
 
 import { projectSessionBoard } from '@/sync/domains/session/board';
-import type { Session } from '@/sync/domains/state/storageTypes';
 
-import { SessionCompanionHost } from './SessionCompanionHost';
+const { SessionCompanionHost } = await import('./SessionCompanionHost');
 import { publishSessionCompanionCardBounds } from './layout/sessionCompanionCardMeasurement';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const session = { id: 'session-1' } as unknown as Session;
+const session = createSessionFixture({ id: 'session-1', serverId: 'server-a' });
 
 const wideLayout = {
     containerWidthPx: 1440,

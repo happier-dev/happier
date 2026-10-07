@@ -1,931 +1,287 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApprovalRequestSchema, buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+    API_TOKEN_FULL_GRANT_V1, ApprovalRequestSchema, ARTIFACT_PLAIN_DATA_KEY_MARKER,
+    MACHINE_PLAIN_DATA_KEY_MARKER, buildApprovalRequestArtifactHeaderV1, encodePlainArtifactStoredContent,
+    type AccountApiTokenSummaryV1, type ApprovalRequest,
+} from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 
-import type { ArtifactHeader } from '@/sync/domains/artifacts/artifactTypes';
-
-type TestState = {
-    settings: any;
-    sessions: Record<string, any>;
-    artifacts: Record<string, any>;
-};
-
-let state: TestState = {
-    settings: {},
-    sessions: {},
-    artifacts: {},
-};
-
-const patchSessionMetadataWithRetry = vi.fn(async () => {});
-const sessionRename = vi.fn(async () => ({ success: true as const }));
-const sessionStopWithServerScope = vi.fn(async () => ({ success: true as const }));
-// The Account server's versioned Artifact rows. The sync client reads a fresh
-// row with its versions and writes against the cached row it was handed as the
-// CAS basis, exactly as `sync.fetchArtifactWithBody` and
-// `sync.updateArtifactWithHeader` do over `apiArtifacts`; only that HTTP
-// boundary is replaced. A row seeded into `state.artifacts` is also the server
-// row until a write versions it.
-const artifactServer = new Map<string, { header: ArtifactHeader; body: string | null; headerVersion: number; bodyVersion: number }>();
-// One-shot interleaving point: another device's write that lands at this
-// client's next Artifact I/O, i.e. after its earlier read and before its write.
-let beforeNextArtifactIo: (() => Promise<void>) | null = null;
-async function runBeforeNextArtifactIo(): Promise<void> {
-    const hook = beforeNextArtifactIo;
-    beforeNextArtifactIo = null;
-    await hook?.();
-}
-function readServerArtifact(artifactId: string) {
-    const existing = artifactServer.get(artifactId);
-    if (existing) return existing;
-    const seeded = state.artifacts[artifactId];
-    if (!seeded) return null;
-    const row = {
-        header: seeded.header,
-        body: seeded.body ?? null,
-        headerVersion: seeded.headerVersion ?? 1,
-        bodyVersion: seeded.bodyVersion ?? 1,
-    };
-    artifactServer.set(artifactId, row);
-    return row;
-}
-const fetchArtifactWithBody = vi.fn(async (artifactId: string) => {
-    await runBeforeNextArtifactIo();
-    const row = readServerArtifact(artifactId);
-    return row ? { id: artifactId, ...row, isDecrypted: true as const, storageMode: 'plain' as const } : null;
+// Only HTTP, device credentials and Socket.IO network acknowledgements are replaced.
+// Home/Account policy, Sync, scoped RPC, the Artifact codec and versioned CAS remain real.
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+const outgoing: SocketRpcRequestPayload[] = [];
+let rpcResult: unknown = { ok: true };
+installDisconnectedServerSocketBoundary((socket) => {
+    socket.connected = true;
+    vi.spyOn(socket, 'timeout').mockReturnValue(socket);
+    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (_event: string, payload: SocketRpcRequestPayload) => {
+        outgoing.push(payload);
+        return { ok: true, result: rpcResult };
+    });
 });
-const updateArtifactWithHeader = vi.fn(
-    async (artifactId: string, header: ArtifactHeader, body: string | null) => {
-        await runBeforeNextArtifactIo();
-        // The sync writer takes its CAS basis from the cached row it is handed.
-        const basis = state.artifacts[artifactId];
-        if (!basis) throw new Error(`Artifact ${artifactId} not found`);
-        const basisHeaderVersion = basis.headerVersion ?? 1;
-        const basisBodyVersion = basis.bodyVersion ?? 1;
-        const row = readServerArtifact(artifactId)!;
-        if (row.headerVersion !== basisHeaderVersion || row.bodyVersion !== basisBodyVersion) {
-            throw new Error('Artifact was modified by another client. Please refresh and try again.');
-        }
-        const next = { header, body, headerVersion: row.headerVersion + 1, bodyVersion: row.bodyVersion + 1 };
-        artifactServer.set(artifactId, next);
-        state.artifacts[artifactId] = { ...basis, id: artifactId, ...next };
-    },
-);
-const sessionExecutionRunStart = vi.fn(async () => ({}));
-const reviewCommentExecute = vi.fn(async () => ({ items: [], cursor: null }));
-const pluginPermissionGrantExecute = vi.fn(async () => ({ grants: [], pendingRequests: [] }));
-const pluginWebhookExecute = vi.fn(async () => ({
-    webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA',
-    revision: 1,
-    publicUrl: 'https://example.test/v1/plugins/webhooks/opaque-route',
-    readiness: 'ready' as const,
-}));
-const executeAccountPluginDataEraseAction = vi.fn(async () => ({
-    status: 'completed' as const,
-    settings: { status: 'completed' as const, changed: true },
-    data: { status: 'completed' as const, changed: false },
-}));
-const signOutEverywhere = vi.fn(async () => ({ status: 'signed_out' as const }));
 const apiTokenSummary = {
-    tokenId: 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d',
-    label: 'CI deploy',
-    displayPrefix: 'hap_v1_dd03e74b',
-    createdAt: '2026-08-22T12:00:00.000Z',
-    lastUsedAt: null,
-    expiresAt: '2026-11-20T12:00:00.000Z',
-    hasEncryptionAccess: false,
-    hasUnattendedTeamAccess: false,
-} as const;
-const createCurrentAccountApiToken = vi.fn(async () => ({
-    token: `hap_v1_${apiTokenSummary.tokenId}_${'A'.repeat(43)}`,
-    apiToken: apiTokenSummary,
-}));
-const listCurrentAccountApiTokens = vi.fn(async () => ({ tokens: [apiTokenSummary] }));
-const revokeCurrentAccountApiToken = vi.fn(async () => ({ revoked: true }));
-const revokeAllCurrentAccountApiTokens = vi.fn(async () => ({ revokedCount: 1 }));
+    tokenId: 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d', label: 'CI deploy', displayPrefix: 'hap_v1_dd03e74b',
+    createdAt: '2026-08-22T12:00:00.000Z', lastUsedAt: null, expiresAt: '2026-11-20T12:00:00.000Z',
+    hasEncryptionAccess: false, hasUnattendedTeamAccess: false, grant: API_TOKEN_FULL_GRANT_V1,
+    parentTokenId: null, activeChildCount: 0, embedConfig: null,
+} satisfies AccountApiTokenSummaryV1;
+const token = 'hap_v1_' + apiTokenSummary.tokenId + '_' + 'A'.repeat(43);
+type Executor = ReturnType<typeof import('./defaultActionExecutor').createDefaultActionExecutor>;
+type StoreState = ReturnType<ReturnType<typeof import('@/sync/domains/state/storage').getStorage>['getState']>;
+let initialState: StoreState;
+let executor: Executor;
+let homeId: string;
+let webLocks: ReturnType<typeof installWebLockManagerMock>;
+const context = () => ({ surface: 'ui' as const, serverId: homeId });
 
-function approvalRequestBodyV2(input: Readonly<{
-    actionId: 'session.title.set' | 'session.stop';
-    actionArgs: Readonly<Record<string, unknown>>;
-    summary: string;
-}>): string {
-    return JSON.stringify({
-        v: 2,
-        status: 'open',
-        createdAtMs: 1,
-        updatedAtMs: 1,
-        createdBy: { surface: 'mcp', sessionId: 's1' },
-        requestedSurface: 'mcp',
+function approvalRequest(actionId: 'session.title.set' | 'session.stop' = 'session.title.set'): ApprovalRequest {
+    return ApprovalRequestSchema.parse({
+        v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+        createdBy: { surface: 'mcp', sessionId: 's1' }, requestedSurface: 'mcp',
         executionOriginV1: {
-            v: 1,
-            authority: 'account_automation',
-            surface: 'mcp',
-            caller: { kind: 'host' },
-            serverId: 'srv-main',
-            sessionId: 's1',
-            target: { kind: 'session', sessionId: 's1' },
-            actionId: input.actionId,
-            requestId: `request-${input.actionId}`,
+            v: 1, authority: 'account_automation', surface: 'mcp', caller: { kind: 'host' },
+            serverId: homeId, sessionId: 's1', target: { kind: 'session', sessionId: 's1' },
+            actionId, requestId: 'request-' + actionId,
         },
-        actionId: input.actionId,
-        actionArgs: input.actionArgs,
-        summary: input.summary,
+        actionId, actionArgs: actionId === 'session.stop' ? { sessionId: 's1' } : { sessionId: 's1', title: 'Renamed from approval' },
+        summary: actionId === 'session.stop' ? 'Stop session' : 'Set session title',
     });
 }
-
-function approvalArtifact(id: string, body: string) {
-    const request = ApprovalRequestSchema.parse(JSON.parse(body));
-    return {
-        id,
-        header: buildApprovalRequestArtifactHeaderV1(request),
-        body,
-    };
-}
-
-function expectTerminalApprovalFailureUpdate(artifactId: string, errorCode: string): void {
-    expect(updateArtifactWithHeader).toHaveBeenCalledTimes(2);
-    const lastCall = updateArtifactWithHeader.mock.calls.at(-1);
-    if (!lastCall) throw new Error('expected terminal approval update');
-    expect(lastCall[0]).toBe(artifactId);
-    const persisted = ApprovalRequestSchema.parse(JSON.parse(String(lastCall[2])));
-    expect(persisted).toMatchObject({
-        status: 'failed',
-        decision: { kind: 'approve' },
-        execution: { ok: false, errorCode },
+async function seedApproval(id: string, request: ApprovalRequest): Promise<void> {
+    const response = await homes.artifacts(homeId).handle('/v1/artifacts', {
+        method: 'POST', body: JSON.stringify({
+            id, header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(request)),
+            body: encodePlainArtifactStoredContent({ body: JSON.stringify(request) }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+        }),
     });
+    expect(response?.ok).toBe(true);
 }
-
-vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
-    sessionExecutionRunStart,
-    sessionExecutionRunList: vi.fn(async () => ({})),
-    sessionExecutionRunGet: vi.fn(async () => ({})),
-    sessionExecutionRunSend: vi.fn(async () => ({})),
-    sessionExecutionRunStop: vi.fn(async () => ({})),
-    sessionExecutionRunAction: vi.fn(async () => ({})),
-}));
-
-vi.mock('@/sync/ops/sessions', () => ({
-    forkSession: vi.fn(),
-    rollbackSessionConversation: vi.fn(),
-    sessionRename,
-    sessionStopWithServerScope,
-}));
-
-vi.mock('@/sync/ops/sessionHandoffs', () => ({
-    startSessionHandoff: vi.fn(),
-}));
-
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', () => ({
-    sessionRpcWithServerScope: vi.fn(),
-}));
-
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage', () => ({
-    sendSessionMessageWithServerScope: vi.fn(async () => ({ ok: true })),
-}));
-
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
-    machineRpcWithServerScope: vi.fn(),
-}));
-
-vi.mock('@/voice/session/voiceSession', () => ({
-    voiceSessionManager: { stopSession: vi.fn() },
-}));
-
-vi.mock('@/voice/agent/teleportVoiceAgentToSessionRoot', () => ({
-    teleportVoiceAgentToSessionRoot: vi.fn(),
-}));
-
-vi.mock('@/voice/persistence/resetVoiceAgentPersistenceState', () => ({
-    resetVoiceAgentPersistenceState: vi.fn(),
-}));
-
-vi.mock('@/voice/tools/actionImpl/openSession', () => ({
-    openSessionForVoiceTool: vi.fn(),
-}));
-
-vi.mock('@/voice/tools/actionImpl/sessionTargets', () => ({
-    setPrimaryActionSessionId: vi.fn(),
-    setTrackedSessionIds: vi.fn(),
-}));
-
-vi.mock('@/voice/tools/actionImpl/sessionList', () => ({
-    listSessionsForVoiceTool: vi.fn(async () => ({ sessions: [] })),
-}));
-
-vi.mock('@/voice/tools/actionImpl/sessionActivity', () => ({
-    getSessionActivityForVoiceTool: vi.fn(async () => ({})),
-}));
-
-vi.mock('@/voice/tools/actionImpl/sessionRecentMessages', () => ({
-    getSessionRecentMessagesForVoiceTool: vi.fn(async () => ({})),
-    getSessionTranscriptForVoiceTool: vi.fn(async () => ({})),
-}));
-
-vi.mock('@/voice/tools/actionImpl/pathsListRecent', () => ({
-    listRecentPathsForVoiceTool: vi.fn(async () => ({ items: [] })),
-}));
-
-vi.mock('@/voice/tools/actionImpl/machinesList', () => ({
-    listMachinesForVoiceTool: vi.fn(async () => ({ items: [] })),
-}));
-
-vi.mock('@/voice/tools/actionImpl/serversList', () => ({
-    listServersForVoiceTool: vi.fn(async () => ({ items: [] })),
-}));
-
-vi.mock('@/voice/tools/actionImpl/reviewEnginesList', () => ({
-    listReviewEnginesForVoiceTool: vi.fn(async () => ({ items: [] })),
-}));
-
-vi.mock('@/voice/tools/actionImpl/agentCatalogList', () => ({
-    listAgentBackendsForVoiceTool: vi.fn(async () => ({ items: [] })),
-    listAgentModelsForVoiceTool: vi.fn(async () => ({ items: [] })),
-}));
-
-vi.mock('@/sync/sync', () => ({
-    sync: {
-        createArtifactWithHeader: vi.fn(async () => 'artifact-created'),
-        fetchArtifactWithBody,
-        updateArtifactWithHeader,
-        patchSessionMetadataWithRetry,
-    },
-}));
-
-vi.mock('@/sync/state/acpSessionModeOverridePublish', () => ({
-    publishAcpSessionModeOverrideToMetadata: vi.fn(),
-}));
-
-vi.mock('@/sync/ops/promptLibrary/promptDocs', () => ({
-    updatePromptDoc: vi.fn(),
-}));
-
-vi.mock('@/sync/ops/promptLibrary/promptBundles', () => ({
-    updateSkillPromptBundle: vi.fn(),
-}));
-
-vi.mock('@/sync/ops/promptLibrary/exportPromptLibraryArtifact', () => ({
-    writePromptLibraryArtifactToExternalAsset: vi.fn(async () => ({ ok: true, nextPromptExternalLinks: null })),
-}));
-
-vi.mock('@/sync/ops/promptLibrary/installPromptRegistryItem', () => ({
-    installPromptRegistryItem: vi.fn(async () => ({ ok: true, artifactId: 'a1', exported: true })),
-}));
-
-vi.mock('@/sync/domains/sessionRollback/rollbackUiSupport', () => ({
-    canRollbackConversation: vi.fn(() => true),
-}));
-
-vi.mock('@/sync/ops/sessionMachineTarget', () => ({
-    readMachineTargetForSession: vi.fn(() => null),
-    readMachineControlTargetForSession: vi.fn(() => null),
-}));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: {
-            // The real store state carries its own `updateArtifact` action.
-            getState: () => Object.assign(state, {
-                updateArtifact: (artifact: { id: string }) => { state.artifacts[artifact.id] = artifact; },
-            }),
-            applySettingsLocal: vi.fn(),
-            updateArtifact: vi.fn((artifact: { id: string }) => { state.artifacts[artifact.id] = artifact; }),
-        },
-});
-});
-
-vi.mock('@/sync/domains/reviews/comments/api', () => ({
-    createReviewCommentsHttpActionExecutor: vi.fn(() => reviewCommentExecute),
-}));
-
-vi.mock('@/sync/domains/plugins/permissions/api', () => ({
-    createPluginPermissionGrantHttpActionExecutor: vi.fn(() => pluginPermissionGrantExecute),
-}));
-
-vi.mock('@/sync/api/plugins/webhooks/endpointActions', () => ({
-    createPluginWebhookEndpointHttpActionExecutor: vi.fn(() => pluginWebhookExecute),
-}));
-
-vi.mock('@/sync/domains/plugins/settings/accountPluginDataEraseAction', () => ({
-    executeAccountPluginDataEraseAction,
-}));
-
-vi.mock('@/sync/api/account/signOutEverywhere', () => ({
-    signOutEverywhere,
-}));
-
-vi.mock('@/sync/api/account/apiTokens', () => ({
-    createCurrentAccountApiToken,
-    listCurrentAccountApiTokens,
-    revokeCurrentAccountApiToken,
-    revokeAllCurrentAccountApiTokens,
-}));
-
-vi.mock('@/agents/registry/generatedBundledPluginEntries.uiBehaviorOverrides', () => ({
-    BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Object.freeze({}),
-}));
-
-async function getSessionRpcWithServerScopeMock() {
-    const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
-    return vi.mocked(sessionRpcWithServerScope);
+function persistedApproval(id: string): ApprovalRequest {
+    return ApprovalRequestSchema.parse(JSON.parse(homes.artifacts(homeId).readPlainBody(id) ?? 'null'));
 }
-
-async function getSendSessionMessageWithServerScopeMock() {
-    const { sendSessionMessageWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage');
-    return vi.mocked(sendSessionMessageWithServerScope);
+function expectFailedApproval(id: string): void {
+    expect(persistedApproval(id)).toMatchObject({
+        status: 'failed', decision: { kind: 'approve' }, execution: { ok: false, errorCode: 'approval_stale' },
+    });
+    expect(outgoing).toEqual([]);
+    expect(homes.requests.some(({ path }) => path.includes('/metadata'))).toBe(false);
 }
 
 describe('createDefaultActionExecutor approvals', () => {
-    beforeEach(() => {
-        state = {
-            settings: {
-                actionsSettingsV1: {
-                    v: 1,
-                    actions: {
-                        'session.title.set': {
-                            enabledPlacements: [],
-                            disabledSurfaces: [],
-                            disabledPlacements: [],
-                            approvalRequiredSurfaces: [],
-                        },
-                    },
-                },
-            },
-            sessions: { s1: { id: 's1' } },
-            artifacts: {
-                'artifact-1': approvalArtifact(
-                    'artifact-1',
-                    approvalRequestBodyV2({
-                        actionId: 'session.title.set',
-                        actionArgs: { sessionId: 's1', title: 'Renamed from approval' },
-                        summary: 'Set session title',
-                    }),
-                ),
-            },
-        };
-        sessionRename.mockClear();
-        patchSessionMetadataWithRetry.mockClear();
-        artifactServer.clear();
-        beforeNextArtifactIo = null;
-        fetchArtifactWithBody.mockClear();
-        updateArtifactWithHeader.mockClear();
-        reviewCommentExecute.mockClear();
-        pluginPermissionGrantExecute.mockClear();
-        pluginWebhookExecute.mockClear();
-        executeAccountPluginDataEraseAction.mockClear();
-        signOutEverywhere.mockClear();
-        createCurrentAccountApiToken.mockClear();
-        listCurrentAccountApiTokens.mockClear();
-        revokeCurrentAccountApiToken.mockClear();
-        revokeAllCurrentAccountApiTokens.mockClear();
+    beforeEach(async () => {
+        webLocks = installWebLockManagerMock();
+        const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
+        await loadSyncSingletonForTests();
+        const { getStorage } = await import('@/sync/domains/state/storage');
+        initialState = getStorage().getState();
+        homeId = await homes.addHome({
+            name: 'Approval Home', serverUrl: 'https://approval-actions.test',
+            serverIdentityId: 'stable-approval-home', accountId: 'account-a',
+        });
+        homes.answer(homeId, '/v2/cursor', { body: { cursor: '0' } });
+        const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+        const bearer = homes.findByServerUrl('https://approval-actions.test')?.token;
+        if (!bearer) throw new Error('expected_account_credentials');
+        await restoreConnectionToActiveServer({ token: bearer });
+        const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+        getStorage().setState({ sessions: { s1: createSessionFixture({ id: 's1', serverId: homeId }) } });
+        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+        executor = createDefaultActionExecutor({ resolveServerIdForSessionId: () => homeId });
+        await seedApproval('artifact-1', approvalRequest());
+        homes.requests.length = 0;
+        outgoing.length = 0;
+        rpcResult = { ok: true };
+    });
+    afterEach(async () => {
+        const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
+        await disconnectActiveServerConnection();
+        const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
+        const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
+        serverScopedRpcSocketPool.resetForTests();
+        resetScopedMachineTransportCacheForTests();
+        await homes.reset();
+        const { getStorage } = await import('@/sync/domains/state/storage');
+        getStorage().setState(initialState, true);
+        vi.restoreAllMocks();
+        webLocks.restore();
     });
 
     it('exposes the approval replay entry point through the app client executor', async () => {
-        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-        const executor = createDefaultActionExecutor();
-
         await expect(executor.replayApprovedApprovalRequest({ artifactId: 'artifact-missing' }))
-            .resolves.toEqual({ ok: false, errorCode: 'approval_not_found', error: 'approval_not_found' });
+            .resolves.toMatchObject({ ok: false, errorCode: 'approval_not_found' });
     });
-
     it('routes durable review-comment actions through the shared HTTP action executor', async () => {
-        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-        const executor = createDefaultActionExecutor();
-
-        const res = await executor.execute(
-            'reviews.comments.list' as any,
-            { projectId: 'project-1', states: ['open'] },
-            { surface: 'ui' },
-        );
-
-        expect(res).toEqual({ ok: true, result: { items: [], cursor: null } });
-        expect(reviewCommentExecute).toHaveBeenCalledWith(
-            'reviews.comments.list',
-            { projectId: 'project-1', states: ['open'], includeHistory: false, limit: 50 },
-        );
+        const path = '/v1/reviews/comments?projectId=project-1&states=open&includeHistory=false&limit=50&stored=true';
+        homes.answer(homeId, path, { body: { items: [], cursor: null } });
+        await expect(executor.execute('reviews.comments.list', { projectId: 'project-1', states: ['open'] }, context()))
+            .resolves.toEqual({ ok: true, result: { items: [], cursor: null } });
+        expect(homes.requestsFor(path)).toHaveLength(1);
     });
-
     it('routes permission grants and webhook endpoints through the Action front door dependencies', async () => {
-        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-        const executor = createDefaultActionExecutor();
-        const controller = new AbortController();
-
-        await expect(executor.execute(
-            'plugins.permissions.grants.list' as any,
-            { pluginId: 'example.plugin' },
-            { surface: 'ui', signal: controller.signal },
-        )).resolves.toEqual({ ok: true, result: { grants: [], pendingRequests: [] } });
-        expect(pluginPermissionGrantExecute).toHaveBeenCalledWith(
-            'plugins.permissions.grants.list',
-            expect.objectContaining({ pluginId: 'example.plugin' }),
-            { signal: controller.signal },
-        );
-
-        const ensureInput = {
+        homes.answer(homeId, '/v1/plugins/permissions/grants/list', { body: { grants: [], pendingRequests: [] } });
+        await expect(executor.execute('plugins.permissions.grants.list', { pluginId: 'example.plugin' }, context()))
+            .resolves.toEqual({ ok: true, result: { grants: [], pendingRequests: [] } });
+        expect(homes.requestsFor('/v1/plugins/permissions/grants/list')[0]?.input).toMatchObject({ pluginId: 'example.plugin' });
+        const input = {
             webhookContribution: { pluginId: 'example.github', localId: 'events' },
-            targetMaterialization: {
-                machineId: 'machine-1',
-                materializationId: 'materialization-1',
-                pluginId: 'example.github',
-            },
-            sourceInstanceId: 'channel:github:primary',
-            setup: { kind: 'accountEndpointV1', credential: 'serverGenerated' },
+            targetMaterialization: { machineId: 'machine-1', materializationId: 'materialization-1', pluginId: 'example.github' },
+            sourceInstanceId: 'channel:github:primary', setup: { kind: 'accountEndpointV1', credential: 'serverGenerated' },
             idempotencyKey: 'ensure-github-primary-0001',
         } as const;
-        await expect(executor.execute(
-            'plugin.webhook.endpoint.ensure' as any,
-            ensureInput,
-            { surface: 'ui', signal: controller.signal },
-        )).resolves.toEqual({ ok: true, result: expect.objectContaining({ readiness: 'ready' }) });
-        expect(pluginWebhookExecute).toHaveBeenCalledWith(
-            'plugin.webhook.endpoint.ensure',
-            ensureInput,
-            { signal: controller.signal },
-        );
+        homes.answer(homeId, '/v1/plugins/webhooks/endpoints/ensure', { body: {
+            webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA', revision: 1,
+            publicUrl: 'https://example.test/v1/plugins/webhooks/opaque-route', readiness: 'ready',
+        } });
+        await expect(executor.execute('plugin.webhook.endpoint.ensure', input, context()))
+            .resolves.toMatchObject({ ok: true, result: { readiness: 'ready' } });
+        expect(homes.requestsFor('/v1/plugins/webhooks/endpoints/ensure')[0]?.input).toEqual(input);
     });
-
     it('routes the host-present Account plugin erase action without forwarding generic retry identity metadata', async () => {
-        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-        const executor = createDefaultActionExecutor();
-        const controller = new AbortController();
-
-        await expect(executor.execute(
-            'account.plugins.data.erase' as any,
-            { pluginId: 'example.orphaned-plugin' },
-            {
-                surface: 'ui',
-                actionCaller: { kind: 'host' },
-                actionRequestId: 'plugin-data-erase-operation-1',
-                signal: controller.signal,
-            },
-        )).resolves.toEqual({
-            ok: true,
-            result: {
-                status: 'completed',
-                settings: { status: 'completed', changed: true },
-                data: { status: 'completed', changed: false },
-            },
-        });
-
-        expect(executeAccountPluginDataEraseAction).toHaveBeenCalledExactlyOnceWith(
-            { pluginId: 'example.orphaned-plugin' },
-            {
-                signal: controller.signal,
-            },
-        );
+        homes.answer(homeId, '/v1/plugins/data/account-erase', { body: { status: 'erased', changed: false } });
+        await expect(executor.execute('account.plugins.data.erase', { pluginId: 'example.orphaned-plugin' }, {
+            ...context(), actionCaller: { kind: 'host' }, actionRequestId: 'plugin-data-erase-operation-1',
+        })).resolves.toMatchObject({ ok: true, result: {
+            status: 'completed', settings: { status: 'completed', changed: false }, data: { status: 'completed', changed: false },
+        } });
+        expect(homes.requestsFor('/v1/plugins/data/account-erase')[0]?.input).toEqual({ pluginId: 'example.orphaned-plugin' });
     });
-
     it('routes the host-present current-Account sign-out-everywhere action', async () => {
-        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-        const executor = createDefaultActionExecutor();
-        const controller = new AbortController();
-
-        await expect(executor.execute(
-            'account.sessions.signOutEverywhere' as any,
-            {},
-            {
-                surface: 'ui',
-                actionCaller: { kind: 'host' },
-                signal: controller.signal,
-            },
-        )).resolves.toEqual({
-            ok: true,
-            result: { status: 'signed_out' },
-        });
-        expect(signOutEverywhere).toHaveBeenCalledExactlyOnceWith({}, { signal: controller.signal });
+        homes.answer(homeId, '/v1/auth/sessions/sign-out-everywhere', { body: { status: 'signed_out' } });
+        await expect(executor.execute('account.sessions.signOutEverywhere', {}, { ...context(), actionCaller: { kind: 'host' } }))
+            .resolves.toEqual({ ok: true, result: { status: 'signed_out' } });
+        expect(homes.requestsFor('/v1/auth/sessions/sign-out-everywhere')[0]?.input).toEqual({});
     });
-
     it('routes current-Account API-token Actions through their scoped transport with no caller-selected Account', async () => {
-        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-        const executor = createDefaultActionExecutor();
-        const controller = new AbortController();
-        const context = {
-            surface: 'ui' as const,
-            authority: 'present_user' as const,
-            actionCaller: { kind: 'host' as const },
-            signal: controller.signal,
-        };
-
-        await expect(executor.execute(
-            'account.apiTokens.create' as any,
-            { tokenId: apiTokenSummary.tokenId, label: apiTokenSummary.label, expiresAt: apiTokenSummary.expiresAt },
-            context,
-        )).resolves.toEqual({
-            ok: true,
-            result: {
-                token: `hap_v1_${apiTokenSummary.tokenId}_${'A'.repeat(43)}`,
-                apiToken: apiTokenSummary,
-            },
-        });
-        await expect(executor.execute('account.apiTokens.list' as any, {}, context)).resolves.toEqual({
-            ok: true,
-            result: { tokens: [apiTokenSummary] },
-        });
-        await expect(executor.execute(
-            'account.apiTokens.revoke' as any,
-            { tokenId: apiTokenSummary.tokenId },
-            context,
-        )).resolves.toEqual({ ok: true, result: { revoked: true } });
-        await expect(executor.execute('account.apiTokens.revokeAll' as any, {}, context)).resolves.toEqual({
-            ok: true,
-            result: { revokedCount: 1 },
-        });
-
-        expect(createCurrentAccountApiToken).toHaveBeenCalledExactlyOnceWith(
-            { tokenId: apiTokenSummary.tokenId, label: apiTokenSummary.label, expiresAt: apiTokenSummary.expiresAt },
-            { signal: controller.signal },
-        );
-        expect(listCurrentAccountApiTokens).toHaveBeenCalledExactlyOnceWith({}, { signal: controller.signal });
-        expect(revokeCurrentAccountApiToken).toHaveBeenCalledExactlyOnceWith(
-            { tokenId: apiTokenSummary.tokenId },
-            { signal: controller.signal },
-        );
-        expect(revokeAllCurrentAccountApiTokens).toHaveBeenCalledExactlyOnceWith({}, { signal: controller.signal });
+        const input = { tokenId: apiTokenSummary.tokenId, label: apiTokenSummary.label, expiresAt: apiTokenSummary.expiresAt };
+        homes.answer(homeId, '/v1/auth/api-tokens/create', { body: { token, apiToken: apiTokenSummary } });
+        homes.answer(homeId, '/v1/auth/api-tokens/list', { body: { tokens: [apiTokenSummary] } });
+        homes.answer(homeId, '/v1/auth/api-tokens/revoke', { body: { revoked: true } });
+        homes.answer(homeId, '/v1/auth/api-tokens/revoke-all', { body: { revokedCount: 1 } });
+        const ctx = { ...context(), actionCaller: { kind: 'host' as const }, authority: 'present_user' as const };
+        await expect(executor.execute('account.apiTokens.create', input, ctx)).resolves.toEqual({ ok: true, result: { token, apiToken: apiTokenSummary } });
+        await expect(executor.execute('account.apiTokens.list', {}, ctx)).resolves.toEqual({ ok: true, result: { tokens: [apiTokenSummary] } });
+        await expect(executor.execute('account.apiTokens.revoke', { tokenId: apiTokenSummary.tokenId }, ctx)).resolves.toEqual({ ok: true, result: { revoked: true } });
+        await expect(executor.execute('account.apiTokens.revokeAll', {}, ctx)).resolves.toEqual({ ok: true, result: { revokedCount: 1 } });
+        expect(homes.requestsFor('/v1/auth/api-tokens/create')[0]?.input).toMatchObject(input);
+        for (const request of homes.requests.filter(({ path }) => path.startsWith('/v1/auth/api-tokens/'))) {
+            expect(request.serverId).toBe(homeId);
+            expect(request.input).not.toHaveProperty('accountId');
+        }
     });
-
     it('preserves the canonical Action preparation lifecycle for current-Account API-token Actions', async () => {
-        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-        const executor = createDefaultActionExecutor();
-        const prepared = await executor.prepare(
-            'account.apiTokens.list' as any,
-            {},
-            {
-                surface: 'ui',
-                authority: 'present_user',
-                actionCaller: { kind: 'host' },
-            },
-        );
-
+        homes.answer(homeId, '/v1/auth/api-tokens/list', { body: { tokens: [apiTokenSummary] } });
+        const prepared = await executor.prepare('account.apiTokens.list', {}, { ...context(), actionCaller: { kind: 'host' } });
         expect(prepared.kind).toBe('ready');
+        expect(homes.requestsFor('/v1/auth/api-tokens/list')).toEqual([]);
         if (prepared.kind !== 'ready') throw new Error('expected_ready_action');
-        await expect(prepared.invocation.run()).resolves.toEqual({
-            ok: true,
-            result: { tokens: [apiTokenSummary] },
-        });
-        expect(listCurrentAccountApiTokens).toHaveBeenCalledExactlyOnceWith({}, undefined);
+        await expect(prepared.invocation.run()).resolves.toEqual({ ok: true, result: { tokens: [apiTokenSummary] } });
     });
-
     it('routes permission responses through the canonical session permission RPC method', async () => {
-        const sessionRpcWithServerScope = await getSessionRpcWithServerScopeMock();
-        sessionRpcWithServerScope.mockReset();
-        sessionRpcWithServerScope.mockResolvedValueOnce({ ok: false, errorCode: 'permission_request_not_found' });
-
-        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-        const executor = createDefaultActionExecutor({
-            resolveServerIdForSessionId: (sessionId) => sessionId === 's1' ? 'srv-main' : null,
-        });
-
-        const res = await executor.execute(
-            'session.permission.respond' as any,
-            { sessionId: 's1', requestId: 'req-1', turnId: 'turn-1', decision: 'deny' },
-            { surface: 'ui' },
-        );
-
-        expect(res).toEqual({
-            ok: false,
-            errorCode: 'permission_request_not_found',
-            error: 'permission_request_not_found',
-        });
-        expect(sessionRpcWithServerScope).toHaveBeenCalledWith({
-            sessionId: 's1',
-            serverId: 'srv-main',
-            method: RPC_METHODS.SESSION_PERMISSION_RESPOND,
-            payload: { id: 'req-1', turnId: 'turn-1', approved: false },
-        });
+        rpcResult = { ok: false, errorCode: 'permission_request_not_found' };
+        await expect(executor.execute('session.permission.respond', {
+            sessionId: 's1', requestId: 'req-1', turnId: 'turn-1', decision: 'deny',
+        }, context())).resolves.toMatchObject({ ok: false, errorCode: 'permission_request_not_found' });
+        expect(outgoing.at(-1)).toMatchObject({ method: 's1:' + RPC_METHODS.SESSION_PERMISSION_RESPOND, params: { id: 'req-1', turnId: 'turn-1', approved: false } });
     });
-
     it('projects successful void permission RPC responses through the canonical Action output', async () => {
-        const sessionRpcWithServerScope = await getSessionRpcWithServerScopeMock();
-        sessionRpcWithServerScope.mockReset();
-        sessionRpcWithServerScope.mockResolvedValueOnce(undefined);
-
-        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-        const executor = createDefaultActionExecutor({
-            resolveServerIdForSessionId: (sessionId) => sessionId === 's1' ? 'srv-main' : null,
-        });
-
-        await expect(executor.execute(
-            'session.permission.respond' as any,
-            { sessionId: 's1', requestId: 'req-1', decision: 'allow' },
-            { surface: 'ui' },
-        )).resolves.toEqual({ ok: true, result: { ok: true } });
+        rpcResult = undefined;
+        await expect(executor.execute('session.permission.respond', { sessionId: 's1', requestId: 'req-1', decision: 'allow' }, context()))
+            .resolves.toEqual({ ok: true, result: { ok: true } });
     });
-
     it('routes owner remote grant management through the canonical session Action transport', async () => {
-        const sessionRpcWithServerScope = await getSessionRpcWithServerScopeMock();
-        sessionRpcWithServerScope.mockReset();
-        sessionRpcWithServerScope.mockResolvedValueOnce({
-            grants: [],
-            nextCursor: null,
-        });
-
-        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-        const executor = createDefaultActionExecutor({
-            resolveServerIdForSessionId: (sessionId) => sessionId === 's1' ? 'srv-main' : null,
-        });
-
-        const res = await executor.execute(
-            'session.permission.remote.grants.list' as any,
-            { sessionId: 's1' },
-            { surface: 'ui' },
-        );
-
-        expect(res).toEqual({
-            ok: true,
-            result: {
-                grants: [],
-                nextCursor: null,
-            },
-        });
-        expect(sessionRpcWithServerScope).toHaveBeenCalledWith({
-            sessionId: 's1',
-            serverId: 'srv-main',
-            method: 'session.permission.remote.grants.list',
-            payload: { sessionId: 's1', limit: 50 },
-        });
+        rpcResult = { grants: [], nextCursor: null };
+        await expect(executor.execute('session.permission.remote.grants.list', { sessionId: 's1' }, context()))
+            .resolves.toEqual({ ok: true, result: { grants: [], nextCursor: null } });
+        expect(outgoing.at(-1)).toMatchObject({ method: 's1:session.permission.remote.grants.list', params: { sessionId: 's1', limit: 50 } });
     });
-
     it('routes user-action answers through the canonical session user-action RPC method', async () => {
-        const sessionRpcWithServerScope = await getSessionRpcWithServerScopeMock();
-        sessionRpcWithServerScope.mockReset();
-        sessionRpcWithServerScope.mockResolvedValueOnce(undefined);
-
-        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-        const executor = createDefaultActionExecutor({
-            resolveServerIdForSessionId: (sessionId) => sessionId === 's1' ? 'srv-main' : null,
-        });
-
-        const res = await executor.execute(
-            'session.user_action.answer' as any,
-            {
-                sessionId: 's1',
-                requestId: 'user-action-1',
-                decision: 'approve',
-                answers: [{
-                    question: 'Where should this run?',
-                    values: ['Washington, D.C.', 'Virginia', 'A custom, exact answer'],
-                }],
-                reason: ' approved from UI ',
-                updatedPermissions: { allowedTools: ['shell'] },
-            },
-            { surface: 'ui' },
-        );
-
-        expect(res).toEqual({ ok: true, result: { ok: true } });
-        expect(sessionRpcWithServerScope).toHaveBeenCalledWith({
-            sessionId: 's1',
-            serverId: 'srv-main',
-            method: RPC_METHODS.SESSION_USER_ACTION_ANSWER,
-            payload: {
-                id: 'user-action-1',
-                approved: true,
-                answers: {
-                    'Where should this run?': ['Washington, D.C.', 'Virginia', 'A custom, exact answer'],
-                },
-                reason: 'approved from UI',
-                updatedPermissions: { allowedTools: ['shell'] },
-            },
-        });
+        rpcResult = undefined;
+        await expect(executor.execute('session.user_action.answer', {
+            sessionId: 's1', requestId: 'user-action-1', decision: 'approve',
+            answers: [{ question: 'Where should this run?', values: ['Washington, D.C.', 'Virginia', 'A custom, exact answer'] }],
+            reason: ' approved from UI ', updatedPermissions: { allowedTools: ['shell'] },
+        }, context())).resolves.toEqual({ ok: true, result: { ok: true } });
+        expect(outgoing.at(-1)).toMatchObject({ method: 's1:' + RPC_METHODS.SESSION_USER_ACTION_ANSWER, params: {
+            id: 'user-action-1', approved: true, answers: { 'Where should this run?': ['Washington, D.C.', 'Virginia', 'A custom, exact answer'] },
+            reason: 'approved from UI', updatedPermissions: { allowedTools: ['shell'] },
+        } });
     });
-
     it('routes session.message.send through the active readiness barrier', async () => {
-        const sendSessionMessageWithServerScope = await getSendSessionMessageWithServerScopeMock();
-        sendSessionMessageWithServerScope.mockReset();
-        sendSessionMessageWithServerScope.mockResolvedValueOnce({
-            ok: true,
-            ack: { ok: true, localId: 'ui-input-1', accepted: true, persistence: 'pending' },
-        });
-
-        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-        const executor = createDefaultActionExecutor({
-            resolveServerIdForSessionId: (sessionId) => sessionId === 's1' ? 'srv-main' : null,
-        });
-
-        const res = await executor.execute(
-            'session.message.send' as any,
-            { sessionId: 's1', message: 'Hello from action' },
-            { surface: 'ui' },
-        );
-
-        expect(res).toEqual({
-            ok: true,
-            result: { status: 'accepted', localId: 'ui-input-1' },
-        });
-        expect(sendSessionMessageWithServerScope).toHaveBeenCalledWith({
-            sessionId: 's1',
-            message: 'Hello from action',
-            serverId: 'srv-main',
-            requestedAction: { v: 1, kind: 'steer_if_active' },
+        homes.answer(homeId, '/v2/sessions/s1/pending', { body: { localId: 'ui-input-1', accepted: true } });
+        await expect(executor.execute('session.message.send', { sessionId: 's1', message: 'Hello from action', localId: 'ui-input-1' }, context()))
+            .resolves.toMatchObject({ ok: true, result: { status: 'accepted', localId: 'ui-input-1' } });
+        expect(homes.requestsFor('/v2/sessions/s1/pending')[0]?.input).toMatchObject({
+            localId: 'ui-input-1', requestedAction: { v: 1, kind: 'steer_if_active' },
         });
     });
-
     it('does not replay an MCP approval locally when its exact daemon origin is unavailable', async () => {
-        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-        const executor = createDefaultActionExecutor();
-
-        const res = await executor.execute(
-            'approval.request.decide' as any,
-            { artifactId: 'artifact-1', decision: 'approve' },
-            { surface: 'ui' },
-        );
-
-        expect(res).toMatchObject({
-            ok: true,
-            result: {
-                status: 'failed',
-                execution: { ok: false, errorCode: 'approval_stale' },
-            },
-        });
-        expectTerminalApprovalFailureUpdate('artifact-1', 'approval_stale');
-        expect(patchSessionMetadataWithRetry).not.toHaveBeenCalled();
+        await expect(executor.execute('approval.request.decide', { artifactId: 'artifact-1', decision: 'approve' }, context()))
+            .resolves.toMatchObject({ ok: true, result: { status: 'failed', execution: { ok: false, errorCode: 'approval_stale' } } });
+        expectFailedApproval('artifact-1');
     });
-
     it('requires an exact Home scope before creating a surfaced UI approval', async () => {
-        state.settings.actionsSettingsV1.actions['review.start'] = {
-            enabledPlacements: [],
-            disabledSurfaces: [],
-            disabledPlacements: [],
-            approvalRequiredSurfaces: ['ui'],
-        };
-        sessionExecutionRunStart.mockClear();
-
-        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-        const executor = createDefaultActionExecutor();
-
-        const res = await executor.execute(
-            'review.start' as any,
-            { sessionId: 's1', engineIds: ['codex'], instructions: 'Needs approval' },
-            { surface: 'ui' },
-        );
-
-        expect(res).toEqual({
-            ok: false,
-            errorCode: 'approval_origin_unavailable',
-            error: 'approval_origin_unavailable',
-        });
-        expect(sessionExecutionRunStart).not.toHaveBeenCalled();
+        await homes.requireUiApproval(homeId, 'review.start');
+        const signedOutHome = await homes.addHome({ name: 'Signed out', serverUrl: 'https://signed-out-approval.test', accountId: null, active: false });
+        await expect(executor.execute('review.start', { sessionId: 's1', engineIds: ['codex'], instructions: 'Needs approval' }, {
+            surface: 'ui', serverId: signedOutHome,
+        })).rejects.toThrow('action_home_signed_out');
+        expect(homes.artifacts(signedOutHome).list()).toEqual([]);
+        expect(outgoing).toEqual([]);
     });
-
     it('does not use local Session cache absence to bypass exact-daemon approval replay', async () => {
-        state.sessions = {};
-        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-        const executor = createDefaultActionExecutor();
-
-        const res = await executor.execute(
-            'approval.request.decide' as any,
-            { artifactId: 'artifact-1', decision: 'approve' },
-            { surface: 'ui' },
-        );
-
-        expect(res).toMatchObject({
-            ok: true,
-            result: {
-                status: 'failed',
-                execution: { ok: false, errorCode: 'approval_stale' },
-            },
-        });
-        expectTerminalApprovalFailureUpdate('artifact-1', 'approval_stale');
-        expect(patchSessionMetadataWithRetry).not.toHaveBeenCalled();
+        const { getStorage } = await import('@/sync/domains/state/storage');
+        getStorage().setState({ sessions: {} });
+        await expect(executor.execute('approval.request.decide', { artifactId: 'artifact-1', decision: 'approve' }, context()))
+            .resolves.toMatchObject({ ok: true, result: { status: 'failed', execution: { errorCode: 'approval_stale' } } });
+        expectFailedApproval('artifact-1');
     });
-
     it('does not replay an approved MCP stop locally without its exact daemon origin', async () => {
-        state.settings.actionsSettingsV1.actions['session.stop'] = {
-            enabledPlacements: [],
-            disabledSurfaces: [],
-            disabledPlacements: [],
-            approvalRequiredSurfaces: [],
-        };
-        state.artifacts['artifact-stop'] = approvalArtifact(
-            'artifact-stop',
-            approvalRequestBodyV2({
-                actionId: 'session.stop',
-                actionArgs: { sessionId: 's1' },
-                summary: 'Stop session',
-            }),
-        );
-        sessionStopWithServerScope.mockClear();
-
-        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-        const executor = createDefaultActionExecutor();
-
-        const res = await executor.execute(
-            'approval.request.decide' as any,
-            { artifactId: 'artifact-stop', decision: 'approve' },
-            { surface: 'ui' },
-        );
-
-        expect(res).toMatchObject({
-            ok: true,
-            result: {
-                status: 'failed',
-                execution: { ok: false, errorCode: 'approval_stale' },
-            },
-        });
-        expectTerminalApprovalFailureUpdate('artifact-stop', 'approval_stale');
-        expect(sessionStopWithServerScope).not.toHaveBeenCalled();
+        await seedApproval('artifact-stop', approvalRequest('session.stop'));
+        await expect(executor.execute('approval.request.decide', { artifactId: 'artifact-stop', decision: 'approve' }, context()))
+            .resolves.toMatchObject({ ok: true, result: { status: 'failed', execution: { errorCode: 'approval_stale' } } });
+        expectFailedApproval('artifact-stop');
     });
-
     it('fails a legacy directory approval safely when immutable execution origin is unavailable', async () => {
-        const { machineRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
-        vi.mocked(machineRpcWithServerScope).mockReset();
-        state.artifacts['artifact-directory-spawn'] = approvalArtifact(
-            'artifact-directory-spawn',
-            JSON.stringify({
-                v: 1,
-                status: 'open',
-                createdAtMs: 1,
-                updatedAtMs: 1,
-                createdBy: { surface: 'mcp' },
-                requestedSurface: 'mcp',
-                actionId: 'session.spawn_new',
-                actionArgs: {
-                    creationKey: 'api:directory-approval-1',
-                    executionTarget: { serverId: 'srv-target', machineId: 'machine-target' },
-                    directory: '/repo/new-directory',
-                    organizationPlacement: { folderId: null, tagIds: [] },
-                    agentTarget: {
-                        kind: 'agent',
-                        identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
-                    },
-                    initialInput: { text: 'Inspect this repository.' },
-                },
-                sessionCreationDirectoryApproval: {
-                    v: 1,
-                    executionTarget: { serverId: 'srv-target', machineId: 'machine-target' },
-                    directory: '/repo/new-directory',
-                },
-                summary: 'Create session',
-                serverId: 'srv-target',
-            }),
-        );
-
-        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-        const executor = createDefaultActionExecutor();
-
-        await expect(executor.execute(
-            'approval.request.decide' as any,
-            { artifactId: 'artifact-directory-spawn', decision: 'approve' },
-            { surface: 'ui' },
-        )).resolves.toMatchObject({
-            ok: true,
-            result: {
-                status: 'failed',
-                execution: { ok: false, errorCode: 'approval_stale' },
+        await seedApproval('artifact-directory-spawn', ApprovalRequestSchema.parse({
+            v: 1, status: 'open', createdAtMs: 1, updatedAtMs: 1, createdBy: { surface: 'mcp' }, requestedSurface: 'mcp',
+            actionId: 'session.spawn_new', actionArgs: {
+                creationKey: 'api:directory-approval-1', executionTarget: { serverId: homeId, machineId: 'machine-target' },
+                directory: '/repo/new-directory', organizationPlacement: { folderId: null, tagIds: [] },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+                initialInput: { text: 'Inspect this repository.' },
             },
-        });
-
-        expect(machineRpcWithServerScope).not.toHaveBeenCalled();
-        expectTerminalApprovalFailureUpdate('artifact-directory-spawn', 'approval_stale');
+            sessionCreationDirectoryApproval: { v: 1, executionTarget: { serverId: homeId, machineId: 'machine-target' }, directory: '/repo/new-directory' },
+            summary: 'Create session', serverId: homeId,
+        }));
+        await expect(executor.execute('approval.request.decide', { artifactId: 'artifact-directory-spawn', decision: 'approve' }, context()))
+            .resolves.toMatchObject({ ok: true, result: { status: 'failed', execution: { errorCode: 'approval_stale' } } });
+        expectFailedApproval('artifact-directory-spawn');
     });
-
     it('does not let an approval built from a stale open read overwrite a rejection committed before its write', async () => {
-        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-        const approver = createDefaultActionExecutor();
-        const rejecter = createDefaultActionExecutor();
-        let rejected: unknown = null;
-        // The approver has already read the open request; another device's
-        // rejection lands (and reaches this client's cache) before its write.
-        beforeNextArtifactIo = async () => {
-            rejected = await rejecter.execute(
-                'approval.request.decide' as any,
-                { artifactId: 'artifact-1', decision: 'reject' },
-                { surface: 'ui' },
-            );
-        };
-
-        const approved = await approver.execute(
-            'approval.request.decide' as any,
-            { artifactId: 'artifact-1', decision: 'approve' },
-            { surface: 'ui' },
-        );
-
+        let rejected: unknown;
+        homes.artifacts(homeId).beforeNextUpdate(async () => {
+            rejected = await executor.execute('approval.request.decide', { artifactId: 'artifact-1', decision: 'reject' }, context());
+        });
+        const approved = await executor.execute('approval.request.decide', { artifactId: 'artifact-1', decision: 'approve' }, context());
         expect(rejected).toMatchObject({ ok: true, result: { status: 'rejected' } });
         expect(approved).toMatchObject({ ok: false });
-        const persisted = ApprovalRequestSchema.parse(JSON.parse(String(artifactServer.get('artifact-1')?.body)));
-        expect(persisted).toMatchObject({ status: 'rejected', decision: { kind: 'reject' } });
-        expect(patchSessionMetadataWithRetry).not.toHaveBeenCalled();
+        expect(persistedApproval('artifact-1')).toMatchObject({ status: 'rejected', decision: { kind: 'reject' } });
+        expect(outgoing).toEqual([]);
     });
-
     it('routes V2 replay by the current profile while carrying stable Home and immutable origin evidence', async () => {
-        const { machineRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
-        vi.mocked(machineRpcWithServerScope).mockReset();
-        vi.mocked(machineRpcWithServerScope).mockResolvedValueOnce({ ok: true });
+        homes.answer(homeId, '/v1/machines/machine-exact', { body: { machine: {
+            id: 'machine-exact', kind: 'persistent', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+        } } });
         const { replayApprovedApprovalRequestAtExactDaemon } = await import('./defaultActionExecutor');
-
-        await replayApprovedApprovalRequestAtExactDaemon({
-            artifactId: 'approval-cross-device',
-            executionTarget: {
-                serverId: 'ui-A',
-                serverIdentityId: 'stable-home-a',
-                originServerId: 'local-A',
-                machineId: 'machine-exact',
-            },
-        });
-
-        expect(machineRpcWithServerScope).toHaveBeenCalledExactlyOnceWith({
-            serverId: 'ui-A',
-            machineId: 'machine-exact',
-            method: RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED,
-            payload: { artifactId: 'approval-cross-device' },
-        });
+        await replayApprovedApprovalRequestAtExactDaemon({ artifactId: 'approval-cross-device', executionTarget: {
+            serverId: homeId, serverIdentityId: 'stable-approval-home', originServerId: 'creator-local-home', machineId: 'machine-exact',
+        } });
+        expect(outgoing).toMatchObject([{ method: 'machine-exact:' + RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED, params: { artifactId: 'approval-cross-device' } }]);
+        expect(homes.requestsFor('/v1/machines/machine-exact')[0]?.serverId).toBe(homeId);
     });
 });

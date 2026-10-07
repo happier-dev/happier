@@ -3,6 +3,11 @@ import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
+vi.mock('react-native', async () => {
+    const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeNativeMock({ platformOS: 'ios' });
+});
+
 describe('ActionCard', () => {
     it('keeps the complete primary action readable and operable', async () => {
         const { ActionCard } = await import('../ActionCard');
@@ -54,20 +59,27 @@ describe('ActionCard', () => {
 
     it('disables buttons when loading', async () => {
         const { ActionCard } = await import('../ActionCard');
+        const primaryPress = vi.fn();
+        const secondaryPress = vi.fn();
         const screen = await renderScreen(
             <ActionCard
                 testID="action-card"
                 title="Install"
-                primaryAction={{ label: 'Go', onPress: () => {} }}
-                secondaryAction={{ label: 'Skip', onPress: () => {} }}
+                primaryAction={{ label: 'Go', onPress: primaryPress }}
+                secondaryAction={{ label: 'Skip', onPress: secondaryPress }}
                 loading
             />,
         );
 
-        expect(screen.findByTestId('action-card-primary')?.props.accessibilityState.disabled).toBe(true);
-        expect(screen.findByTestId('action-card-secondary')?.props.accessibilityState.disabled).toBe(true);
-        expect(screen.findByTestId('action-card-primary')?.props.loading).toBe(true);
-        expect(screen.findByTestId('action-card-secondary')?.props.loading).toBe(true);
+        for (const id of ['action-card-primary', 'action-card-secondary']) {
+            const button = screen.findHostByTestId(id);
+            expect(button).not.toBeNull();
+            expect(button?.props.accessibilityState).toMatchObject({ disabled: true, busy: true });
+            expect(button?.props.onPress).toBeTypeOf('function');
+            await act(async () => { button?.props.onPress(); });
+        }
+        expect(primaryPress).not.toHaveBeenCalled();
+        expect(secondaryPress).not.toHaveBeenCalled();
     });
 
     it('description is optional', async () => {

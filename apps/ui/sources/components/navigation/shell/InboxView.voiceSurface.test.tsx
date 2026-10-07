@@ -1,7 +1,8 @@
 import React from 'react';
 import renderer from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storageStore';
 import { installNavigationShellCommonModuleMocks } from './navigationShellTestHelpers';
 
 
@@ -11,6 +12,7 @@ installNavigationShellCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
+            useWindowDimensions: () => ({ width: 1024, height: 768, scale: 1, fontScale: 1 }),
             Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
         });
     },
@@ -21,21 +23,7 @@ installNavigationShellCommonModuleMocks({
         });
         return routerMock.module;
     },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            useAcceptedFriends: () => [],
-            useArtifacts: () => [],
-            useFriendRequests: () => [],
-            useRequestedFriends: () => [],
-            useFeedItems: () => [],
-            useFeedLoaded: () => true,
-            useFriendsLoaded: () => true,
-            useSettings: () => ({ experiments: false, featureToggles: {} }),
-            useAllSessions: () => [],
-            useMachine: () => null,
-        });
-    },
+    storage: async (importOriginal) => importOriginal(),
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ translate: (key) => key });
@@ -58,12 +46,6 @@ vi.mock('@/track', () => ({
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
 }));
-
-vi.mock('@/sync/domains/state/storageStore', () => {
-    const storage = (selector: (state: { profile: { id: string }; localSettings: { uiFontScale: number } }) => unknown) =>
-        selector({ profile: { id: 'me' }, localSettings: { uiFontScale: 1 } });
-    return { storage, getStorage: () => storage };
-});
 
 vi.mock('@/components/ui/cards/UserCard', () => ({
     UserCard: 'UserCard',
@@ -106,18 +88,6 @@ vi.mock('@/components/friends/RequireFriendsIdentityForFriends', () => ({
     RequireFriendsIdentityForFriends: ({ children }: any) => React.createElement('RequireFriendsIdentityForFriends', null, children),
 }));
 
-vi.mock('@/hooks/server/useFriendsIdentityReadiness', () => ({
-    useFriendsIdentityReadiness: () => ({ isReady: true }),
-}));
-
-vi.mock('@/hooks/server/useFriendsEnabled', () => ({
-    useFriendsEnabled: () => false,
-}));
-
-vi.mock('@/utils/platform/responsive', () => ({
-    useIsTablet: () => true,
-}));
-
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: {
         maxWidth: 960,
@@ -127,6 +97,12 @@ vi.mock('@/components/ui/layout/layout', () => ({
 }));
 
 describe('InboxView voice placement', () => {
+    const initialStorageState = storage.getState();
+    beforeEach(() => storage.setState(initialStorageState, true));
+    afterEach(() => {
+        standardCleanup();
+        storage.setState(initialStorageState, true);
+    });
     it('does not render VoiceSurface in inbox content on tablet', async () => {
         const { InboxView } = await import('./InboxView');
 

@@ -3,16 +3,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { isServerFetchConnectivityProbeRequest } from '@/dev/testkit/mocks/serverFetch';
 
-vi.mock('@/utils/timing/time', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/utils/timing/time')>();
-  const immediate = async <T,>(callback: () => Promise<T>): Promise<T> => await callback();
-  return {
-    ...actual,
-    backoff: immediate,
-    backoffForever: immediate,
-  };
-});
-
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.resetModules();
@@ -20,20 +10,14 @@ afterEach(() => {
 
 const credentials: AuthCredentials = { token: 't', secret: 's' };
 
-function mockServerConfig() {
-  vi.doMock('@/sync/domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: () => ({
-      serverId: 'test',
-      serverUrl: 'https://api.example.test',
-      kind: 'custom',
-      generation: 1,
-    }),
-  }));
+async function activateTestHome() {
+    const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+    await upsertAndActivateServer({ serverUrl: 'https://api.example.test', scope: 'tab' });
 }
 
 describe('apiConnectedServicesQuotasV3', () => {
   it('gets the latest plaintext quota snapshot from the v3 endpoint', async () => {
-    mockServerConfig();
+    await activateTestHome();
     const fetchMock = vi.fn(async (input: unknown) => {
       if (isServerFetchConnectivityProbeRequest(input)) {
         return { ok: true, status: 200, json: async () => ({ ok: true }) };
@@ -71,7 +55,7 @@ describe('apiConnectedServicesQuotasV3', () => {
   });
 
   it('propagates caller abort signals to quota snapshot requests', async () => {
-    mockServerConfig();
+    await activateTestHome();
     let requestSignal: AbortSignal | undefined;
     const fetchMock = vi.fn((input: unknown, init?: RequestInit) => {
       const url = String(input);
@@ -80,7 +64,9 @@ describe('apiConnectedServicesQuotasV3', () => {
       }
       if (url === 'https://api.example.test/v3/connect/openai-codex/profiles/work/quotas') {
         requestSignal = init?.signal ?? undefined;
-        return new Promise<Response>(() => {});
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+        });
       }
       return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true }) } as Response);
     });
@@ -88,27 +74,21 @@ describe('apiConnectedServicesQuotasV3', () => {
 
     const { getConnectedServiceQuotaSnapshotPlain } = await import('./apiConnectedServicesQuotasV3');
     const controller = new AbortController();
-    void (getConnectedServiceQuotaSnapshotPlain as (
-      creds: AuthCredentials,
-      params: Parameters<typeof getConnectedServiceQuotaSnapshotPlain>[1],
-      opts: Readonly<{ signal?: AbortSignal }>,
-    ) => ReturnType<typeof getConnectedServiceQuotaSnapshotPlain>)(
+    const pending = getConnectedServiceQuotaSnapshotPlain(
       credentials,
       { serviceId: 'openai-codex', profileId: 'work' },
       { signal: controller.signal },
-    ).catch(() => undefined);
-
-    for (let i = 0; i < 10 && !requestSignal; i += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    }
+    );
+    const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    await vi.waitFor(() => expect(requestSignal).toBeDefined());
     controller.abort();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await rejected;
 
     expect(requestSignal?.aborted).toBe(true);
   });
 
   it('returns null when the server has no snapshot', async () => {
-    mockServerConfig();
+    await activateTestHome();
     const fetchMock = vi.fn(async (input: unknown) => {
       if (isServerFetchConnectivityProbeRequest(input)) {
         return { ok: true, status: 200, json: async () => ({ ok: true }) };
@@ -126,7 +106,7 @@ describe('apiConnectedServicesQuotasV3', () => {
   });
 
   it('requests a daemon refresh (best-effort) via the refresh endpoint', async () => {
-    mockServerConfig();
+    await activateTestHome();
     const fetchMock = vi.fn(async (input: unknown) => {
       if (isServerFetchConnectivityProbeRequest(input)) {
         return { ok: true, status: 200, json: async () => ({ ok: true }) };
@@ -145,7 +125,7 @@ describe('apiConnectedServicesQuotasV3', () => {
   });
 
   it('treats missing snapshots as a non-fatal refresh request failure', async () => {
-    mockServerConfig();
+    await activateTestHome();
     const fetchMock = vi.fn(async (input: unknown) => {
       if (isServerFetchConnectivityProbeRequest(input)) {
         return { ok: true, status: 200, json: async () => ({ ok: true }) };

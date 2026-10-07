@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // ESM build, so both this harness and the renderer adapter under test load the patched native
 // runtime through the app's own import mapping — and the lane still fails if that mapping moves.
 import { LegendList, type LegendListRef } from '@legendapp/list/react-native';
+import { createLayoutChangeEvent, createNativeScrollEvent } from '@/dev/testkit/fixtures/nativeEventFixtures';
 
 import { createWebDomScrollObservation } from '@/components/sessions/transcript/viewport/driver/webDomObservation';
 import { resolveMainTranscriptListShellFrame } from '../transcriptListShellCapabilities';
@@ -68,9 +69,7 @@ async function flushNativeLayouts(currentScreen: ReactTestRenderer): Promise<voi
             (node) => typeof node.props.onLayout === 'function',
         );
         for (const node of layoutNodes) {
-            node.props.onLayout({
-                nativeEvent: { layout: { height: 120, width: 800, x: 0, y: 0 } },
-            });
+            node.props.onLayout(createLayoutChangeEvent({ height: 120, width: 800, x: 0, y: 0 }));
         }
         await Promise.resolve();
     });
@@ -156,14 +155,12 @@ describe('Legend transcript renderer installed native-package cleanup', () => {
         }
         expect(readyToRender).toBe(true);
 
-        const readNativeEvent = (offsetY: number, contentHeight: number) => ({
-            nativeEvent: {
-                contentInset: { bottom: 0, left: 0, right: 0, top: 0 },
-                contentOffset: { x: 0, y: offsetY },
-                contentSize: { height: contentHeight, width: 800 },
-                layoutMeasurement: { height: 600, width: 800 },
-                zoomScale: 1,
-            },
+        const readNativeEvent = (offsetY: number, contentHeight: number) => createNativeScrollEvent({
+            contentInset: { bottom: 0, left: 0, right: 0, top: 0 },
+            contentOffset: { x: 0, y: offsetY },
+            contentSize: { height: contentHeight, width: 800 },
+            layoutMeasurement: { height: 600, width: 800 },
+            zoomScale: 1,
         });
         const scrollView = requireMountedScreen(screen).root.findByType('ScrollView');
         const initialState = listRef.current!.getState();
@@ -469,9 +466,15 @@ describe('Legend transcript renderer installed native-package cleanup', () => {
         }]);
 
         act(() => {
-            requireMountedScreen(screen).root.findByType(LegendList).props.onScrollBeginDrag({
-                nativeEvent: { contentOffset: { x: 0, y: 440 } },
-            });
+            const onScrollBeginDrag = requireMountedScreen(screen).root.findByType(LegendList).props.onScrollBeginDrag;
+            if (!onScrollBeginDrag) throw new Error('Expected native entry placement drag handler');
+            onScrollBeginDrag(createNativeScrollEvent({
+                contentInset: { bottom: 0, left: 0, right: 0, top: 0 },
+                contentOffset: { x: 0, y: 440 },
+                contentSize: { height: 1_200, width: 800 },
+                layoutMeasurement: { height: 240, width: 800 },
+                zoomScale: 1,
+            }));
         });
 
         expect(placementEvents).toEqual([
@@ -916,9 +919,7 @@ describe('Legend transcript renderer installed native-package end follow (E-18)'
                 const height = rowIds.length === 1
                     ? resolveRowHeight(rowIds[0]!)
                     : VIEWPORT_HEIGHT;
-                node.props.onLayout({
-                    nativeEvent: { layout: { height, width: 800, x: 0, y: 0 } },
-                });
+                node.props.onLayout(createLayoutChangeEvent({ height, width: 800, x: 0, y: 0 }));
             }
             await Promise.resolve();
         });
@@ -976,15 +977,13 @@ describe('Legend transcript renderer installed native-package end follow (E-18)'
         // the landed offset back through onScroll.
         const emitScroll = (offsetY: number, contentHeight: number) => {
             act(() => {
-                requireMountedScreen(screen).root.findByType('ScrollView').props.onScroll({
-                    nativeEvent: {
-                        contentInset: { bottom: 0, left: 0, right: 0, top: 0 },
-                        contentOffset: { x: 0, y: offsetY },
-                        contentSize: { height: contentHeight, width: 800 },
-                        layoutMeasurement: { height: viewportHeight, width: 800 },
-                        zoomScale: 1,
-                    },
-                });
+                requireMountedScreen(screen).root.findByType('ScrollView').props.onScroll(createNativeScrollEvent({
+                    contentInset: { bottom: 0, left: 0, right: 0, top: 0 },
+                    contentOffset: { x: 0, y: offsetY },
+                    contentSize: { height: contentHeight, width: 800 },
+                    layoutMeasurement: { height: viewportHeight, width: 800 },
+                    zoomScale: 1,
+                }));
             });
         };
         const initialContentHeight = rows.length * VIEWPORT_HEIGHT;
@@ -1103,15 +1102,13 @@ describe('Legend transcript renderer installed native-package end follow (E-18)'
             });
             const settled = listRef.current!.getState();
             act(() => {
-                probeScreen.root.findByType('ScrollView').props.onScroll({
-                    nativeEvent: {
-                        contentInset: { bottom: 0, left: 0, right: 0, top: 0 },
-                        contentOffset: { x: 0, y: settled.scroll },
-                        contentSize: { height: settled.contentLength, width: 800 },
-                        layoutMeasurement: { height: settled.scrollLength, width: 800 },
-                        zoomScale: 1,
-                    },
-                });
+                probeScreen.root.findByType('ScrollView').props.onScroll(createNativeScrollEvent({
+                    contentInset: { bottom: 0, left: 0, right: 0, top: 0 },
+                    contentOffset: { x: 0, y: settled.scroll },
+                    contentSize: { height: settled.contentLength, width: 800 },
+                    layoutMeasurement: { height: settled.scrollLength, width: 800 },
+                    zoomScale: 1,
+                }));
             });
             expect(listRef.current!.getState().isWithinMaintainScrollAtEndThreshold).toBe(true);
             nativeScroller.scrollToEnd.mockClear();
@@ -1188,9 +1185,15 @@ describe('Legend transcript renderer installed native-package end follow (E-18)'
         // evaluates `withinThreshold || isMaintainingScrollAtEnd()` as an OR, so only the
         // semantic outer gate can stop a re-pin here.
         act(() => {
-            requireMountedScreen(screen).root.findByType(LegendList).props.onScrollBeginDrag({
-                nativeEvent: { contentOffset: { x: 0, y: 2_280 } },
-            });
+            const onScrollBeginDrag = requireMountedScreen(screen).root.findByType(LegendList).props.onScrollBeginDrag;
+            if (!onScrollBeginDrag) throw new Error('Expected native held-end drag handler');
+            onScrollBeginDrag(createNativeScrollEvent({
+                contentInset: { bottom: 0, left: 0, right: 0, top: 0 },
+                contentOffset: { x: 0, y: 2_280 },
+                contentSize: { height: 21 * VIEWPORT_HEIGHT, width: 800 },
+                layoutMeasurement: { height: VIEWPORT_HEIGHT, width: 800 },
+                zoomScale: 1,
+            }));
         });
         expect(harness.readMaintainScrollAtEnd()).toBe(false);
         harness.nativeScroller.scrollToEnd.mockClear();

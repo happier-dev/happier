@@ -1,9 +1,13 @@
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_ATTENTION_DELIVERY_POLICY_V1 } from '@happier-dev/protocol';
 
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { getStorage } from '@/sync/domains/state/storage';
 import { DEFAULT_ATTENTION_DEVICE_OVERRIDES_V1 } from '@/sync/domains/settings/attentionDeviceOverridesV1';
@@ -15,6 +19,9 @@ const nativeCapabilitiesState = vi.hoisted(() => ({
 }));
 const readExpoPushTokenSpy = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, token: 'ExponentPushToken[test]' })));
 
+installDisconnectedServerSocketBoundary();
+beforeAll(loadSyncSingletonForTests);
+
 vi.mock('../../../../modules/happier-activity-notifications', () => ({
     readActivityNotificationCapabilities: () => nativeCapabilitiesState.current,
 }));
@@ -24,6 +31,7 @@ vi.mock('@/activity/notifications/permission/pushNotificationAccess', () => ({
 }));
 
 afterEach(() => {
+    standardCleanup();
     nativeCapabilitiesState.current = { v: 1, platform: 'ios', events: ['ready'] };
     readExpoPushTokenSpy.mockClear();
     vi.restoreAllMocks();
@@ -43,7 +51,7 @@ describe('remote alert registration status', () => {
         let marked = true;
         const hosts: string[] = [];
         setRuntimeFetch(async (url) => {
-            const target = new URL(String(url));
+            const target = new URL(url instanceof Request ? url.url : String(url));
             hosts.push(target.host);
             if (target.pathname === '/v1/auth/ping') return new Response('{}', { status: 200 });
             return new Response(JSON.stringify(marked ? {
@@ -58,13 +66,16 @@ describe('remote alert registration status', () => {
             deviceEnabled: true,
             deviceOverrides: DEFAULT_ATTENTION_DEVICE_OVERRIDES_V1,
         }));
-        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().registration.accountPolicy).toBe('stale'));
         expect(hook.getCurrent().registration.accountPolicy).toBe('stale');
         expect(hook.getCurrent().registration.supported).toBe(true);
         expect(hook.getCurrent().registration.deviceEnrollment).toBe('enrolling');
         expect(new Set(hosts)).toEqual(new Set(['remote-alert-status.example']));
         marked = false;
         await act(async () => { hook.getCurrent().refresh(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().registration).toMatchObject({
+            accountPolicy: 'unavailable', supported: false, refreshing: false,
+        }));
         expect(hook.getCurrent().registration.accountPolicy).toBe('unavailable');
         expect(hook.getCurrent().registration.supported).toBe(false);
         await hook.unmount();
@@ -98,7 +109,7 @@ describe('remote alert registration status', () => {
             token: `e30.${Buffer.from(JSON.stringify({ sub: scope.accountId })).toString('base64url')}.signature`,
         });
         setRuntimeFetch(async (url) => {
-            const target = new URL(String(url));
+            const target = new URL(url instanceof Request ? url.url : String(url));
             if (target.pathname === '/v1/auth/ping') return new Response('{}', { status: 200 });
             return Response.json({
                 v: 2,
@@ -115,7 +126,9 @@ describe('remote alert registration status', () => {
             deviceEnabled: true,
             deviceOverrides: DEFAULT_ATTENTION_DEVICE_OVERRIDES_V1,
         }));
-        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().registration).toMatchObject({
+            accountPolicy: 'current', supported: true, refreshing: false,
+        }));
         expect(hook.getCurrent().registration.nativeAvailable).toBe(false);
         expect(hook.getCurrent().registration.deviceEnrollment).toBe('unavailable');
 
@@ -125,6 +138,9 @@ describe('remote alert registration status', () => {
             await new Promise((resolve) => setTimeout(resolve, 0));
         });
 
+        await waitForHomeGovernance(() => expect(hook.getCurrent().registration).toMatchObject({
+            nativeAvailable: true, deviceEnrollment: 'enrolling', refreshing: false,
+        }));
         expect(hook.getCurrent().registration.nativeAvailable).toBe(true);
         expect(hook.getCurrent().registration.deviceEnrollment).toBe('enrolling');
         expect(readExpoPushTokenSpy).toHaveBeenCalled();
@@ -142,7 +158,13 @@ describe('remote alert registration status', () => {
         let resolveProjection: ((response: Response) => void) | null = null;
         const projectionRequested = new Promise<void>((resolve) => {
             setRuntimeFetch(async (url) => {
-                if (new URL(String(url)).pathname === '/v1/auth/ping') return new Response('{}', { status: 200 });
+                const target = new URL(url instanceof Request ? url.url : String(url));
+                if (target.pathname === '/v1/auth/ping' || target.pathname === '/health') {
+                    return Response.json({});
+                }
+                if (target.pathname !== '/v1/push-tokens' || target.searchParams.get('projectionVersion') !== '2') {
+                    return new Response(null, { status: 404 });
+                }
                 resolve();
                 return await new Promise<Response>((resolveResponse) => { resolveProjection = resolveResponse; });
             });
@@ -169,6 +191,9 @@ describe('remote alert registration status', () => {
             await new Promise((resolve) => setTimeout(resolve, 0));
         });
 
+        await waitForHomeGovernance(() => expect(hook.getCurrent().registration).toMatchObject({
+            supported: true, nativeAvailable: true, deviceEnrollment: 'enrolling', refreshing: false,
+        }));
         expect(hook.getCurrent().registration.nativeAvailable).toBe(true);
         expect(hook.getCurrent().registration.deviceEnrollment).toBe('enrolling');
         expect(readExpoPushTokenSpy).toHaveBeenCalled();

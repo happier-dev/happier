@@ -205,7 +205,7 @@ describe('WorkspaceScmStashDetailsView', () => {
         expect(machineScmStashDropSpy).toHaveBeenCalledWith('m1', expect.objectContaining({ cwd: '/repo', stashRef: 'stash@{0}' }), { serverId: 's1' });
     });
 
-    it('switches between stashes from the dropdown trigger and shows stash metadata in the subtitle', async () => {
+    it('switches between stashes from the dropdown trigger and shows the selected stash metadata', async () => {
         machineScmStashListSpy.mockResolvedValueOnce({
             success: true,
             stashes: [
@@ -230,9 +230,13 @@ describe('WorkspaceScmStashDetailsView', () => {
         await settle();
         machineScmStashShowSpy.mockClear();
 
-        const stashSelector = screen.tree.findByProps({ title: 'files.stash.detailsTitle' });
-        expect(stashSelector.props.title).toBe('files.stash.detailsTitle');
-        expect(String(stashSelector.props.subtitle ?? '')).toContain('stash@{0}');
+        const { DetailsTabHeader } = await import('@/components/appShell/panes/details/header/DetailsTabHeader');
+        const header = screen.findByType(DetailsTabHeader);
+        expect(header.props.title).toBe('detailsSurface.history.stashKeptOn');
+        expect(header.props.meta).toEqual(expect.arrayContaining([
+            expect.objectContaining({ key: 'ref', text: 'stash@{0}' }),
+        ]));
+        const stashSelector = screen.tree.findByProps({ testID: 'scm-stash-switcher' });
 
         await act(async () => {
             stashSelector.props.onPress?.();
@@ -251,8 +255,11 @@ describe('WorkspaceScmStashDetailsView', () => {
         });
 
         expect(machineScmStashShowSpy).toHaveBeenCalledWith('m1', expect.objectContaining({ cwd: '/repo', stashRef: 'stash@{1}' }), { serverId: 's1' });
-        const updatedSelector = screen.tree.findByProps({ title: 'files.stash.detailsTitle' });
-        expect(String(updatedSelector.props.subtitle ?? '')).toContain('stash@{1}');
+        const updatedHeader = screen.findByType(DetailsTabHeader);
+        expect(updatedHeader.props.title).toBe('WIP on feature: unmanaged');
+        expect(updatedHeader.props.meta).toEqual(expect.arrayContaining([
+            expect.objectContaining({ key: 'ref', text: 'stash@{1}' }),
+        ]));
     });
 
     it('retries the stash list when the backend is transiently unavailable', async () => {

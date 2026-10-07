@@ -46,7 +46,7 @@ function artifactFor(actionId: string, actionArgs: unknown, overrides: Readonly<
     status: 'executing' as const,
     createdAtMs: 1,
     updatedAtMs: 2,
-    createdBy: { surface: 'app' as const },
+    createdBy: { surface: 'system' as const },
     executionOriginV1: {
       v: 1 as const,
       authority: 'present_user' as const,

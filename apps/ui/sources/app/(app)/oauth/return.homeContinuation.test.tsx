@@ -144,9 +144,13 @@ it.each(['current', 'another'] as const)('starts the selected %s Account Team fl
 it('keeps the exact Team return when handing authentication to the Home-selected Account Service', async () => {
     const { fixture } = await mountTeamEntry();
     await pressEntryCard('team-auth-entry-account-service');
-    expect(router.push).toHaveBeenCalledWith(expect.objectContaining({ pathname: '/setup/wizard',
-        params: expect.objectContaining({ accountEntryReturnTo:
-            `/teams/team-1/sign-in?target=${encodeURIComponent(fixture.home.homeServerIdentityId)}` }) }));
+    expect(router.push).toHaveBeenCalledWith({ pathname: '/homes/sign-in',
+        params: {
+            accountEntryReturnTo: `/teams/team-1/sign-in?target=${encodeURIComponent(fixture.home.homeServerIdentityId)}`,
+            accountServiceEndpoint: fixture.service.endpointUrl,
+            accountServiceIdentity: fixture.service.serverIdentityId,
+            accountIntent: JSON.stringify({ kind: 'enter', target: { kind: 'explicit', homeServerIdentityId: fixture.home.homeServerIdentityId } }),
+        } });
 });
 
 it.each(['access_denied', 'oauth_not_configured'])('returns a failed Team connect to its bound Team after %s', async (error) => {

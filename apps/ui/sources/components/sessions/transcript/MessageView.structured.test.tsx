@@ -627,8 +627,6 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         const message: any = {
             kind: 'user-text',
-            id: 'structured-message-1',
-            createdAt: 0,
             localId: 'local-media-1',
             id: 'message-media-1',
             createdAt: 1,
@@ -701,8 +699,6 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         const message: any = {
             kind: 'user-text',
-            id: 'structured-message-1',
-            createdAt: 0,
             localId: 'local-media-video-1',
             id: 'message-media-video-1',
             createdAt: 1,
@@ -739,8 +735,6 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         const message: any = {
             kind: 'user-text',
-            id: 'structured-message-1',
-            createdAt: 0,
             localId: 'local-1',
             text: 'review prompt',
             id: 'message-review-1',
@@ -847,8 +841,6 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         const message: any = {
             kind: 'user-text',
-            id: 'structured-message-1',
-            createdAt: 0,
             localId: 'local-1',
             text: 'review prompt',
             id: 'message-review-1',
@@ -994,8 +986,6 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         const message: any = {
             kind: 'user-text',
-            id: 'structured-message-1',
-            createdAt: 0,
             localId: 'local-1',
             text: '@happier/review.comments ...',
             id: 'message-review-1',
@@ -1032,8 +1022,6 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         const message: any = {
             kind: 'user-text',
-            id: 'structured-message-1',
-            createdAt: 0,
             localId: 'local-1',
             text: '@happier/review.comments ...',
             id: 'message-review-1',
@@ -1076,8 +1064,6 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         const message: any = {
             kind: 'user-text',
-            id: 'structured-message-1',
-            createdAt: 0,
             localId: 'local-1',
             id: 'message-attachments-1',
             createdAt: 1,
@@ -1117,8 +1103,6 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         const message: any = {
             kind: 'user-text',
-            id: 'structured-message-1',
-            createdAt: 0,
             localId: 'local-svg-1',
             id: 'message-svg-1',
             createdAt: 1,
@@ -1156,8 +1140,6 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         const message: any = {
             kind: 'user-text',
-            id: 'structured-message-1',
-            createdAt: 0,
             localId: 'local-1',
             text: 'review prompt\n\n[attachments block]',
             id: 'message-review-attachments-1',
@@ -1203,8 +1185,6 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         const message: any = {
             kind: 'user-text',
-            id: 'structured-message-1',
-            createdAt: 0,
             localId: 'local-voice-1',
             id: 'message-voice-1',
             createdAt: 1,
@@ -1239,8 +1219,6 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         const message: any = {
             kind: 'user-text',
-            id: 'structured-message-1',
-            createdAt: 0,
             localId: 'local-voice-2',
             id: 'message-voice-2',
             createdAt: 1,
@@ -1292,8 +1270,6 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         const path = '.happier/uploads/messages/m2/file.png';
         const message: any = {
             kind: 'user-text',
-            id: 'structured-message-1',
-            createdAt: 0,
             localId: 'local-1',
             id: 'message-attachments-preview-1',
             createdAt: 1,
@@ -1332,8 +1308,6 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         const secondPath = '.happier/uploads/messages/m3/two.png';
         const message: any = {
             kind: 'user-text',
-            id: 'structured-message-1',
-            createdAt: 0,
             localId: 'local-1',
             id: 'message-attachments-modal-1',
             createdAt: 1,
@@ -1389,8 +1363,6 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         const message: any = {
             kind: 'user-text',
-            id: 'structured-message-1',
-            createdAt: 0,
             localId: 'local-1',
             text: 'review prompt',
             id: 'message-review-jump-1',
@@ -1431,8 +1403,6 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         const { MessageView } = await import('./MessageView');
         const message: any = {
             kind: 'user-text',
-            id: 'structured-message-1',
-            createdAt: 0,
             localId: 'public-review',
             id: 'message-public-review',
             createdAt: 1,
@@ -1895,8 +1865,6 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         const message: any = {
             kind: 'agent-text',
-            id: 'structured-message-1',
-            createdAt: 0,
             localId: null,
             text: '**Title**\n\n- first\n- second',
             id: 'message-thinking-1',
@@ -1924,8 +1892,6 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         const message: any = {
             kind: 'agent-text',
-            id: 'structured-message-1',
-            createdAt: 0,
             localId: null,
             text: '*Thinking...*\n\n*Hello*',
             id: 'message-thinking-legacy-1',
@@ -1974,8 +1940,6 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         const message: any = {
             kind: 'agent-text',
-            id: 'structured-message-1',
-            createdAt: 0,
             localId: null,
             text: '**Title**\n\nHello',
             id: 'message-thinking-tool-1',
@@ -2001,8 +1965,6 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         const message: any = {
             kind: 'agent-text',
-            id: 'structured-message-1',
-            createdAt: 0,
             localId: null,
             text: 'Hello',
             id: 'message-thinking-hidden-1',

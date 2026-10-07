@@ -2,21 +2,35 @@ import { vi } from 'vitest';
 import type { Socket } from 'socket.io-client';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 
-const socketBoundary = vi.hoisted(() => ({ configure: undefined as ((socket: Socket) => void) | undefined }));
+type ConfigureSocketBoundary = (socket: Socket, serverUrl: string | undefined) => void;
+const socketBoundary = vi.hoisted(() => ({ configure: undefined as ConfigureSocketBoundary | undefined }));
 
 /** Also reusable by cross-package suites whose host imports Socket before the UI harness. */
 export async function createSocketIoClientBoundary(importOriginal: <T>() => Promise<T>) {
     const actual = await importOriginal<typeof import('socket.io-client')>();
-    return { ...actual, io: (...args: Parameters<typeof actual.io>) => {
+    const createSocket = (...args: Parameters<typeof actual.io>) => {
         const socket = actual.io(...args);
         vi.spyOn(socket, 'connect').mockReturnValue(socket);
-        socketBoundary.configure?.(socket);
+        // This cold SDK fixture never opens an Engine.IO connection or creates
+        // namespace/ACK teardown state. Deliver the external disconnect event
+        // through the real listeners; Sync and Account lifetime teardown stay real.
+        vi.spyOn(socket, 'disconnect').mockImplementation(() => {
+            if (!socket.connected) return socket;
+            socket.connected = false;
+            for (const listener of socket.listeners('disconnect')) listener('io client disconnect');
+            return socket;
+        });
+        socketBoundary.configure?.(socket, args[0]);
         return socket;
-    } };
+    };
+    // Socket.IO publishes one callable namespace through io/connect/default in
+    // both ESM and CommonJS. Keep every alias on this same transport boundary.
+    const factory = Object.assign(createSocket, actual.io, { io: createSocket, connect: createSocket });
+    return { ...actual, io: factory, connect: factory, default: factory };
 }
 
 /** Keep the real Socket and Sync owners; only the external transport is replaced. */
-export function installDisconnectedServerSocketBoundary(configure?: (socket: Socket) => void): void {
+export function installDisconnectedServerSocketBoundary(configure?: ConfigureSocketBoundary): void {
     socketBoundary.configure = configure;
     vi.mock('socket.io-client', createSocketIoClientBoundary);
 }

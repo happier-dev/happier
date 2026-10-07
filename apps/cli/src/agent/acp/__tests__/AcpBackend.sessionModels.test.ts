@@ -239,7 +239,9 @@ describe('AcpBackend session models', () => {
       const script = writeFakeAcpAgentScript({ dir, emptyModelChoices: true });
       const backend = new AcpBackend({ agentName: 'test', cwd: dir, command: process.execPath, args: [script] });
       try {
-        expect(await probeModelsFromAcpBackend({ backend, timeoutMs: 10000 })).toEqual([{ id: 'default', name: 'Default' }]);
+        expect(await probeModelsFromAcpBackend({ backend, timeoutMs: 10000 })).toEqual([
+          { id: 'default', name: 'Default', capabilities: { structuredOutput: 'unknown' } },
+        ]);
       } finally { await backend.dispose(); }
     });
   });

@@ -1,100 +1,68 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { createMachineFixture, createSessionFixture, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
-import { storage } from '@/sync/domains/state/storageStore';
+import { storage } from '@/sync/domains/state/storage';
+import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 
 import { useSessionWorkspaceTarget } from './useSessionWorkspaceTarget';
 
-const activeServerState = vi.hoisted(() => {
-    const listeners = new Set<(snapshot: { serverId: string; serverUrl: string; generation: number }) => void>();
-    return {
-        snapshot: { serverId: 'server-a', serverUrl: 'https://a.example.test', generation: 1 },
-        listeners,
-        setSnapshot(next: { serverId: string; serverUrl: string; generation: number }) {
-            this.snapshot = next;
-            for (const listener of listeners) {
-                listener(next);
-            }
-        },
-        reset() {
-            this.snapshot = { serverId: 'server-a', serverUrl: 'https://a.example.test', generation: 1 };
-            listeners.clear();
-        },
-    };
-});
-
-vi.mock('@/sync/domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: () => activeServerState.snapshot,
-    subscribeActiveServer: (listener: (snapshot: { serverId: string; serverUrl: string; generation: number }) => void) => {
-        activeServerState.listeners.add(listener);
-        listener(activeServerState.snapshot);
-        return () => {
-            activeServerState.listeners.delete(listener);
-        };
-    },
-}));
+function hydrateHomeSession(serverId: string): void {
+    const session = createSessionFixture({
+        id: 's1', serverId,
+        metadata: { machineId: 'machine-1', path: '/repo', host: 'machine.local', homeDir: '/Users/tester' },
+    });
+    const machine = createMachineFixture({
+        id: 'machine-1', active: true,
+        metadata: { host: 'machine.local', platform: 'darwin', happyCliVersion: '0.0.0-test',
+            happyHomeDir: '/Users/tester/.happy-dev', homeDir: '/Users/tester' },
+    });
+    storage.setState({
+        sessions: { s1: session },
+        machines: { 'machine-1': machine },
+        // Selection can change before hydration; keep each Home's Machine facts
+        // available without attributing the old Session to the new Home.
+        machineListByServerId: { 'server-a': [machine], 'server-b': [machine] },
+        sessionListRowsByServerId: {}, sessionListIndexByServerId: {},
+        ordinarySessionListMembershipByServerId: {}, concurrentSessionListCacheByServerId: {},
+    });
+}
 
 describe('useSessionWorkspaceTarget', () => {
     let previousState: ReturnType<typeof storage.getState>;
 
-    beforeEach(() => {
+    beforeEach(async () => {
         previousState = storage.getState();
-        activeServerState.reset();
-        storage.setState((state) => ({
-            ...state,
-            sessions: {
-                ...state.sessions,
-                s1: createSessionFixture({
-                    id: 's1',
-                    metadata: {
-                        machineId: 'machine-1',
-                        path: '/repo',
-                        host: 'machine.local',
-                        homeDir: '/Users/tester',
-                    } as any,
-                }),
-            },
-            machines: {
-                ...state.machines,
-                'machine-1': createMachineFixture({
-                    id: 'machine-1',
-                    active: true,
-                    metadata: {
-                        host: 'machine.local',
-                        platform: 'darwin',
-                        happyCliVersion: '0.0.0-test',
-                        happyHomeDir: '/Users/tester/.happy-dev',
-                        homeDir: '/Users/tester',
-                    } as any,
-                }),
-            },
-            getProjectForSession: () => null,
-        }));
+        for (const serverId of ['server-a', 'server-b']) {
+            await upsertServerProfile({ serverUrl: `https://${serverId}`, name: serverId });
+        }
+        await setActiveServerId('server-a');
+        hydrateHomeSession('server-a');
     });
 
     afterEach(() => {
-        storage.setState(previousState);
         standardCleanup();
+        storage.setState(previousState, true);
     });
 
-    it('recomputes the workspace target when the active server changes', async () => {
+    it('keeps the qualified Home until the newly active Home hydrates its Session', async () => {
         const hook = await renderHook(() => useSessionWorkspaceTarget('  s1  '));
 
-        expect(hook.getCurrent()).toEqual({
+        const homeATarget = {
             workspaceCacheKey: 'server-a:machine-1:/repo',
             machineId: 'machine-1',
             rootPath: '/repo',
             serverId: 'server-a',
-        });
+        };
+        expect(hook.getCurrent()).toEqual(homeATarget);
 
         await act(async () => {
-            activeServerState.setSnapshot({
-                serverId: 'server-b',
-                serverUrl: 'https://b.example.test',
-                generation: 2,
-            });
+            await setActiveServerId('server-b');
         });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+        expect(hook.getCurrent()).toEqual(homeATarget);
+
+        await act(async () => { hydrateHomeSession('server-b'); });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         expect(hook.getCurrent()).toEqual({

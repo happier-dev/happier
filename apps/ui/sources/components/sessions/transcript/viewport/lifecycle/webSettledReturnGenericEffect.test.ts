@@ -45,6 +45,7 @@ describe('web settled return generic effects', () => {
                     viewportState: {
                         isPinned: true,
                         offsetY: 12,
+                        shouldPersistViewport: false,
                         shouldRestoreViewport: false,
                     },
                 },
@@ -64,6 +65,7 @@ describe('web settled return generic effects', () => {
                 viewportState: {
                     isPinned: true,
                     offsetY: 12,
+                    shouldPersistViewport: false,
                     shouldRestoreViewport: false,
                 },
                 wantsPinned: true,
@@ -132,6 +134,7 @@ describe('web settled return generic effects', () => {
         expect(effect.state.viewportState).toEqual({
             isPinned: true,
             offsetY: 0.5,
+            shouldPersistViewport: false,
             shouldRestoreViewport: false,
         });
         expect(effect.state.lastDistanceFromLiveTailPx).toBe(0.5);

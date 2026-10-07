@@ -518,7 +518,9 @@ describe('HomeHub plugin widgets', () => {
         const menu = screen.findByTestId(`home-hub.${main.id}.menu`)!.findByType(ItemRowActions);
         const actionIds = menu.props.actions.map((action: { id: string }) => action.id);
         expect(actionIds.slice(0, 2)).toEqual(['editInputs', 'rename']);
-        await act(async () => { menu.props.actions.find((action: { id: string }) => action.id === 'rename').onPress(); });
+        const onRename = menu.props.actions.find((action: { id: string }) => action.id === 'rename')?.onPress;
+        if (!onRename) throw new Error('Expected the rename action to be executable');
+        await act(async () => { onRename(); });
         await flushHookEffects({ cycles: 2 });
         const field = screen.findByTestId(`home-hub.section.${main.id}-title-input`)!;
         await act(async () => { field.props.onChangeText('  Release soak '); });

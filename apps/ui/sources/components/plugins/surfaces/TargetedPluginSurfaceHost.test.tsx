@@ -87,7 +87,7 @@ const rawMount = DaemonPluginUiTargetedSurfaceMountV1Schema.parse({
                 // The renderer model is admitted for this exact plugin occurrence.
                 pluginId: 'acme.review',
                 localId: 'review-detail',
-                occurrenceId: 'review-occurrence-11',
+                occurrenceId: surface.contributor.occurrenceId,
                 document: { version: 1, root: { kind: 'state', state: 'empty', title: 'No review selected' } },
             }),
         }),
@@ -531,7 +531,7 @@ describe('readTargetedPluginSurfaceMountRequest', () => {
         expect(readRequests).toEqual([expect.objectContaining({
             machineId: 'machine-a',
             callerPluginId: 'acme.review',
-            expectedCallerOccurrenceId: '11',
+            expectedCallerOccurrenceId: mount.contributor.occurrenceId,
             resource: { pluginId: 'acme.review', localId: 'review-summary' },
             context: facts.resourceContext,
         })]);

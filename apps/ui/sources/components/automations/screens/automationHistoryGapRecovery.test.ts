@@ -135,7 +135,7 @@ function eventSourceStatus(
             materializationId: MATERIALIZATION_ID,
             pluginId: PLUGIN_ID,
         },
-        reporterSourceCustody: { kind: "development", registeredRootId: 'github-generation-a' },
+        reporterSourceCustody: { kind: 'development', registeredRootId: 'github-root-a' },
         state: 'attention',
         code: 'historyGap',
         lastObservedAt: 10,
@@ -503,13 +503,15 @@ describe('automation history-gap recovery status', () => {
             contributedAction: {
                 machineId: MACHINE_ID,
                 serverId: SERVER_ID,
-                expectedOccurrenceId: 'github-occurrence-a',
             },
         }));
         expect(dispatch.mock.calls[0]?.[0]?.resolveContributedAction?.({
             pluginId: PLUGIN_ID,
             localId: ACTION_LOCAL_ID,
-        })).toMatchObject({ execution: { target: 'daemon' } });
+        })).toMatchObject({
+            occurrenceId: 'github-occurrence-a',
+            execution: { target: 'daemon' },
+        });
 
         currentAutomation = automation({
             triggers: [eventTrigger({
@@ -555,12 +557,23 @@ describe('automation history-gap recovery status', () => {
     });
 
     it('does not dispatch a history gap reported by a replaced immutable contributor generation at the same release and materialization', async () => {
-        const event = eligibleEvent('github-generation-b');
+        const base = eligibleEvent('github-generation-b');
+        const event = DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema.parse({
+            ...base,
+            event: {
+                ...base.event,
+                sourceCustody: { kind: 'managed', immutableGenerationId: 'github-generation-b', installSource: 'archive' },
+            },
+        });
         const dispatch = vi.fn<PluginContributedActionDispatch>(async () => ({
             ok: true as const,
             result: { kind: 'baselined' },
         }));
-        const currentAutomation = automation();
+        const currentAutomation = automation({
+            triggers: [eventTrigger({ sourceStatus: eventSourceStatus({
+                reporterSourceCustody: { kind: 'managed', immutableGenerationId: 'github-generation-a', installSource: 'archive' },
+            }) })],
+        });
 
         await expect(recoverAutomationHistoryGap({
             eligibleEvent: event,

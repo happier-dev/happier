@@ -1,31 +1,81 @@
-import type { PluginClientApi } from '@happier-dev/plugin-sdk';
-import type { PluginClientActionHandler } from '@happier-dev/plugin-sdk/actions';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+    DaemonPluginActionSchemasReadRequestSchema,
+    DaemonPluginActionSchemasReadResponseSchema,
     DaemonPluginStructuredMessageActionExecuteRequestSchema,
+    DaemonPluginStructuredMessageActionExecuteResponseSchema,
     PluginContributesV2Schema,
     PluginProjectedActionV2Schema,
     type PluginContributionIdentityV1,
     type PluginMachineExecutionOriginV1,
     type PluginProjectedActionV2,
 } from '@happier-dev/protocol';
+import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import {
+    computePluginUiArtifactFileSetSha256DigestV1,
+    computePluginUiArtifactSha256DigestV1,
+    normalizePluginUiDestinationBindingV1,
+} from '@happier-dev/protocol/plugins/ui';
 
 import { createPluginReactNativeBundleCache } from '@/components/plugins/reactNative/bundleCache';
 import {
     getInstalledPluginUiClientExecutableComposition,
     resolvePluginUiClientActionRegistration,
 } from '@/components/plugins/reactNative/clientExecutableContributions';
-import type {
-    PluginReactNativeExecutableExport,
-    PluginReactNativeLoaderBackend,
-} from '@/components/plugins/reactNative/loader';
+import { createPluginUiCommonJsLoaderBackend } from '@/components/plugins/reactNative/commonJsLoaderBackend';
 import type { PluginReactNativeBundleCacheIdentity } from '@/sync/domains/plugins/ui/reactNativeRuntime';
+import type { PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
+import { resetMachineProjectionReadsForTests } from '@/sync/ops/machineContributionRegistryProjection';
+import { createPluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
+import type { PluginSurfaceOpenRequest } from '@/components/plugins/surfaces/openPluginSurface';
 
 import {
     createAppShellPluginUiInvocationHost,
-    type AppShellPluginUiActionExecute,
 } from './pluginUiInvocationHost';
 import { PLUGIN_PRESENT_USER_INTERACTION_DEADLINE_MS } from '@/components/plugins/hostApi/interactionLifetime';
+
+// Keep schema reads, dispatch, serialization and outcome classification real;
+// only the external daemon RPC transport supplies fixture responses.
+const machineRpc = vi.hoisted(() => vi.fn<(
+    params: Parameters<typeof import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc')['machineRpcWithServerScope']>[0],
+) => Promise<unknown>>());
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
+    const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
+    return createServerScopedMachineRpcBoundaryMock(machineRpc);
+});
+
+function answerDaemonAction(response: unknown, onDispatch?: () => void) {
+    machineRpc.mockImplementation(async (params) => {
+        if (params.method !== RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE) {
+            throw new Error(`Unexpected invocation fixture RPC: ${params.method}`);
+        }
+        DaemonPluginStructuredMessageActionExecuteRequestSchema.parse(params.payload);
+        params.onIssued?.();
+        onDispatch?.();
+        return response;
+    });
+}
+
+function daemonSuccess(result: Record<string, string>) {
+    return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({ ok: true, result });
+}
+
+beforeEach(() => {
+    resetMachineProjectionReadsForTests();
+    machineRpc.mockReset();
+    machineRpc.mockImplementation(async (params) => {
+        if (params.method !== RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ) {
+            throw new Error(`Unexpected invocation fixture RPC: ${params.method}`);
+        }
+        expect(DaemonPluginActionSchemasReadRequestSchema.parse(params.payload)).toEqual({
+            machineId: 'machine-1',
+            expectedOccurrenceId: 'acme-voice-client-action-occurrence-12',
+            qualifiedActionId: `${CLIENT_ACTION_PLUGIN_ID}/${CLIENT_ACTION_LOCAL_ID}`,
+        });
+        expect(params.serverId).toBe(CLIENT_ACTION_ORIGIN.serverIdentityId);
+        return DaemonPluginActionSchemasReadResponseSchema.parse({ ok: true, inputSchema: {} });
+    });
+});
 
 const DAEMON_ACTION: PluginProjectedActionV2 = {
     id: 'mint-session',
@@ -72,7 +122,7 @@ const CLIENT_ACTION_AUTHORIZATION = Object.freeze({
     operatingSystemAuthorization: Object.freeze([]),
 });
 
-function createClientActionFixture(handler: PluginClientActionHandler) {
+function createClientActionFixture() {
     const declaration = {
         id: CLIENT_ACTION_LOCAL_ID,
         title: 'Open client destination',
@@ -98,30 +148,39 @@ function createClientActionFixture(handler: PluginClientActionHandler) {
         available: true,
         authorization: CLIENT_ACTION_AUTHORIZATION,
     });
+    // The public activate(api) ABI registers the actual executable handler.
+    // Re-entering a denied invocation would produce a distinct error, exposing
+    // a stale/cancelled caller that reached plugin code.
+    const bytes = new TextEncoder().encode(`
+        let activations = 0;
+        let invocations = 0;
+        exports.activate = function (api) {
+            activations++;
+            api.actions.register('${CLIENT_ACTION_LOCAL_ID}', async function (_input, context) {
+                if (++invocations !== 1) throw new Error('unexpected_client_action_reentry');
+                await context.ui.openSurface({ pluginId: 'acme.destination', localId: 'issue-details' },
+                    { issue: 'UCX-EXTERNAL-VOICE' });
+                return { navigated: true, activations, invocations };
+            });
+        };
+    `);
     const identity: PluginReactNativeBundleCacheIdentity = Object.freeze({
         pluginId: CLIENT_ACTION_PLUGIN_ID,
         contributionId: CLIENT_ACTION_LOCAL_ID,
         artifactId: CLIENT_ACTION_TARGET.artifactId,
-        artifactDigest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        artifactDigest: computePluginUiArtifactFileSetSha256DigestV1([{ relativePath: 'index.cjs', bytes }]),
         platform: CLIENT_ACTION_TARGET.platform,
     });
     const cache = createPluginReactNativeBundleCache();
-    cache.putInstalledArtifact({
+    expect(cache.putInstalledArtifact({
         identity,
-        bytes: new Uint8Array([47, 47, 32, 99, 108, 105, 101, 110, 116]),
+        bytes,
         format: 'plainJs',
-    });
-    const activate = vi.fn((api: PluginClientApi) => {
-        api.actions.register(CLIENT_ACTION_LOCAL_ID, handler);
-    });
-    const backend: PluginReactNativeLoaderBackend = Object.freeze({
-        backendId: 'commonJs',
-        available: true,
-        loadInstalledBundle: vi.fn(async () => activate as PluginReactNativeExecutableExport),
-    });
+        entryRelativePath: 'index.cjs',
+        files: [{ relativePath: 'index.cjs', bytes, byteSize: bytes.byteLength, digest: computePluginUiArtifactSha256DigestV1(bytes) }],
+    })).toMatchObject({ ok: true });
     return Object.freeze({
         action,
-        activate,
         activation: Object.freeze({
             pluginId: CLIENT_ACTION_PLUGIN_ID,
             occurrenceId: action.occurrenceId,
@@ -135,7 +194,7 @@ function createClientActionFixture(handler: PluginClientActionHandler) {
             moduleReference: {
                 exportName: CLIENT_ACTION_TARGET.exportName,
             },
-            backend,
+            backend: createPluginUiCommonJsLoaderBackend(),
             authority: {
                 serverId: 'srv_voice_client_action',
                 machineId: 'machine-1',
@@ -160,17 +219,36 @@ function resolveDaemonAction(identity: Readonly<{ pluginId: string; localId: str
 
 describe('AppShell plugin UI invocation host', () => {
     it('routes a once-registered client Action from Voice through the incumbent navigation binding', async () => {
-        const openSurface = vi.fn(async () => ({ ok: true as const }));
-        const handler = vi.fn();
-        const clientHandler: PluginClientActionHandler = async (_input, context) => {
-            handler();
-            await context.ui.openSurface({
-                pluginId: 'acme.destination',
-                localId: 'issue-details',
-            }, { issue: 'UCX-EXTERNAL-VOICE' });
-            return { navigated: true };
-        };
-        const fixture = createClientActionFixture(clientHandler);
+        const binding = normalizePluginUiDestinationBindingV1({
+            pluginId: 'acme.destination', destinationId: 'issue-details',
+            rendererId: 'issue-details-renderer', container: 'appPage', target: { kind: 'app' },
+        });
+        if (!binding) throw new Error('Expected an admitted app destination fixture.');
+        const placement = {
+            id: 'surfacePlacement:acme.destination:appPage:issue-details',
+            pluginId: 'acme.destination', occurrenceId: 'destination-occurrence-12',
+            contributionKind: 'surfacePlacement', descriptorId: 'issue-details',
+            binding, target: binding.target,
+            renderer: { kind: 'reactNative', contributionId: 'issue-details-renderer' },
+            display: { developerFallback: 'Issue details' },
+            availability: { state: 'available', reason: 'available', diagnostics: [] },
+            headerActions: [],
+            hostOrigin: {
+                machineId: 'machine-1', serverId: CLIENT_ACTION_ORIGIN.serverIdentityId,
+                phase: 'current', interactionEnabled: true,
+                executionOrigin: {
+                    ...CLIENT_ACTION_ORIGIN,
+                    materializationRef: { ...CLIENT_ACTION_ORIGIN.materializationRef, pluginId: 'acme.destination' },
+                },
+            },
+        } satisfies PluginUiSurfacePlacementProjection;
+        const navigation = createPluginSurfaceDestinationNavigationBinding({ placements: [placement], targetKind: 'app' });
+        const navigated: PluginSurfaceOpenRequest[] = [];
+        const unregister = navigation.registerOwner({ container: 'appPage', handler: ({ request }) => {
+            navigated.push(request);
+            return { ok: true };
+        } });
+        const fixture = createClientActionFixture();
         const invocation = {
             pluginId: CLIENT_ACTION_PLUGIN_ID,
             contributionId: 'conversation',
@@ -182,53 +260,44 @@ describe('AppShell plugin UI invocation host', () => {
             resolveContributedAction: fixture.resolve,
             // The AppShell-owned binding remains the navigation owner. This
             // host only reads it at client Action invocation time.
-            readNavigationBinding: () => ({
-                openSurface,
-                targetKind: 'app' as const,
-                registerOwner: () => () => {},
-            }),
+            readNavigationBinding: () => navigation,
         };
         await fixture.composition.unload();
         try {
+            const attempts = await fixture.composition.reconcile([fixture.activation]);
+            expect(attempts.map((attempt) => attempt.result)).toEqual([{ ok: true }]);
             await fixture.composition.reconcile([fixture.activation]);
             const ui = createAppShellPluginUiInvocationHost(invocation);
 
             await expect(ui.executeAction(CLIENT_ACTION_LOCAL_ID, { source: 'voice' })).resolves.toEqual({
                 navigated: true,
+                activations: 1,
+                invocations: 1,
             });
-            expect(fixture.activate).toHaveBeenCalledTimes(1);
             expect(resolvePluginUiClientActionRegistration({
                 action: fixture.action,
                 platform: CLIENT_ACTION_TARGET.platform,
                 reader: fixture.composition,
             })).not.toBeNull();
-            expect(handler).toHaveBeenCalledTimes(1);
-            expect(openSurface).toHaveBeenCalledWith({
+            expect(navigated).toEqual([{
                 destination: {
                     pluginId: 'acme.destination',
                     localId: 'issue-details',
                 },
                 input: { issue: 'UCX-EXTERNAL-VOICE' },
-            });
+            }]);
         } finally {
+            unregister();
             await fixture.composition.unload();
         }
     });
 
     it('fails client Action navigation closed for a missing binding, stale generation, or caller abort', async () => {
-        const handler = vi.fn();
-        const clientHandler: PluginClientActionHandler = async (_input, context) => {
-            handler();
-            await context.ui.openSurface({
-                pluginId: 'acme.destination',
-                localId: 'issue-details',
-            });
-            return { shouldNotSettle: true };
-        };
-        const fixture = createClientActionFixture(clientHandler);
+        const fixture = createClientActionFixture();
         await fixture.composition.unload();
         try {
-            await fixture.composition.reconcile([fixture.activation]);
+            const attempts = await fixture.composition.reconcile([fixture.activation]);
+            expect(attempts.map((attempt) => attempt.result)).toEqual([{ ok: true }]);
             const base = {
                 pluginId: CLIENT_ACTION_PLUGIN_ID,
                 occurrenceId: fixture.action.occurrenceId,
@@ -245,7 +314,6 @@ describe('AppShell plugin UI invocation host', () => {
             await expect(noBinding.executeAction(CLIENT_ACTION_LOCAL_ID, null)).rejects.toMatchObject({
                 code: 'plugin_surface_open_unavailable',
             });
-            expect(handler).toHaveBeenCalledTimes(1);
 
             const stale = createAppShellPluginUiInvocationHost({
                 ...base,
@@ -263,7 +331,6 @@ describe('AppShell plugin UI invocation host', () => {
             });
             await expect(aborted.executeAction(CLIENT_ACTION_LOCAL_ID, null, { signal: caller.signal }))
                 .rejects.toMatchObject({ code: 'plugin_ui_invocation_aborted' });
-            expect(handler).toHaveBeenCalledTimes(1);
         } finally {
             await fixture.composition.unload();
         }
@@ -271,10 +338,7 @@ describe('AppShell plugin UI invocation host', () => {
 
     it('qualifies a local Voice action with truthful non-mounted provenance', async () => {
         const signal = new AbortController().signal;
-        const execute = vi.fn<AppShellPluginUiActionExecute>(async () => ({
-            supported: true as const,
-            result: { ok: true as const, result: { token: 'bounded-artifact' } },
-        }));
+        answerDaemonAction(daemonSuccess({ token: 'bounded-artifact' }));
         const ui = createAppShellPluginUiInvocationHost({
             pluginId: 'acme.voice',
             contributionId: 'conversation',
@@ -285,37 +349,32 @@ describe('AppShell plugin UI invocation host', () => {
             timeoutMs: 5_000,
             isCurrent: () => true,
             resolveContributedAction: resolveDaemonAction,
-            execute,
         });
 
         await expect(ui.executeAction('mint-session', { voice: 'alloy' }))
             .resolves.toEqual({ token: 'bounded-artifact' });
-        expect(execute).toHaveBeenCalledWith('machine-1', {
+        expect(machineRpc).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine-1',
             serverId: 'server-1',
-            expectedContributorOccurrenceId: 'acme-voice-occurrence-12',
-            qualifiedActionId: 'acme.voice/mint-session',
-            input: { voice: 'alloy' },
-            executionSurface: 'voice',
+            method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
+            payload: {
+                machineId: 'machine-1',
+                expectedContributorOccurrenceId: 'acme-voice-occurrence-12',
+                qualifiedActionId: 'acme.voice/mint-session',
+                input: { voice: 'alloy' },
+                executionSurface: 'voice',
+            },
             timeoutMs: 5_000,
             signal,
-        });
-        const request = execute.mock.calls[0]?.[1];
-        expect(DaemonPluginStructuredMessageActionExecuteRequestSchema.safeParse({
-            machineId: 'machine-1',
-            expectedContributorOccurrenceId: request?.expectedContributorOccurrenceId,
-            qualifiedActionId: request?.qualifiedActionId,
-            input: request?.input,
-            executionSurface: request?.executionSurface,
-            ...(request?.invocation ? { invocation: request.invocation } : {}),
-        }).success).toBe(true);
+        }));
+        expect(machineRpc.mock.calls[0]?.[0].payload).not.toHaveProperty('invocation');
     });
 
     it('fails before dispatch when the generation is stale or the caller is aborted', async () => {
-        const execute = vi.fn();
         const stale = createAppShellPluginUiInvocationHost({
             pluginId: 'acme.voice', contributionId: 'conversation',
             occurrenceId: 'acme-voice-occurrence-12', machineId: 'machine-1', signal: new AbortController().signal,
-            isCurrent: () => false, execute,
+            isCurrent: () => false,
         });
         await expect(stale.executeAction('mint-session', null)).rejects.toMatchObject({
             code: 'plugin_ui_generation_retired',
@@ -326,26 +385,22 @@ describe('AppShell plugin UI invocation host', () => {
         const aborted = createAppShellPluginUiInvocationHost({
             pluginId: 'acme.voice', contributionId: 'conversation',
             occurrenceId: 'acme-voice-occurrence-12', machineId: 'machine-1', signal: new AbortController().signal,
-            isCurrent: () => true, execute,
+            isCurrent: () => true,
         });
         await expect(aborted.executeAction('mint-session', null, { signal: caller.signal })).rejects.toMatchObject({
             code: 'plugin_ui_invocation_aborted',
         });
-        expect(execute).not.toHaveBeenCalled();
+        expect(machineRpc).not.toHaveBeenCalled();
     });
 
     it('preserves a settled daemon success when caller cancellation races result delivery', async () => {
         const caller = new AbortController();
+        answerDaemonAction(daemonSuccess({ token: 'known-success' }), () => caller.abort(new Error('caller stopped')));
         const cancelledAfterSettlement = createAppShellPluginUiInvocationHost({
             pluginId: 'acme.voice', contributionId: 'conversation',
             occurrenceId: 'acme-voice-occurrence-12', machineId: 'machine-1', signal: new AbortController().signal,
             isCurrent: () => true,
             resolveContributedAction: resolveDaemonAction,
-            execute: async () => {
-                const settled = { supported: true as const, result: { ok: true as const, result: { token: 'known-success' } } };
-                caller.abort(new Error('caller stopped'));
-                return settled;
-            },
         });
         await expect(cancelledAfterSettlement.executeAction('mint-session', null, { signal: caller.signal }))
             .resolves.toEqual({ token: 'known-success' });
@@ -353,39 +408,37 @@ describe('AppShell plugin UI invocation host', () => {
 
     it('preserves a settled daemon success when generation retirement races result delivery', async () => {
         let current = true;
+        answerDaemonAction(daemonSuccess({ token: 'known-success' }), () => { current = false; });
         const retiredInFlight = createAppShellPluginUiInvocationHost({
             pluginId: 'acme.voice', contributionId: 'conversation',
             occurrenceId: 'acme-voice-occurrence-12', machineId: 'machine-1', signal: new AbortController().signal,
             isCurrent: () => current,
             resolveContributedAction: resolveDaemonAction,
-            execute: async () => {
-                const settled = { supported: true as const, result: { ok: true as const, result: { token: 'known-success' } } };
-                current = false;
-                return settled;
-            },
         });
         await expect(retiredInFlight.executeAction('mint-session', null))
             .resolves.toEqual({ token: 'known-success' });
     });
 
     it('normalizes daemon unavailability and action errors', async () => {
+        answerDaemonAction({ error: 'Method not found', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
         const unavailable = createAppShellPluginUiInvocationHost({
             pluginId: 'acme.voice', contributionId: 'conversation',
             occurrenceId: 'acme-voice-occurrence-12', machineId: 'machine-1', signal: new AbortController().signal,
             isCurrent: () => true,
             resolveContributedAction: resolveDaemonAction,
-            execute: async () => ({ supported: false, reason: 'not-supported' }),
         });
         await expect(unavailable.executeAction('mint-session', null)).rejects.toMatchObject({
             code: 'plugin_ui_action_host_unavailable',
         });
 
+        answerDaemonAction(DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({
+            ok: false, code: 'plugin_action_grant_missing',
+        }));
         const denied = createAppShellPluginUiInvocationHost({
             pluginId: 'acme.voice', contributionId: 'conversation',
             occurrenceId: 'acme-voice-occurrence-12', machineId: 'machine-1', signal: new AbortController().signal,
             isCurrent: () => true,
             resolveContributedAction: resolveDaemonAction,
-            execute: async () => ({ supported: true, result: { ok: false, code: 'plugin_action_grant_missing' } }),
         });
         await expect(denied.executeAction('mint-session', null)).rejects.toMatchObject({
             code: 'plugin_action_grant_missing',
@@ -393,30 +446,31 @@ describe('AppShell plugin UI invocation host', () => {
     });
 
     it('does not require a mounted UI materialization for a global Voice action', async () => {
-        const execute = vi.fn(async () => ({
-            supported: true as const,
-            result: { ok: true as const, result: { token: 'global-voice-success' } },
-        }));
+        answerDaemonAction(daemonSuccess({ token: 'global-voice-success' }));
         const ui = createAppShellPluginUiInvocationHost({
             pluginId: 'acme.voice', contributionId: 'conversation',
             occurrenceId: 'acme-voice-occurrence-12', machineId: 'machine-1', signal: new AbortController().signal,
             isCurrent: () => true,
             resolveContributedAction: resolveDaemonAction,
-            execute,
         });
 
         await expect(ui.executeAction('mint-session', null)).resolves.toEqual({
             token: 'global-voice-success',
         });
-        expect(execute).toHaveBeenCalledWith('machine-1', {
-            serverId: null,
-            expectedContributorOccurrenceId: 'acme-voice-occurrence-12',
-            qualifiedActionId: 'acme.voice/mint-session',
-            input: null,
-            executionSurface: 'voice',
+        expect(machineRpc).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine-1',
+            method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
+            payload: {
+                machineId: 'machine-1',
+                expectedContributorOccurrenceId: 'acme-voice-occurrence-12',
+                qualifiedActionId: 'acme.voice/mint-session',
+                input: null,
+                executionSurface: 'voice',
+            },
             timeoutMs: PLUGIN_PRESENT_USER_INTERACTION_DEADLINE_MS,
             signal: expect.any(AbortSignal),
-        });
+        }));
+        expect(machineRpc.mock.calls[0]?.[0].payload).not.toHaveProperty('invocation');
     });
 
     it('keeps the complete UI host API present while unsupported mounted-only methods fail closed', async () => {

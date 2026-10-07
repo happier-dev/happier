@@ -66,7 +66,7 @@ function eventDefinition(
                 kind: 'newSession',
                 spawn: {
                     executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
-                    directory: '/workspace',
+                    directory: { kind: 'path', path: '/workspace' },
                     agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
                 },
             },

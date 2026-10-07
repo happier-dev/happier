@@ -1,33 +1,44 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { IDBFactory } from 'fake-indexeddb';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
 import type { AgentInputLocalUiStateV1 } from '@/sync/domains/input/draftValues/agentInputLocalUiStateStore';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 
 const mmkvStore = vi.hoisted(() => new Map<string, string>());
-const sessionDraftPersistenceStore = vi.hoisted(() => new Map<string, string>());
-const activeScopeState = vi.hoisted(() => ({
-    value: { serverId: 'server-a', accountId: 'account-a' } as ServerAccountScope | null,
-}));
+const activeScopeState: { value: ServerAccountScope | null } = { value: null };
 const appStateListeners = vi.hoisted(() => new Set<(nextState: string) => void>());
-const accountLifetimesByScope = new Map<string, import('@/sync/domains/scope/serverAccountScope').ServerAccountScopeLifetime>();
+let account: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+let captureLifetime: typeof import('@/sync/domains/scope/activeServerAccountScope').captureActiveServerAccountScopeLifetime;
+
+installDisconnectedServerSocketBoundary();
+
+async function activateAccount(accountId: string) {
+    await account?.dispose();
+    account = await restoreServerAccountForTest({
+        serverUrl: 'https://composer-drafts.test',
+        accountId,
+        request: async (url) => {
+            const path = new URL(String(url)).pathname;
+            const json = (value: unknown) => new Response(JSON.stringify(value));
+            if (path === '/v1/features' || path === '/v1/features/authenticated') return json(createRootLayoutFeaturesResponse());
+            if (path === '/v1/account/encryption') return json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v1/account/encryption/currentness') return json(createPlainAccountEncryptionCurrentnessFixture());
+            return new Response('{}', { status: 404 });
+        },
+    });
+    activeScopeState.value = captureLifetime()?.scope ?? null;
+    expect(activeScopeState.value?.accountId).toBe(accountId);
+}
 
 function getActiveAccountLifetime() {
-    const scope = activeScopeState.value;
-    if (!scope) return null;
-    const key = `${scope.serverId}\u0000${scope.accountId}`;
-    const existing = accountLifetimesByScope.get(key);
-    if (existing) return existing;
-    const lifetime = Object.freeze({
-        scope: Object.freeze({ ...scope }),
-        isCurrent: () => activeScopeState.value?.serverId === scope.serverId
-            && activeScopeState.value.accountId === scope.accountId,
-        onRetire: () => Object.freeze({ dispose: () => undefined }),
-    });
-    accountLifetimesByScope.set(key, lifetime);
-    return lifetime;
+    return captureLifetime();
 }
 
 function installMockDocument(visibilityState: 'hidden' | 'visible' = 'visible') {
@@ -136,19 +147,9 @@ vi.mock('react-native-mmkv', () => {
     return { MMKV };
 });
 
-vi.mock('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage', () => ({
-    getSessionDraftPersistenceStorage: () => ({
-        getString: (key: string) => sessionDraftPersistenceStore.get(key),
-        set: (key: string, value: string) => sessionDraftPersistenceStore.set(key, value),
-        delete: (key: string) => sessionDraftPersistenceStore.delete(key),
-    }),
-    prepareSessionDraftPersistenceStorage: async () => undefined,
-    discardSessionDraftPersistenceWrites: async () => undefined,
-}));
-
-vi.mock('@react-navigation/native', () => ({
-    useIsFocused: () => true,
-}));
+vi.mock('@react-navigation/native', async () => (
+    (await import('@/dev/testkit/mocks/reactNavigation')).createReactNavigationNativeMock()
+));
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -164,13 +165,6 @@ vi.mock('react-native', async () => {
                 };
             },
         },
-    });
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        useActiveServerAccountScope: () => activeScopeState.value,
     });
 });
 
@@ -223,17 +217,25 @@ async function importSessionDraftValuesPersistence() {
 }
 
 describe('useSessionAgentInputComposerPersistence', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
         mmkvStore.clear();
-        sessionDraftPersistenceStore.clear();
         appStateListeners.clear();
-        activeScopeState.value = { serverId: 'server-a', accountId: 'account-a' };
         vi.resetModules();
+        // IndexedDB is the browser boundary; exercise the real repository and migration owner.
+        vi.stubGlobal('indexedDB', new IDBFactory());
+        const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
+        await prepareSessionDraftPersistenceStorage();
+        await loadSyncSingletonForTests();
+        ({ captureActiveServerAccountScopeLifetime: captureLifetime } = await import('@/sync/domains/scope/activeServerAccountScope'));
+        await activateAccount('account-a');
     });
 
-    afterEach(() => {
+    afterEach(async () => {
         vi.useRealTimers();
-        standardCleanup();
+        await standardCleanup();
+        await account?.dispose();
+        account = undefined;
+        vi.unstubAllGlobals();
     });
 
     it('persists expansion per session owner and restores it after session switches', async () => {
@@ -932,10 +934,6 @@ describe('useSessionAgentInputComposerPersistence', () => {
 
     it('isolates expansion by account scope', async () => {
         const { useSessionAgentInputComposerPersistence } = await importHook();
-        const scopeA = { serverId: 'server-a', accountId: 'account-a' } satisfies ServerAccountScope;
-        const scopeB = { serverId: 'server-a', accountId: 'account-b' } satisfies ServerAccountScope;
-        activeScopeState.value = scopeA;
-
         const hook = await renderHook(
             (sessionId: string) => useSessionAgentInputComposerPersistence({ sessionId }),
             { initialProps: 'session-a' },
@@ -945,12 +943,12 @@ describe('useSessionAgentInputComposerPersistence', () => {
             hook.getCurrent().setExpanded(true);
         });
 
-        activeScopeState.value = scopeB;
+        await act(async () => { await activateAccount('account-b'); });
         await hook.rerender('session-a');
 
         expect(hook.getCurrent().expanded).toBe(false);
 
-        activeScopeState.value = scopeA;
+        await act(async () => { await activateAccount('account-a'); });
         await hook.rerender('session-a');
 
         expect(hook.getCurrent().expanded).toBe(true);

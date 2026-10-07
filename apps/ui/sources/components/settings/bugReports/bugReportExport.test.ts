@@ -26,7 +26,7 @@ const input = {
   exportedAt: '2026-09-26T00:00:00.000Z',
   environment: { appVersion: '0.3.0', platform: 'ios', deploymentType: 'cloud' },
   artifacts: [{ filename: 'logs.txt', sourceKind: 'ui-mobile' as const, contentType: 'text/plain', content: 'synthetic log' }],
-};
+} satisfies Parameters<typeof exportBugReportDiagnosticsBundle>[0];
 describe('exportBugReportDiagnosticsBundle', () => {
   it('shares one serialized bundle and removes completed iOS custody', async () => {
     sdk.share.mockImplementation(async (uri: string, options: { mimeType?: string; UTI?: string; dialogTitle?: string }) => {

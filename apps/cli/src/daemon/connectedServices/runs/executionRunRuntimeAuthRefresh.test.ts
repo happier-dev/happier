@@ -60,8 +60,8 @@ async function harness(refresh: (request: ConnectedServiceDaemonAuthBridgeRefres
         verifyRunMaterializeToken: (token) => token === 'scoped',
         refreshConnectedServiceRuntimeAuthForExecutionRun: (input) => bridge.refreshRuntimeAuth(input),
     });
-    const post = (payload: unknown = request, token = 'scoped') => app.inject({ method: 'POST', url: path,
-        headers: { 'x-happier-daemon-token': token }, payload });
+    const post = async (payload: unknown = request, token = 'scoped') => await app.inject({ method: 'POST', url: path,
+        headers: { 'x-happier-daemon-token': token, 'content-type': 'application/json' }, payload: JSON.stringify(payload) });
     return { app, bridge, request, post, registry,
         retireRunner: () => { runnerCurrent = false; }, retireContribution: () => { contributionCurrent = false; } };
 }

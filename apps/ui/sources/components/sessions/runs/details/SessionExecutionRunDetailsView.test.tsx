@@ -1,1612 +1,535 @@
-import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { Platform } from 'react-native';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { flattenTestStyle, renderScreen } from '@/dev/testkit';
+import {
+    ExecutionRunCancelTurnRequestSchema, ExecutionRunEnsureRequestSchema, ExecutionRunGetRequestSchema,
+    ExecutionRunGetResponseSchema, ExecutionRunPublicStateSchema,
+    ExecutionRunStopRequestSchema, FeaturesResponseSchema,
+    SessionAgentActivityHeadlineV1Schema, SessionStoredMessageContentSchema, V2SessionByIdResponseSchema,
+    type ExecutionRunPublicState,
+} from '@happier-dev/protocol';
+import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { NormalizedMessage } from '@happier-dev/session-core/raw';
+
+import { createMachineFixture, createPendingMessageFixture, createSessionFixture, flattenTestStyle,
+    renderScreen, standardCleanup } from '@/dev/testkit';
+import { createSessionMessagesFixture, createToolCallMessageFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
+import { serveActionHomes, type ServedHomeRequest } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { getStorage } from '@/sync/domains/state/storageStore';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { disconnectActiveServerConnection, restoreConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
+import { notifyExecutionRunActivity } from '@/sync/runtime/executionRuns/executionRunActivityBus';
+import { ensureSessionDraftRepositoryHydrated, resetSessionDraftRepositoryForTests } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { SessionParticipantComposer } from '@/components/sessions/participants/composer/SessionParticipantComposer';
+import { SessionMessageDetailsView } from '@/components/sessions/transcript/details/SessionMessageDetailsView';
+import { ChainTranscriptList } from '@/components/sessions/transcript/ChainTranscriptList';
+import { SessionExecutionRunInfoCard } from './SessionExecutionRunInfoCard';
+import { SessionExecutionRunDetailsView, type SessionExecutionRunDetailsViewHandle } from './SessionExecutionRunDetailsView';
+import { SessionBrowserContextRuntimeProvider, useSessionBrowserContextRuntime,
+    type SessionBrowserContextRuntime } from '@/components/sessions/browser/sessionBrowserContextRuntime';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
-import { installSessionExecutionRunDetailsCommonModuleMocks } from './sessionExecutionRunDetailsTestHelpers';
+import { Modal } from '@/modal';
 
-
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-const getRunSpy = vi.fn<(sessionId: string, request: { runId: string }, options?: { serverId?: string | null }) => Promise<any>>(async (_sessionId, _request) => ({
-    run: {
-        runId: 'run_1',
-        callId: 'toolu_1',
-        sidechainId: 'toolu_1',
-        intent: 'review',
-        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-        runClass: 'bounded',
-        ioMode: 'streaming',
-        status: 'running',
-        startedAtMs: 1,
-    },
-}));
-
-const executionRunInfoCardSpy = vi.fn();
-const messageDetailsSpy = vi.fn();
-const browserContextState = vi.hoisted(() => ({ current: null as null | { marker: string } }));
-const participantComposerSpy = vi.fn();
-const participantComposerMountSpy = vi.hoisted(() => vi.fn());
-const participantComposerUnmountSpy = vi.hoisted(() => vi.fn());
-const pendingBlockSpy = vi.fn();
-const chainTranscriptSpy = vi.fn();
-const sidechainMessagesState = vi.hoisted(() => ({ current: [] as any[] }));
-const targetPendingState = vi.hoisted(() => ({
-    current: { messages: [] as any[], discarded: [] as any[], isLoaded: true },
-}));
-const exactSessionState = vi.hoisted(() => ({
-    current: {
-        id: 's1',
-        active: true,
-        metadata: { flavor: 'codex' },
-        access: {
-            level: 'edit',
-            capabilities: {
-                readTranscript: true,
-                submitAgentInput: true,
-                approveRuntimePermissions: true,
-            },
-        },
-    } as Record<string, unknown> | null,
-}));
-const sessionMessagesState = vi.hoisted(() => ({
-    isLoaded: true,
-    messages: [
-        {
-            id: 'tool-msg-1',
-            kind: 'tool-call',
-            localId: null,
-            tool: {
-                id: 'toolu_1',
-                name: 'SubAgentRun',
-                state: 'running',
-                input: {
-                    runId: 'run_1',
-                    backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-                    intent: 'review',
-                    runClass: 'bounded',
-                    ioMode: 'streaming',
-                    permissionMode: 'read-only',
-                    retentionPolicy: 'ephemeral',
-                    label: 'Reviewer A',
-                },
-                result: {
-                    runId: 'run_1',
-                    backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-                    intent: 'review',
-                    runClass: 'bounded',
-                    ioMode: 'streaming',
-                    permissionMode: 'read-only',
-                    retentionPolicy: 'ephemeral',
-                    status: 'succeeded',
-                    sidechainId: 'toolu_1',
-                    callId: 'toolu_1',
-                },
-                createdAt: 1,
-                startedAt: 1,
-                completedAt: 2,
-                description: null,
-            },
-            children: [],
-            createdAt: 1,
-        },
-    ] as any[],
-}));
-
-/** Exactly what the daemon projects for a live run backed by the retained Agent Session adapter. */
-const RETAINED_INTERACTION = {
-    kind: 'retained_agent_session.v1',
-    capabilities: {
-        open: ['create', 'resume'],
-        delivery: ['newTurn', 'steer'],
-        cancel: true,
-    },
-} as const;
-
-function createExecutionRunGetResponse(overrides?: Record<string, unknown>) {
-    return {
-        run: {
-            runId: 'run_1',
-            callId: 'toolu_1',
-            sidechainId: 'toolu_1',
-            intent: 'review',
-            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-            runClass: 'bounded',
-            ioMode: 'streaming',
-            status: 'running',
-            startedAtMs: 1,
-            ...overrides,
-        },
-    };
-}
-
-installSessionExecutionRunDetailsCommonModuleMocks({
-    text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({
-            translate: (key, values) => {
-                if (key === 'sessionPages.newRun.transcriptReadOnly') {
-                    return 'This is saved history. Reconnect to this Home to continue the conversation.';
-                }
-                if (key === 'sessionPages.newRun.daemonReadOnly') {
-                    return 'This history comes from the agent process. Reconnect to this Home to continue the conversation.';
-                }
-                if (key === 'executionRuns.details.labels.statusValue' && values?.value) {
-                    return `Status: ${String(values.value)}`;
-                }
-                return values ? `${key}(${Object.entries(values).map(([name, value]) => `${name}=${String(value)}`).join(',')})` : key;
-            },
-        });
-    },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            storage: {
-                getState: () => ({ sessions: { s1: { metadata: { machineId: 'm1' } } } }),
-            },
-            useSession: () => ({
-                id: 's1',
-                active: true,
-                metadata: { flavor: 'codex' },
-                access: {
-                    level: 'edit',
-                    capabilities: {
-                        readTranscript: true,
-                        submitAgentInput: true,
-                        approveRuntimePermissions: true,
-                    },
-                },
-            }),
-            useSessionMessages: () => ({ messages: sessionMessagesState.messages, isLoaded: sessionMessagesState.isLoaded }),
-            useResolvedSessionMessageRouteId: () => 'tool-msg-1',
-            useMessage: () => sessionMessagesState.messages[0] ?? null,
-            useSessionPendingMessages: () => targetPendingState.current,
-            useSessionSidechainMessages: () => sidechainMessagesState.current,
-        });
-    },
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
 });
-
-vi.mock('@/components/sessions/transcript/ChainTranscriptList', () => ({
-    ChainTranscriptList: (props: any) => {
-        chainTranscriptSpy(props);
-        return React.createElement('ChainTranscriptList', props);
-    },
-}));
-
-vi.mock('@/components/sessions/shell/sessionViewStableSession', () => ({
-    useSessionViewShellSession: () => exactSessionState.current,
-    selectSessionViewShellSessionForRouteState: (
-        state: { sessions?: Record<string, Record<string, unknown> | null> },
-        sessionId: string,
-        expectedServerId?: string | null,
-    ) => {
-        const session = state.sessions?.[sessionId] ?? null;
-        if (!session || (expectedServerId && session.serverId !== expectedServerId)) return null;
-        return session;
-    },
-}));
-
-vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
-    sessionExecutionRunGet: (sessionId: string, request: { runId: string }, options?: { serverId?: string | null }) =>
-        getRunSpy(sessionId, request, options),
-    sessionExecutionRunSend: vi.fn(async () => ({ ok: true })),
-    sessionExecutionRunStop: vi.fn(async () => ({ ok: true })),
-    sessionExecutionRunCancelTurn: vi.fn(async () => ({ ok: true })),
-    sessionExecutionRunResume: vi.fn(async () => ({ ok: true })),
-    isExecutionRunNotRunningMutationError: (result: unknown) => {
-        if (!result || typeof result !== 'object' || (result as any).ok !== false) return false;
-        const errorCode = typeof (result as any).errorCode === 'string' ? String((result as any).errorCode).trim().toLowerCase() : '';
-        if (errorCode === 'execution_run_not_allowed' || errorCode === 'execution_run_not_running') {
-            const error = typeof (result as any).error === 'string' ? String((result as any).error).trim().toLowerCase() : '';
-            return error.includes('not running') || error.includes('already finished');
-        }
-        return false;
-    },
-    isExecutionRunNotRunningSendError: (result: unknown) => {
-        if (!result || typeof result !== 'object' || (result as any).ok !== false) return false;
-        const errorCode = typeof (result as any).errorCode === 'string' ? String((result as any).errorCode).trim().toLowerCase() : '';
-        if (errorCode === 'execution_run_not_allowed' || errorCode === 'execution_run_not_running') {
-            const error = typeof (result as any).error === 'string' ? String((result as any).error).trim().toLowerCase() : '';
-            return error.includes('not running') || error.includes('already finished');
-        }
-        return false;
-    },
-}));
-
-vi.mock('@/sync/ops/machineExecutionRuns', () => ({
-    machineExecutionRunsList: vi.fn(async () => ({ ok: true, runs: [] })),
-}));
-
-vi.mock('@/sync/domains/scope/useServerCredentialAccountScopes', () => ({
-    useServerCredentialAccountScopeBindings: () => new Map(),
-    useServerCredentialAccountScopeResolution: (serverId: string | null | undefined) => serverId
-        ? { kind: 'bound', scope: { serverId, accountId: 'account-1' } }
-        : { kind: 'resolving' },
-}));
-
-vi.mock('@/components/sessions/runs/details/SessionExecutionRunInfoCard', () => ({
-    SessionExecutionRunInfoCard: (props: any) => {
-        executionRunInfoCardSpy(props);
-        return React.createElement(
-            'SessionExecutionRunInfoCard',
-            props,
-            props.stopAction ? React.createElement('Pressable', {
-                testID: 'session-run-details-stop',
-                accessibilityState: { disabled: props.stopAction.stopping, busy: props.stopAction.stopping },
-                onPress: props.stopAction.onStop,
-            }) : null,
-            // Cancel response lives in the header's ⋯ menu; the stand-in exposes the same control.
-            props.cancelResponseAction ? React.createElement('Pressable', {
-                testID: 'session-run-details-cancel-turn',
-                accessibilityState: { disabled: props.cancelResponseAction.pending, busy: props.cancelResponseAction.pending },
-                onPress: props.cancelResponseAction.onCancel,
-            }) : null,
-        );
-    },
-}));
-
-vi.mock('@/components/sessions/transcript/details/SessionMessageDetailsView', () => ({
-    SessionMessageDetailsView: (props: any) => {
-        messageDetailsSpy(props);
-        return React.createElement('SessionMessageDetailsView', props);
-    },
-}));
-
-vi.mock('@/components/sessions/participants/composer/SessionParticipantComposer', () => ({
-    SessionParticipantComposer: (props: any) => {
-        participantComposerSpy(props);
-        // Mount identity, not render count: a destructive reload replaces the
-        // loaded tree with a spinner and remounts this composer from scratch.
-        React.useEffect(() => {
-            participantComposerMountSpy();
-            return () => participantComposerUnmountSpy();
-        }, []);
-        return React.createElement('SessionParticipantComposer', props);
-    },
-}));
-
-vi.mock('@/components/sessions/pending/PendingMessagesTranscriptBlock', () => ({
-    PendingMessagesTranscriptBlock: (props: any) => {
-        pendingBlockSpy(props);
-        return React.createElement('PendingMessagesTranscriptBlock', props);
-    },
-}));
-
-vi.mock('@/components/sessions/browser/sessionBrowserContextRuntime', () => ({
-    useSessionBrowserContextRuntimeContext: () => ({
-        composerContext: { state: browserContextState.current },
-    }),
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
-    TextInput: ({ ...props }: any) => React.createElement('TextInput', props),
-}));
-
-vi.mock('@/components/ui/layout/ConstrainedScreenContent', () => ({
-    ConstrainedScreenContent: ({ children, ...props }: any) => React.createElement('ConstrainedScreenContent', props, children),
-}));
-
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
+vi.mock('@expo/vector-icons', async () => {
+    const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
+    return createExpoVectorIconsMock();
+});
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key, values) => values
+        ? key + '(' + Object.entries(values).map(([name, value]) => name + '=' + String(value)).join(',') + ')' : key });
+});
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock().module;
 });
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock().module;
+});
+vi.mock('@/sync/domains/state/browserRecordStorage', async () => {
+    const { createBrowserRecordStorageModuleMock } = await import('@/dev/testkit/mocks/browserRecordStorage');
+    return createBrowserRecordStorageModuleMock();
+});
 
-vi.mock('@/sync/sync', () => ({
-    sync: {
-        fetchPendingMessages: vi.fn(async () => undefined),
-        ensureSidechainMessagesLoaded: vi.fn(async () => 'loaded'),
-        loadOlderMessages: vi.fn(async () => ({
-            loaded: 1,
-            hasMore: false,
-            status: 'loaded',
-        })),
-        loadOlderSidechainMessages: vi.fn(async () => ({
-            loaded: 0,
-            hasMore: false,
-            status: 'loaded',
-        })),
-    },
-}));
-
-vi.mock('@/utils/system/fireAndForget', () => ({
-    fireAndForget: (promise: Promise<unknown>) => void promise,
-}));
-
-const machineStopSessionSpy = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => ({ ok: true })));
-vi.mock('@/sync/ops/machines', () => ({
-    machineStopSession: (...args: unknown[]) => machineStopSessionSpy(...args),
-}));
-// The session's live agent counts are a store projection; the stop fallback only reads `counts.live`.
-const liveAgentCountState = vi.hoisted(() => ({ current: 1 }));
-// The roster's merged entry per Run: the canonical attention the Run header reads.
-const rosterRunEntryState = vi.hoisted(() => ({ current: null as null | Record<string, unknown> }));
-vi.mock('@/hooks/session/useSessionAgentActivity', () => ({
-    useSessionAgentActivity: () => ({ entries: [], counts: { live: liveAgentCountState.current, total: liveAgentCountState.current } }),
-    useSessionAgentActivityRoster: () => ({
-        entries: [],
-        subagents: [],
-        readSubagentForEntry: () => null,
-        readExecutionRunEntry: (runId: string) => rosterRunEntryState.current?.runId === runId ? rosterRunEntryState.current : null,
-    }),
-}));
-
-describe('SessionExecutionRunDetailsView', () => {
-    let tree: renderer.ReactTestRenderer | null = null;
-
-    beforeEach(() => {
-        getRunSpy.mockReset();
-        getRunSpy.mockImplementation(async () => createExecutionRunGetResponse());
-        executionRunInfoCardSpy.mockClear();
-        messageDetailsSpy.mockClear();
-        participantComposerSpy.mockClear();
-        participantComposerMountSpy.mockClear();
-        participantComposerUnmountSpy.mockClear();
-        pendingBlockSpy.mockClear();
-        chainTranscriptSpy.mockClear();
-        sidechainMessagesState.current = [];
-        targetPendingState.current = { messages: [], discarded: [], isLoaded: true };
-        browserContextState.current = null;
-        exactSessionState.current = {
-            id: 's1',
-            active: true,
-            metadata: { flavor: 'codex' },
-            access: {
-                level: 'edit',
-                capabilities: {
-                    readTranscript: true,
-                    submitAgentInput: true,
-                    approveRuntimePermissions: true,
-                },
-            },
-        };
-        sessionMessagesState.isLoaded = true;
-        sessionMessagesState.messages = [
-            {
-                id: 'tool-msg-1',
-                kind: 'tool-call',
-                localId: null,
-                tool: {
-                    id: 'toolu_1',
-                    name: 'SubAgentRun',
-                    state: 'running',
-                    input: {
-                        runId: 'run_1',
-                        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-                        intent: 'review',
-                        runClass: 'bounded',
-                        ioMode: 'streaming',
-                        permissionMode: 'read-only',
-                        retentionPolicy: 'ephemeral',
-                        label: 'Reviewer A',
-                    },
-                    result: {
-                        runId: 'run_1',
-                        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-                        intent: 'review',
-                        runClass: 'bounded',
-                        ioMode: 'streaming',
-                        permissionMode: 'read-only',
-                        retentionPolicy: 'ephemeral',
-                        status: 'succeeded',
-                        sidechainId: 'toolu_1',
-                        callId: 'toolu_1',
-                    },
-                    createdAt: 1,
-                    startedAt: 1,
-                    completedAt: 2,
-                    description: null,
-                },
-                children: [],
-                createdAt: 1,
-            },
-        ];
-    });
-
-    afterEach(async () => {
-        if (!tree) return;
-        await act(async () => {
-            tree?.unmount();
+const boundary = vi.hoisted(() => {
+    const requests: Array<Readonly<{ serverUrl: string; targetId: string; method: string; payload: unknown }>> = [];
+    return { call: vi.fn<(method: string, input: unknown) => Promise<unknown>>(), requests };
+});
+vi.mock('socket.io-client', async () => {
+    const { createSocketIoBoundaryStub } = await import('@/dev/testkit/mocks/socketIo');
+    return { io: (serverUrl: string) => {
+        const { socket } = createSocketIoBoundaryStub();
+        socket.emitWithAck.mockImplementation(async (event, raw) => {
+            if (event !== 'rpc-call') return { v: 1, ok: true, admittedSessionIds: ['s1'] };
+            if (!raw || typeof raw !== 'object' || !('method' in raw) || typeof raw.method !== 'string' || !('params' in raw)) {
+                throw new Error('Malformed Socket RPC boundary request');
+            }
+            const separator = raw.method.indexOf(':');
+            const method = raw.method.slice(separator + 1);
+            boundary.requests.push({ serverUrl, targetId: raw.method.slice(0, separator), method, payload: raw.params });
+            return { ok: true, result: await boundary.call(method, raw.params) };
         });
-        tree = null;
+        return socket;
+    } };
+});
+// Only Socket, HTTP, credentials, local persistence and native/browser adapters are replaced.
+// App bootstrap, exact Home/Account admission, store, Run operations, roster, transcript,
+// composer, state transitions, result projection and rendered controls are all real.
+await loadSyncSingletonForTests();
+
+type Screen = Awaited<ReturnType<typeof renderScreen>>;
+let screen: Screen;
+let home: Awaited<ReturnType<typeof serveActionHomes>>;
+let serverId: string;
+let sequence = 0;
+let runState: ExecutionRunPublicState;
+let getReply: () => Promise<unknown>;
+let stopReply: () => Promise<unknown>;
+let cancelReply: () => Promise<unknown>;
+let resumeReply: () => Promise<unknown>;
+let latestToolResult: unknown;
+let structuredMeta: unknown;
+let browserRuntime: SessionBrowserContextRuntime | null = null;
+const httpReads: ServedHomeRequest[] = [];
+let httpSessionAvailable = true;
+const pendingRows: Array<Readonly<{
+    localId: string; recipient: { kind: 'execution_run'; runId: string }; messageRole: 'user';
+    content: ReturnType<typeof SessionStoredMessageContentSchema.parse>;
+    status: 'queued'; position: number; createdAt: number; updatedAt: number;
+}>> = [];
+const mutationMethods = [SESSION_RPC_METHODS.EXECUTION_RUN_STOP, SESSION_RPC_METHODS.EXECUTION_RUN_CANCEL_TURN_V1,
+    SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE, SESSION_RPC_METHODS.EXECUTION_RUN_SEND];
+
+function createRun(patch: Partial<ExecutionRunPublicState> = {}): ExecutionRunPublicState {
+    return ExecutionRunPublicStateSchema.parse({
+        runId: 'run_1', callId: 'toolu_1', sidechainId: 'toolu_1', intent: 'review',
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, permissionMode: 'read_only',
+        retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'streaming',
+        status: 'running', startedAtMs: 1, ...patch,
     });
-
-    it('hands the header the Run waiting on a person, from the roster attention, so it says Needs your answer', async () => {
-        rosterRunEntryState.current = {
-            id: 'execution_run:run_1', kind: 'execution_run', status: 'waiting', title: 'Run', metaDetail: null,
-            startedAtMs: 1, endedAtMs: null, provenance: 'merged', detailState: 'loaded', parentId: null,
-            runId: 'run_1', sidechainId: null, subagentId: 'execution_run:run_1', attentionKinds: ['user_action'],
-        };
-        try {
-            const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-            const screen = await renderScreen(<SessionExecutionRunDetailsView sessionId="s1" runId="run_1" presentation="panel" />);
-            tree = screen.tree;
-
-            expect(executionRunInfoCardSpy).toHaveBeenLastCalledWith(expect.objectContaining({
-                attention: expect.objectContaining({ label: 'sessionAgentActivity.attention.userAction' }),
+}
+function liveRun(patch: Partial<ExecutionRunPublicState> = {}) {
+    return createRun({ runClass: 'long_lived', retentionPolicy: 'resumable',
+        lifecycle: { v: 1, state: 'current' }, interaction: {
+            kind: 'retained_agent_session.v1', capabilities: { open: ['create', 'resume'], delivery: ['newTurn', 'steer'], cancel: true },
+        }, ...patch });
+}
+function wireResult() {
+    return ExecutionRunGetResponseSchema.parse({ run: runState,
+        ...(latestToolResult !== undefined ? { latestToolResult } : {}),
+        ...(structuredMeta !== undefined ? { structuredMeta } : {}) });
+}
+function calls(method: string) { return boundary.call.mock.calls.filter(([candidate]) => candidate === method); }
+function composer() { return screen.findAllByType(SessionParticipantComposer); }
+function info() { return screen.findByType(SessionExecutionRunInfoCard).props; }
+async function mount(props: Partial<React.ComponentProps<typeof SessionExecutionRunDetailsView>> = {}, browser = false) {
+    function BrowserOwner({ children }: React.PropsWithChildren) {
+        const runtime = useSessionBrowserContextRuntime({ enabled: true, sessionId: 's1', scopeKey: serverId });
+        browserRuntime = runtime;
+        return <SessionBrowserContextRuntimeProvider runtime={runtime}>{children}</SessionBrowserContextRuntimeProvider>;
+    }
+    const view = <SessionExecutionRunDetailsView sessionId="s1" serverId={serverId} runId="run_1" presentation="panel" {...props} />;
+    screen = await renderScreen(browser ? <BrowserOwner>{view}</BrowserOwner> : view);
+    return screen;
+}
+async function loaded() { await vi.waitFor(() => expect(screen.findAllByType(SessionExecutionRunInfoCard)).toHaveLength(1)); }
+async function refresh() {
+    await act(async () => notifyExecutionRunActivity({ sessionId: 's1', serverId }, { runId: 'run_1' }));
+    await vi.waitFor(() => expect(info().run).toEqual(runState));
+}
+async function menu() {
+    await screen.pressByTestIdAsync('session-run-details-actions-menu');
+}
+function publishMarker(status: ExecutionRunPublicState['status'] = 'running') {
+    const marker: NormalizedMessage = {
+        id: 'tool-msg-1', localId: null, createdAt: 1, seq: 1, role: 'agent', isSidechain: false,
+        content: [{ type: 'tool-call', id: 'toolu_1', name: 'SubAgentRun', description: null,
+            uuid: 'run-marker', parentUUID: null, input: {
+                runId: 'run_1', backendTarget: runState.backendTarget, intent: runState.intent,
+                runClass: runState.runClass, ioMode: runState.ioMode, permissionMode: runState.permissionMode,
+                retentionPolicy: runState.retentionPolicy, label: 'Reviewer A',
+            } }],
+    };
+    const result: NormalizedMessage = {
+        id: 'tool-result-1', localId: null, createdAt: 2, seq: 2, role: 'agent', isSidechain: false,
+        content: [{ type: 'tool-result', tool_use_id: 'toolu_1', content: { ...runState, status },
+            is_error: false, uuid: 'run-result', parentUUID: 'run-marker' }],
+    };
+    getStorage().getState().applyMessages('s1', [marker, result]);
+    getStorage().getState().applyMessagesLoaded('s1');
+}
+beforeEach(async () => {
+    resetSessionDraftRepositoryForTests();
+    browserRuntime = null;
+    latestToolResult = undefined;
+    structuredMeta = undefined;
+    httpSessionAvailable = true;
+    pendingRows.length = 0;
+    runState = createRun();
+    getReply = async () => wireResult();
+    stopReply = async () => ({ ok: true });
+    cancelReply = async () => ({ ok: true, status: 'requested', runId: 'run_1', occurrenceId: 'occurrence-1', turnId: 'turn-1' });
+    resumeReply = async () => ({ ok: true });
+    boundary.call.mockReset();
+    boundary.requests.length = 0;
+    boundary.call.mockImplementation(async (method, input) => {
+        if (method === SESSION_RPC_METHODS.EXECUTION_RUN_GET) { ExecutionRunGetRequestSchema.parse(input); return getReply(); }
+        if (method === SESSION_RPC_METHODS.EXECUTION_RUN_STOP) { ExecutionRunStopRequestSchema.parse(input); return stopReply(); }
+        if (method === SESSION_RPC_METHODS.EXECUTION_RUN_CANCEL_TURN_V1) { ExecutionRunCancelTurnRequestSchema.parse(input); return cancelReply(); }
+        if (method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE) { ExecutionRunEnsureRequestSchema.parse(input); return resumeReply(); }
+        if (method === SESSION_RPC_METHODS.EXECUTION_RUN_LIST) return { runs: [runState] };
+        if (method === RPC_METHODS.CAPABILITIES_DETECT) return { protocolVersion: 1, results: {
+            'tool.executionRuns': { ok: true, checkedAt: Date.now(), data: { available: true, protocolVersion: 2,
+                backends: { codex: { available: true, intents: ['review', 'delegate'] } } } },
+        } };
+        if (method === RPC_METHODS.STOP_SESSION) return { ok: true };
+        return { errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND, error: 'Method not found' };
+    });
+    httpReads.length = 0;
+    home = await serveActionHomes({
+        homes: [{ key: 'home', serverUrl: 'https://run-details-' + (++sequence) + '.test', accountId: 'account-1' }],
+        route(request) {
+            if (request.path === '/v1/features') return Response.json(FeaturesResponseSchema.parse({
+                features: { execution: { runs: { enabled: true } }, encryption: { plaintextStorage: { enabled: true }, accountOptOut: { enabled: true } } },
+                capabilities: { session: { pendingInput: { protocolVersion: 3 } },
+                    accountStoredContentCompatibility: { v: 1, currentProtocolVersion: 3, minimumProtocolVersion: 3, declarationTransport: 'http-header-and-socket-auth-v1' } },
             }));
-        } finally {
-            rosterRunEntryState.current = null;
-        }
+            if (request.path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            if (request.path === '/v2/sessions/s1' && !httpSessionAvailable) return new Response(null, { status: 404 });
+            if (request.path === '/v2/sessions/s1') return Response.json(V2SessionByIdResponseSchema.parse({ session: {
+                id: 's1', encryptionMode: 'plain', metadata: JSON.stringify(getStorage().getState().sessions.s1?.metadata ?? {}),
+                metadataVersion: 1, agentState: null, agentStateVersion: 1, dataEncryptionKey: null, active: true,
+                activeAt: 1, createdAt: 1, updatedAt: 1, seq: 1,
+            } }));
+            if (request.path.includes('/messages') || request.path.includes('/pending')) {
+                httpReads.push(request);
+                return Response.json(request.path.endsWith('/pending')
+                    ? { pending: request.path.includes('/execution-runs/run_1/') ? pendingRows : [],
+                        discarded: [], pendingVersion: 1, pendingCount: pendingRows.length }
+                    : { messages: [], hasMore: false, nextCursor: null });
+            }
+            if (request.path === '/v1/artifacts') return Response.json([]);
+            return undefined;
+        },
     });
-
-    it('renders transcript details alongside the execution-run info card when the run has a transcript tool route', async () => {
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-                    sessionId="s1"
-                    runId="run_1"
-                    presentation="panel"
-                />);
-        tree = screen.tree;
-
-        expect(tree).toBeTruthy();
-        const { SessionTranscriptSourceProvider } = await import('@/components/sessions/transcript/source/SessionTranscriptSourceContext');
-        expect(screen.findAllByType(SessionTranscriptSourceProvider).map((root) => root.props.source)).toEqual([
-            expect.objectContaining({ kind: 'app', sessionId: 's1' }),
-        ]);
-        expect(executionRunInfoCardSpy).toHaveBeenCalledWith(expect.objectContaining({
-            run: expect.objectContaining({
-                runId: 'run_1',
-                backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-            }),
-        }));
-        expect(messageDetailsSpy).toHaveBeenCalledWith(expect.objectContaining({
-            sessionId: 's1',
-            message: expect.objectContaining({
-                id: 'tool-msg-1',
-                kind: 'tool-call',
-            }),
-            recipientOverride: { kind: 'execution_run', runId: 'run_1' },
-        }));
-        expect(messageDetailsSpy.mock.calls.at(-1)?.[0]).not.toHaveProperty('presentation');
+    serverId = home.homes.home!.id;
+    await restoreConnectionToActiveServer((await TokenStorage.getCredentialsForServerUrl(home.homes.home!.serverUrl))!);
+    const machine = createMachineFixture({ id: 'm1', activeAt: Date.now(), storageMode: 'plain' });
+    getStorage().setState({
+        sessions: { s1: createSessionFixture({ id: 's1', serverId, active: true,
+            metadata: { path: '/repo', host: 'tester.local', machineId: 'm1', flavor: 'codex' } }) },
+        machines: { m1: machine }, machineListByServerId: { [serverId]: [machine] },
+        sessionMessages: { s1: createSessionMessagesFixture({ isLoaded: true }) },
+        sessionPending: { s1: { messages: [], discarded: [], isLoaded: true } },
+        settings: { ...settingsDefaults, backendEnabledByTargetKey: {} },
+        settingsScope: { serverId, accountId: 'account-1' }, profileScope: { serverId, accountId: 'account-1' },
     });
+    await ensureSessionDraftRepositoryHydrated({ serverId, accountId: 'account-1' });
+});
+afterEach(async () => {
+    standardCleanup();
+    await disconnectActiveServerConnection();
+    home?.dispose();
+});
 
-    it('carries the mounted Session browser context into the tool-call Run composer host', async () => {
-        browserContextState.current = { marker: 'browser-context' };
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-            sessionId="s1"
-            runId="run_1"
-            presentation="panel"
-        />);
-        tree = screen.tree;
-
-        expect(messageDetailsSpy).toHaveBeenCalledWith(expect.objectContaining({
-            browserContextState: { marker: 'browser-context' },
-        }));
+describe('SessionExecutionRunDetailsView — real Home, transcript and interaction owners', () => {
+    it('reads the Run waiting on a person from the real roster, rather than Run status alone', async () => {
+        const question = createToolCallMessageFixture({ id: 'question', tool: {
+            id: 'question-tool', name: 'AskUserQuestion', state: 'running', input: {}, createdAt: 1,
+            startedAt: 1, completedAt: null, description: null,
+            permission: { id: 'question-permission', status: 'pending', kind: 'user_action' },
+        } });
+        const marker = createToolCallMessageFixture({ id: 'tool-msg-1', tool: {
+            id: 'toolu_1', name: 'SubAgentRun', state: 'running', input: { ...runState, label: 'Reviewer A' },
+            createdAt: 1, startedAt: 1, completedAt: null, description: null,
+        }, children: [question] });
+        getStorage().setState({ sessionMessages: { s1: createSessionMessagesFixture({ isLoaded: true,
+            messageIdsOldestFirst: [marker.id], messagesById: { [marker.id]: marker } }) } });
+        await mount(); await loaded();
+        expect(info().attention).toMatchObject({ label: 'sessionAgentActivity.attention.userAction' });
     });
-
-    /**
-     * A run result is arbitrary JSON, so `false`, `0`, `''` and `null` are all
-     * results the run really produced. Only absence means there is nothing to
-     * show, and absence on this wire is `undefined` — the field is optional.
-     */
-    it.each([
-        ['false', false],
-        ['zero', 0],
-        ['an empty string', ''],
-        ['null', null],
-    ])('shows the latest tool result when the run settled on %s', async (_label, latestToolResult) => {
-        getRunSpy.mockImplementation(async () => ({
-            ...createExecutionRunGetResponse(),
-            latestToolResult,
-        }));
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-                    sessionId="s1"
-                    runId="run_1"
-                    presentation="panel"
-                />);
-        tree = screen.tree;
-
+    it('renders the actual info and tool transcript under the app Session source, carrying mounted browser context', async () => {
+        publishMarker();
+        await mount({}, true); await loaded();
+        const details = screen.findByType(SessionMessageDetailsView);
+        expect(info().run).toMatchObject({ runId: 'run_1', backendTarget: runState.backendTarget });
+        expect(boundary.requests.filter(request => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_GET)).toEqual(
+            expect.arrayContaining([expect.objectContaining({ serverUrl: home.homes.home!.serverUrl, targetId: 's1',
+                payload: { runId: 'run_1', includeStructured: true } })]),
+        );
+        expect(details.props).toMatchObject({ sessionId: 's1', recipientOverride: { kind: 'execution_run', runId: 'run_1' } });
+        expect(details.props.browserContextState).toBe(browserRuntime?.composerContext.state);
+        expect(details.props).not.toHaveProperty('presentation');
+    });
+    it.each([false, 0, '', null])('shows a defined latest result %j, and hides it only when absent', async (result) => {
+        latestToolResult = result;
+        await mount(); await loaded();
         expect(screen.findAllHostsByTestId('session-run-details-latest-tool-result')).toHaveLength(1);
-    });
-
-    /**
-     * The result region is not a JSON dump. The incumbent structured projection
-     * owns a recognizable payload, and the arbitrary payload a trusted plugin may
-     * return stays reachable one tap away instead of being the primary content.
-     */
-    it('projects a recognizable tool result and keeps the raw payload subordinate', async () => {
-        getRunSpy.mockImplementation(async () => ({
-            ...createExecutionRunGetResponse(),
-            latestToolResult: { stdout: 'built 3 targets', exitCode: 0, marker: 'plugin-private-field' },
-        }));
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-            sessionId="s1"
-            runId="run_1"
-            presentation="panel"
-        />);
-        tree = screen.tree;
-
-        // The projection renders the result's own readable content...
-        expect(JSON.stringify(screen.tree.toJSON())).toContain('built 3 targets');
-        // ...while the raw payload is behind its own disclosure, not above the transcript.
-        expect(screen.findAllHostsByTestId('session-run-details-latest-tool-result-raw')).toHaveLength(0);
-        await screen.pressByTestIdAsync('session-run-details-latest-tool-result-raw-toggle');
-        expect(screen.findAllHostsByTestId('session-run-details-latest-tool-result-raw')).toHaveLength(1);
-        // Nothing is removed: the plugin-private field the projection ignores is
-        // still reachable in the raw payload.
-        expect(JSON.stringify(screen.tree.toJSON())).toContain('plugin-private-field');
-    });
-
-    it('hides the latest tool result only when the run reported no result at all', async () => {
-        getRunSpy.mockImplementation(async () => createExecutionRunGetResponse());
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-                    sessionId="s1"
-                    runId="run_1"
-                    presentation="panel"
-                />);
-        tree = screen.tree;
-
+        latestToolResult = undefined; await refresh();
         expect(screen.findAllHostsByTestId('session-run-details-latest-tool-result')).toHaveLength(0);
     });
-
-    it('passes explicit server scope through execution-run get and stop RPCs', async () => {
-        const sessionExecutionRuns = await import('@/sync/ops/sessionExecutionRuns');
-        const stopSpy = vi.mocked(sessionExecutionRuns.sessionExecutionRunStop);
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-                    sessionId="s1"
-                    runId="run_1"
-                    serverId="server-route"
-                    presentation="panel"
-                />);
-        tree = screen.tree;
-
-        expect(getRunSpy).toHaveBeenCalledWith('s1', { runId: 'run_1', includeStructured: true }, { serverId: 'server-route' });
-
-        await act(async () => {
-            await screen.pressByTestIdAsync('session-run-details-stop');
-            await flushHookEffects({ cycles: 1, turns: 1 });
-        });
-
-        expect(stopSpy).toHaveBeenCalledWith('s1', { runId: 'run_1' }, { serverId: 'server-route' });
+    it('projects a recognizable result while keeping raw JSON subordinate', async () => {
+        latestToolResult = { stdout: 'Four checks passed', exitCode: 0, marker: 'plugin-private-field' };
+        await mount(); await loaded();
+        expect(screen.findByTestId('session-run-details-latest-tool-result-raw')).toBeNull();
+        await screen.pressByTestIdAsync('session-run-details-latest-tool-result-raw-toggle');
+        expect(screen.getTextContent()).toContain('Four checks passed');
     });
-
-    it('mounts exact-turn cancel and explicit resume separately from whole-Run stop', async () => {
-        getRunSpy.mockResolvedValue(createExecutionRunGetResponse({
-            runClass: 'long_lived',
-            retentionPolicy: 'resumable',
-            lifecycle: { v: 1, state: 'current' },
-            interaction: RETAINED_INTERACTION,
-            inputTurns: {
-                occurrenceId: 'occurrence-1',
-                current: { turnId: 'turn-1', inputIds: ['input-1'], state: 'active' },
-            },
-        }));
-        const sessionExecutionRuns = await import('@/sync/ops/sessionExecutionRuns');
-        vi.mocked(sessionExecutionRuns.sessionExecutionRunStop).mockClear();
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-            sessionId="s1"
-            runId="run_1"
-            serverId="server-route"
-            presentation="panel"
-        />);
-        tree = screen.tree;
-
-        expect(screen.findByTestId('session-run-details-cancel-turn')).toBeTruthy();
-        expect(screen.findByTestId('session-run-details-resume')).toBeNull();
-        expect(screen.findByTestId('session-run-details-stop')).toBeTruthy();
-
-        await act(async () => {
-            await screen.pressByTestIdAsync('session-run-details-cancel-turn');
-            await flushHookEffects({ cycles: 1, turns: 1 });
-        });
-        expect(vi.mocked(sessionExecutionRuns.sessionExecutionRunCancelTurn)).toHaveBeenCalledWith(
-            's1',
-            { runId: 'run_1', occurrenceId: 'occurrence-1', turnId: 'turn-1' },
-            { serverId: 'server-route' },
-        );
-        expect(vi.mocked(sessionExecutionRuns.sessionExecutionRunStop)).not.toHaveBeenCalled();
-
-        expect(vi.mocked(sessionExecutionRuns.sessionExecutionRunResume)).not.toHaveBeenCalled();
-        expect(vi.mocked(sessionExecutionRuns.sessionExecutionRunStop)).not.toHaveBeenCalled();
-    });
-
-    it('announces exact-turn cancellation as busy and disables only interaction controls', async () => {
-        getRunSpy.mockResolvedValue(createExecutionRunGetResponse({
-            runClass: 'long_lived',
-            retentionPolicy: 'resumable',
-            lifecycle: { v: 1, state: 'current' },
-            interaction: RETAINED_INTERACTION,
-            inputTurns: {
-                occurrenceId: 'occurrence-1',
-                current: { turnId: 'turn-1', inputIds: ['input-1'], state: 'active' },
-            },
-        }));
-        const sessionExecutionRuns = await import('@/sync/ops/sessionExecutionRuns');
-        type CancelTurnResult = Awaited<ReturnType<typeof sessionExecutionRuns.sessionExecutionRunCancelTurn>>;
-        let resolveCancel!: (value: CancelTurnResult) => void;
-        vi.mocked(sessionExecutionRuns.sessionExecutionRunCancelTurn).mockImplementationOnce(
-            () => new Promise((resolve) => { resolveCancel = resolve; }),
-        );
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-            sessionId="s1"
-            runId="run_1"
-            presentation="panel"
-        />);
-        tree = screen.tree;
-
-        act(() => {
-            screen.findByTestId('session-run-details-cancel-turn')?.props.onPress();
-        });
-        await flushHookEffects({ cycles: 2 });
-
-        expect(screen.findByTestId('session-run-details-cancel-turn')?.props.accessibilityState)
-            .toMatchObject({ disabled: true, busy: true });
-        expect(screen.findByTestId('session-run-details-stop')?.props.accessibilityState)
-            .toMatchObject({ disabled: false, busy: false });
-
-        await act(async () => {
-            resolveCancel({
-                ok: true,
-                status: 'requested',
-                runId: 'run_1',
-                occurrenceId: 'occurrence-1',
-                turnId: 'turn-1',
-            });
-            await flushHookEffects({ cycles: 2 });
-        });
-    });
-
-    it('offers explicit Resume for a daemon-proven recoverable Run without a live interaction', async () => {
-        getRunSpy.mockResolvedValue(createExecutionRunGetResponse({
-            runClass: 'long_lived',
-            retentionPolicy: 'resumable',
-            status: 'succeeded',
-            lifecycle: { v: 1, state: 'recoverable' },
-        }));
-        const sessionExecutionRuns = await import('@/sync/ops/sessionExecutionRuns');
-        vi.mocked(sessionExecutionRuns.sessionExecutionRunResume).mockClear();
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-            sessionId="s1"
-            runId="run_1"
-            serverId="server-route"
-            presentation="panel"
-        />);
-        tree = screen.tree;
-
-        expect(screen.findByTestId('session-run-details-resume')).toBeTruthy();
-        expect(screen.findByTestId('session-run-details-stop')).toBeNull();
-
-        await act(async () => {
-            await screen.pressByTestIdAsync('session-run-details-resume');
-            await flushHookEffects({ cycles: 1, turns: 1 });
-        });
-        expect(vi.mocked(sessionExecutionRuns.sessionExecutionRunResume)).toHaveBeenCalledWith(
-            's1',
-            { runId: 'run_1' },
-            { serverId: 'server-route' },
-        );
-    });
-
-    it('announces Resume as disabled and busy while its existing interaction is pending', async () => {
-        getRunSpy.mockResolvedValue(createExecutionRunGetResponse({
-            runClass: 'long_lived',
-            retentionPolicy: 'resumable',
-            status: 'succeeded',
-            lifecycle: { v: 1, state: 'recoverable' },
-        }));
-        const sessionExecutionRuns = await import('@/sync/ops/sessionExecutionRuns');
-        let resolveResume!: (value: { ok: true }) => void;
-        vi.mocked(sessionExecutionRuns.sessionExecutionRunResume).mockImplementationOnce(
-            () => new Promise((resolve) => { resolveResume = resolve; }),
-        );
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-            sessionId="s1"
-            runId="run_1"
-            presentation="panel"
-        />);
-        tree = screen.tree;
-
-        act(() => {
-            screen.findByTestId('session-run-details-resume')?.props.onPress();
-        });
-        await flushHookEffects({ cycles: 2 });
-
-        expect(screen.findByTestId('session-run-details-resume')?.props.accessibilityState)
-            .toMatchObject({ disabled: true, busy: true });
-
-        await act(async () => {
-            resolveResume({ ok: true });
-            await flushHookEffects({ cycles: 2 });
-        });
-    });
-
-    it('does not offer turn cancellation without the exact current occurrence and turn witness', async () => {
-        getRunSpy.mockResolvedValue(createExecutionRunGetResponse({
-            runClass: 'long_lived',
-            retentionPolicy: 'resumable',
-            lifecycle: { v: 1, state: 'current' },
-            interaction: RETAINED_INTERACTION,
-        }));
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-            sessionId="s1"
-            runId="run_1"
-            serverId="server-route"
-            presentation="panel"
-        />);
-        tree = screen.tree;
-
-        expect(screen.findByTestId('session-run-details-cancel-turn')).toBeNull();
-        expect(screen.findByTestId('session-run-details-resume')).toBeNull();
-        expect(screen.findByTestId('session-run-details-stop')).toBeTruthy();
-    });
-
-    it('never sends run input through the direct execution.run.send route', async () => {
-        getRunSpy.mockResolvedValueOnce(createExecutionRunGetResponse({
-            runClass: 'long_lived',
-            retentionPolicy: 'resumable',
-            status: 'running',
-            interaction: RETAINED_INTERACTION,
-        }));
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-                    sessionId="s1"
-                    runId="run_1"
-                    presentation="panel"
-                />);
-        tree = screen.tree;
-
-        // The plain input and its direct send are gone: the run's transcript host owns
-        // the one canonical composer, which reaches canonical Session input admission.
-        expect(screen.findByTestId('session-run-details-send-input')).toBeNull();
-        expect(screen.findByTestId('session-run-details-send')).toBeNull();
-    });
-
-    it('offers the canonical composer only when the run projects a live retained interaction', async () => {
-        getRunSpy.mockResolvedValueOnce(createExecutionRunGetResponse({
-            runClass: 'long_lived',
-            retentionPolicy: 'resumable',
-            status: 'running',
-            interaction: RETAINED_INTERACTION,
-        }));
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-                    sessionId="s1"
-                    runId="run_1"
-                    presentation="panel"
-                />);
-        tree = screen.tree;
-
-        expect(messageDetailsSpy).toHaveBeenCalledWith(expect.objectContaining({
-            sessionId: 's1',
-            showComposer: true,
-            recipientOverride: { kind: 'execution_run', runId: 'run_1' },
-        }));
-    });
-
-    it('mounts the exact Run composer before a transcript tool marker arrives', async () => {
-        sessionMessagesState.messages = [];
-        getRunSpy.mockResolvedValueOnce(createExecutionRunGetResponse({
-            runClass: 'long_lived',
-            retentionPolicy: 'resumable',
-            status: 'running',
-            interaction: RETAINED_INTERACTION,
-        }));
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-            sessionId="s1"
-            runId="run_1"
-            serverId="server-route"
-            retryInputLocalId="first-input-1"
-            presentation="panel"
-        />);
-        tree = screen.tree;
-
-        expect(messageDetailsSpy).not.toHaveBeenCalled();
-        expect(participantComposerSpy).toHaveBeenCalledWith(expect.objectContaining({
-            sessionId: 's1',
-            serverId: 'server-route',
-            canSendMessages: true,
-            recipient: { kind: 'execution_run', runId: 'run_1' },
-            initialLocalId: 'first-input-1',
-            // The direct Run composer carries the same canonical send-mode control (queue / steer /
-            // send now) as the tool-marker branch, not the silent default.
+    it('mounts the exact retained Run composer before any tool marker, with canonical queue/steer controls', async () => {
+        runState = liveRun();
+        await mount({ retryInputLocalId: 'first-input-1' }); await loaded();
+        await vi.waitFor(() => expect(composer()).toHaveLength(1));
+        expect(composer()[0]!.props).toMatchObject({ sessionId: 's1', serverId, canSendMessages: true,
+            recipient: { kind: 'execution_run', runId: 'run_1' }, initialLocalId: 'first-input-1',
             executionRunRequestedAction: { v: 1, kind: 'enqueue' },
-            extraActionChips: expect.arrayContaining([
-                expect.objectContaining({ key: 'execution-run-requested-action', controlId: 'delivery' }),
-            ]),
-        }));
-        const { sync } = await import('@/sync/sync');
-        expect(sync.fetchPendingMessages).toHaveBeenCalledWith(
-            's1',
-            { serverId: 'server-route', accountId: 'account-1' },
-            { kind: 'execution_run', runId: 'run_1' },
-        );
+            extraActionChips: expect.arrayContaining([expect.objectContaining({ key: 'execution-run-requested-action', controlId: 'delivery' })]),
+        });
+        expect(calls(SESSION_RPC_METHODS.EXECUTION_RUN_SEND)).toEqual([]);
+        await vi.waitFor(() => expect(httpReads.some(request => request.path === '/v2/sessions/s1/execution-runs/run_1/pending')).toBe(true));
     });
-
-    it('shows the canonical waiting state before a Run has a transcript marker or queued rows', async () => {
-        sessionMessagesState.messages = [];
-        getRunSpy.mockResolvedValueOnce(createExecutionRunGetResponse({
-            callId: undefined,
-            sidechainId: undefined,
-            interaction: undefined,
-            status: 'running',
-        }));
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-            sessionId="s1"
-            runId="run_1"
-            presentation="panel"
-        />);
-        tree = screen.tree;
-
-        expect(screen.findByTestId('session-run-details-pre-marker-state')).toBeTruthy();
+    it('shows a canonical waiting state before a Run has a transcript marker or queued rows', async () => {
+        // Current public Run state always names its transcript IDs, even before their rows arrive.
+        runState = createRun();
+        await mount(); await loaded();
+        expect(screen.findByTestId('session-run-details-pre-marker-state')).not.toBeNull();
         expect(screen.getTextContent()).toContain('status.awaitingUpdates');
+        expect(composer()).toHaveLength(0);
     });
-
-    it('renders the committed direct-start Run transcript with its exact pending queue and one composer', async () => {
-        sessionMessagesState.messages = [];
-        sidechainMessagesState.current = [
-            { id: 'sc-user', kind: 'user-text', localId: null, createdAt: 1, text: 'Start the run' },
-            { id: 'sc-agent', kind: 'agent-text', localId: null, createdAt: 2, text: 'Working on it' },
-        ];
-        targetPendingState.current = {
-            messages: [{ localId: 'queued-1', recipient: { kind: 'execution_run', runId: 'run_1' } }],
-            discarded: [],
-            isLoaded: true,
-        };
-        getRunSpy.mockResolvedValue(createExecutionRunGetResponse({
-            runClass: 'long_lived',
-            retentionPolicy: 'resumable',
-            status: 'running',
-            interaction: RETAINED_INTERACTION,
-        }));
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-            sessionId="s1"
-            runId="run_1"
-            serverId="server-route"
-            presentation="panel"
-        />);
-        tree = screen.tree;
-
-        // No parent tool marker exists for a Run its profile never materializes,
-        // so the committed rows arrive by sidechain id through the shared list.
-        expect(messageDetailsSpy).not.toHaveBeenCalled();
-        expect(chainTranscriptSpy).toHaveBeenCalledWith(expect.objectContaining({
-            sessionId: 's1',
-            serverId: 'server-route',
-            messages: [
-                expect.objectContaining({ id: 'sc-user' }),
-                expect.objectContaining({ id: 'sc-agent' }),
-            ],
-            pendingMessages: targetPendingState.current.messages,
-            pendingRecipient: { kind: 'execution_run', runId: 'run_1' },
-        }));
-        // One transcript projection owns the pending-to-committed crossover.
-        expect(pendingBlockSpy).not.toHaveBeenCalled();
-        expect(screen.root.findAllByType('SessionParticipantComposer' as never)).toHaveLength(1);
-
-        await screen.update(<SessionExecutionRunDetailsView
-            sessionId="s1"
-            runId="run_1"
-            serverId="server-route"
-            presentation="panel"
-        />);
-        expect(screen.root.findAllByType('SessionParticipantComposer' as never)).toHaveLength(1);
+    it('renders committed direct-start sidechain rows and the exact Run pending queue with one mounted composer', async () => {
+        runState = liveRun();
+        const child: NormalizedMessage = { id: 'sc-agent', localId: null, createdAt: 2, seq: 2, role: 'agent',
+            isSidechain: true, sidechainId: 'toolu_1', content: [{ type: 'text', text: 'Working on it', uuid: 'sc-text', parentUUID: null }] };
+        getStorage().getState().applyMessages('s1', [child]);
+        getStorage().getState().applyMessagesLoaded('s1');
+        const pending = createPendingMessageFixture({ id: 'queued-1', localId: 'queued-1',
+            recipient: { kind: 'execution_run', runId: 'run_1' }, text: 'Continue this run' });
+        pendingRows.push({ localId: pending.localId!, recipient: { kind: 'execution_run', runId: 'run_1' },
+            messageRole: 'user', content: SessionStoredMessageContentSchema.parse({ t: 'plain', v: {
+                role: 'user', content: { type: 'text', text: pending.text }, meta: {},
+            } }), status: 'queued', position: 0, createdAt: 1, updatedAt: 1 });
+        getStorage().getState().applyPendingSnapshot('s1', { messages: [pending], discarded: [] });
+        await mount(); await loaded();
+        await vi.waitFor(() => expect(screen.findByType(ChainTranscriptList).props.pendingMessages).toEqual(
+            expect.arrayContaining([expect.objectContaining({ localId: 'queued-1', text: 'Continue this run' })]),
+        ));
+        const list = screen.findByType(ChainTranscriptList);
+        expect(list.props).toMatchObject({ sessionId: 's1', serverId, pendingRecipient: { kind: 'execution_run', runId: 'run_1' } });
+        expect(list.props.messages).toEqual(expect.arrayContaining([expect.objectContaining({ text: 'Working on it' })]));
+        expect(composer()).toHaveLength(1);
+        const input = composer()[0];
+        await screen.update(<SessionExecutionRunDetailsView sessionId="s1" serverId={serverId} runId="run_1" presentation="panel" />);
+        expect(composer()).toHaveLength(1); expect(composer()[0]).toBe(input);
     });
-
-    it('applies live Run state from the canonical activity bus without unmounting the loaded surface', async () => {
-        sessionMessagesState.messages = [];
-        getRunSpy.mockResolvedValue(createExecutionRunGetResponse({
-            runClass: 'long_lived',
-            retentionPolicy: 'resumable',
-            status: 'running',
-            interaction: RETAINED_INTERACTION,
-        }));
-        const { notifyExecutionRunActivity } = await import('@/sync/runtime/executionRuns/executionRunActivityBus');
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-            sessionId="s1"
-            runId="run_1"
-            serverId="server-route"
-            presentation="panel"
-        />);
-        tree = screen.tree;
-        expect(getRunSpy).toHaveBeenCalledTimes(1);
-        expect(participantComposerMountSpy).toHaveBeenCalledTimes(1);
-
-        // Neither another Session nor another Run of this Session is this surface.
-        await act(async () => {
-            notifyExecutionRunActivity({ serverId: 'server-route', sessionId: 'other-session' }, { runId: 'run_1' });
-            notifyExecutionRunActivity({ serverId: 'server-route', sessionId: 's1' }, { runId: 'run_other' });
-            await flushHookEffects({ cycles: 1, turns: 1 });
-        });
-        expect(getRunSpy).toHaveBeenCalledTimes(1);
-
-        // A still-sendable refresh must leave the mounted composer completely alone:
-        // a destructive reload would unmount it and remount it from scratch.
-        getRunSpy.mockResolvedValue(createExecutionRunGetResponse({
-            runClass: 'long_lived',
-            retentionPolicy: 'resumable',
-            status: 'running',
-            interaction: RETAINED_INTERACTION,
-            inputTurns: {
-                occurrenceId: 'occurrence-1',
-                current: { turnId: 'turn-1', inputIds: ['input-1'], state: 'active' },
-            },
-        }));
-        await act(async () => {
-            notifyExecutionRunActivity({ serverId: 'server-route', sessionId: 's1' }, { runId: 'run_1' });
-            await flushHookEffects({ cycles: 1, turns: 1 });
-        });
-
-        expect(getRunSpy).toHaveBeenCalledTimes(2);
-        expect(executionRunInfoCardSpy).toHaveBeenLastCalledWith(expect.objectContaining({
-            run: expect.objectContaining({
-                inputTurns: expect.objectContaining({ occurrenceId: 'occurrence-1' }),
-            }),
-        }));
-        expect(participantComposerMountSpy).toHaveBeenCalledTimes(1);
-        expect(participantComposerUnmountSpy).not.toHaveBeenCalled();
-
-        // Terminal completion arrives on the same signal and updates the Run. Live
-        // delivery is correctly retired with it — but the surface is never remounted,
-        // which is exactly what a `status: 'loading'` reload would have done.
-        getRunSpy.mockResolvedValue(createExecutionRunGetResponse({
-            runClass: 'long_lived',
-            retentionPolicy: 'resumable',
-            status: 'completed',
-            interaction: RETAINED_INTERACTION,
-        }));
-        await act(async () => {
-            notifyExecutionRunActivity({ serverId: 'server-route', sessionId: 's1' }, { runId: 'run_1' });
-            await flushHookEffects({ cycles: 1, turns: 1 });
-        });
-
-        expect(getRunSpy).toHaveBeenCalledTimes(3);
-        expect(executionRunInfoCardSpy).toHaveBeenLastCalledWith(expect.objectContaining({
-            run: expect.objectContaining({ status: 'completed' }),
-        }));
-        expect(participantComposerMountSpy).toHaveBeenCalledTimes(1);
-    });
-
-    it('ignores a Run response that resolves after a newer one', async () => {
-        sessionMessagesState.messages = [];
-        getRunSpy.mockResolvedValue(createExecutionRunGetResponse({ status: 'running' }));
-        const { notifyExecutionRunActivity } = await import('@/sync/runtime/executionRuns/executionRunActivityBus');
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-            sessionId="s1"
-            runId="run_1"
-            serverId="server-route"
-            presentation="panel"
-        />);
-        tree = screen.tree;
-
-        let resolveOlder: ((value: unknown) => void) | null = null;
-        const olderResponse = new Promise((resolve) => { resolveOlder = resolve as (value: unknown) => void; });
-        getRunSpy.mockImplementationOnce(() => olderResponse as Promise<any>);
-
-        await act(async () => {
-            notifyExecutionRunActivity({ serverId: 'server-route', sessionId: 's1' }, { runId: 'run_1' });
-            await flushHookEffects({ cycles: 1, turns: 1 });
-
-            getRunSpy.mockResolvedValue(createExecutionRunGetResponse({ status: 'completed' }));
-            notifyExecutionRunActivity({ serverId: 'server-route', sessionId: 's1' }, { runId: 'run_1' });
-            await flushHookEffects({ cycles: 1, turns: 1 });
-
-            resolveOlder?.(createExecutionRunGetResponse({ status: 'queued' }));
-            await flushHookEffects({ cycles: 1, turns: 1 });
-        });
-
-        expect(executionRunInfoCardSpy).toHaveBeenLastCalledWith(expect.objectContaining({
-            run: expect.objectContaining({ status: 'completed' }),
-        }));
-    });
-
-    it('does not expose Run input from an ambient same-ID Session when the exact Home Session is unavailable', async () => {
-        exactSessionState.current = null;
-        getRunSpy.mockResolvedValueOnce(createExecutionRunGetResponse({
-            runClass: 'long_lived',
-            retentionPolicy: 'resumable',
-            status: 'running',
-            interaction: RETAINED_INTERACTION,
-        }));
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-            sessionId="s1"
-            runId="run_1"
-            serverId="server-exact"
-            presentation="panel"
-        />);
-        tree = screen.tree;
-
-        expect(getRunSpy).not.toHaveBeenCalled();
-        expect(executionRunInfoCardSpy).not.toHaveBeenCalled();
-        expect(messageDetailsSpy).not.toHaveBeenCalled();
-        expect(participantComposerSpy).not.toHaveBeenCalled();
-    });
-
-    it('stays read-only for a running long-lived run the daemon never projected an interaction for', async () => {
-        // The exact shape of a run whose live controller is gone: status and class still
-        // look interactive, but no retained adapter is behind it. Inferring sendability
-        // from those fields is what let a reconstructed run paint a composer.
-        getRunSpy.mockResolvedValueOnce(createExecutionRunGetResponse({
-            runClass: 'long_lived',
-            retentionPolicy: 'resumable',
-            status: 'running',
-        }));
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-                    sessionId="s1"
-                    runId="run_1"
-                    presentation="panel"
-                />);
-        tree = screen.tree;
-
-        expect(messageDetailsSpy).toHaveBeenCalledWith(expect.objectContaining({
-            sessionId: 's1',
-            showComposer: false,
-        }));
-    });
-
-    it('keeps a bounded job read-only even while its turn is in flight', async () => {
-        getRunSpy.mockResolvedValueOnce(createExecutionRunGetResponse({
-            runClass: 'bounded',
-            status: 'running',
-            turnInFlight: true,
-        }));
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-                    sessionId="s1"
-                    runId="run_1"
-                    presentation="panel"
-                />);
-        tree = screen.tree;
-
-        expect(messageDetailsSpy).toHaveBeenCalledWith(expect.objectContaining({
-            showComposer: false,
-        }));
-    });
-
-    it('shows a finished review as its result, with no conversation composer (lab convo-R1)', async () => {
-        getRunSpy.mockImplementation(async () => ({
-            ...createExecutionRunGetResponse({ status: 'succeeded', finishedAtMs: 2, runClass: 'bounded' }),
-            structuredMeta: {
-                kind: 'review_findings.v2',
-                payload: {
-                    runRef: { runId: 'run_1', callId: 'toolu_1', backendId: 'codex' },
-                    summary: 'Two findings, one high.',
-                    overviewMarkdown: 'The retry banner can double-charge.',
-                    findings: [],
-                    generatedAtMs: 2,
-                },
-            },
-        }));
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-
-        const screen = await renderScreen(<SessionExecutionRunDetailsView sessionId="s1" runId="run_1" presentation="panel" />);
-        tree = screen.tree;
-
-        expect(JSON.stringify(screen.tree.toJSON())).toContain('Two findings, one high.');
-        expect(screen.root.findAllByType('SessionParticipantComposer' as never)).toHaveLength(0);
-        expect(messageDetailsSpy).not.toHaveBeenCalledWith(expect.objectContaining({ showComposer: true }));
-    });
-
-    it('skips the execution-run info card when embedded under the subagent details header', async () => {
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-        executionRunInfoCardSpy.mockClear();
-        messageDetailsSpy.mockClear();
-
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-                    sessionId="s1"
-                    runId="run_1"
-                    presentation="panel"
-                    showInfoCard={false}
-                />);
-        tree = screen.tree;
-
-        expect(tree).toBeTruthy();
-        expect(executionRunInfoCardSpy).not.toHaveBeenCalled();
-        expect(messageDetailsSpy).toHaveBeenCalledWith(expect.objectContaining({
-            sessionId: 's1',
-        }));
-        expect(messageDetailsSpy.mock.calls.at(-1)?.[0]).not.toHaveProperty('presentation');
-    });
-
-    it('withholds the composer from a body-only host that owns its own composition', async () => {
-        getRunSpy.mockResolvedValueOnce(createExecutionRunGetResponse({
-            runClass: 'long_lived',
-            retentionPolicy: 'resumable',
-            status: 'running',
-            interaction: RETAINED_INTERACTION,
-        }));
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-                    sessionId="s1"
-                    runId="run_1"
-                    presentation="panel"
-                    showSendComposer={false}
-                />);
-        tree = screen.tree;
-
-        expect(tree).toBeTruthy();
-        expect(messageDetailsSpy).toHaveBeenCalledWith(expect.objectContaining({
-            showComposer: false,
-        }));
-    });
-
-    it('reloads and hides the stop control when stopping races with a terminal run', async () => {
-        const sessionExecutionRuns = await import('@/sync/ops/sessionExecutionRuns');
-        const stopSpy = vi.mocked(sessionExecutionRuns.sessionExecutionRunStop);
-        stopSpy.mockResolvedValueOnce({
-            ok: false,
-            error: 'Not running',
-            errorCode: 'execution_run_not_allowed',
-        });
-        getRunSpy
-            .mockResolvedValueOnce(createExecutionRunGetResponse({ status: 'running' }))
-            .mockResolvedValueOnce(createExecutionRunGetResponse({
-                status: 'failed',
-                finishedAtMs: 2,
-                error: { code: 'execution_run_failed', message: 'startup timeout' },
-            }));
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-                    sessionId="s1"
-                    runId="run_1"
-                    presentation="panel"
-                />);
-        tree = screen.tree;
-
-        expect(screen.findByTestId('session-run-details-stop')).toBeTruthy();
-
-        await act(async () => {
-            await screen.pressByTestIdAsync('session-run-details-stop');
-            await flushHookEffects({ cycles: 1, turns: 1 });
-        });
-
-        expect(stopSpy).toHaveBeenCalledWith('s1', expect.objectContaining({ runId: 'run_1' }));
-        await vi.waitFor(() => {
-            expect(screen.findByTestId('session-run-details-stop')).toBeNull();
-        });
-        expect(executionRunInfoCardSpy.mock.calls.at(-1)?.[0]?.run).toEqual(expect.objectContaining({
-            runId: 'run_1',
-            status: 'failed',
-        }));
-    });
-
-    it('announces whole-Run Stop as disabled and busy while stopping', async () => {
-        const sessionExecutionRuns = await import('@/sync/ops/sessionExecutionRuns');
-        let resolveStop!: (value: { ok: true }) => void;
-        vi.mocked(sessionExecutionRuns.sessionExecutionRunStop).mockImplementationOnce(
-            () => new Promise((resolve) => { resolveStop = resolve; }),
-        );
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-            sessionId="s1"
-            runId="run_1"
-            presentation="panel"
-        />);
-        tree = screen.tree;
-
-        act(() => {
-            screen.findByTestId('session-run-details-stop')?.props.onPress();
-        });
-        await flushHookEffects({ cycles: 2 });
-
-        expect(screen.findByTestId('session-run-details-stop')?.props.accessibilityState)
-            .toMatchObject({ disabled: true, busy: true });
-
-        await act(async () => {
-            resolveStop({ ok: true });
-            await flushHookEffects({ cycles: 2 });
-        });
-    });
-
-    it('falls back to the persisted transcript when execution.run.get no longer finds the run', async () => {
-        getRunSpy.mockResolvedValueOnce({
-            ok: false,
-            error: 'Not found',
-            errorCode: 'execution_run_not_found',
-        });
-        sessionMessagesState.messages = [
-            {
-                ...sessionMessagesState.messages[0],
-                tool: {
-                    ...sessionMessagesState.messages[0]!.tool,
-                    state: 'completed',
-                    result: {
-                        ...sessionMessagesState.messages[0]!.tool.result,
-                        status: 'succeeded',
-                        permissionMode: 'read-only',
-                    },
-                },
-            },
-        ];
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-                    sessionId="s1"
-                    runId="run_1"
-                    presentation="panel"
-                />);
-        tree = screen.tree;
-
-        expect(tree).toBeTruthy();
-        expect(executionRunInfoCardSpy).toHaveBeenCalledWith(expect.objectContaining({
-            run: expect.objectContaining({
-                runId: 'run_1',
-                backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-                status: 'succeeded',
-                permissionMode: 'read-only',
-            }),
-        }));
-        expect(messageDetailsSpy).toHaveBeenCalledWith(expect.objectContaining({
-            sessionId: 's1',
-            message: expect.objectContaining({
-                id: 'tool-msg-1',
-                kind: 'tool-call',
-            }),
-        }));
-        expect(messageDetailsSpy.mock.calls.at(-1)?.[0]).not.toHaveProperty('presentation');
-    });
-
-    it('hides the transcript composer when the run is no longer sendable', async () => {
-        getRunSpy.mockResolvedValueOnce(createExecutionRunGetResponse({
-            status: 'succeeded',
-            turnInFlight: false,
-        }));
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-                    sessionId="s1"
-                    runId="run_1"
-                    presentation="panel"
-                />);
-        tree = screen.tree;
-
-        expect(messageDetailsSpy).toHaveBeenCalledWith(expect.objectContaining({
-            sessionId: 's1',
-            showComposer: false,
-        }));
-        expect(messageDetailsSpy.mock.calls.at(-1)?.[0]).not.toHaveProperty('presentation');
-    });
-
-    it('loads main transcript messages before failing closed on execution.run.get not-found responses', async () => {
-        getRunSpy.mockResolvedValueOnce({
-            ok: false,
-            error: 'Not found',
-            errorCode: 'execution_run_not_found',
-        });
-        sessionMessagesState.isLoaded = false;
-        sessionMessagesState.messages = [];
-        const { sync } = await import('@/sync/sync');
-        const loadOlderMessagesSpy = vi.mocked(sync.loadOlderMessages);
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-                    sessionId="s1"
-                    runId="run_1"
-                    presentation="panel"
-                />);
-        tree = screen.tree;
-
-        expect(loadOlderMessagesSpy).toHaveBeenCalledWith('s1');
-        expect(screen.findByTestId('session-run-details-load-error-action')).toBeTruthy();
-    });
-
-    it('does not query daemon execution-run markers without an exact Home', async () => {
-        getRunSpy.mockResolvedValueOnce({
-            ok: false,
-            error: 'RPC method not available',
-            errorCode: 'RPC_METHOD_NOT_AVAILABLE',
-        });
-        const machineExecutionRuns = await import('@/sync/ops/machineExecutionRuns');
-        vi.mocked(machineExecutionRuns.machineExecutionRunsList).mockResolvedValueOnce({
-            ok: true,
-            runs: [{
-                happyHomeDir: '/tmp/happier',
-                pid: 123,
-                happySessionId: 's1',
-                runId: 'run_1',
-                callId: 'toolu_1',
-                sidechainId: 'toolu_1',
-                intent: 'review',
-                backendTarget: { kind: 'backend', backendId: 'codex' },
-                runClass: 'bounded',
-                ioMode: 'streaming',
-                retentionPolicy: 'ephemeral',
-                status: 'running',
-                startedAtMs: 1,
-                updatedAtMs: 2,
-            }],
-        });
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-                    sessionId="s1"
-                    runId="run_1"
-                    presentation="panel"
-                />);
-        tree = screen.tree;
-
-        expect(executionRunInfoCardSpy).toHaveBeenCalledWith(expect.objectContaining({
-            run: expect.objectContaining({
-                runId: 'run_1',
-                backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-                status: 'running',
-            }),
-        }));
-        expect(messageDetailsSpy).toHaveBeenCalledWith(expect.objectContaining({
-            sessionId: 's1',
-            message: expect.objectContaining({
-                id: 'tool-msg-1',
-                kind: 'tool-call',
-            }),
-        }));
-        expect(messageDetailsSpy.mock.calls.at(-1)?.[0]).not.toHaveProperty('presentation');
+    it.each([
+        ['unproven long-lived', { runClass: 'long_lived', retentionPolicy: 'resumable' }],
+        ['bounded in-flight', { turnInFlight: true }],
+        ['finished', { status: 'succeeded', turnInFlight: false }],
+    ] satisfies ReadonlyArray<readonly [string, Partial<ExecutionRunPublicState>]>)
+    ('keeps %s history read-only without a daemon-proven live retained interaction', async (_name, patch) => {
+        runState = createRun(patch); publishMarker();
+        await mount(); await loaded();
+        expect(composer()).toHaveLength(0);
         expect(screen.findByTestId('session-run-details-send-input')).toBeNull();
-        expect(vi.mocked(machineExecutionRuns.machineExecutionRunsList)).not.toHaveBeenCalled();
     });
-
-    it('does not expose mutable run controls when only transcript fallback state is available', async () => {
-        getRunSpy.mockResolvedValueOnce({
-            ok: false,
-            error: 'RPC method not available',
-            errorCode: 'RPC_METHOD_NOT_AVAILABLE',
-        });
-        sessionMessagesState.messages = [
-            {
-                ...sessionMessagesState.messages[0],
-                tool: {
-                    ...sessionMessagesState.messages[0]!.tool,
-                    state: 'running',
-                    result: {
-                        ...sessionMessagesState.messages[0]!.tool.result,
-                        status: 'running',
-                        permissionMode: 'read-only',
-                    },
-                },
-            },
-        ];
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-                    sessionId="s1"
-                    runId="run_1"
-                    presentation="panel"
-                />);
-        tree = screen.tree;
-
-        expect(tree).toBeTruthy();
+    it('does not expose input from an ambient same-ID Session in another Home', async () => {
+        runState = liveRun();
+        httpSessionAvailable = false;
+        getStorage().setState(state => ({ sessions: { s1: { ...state.sessions.s1!, serverId: 'another-home' } } }));
+        await mount();
+        await vi.waitFor(() => expect(screen.findByTestId('session-run-details-load-error')).not.toBeNull());
+        expect(composer()).toHaveLength(0);
         expect(screen.findByTestId('session-run-details-send-input')).toBeNull();
-        expect(screen.findByTestId('session-run-details-cancel-turn')).toBeNull();
+        expect(calls(SESSION_RPC_METHODS.EXECUTION_RUN_GET)).toEqual([]);
+    });
+    it('keeps a body-only host from mounting a second composer or a redundant info card', async () => {
+        runState = liveRun(); publishMarker();
+        await mount({ showSendComposer: false, showInfoCard: false });
+        await vi.waitFor(() => expect(screen.findAllByType(SessionMessageDetailsView)).toHaveLength(1));
+        expect(composer()).toHaveLength(0); expect(screen.findAllByType(SessionExecutionRunInfoCard)).toHaveLength(0);
+    });
+    it('applies only exact Run activity and preserves the loaded composer through live refresh and completion', async () => {
+        runState = liveRun(); await mount(); await loaded();
+        const mountedComposer = composer()[0]!;
+        const before = calls(SESSION_RPC_METHODS.EXECUTION_RUN_GET).length;
+        await act(async () => {
+            notifyExecutionRunActivity({ sessionId: 'other-session', serverId }, { runId: 'run_1' });
+            notifyExecutionRunActivity({ sessionId: 's1', serverId }, { runId: 'other-run' });
+        });
+        expect(calls(SESSION_RPC_METHODS.EXECUTION_RUN_GET)).toHaveLength(before);
+        runState = liveRun({ inputTurns: { occurrenceId: 'occurrence-1', current: { turnId: 'turn-1', inputIds: ['input-1'], state: 'active' } } });
+        await refresh(); expect(composer()[0]).toBe(mountedComposer);
+        runState = liveRun({ status: 'succeeded' }); await refresh();
+        expect(screen.findByTestId('session-run-details-loading')).toBeNull(); expect(composer()).toHaveLength(0);
+    });
+    it('ignores a Run response that resolves after a newer exact-address response', async () => {
+        await mount(); await loaded();
+        let resolveOlder!: (value: unknown) => void;
+        const old = new Promise<unknown>(resolve => { resolveOlder = resolve; });
+        getReply = () => old;
+        await act(async () => notifyExecutionRunActivity({ sessionId: 's1', serverId }, { runId: 'run_1' }));
+        runState = createRun({ status: 'succeeded' }); getReply = async () => wireResult(); await refresh();
+        await act(async () => resolveOlder({ run: createRun({ status: 'running' }) }));
+        expect(info().run.status).toBe('succeeded');
+    });
+    it('cancels only the witnessed current turn through the rendered Run menu, not the whole Run', async () => {
+        runState = liveRun({ inputTurns: { occurrenceId: 'occurrence-1', current: { turnId: 'turn-1', inputIds: ['input-1'], state: 'active' } } });
+        await mount(); await loaded(); await menu();
         expect(screen.findByTestId('session-run-details-resume')).toBeNull();
-        expect(screen.findByTestId('session-run-details-stop')).toBeNull();
-        expect(screen.findByTestId('session-run-details-read-only-reason')?.props.children)
-            .toBe('This is saved history. Reconnect to this Home to continue the conversation.');
+        await screen.pressByTestIdAsync('session-run-details-cancel-turn');
+        await vi.waitFor(() => expect(calls(SESSION_RPC_METHODS.EXECUTION_RUN_CANCEL_TURN_V1)).toHaveLength(1));
+        expect(calls(SESSION_RPC_METHODS.EXECUTION_RUN_CANCEL_TURN_V1)[0]![1]).toEqual({ runId: 'run_1', occurrenceId: 'occurrence-1', turnId: 'turn-1' });
+        expect(boundary.requests.filter(request => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_CANCEL_TURN_V1)).toEqual([
+            { serverUrl: home.homes.home!.serverUrl, targetId: 's1', method: SESSION_RPC_METHODS.EXECUTION_RUN_CANCEL_TURN_V1,
+                payload: { runId: 'run_1', occurrenceId: 'occurrence-1', turnId: 'turn-1' } },
+        ]);
+        expect(calls(SESSION_RPC_METHODS.EXECUTION_RUN_STOP)).toEqual([]);
+        expect(calls(SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE)).toEqual([]);
     });
-
-    it('announces one semantic Run-status change without re-speaking an unchanged refresh', async () => {
-        getRunSpy
-            .mockResolvedValueOnce(createExecutionRunGetResponse({ status: 'running' }))
-            .mockResolvedValueOnce(createExecutionRunGetResponse({ status: 'succeeded', finishedAtMs: 2 }))
-            .mockResolvedValueOnce(createExecutionRunGetResponse({ status: 'succeeded', finishedAtMs: 2 }));
-        const { notifyExecutionRunActivity } = await import('@/sync/runtime/executionRuns/executionRunActivityBus');
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-        const screen = await renderScreen(<SessionExecutionRunDetailsView sessionId="s1" serverId="server-a" runId="run_1" presentation="panel" />);
-        tree = screen.tree;
-
-        await act(async () => {
-            notifyExecutionRunActivity({ serverId: 'server-a', sessionId: 's1' }, { runId: 'run_1' });
-            await flushHookEffects({ cycles: 2 });
-        });
-        const first = screen.findByTestId('session-run-details-accessibility-status');
-        expect(first?.props.children.props.children).toContain('succeeded');
-        const firstAnnouncementNode = first?.props.children;
-
-        await act(async () => {
-            notifyExecutionRunActivity({ serverId: 'server-a', sessionId: 's1' }, { runId: 'run_1' });
-            await flushHookEffects({ cycles: 2 });
-        });
-        expect(screen.findByTestId('session-run-details-accessibility-status')?.props.children).toBe(firstAnnouncementNode);
+    it('does not expose turn cancellation without the exact current occurrence and turn witness', async () => {
+        runState = liveRun(); await mount(); await loaded(); await menu();
+        expect(screen.findByTestId('session-run-details-cancel-turn')).toBeNull();
+        expect(screen.findByTestId('session-run-details-stop')).not.toBeNull();
     });
-
-
-    /**
-     * Only the phone route wraps this view with a header Refresh bound to its
-     * `reload` handle. The desktop Details workspace and the subagent panel host
-     * it without any header, so a failed first load used to be a dead end that
-     * could only be escaped by closing and reopening the Run.
-     */
-    it('recovers a failed load in place through the view-owned loader', async () => {
-        getRunSpy.mockReset();
-        getRunSpy
-            .mockResolvedValueOnce({ ok: false, error: 'Home unreachable', errorCode: 'unavailable' })
-            .mockResolvedValue(createExecutionRunGetResponse());
-        sessionMessagesState.messages = [];
-        executionRunInfoCardSpy.mockClear();
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-            sessionId="s1"
-            runId="run_1"
-            presentation="panel"
-        />);
-        tree = screen.tree;
-
-        // Pane-states lab 0 "X": what failed in words and one recovery; the raw failure is a
-        // diagnostic behind the collapsed Details, never the headline.
-        expect(screen.findByTestId('session-run-details-load-error')).toBeTruthy();
-        expect(screen.getTextContent()).not.toContain('Home unreachable');
-        expect(screen.findByTestId('session-run-details-load-error-diagnostic-Home unreachable')).toBeTruthy();
-        expect(executionRunInfoCardSpy).not.toHaveBeenCalled();
-
-        await act(async () => {
-            await screen.pressByTestIdAsync('session-run-details-load-error-action');
-            await flushHookEffects({ cycles: 2, turns: 1 });
-        });
-
-        expect(getRunSpy).toHaveBeenCalledTimes(2);
-        expect(screen.findByTestId('session-run-details-load-error')).toBeNull();
-        expect(executionRunInfoCardSpy).toHaveBeenCalledWith(expect.objectContaining({
-            run: expect.objectContaining({ runId: 'run_1' }),
-        }));
+    it('disables only the pending turn interaction while preserving the whole-Run stop affordance', async () => {
+        runState = liveRun({ inputTurns: { occurrenceId: 'occurrence-1', current: { turnId: 'turn-1', inputIds: ['input-1'], state: 'active' } } });
+        let settle!: (value: unknown) => void;
+        cancelReply = () => new Promise(resolve => { settle = resolve; });
+        await mount(); await loaded(); await menu(); screen.pressByTestId('session-run-details-cancel-turn');
+        await vi.waitFor(() => expect(info().cancelResponseAction?.pending).toBe(true));
+        expect(info().stopAction?.stopping).toBe(false);
+        await act(async () => settle({ ok: true, status: 'requested', runId: 'run_1', occurrenceId: 'occurrence-1', turnId: 'turn-1' }));
+        await vi.waitFor(() => expect(info().cancelResponseAction?.pending).toBe(false));
     });
-
-    it('keeps the inline recovery action out of the way once the Run loads', async () => {
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-            sessionId="s1"
-            runId="run_1"
-            presentation="panel"
-        />);
-        tree = screen.tree;
-
-        expect(screen.findByTestId('session-run-details-load-error')).toBeNull();
+    it('offers explicit recoverable Resume, with pending accessibility state and shared target sizes', async () => {
+        runState = liveRun({ status: 'succeeded', interaction: undefined, lifecycle: { v: 1, state: 'recoverable' } });
+        let settle!: (value: unknown) => void;
+        resumeReply = () => new Promise(resolve => { settle = resolve; });
+        await mount(); await loaded();
+        const target = screen.findByTestId('session-run-details-resume')!;
+        const size = resolveMinimumInteractiveTargetSize(Platform.OS);
+        expect(flattenTestStyle(target.props.style)).toMatchObject({ minWidth: size, minHeight: size });
+        screen.pressByTestId('session-run-details-resume');
+        await vi.waitFor(() => expect(screen.findByTestId('session-run-details-resume')?.props.accessibilityState).toMatchObject({ disabled: true, busy: true }));
+        expect(calls(SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE)[0]![1]).toEqual({ runId: 'run_1', resume: true });
+        await act(async () => settle({ ok: true }));
     });
-
-    it('gives every actionable Run control the shared platform interactive target', async () => {
-        // The view's own control (Resume); Stop, Cancel response and ⋯ belong to the header owner
-        // and its menu rows, which carry their own target policy.
-        getRunSpy.mockResolvedValue(createExecutionRunGetResponse({
-            runClass: 'long_lived',
-            retentionPolicy: 'resumable',
-            status: 'succeeded',
-            lifecycle: { v: 1, state: 'recoverable' },
-        }));
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-        // `react-native` is mocked by a shared helper at runtime, so this file's
-        // static import would bind the unmocked stub. Read the mocked module.
-        const { Platform } = await import('react-native');
+    it.each(['android', 'ios', 'web'] as const)('keeps the view-owned Resume target accessible on %s', async (platform) => {
+        runState = liveRun({ status: 'succeeded', interaction: undefined, lifecycle: { v: 1, state: 'recoverable' } });
         const originalPlatform = Platform.OS;
-
         try {
-            for (const platform of ['android', 'ios', 'web'] as const) {
-                Object.defineProperty(Platform, 'OS', { configurable: true, value: platform });
-                const screen = await renderScreen(<SessionExecutionRunDetailsView
-                    sessionId="s1"
-                    runId="run_1"
-                    serverId="server-route"
-                    presentation="panel"
-                />);
-                const targetSize = resolveMinimumInteractiveTargetSize(platform);
-
-                for (const testID of [
-                    'session-run-details-resume',
-                ]) {
-                    const target = screen.findByTestId(testID);
-                    expect(target, testID).not.toBeNull();
-                    const style = flattenTestStyle(target?.props.style);
-                    expect(style.minWidth, testID).toBe(targetSize);
-                    expect(style.minHeight, testID).toBe(targetSize);
-                }
-
-                await screen.unmount();
-            }
+            Object.defineProperty(Platform, 'OS', { configurable: true, value: platform });
+            await mount(); await loaded();
+            const target = screen.findByTestId('session-run-details-resume');
+            expect(target).not.toBeNull();
+            const size = resolveMinimumInteractiveTargetSize(platform);
+            expect(flattenTestStyle(target!.props.style)).toMatchObject({ minWidth: size, minHeight: size });
         } finally {
             Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatform });
         }
     });
-
-
-    it('names the wait while it opens, and where it is reading from', async () => {
-        getRunSpy.mockReset();
-        getRunSpy.mockImplementation(() => new Promise(() => undefined));
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-            sessionId="s1"
-            runId="run_1"
-            presentation="panel"
-            openingTitle="Review the settings modal fix"
-        />);
-        tree = screen.tree;
-
-        const text = screen.getTextContent();
-        expect(screen.findByTestId('session-run-details-loading')).toBeTruthy();
-        expect(text).toContain('surfaceState.opening(name=Review the settings modal fix)');
-        expect(text).toContain('runPage.opening.reading(machine=runPage.thisMachine)');
+    it('stops on the exact Home and reloads terminal state when Stop races with completion', async () => {
+        runState = liveRun();
+        stopReply = async () => { runState = liveRun({ status: 'succeeded' }); return { ok: false, error: 'Already finished', errorCode: 'execution_run_not_allowed' }; };
+        await mount(); await loaded(); await menu(); await screen.pressByTestIdAsync('session-run-details-stop');
+        await vi.waitFor(() => expect(info().run.status).toBe('succeeded'));
+        expect(calls(SESSION_RPC_METHODS.EXECUTION_RUN_STOP)[0]![1]).toEqual({ runId: 'run_1' });
+        expect(boundary.requests.filter(request => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STOP)).toEqual([
+            { serverUrl: home.homes.home!.serverUrl, targetId: 's1', method: SESSION_RPC_METHODS.EXECUTION_RUN_STOP,
+                payload: { runId: 'run_1' } },
+        ]);
+        expect(info().stopAction).toBeNull();
+        expect(home.requests.every(request => request.accountId === 'account-1')).toBe(true);
     });
-
-    it('says the run is gone, with a way out, instead of spinning when neither its host nor the transcript has it', async () => {
-        getRunSpy.mockReset();
-        getRunSpy.mockResolvedValue({ ok: false, error: 'Run not found', errorCode: 'execution_run_not_found' });
-        sessionMessagesState.messages = [];
-        const onRequestClose = vi.fn();
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-            sessionId="s1"
-            runId="run_1"
-            presentation="panel"
-            onRequestClose={onRequestClose}
-        />);
-        tree = screen.tree;
-
-        await vi.waitFor(() => {
-            expect(screen.findByTestId('session-run-details-gone')).toBeTruthy();
-        });
+    it('keeps whole-Run Stop busy until its actual transport request settles', async () => {
+        runState = liveRun();
+        let settle!: (value: unknown) => void;
+        stopReply = () => new Promise(resolve => { settle = resolve; });
+        await mount(); await loaded(); await menu(); screen.pressByTestId('session-run-details-stop');
+        await vi.waitFor(() => expect(info().stopAction?.stopping).toBe(true));
+        await act(async () => settle({ ok: true }));
+        await vi.waitFor(() => expect(info().stopAction?.stopping).toBe(false));
+    });
+    it('falls back to retained transcript history, withholding mutable controls and daemon-marker queries without an exact Home', async () => {
+        publishMarker('succeeded');
+        getReply = async () => ({ ok: false, error: 'Run not found', errorCode: 'execution_run_not_found' });
+        await mount({ serverId: undefined }); await loaded();
+        expect(info().run).toMatchObject({ runId: 'run_1', status: 'succeeded' });
+        expect(composer()).toHaveLength(0);
+        expect(mutationMethods.flatMap(method => calls(method))).toEqual([]);
+        expect(calls(RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST)).toEqual([]);
+    });
+    it('loads main transcript history before failing closed on an absent Run, then offers a way out', async () => {
+        getStorage().setState({ sessionMessages: { s1: createSessionMessagesFixture({ isLoaded: false }) } });
+        getReply = async () => ({ ok: false, error: 'Run not found', errorCode: 'execution_run_not_found' });
+        const close = vi.fn();
+        await mount({ onRequestClose: close });
+        await vi.waitFor(() => expect(httpReads.some(request => request.path.includes('/messages'))).toBe(true));
+        await vi.waitFor(() => expect(screen.findByTestId('session-run-details-gone')).not.toBeNull());
         expect(screen.findByTestId('session-run-details-loading')).toBeNull();
-        expect(screen.findByTestId('session-run-details-load-error')).toBeNull();
-        expect(screen.getTextContent()).toContain('runPage.gone.title(machine=runPage.thisMachine)');
-        await act(async () => {
-            await screen.pressByTestIdAsync('session-run-details-gone-action');
-        });
-        expect(onRequestClose).toHaveBeenCalledTimes(1);
+        await screen.pressByTestIdAsync('session-run-details-gone-action'); expect(close).toHaveBeenCalledOnce();
+        expect(mutationMethods.flatMap(method => calls(method))).toEqual([]);
     });
-
-    it('says what stopping the whole session would also stop when the run does not confirm its stop', async () => {
-        const sessionExecutionRuns = await import('@/sync/ops/sessionExecutionRuns');
-        const stopSpy = vi.mocked(sessionExecutionRuns.sessionExecutionRunStop);
-        stopSpy.mockResolvedValueOnce({ ok: false, error: 'timed out', errorCode: 'rpc_timeout' } as any);
-        machineStopSessionSpy.mockClear();
-        liveAgentCountState.current = 4;
-        exactSessionState.current = { ...exactSessionState.current!, metadata: { flavor: 'codex', machineId: 'm1' } };
-        const { Modal } = await import('@/modal');
+    it('names the opening wait and reading source, then recovers a failed load in place', async () => {
+        let settle!: (value: unknown) => void;
+        getReply = () => new Promise(resolve => { settle = resolve; });
+        await mount({ openingTitle: 'Review the settings modal fix' });
+        expect(screen.findByTestId('session-run-details-loading')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('surfaceState.opening(name=Review the settings modal fix)');
+        await act(async () => settle({ ok: false, error: 'Home unreachable', errorCode: 'unavailable' }));
+        await vi.waitFor(() => expect(screen.findByTestId('session-run-details-load-error-action')).not.toBeNull());
+        getReply = async () => wireResult();
+        await screen.pressByTestIdAsync('session-run-details-load-error-action'); await loaded();
+        expect(screen.findByTestId('session-run-details-load-error-action')).toBeNull();
+    });
+    it('announces one semantic status change without repeating an unchanged refresh', async () => {
+        const ref = React.createRef<SessionExecutionRunDetailsViewHandle>();
+        await mount({ ref }); await loaded();
+        runState = createRun({ status: 'succeeded', finishedAtMs: 2 });
+        await act(async () => ref.current?.reload());
+        const status = screen.findByTestId('session-run-details-accessibility-status');
+        expect(status?.props.children.props.children).toContain('succeeded');
+        const before = status?.props.children;
+        await act(async () => ref.current?.reload());
+        expect(screen.findByTestId('session-run-details-accessibility-status')?.props.children).toBe(before);
+    });
+    it('shows a finished review result without mounting a conversation composer', async () => {
+        runState = createRun({ status: 'succeeded' });
+        structuredMeta = { kind: 'review_findings.v2', payload: {
+            runRef: { runId: 'run_1', callId: 'toolu_1', backendId: 'codex' },
+            summary: 'Two findings, one high.', overviewMarkdown: 'The retry banner can double-charge.',
+            findings: [], generatedAtMs: 2,
+        } };
+        await mount(); await loaded();
+        expect(screen.getTextContent()).toContain('Two findings, one high.');
+        expect(composer()).toHaveLength(0);
+    });
+    it('states the other live agents affected before an unconfirmed Run stop falls back to Session stop', async () => {
+        runState = liveRun();
+        const headline = SessionAgentActivityHeadlineV1Schema.parse({ v: 1, backendId: 'codex', updatedAt: 1,
+            activeEntries: Array.from({ length: 4 }, (_, index) => ({ entryId: 'execution_run:run_' + (index + 1),
+                kind: 'execution_run', title: 'Run ' + (index + 1), status: 'running', updatedAt: 1 })) });
+        getStorage().setState(state => ({ sessions: { s1: { ...state.sessions.s1!, metadata: {
+            ...state.sessions.s1!.metadata!, sessionAgentActivityHeadlineV1: headline,
+        } } } }));
+        stopReply = async () => ({ ok: false, error: 'Not confirmed', errorCode: 'rpc_timeout' });
         vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
-        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
-        const screen = await renderScreen(<SessionExecutionRunDetailsView
-            sessionId="s1"
-            runId="run_1"
-            presentation="panel"
-        />);
-        tree = screen.tree;
-
-        await act(async () => {
-            await screen.pressByTestIdAsync('session-run-details-stop');
-            await flushHookEffects({ cycles: 1, turns: 1 });
-        });
-        await vi.waitFor(() => {
-            expect(screen.findByTestId('session-run-details-stop-failed')).toBeTruthy();
-        });
-        // The consequence is said before it happens: this run plus 3 others.
+        await mount(); await loaded(); await menu(); await screen.pressByTestIdAsync('session-run-details-stop');
+        await vi.waitFor(() => expect(screen.findByTestId('session-run-details-stop-failed')).not.toBeNull());
         expect(screen.getTextContent()).toContain('count=3');
-        await act(async () => {
-            await screen.pressByTestIdAsync('session-run-details-stop-failed-secondary-action');
-            await flushHookEffects({ cycles: 1, turns: 1 });
-        });
-        expect(machineStopSessionSpy).toHaveBeenCalledWith('m1', 's1', expect.anything());
-        liveAgentCountState.current = 1;
+        await screen.pressByTestIdAsync('session-run-details-stop-failed-secondary-action');
+        expect(calls(RPC_METHODS.STOP_SESSION)).toHaveLength(1);
     });
-
 });

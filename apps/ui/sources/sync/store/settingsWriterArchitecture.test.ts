@@ -16,6 +16,8 @@ const ALLOWED_DIRECT_ACCOUNT_WRITE_FILES = new Set([
 
 const ALLOWED_DIRECT_LOCAL_WRITE_FILES = new Set([
     'hooks/server/useHomeViewSelectionSettings.ts',
+    'sync/ops/actions/connectedServiceActionDeps.ts',
+    'sync/ops/actions/defaultActionExecutor.ts',
     'sync/store/settingsWriters.ts',
     'sync/store/domains/settings.ts',
     'sync/domains/settings/localSettings.ts',
@@ -33,8 +35,10 @@ const ALLOWED_RAW_LOCAL_PROJECTION_FILES = new Set([
     // The one catalogued local-only compatibility projection: device/tab Home selection is owned
     // by the device-global Home-view state and must never enter Account-settings sync.
     'hooks/server/useHomeViewSelectionSettings.ts',
-    // Development and Voice-QA harnesses that install fixture settings into a throwaway runtime.
+    // Test, development and Voice-QA harnesses that install fixture settings into a throwaway runtime.
     // They ship in the source tree but are never a product write path for a real Account.
+    'components/sessions/files/views/sessionFilesViewTestkit.ts',
+    'dev/testkit/harness/standaloneVoicePolicyHarness.ts',
     'dev/testkit/harness/useVoiceSurfaceE2eFixtureComposition.ts',
     'voice/qa/voiceQaRecordedAudioController.ts',
     'voice/qa/voiceQaTemporarySettingsScope.ts',

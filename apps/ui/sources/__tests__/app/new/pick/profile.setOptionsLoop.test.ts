@@ -12,7 +12,7 @@ import {
     PICKER_NAV_STATE,
     type PickerStackOptionsInput,
 } from './testHarness';
-import { createUseSettingMock, createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
+import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 
 enableReactActEnvironment();
 
@@ -35,14 +35,6 @@ installPickerCommonModuleMocks({
                 show: vi.fn(),
             },
         }).module,
-    storage: async (importOriginal) =>
-        (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
-            importOriginal,
-            overrides: {
-                useSetting: createUseSettingMock({ fallback: () => false }),
-                useSettingMutable: createUseSettingMutableMockFromReader(() => [[], vi.fn()]),
-            },
-        }),
     unistyles: async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock(),
     expoRouter: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -81,51 +73,9 @@ installPickerCommonModuleMocks({
             useLocalSearchParams: () => searchParams,
         };
     },
-    tempDataStore: {
-        storeTempData: () => 'temp',
-        getTempData: () => null,
-    },
 });
 
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children }: React.PropsWithChildren<Record<string, never>>) => React.createElement(React.Fragment, null, children),
-}));
-
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: () => null,
-}));
-
-vi.mock('@/components/profiles/ProfilesList', () => ({
-    ProfilesList: () => null,
-}));
-
-vi.mock('@/components/secrets/requirements', () => ({
-    SecretRequirementModal: () => null,
-}));
-
-vi.mock('@/utils/secrets/secretSatisfaction', () => ({
-    getSecretSatisfaction: () => ({ isSatisfied: true, items: [] }),
-}));
-
-vi.mock('@/sync/domains/profiles/profileSecrets', () => ({
-    getRequiredSecretEnvVarNames: () => [],
-}));
-
-vi.mock('@/hooks/machine/useMachineEnvPresence', () => ({
-    useMachineEnvPresence: () => ({ isLoading: false, isPreviewEnvSupported: false, meta: {} }),
-}));
-
-vi.mock('@/sync/ops', () => ({
-    machinePreviewEnv: vi.fn(async () => ({ supported: false })),
-}));
-
-vi.mock('@/sync/domains/profiles/profileCompatibility', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/profiles/profileCompatibility')>();
-    return {
-        ...actual,
-        getProfileEnvironmentVariables: () => ({}),
-    };
-});
+const runtime = installSessionPaneRuntimeTestHarness();
 
 describe('ProfilePickerScreen (Stack.Screen options stability)', () => {
     afterEach(() => {
@@ -144,10 +94,10 @@ describe('ProfilePickerScreen (Stack.Screen options stability)', () => {
 
     it('does not trigger an infinite setOptions update loop', async () => {
         const ProfilePickerScreen = (await import('@/app/(app)/new/pick/profile')).default;
-        const screen = await renderScreen(React.createElement(ProfilePickerScreen));
+        const screen = await renderScreen(React.createElement(runtime.Wrapper, null, React.createElement(ProfilePickerScreen)));
 
         searchParams = { selectedId: 'profile-1', machineId: 'm1' };
-        await screen.update(React.createElement(ProfilePickerScreen));
+        await screen.update(React.createElement(runtime.Wrapper, null, React.createElement(ProfilePickerScreen)));
 
         const setOptionsCalls = setOptionsSpy.mock.calls.length;
         const observedOptions = setOptionsSpy.mock.calls.map(([options]) => options);

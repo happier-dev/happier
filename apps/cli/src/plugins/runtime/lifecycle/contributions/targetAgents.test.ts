@@ -1272,8 +1272,8 @@ describe('target Agent runtime registry', () => {
         }
     });
 
-    it('fails closed when no retirement signal owns a generated runtime lease', () => {
-        expect(async () => await createTargetAgentRuntimeRegistry({
+    it('fails closed when no retirement signal owns a generated runtime lease', async () => {
+        await expect(createTargetAgentRuntimeRegistry({
             agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: [registration({
@@ -1289,7 +1289,7 @@ describe('target Agent runtime registry', () => {
             })],
             isOccurrenceCurrent: () => true,
             onDuplicate: vi.fn(),
-        } as never)).toThrow(/retirement signal/i);
+        } as never)).rejects.toThrow(/retirement signal/i);
     });
 
     it('leases a static ACP declaration as a native runtime that delegates only to the public composer', async () => {
@@ -1410,7 +1410,7 @@ describe('target Agent runtime registry', () => {
             ...common,
             registered: new Map(),
         })).get(agentId)?.externalSessions).toBeDefined();
-        expect(async () => await createDeclarativeAcpAgentRuntimeRegistry({
+        await expect(createDeclarativeAcpAgentRuntimeRegistry({
             ...common,
             registered: new Map([[agentId, {
                 pluginId,
@@ -1430,7 +1430,7 @@ describe('target Agent runtime registry', () => {
                 isCurrent: () => true,
                 createAgentRuntimeSurfaceInvocationContext: vi.fn(),
             }]]),
-        })).toThrow(/competing External Sessions owners/);
+        })).rejects.toThrow(/competing External Sessions owners/);
     });
 
     it('fails closed when bypassed installed data declares resume-only sources without Session resume capability', async () => {

@@ -13,7 +13,6 @@ type InstallRepositoryTreeCommonModuleMocksOptions = Readonly<{
     reactNative?: RepositoryTreeModuleFactory;
     storage?: RepositoryTreeStorageModuleFactory;
     text?: RepositoryTreeModuleFactory;
-    typography?: RepositoryTreeModuleFactory;
     unistyles?: RepositoryTreeModuleFactory;
 }>;
 
@@ -25,7 +24,6 @@ export function installRepositoryTreeCommonModuleMocks(
         reactNative: options.reactNative,
         storage: options.storage,
         text: options.text,
-        typography: options.typography,
         unistyles: options.unistyles,
     };
 
@@ -54,19 +52,6 @@ export function installRepositoryTreeCommonModuleMocks(
 
         const { createTextModuleMock } = await import(`${testkitMocksPath}/text`);
         return createTextModuleMock({ translate: (key: string) => key });
-    });
-
-    vi.doMock('@/constants/Typography', async () => {
-        if (activeOptions.typography) {
-            return await activeOptions.typography();
-        }
-
-        return {
-            Typography: {
-                default: () => ({}),
-                mono: () => ({}),
-            },
-        };
     });
 
     vi.doMock('@/modal', async () => {

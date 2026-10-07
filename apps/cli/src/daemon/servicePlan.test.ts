@@ -351,9 +351,17 @@ describe('daemon service install plan', () => {
     expect(plan.files[0]?.content).toContain('$env:HAPPIER_ACTIVE_SERVER_ID');
     expect(plan.files[0]?.content).toContain('happier.exe');
 
-    const cmdText = plan.commands.map((c) => `${c.cmd} ${c.args.join(' ')}`).join('\n');
-    expect(cmdText).toContain('schtasks /Create');
-    expect(cmdText).toContain('ONLOGON');
+    const registration = plan.commands.find((command) =>
+      command.cmd === 'powershell.exe' && command.args.at(-1)?.includes('RegisterTask'));
+    expect(registration).toBeDefined();
+    // User tasks are registered through the canonical current-user XML boundary,
+    // not the all-users schtasks /Create + ONLOGON command.
+    expect(registration?.args.at(-1)).toContain('<LogonTrigger><Enabled>true</Enabled><UserId>');
+    expect(registration?.args.at(-1)).toContain('$xml.Task.Triggers.LogonTrigger.UserId = $userId');
+    expect(registration?.args.at(-1)).toContain('<LogonType>InteractiveToken</LogonType>');
+    expect(plan.commands).toContainEqual({
+      cmd: 'schtasks', args: ['/Run', '/TN', 'Happier\\happier-daemon.cloud'],
+    });
   });
 
   it('plans channel-scoped task names for dev (win32)', () => {

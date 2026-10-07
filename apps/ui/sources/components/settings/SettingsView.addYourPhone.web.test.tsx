@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
 import { createPassThroughComponent } from '@/dev/testkit/mocks/components';
@@ -92,9 +94,10 @@ installSettingsViewCommonModuleMocks({
     },
 });
 
-vi.mock('@react-navigation/native', () => ({
-    useFocusEffect: (_cb: () => void) => {},
-}));
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return { ...createReactNavigationNativeMock(), useFocusEffect: () => {} };
+});
 
 vi.mock('expo-constants', () => ({
     default: { expoConfig: { version: '0.0.0-test' } },
@@ -119,10 +122,7 @@ vi.mock('@/hooks/session/useConnectTerminal', () => ({
 
 // The real provider memoizes its context value and holds credentials in state, so consumers see one
 // stable object; a fresh object per call would re-run every effect that depends on `credentials`.
-const authContextValue = vi.hoisted(() => ({ isAuthenticated: true, credentials: { token: 't', secret: 's' } }));
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => authContextValue,
-}));
+const authCredentials = { token: createAccountTokenForTests('account-a') };
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -220,7 +220,7 @@ describe('SettingsView (web)', () => {
         vi.stubGlobal('navigator', { maxTouchPoints: 5, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)' } as any);
         routerPushSpy.mockClear();
 
-        const screen = await renderSettingsView(<SettingsView />);
+        const screen = await renderSettingsView(<InjectedAuthProvider credentials={authCredentials}><SettingsView /></InjectedAuthProvider>);
 
         expect(screen.findRow('settings-add-your-phone-shortcut')).toBeNull();
     });
@@ -231,7 +231,7 @@ describe('SettingsView (web)', () => {
         vi.stubGlobal('window', { matchMedia: () => ({ matches: false }) } as any);
         routerPushSpy.mockClear();
 
-        const screen = await renderSettingsView(<SettingsView />);
+        const screen = await renderSettingsView(<InjectedAuthProvider credentials={authCredentials}><SettingsView /></InjectedAuthProvider>);
 
         expect(screen.findRow('settings-add-your-phone-shortcut')).toBeTruthy();
     });

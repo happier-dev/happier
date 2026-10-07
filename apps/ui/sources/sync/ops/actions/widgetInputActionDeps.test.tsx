@@ -27,12 +27,11 @@ import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/act
 import { buildConnectedAccountPurposeSetupRoute, readConnectedAccountPurposeSetupRequest,
     isConnectedAccountPurposeSetupTargetCurrent } from '@/sync/domains/connectedServices/connectedAccountPurposeSetup';
 import { useApplyConnectedAccountPurposeTarget } from '@/sync/store/settingsWriters';
-import { loadVitestModuleForNodeRequire } from '@/dev/vitestRnShim';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 it('repairs a shared mounted viewer purpose through the existing Account settings mutation without changing shared inputs', async () => {
-    await import('@/sync/syncEngine');
     // Bridge Metro's call-time require to the same real Sync singleton; no settings logic is replaced.
-    const syncBridge = await loadVitestModuleForNodeRequire(new URL('../../sync.ts', import.meta.url), () => import('@/sync/sync'));
+    const syncBridge = await loadSyncSingletonForTests();
     const http = createHomeHubArtifactHttpBoundary('viewer');
     let raw: Record<string, unknown> = {};
     let version = 1;

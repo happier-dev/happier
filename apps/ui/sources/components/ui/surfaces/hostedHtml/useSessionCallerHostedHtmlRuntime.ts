@@ -11,7 +11,8 @@ import { publishPresentationNotice } from '@/components/sessions/presentation/pr
 import type { SessionPluginRuntimeState } from '@/components/sessions/plugins/useSessionPluginRuntime';
 import { useSessionViewShellSession } from '@/components/sessions/shell/sessionViewStableSession';
 import { resolveScopedPluginSettingsServerIdentity } from '@/sync/domains/plugins/settings/scopedPluginSettingsRuntime';
-import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { useLocalSettingMutable } from '@/sync/store/hooks';
 
@@ -45,9 +46,7 @@ export function useSessionCallerHostedHtmlRuntime(
     sessionId: string,
     pluginRuntime?: SessionPluginRuntimeState,
 ): CallerHostedHtmlRuntime | null {
-    const requestedServerIds = React.useMemo(() => serverId ? [serverId] : [], [serverId]);
-    const bindings = useServerCredentialAccountScopeBindings(requestedServerIds);
-    const binding = serverId ? bindings.get(serverId) ?? null : null;
+    const { binding } = useServerCredentialAccountScopeBinding(serverId);
     const [approvals, setApprovals] = useLocalSettingMutable('uiSurfaceExecutableApprovalsV1');
     const execute = React.useMemo(() => createFrontDoorActionExecute(), []);
     const pluginRuntimeRef = React.useRef(pluginRuntime);
@@ -76,7 +75,8 @@ export function useSessionCallerHostedHtmlRuntime(
         const isCurrent = () => binding.isCurrent() && sessionCurrentRef.current;
         const pluginTargetCurrent = pluginPhase === 'current'
             && pluginInteractionEnabled
-            && pluginServerId === binding.serverId
+            && pluginServerId != null
+            && areServerProfileIdentifiersEquivalent(pluginServerId, binding.serverId)
             && pluginMachineId != null
             && pluginUiProjection?.generation != null;
         const pluginTarget = pluginTargetCurrent ? {
@@ -87,7 +87,7 @@ export function useSessionCallerHostedHtmlRuntime(
             isCurrent: () => isCurrent()
                 && pluginRuntimeRef.current?.phase === 'current'
                 && pluginRuntimeRef.current.interactionEnabled
-                && pluginRuntimeRef.current.serverId === binding.serverId
+                && areServerProfileIdentifiersEquivalent(pluginRuntimeRef.current.serverId, binding.serverId)
                 && pluginRuntimeRef.current.machineId === pluginMachineId
                 && pluginRuntimeRef.current.pluginUiProjection?.generation
                     === pluginUiProjection.generation,

@@ -557,6 +557,8 @@ export async function executeContributedAction(params: Readonly<{
     ? runtimeRegistry.targetActionInvocations
     : undefined;
   if (runtimeRegistry && targetActionInvocations?.expects(pluginId, action.definition.id)) {
+    // Occurrence admission precedes activation: a retired handle must not
+    // activate its replacement or be reported as a missing handler.
     const checkAdmittedCurrentness = async (): Promise<PluginActionExecutorResult | null> => {
       if (expectedContributorOccurrenceId !== undefined
         && !(await isExpectedPluginCurrent({

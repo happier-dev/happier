@@ -1,10 +1,16 @@
 import * as React from 'react';
 import { createReactNavigationNativeMock } from '@/dev/testkit/mocks/reactNavigation';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { renderScreen as renderCanonicalScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import 'fake-indexeddb/auto';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createThemeFixture } from '@/dev/testkit/fixtures/themeFixtures';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
@@ -13,7 +19,7 @@ import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
 
-import { activateSessionShellStorageBoundary, installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -56,13 +62,6 @@ const chatHeaderPropsSpy = vi.hoisted(() => vi.fn());
 const capturedOpenSessionSpy = vi.hoisted(() => vi.fn<(sid: string) => void>());
 const companionHostPropsSpy = vi.hoisted(() => vi.fn());
 const boardControllerState = vi.hoisted(() => ({ unavailable: false }));
-const openDetailsTabSpy = vi.hoisted(() => vi.fn());
-const openRightSpy = vi.hoisted(() => vi.fn());
-const resolveServerIdForSessionIdFromLocalCacheSpy = vi.hoisted(() =>
-    vi.fn<(sessionId: string) => string | null>((sessionId: string) =>
-        sessionId === 's1' ? 'server-cache' : null
-    ),
-);
 
 installSessionShellCommonModuleMocks({
     reactNative: async () =>
@@ -102,76 +101,9 @@ installSessionShellCommonModuleMocks({
                 setParams: vi.fn(),
             },
         }).module,
-    storage: async () => {
-        const { createStorageModuleStub, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
-        const session: any = {
-            id: 's1',
-            seq: 1,
-            serverId: 'server-2',
-            presence: 'online',
-            active: true,
-            accessLevel: 'edit',
-            metadata: { machineId: 'm1', flavor: 'codex', version: '0.0.0', path: '/tmp', homeDir: '/Users/test' },
-            agentState: {},
-        };
-
-        return createStorageModuleStub({
-            storage: createStorageStoreMock({
-                sessions: { s1: session },
-                settings: settingsDefaults,
-                sessionListIndexByServerId: {
-                    'server-1': [
-                        {
-                            type: 'session',
-                            sessionId: 's1',
-                            serverId: 'server-1',
-                            serverName: 'Server 1',
-                        },
-                    ],
-                },
-            }),
-            useSession: () => session,
-            useIsDataReady: () => true,
-            useRealtimeStatus: () => ({ current: { status: 'connected' } as any }),
-            useSessionMessages: () => ({ messages: [], isLoaded: true }),
-            useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-            useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: true }),
-            useSessionSubagentSourceMessages: () => [],
-            useOpenApprovalArtifactsForSession: () => [],
-            useEnabledAutomationsCountForSession: () => 0,
-            useSessionReviewCommentsDrafts: () => [],
-            useWorkspaceReviewCommentsDrafts: () => [],
-            useSessionUsage: () => null,
-            useSessionCompanionPreferenceSlot: () => ({
-                stored: undefined,
-                storageKey: 'server-2 account-1 s1',
-            }),
-            useLocalSetting: <K extends keyof LocalSettings>(key: K) => localSettingsDefaults[key],
-            useLocalSettingMutable: <K extends keyof LocalSettings>(key: K) => [
-                localSettingsDefaults[key],
-                vi.fn<(value: LocalSettings[K]) => void>(),
-            ],
-            useSetting: <K extends keyof Settings>(key: K) => {
-                return settingsDefaults[key];
-            },
-            useSettings: () => ({ ...settingsDefaults, experiments: true, featureToggles: {} }),
-            useAutomations: () => [],
-            useMachine: () => null,
-            useAllMachines: () => [{ id: 'm1', metadata: {} }],
-        });
-    },
+    storage: async importOriginal => importOriginal(),
 });
 
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache', async (importOriginal) => {
-    const actual = await importOriginal<
-        typeof import('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache')
-    >();
-    return {
-        ...actual,
-        resolveServerIdForSessionIdFromLocalCache: (sessionId: string) =>
-            resolveServerIdForSessionIdFromLocalCacheSpy(sessionId),
-    };
-});
 
 vi.mock('react-native-reanimated', async () => {
     const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
@@ -206,9 +138,6 @@ vi.mock('@react-navigation/native', () => ({
     ...createReactNavigationNativeMock(),
     useFocusEffect: () => {},
     useIsFocused: () => true,
-}));
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ credentials: { token: 't', secret: 's' } }),
 }));
 vi.mock('@/components/sessions/transcript/ChatHeaderView', () => ({
     ChatHeaderView: (props: any) => {
@@ -317,20 +246,6 @@ vi.mock('@/hooks/session/files/useWarmRepositoryDirectoryCacheOnSessionOpen', ()
 vi.mock('@/components/appShell/panes/useRegisterSessionPaneDriver', () => ({
     useRegisterSessionPaneDriver: () => 'session:s1',
 }));
-vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
-    useAppPaneScope: () => ({
-        openRight: openRightSpy,
-        setRightTab: vi.fn(),
-        closeRight: vi.fn(),
-        openDetailsTab: openDetailsTabSpy,
-        closeDetails: vi.fn(),
-        pinDetailsTab: vi.fn(),
-        closeDetailsTab: vi.fn(),
-        setActiveDetailsTab: vi.fn(),
-        setRightTabState: vi.fn(),
-        scopeState: null,
-    }),
-}));
 vi.mock('@/components/sessions/panes/url/useSessionPaneUrlSync', () => ({
     useSessionPaneUrlSync: () => {},
 }));
@@ -340,25 +255,6 @@ vi.mock('@/sync/domains/session/activeViewingSession', () => ({
     markSessionVisible: () => {},
     markSessionHidden: () => {},
 }));
-vi.mock('@/sync/sync', async () => {
-    const { createAcceptedExternalSessionTailCursorSyncBoundary } = await import('@/dev/testkit/mocks/sync');
-    return {
-        sync: {
-        getSessionAttachmentTransferContext: () => undefined,
-            ...createAcceptedExternalSessionTailCursorSyncBoundary(),
-            markSessionViewed: async () => {},
-            fetchPendingMessages: async () => {},
-            publishSessionPermissionModeToMetadata: async () => {},
-            refreshSessions: async () => {},
-            onSessionVisible: () => () => {},
-            ensureSidechainMessagesLoaded: async () => {},
-            sendMessage: async () => {},
-            enqueuePendingMessage: async () => {},
-            submitMessage: async () => {},
-            encryption: { getMachineEncryption: () => null },
-        },
-    };
-});
 vi.mock('@/sync/ops', async (importOriginal) => {
     const { createSyncOpsModuleMock } = await import('@/dev/testkit/mocks/syncOps');
     return createSyncOpsModuleMock({
@@ -377,13 +273,6 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
         return { execute: vi.fn() };
     },
 }));
-vi.mock('@/sync/domains/server/serverRuntime', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/server/serverRuntime')>();
-    return {
-        ...actual,
-        getActiveServerSnapshot: () => ({ serverId: 'server-1' }),
-    };
-});
 vi.mock('@/utils/system/versionUtils', () => ({
     isVersionSupported: () => true,
     MINIMUM_CLI_VERSION: '0.0.0',
@@ -400,37 +289,58 @@ vi.mock('@/hooks/server/useSessionExecutionRunsSupported', () => ({
 vi.mock('@/hooks/server/useExecutionRunsBackendsForSession', () => ({
     useExecutionRunsBackendsForSession: () => null,
 }));
-vi.mock('@/utils/sessions/sessionUtils', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/utils/sessions/sessionUtils')>();
-    return {
-        ...actual,
-        getSessionName: () => 'Session',
-        getSessionSubtitle: () => 'Subtitle',
-        getSessionAvatarId: () => 'avatar',
-        listPendingPermissionRequests: () => [],
-        listPendingUserActionRequests: () => [],
-        useSessionStatus: () => ({
-            isConnected: true,
-            statusText: 'Connected',
-            statusColor: '#0f0',
-            statusDotColor: '#0f0',
-            isPulsing: false,
-        }),
-        formatPathRelativeToHome: (path: string) => path,
-    };
-});
 vi.mock('@/utils/system/fireAndForget', () => ({
     fireAndForget: (promise: Promise<unknown>) => void promise,
 }));
 
+installDisconnectedServerSocketBoundary();
+vi.doUnmock('@/sync/domains/state/storage');
+vi.doUnmock('@/hooks/session/useDraft');
+vi.doUnmock('@/agents/registry/registryUiBehavior');
+const { storage } = await import('@/sync/domains/state/storage');
+const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
+const { createSessionPaneScopeId } = await import('@/components/sessions/panes/sessionPaneScopeId');
+let account: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
+let previousStorage: ReturnType<typeof storage.getState>;
+let pane: ReturnType<typeof useAppPaneScope>;
+function PaneProbe() {
+    pane = useAppPaneScope(createSessionPaneScopeId('s1', account.home.id));
+    return null;
+}
 const AppPaneProviderWrapper = ({ children }: { children?: React.ReactNode }) => (
-    <AppPaneProvider>{children ?? null}</AppPaneProvider>
+    <InjectedAuthProvider credentials={account.credentials}><AppPaneProvider><PaneProbe />{children ?? null}</AppPaneProvider></InjectedAuthProvider>
 );
+async function renderScreen(...args: Parameters<typeof renderCanonicalScreen>) {
+    return renderCanonicalScreen(...args);
+}
+function applySessionHome(serverId = account.home.id) {
+    storage.getState().applySessions([createSessionFixture({ id: 's1', serverId, active: true, metadata: {
+        machineId: 'm1', host: 'tester.local', flavor: 'codex', version: '0.0.0', path: '/tmp', homeDir: '/Users/test',
+    }, agentState: {} })]);
+}
+async function restoreHome(serverUrl: string) {
+    await loadSyncSingletonForTests();
+    return restoreServerAccountForTest({ serverUrl, request: async url => {
+        const path = new URL(String(url)).pathname;
+        if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+        if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+        if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+        if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+        if (path === '/v2/sessions/s1/pending') return Response.json({ pending: [] });
+        if (path === '/v1/sessions/s1/messages') return Response.json({ messages: [], hasMore: false, nextBeforeSeq: null });
+        return new Response('{}', { status: 404 });
+    } });
+}
 
 const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
 
 describe('SessionView info navigation', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+        previousStorage = storage.getState();
+        account = await restoreHome('https://server-2');
+        applySessionHome();
+        storage.setState({ isDataReady: true });
         routerPushSpy.mockReset();
         routerNavigateSpy.mockReset();
         routerBackSpy.mockClear();
@@ -438,12 +348,6 @@ describe('SessionView info navigation', () => {
         capturedOpenSessionSpy.mockReset();
         companionHostPropsSpy.mockReset();
         boardControllerState.unavailable = false;
-        openDetailsTabSpy.mockReset();
-        openRightSpy.mockReset();
-        resolveServerIdForSessionIdFromLocalCacheSpy.mockReset();
-        resolveServerIdForSessionIdFromLocalCacheSpy.mockImplementation((sessionId: string) =>
-            sessionId === 's1' ? 'server-2' : null
-        );
         Object.defineProperty(globalThis, 'location', {
             value: { href: 'http://localhost/session/s1', pathname: '/session/s1' },
             writable: true,
@@ -451,11 +355,13 @@ describe('SessionView info navigation', () => {
         });
     });
 
-    afterEach(() => {
-        standardCleanup();
+    afterEach(async () => {
+        await standardCleanup();
+        const { scmStatusSync } = await import('@/scm/scmStatusSync');
+        scmStatusSync.stop('s1', account.home.id);
+        await account.dispose();
+        storage.setState(previousStorage, true);
     });
-
-    beforeEach(activateSessionShellStorageBoundary);
 
     it('opens session info via singular navigate using the explicit route server id for a route-owned session', async () => {
         const { SessionView } = await import('./SessionView');
@@ -482,14 +388,7 @@ describe('SessionView info navigation', () => {
         boardControllerState.unavailable = true;
         const { SessionView } = await import('./SessionView');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <AppPaneProviderWrapper>
-                    <SessionView id="s1" routeServerId="server-2" />
-                </AppPaneProviderWrapper>,
-            );
-        });
+        const screen = await renderScreen(<SessionView id="s1" routeServerId="server-2" />, { wrapper: AppPaneProviderWrapper });
 
         const companionProps = companionHostPropsSpy.mock.calls.at(-1)?.[0] as Readonly<{
             address: { serverId: string; sessionId: string };
@@ -507,26 +406,16 @@ describe('SessionView info navigation', () => {
 
         expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/info?serverId=server-2');
         expect(routerPushSpy).not.toHaveBeenCalledWith('/session/s1/info?serverId=server-cache');
-        act(() => tree?.unmount());
+        await screen.unmount();
     });
 
-    it('keeps every nested current-Session destination on the exact route Home when the bare cache names another Home', async () => {
-        // The bare resolver is authoritative only for a different, genuinely
-        // unqualified target. This view already holds its own Session's exact
-        // Home-qualified identity.
-        resolveServerIdForSessionIdFromLocalCacheSpy.mockImplementation((sessionId: string) =>
-            sessionId === 's1' ? 'server-other-home' : null
-        );
+    it('keeps every nested current-Session destination on the exact route Home when bare-id cache admission is ambiguous', async () => {
+        // Two real cached addresses cannot admit a bare id, while the explicit
+        // route retains its already Home-qualified Session identity.
+        storage.setState({ ordinarySessionListMembershipByServerId: { 'server-other-home': ['s1'] } });
         const { SessionView } = await import('./SessionView');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <AppPaneProviderWrapper>
-                    <SessionView id="s1" routeServerId="server-2" />
-                </AppPaneProviderWrapper>,
-            );
-        });
+        const screen = await renderScreen(<SessionView id="s1" routeServerId="server-2" />, { wrapper: AppPaneProviderWrapper });
 
         const companionProps = companionHostPropsSpy.mock.calls.at(-1)?.[0] as Readonly<{
             summaryDestinations: Readonly<{
@@ -537,16 +426,18 @@ describe('SessionView info navigation', () => {
         }> | undefined;
         expect(companionProps).toBeDefined();
 
-        companionProps?.summaryDestinations.sessionInfo();
-        companionProps?.summaryDestinations.workTab();
-        companionProps?.summaryDestinations.usage();
+        await act(async () => {
+            companionProps?.summaryDestinations.sessionInfo();
+            companionProps?.summaryDestinations.workTab();
+            companionProps?.summaryDestinations.usage();
+        });
 
         expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/info?serverId=server-2');
-        expect(openRightSpy).toHaveBeenCalledWith({ tabId: 'agents' });
+        expect(pane.scopeState?.right).toMatchObject({ isOpen: true, activeTabId: 'agents' });
         expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/usage?serverId=server-2');
         expect(routerPushSpy.mock.calls.map((call) => String(call[0]))
             .filter((href) => href.includes('server-other-home'))).toEqual([]);
-        act(() => tree?.unmount());
+        await screen.unmount();
     });
 
     it('opens the exact Companion widget in the existing Board details owner', async () => {
@@ -559,19 +450,16 @@ describe('SessionView info navigation', () => {
             onRevealBoardItem: (itemId: string) => void;
         }>;
 
-        companionProps.onRevealBoardItem('widget-7');
+        await act(async () => { companionProps.onRevealBoardItem('widget-7'); });
 
-        expect(openDetailsTabSpy).toHaveBeenCalledWith(
-            expect.objectContaining({
-                key: 'board:widget-7',
-                resource: { kind: 'board', focusTarget: { kind: 'item', itemId: 'widget-7' } },
-            }),
-            { intent: 'pinned' },
-        );
+        expect(pane.scopeState?.details.tabs).toEqual(expect.arrayContaining([expect.objectContaining({
+            key: 'board:widget-7', isPinned: true,
+            resource: { kind: 'board', focusTarget: { kind: 'item', itemId: 'widget-7' } },
+        })]));
     });
 
-    it('opens session info via singular navigate using the route server id when cache resolution is unavailable', async () => {
-        resolveServerIdForSessionIdFromLocalCacheSpy.mockReturnValue(null);
+    it('opens session info via singular navigate using the route server id when bare-id cache admission is ambiguous', async () => {
+        storage.setState({ ordinarySessionListMembershipByServerId: { 'server-other-home': ['s1'] } });
         const { SessionView } = await import('./SessionView');
 
         const screen = await renderScreen(
@@ -589,6 +477,10 @@ describe('SessionView info navigation', () => {
     });
 
     it('opens session info via singular navigate using the cached owning server id when the route is missing server scope', async () => {
+        await account.dispose();
+        account = await restoreHome('https://server-cache');
+        applySessionHome();
+        storage.setState({ isDataReady: true });
         const { SessionView } = await import('./SessionView');
 
         const screen = await renderScreen(
@@ -599,7 +491,7 @@ describe('SessionView info navigation', () => {
         screen.root.findByProps({ accessibilityLabel: 'sessionInfo.title' }).props.onPress();
 
         expect(routerNavigateSpy).toHaveBeenCalledTimes(1);
-        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/s1/info?serverId=server-2', expect.objectContaining({
+        expect(routerNavigateSpy).toHaveBeenCalledWith(`/session/s1/info?serverId=${account.home.id}`, expect.objectContaining({
             dangerouslySingular: expect.any(Function),
         }));
     });

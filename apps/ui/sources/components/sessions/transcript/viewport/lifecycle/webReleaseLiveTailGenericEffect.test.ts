@@ -33,6 +33,7 @@ describe('web release live-tail generic effects', () => {
                     viewportState: {
                         isPinned: false,
                         offsetY: 180,
+                        shouldPersistViewport: false,
                         shouldRestoreViewport: true,
                     },
                 },
@@ -52,6 +53,7 @@ describe('web release live-tail generic effects', () => {
                 viewportState: {
                     isPinned: false,
                     offsetY: 180,
+                    shouldPersistViewport: false,
                     shouldRestoreViewport: true,
                 },
                 wantsPinned: false,
@@ -75,6 +77,7 @@ describe('web release live-tail generic effects', () => {
         expect(effect.state.viewportState).toEqual({
             isPinned: false,
             offsetY: -0.5,
+            shouldPersistViewport: false,
             shouldRestoreViewport: true,
         });
         expect(effect.state.lastDistanceFromLiveTailPx).toBe(-0.5);

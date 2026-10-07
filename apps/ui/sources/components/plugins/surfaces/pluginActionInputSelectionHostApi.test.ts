@@ -17,6 +17,26 @@ import {
     createPluginActionInputSelectionHostApiHandler,
 } from './pluginActionInputSelectionHostApi';
 
+// Only the daemon RPC boundary is substituted; schema reading and form admission remain real.
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
+    const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+    return {
+        machineRpcWithServerScope: async (request: Readonly<{
+            method: string;
+            payload: Readonly<{ qualifiedActionId: string; expectedOccurrenceId: string }>;
+        }>) => request.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ
+            && request.payload.qualifiedActionId === 'acme.setup/connection/prepare-v1'
+            && request.payload.expectedOccurrenceId === 'setup-generation-a'
+            ? { ok: true, inputSchema: {
+                type: 'object',
+                properties: { repository: { type: 'string' } },
+                required: ['repository'],
+                additionalProperties: false,
+            } }
+            : { ok: false, code: 'plugin_action_schemas_unavailable' },
+    };
+});
+
 const accountLifetime = Object.freeze({
     scope: Object.freeze({ serverId: 'server-a', accountId: 'account-a' }),
     isCurrent: () => true,
@@ -176,11 +196,19 @@ describe('plugin Action input selection Host API producer', () => {
             action: { pluginId: 'acme.setup', localId: 'connection/prepare-v1' },
             input: { repository: 'happier-dev/happier' },
             selection: {
-                target: targetedContributions().target,
+                target: {
+                    pluginId: targetedContributions().target.pluginId,
+                    sourceCustody: targetedContributions().target.sourceCustody,
+                },
                 point: operation.point,
-                contributor: operation.contributor,
+                contributor: {
+                    pluginId: operation.contributor.pluginId,
+                    contributionId: operation.contributor.contributionId,
+                    sourceCustody: operation.contributor.sourceCustody,
+                },
             },
             connectedAccount: { kind: 'none' },
+            presentation: { connectedAccountLabel: null, machineDisplayName: null },
         });
         expect(present).toHaveBeenCalledOnce();
     });
@@ -327,12 +355,7 @@ describe('plugin Action input selection Host API producer', () => {
             },
         });
 
-        const outcome = await Promise.race([
-            handler(request()),
-            new Promise<Readonly<{ timedOut: true }>>((resolve) => {
-                setTimeout(() => resolve({ timedOut: true }), 50);
-            }),
-        ]);
+        const outcome = await handler(request());
         expect(outcome).toEqual({ code: 'stale_surface', diagnostics: ['host_retired'] });
     });
 

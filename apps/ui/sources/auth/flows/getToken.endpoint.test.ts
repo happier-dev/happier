@@ -1,30 +1,18 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { encodeBase64 } from '@/encryption/base64';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
+import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+import { resetServerProfilesRuntimeForTests } from '@/sync/domains/server/serverProfiles';
+
+installTokenStorageWebPlatformMocks();
 
 const runtimeFetchMock = vi.hoisted(() => vi.fn());
-const tokenStorageMock = vi.hoisted(() => ({
-    getCredentials: vi.fn(async () => null),
-    getCredentialsForServerUrl: vi.fn(async () => null),
-    invalidateCredentialsTokenForServerUrl: vi.fn(async () => false),
-}));
-const activeSnapshotMock = vi.hoisted(() => vi.fn(() => ({
-    serverId: 'focused-home',
-    serverUrl: 'https://focused.example.test',
-    generation: 1,
-    kind: 'custom',
-})));
 
 vi.mock('@/utils/system/runtimeFetch', () => ({
     runtimeFetch: (...args: unknown[]) => runtimeFetchMock(...args),
-}));
-vi.mock('@/sync/domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: activeSnapshotMock,
-    getActiveServerHomeCarrier: () => null,
-}));
-vi.mock('@/auth/storage/tokenStorage', () => ({
-    TokenStorage: tokenStorageMock,
 }));
 // The address-trust decision can ask the person; this lean endpoint suite keeps
 // the modal surface out of its graph.
@@ -53,23 +41,24 @@ function keyChallengeV2Capabilities(serverIdentityId: string) {
     };
 }
 
+let restoreStorage: () => void;
+let restoreLocks: () => void;
+let focusedSnapshot: ReturnType<typeof getActiveServerSnapshot>;
+beforeEach(async () => {
+    restoreStorage = installLocalStorageMock().restore;
+    restoreLocks = installWebLockManagerMock().restore;
+    runtimeFetchMock.mockResolvedValue(jsonResponse({}, 404));
+    resetServerProfilesRuntimeForTests();
+    await upsertAndActivateServer({ serverUrl: 'https://focused.example.test', scope: 'device' });
+    focusedSnapshot = getActiveServerSnapshot();
+    runtimeFetchMock.mockClear();
+});
 afterEach(() => {
     vi.useRealTimers();
     runtimeFetchMock.mockReset();
-    tokenStorageMock.getCredentials.mockReset();
-    tokenStorageMock.getCredentials.mockResolvedValue(null);
-    tokenStorageMock.getCredentialsForServerUrl.mockReset();
-    tokenStorageMock.getCredentialsForServerUrl.mockResolvedValue(null);
-    tokenStorageMock.invalidateCredentialsTokenForServerUrl.mockReset();
-    tokenStorageMock.invalidateCredentialsTokenForServerUrl.mockResolvedValue(false);
-    activeSnapshotMock.mockReset();
-    activeSnapshotMock.mockReturnValue({
-        serverId: 'focused-home',
-        serverUrl: 'https://focused.example.test',
-        generation: 1,
-        kind: 'custom',
-    });
-    vi.resetModules();
+    vi.restoreAllMocks();
+    restoreLocks();
+    restoreStorage();
 });
 
 describe('explicit endpoint authentication foundations', () => {
@@ -82,7 +71,7 @@ describe('explicit endpoint authentication foundations', () => {
             paths.push(new URL(url).pathname);
             if (url.endsWith('/v1/features')) {
                 await new Promise<void>((resolve) => setTimeout(resolve, 1_500));
-                return jsonResponse({ features: {}, capabilities: keyChallengeV2Capabilities('srv_slow_home') });
+                return jsonResponse(createRootLayoutFeaturesResponse({ capabilities: keyChallengeV2Capabilities('srv_slow_home') }));
             }
             if (url.endsWith('/v1/auth/challenge')) return jsonResponse({
                 challengeId: 'slow-challenge', nonce: 'nonce',
@@ -112,7 +101,8 @@ describe('explicit endpoint authentication foundations', () => {
     it('repairs retained 0.2 secret credentials during focused Account currentness without a restore action', async () => {
         const token = 'header.eyJzdWIiOiJhY2NvdW50LTEifQ.signature';
         const credentials = { token, secret: encodeBase64(new Uint8Array(32).fill(7)) };
-        vi.mocked(TokenStorage.getCredentialsForServerUrl).mockResolvedValue(credentials);
+        await TokenStorage.setCredentialsForServerUrl(focusedSnapshot.serverUrl, { serverId: focusedSnapshot.serverId }, credentials);
+        const readCredentials = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl');
         let repaired = false;
         const request = vi.fn(async () => jsonResponse(repaired
             ? { mode: 'e2ee', version: 1, signingKeyFingerprint: 'signing', contentKeyFingerprint: 'content', updatedAt: 1, recipientEnvelopeReadiness: { status: 'available' } }
@@ -120,10 +110,11 @@ describe('explicit endpoint authentication foundations', () => {
         repaired ? 200 : 400));
         runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = String(input);
+            if (url.endsWith('/v1/account/encryption/currentness')) return request();
             if (url.endsWith('/v1/features')) return jsonResponse({ features: {}, capabilities: keyChallengeV2Capabilities('srv_home') });
             if (url.endsWith('/v1/auth/challenge')) return jsonResponse({
                 challengeId: 'challenge-retained', nonce: 'nonce-retained',
-                issuedAt: '2026-09-10T10:00:00.000Z', expiresAt: '2026-09-10T18:00:00.000Z',
+                issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString(),
                 audience: { origin: 'https://focused.example.test', serverIdentityId: 'srv_home' },
             });
             if (url.endsWith('/v1/auth')) {
@@ -138,12 +129,16 @@ describe('explicit endpoint authentication foundations', () => {
             throw new Error(`Unexpected test request: ${url}`);
         });
         const { fetchAccountEncryptionCurrentness } = await import('@/sync/api/account/apiAccountEncryptionMode');
-        const result = await fetchAccountEncryptionCurrentness(credentials, { request }).catch((error: unknown) => error);
-        expect(TokenStorage.getCredentialsForServerUrl).toHaveBeenCalledWith('https://focused.example.test', { serverId: 'focused-home' });
+        // Only the focused request owner can authorize retained-credential recovery;
+        // an explicitly captured transport must not borrow active Home authority.
+        const result = await fetchAccountEncryptionCurrentness(credentials).catch((error: unknown) => error);
+        expect(readCredentials).toHaveBeenCalledWith('https://focused.example.test', { serverId: focusedSnapshot.serverId });
         expect(runtimeFetchMock.mock.calls.map((call) => String(call[0]))).toEqual([
+            'https://focused.example.test/v1/account/encryption/currentness',
             'https://focused.example.test/v1/features',
             'https://focused.example.test/v1/auth/challenge',
             'https://focused.example.test/v1/auth',
+            'https://focused.example.test/v1/account/encryption/currentness',
         ]);
         expect(result).toMatchObject({ mode: 'e2ee' });
         expect(request).toHaveBeenCalledTimes(2);
@@ -158,6 +153,23 @@ describe('explicit endpoint authentication foundations', () => {
         await expect(fetchAccountEncryptionCurrentness({ token: 'bearer-only' }, { request })).rejects.toMatchObject({
             recipientEnvelopeReadiness: { status: 'unavailable', reason: 'encryption_setup_required' },
         });
+        expect(runtimeFetchMock).not.toHaveBeenCalled();
+    });
+
+    it('does not borrow focused Home recovery authority for an explicitly captured currentness request', async () => {
+        const credentials = { token: 'header.eyJzdWIiOiJhY2NvdW50LTEifQ.signature', secret: encodeBase64(new Uint8Array(32).fill(7)) };
+        await TokenStorage.setCredentialsForServerUrl(focusedSnapshot.serverUrl, { serverId: focusedSnapshot.serverId }, credentials);
+        const readCredentials = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl');
+        const request = vi.fn(async () => jsonResponse({
+            error: 'migration-required',
+            recipientEnvelopeReadiness: { status: 'unavailable', reason: 'encryption_setup_required' },
+        }, 400));
+        const { fetchAccountEncryptionCurrentness } = await import('@/sync/api/account/apiAccountEncryptionMode');
+        await expect(fetchAccountEncryptionCurrentness(credentials, { request })).rejects.toMatchObject({
+            recipientEnvelopeReadiness: { status: 'unavailable', reason: 'encryption_setup_required' },
+        });
+        expect(request).toHaveBeenCalledOnce();
+        expect(readCredentials).not.toHaveBeenCalled();
         expect(runtimeFetchMock).not.toHaveBeenCalled();
     });
 
@@ -254,12 +266,8 @@ describe('explicit endpoint authentication foundations', () => {
             serverId: 'srv_home_b',
             credentials: { token: 'home-b-token' },
         });
-        activeSnapshotMock.mockReturnValue({
-            serverId: 'focused-home-after-switch',
-            serverUrl: 'https://focused-after-switch.example.test',
-            generation: 2,
-            kind: 'custom',
-        });
+        await upsertAndActivateServer({ serverUrl: 'https://focused-after-switch.example.test', scope: 'device' });
+        const switchedSnapshot = getActiveServerSnapshot();
 
         await expect(request('/v1/account/profile', { method: 'GET' }, { retry: 'none' })).resolves.toMatchObject({
             ok: true,
@@ -270,7 +278,7 @@ describe('explicit endpoint authentication foundations', () => {
         );
         const init = runtimeFetchMock.mock.calls[0]?.[1] as RequestInit;
         expect(new Headers(init.headers).get('Authorization')).toBe('Bearer home-b-token');
-        expect(activeSnapshotMock).not.toHaveBeenCalled();
+        expect(getActiveServerSnapshot()).toEqual(switchedSnapshot);
     });
 
     it('probes a supplied endpoint and returns observed features without adopting a profile or changing focus', async () => {
@@ -295,7 +303,7 @@ describe('explicit endpoint authentication foundations', () => {
         expect(String(runtimeFetchMock.mock.calls[0]?.[0])).toBe(
             'https://home-b.example.test/v1/features',
         );
-        expect(activeSnapshotMock).not.toHaveBeenCalled();
+        expect(getActiveServerSnapshot()).toEqual(focusedSnapshot);
     });
 
     it('authenticates at an explicit endpoint while signing the stable canonical audience', async () => {
@@ -352,7 +360,7 @@ describe('explicit endpoint authentication foundations', () => {
             contentPublicKey: expect.any(String),
             contentPublicKeySig: expect.any(String),
         });
-        expect(activeSnapshotMock).not.toHaveBeenCalled();
+        expect(getActiveServerSnapshot()).toEqual(focusedSnapshot);
     });
 
     it('offers a signed content binding on ordinary v2 secret-key sign-in even without content-key sharing', async () => {
@@ -435,7 +443,7 @@ describe('explicit endpoint authentication foundations', () => {
             'https://accounts.example.test/v1/auth/account-directory/challenge',
             'https://accounts.example.test/v1/auth/account-directory',
         ]);
-        expect(activeSnapshotMock).not.toHaveBeenCalled();
+        expect(getActiveServerSnapshot()).toEqual(focusedSnapshot);
     });
 
     it('reuses an already verified Account Service discovery snapshot instead of probing twice', async () => {
@@ -544,7 +552,7 @@ describe('explicit endpoint authentication foundations', () => {
         expect(runtimeFetchMock.mock.calls.map((call) => String(call[0]))).not.toContain(
             'https://home-b.example.test/v1/auth',
         );
-        expect(activeSnapshotMock).not.toHaveBeenCalled();
+        expect(getActiveServerSnapshot()).toEqual(focusedSnapshot);
     });
 
     it('rejects an endpoint whose observed identity does not match the expected Home before authentication', async () => {
@@ -578,6 +586,6 @@ describe('explicit endpoint authentication foundations', () => {
         expect(requestedUrls).toContain('https://home-b.example.test/v1/features');
         expect(requestedUrls).not.toContain('https://home-b.example.test/v1/auth/challenge');
         expect(requestedUrls).not.toContain('https://home-b.example.test/v1/auth');
-        expect(activeSnapshotMock).not.toHaveBeenCalled();
+        expect(getActiveServerSnapshot()).toEqual(focusedSnapshot);
     });
 });

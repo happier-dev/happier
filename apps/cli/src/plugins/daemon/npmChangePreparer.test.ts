@@ -1856,7 +1856,7 @@ describe('createDaemonNpmPluginChangePreparer', () => {
     await service.decidePluginChange({ pendingChangeId: publisherResult.pendingChangeId, decision: 'cancel' });
   });
 
-  it('requires review when an automatic update expands executable realms or declared integrations', async () => {
+  it('applies trusted automatic code updates adding executable realms or integrations without expanding grants', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-npm-integration-update-home-'));
     roots.push(happyHomeDir);
     const initialFixture = await createNpmPackageFixture({
@@ -1903,16 +1903,12 @@ describe('createDaemonNpmPluginChangePreparer', () => {
     activeClient = realmFixture.client;
     activeMarketplaceFixture = realmFixture;
     const realmResult = await requestInstalledUpdate(service);
-    expect(realmResult).toMatchObject({ kind: 'reviewRequired' });
-    if (realmResult.kind !== 'reviewRequired') throw new Error('Expected executable-realm expansion review');
-    await service.decidePluginChange({ pendingChangeId: realmResult.pendingChangeId, decision: 'cancel' });
+    expect(realmResult).toMatchObject({ kind: 'committed' });
 
     activeClient = integrationFixture.client;
     activeMarketplaceFixture = integrationFixture;
     const integrationResult = await requestInstalledUpdate(service);
-    expect(integrationResult).toMatchObject({ kind: 'reviewRequired' });
-    if (integrationResult.kind !== 'reviewRequired') throw new Error('Expected declared-integration expansion review');
-    await service.decidePluginChange({ pendingChangeId: integrationResult.pendingChangeId, decision: 'cancel' });
+    expect(integrationResult).toMatchObject({ kind: 'committed' });
   });
 
   it('keeps the prior generation active when an automatic update fails runtime preparation', async () => {

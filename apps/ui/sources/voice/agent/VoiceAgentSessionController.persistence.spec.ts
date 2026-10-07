@@ -515,49 +515,6 @@ describe('VoiceExecutionTransport (persistence)', () => {
     });
   });
 
-  it('does not migrate or stop a legacy global daemon run during startup when persisted metadata predates the hidden transcript contract', async () => {
-    state.settings.voice.providers.local_conversation.config.agent.transcript = { persistenceMode: 'ephemeral', epoch: 1 };
-    state.sessions.sys_voice.metadata.voiceAgentRunV1 = {
-      v: 1,
-      runId: 'run_legacy',
-      backendId: 'claude',
-      resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_legacy' },
-      updatedAtMs: 1,
-    };
-    sessionExecutionRunList.mockResolvedValueOnce({
-      runs: [
-        buildExecutionRunPublicState({
-          runId: 'run_legacy',
-          startedAtMs: 1,
-        }),
-      ],
-    });
-    sessionExecutionRunGet.mockResolvedValueOnce({
-      run: buildExecutionRunPublicState({
-        runId: 'run_legacy',
-        transcript: { persistenceMode: 'ephemeral', epoch: 1 },
-        resumeHandle: {
-          kind: 'provider_session.v1',
-          backendTarget: { kind: 'backend', backendId: 'claude' },
-          providerSessionId: 'vs_legacy',
-        },
-      }),
-    });
-
-    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceExecutionTransport } = await loadVoiceAgentPersistenceHarness();
-    const controller = createVoiceExecutionTransport();
-
-    await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
-
-    expect(sessionExecutionRunStop).not.toHaveBeenCalled();
-    expect(start).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId: 'sys_voice',
-        existingRunId: 'run_legacy',
-      }),
-    );
-  });
-
   it('persists session-scoped daemon run metadata so the run can be reattached after controller recreation', async () => {
     const { createVoiceExecutionTransport } = await loadVoiceAgentPersistenceHarness();
 
@@ -1761,4 +1718,58 @@ describe('VoiceExecutionTransport (persistence)', () => {
     expect(useVoiceTargetStore.getState().autoTargetMachineByScope[accountSettingsScopeKeySuffix(state.settingsScope)]).toBe('m_new');
   });
 
+});
+
+describe('retained global Voice Run authority', () => {
+  it('reattaches the retained global Run without stopping it and reads its policy through real RPC', async () => {
+    // This changed authority case uses real owners; untouched family mocks remain P2.
+    const internalModules = [
+      '@/voice/agent/daemonVoiceAgentClient', '@/voice/context/buildVoiceInitialContext',
+      '@/voice/agent/resolveDaemonVoiceAgentModels', '@/voice/agent/ensureVoiceAgentInstallablesBackground',
+      '@/sync/ops/sessionExecutionRuns', '@/sync/domains/features/featureDecisionInputs',
+      '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', '@/modal',
+    ] as const;
+    const incumbentMocks = await Promise.all(internalModules.map(async (id) => [id, await vi.importMock(id)] as const));
+    for (const id of internalModules) vi.doUnmock(id);
+    vi.resetModules();
+    let harness: Awaited<ReturnType<typeof import('@/dev/testkit/harness/standaloneVoicePolicyHarness')['createStandaloneVoicePolicyHarness']>> | undefined;
+    try {
+      const { ExecutionRunPublicStateSchema, buildVoiceAgentRunMetadataV1, parseVoiceAgentRunMetadataV1 } = await import('@happier-dev/protocol');
+      const { SESSION_RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+      const { VOICE_AGENT_GLOBAL_SESSION_ID } = await import('@/voice/agent/voiceAgentGlobalSessionId');
+      const { createStandaloneVoicePolicyHarness } = await import('@/dev/testkit/harness/standaloneVoicePolicyHarness');
+      const retainedPolicy = { assistantLanguage: 'de-DE', welcome: { enabled: true, mode: 'on_first_turn' as const } };
+      const retainedRun = ExecutionRunPublicStateSchema.parse(buildExecutionRunPublicState({ runId: 'run_legacy',
+        transcript: { persistenceMode: 'persistent', epoch: 1 }, voicePolicy: retainedPolicy,
+        resumeHandle: { kind: 'provider_session.v1', backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' }, providerSessionId: 'vs_legacy' },
+      }));
+      const metadata = parseVoiceAgentRunMetadataV1(buildVoiceAgentRunMetadataV1({ runId: 'run_legacy',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, resumeHandle: retainedRun.resumeHandle ?? null, updatedAtMs: 1 }));
+      if (!metadata) throw new Error('Canonical retained Run metadata was rejected');
+      const dispatch = vi.fn(async (method: string, _input: unknown): Promise<unknown> => {
+        if (method === SESSION_RPC_METHODS.EXECUTION_RUN_LIST) return { runs: [retainedRun] };
+        if (method === SESSION_RPC_METHODS.EXECUTION_RUN_GET) return { run: retainedRun };
+        if (method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START) return { ok: true, runId: retainedRun.runId, created: false };
+        throw new Error(`Unexpected retained Run RPC: ${method}`);
+      });
+      harness = await createStandaloneVoicePolicyHarness({ mode: 'off', dispatch, initializeSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+        existingSession: { id: 'sys_voice', active: true, metadata: { path: '/voice', host: 'voice.test', flavor: 'claude',
+          systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true }, voiceAgentRunV1: metadata,
+          agentRuntimeCapabilitiesV1: { localControl: { supported: true } },
+          agentRuntimeFacetsV1: { v: 1, transcriptSource: { supported: true, followLeaseSupported: true } },
+        } },
+      });
+      expect(harness.handle.voiceAgentId).toBe('run_legacy');
+      expect(harness.handle.voicePolicy).toEqual(retainedPolicy);
+      const admitted = dispatch.mock.calls.findIndex(([method]) => method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START);
+      expect(dispatch.mock.calls[admitted]?.[1]).toMatchObject({ runId: 'run_legacy' });
+      expect(dispatch.mock.calls.slice(0, admitted).some(([method]) => method === SESSION_RPC_METHODS.EXECUTION_RUN_GET)).toBe(true);
+      expect(dispatch.mock.calls.slice(admitted + 1).some(([method]) => method === SESSION_RPC_METHODS.EXECUTION_RUN_GET)).toBe(true);
+      expect(dispatch.mock.calls.some(([method]) => method === SESSION_RPC_METHODS.EXECUTION_RUN_STOP)).toBe(false);
+    } finally {
+      await harness?.dispose();
+      for (const [id, module] of incumbentMocks) vi.doMock(id, () => module);
+      vi.resetModules();
+    }
+  });
 });

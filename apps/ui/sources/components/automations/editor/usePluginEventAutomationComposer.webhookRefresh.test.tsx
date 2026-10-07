@@ -1,26 +1,28 @@
 import { act } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
     DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema,
     AutomationTriggerIdSchema,
     PluginEventAutomationSetupResultV1Schema,
+    PluginAccountAvailabilityIntentReadResponseV1Schema,
     PluginMachineMaterializationV1Schema,
     PluginWebhookEndpointIdV1Schema,
+    getActionSpec,
     type DaemonContributionRegistryProjectionAutomationEligibleEventV1,
 } from '@happier-dev/protocol';
 
 import type { DaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
-import {
-    createDeferred,
-    flushHookEffects,
-    renderHook,
-    standardCleanup,
-} from '@/dev/testkit';
-import type { PluginWebhookEndpointUiActionExecutor } from '@/sync/api/plugins/webhooks/endpointActions';
-import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 
 import type { PluginEventAutomationEditSeed } from './pluginEventAutomationEditSeed';
-import { usePluginEventAutomationComposer } from './usePluginEventAutomationComposer';
 
 const PLUGIN_ID = 'acme.github';
 const EVENT_LOCAL_ID = 'events/repository';
@@ -28,59 +30,23 @@ const SETUP_ACTION_LOCAL_ID = 'setup/repository-source';
 const WEBHOOK_LOCAL_ID = 'webhooks/repository';
 const WEBHOOK_ENDPOINT_ID = 'wh_ep_AAAAAAAAAAAAAAAAAAAAAQ';
 const SOURCE_INSTANCE_ID = 'repository:42';
-const SERVER_ID = 'server-a';
+let serverId: string;
+const SERVER_URL = 'https://webhook-composer.test';
 const SERVER_IDENTITY_ID = 'srv_account_a';
 const WATCHER_MACHINE_ID = 'watcher-machine';
 const MATERIALIZATION_ID = 'github-materialization-a';
 
-type AccountLifetimeState = {
-    value: ActiveServerAccountScopeLifetime | null;
-};
+const harness = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(harness);
+installDisconnectedServerSocketBoundary();
+const { usePluginEventAutomationComposer } = await import('./usePluginEventAutomationComposer');
+const endpointReadPath = getActionSpec('plugin.webhook.endpoint.read').serverTransport!.path;
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
+let restoreActionLoader: (() => void) | null = null;
 
-const activeAccountLifetime = vi.hoisted((): AccountLifetimeState => ({ value: null }));
-const endpointActionExecutor = vi.hoisted(() => vi.fn<PluginWebhookEndpointUiActionExecutor>());
-
-vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({
-    createFrontDoorUiActionExecutor: () => endpointActionExecutor,
-}));
-
-vi.mock('@/agents/backendCatalog/loadDaemonMergedProjectionInputs', () => ({
-    loadDaemonMergedProjectionInputs: vi.fn(async () => null),
-}));
-
-vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
-    captureActiveServerAccountScopeLifetime: () => activeAccountLifetime.value,
-}));
-
-vi.mock('@/sync/domains/plugins/availability/projection', () => ({
-    useActivePluginAccountAvailabilityReader: () => stableAvailabilityReader,
-    useActivePluginAccountAvailabilityReleaseClassifier: () => stableReleaseClassifier,
-}));
-
-vi.mock('@/sync/domains/machines/useMachineInventorySnapshots', () => ({
-    useAllProfileMachineInventorySnapshots: () => stableMachineSnapshots,
-}));
-
-vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
-    useHydrateSessionForRoute: () => stableSessionHydration,
-}));
-
-vi.mock('@/sync/domains/state/storage', () => ({
-    storage: {
-        getState: () => ({ sessions: {}, settings: {} }),
-    },
-    useSession: () => null,
-    useSessionListIndexByServerId: () => stableSessionListIndexByServerId,
-    useSessionListRowRenderablesForItems: () => stableSessionListRowRenderablesByKey,
-    useSessions: () => stableSessions,
-    useSettings: () => stableSettings,
-}));
-
-vi.mock('@/sync/sync', () => ({
-    sync: {
-        getSessionEncryptionKeyBase64ForResume: () => null,
-    },
-}));
+function endpointReads() {
+    return harness.requestsFor(endpointReadPath);
+}
 
 function watcherMaterialization() {
     return PluginMachineMaterializationV1Schema.parse({
@@ -91,6 +57,7 @@ function watcherMaterialization() {
         version: '1.0.0',
         sourceClass: 'registryPackage',
         portableRelease: true,
+        archiveDigestSha256: `sha256:${'a'.repeat(64)}`,
         uiArtifacts: [],
         enabled: true,
         trustState: 'trusted',
@@ -99,55 +66,25 @@ function watcherMaterialization() {
 }
 
 const stableMaterialization = watcherMaterialization();
-const stableMaterializationAdmission = Object.freeze({
-    kind: 'available' as const,
+const availabilityResponse = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({
     availabilityCursor: 1,
-    materializations: Object.freeze([stableMaterialization]),
-    snapshots: Object.freeze([]),
+    hostingCapability: { enabled: false },
+    intent: {
+        pluginId: PLUGIN_ID, desiredVersion: '1.0.0', enabled: true,
+        offlineUiHosting: 'disabled', writableCollections: [], revision: 'intent-1',
+    },
+    release: {
+        ref: { pluginId: PLUGIN_ID, version: '1.0.0' },
+        archiveDigestSha256: stableMaterialization.archiveDigestSha256,
+        normalizedManifest: {
+            schemaVersion: 2, id: PLUGIN_ID, version: '1.0.0', displayName: 'GitHub',
+            engines: { happier: '^1.0.0' }, runtime: { apiVersion: 1 }, contributes: {},
+        },
+        collectionContracts: [], uiSlots: [],
+        packageAssetArchive: { archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources: [] },
+    },
+    packageAssets: [], uiArtifacts: [],
 });
-const stableAvailabilityReader = Object.freeze({
-    readMaterializations: () => stableMaterializationAdmission,
-});
-const stableReleaseClassifier = (materialization: typeof stableMaterialization) => Object.freeze({
-    serverIdentityId: materialization.serverIdentityId,
-    materializationRef: Object.freeze({
-        machineId: materialization.machineId,
-        materializationId: materialization.materializationId,
-        pluginId: materialization.pluginId,
-    }),
-    releaseContent: 'matched' as const,
-    validation: Object.freeze({ kind: 'admitted' as const }),
-});
-const stableMachineSnapshots = Object.freeze([
-    Object.freeze({
-        kind: 'resolved' as const,
-        profileId: SERVER_ID,
-        serverIdentityId: SERVER_IDENTITY_ID,
-        serverName: 'Server A',
-        observation: 'live' as const,
-        machines: Object.freeze([Object.freeze({
-            id: WATCHER_MACHINE_ID,
-            updatedAt: 1,
-            active: true,
-            activeAt: 0,
-            metadataVersion: 1,
-            metadata: null,
-        })]),
-    }),
-]);
-const stableSessionHydration = Object.freeze({ kind: 'available' as const, sessionId: '' });
-const stableSessionListIndexByServerId = Object.freeze({});
-const stableSessionListRowRenderablesByKey = Object.freeze({});
-const stableSessions = Object.freeze([]);
-const stableSettings = Object.freeze({});
-
-function accountLifetime(): ActiveServerAccountScopeLifetime {
-    return Object.freeze({
-        scope: Object.freeze({ serverId: SERVER_ID, accountId: 'account-a' }),
-        isCurrent: () => true,
-        onRetire: () => Object.freeze({ dispose() {} }),
-    });
-}
 
 function eligibleEvent(): DaemonContributionRegistryProjectionAutomationEligibleEventV1 {
     return DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema.parse({
@@ -198,7 +135,7 @@ function eligibleEventWithSetupSurface(
     rendererLocalId: string,
 ): DaemonContributionRegistryProjectionAutomationEligibleEventV1 {
     const event = eligibleEvent();
-    return {
+    return DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema.parse({
         ...event,
         event: {
             ...event.event,
@@ -233,11 +170,12 @@ function eligibleEventWithSetupSurface(
                 target: {
                     pluginId: PLUGIN_ID,
                     occurrenceId: event.event.occurrenceId,
+                    sourceCustody: event.event.sourceCustody,
                 },
                 points: [],
             },
         },
-    } as unknown as DaemonContributionRegistryProjectionAutomationEligibleEventV1;
+    });
 }
 
 function projectionInputs(
@@ -300,14 +238,14 @@ function endpointReadResult(readiness: 'providerConfirmationRequired' | 'ready' 
 }
 
 async function configureSeededComposer() {
-    endpointActionExecutor.mockResolvedValueOnce(endpointReadResult());
+    harness.answer(serverId, endpointReadPath, { body: endpointReadResult() });
     const event = eligibleEvent();
     const inputs = projectionInputs(event);
     const seed = editSeed(event);
     const hook = await renderHook(
         (machineId: string) => usePluginEventAutomationComposer({
             machineId,
-            serverId: SERVER_ID,
+            serverId,
             projectionPhase: 'ready',
             projectionInputs: inputs,
             initialEditSeed: seed,
@@ -315,16 +253,15 @@ async function configureSeededComposer() {
         { initialProps: 'composer-machine-a' },
     );
 
-    await flushHookEffects({ cycles: 8, turns: 3 });
-    expect(endpointActionExecutor).toHaveBeenCalledTimes(1);
-    expect(hook.getCurrent()).toMatchObject({
+    await waitForHomeGovernance(() => expect(hook.getCurrent()).toMatchObject({
         sourceStatus: 'configured',
         sourceFailure: null,
         webhookEndpoint: {
             webhookEndpointId: WEBHOOK_ENDPOINT_ID,
             readiness: 'providerConfirmationRequired',
         },
-    });
+    }));
+    expect(endpointReads()).toHaveLength(1);
     expect(hook.getCurrent().refreshWebhookEndpoint).not.toBeNull();
     return hook;
 }
@@ -337,20 +274,46 @@ async function refresh(hook: Awaited<ReturnType<typeof configureSeededComposer>>
 }
 
 describe('usePluginEventAutomationComposer webhook refresh', () => {
-    beforeEach(() => {
-        activeAccountLifetime.value = accountLifetime();
-        endpointActionExecutor.mockReset();
+    beforeEach(async () => {
+        await harness.reset();
+        await loadSyncSingletonForTests();
+        restoreActionLoader = await installRealActionExecutorModuleLoader();
+        serverId = await harness.addHome({
+            name: 'Webhook composer', serverUrl: SERVER_URL,
+            serverIdentityId: SERVER_IDENTITY_ID, accountId: 'account-a',
+        });
+        connection = await restoreServerAccountForTest({ serverUrl: SERVER_URL, accountId: 'account-a' });
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { profileDefaults } = await import('@/sync/domains/profiles/profile');
+        const { replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+        const scope = { serverId: SERVER_IDENTITY_ID, accountId: 'account-a' };
+        storage.setState({ profileScope: scope, settingsScope: scope, profile: { ...profileDefaults, id: 'account-a' }, isDataReady: true });
+        storage.getState().applyMachines([createMachineFixture({ id: WATCHER_MACHINE_ID })], true, { sourceServerId: serverId });
+        replacePluginAccountAvailabilityProjection({ scope, snapshot: {
+            availabilityCursor: 1,
+            intentReads: [{ pluginId: PLUGIN_ID, response: availabilityResponse }],
+            materializations: [stableMaterialization],
+            snapshots: [{ serverIdentityId: SERVER_IDENTITY_ID, machineId: WATCHER_MACHINE_ID, materializations: [stableMaterialization] }],
+        } });
     });
 
-    afterEach(() => {
+    afterEach(async () => {
         standardCleanup();
-        activeAccountLifetime.value = null;
+        await connection?.dispose();
+        connection = null;
+        restoreActionLoader?.();
+        restoreActionLoader = null;
+        const { clearPluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+        clearPluginAccountAvailabilityProjection();
+        await harness.reset();
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.setState(storage.getInitialState(), true);
     });
 
     it('releases an unresolved refresh latch when the setup scope rotates', async () => {
-        const staleRead = createDeferred<unknown>();
+        const staleRead = createDeferred<void>();
         const hook = await configureSeededComposer();
-        endpointActionExecutor.mockImplementationOnce(async () => await staleRead.promise);
+        harness.answer(serverId, endpointReadPath, { body: endpointReadResult(), respondAfter: staleRead.promise });
 
         await refresh(hook);
         expect(hook.getCurrent().webhookEndpointRefreshing).toBe(true);
@@ -358,10 +321,11 @@ describe('usePluginEventAutomationComposer webhook refresh', () => {
         await hook.rerender('composer-machine-b');
 
         expect(hook.getCurrent().webhookEndpointRefreshing).toBe(false);
+        staleRead.resolve();
     });
 
     it('retires and replaces a selected custom setup presentation when only its renderer projection changes', async () => {
-        endpointActionExecutor.mockResolvedValue(endpointReadResult());
+        harness.answer(serverId, endpointReadPath, { body: endpointReadResult() });
         const original = eligibleEventWithSetupSurface(17, 'repository-picker-native');
         const replacement = eligibleEventWithSetupSurface(18, 'repository-picker-hosted');
         const seed = editSeed(original);
@@ -369,7 +333,7 @@ describe('usePluginEventAutomationComposer webhook refresh', () => {
             (event: DaemonContributionRegistryProjectionAutomationEligibleEventV1) => (
                 usePluginEventAutomationComposer({
                     machineId: 'composer-machine-a',
-                    serverId: SERVER_ID,
+                    serverId,
                     projectionPhase: 'ready',
                     projectionInputs: projectionInputs(event),
                     initialEditSeed: seed,
@@ -377,9 +341,8 @@ describe('usePluginEventAutomationComposer webhook refresh', () => {
             ),
             { initialProps: original },
         );
-        await flushHookEffects({ cycles: 8, turns: 3 });
-        expect(hook.getCurrent().selectedEvent?.setupSurface?.selectedRenderer.identity.localId)
-            .toBe('repository-picker-native');
+        await waitForHomeGovernance(() => expect(hook.getCurrent().selectedEvent?.setupSurface?.selectedRenderer.identity.localId)
+            .toBe('repository-picker-native'));
 
         await hook.rerender(replacement);
         await flushHookEffects({ cycles: 4, turns: 3 });
@@ -393,28 +356,29 @@ describe('usePluginEventAutomationComposer webhook refresh', () => {
     });
 
     it('does not let stale A clear B or admit a duplicate current reread', async () => {
-        const staleRead = createDeferred<unknown>();
-        const currentRead = createDeferred<unknown>();
+        const staleRead = createDeferred<void>();
+        const currentRead = createDeferred<void>();
         const hook = await configureSeededComposer();
-        endpointActionExecutor
-            .mockImplementationOnce(async () => await staleRead.promise)
-            .mockImplementationOnce(async () => await currentRead.promise);
+        harness.answer(serverId, endpointReadPath, { body: endpointReadResult(), respondAfter: staleRead.promise });
 
         await refresh(hook);
+        await waitForHomeGovernance(() => expect(endpointReads()).toHaveLength(2));
         await hook.rerender('composer-machine-b');
+        harness.answer(serverId, endpointReadPath, { body: endpointReadResult('ready'), respondAfter: currentRead.promise });
         await refresh(hook);
-        expect(endpointActionExecutor).toHaveBeenCalledTimes(3);
+        await waitForHomeGovernance(() => expect(endpointReads()).toHaveLength(3));
         expect(hook.getCurrent().webhookEndpointRefreshing).toBe(true);
 
-        staleRead.resolve(endpointReadResult());
+        staleRead.resolve();
         await flushHookEffects({ cycles: 4, turns: 3 });
 
         expect(hook.getCurrent().webhookEndpointRefreshing).toBe(true);
         await refresh(hook);
-        expect(endpointActionExecutor).toHaveBeenCalledTimes(3);
-
-        currentRead.resolve(endpointReadResult('ready'));
         await flushHookEffects({ cycles: 4, turns: 3 });
+        expect(endpointReads()).toHaveLength(3);
+
+        currentRead.resolve();
+        await waitForHomeGovernance(() => expect(hook.getCurrent().webhookEndpoint?.readiness).toBe('ready'));
         expect(hook.getCurrent().webhookEndpointRefreshing).toBe(false);
         expect(hook.getCurrent().webhookEndpoint?.readiness).toBe('ready');
     });

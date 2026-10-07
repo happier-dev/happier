@@ -1,50 +1,43 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { createMessagesDomain } from './messages';
+import { createSessionFixture } from '@/dev/testkit';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { storage } from '@/sync/domains/state/storage';
+import { activatePendingQueueScope } from '../../engine/pending/pendingQueueV2.testHelpers';
 
-function createHarness(initial: any) {
-    let state: any = {
-        sessions: {},
-        sessionPending: {},
-        sessionMessages: {},
-        ...initial,
-    };
+beforeEach(async () => {
+    await loadSyncSingletonForTests();
+    storage.setState(storage.getInitialState(), true);
+    await activatePendingQueueScope({ serverId: 'sidechain-home', accountId: 'account_a' });
+});
 
-    const get = () => state;
-    const set = (updater: any) => {
-        const next = typeof updater === 'function' ? updater(state) : updater;
-        state = { ...state, ...next };
-    };
+afterEach(() => {
+    storage.setState(storage.getInitialState(), true);
+});
 
-    const domain = createMessagesDomain({ get, set } as any);
-    return { get, domain };
-}
-
-function readRootToolNames(state: any, sessionId: string): string[] {
+function readRootToolNames(state: ReturnType<typeof storage.getState>, sessionId: string): string[] {
     const sessionMessages = state.sessionMessages[sessionId];
     const ids = sessionMessages?.messageIdsOldestFirst ?? [];
     return ids
         .map((id: string) => sessionMessages?.messagesById[id])
-        .filter((m: any) => m?.kind === 'tool-call')
-        .map((m: any) => m.tool?.name);
+        .filter((m) => m?.kind === 'tool-call')
+        .flatMap((m) => m?.kind === 'tool-call' ? [m.tool.name] : []);
 }
 
 describe('messages domain: sidechains (orphan fallback)', () => {
     it('keeps orphan sidechain children out of the root transcript until the owning tool-call arrives', () => {
-        const { get, domain } = createHarness({
-            sessions: {
-                s1: {
-                    id: 's1',
-                    createdAt: 1,
-                    active: false,
-                    activeAt: 1,
-                    metadataVersion: 1,
-                    metadata: null,
-                    permissionMode: null,
-                    permissionModeUpdatedAt: 0,
-                },
-            },
-        });
+        storage.getState().applySessions([createSessionFixture({
+            id: 's1',
+            createdAt: 1,
+            active: false,
+            activeAt: 1,
+            metadataVersion: 1,
+            metadata: null,
+            permissionMode: null,
+            permissionModeUpdatedAt: 0,
+        })]);
+        const get = storage.getState;
+        const domain = storage.getState();
 
         domain.applyMessages('s1', [
             {

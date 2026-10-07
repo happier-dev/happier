@@ -1,15 +1,11 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 
 import { TranscriptMessageSelectionProvider, useTranscriptSelectionActions, useTranscriptSelectionRow, useTranscriptSelectionState } from './TranscriptMessageSelectionContext';
 import { SelectMessageButton } from './SelectMessageButton';
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
 
 function Probe() {
     const state = useTranscriptSelectionState();
@@ -31,11 +27,11 @@ function ProbeButton(props: { testID: string; onPress: () => void }) {
 }
 
 function findPressableByTestId(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string) {
-    return screen.find((node) => node.props?.testID === testID && typeof node.props?.onPress === 'function');
+    return screen.find((node) => typeof node.type === 'string' && node.props?.testID === testID && typeof node.props?.onPress === 'function');
 }
 
 function findAllPressablesByTestId(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string) {
-    return screen.findAll((node) => node.props?.testID === testID && typeof node.props?.onPress === 'function');
+    return screen.findAllHostsByTestId(testID).filter((node) => typeof node.props.onPress === 'function');
 }
 
 function flattenStyle(style: unknown): Record<string, unknown> {
@@ -108,7 +104,7 @@ describe('SelectMessageButton', () => {
         expect(findPressableByTestId(screen, 'select-m1').props.accessibilityRole).toBe('checkbox');
         expect(findPressableByTestId(screen, 'select-m1').props.accessibilityState).toEqual({ checked: true });
         expect(findPressableByTestId(screen, 'select-m1').props.accessibilityLabel).toBe('assistant: hello from assistant');
-        expect(screen.findByType('Icon').props.name).toBe('checkbox-outline');
+        expect(screen.findByType('Icon').props.name).toBe('check-square');
     });
 
     it('toggles the message when pressed during active selection mode', async () => {
@@ -123,7 +119,7 @@ describe('SelectMessageButton', () => {
         expect(uncheckedSelectionToggle.props.accessibilityState).toEqual({ checked: false });
         expect(uncheckedSelectionToggle.props.accessibilityLabel).toBe('assistant: hello from assistant');
         expect(resolvePressableStyle(uncheckedSelectionToggle).backgroundColor).toEqual(expect.any(String));
-        expect(screen.findByType('Icon').props.name).toBe('square-outline');
+        expect(screen.findByType('Icon').props.name).toBe('square');
 
         await act(async () => {
             findPressableByTestId(screen, 'select-m1').props.onPress();

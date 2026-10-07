@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -6,34 +6,22 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createManagedServiceProcessSupervisorHost } from './managedProcessSupervisor';
 import type { ManagedServiceProcessSpec } from './managedProcessSupervisor';
-import type { ManagedServiceProcessDurabilityOwner } from './managedServiceDurability';
+import { createManagedServiceDurabilityOwner } from './managedServiceDurability';
+import { readManagedServiceEndpointProjectionCandidates } from './managedServiceEndpointProjection';
 import { createStablePluginExecService } from './exec';
-import type { terminateProcessCustodyByJob as terminateProcessCustodyByJobOwner } from '@/subprocess/supervision/processCustody';
-
-// The custody helper's OS job operations are a genuine system boundary: these
-// tests fake only terminate/query while the spawn wrap, the post-assignment
-// handshake, custody projection, and every internal decision stay real.
-const terminateProcessCustodyByJob = vi.hoisted(() =>
-    vi.fn<typeof terminateProcessCustodyByJobOwner>(async () => 'absent' as const));
-
-vi.mock('@/subprocess/supervision/processCustody', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/subprocess/supervision/processCustody')>();
-    return {
-        ...actual,
-        terminateProcessCustodyByJob,
-    };
-});
+import { queryProcessCustodyJob } from '@/subprocess/supervision/processCustody';
+import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 
 const tempDirs: string[] = [];
+const disposers: Array<() => Promise<void>> = [];
 
 afterEach(async () => {
-    terminateProcessCustodyByJob.mockReset();
-    terminateProcessCustodyByJob.mockImplementation(async () => 'absent' as const);
+    for (const dispose of disposers.splice(0).reverse()) await dispose();
     await Promise.all(tempDirs.splice(0).map(async (path) => {
         await rm(path, { recursive: true, force: true });
     }));
 });
-terminateProcessCustodyByJob.mockImplementation(async () => 'absent' as const);
 
 // Stand-in for the staged `happier-process-custody` runtime. It reproduces the
 // helper's run-mode contract: parse the job/handshake options, publish the
@@ -41,27 +29,52 @@ terminateProcessCustodyByJob.mockImplementation(async () => 'absent' as const);
 // until termination. FIXTURE_CUSTODY_WITHOUT_HANDSHAKE=1 (injected through the
 // authorized launch env) reproduces the assignment-failure shape: the helper
 // exits nonzero and no handshake ever exists.
-const CUSTODY_HELPER_SCRIPT = `#!/usr/bin/env node
-const { writeFileSync, existsSync } = require('node:fs');
+const CUSTODY_HELPER_SCRIPT = `#!${process.execPath}
+const { writeFileSync, readFileSync, rmSync } = require('node:fs');
+const { join } = require('node:path');
+const { spawn } = require('node:child_process');
 const args = process.argv.slice(2);
 const handshakeArgument = args.find((argument) => argument.startsWith('--handshake='));
 const jobArgument = args.find((argument) => argument.startsWith('--job='));
-if (!handshakeArgument || !jobArgument) process.exit(2);
-const handshakePath = handshakeArgument.slice('--handshake='.length);
+if (!jobArgument) process.exit(2);
 const jobName = jobArgument.slice('--job='.length);
+const custodyPath = join(__dirname, 'custody.json');
+if (args[0] === 'query' || args[0] === 'terminate') {
+    let custody;
+    try { custody = JSON.parse(readFileSync(custodyPath,'utf8')); } catch {}
+    if (!custody || custody.job !== jobName) {
+        console.log(JSON.stringify({state:'absent'})); process.exit(0);
+    }
+    if (args[0] === 'terminate') {
+        try { process.kill(custody.pid,'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+    }
+    const observe = () => {
+        const live = [custody.pid,custody.helperPid].some((pid) => {
+            try { process.kill(pid,0); return true; } catch { return false; }
+        });
+        if (!live) {
+            rmSync(custodyPath,{force:true});
+            console.log(JSON.stringify({state:'absent'})); process.exit(0);
+        }
+        if (args[0] === 'query') { console.log(JSON.stringify({state:'live'})); process.exit(0); }
+    };
+    observe();
+    setInterval(observe,5);
+} else {
+if (!handshakeArgument) process.exit(2);
+const handshakePath = handshakeArgument.slice('--handshake='.length);
 if (process.env.FIXTURE_CUSTODY_WITHOUT_HANDSHAKE === '1') {
     process.exit(4);
 }
-writeFileSync(handshakePath, JSON.stringify({ v: 1, pid: process.pid, job: jobName }) + '\\n');
-const killMarker = handshakePath + '.kill';
-const poll = setInterval(() => {
-    if (existsSync(killMarker)) {
-        clearInterval(poll);
-        process.exit(0);
-    }
-}, 5);
-// Deliberately NOT unref'd: the helper must hold the containment alive until
-// the supervisor's termination actually happens, like the real runtime.
+const targetArgs = args.slice(args.indexOf('--') + 1);
+const target = spawn(targetArgs[0], targetArgs.slice(1), {stdio:'inherit'});
+target.once('error', () => process.exit(4));
+target.once('spawn', () => {
+    writeFileSync(custodyPath, JSON.stringify({job:jobName,pid:target.pid,helperPid:process.pid}));
+    writeFileSync(handshakePath, JSON.stringify({v:1,pid:target.pid,job:jobName}) + '\\n');
+});
+target.once('exit', () => process.exit(0));
+}
 `;
 
 async function writeCustodyHelper(root: string): Promise<string> {
@@ -73,18 +86,11 @@ async function writeCustodyHelper(root: string): Promise<string> {
     return helperPath;
 }
 
-function createDurability(): ManagedServiceProcessDurabilityOwner & {
-    publishEndpointProjection: ReturnType<typeof vi.fn>;
-} {
-    return {
-        publishEndpointProjection: vi.fn(async () => 'c'.repeat(64)),
-        releaseEndpointProjection: vi.fn(async () => true),
-        openLog: vi.fn(async () => ({
-            path: '/host/logs/redacted.log',
-            write: () => undefined,
-            close: async () => undefined,
-        })),
-    };
+function createDurability(root: string, helperPath: string) {
+    return createManagedServiceDurabilityOwner({
+        rootDir: join(root, 'durability'), platform: 'win32',
+        resolveProcessCustodyRuntimeExecutable: () => helperPath,
+    });
 }
 
 function windowsManagedSpec(): ManagedServiceProcessSpec {
@@ -133,6 +139,13 @@ describe('managed SVC09 Windows job custody', () => {
         const root = await mkdtemp(join(tmpdir(), 'svc09-win-custody-live-'));
         tempDirs.push(root);
         const helperPath = await writeCustodyHelper(root);
+        const runtime = await createAuthoredAdmittedPluginRuntimeFixture({
+            plugins: [{ manifest: createPluginManifestV2Fixture({ id: 'fixture.plugin' }),
+                files: { 'daemon.mjs': 'export function activate() {}' } }],
+        });
+        disposers.push(runtime.dispose);
+        const sourceCustody = runtime.registry.readPluginSourceCustody?.('fixture.plugin');
+        if (!sourceCustody) throw new Error('Expected admitted fixture source custody');
 
         const exec = createStablePluginExecService({
             allowedExecutables: [{ kind: 'systemTool', id: 'fixture.server' }],
@@ -145,18 +158,17 @@ describe('managed SVC09 Windows job custody', () => {
                 throw new Error('preauthorized launch must not resolve a path');
             },
             authorizeLaunch: async () => ({
-                command: '/bin/sleep',
-                args: ['30'],
+                command: process.execPath,
+                args: ['-e', 'setInterval(() => {}, 1000)'],
                 env: { FIXTURE_MANAGED_ENV: '1' },
                 release: () => undefined,
             }),
         });
-        const durability = createDurability();
+        const durability = createDurability(root, helperPath);
         const host = createManagedServiceProcessSupervisorHost({
             platform: 'win32',
             resolveProcessCustodyRuntimeExecutable: () => helperPath,
             durability,
-            fetch: vi.fn(async () => new Response('', { status: 200 })),
             createInstanceId: () => 'opaque-custody-live',
         });
         const servers = host.bind({
@@ -164,44 +176,43 @@ describe('managed SVC09 Windows job custody', () => {
             pluginId: 'fixture.plugin',
             contributionId: 'fixture.agent',
             sessionId: 'session-win-custody-live',
+            sourceCustody,
             isOccurrenceCurrent: () => true,
             exec,
         });
 
         const handle = await servers.supervise(windowsManagedSpec());
+        disposers.push(() => handle.dispose());
 
         // The projected pid is the TARGET pid from the post-assignment
         // handshake — never the pid of the process the host spawned itself.
         const targetPidSidecar = handle.snapshot().pid;
         expect(targetPidSidecar).toBeGreaterThan(0);
-        expect(handle.snapshot().pid).toBe(targetPidSidecar);
+        const custodyWitness: { pid: number; helperPid: number; job: string } = JSON.parse(
+            await readFile(join(root, 'custody.json'), 'utf8'),
+        );
+        expect(targetPidSidecar).toBe(custodyWitness.pid);
+        expect(targetPidSidecar).not.toBe(custodyWitness.helperPid);
 
-        // Health flows through the mocked fetch, then the projection persists
-        // the tagged job identity with the exact target pid.
+        // The no-health readiness path persists the tagged job identity with
+        // the exact target pid through the real durability owner.
         await handle.waitUntilHealthy({ timeoutMs: 30_000 });
-        expect(durability.publishEndpointProjection).toHaveBeenCalledTimes(1);
-        const projectedRecord = durability.publishEndpointProjection.mock.calls[0]?.[0] as {
-            process: { pid: number; startIdentity: string };
-        };
+        const projectedRecord = await durability.resolveEndpointProjection({
+            pluginId: 'fixture.plugin', sessionId: 'session-win-custody-live',
+            contributionId: 'fixture.agent',
+            selector: { kind: 'baseUrl', baseUrl: 'http://127.0.0.1:49152' },
+        });
+        if (!projectedRecord || projectedRecord.mode !== 'managedSpawn') throw new Error('Expected persisted managed projection');
         expect(projectedRecord.process.pid).toBe(targetPidSidecar);
         expect(projectedRecord.process.startIdentity).toMatch(/^winjob:Local\\happier-svc09-.+$/u);
+        expect(projectedRecord.process.startIdentity).toBe(`winjob:${custodyWitness.job}`);
 
-        // Emulate the kernel's job termination: the (faked) terminate-by-job
-        // proves absence and the contained member dies with it.
-        terminateProcessCustodyByJob.mockImplementationOnce(async () => {
-            if (targetPidSidecar) {
-                process.kill(targetPidSidecar, 'SIGKILL');
-            }
-            return 'absent' as const;
-        });
         await handle.dispose();
 
-        expect(terminateProcessCustodyByJob).toHaveBeenCalledTimes(1);
-        const terminationCall = terminateProcessCustodyByJob.mock.calls[0]?.[0];
-        expect(terminationCall?.executablePath).toBe(helperPath);
-        expect(terminationCall?.jobName).toBe(
-            projectedRecord.process.startIdentity.slice('winjob:'.length),
-        );
+        await expect(queryProcessCustodyJob({
+            executablePath: helperPath, jobName: projectedRecord.process.startIdentity.slice('winjob:'.length),
+        })).resolves.toBe('absent');
+        expect(readManagedServiceEndpointProjectionCandidates(join(root, 'durability'))).toEqual([]);
         expect(handle.snapshot().state).toBe('stopped');
     });
 
@@ -227,7 +238,7 @@ describe('managed SVC09 Windows job custody', () => {
                 release: () => undefined,
             }),
         });
-        const durability = createDurability();
+        const durability = createDurability(root, helperPath);
         const host = createManagedServiceProcessSupervisorHost({
             platform: 'win32',
             resolveProcessCustodyRuntimeExecutable: () => helperPath,
@@ -247,7 +258,6 @@ describe('managed SVC09 Windows job custody', () => {
         });
         // Cleanup still enforces containment on the occurrenceId-unique job name
         // (a no-op when the job never existed), but no custody was published.
-        expect(durability.publishEndpointProjection).not.toHaveBeenCalled();
-        expect(terminateProcessCustodyByJob).toHaveBeenCalledTimes(1);
+        expect(readManagedServiceEndpointProjectionCandidates(join(root, 'durability'))).toEqual([]);
     });
 });

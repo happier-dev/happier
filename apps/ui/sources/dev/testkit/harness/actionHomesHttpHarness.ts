@@ -1,5 +1,9 @@
 import { vi } from 'vitest';
 import { loadVitestModuleForNodeRequire } from '@/dev/vitestRnShim';
+import { getVitestNodeBuiltin } from '@/dev/vitestNodeBuiltins';
+
+// File identities belong to Node, not Vite's client asset URL transform.
+const { URL: NodeURL } = getVitestNodeBuiltin<typeof import('node:url')>('node:url');
 
 // A generated third-party WebView asset is not part of an HTTP Action journey. Its multi-MB
 // source otherwise enters the default executor's presentation import graph during collection.
@@ -38,7 +42,7 @@ function accountOf(init: RequestInit | undefined): string | null {
 /** Bridges Metro's call-time require to the real Vitest executor; substitutes no Action logic. */
 export async function installRealActionExecutorModuleLoader(): Promise<() => void> {
     const bridge = await loadVitestModuleForNodeRequire(
-        new URL('../../../sync/ops/actions/defaultActionExecutor.ts', import.meta.url),
+        new NodeURL('../../../sync/ops/actions/defaultActionExecutor.ts', import.meta.url),
         () => import('@/sync/ops/actions/defaultActionExecutor'),
     );
     return bridge.dispose;

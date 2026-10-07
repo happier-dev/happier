@@ -576,16 +576,18 @@ describe('Agent registration catalog projections', () => {
     });
     let nowMs = 0;
     const dateNow = vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+    const primaryParseOutput = vi.fn(({ stdout }: Readonly<{ stdout: string }>) => {
+      expect(stdout.trim()).toBe('primary');
+      nowMs = 1_500;
+      return null;
+    });
     const fallbackParseOutput = vi.fn(() => 'fallback');
     const projected = projectAgentPreflightSessionControlsCatalogEntry({
       agentId: 'acme.external-agent' as never,
       preflightSessionControls: {
         models: {
           command: { toolId: 'external-models', args: ['primary'] },
-          parseOutput: () => {
-            nowMs = 1_500;
-            return null;
-          },
+          parseOutput: primaryParseOutput,
           fallback: {
             command: { toolId: 'external-models', args: ['fallback'] },
             parseOutput: fallbackParseOutput,
@@ -605,6 +607,8 @@ describe('Agent registration catalog projections', () => {
         backendTarget: undefined,
         accountSettings: null,
       })).resolves.toBeNull();
+      // A failed OS fixture must not masquerade as the exhausted-budget case.
+      expect(primaryParseOutput).toHaveBeenCalledOnce();
       expect(fallbackParseOutput).not.toHaveBeenCalled();
     } finally {
       dateNow.mockRestore();

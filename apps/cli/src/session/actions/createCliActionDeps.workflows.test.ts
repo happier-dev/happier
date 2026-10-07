@@ -172,6 +172,7 @@ describe('createCliActionDeps workflow boundary', () => {
   it('shares an opened plain Workflow through the credentialed Action host with a key-free storage write', async () => {
     const grants = { artifactId: 'definition-1', ownerAccountId: 'account-1', access: 'owner', grants: [], changed: true };
     http.get.mockImplementation(async (url: string) => {
+      if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
       if (url.endsWith('/v1/artifacts/definition-1')) return { status: 200, data: {
         id: 'definition-1', ownerAccountId: 'account-1', access: 'owner', encryptionMode: 'plain',
         header: encodePlainArtifactStoredContent({ kind: 'workflow-definition.v1', definitionId: 'definition-1', revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Shared' } }),

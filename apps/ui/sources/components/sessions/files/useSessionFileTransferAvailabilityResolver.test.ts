@@ -1,859 +1,173 @@
-import * as React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
-import { renderHook } from '@/dev/testkit';
-import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+import { createDeferred, createSessionFixture, renderHook } from '@/dev/testkit';
+import { setActiveServer } from '@/sync/domains/server/serverRuntime';
+import { storage } from '@/sync/domains/state/storage';
+import { recordCachedMachineRpcDirectRouteViable } from '@/sync/domains/transfers/runtime/transferRouteCache';
+import { probeIrohMachineTransferLifecycleAvailability } from '@/sync/runtime/nativeIrohTunnels/machineTransferLifecycle';
+import { installTransferProjection, resetTransferFixture, transferFeatures, transferMachine } from './sessionFileTransferTestkit';
+import { useSessionFileTransferAvailabilityResolver, useSessionFileTransferAvailabilityState } from './useSessionFileTransferAvailability';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-const state = vi.hoisted(() => ({
-    session: { active: true } as any,
-    machineReachability: { machineRpcTargetAvailable: true } as any,
-    machineTarget: { machineId: 'machine-1', basePath: '/repo' } as any,
-    machine: null as any,
-    serverScopedMachineServerId: 'server-1' as string | null,
-    serverScopedMachine: null as any,
-    cachedMachineRpcDirectRoute: { status: 'unknown' as const } as any,
-    serverSnapshot: {
-        status: 'ready' as const,
-        features: {
-            features: {
-                machines: {
-                    enabled: true,
-                    transfer: {
-                        enabled: true,
-                        directPeer: {
-                            enabled: false,
-                        },
-                        serverRouted: { enabled: false },
-                    },
-                },
-            },
-            capabilities: {
-                machines: {
-                    transfer: {
-                        serverRouted: {
-                            maxBytes: 128,
-                        },
-                    },
-                },
-            },
-        },
-    } as any,
-}));
-const activeServerState = vi.hoisted(() => {
-    const listeners = new Set<() => void>();
-
-    return {
-        serverId: 'server-1' as string | null,
-        listeners,
-        setServerId(next: string | null) {
-            activeServerState.serverId = next;
-            for (const listener of Array.from(listeners)) {
-                listener();
-            }
-        },
-        reset() {
-            activeServerState.serverId = 'server-1';
-            listeners.clear();
-        },
-    };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit');
+    return createReactNativeWebMock();
 });
-const nativeLifecycleState = vi.hoisted(() => {
-    const listeners = new Set<() => void>();
-    const state = {
-        available: false,
-        listeners,
-        resolveProbe: null as (() => void) | null,
-        probe: vi.fn(() => new Promise<boolean>((resolve) => {
-            state.resolveProbe = () => {
-                state.available = true;
-                for (const listener of [...listeners]) listener();
-                resolve(true);
-            };
-        })),
-    };
-    return state;
-});
-
-function declareCurrentFiniteTransferMachine(machine: any): any {
-    return {
-        ...machine,
-        kind: 'persistent',
-        active: true,
-        revokedAt: null,
-        operationProtocolCapabilities: {
-            finiteTransferRpc: { protocolVersions: [1] },
-        },
-        operationProtocolCapabilitiesRevision: 1,
-        daemonState: {
-            ...machine?.daemonState,
-            transfer: machine?.daemonState?.transfer ?? {
-                supported: { import: true, export: true },
-                listenerClasses: {
-                    loopback_http: { enabled: false, configured: false, active: false },
-                    tailscale_serve_https: { enabled: false, configured: false, active: false },
-                },
-                lifecycle: { mode: 'lazy_idle_shutdown', version: 1 },
-            },
-        },
-    };
-}
-
-vi.mock('@/sync/runtime/nativeIrohTunnels/machineTransferLifecycle', () => ({
-    isIrohMachineTransferLifecycleAvailable: () => nativeLifecycleState.available,
-    probeIrohMachineTransferLifecycleAvailability: () => nativeLifecycleState.probe(),
-    subscribeIrohMachineTransferLifecycleAvailability: (listener: () => void) => {
-        nativeLifecycleState.listeners.add(listener);
-        return () => nativeLifecycleState.listeners.delete(listener);
-    },
-}));
-
-vi.mock('@/sync/domains/state/storage', () =>
-    createStorageModuleStub({
-        useSession: () => state.session,
-        useSessionRpcAvailabilityState: () => ({
-            sessionExists: Boolean(state.session),
-            sessionRpcAvailable: Boolean(state.session) && state.session?.active !== false,
-        }),
-        useMachine: () => state.machine,
-        useServerScopedMachine: (_serverId: string | null) =>
-            _serverId !== null && _serverId === state.serverScopedMachineServerId ? state.serverScopedMachine : null,
-    }),
-);
-
-vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
-    useSessionMachineReachability: () => state.machineReachability,
-}));
-
-vi.mock('@/sync/ops/sessionMachineTarget', () => ({
-    readMachineTargetForSession: () => state.machineTarget,
-}));
-
-vi.mock('@/sync/domains/transfers/runtime/transferRouteCache', () => ({
-    readCachedMachineRpcDirectRoute: () => state.cachedMachineRpcDirectRoute,
-    recordCachedMachineRpcDirectRouteUnavailable: vi.fn(),
-    subscribeCachedMachineRpcDirectRoute: () => () => {},
-}));
-
-vi.mock('@/sync/domains/features/featureDecisionRuntime', () => ({
-    useServerFeaturesSnapshotForServerId: () => state.serverSnapshot,
-}));
-
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession', () => ({
-    usePreferredServerIdForSession: (sessionId: string) => {
-        void sessionId;
-        return React.useSyncExternalStore(
-            (listener: () => void) => {
-                activeServerState.listeners.add(listener);
-                return () => {
-                    activeServerState.listeners.delete(listener);
-                };
-            },
-            () => state.session?.serverId ?? activeServerState.serverId,
-            () => state.session?.serverId ?? activeServerState.serverId,
-        );
-    },
-}));
 
 describe('useSessionFileTransferAvailabilityResolver', () => {
-    beforeEach(() => {
-        activeServerState.reset();
-        state.machine = null;
-        state.serverScopedMachine = null;
-        state.serverScopedMachineServerId = 'server-1';
-        state.cachedMachineRpcDirectRoute = { status: 'unknown' } as any;
-        nativeLifecycleState.available = false;
-        nativeLifecycleState.resolveProbe = null;
-        nativeLifecycleState.listeners.clear();
-        nativeLifecycleState.probe.mockClear();
+    beforeEach(async () => {
+        vi.stubGlobal('SharedWorker', class SharedWorker {});
+        await resetTransferFixture();
     });
+    afterEach(() => vi.unstubAllGlobals());
 
     it('reactively enables an Iroh-only native transfer after the host lifecycle probe succeeds', async () => {
-        state.session = { active: true } as any;
-        state.machineReachability = { machineRpcTargetAvailable: true } as any;
-        state.machineTarget = { machineId: 'machine-1', basePath: '/repo' } as any;
-        state.machine = null as any;
-        state.serverScopedMachine = {
-            daemonState: {
-                peerMediation: {
-                    iroh: {
-                        endpoint: {
-                            endpointId: 'a'.repeat(64),
-                            relayUrls: ['https://relay.example.test'],
-                        },
-                    },
-                },
-            },
-        } as any;
-        state.serverScopedMachine = declareCurrentFiniteTransferMachine(state.serverScopedMachine);
-        state.serverScopedMachine.operationProtocolCapabilities.irohMachineEndpoint = {
-            protocolVersions: [1], endpointId: 'a'.repeat(64),
-        };
-        state.cachedMachineRpcDirectRoute = { status: 'unknown' as const } as any;
-        state.serverSnapshot = {
-            status: 'ready' as const,
-            features: {
-                features: {
-                    machines: {
-                        enabled: true,
-                        transfer: {
-                            enabled: true,
-                            directPeer: { enabled: true },
-                            serverRouted: { enabled: false },
-                        },
-                        peerMediation: { enabled: true },
-                    },
-                },
-                capabilities: {},
-            },
-        } as any;
-
-        const { useSessionFileTransferAvailabilityResolver } = await import('./useSessionFileTransferAvailability');
+        const availability = createDeferred<{ available: boolean }>();
+        const invoke = vi.fn((command: string) => {
+            expect(command).toBe('iroh_get_availability');
+            return availability.promise;
+        });
+        // The physical desktop command bridge is the availability boundary.
+        vi.stubGlobal('__TAURI_INTERNALS__', { invoke });
+        installTransferProjection();
         const hook = await renderHook(() => useSessionFileTransferAvailabilityResolver('s1'));
-
         expect(hook.getCurrent()(null)).toBe(false);
+        expect(invoke).toHaveBeenCalled();
         await act(async () => {
-            nativeLifecycleState.resolveProbe?.();
-            await nativeLifecycleState.probe.mock.results[0]?.value;
+            availability.resolve({ available: true });
+            await probeIrohMachineTransferLifecycleAvailability();
         });
         expect(hook.getCurrent()(null)).toBe(true);
+        await hook.unmount();
     });
+
     it('does not gate bulk file transfers by the total transfer size (chunked transfers)', async () => {
-        nativeLifecycleState.available = true;
-        state.session = { active: true } as any;
-        state.machineReachability = { machineRpcTargetAvailable: true } as any;
-        state.machineTarget = { machineId: 'runner-1', basePath: '/repo' } as any;
-        state.serverScopedMachine = {
-            id: 'runner-1',
-            kind: 'ephemeral_session_runner',
-            active: true,
-            revokedAt: null,
-            operationProtocolCapabilities: {
-                finiteTransferRpc: { protocolVersions: [1] },
-                irohMachineEndpoint: { protocolVersions: [1], endpointId: 'a'.repeat(64) },
-            },
-            operationProtocolCapabilitiesRevision: 1,
-            daemonState: null,
-        } as any;
-        state.cachedMachineRpcDirectRoute = { status: 'viable' as const, checkedAt: 10, expiresAt: 20 } as any;
-        state.serverSnapshot = {
-            status: 'ready' as const,
-            features: {
-                features: {
-                    machines: {
-                        enabled: true,
-                        transfer: {
-                            enabled: true,
-                            directPeer: {
-                                enabled: true,
-                            },
-                            serverRouted: { enabled: false },
-                        },
-                        peerMediation: { enabled: true },
-                    },
-                },
-                capabilities: {
-                    machines: {
-                        transfer: {
-                            serverRouted: {
-                                maxBytes: 128,
-                            },
-                        },
-                    },
-                },
-            },
-        } as any;
-
-        const { useSessionFileTransferAvailabilityResolver } = await import('./useSessionFileTransferAvailability');
+        installTransferProjection({ machine: transferMachine({ id: 'runner-1', kind: 'ephemeral_session_runner', daemonState: null }) });
         const hook = await renderHook(() => useSessionFileTransferAvailabilityResolver('s1'));
-
         expect(hook.getCurrent()(64)).toBe(true);
         expect(hook.getCurrent()(512)).toBe(true);
+        await hook.unmount();
     });
 
     it('keeps a current Runner unavailable without its current Iroh endpoint', async () => {
-        state.session = { active: true, serverId: 'server-1' } as any;
-        state.machineReachability = { machineRpcTargetAvailable: true } as any;
-        state.machineTarget = { machineId: 'runner-1', basePath: '/repo' } as any;
-        state.machine = null as any;
-        state.serverScopedMachine = {
-            id: 'runner-1',
-            kind: 'ephemeral_session_runner',
-            active: true,
-            revokedAt: null,
-            operationProtocolCapabilities: {
-                finiteTransferRpc: { protocolVersions: [1] },
-            },
-            operationProtocolCapabilitiesRevision: 1,
-            daemonState: null,
-        } as any;
-        state.cachedMachineRpcDirectRoute = { status: 'viable' as const, checkedAt: 10, expiresAt: 20 } as any;
-        state.serverSnapshot = {
-            status: 'ready' as const,
-            features: {
-                features: {
-                    machines: {
-                        enabled: true,
-                        transfer: {
-                            enabled: true,
-                            directPeer: { enabled: false },
-                            serverRouted: { enabled: false },
-                        },
-                    },
-                },
-                capabilities: {},
-            },
-        } as any;
-
-        const { useSessionFileTransferAvailabilityState } = await import('./useSessionFileTransferAvailability');
+        installTransferProjection({ machine: transferMachine({
+            id: 'runner-1', kind: 'ephemeral_session_runner', daemonState: null,
+            operationProtocolCapabilities: { finiteTransferRpc: { protocolVersions: [1] } },
+        }) });
+        recordCachedMachineRpcDirectRouteViable({ serverId: 'server-1', remoteMachineId: 'runner-1' });
         const hook = await renderHook(() => useSessionFileTransferAvailabilityState('s1'));
-
         expect(hook.getCurrent().available).toBe(false);
         expect(hook.getCurrent().decision).toBeNull();
+        await hook.unmount();
     });
 
     it('keeps the resolver stable while availability inputs stay unchanged', async () => {
-        state.session = { active: true } as any;
-        state.machineReachability = { machineRpcTargetAvailable: true } as any;
-        state.machineTarget = { machineId: 'machine-1', basePath: '/repo' } as any;
-        state.serverScopedMachine = null as any;
-        state.cachedMachineRpcDirectRoute = { status: 'viable' as const, checkedAt: 10, expiresAt: 20 } as any;
-        state.serverSnapshot = {
-            status: 'ready' as const,
-            features: {
-                features: {
-                    machines: {
-                        enabled: true,
-                        transfer: {
-                            enabled: true,
-                            directPeer: {
-                                enabled: false,
-                            },
-                            serverRouted: { enabled: false },
-                        },
-                    },
-                },
-                capabilities: {},
-            },
-        } as any;
-
-        const { useSessionFileTransferAvailabilityResolver } = await import('./useSessionFileTransferAvailability');
+        installTransferProjection();
         const hook = await renderHook(() => useSessionFileTransferAvailabilityResolver('s1'));
-
         const initialResolver = hook.getCurrent();
-
         await hook.rerender();
-
         expect(hook.getCurrent()).toBe(initialResolver);
+        await hook.unmount();
     });
 
-    it('allows session file transfers when the daemon direct transfer listener is active and direct peer is enabled', async () => {
-        state.session = { active: true } as any;
-        state.machineReachability = { machineRpcTargetAvailable: true } as any;
-        state.machineTarget = { machineId: 'machine-1', basePath: '/repo' } as any;
-        state.machine = {
-            daemonState: {
-                transfer: {
-                    supported: {
-                        import: true,
-                        export: true,
-                    },
-                    listenerClasses: {
-                        loopback_http: {
-                            enabled: true,
-                            configured: true,
-                            active: true,
-                        },
-                        lan_http: {
-                            enabled: false,
-                            configured: false,
-                            active: false,
-                        },
-                        tailscale_serve_https: {
-                            enabled: false,
-                            configured: false,
-                            active: false,
-                            available: false,
-                        },
-                    },
-                    lifecycle: {
-                        mode: 'lazy_idle_shutdown',
-                        version: 1,
-                    },
-                },
+    it('allows session file transfers when the current daemon endpoint and direct peer are enabled', async () => {
+        installTransferProjection({ machine: transferMachine({ daemonState: { transfer: {
+            supported: { import: true, export: true },
+            listenerClasses: {
+                loopback_http: { enabled: true, configured: true, active: true },
+                tailscale_serve_https: { enabled: false, configured: false, active: false, available: false },
             },
-        } as any;
-        state.machine = declareCurrentFiniteTransferMachine(state.machine);
-        state.serverScopedMachine = state.machine;
-        state.cachedMachineRpcDirectRoute = { status: 'viable' as const, checkedAt: 10, expiresAt: 20 } as any;
-        state.serverSnapshot = {
-            status: 'ready' as const,
-            features: {
-                features: {
-                    machines: {
-                        enabled: true,
-                        transfer: {
-                            enabled: true,
-                            directPeer: {
-                                enabled: true,
-                            },
-                            serverRouted: {
-                                enabled: false,
-                            },
-                        },
-                    },
-                },
-                capabilities: {},
-            },
-        } as any;
-
-        const { useSessionFileTransferAvailabilityResolver } = await import('./useSessionFileTransferAvailability');
+            lifecycle: { mode: 'lazy_idle_shutdown', version: 1 },
+        } } }) });
         const hook = await renderHook(() => useSessionFileTransferAvailabilityResolver('s1'));
-
         expect(hook.getCurrent()(64)).toBe(true);
+        await hook.unmount();
     });
 
     it('exposes coarse daemon direct-peer diagnostics for configured-but-inactive listeners', async () => {
-        state.session = { active: true } as any;
-        state.machineReachability = { machineRpcTargetAvailable: true } as any;
-        state.machineTarget = { machineId: 'machine-1', basePath: '/repo' } as any;
-        state.machine = {
-            daemonState: {
-                transfer: {
-                    supported: {
-                        import: true,
-                        export: true,
-                    },
-                    listenerClasses: {
-                        loopback_http: {
-                            enabled: true,
-                            configured: true,
-                            active: false,
-                        },
-                        lan_http: {
-                            enabled: false,
-                            configured: false,
-                            active: false,
-                        },
-                        tailscale_serve_https: {
-                            enabled: true,
-                            configured: true,
-                            active: false,
-                            available: true,
-                        },
-                    },
-                    lifecycle: {
-                        mode: 'lazy_idle_shutdown',
-                        version: 1,
-                    },
-                },
+        installTransferProjection({ machine: transferMachine({ daemonState: { transfer: {
+            supported: { import: true, export: true },
+            listenerClasses: {
+                loopback_http: { enabled: true, configured: true, active: false },
+                tailscale_serve_https: { enabled: true, configured: true, active: false, available: true },
             },
-        } as any;
-        state.machine = declareCurrentFiniteTransferMachine(state.machine);
-        state.serverScopedMachine = state.machine;
-        state.cachedMachineRpcDirectRoute = { status: 'viable' as const, checkedAt: 20, expiresAt: 30 } as any;
-        state.serverSnapshot = {
-            status: 'ready' as const,
-            features: {
-                features: {
-                    machines: {
-                        enabled: true,
-                        transfer: {
-                            enabled: true,
-                            directPeer: {
-                                enabled: true,
-                            },
-                            serverRouted: {
-                                enabled: false,
-                            },
-                        },
-                    },
-                },
-                capabilities: {},
-            },
-        } as any;
-
-        const { useSessionFileTransferAvailabilityState } = await import('./useSessionFileTransferAvailability');
+            lifecycle: { mode: 'lazy_idle_shutdown', version: 1 },
+        } } }) });
         const hook = await renderHook(() => useSessionFileTransferAvailabilityState('s1'));
-
         expect(hook.getCurrent().daemonDirectPeerDiagnostics).toEqual({
-            route: { status: 'unknown' },
-            state: 'configured_inactive',
+            route: { status: 'unknown' }, state: 'configured_inactive',
             configuredListenerClasses: ['loopback_http', 'tailscale_serve_https'],
-            activeListenerClasses: [],
-            activeRouteKinds: [],
-            inactiveListenerClasses: ['loopback_http', 'tailscale_serve_https'],
-            unavailableListenerClasses: [],
+            activeListenerClasses: [], activeRouteKinds: [],
+            inactiveListenerClasses: ['loopback_http', 'tailscale_serve_https'], unavailableListenerClasses: [],
         });
         expect(hook.getCurrent().available).toBe(true);
+        await hook.unmount();
     });
 
     it('uses the preferred server scoped machine daemon state instead of the active global machine record', async () => {
-        state.session = { active: true } as any;
-        state.machineReachability = { machineRpcTargetAvailable: true } as any;
-        state.machineTarget = { machineId: 'machine-1', basePath: '/repo' } as any;
-        state.machine = null as any;
-        state.serverScopedMachine = {
-            daemonState: {
-                transfer: {
-                    supported: {
-                        import: true,
-                        export: true,
-                    },
-                    listenerClasses: {
-                        loopback_http: {
-                            enabled: true,
-                            configured: true,
-                            active: true,
-                        },
-                        lan_http: {
-                            enabled: false,
-                            configured: false,
-                            active: false,
-                        },
-                        tailscale_serve_https: {
-                            enabled: false,
-                            configured: false,
-                            active: false,
-                            available: false,
-                        },
-                    },
-                    lifecycle: {
-                        mode: 'lazy_idle_shutdown',
-                        version: 1,
-                    },
-                },
-            },
-        } as any;
-        state.serverScopedMachine = declareCurrentFiniteTransferMachine(state.serverScopedMachine);
-        state.cachedMachineRpcDirectRoute = { status: 'viable' as const, checkedAt: 10, expiresAt: 20 } as any;
-        state.serverSnapshot = {
-            status: 'ready' as const,
-            features: {
-                features: {
-                    machines: {
-                        enabled: true,
-                        transfer: {
-                            enabled: true,
-                            directPeer: {
-                                enabled: true,
-                            },
-                            serverRouted: {
-                                enabled: false,
-                            },
-                        },
-                    },
-                },
-                capabilities: {},
-            },
-        } as any;
-
-        const { useSessionFileTransferAvailabilityResolver } = await import('./useSessionFileTransferAvailability');
-        const hook = await renderHook(() => useSessionFileTransferAvailabilityResolver('s1'));
-
+        installTransferProjection({ machine: transferMachine(), globalMachine: transferMachine({ operationProtocolCapabilities: {}, daemonState: null }) });
+        const hook = await renderHook(() => useSessionFileTransferAvailabilityResolver('s1', 'server-1'));
         expect(hook.getCurrent()(64)).toBe(true);
+        await hook.unmount();
     });
 
-    it('uses the session server id when preferred server resolution is unavailable', async () => {
-        state.session = { active: true, serverId: 'server-explicit' } as any;
-        state.machineReachability = { machineRpcTargetAvailable: true } as any;
-        state.machineTarget = { machineId: 'machine-1', basePath: '/repo' } as any;
-        state.serverScopedMachineServerId = 'server-explicit';
-        state.machine = null as any;
-        state.serverScopedMachine = {
-            daemonState: {
-                transfer: {
-                    supported: {
-                        import: true,
-                        export: true,
-                    },
-                    listenerClasses: {
-                        loopback_http: {
-                            enabled: true,
-                            configured: true,
-                            active: true,
-                        },
-                        lan_http: {
-                            enabled: false,
-                            configured: false,
-                            active: false,
-                        },
-                        tailscale_serve_https: {
-                            enabled: false,
-                            configured: false,
-                            active: false,
-                            available: false,
-                        },
-                    },
-                    lifecycle: {
-                        mode: 'lazy_idle_shutdown',
-                        version: 1,
-                    },
-                },
-            },
-        } as any;
-        state.serverScopedMachine = declareCurrentFiniteTransferMachine(state.serverScopedMachine);
-        state.cachedMachineRpcDirectRoute = { status: 'viable' as const, checkedAt: 10, expiresAt: 20 } as any;
-        state.serverSnapshot = {
-            status: 'ready' as const,
-            features: {
-                features: {
-                    machines: {
-                        enabled: true,
-                        transfer: {
-                            enabled: true,
-                            directPeer: {
-                                enabled: true,
-                            },
-                            serverRouted: {
-                                enabled: false,
-                            },
-                        },
-                    },
-                },
-                capabilities: {},
-            },
-        } as any;
-
-        const { useSessionFileTransferAvailabilityResolver } = await import('./useSessionFileTransferAvailability');
-        const hook = await renderHook(() => useSessionFileTransferAvailabilityResolver('s1'));
-
-        expect(hook.getCurrent()(64)).toBe(true);
+    it('uses the explicit session server id when bare-id preferred server resolution is ambiguous', async () => {
+        installTransferProjection({ serverId: 'server-explicit' });
+        storage.setState({ ordinarySessionListMembershipByServerId: { 'server-1': ['s1'], 'server-explicit': ['s1'] } });
+        const bare = await renderHook(() => useSessionFileTransferAvailabilityResolver('s1'));
+        const exact = await renderHook(() => useSessionFileTransferAvailabilityResolver('s1', 'server-explicit'));
+        expect(bare.getCurrent()(64)).toBe(false);
+        expect(exact.getCurrent()(64)).toBe(true);
+        await bare.unmount();
+        await exact.unmount();
     });
 
-    it('reacts to active server changes when the session server id is not hydrated yet', async () => {
-        state.session = { active: true } as any;
-        state.machineReachability = { machineRpcTargetAvailable: true } as any;
-        state.machineTarget = { machineId: 'machine-1', basePath: '/repo' } as any;
-        state.machine = null as any;
-        state.serverScopedMachineServerId = 'server-b';
-        state.serverScopedMachine = {
-            daemonState: {
-                transfer: {
-                    supported: {
-                        import: true,
-                        export: true,
-                    },
-                    listenerClasses: {
-                        loopback_http: {
-                            enabled: true,
-                            configured: true,
-                            active: true,
-                        },
-                        lan_http: {
-                            enabled: false,
-                            configured: false,
-                            active: false,
-                        },
-                        tailscale_serve_https: {
-                            enabled: false,
-                            configured: false,
-                            active: false,
-                            available: false,
-                        },
-                    },
-                    lifecycle: {
-                        mode: 'lazy_idle_shutdown',
-                        version: 1,
-                    },
-                },
-            },
-        } as any;
-        state.serverScopedMachine = declareCurrentFiniteTransferMachine(state.serverScopedMachine);
-        state.cachedMachineRpcDirectRoute = { status: 'viable' as const, checkedAt: 10, expiresAt: 20 } as any;
-        state.serverSnapshot = {
-            status: 'ready' as const,
-            features: {
-                features: {
-                    machines: {
-                        enabled: true,
-                        transfer: {
-                            enabled: true,
-                            directPeer: {
-                                enabled: true,
-                            },
-                            serverRouted: {
-                                enabled: false,
-                            },
-                        },
-                    },
-                },
-                capabilities: {},
-            },
-        } as any;
-        activeServerState.setServerId('server-a');
-
-        const { useSessionFileTransferAvailabilityResolver } = await import('./useSessionFileTransferAvailability');
+    it('does not infer an unhydrated session Home from active server changes and reacts when its Home is hydrated', async () => {
+        installTransferProjection({ session: createSessionFixture({ id: 's1', active: true }) });
         const hook = await renderHook(() => useSessionFileTransferAvailabilityResolver('s1'));
-
         expect(hook.getCurrent()(64)).toBe(false);
-
-        act(() => {
-            activeServerState.setServerId('server-b');
-        });
-
+        await act(async () => { await setActiveServer({ serverId: 'server-b' }); });
+        expect(hook.getCurrent()(64)).toBe(false);
+        await act(async () => installTransferProjection({ serverId: 'server-b' }));
         expect(hook.getCurrent()(64)).toBe(true);
+        await hook.unmount();
     });
 
-    it('falls back to the active global machine daemon state when the preferred server scoped machine record is not loaded yet', async () => {
-        state.session = { active: true } as any;
-        state.machineReachability = { machineRpcTargetAvailable: true } as any;
-        state.machineTarget = { machineId: 'machine-1', basePath: '/repo' } as any;
-        state.machine = {
-            daemonState: {
-                transfer: {
-                    supported: {
-                        import: true,
-                        export: true,
-                    },
-                    listenerClasses: {
-                        loopback_http: {
-                            enabled: true,
-                            configured: true,
-                            active: true,
-                        },
-                        lan_http: {
-                            enabled: false,
-                            configured: false,
-                            active: false,
-                        },
-                        tailscale_serve_https: {
-                            enabled: false,
-                            configured: false,
-                            active: false,
-                            available: false,
-                        },
-                    },
-                    lifecycle: {
-                        mode: 'lazy_idle_shutdown',
-                        version: 1,
-                    },
-                },
-            },
-        } as any;
-        state.machine = declareCurrentFiniteTransferMachine(state.machine);
-        state.serverScopedMachine = null as any;
-        state.cachedMachineRpcDirectRoute = { status: 'viable' as const, checkedAt: 10, expiresAt: 20 } as any;
-        state.serverSnapshot = {
-            status: 'ready' as const,
-            features: {
-                features: {
-                    machines: {
-                        enabled: true,
-                        transfer: {
-                            enabled: true,
-                            directPeer: {
-                                enabled: true,
-                            },
-                            serverRouted: {
-                                enabled: false,
-                            },
-                        },
-                    },
-                },
-                capabilities: {},
-            },
-        } as any;
-
-        const { useSessionFileTransferAvailabilityResolver } = await import('./useSessionFileTransferAvailability');
-        const hook = await renderHook(() => useSessionFileTransferAvailabilityResolver('s1'));
-
+    it('uses the active global machine projection when its scoped machine list is not loaded, but never for another Home', async () => {
+        const machine = transferMachine();
+        installTransferProjection({ machine });
+        storage.setState({ machineListByServerId: { 'server-1': null } });
+        const hook = await renderHook(() => useSessionFileTransferAvailabilityResolver('s1', 'server-1'));
         expect(hook.getCurrent()(64)).toBe(true);
+        await act(async () => {
+            storage.setState({ sessions: { s1: createSessionFixture({ id: 's1', serverId: 'server-b', active: true }) } });
+        });
+        const remote = await renderHook(() => useSessionFileTransferAvailabilityResolver('s1', 'server-b'));
+        expect(remote.getCurrent()(64)).toBe(false);
+        await hook.unmount();
+        await remote.unmount();
     });
 
     it('fails closed when file transfer policy has no viable route', async () => {
-        state.session = { active: true } as any;
-        state.machineReachability = { machineRpcTargetAvailable: true } as any;
-        state.machineTarget = { machineId: 'machine-1', basePath: '/repo' } as any;
-        state.serverScopedMachine = null as any;
-        state.cachedMachineRpcDirectRoute = { status: 'unknown' as const } as any;
-        state.serverSnapshot = {
-            status: 'ready' as const,
-            features: {
-                features: {
-                    machines: {
-                        enabled: true,
-                        transfer: {
-                            enabled: true,
-                            directPeer: {
-                                enabled: false,
-                            },
-                            serverRouted: {
-                                enabled: false,
-                            },
-                        },
-                    },
-                },
-                capabilities: {},
-            },
-        } as any;
-
-        const { useSessionFileTransferAvailabilityResolver } = await import('./useSessionFileTransferAvailability');
+        installTransferProjection({ features: transferFeatures({ transfer: { enabled: true, directPeer: { enabled: false }, serverRouted: { enabled: false } } }) });
         const hook = await renderHook(() => useSessionFileTransferAvailabilityResolver('s1'));
-
         expect(hook.getCurrent()(64)).toBe(false);
+        await act(async () => installTransferProjection({ features: transferFeatures({ peerMediation: { enabled: false, observability: { enabled: false } } }) }));
+        expect(hook.getCurrent()(64)).toBe(false);
+        await hook.unmount();
     });
 
     it('fails closed when machine transfers are disabled on the server', async () => {
-        state.session = { active: true } as any;
-        state.machineReachability = { machineRpcTargetAvailable: true } as any;
-        state.machineTarget = { machineId: 'machine-1', basePath: '/repo' } as any;
-        state.serverScopedMachine = null as any;
-        state.cachedMachineRpcDirectRoute = { status: 'viable' as const, checkedAt: 10, expiresAt: 20 } as any;
-        state.serverSnapshot = {
-            status: 'ready' as const,
-            features: {
-                features: {
-                    machines: {
-                        enabled: true,
-                        transfer: {
-                            enabled: false,
-                            directPeer: {
-                                enabled: true,
-                            },
-                            serverRouted: {
-                                enabled: true,
-                            },
-                        },
-                    },
-                },
-                capabilities: {},
-            },
-        } as any;
-
-        const { useSessionFileTransferAvailabilityResolver } = await import('./useSessionFileTransferAvailability');
+        installTransferProjection({ features: transferFeatures({ transfer: { enabled: false, directPeer: { enabled: true }, serverRouted: { enabled: true } } }) });
         const hook = await renderHook(() => useSessionFileTransferAvailabilityResolver('s1'));
-
         expect(hook.getCurrent()(64)).toBe(false);
+        await hook.unmount();
     });
 
     it('fails closed when the session record is missing (no speculative transfer availability)', async () => {
-        state.session = null as any;
-        state.machineReachability = { machineRpcTargetAvailable: true } as any;
-        state.machineTarget = { machineId: 'machine-1', basePath: '/repo' } as any;
-        state.serverScopedMachine = null as any;
-        state.cachedMachineRpcDirectRoute = { status: 'viable' as const } as any;
-        state.serverSnapshot = {
-            status: 'ready' as const,
-            features: {
-                features: {
-                    machines: {
-                        enabled: true,
-                        transfer: {
-                            enabled: true,
-                            serverRouted: { enabled: true },
-                        },
-                    },
-                },
-                capabilities: {},
-            },
-        } as any;
-
-        const { useSessionFileTransferAvailabilityResolver } = await import('./useSessionFileTransferAvailability');
+        installTransferProjection({ session: null });
         const hook = await renderHook(() => useSessionFileTransferAvailabilityResolver('s1'));
-
         expect(hook.getCurrent()(null)).toBe(false);
+        await hook.unmount();
     });
 });

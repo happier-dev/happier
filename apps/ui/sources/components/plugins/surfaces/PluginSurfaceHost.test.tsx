@@ -93,6 +93,10 @@ import {
     renderScreen,
 } from '@/dev/testkit';
 import { createTestMessageChannel } from '@/dev/testkit/mocks/messageChannel';
+import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -116,10 +120,9 @@ import {
 } from '@/sync/domains/server/serverProfiles';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import {
-    createPluginAccountAvailabilityReader,
-    createPluginAccountAvailabilityReaderStore,
     type PluginAccountAvailabilitySnapshot,
 } from '@/sync/domains/plugins/availability/reader';
+import { clearPluginAccountAvailabilityProjection, replacePluginAccountAvailabilityProjection } from '@/sync/domains/plugins/availability/projection';
 import { recordAccountStoredContentServerRequirements } from '@/sync/http/accountStoredContentCompatibility';
 
 const directDeclarativeTestEnvironment = Object.freeze({
@@ -155,6 +158,8 @@ const GENERATED_DESTINATION_UNAVAILABLE_HOST_METHODS = new Set<PluginUiHostMetho
     // A generated destination is not a full page, so it has no location of its
     // own to replace. The navigation family stays factually uninstalled here.
     'replacePageLocation',
+    // Widget areas require a page-owned area composition, not a destination.
+    'widgetArea',
 ]);
 
 const EXPECTED_GENERIC_DESTINATION_HOST_METHODS = [
@@ -180,8 +185,13 @@ const EXPECTED_GENERIC_DESTINATION_HOST_METHODS = [
     'setComposerDecorations',
     'acquireComposerInputLock',
     'readSession',
+    'readStoredImage',
     'watchSession',
+    'watchLiveStream',
     'respondToSessionPermission',
+    'readEntityDragItem',
+    'updateEntityDragDrop',
+    'watchEntityDragDrop',
 ] as const satisfies readonly PluginUiHostMethodV1[];
 
 const {
@@ -229,64 +239,41 @@ const pluginSurfaceConnectivity = vi.hoisted(() => ({
     machineOnlineById: new Map<string, boolean>(),
     daemonStateVersion: 1,
 }));
-const pluginSurfaceAccountLifetime = vi.hoisted(() => {
-    type TestAccountLifetime = Readonly<{
-        scope: Readonly<{ serverId: string; accountId: string }>;
-        isCurrent: () => boolean;
-        onRetire: (callback: () => void) => Readonly<{ dispose: () => void }>;
-    }>;
-    let current = true;
-    let lifetimeRevision = 0;
-    const retirementCallbacks = new Set<() => void>();
-    const createLifetime = (scope: Readonly<{ serverId: string; accountId: string }>): TestAccountLifetime => {
-        const revision = lifetimeRevision;
-        return Object.freeze({
-            scope: Object.freeze({ ...scope }),
-            isCurrent: () => current && revision === lifetimeRevision,
-            onRetire: (callback: () => void) => {
-                retirementCallbacks.add(callback);
-                return Object.freeze({ dispose: () => retirementCallbacks.delete(callback) });
+// Exercise the same applied Home, credentials and Account lifetime as app entry.
+// Only the disconnected Socket and Home's HTTP responses leave this process.
+const usedAccountScopes = new Map<string, Readonly<{ serverId: string; accountId: string }>>();
+let surfaceConnection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
+const pluginSurfaceAccountLifetime = {
+    value: null as ActiveServerAccountScopeLifetime | null,
+    async setScope(scope: Readonly<{ serverId: string; accountId: string }>) {
+        await surfaceConnection?.dispose();
+        surfaceConnection = await restoreServerAccountForTest({
+            serverUrl: `https://${scope.serverId}`, accountId: scope.accountId,
+            request: async (url, init) => {
+                const path = new URL(String(url)).pathname;
+                if (path === '/health') return Response.json({});
+                if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+                if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture({ version: 1, updatedAt: 1 }));
+                if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+                if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+                if (pluginDataTransport.enabled) return pluginDataTransport.request(path, init);
+                return Response.json({ error: 'not_found' }, { status: 404 });
             },
         });
-    };
-    const defaultScope = Object.freeze({ serverId: 'server-a', accountId: 'account-a' });
-    const usedScopes = new Map<string, Readonly<{ serverId: string; accountId: string }>>();
-    const recordScope = (scope: Readonly<{ serverId: string; accountId: string }>) => {
-        usedScopes.set(`${scope.serverId}\u0000${scope.accountId}`, scope);
-    };
-    recordScope(defaultScope);
-    let defaultLifetime = createLifetime(defaultScope);
-    return {
-        defaultLifetime,
-        value: defaultLifetime as TestAccountLifetime | null,
-        reset() {
-            current = true;
-            lifetimeRevision += 1;
-            retirementCallbacks.clear();
-            usedScopes.clear();
-            recordScope(defaultScope);
-            defaultLifetime = createLifetime(defaultScope);
-            this.defaultLifetime = defaultLifetime;
-            this.value = defaultLifetime;
-        },
-        setScope(scope: Readonly<{ serverId: string; accountId: string }>) {
-            recordScope(scope);
-            current = true;
-            lifetimeRevision += 1;
-            retirementCallbacks.clear();
-            this.value = createLifetime(scope);
-        },
-        scopesUsed() {
-            return [...usedScopes.values()];
-        },
-        retire() {
-            current = false;
-            this.value = null;
-            for (const callback of [...retirementCallbacks]) callback();
-            retirementCallbacks.clear();
-        },
-    };
-});
+        if (surfaceConnection.home.id !== scope.serverId) throw new Error('Fixture Home identity must match its routed mount.');
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.setState({ profileScope: scope });
+        this.value = captureActiveServerAccountScopeLifetime();
+        if (!this.value) throw new Error('Expected an applied fixture Account lifetime.');
+        usedAccountScopes.set(serverAccountScopeKeySuffix(scope), scope);
+        accountEncryptionModeCredentials.value = surfaceConnection.credentials;
+    },
+    scopesUsed() { return [...usedAccountScopes.values()]; },
+    retire() {
+        retireActiveServerAccountScopeLifetime();
+        this.value = null;
+    },
+};
 
 /**
  * The SDK fixture is authored in an independently compiled package and imports
@@ -296,8 +283,8 @@ const pluginSurfaceAccountLifetime = vi.hoisted(() => {
  * prove the same cold, target-scoped A→B composition contract.
  */
 describe('external targeted source products through the bound surface host', () => {
-    beforeEach(() => {
-        pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
+    beforeEach(async () => {
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
     });
 
     const targetPluginId = 'fixture.physical-copy-target';
@@ -984,9 +971,6 @@ const resourceWatchNextMock = vi.hoisted(() => vi.fn<(...args: unknown[]) => Pro
     },
 ));
 const resourceWatchCloseMock = vi.hoisted(() => vi.fn(async () => undefined));
-const activePluginAvailability = vi.hoisted(() => ({
-    reader: null as unknown,
-}));
 const contributionProjectionDescribeMock = vi.hoisted(() => vi.fn());
 const targetedContributionsReadMock = vi.hoisted(() => vi.fn());
 const accountEncryptionModeCredentials = vi.hoisted(() => ({
@@ -999,7 +983,6 @@ const accountEncryptionModeFetch = vi.hoisted(() => vi.fn<
 type AccountEncryptionModeResult = Awaited<ReturnType<
     typeof import('@/sync/api/account/apiAccountEncryptionMode').fetchAccountEncryptionMode
 >>;
-let restoreCredentialBoundary: (() => void) | undefined;
 
 vi.mock('@/sync/ops/machineContributionRegistryProjection', async (importOriginal) => ({
     ...(await importOriginal<typeof import('@/sync/ops/machineContributionRegistryProjection')>()),
@@ -1035,26 +1018,6 @@ vi.mock('@/sync/store/hooks', async (importOriginal) => ({
     }),
 }));
 
-vi.mock('@/sync/domains/scope/activeServerAccountScope', async (importOriginal) => ({
-    ...(await importOriginal<typeof import('@/sync/domains/scope/activeServerAccountScope')>()),
-    captureActiveServerAccountScopeLifetime: () => pluginSurfaceAccountLifetime.value,
-}));
-
-// The production merged-projection hook resolves routed Homes through this
-// credential-scope boundary when a serverId is supplied. Keep that boundary
-// truthful in host tests so generic mounts can consume the same machine
-// projection as the target read; the account lifetime itself remains the
-// fixture's existing currentness owner.
-vi.mock('@/sync/domains/scope/useServerCredentialAccountScopes', () => ({
-    useServerCredentialAccountScopeBindings: (serverIds: readonly string[]) => new Map(
-        serverIds.flatMap((serverId) => {
-            const binding = pluginSurfaceAccountLifetime.value;
-            return binding?.scope.serverId === serverId
-                ? [[serverId, binding] as const]
-                : [];
-        }),
-    ),
-}));
 
 vi.mock('@/sync/http/client', async (importOriginal) => {
     const original = await importOriginal<typeof import('@/sync/http/client')>();
@@ -1101,43 +1064,7 @@ vi.mock('@/sync/domains/session/listing/sessionListQueryRuntime', async (importO
     } };
 });
 
-vi.mock('@/sync/domains/server/serverRuntime', async (importOriginal) => {
-    const original = await importOriginal<typeof import('@/sync/domains/server/serverRuntime')>();
-    return {
-        ...original,
-        getActiveServerSnapshot: () => pluginDataTransport.enabled
-            ? {
-                serverId: 'server-a',
-                serverUrl: 'https://plugin-data.example',
-                generation: 1,
-            }
-            : original.getActiveServerSnapshot(),
-    };
-});
 
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope', async (importOriginal) => {
-    const original = await importOriginal<typeof import('@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope')>();
-    return {
-        ...original,
-        captureServerRequestAuthorityForServerAccountScope: (...args: Parameters<
-            typeof original.captureServerRequestAuthorityForServerAccountScope
-        >) => {
-            if (!pluginDataTransport.enabled) {
-                return original.captureServerRequestAuthorityForServerAccountScope(...args);
-            }
-            return Promise.resolve({
-                scope: args[0].scope,
-                context: { token: 'account-token' },
-                request: pluginDataTransport.request,
-            });
-        },
-    };
-});
-
-vi.mock('@/sync/domains/plugins/availability/projection', async (importOriginal) => ({
-    ...(await importOriginal<typeof import('@/sync/domains/plugins/availability/projection')>()),
-    useActivePluginAccountAvailabilityReader: () => activePluginAvailability.reader,
-}));
 
 
 vi.mock('@/log', async (importOriginal) => {
@@ -1335,8 +1262,8 @@ vi.mock('@/components/appShell/currentUiContext/CurrentUiContextProvider', async
 });
 
 afterEach(async () => {
-    restoreCredentialBoundary?.();
-    restoreCredentialBoundary = undefined;
+    await surfaceConnection?.dispose();
+    surfaceConnection = null;
     vi.useRealTimers();
     act(() => {
         surfaceEnvironment.appState = 'active';
@@ -1366,7 +1293,7 @@ afterEach(async () => {
     pluginDataTransport.enabled = false;
     pluginDataTransport.request.mockReset();
     recordAccountStoredContentServerRequirements({
-        serverUrl: 'https://plugin-data.example',
+        serverUrl: 'https://server-a',
         requirements: undefined,
     });
     resourceReadMock.mockReset();
@@ -1386,13 +1313,15 @@ afterEach(async () => {
     for (const scope of pluginSurfaceAccountLifetime.scopesUsed()) {
         forgetPluginUiProjectionAdmissionSnapshots(scope);
     }
-    pluginSurfaceAccountLifetime.reset();
-    activePluginAvailability.reader = null;
+    pluginSurfaceAccountLifetime.value = null;
+    usedAccountScopes.clear();
+    clearPluginAccountAvailabilityProjection();
     accountEncryptionModeFetch.mockReset();
     accountEncryptionModeCredentials.value = null;
 });
 
 beforeEach(async () => {
+    await loadSyncSingletonForTests();
     resourceReadMock.mockReset();
     resourceReadMock.mockResolvedValue({
         supported: true,
@@ -1462,17 +1391,8 @@ beforeEach(async () => {
         };
     });
     (await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs')).clearDaemonMergedProjectionCacheForTests();
-    accountEncryptionModeCredentials.value = { token: 'plugin-surface-account-mode-test-token' };
-    // Mutate the genuine singleton boundary: a module-replacement Proxy can
-    // leave cyclic imports holding the original, credential-less Sync object.
-    const credentialBoundary = vi.spyOn((await import('@/sync/syncEngine')).sync, 'getCredentials')
-        .mockImplementation(() => {
-            const credentials = accountEncryptionModeCredentials.value;
-            if (!credentials) throw new Error('Account credentials unavailable in test boundary');
-            return credentials;
-        });
-    restoreCredentialBoundary = () => credentialBoundary.mockRestore();
     accountEncryptionModeFetch.mockResolvedValue({ mode: 'e2ee', updatedAt: 1 });
+    await pluginSurfaceAccountLifetime.setScope({ serverId: 'server-a', accountId: 'account-a' });
     (await import('@/sync/api/account/apiAccountEncryptionMode')).invalidateAccountEncryptionModeCache();
     const { clearDaemonMergedProjectionCacheForTests } = await import(
         '@/agents/backendCatalog/loadDaemonMergedProjectionInputs'
@@ -1815,7 +1735,7 @@ function createGeneratedHostedWebArtifactProjection(input: Readonly<{
 
 function prepareGeneratedHostedWebArtifactFrame(): void {
     const { graph, pluginId, contributionId, platform, releaseVersion } = generatedHostedWebArtifactFixture;
-    activePluginAvailability.reader = createPluginAccountAvailabilityReader({
+    replacePluginAccountAvailabilityProjection({
         scope: { serverId: 'server-a', accountId: 'account-a' },
         snapshot: {
             availabilityCursor: 11,
@@ -3875,7 +3795,7 @@ describe('PluginSurfacePlacementHost', () => {
     });
 
     it('keeps Account-local declarative interaction available while daemon-owned settings recover offline', async () => {
-        pluginSurfaceAccountLifetime.setScope({ serverId: 'server-a', accountId: 'account-a' });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server-a', accountId: 'account-a' });
         accountEncryptionModeFetch.mockResolvedValue({ mode: 'plain', updatedAt: 1 });
         const daemonProfile = await upsertServerProfile({
             serverUrl: 'https://server-recovery',
@@ -3958,7 +3878,7 @@ describe('PluginSurfacePlacementHost', () => {
             schemaVersion: accountCollectionContract.schemaVersion,
             contractDigest: accountCollectionContract.contractDigest,
         };
-        activePluginAvailability.reader = createPluginAccountAvailabilityReader({
+        replacePluginAccountAvailabilityProjection({
             scope: { serverId: 'server-a', accountId: 'account-a' },
             snapshot: {
                 availabilityCursor: 1,
@@ -4007,7 +3927,7 @@ describe('PluginSurfacePlacementHost', () => {
             } satisfies PluginAccountAvailabilitySnapshot,
         });
         recordAccountStoredContentServerRequirements({
-            serverUrl: 'https://plugin-data.example',
+            serverUrl: 'https://server-a',
             requirements: {
                 v: 1,
                 minimumProtocolVersion: 2,
@@ -4197,6 +4117,8 @@ describe('PluginSurfacePlacementHost', () => {
             id: daemonProfile.id,
             serverIdentityId: 'srv_missing_account_lifetime',
         });
+        await surfaceConnection!.dispose();
+        surfaceConnection = null;
         pluginSurfaceAccountLifetime.value = null;
         declarativeSettingsGetMock.mockResolvedValue({
             supported: true,
@@ -4747,7 +4669,10 @@ describe('PluginSurfacePlacementHost', () => {
         } as const;
         const deferredPlacement = {
             ...browserHostedWebPlacement,
-            featureGate: 'plugins.ui.hostedWeb',
+            availability: {
+                ...browserHostedWebPlacement.availability,
+                when: { fact: 'host.feature', operator: 'enabled', value: 'plugins.ui.hostedWeb' },
+            },
         } as const;
 
         const unavailable = await renderScreen(
@@ -5619,7 +5544,7 @@ describe('PluginSurfacePlacementHost', () => {
         // A bound Availability reader always gives the mount a Data client. That
         // is not itself an offline rendering grant: this current release has no
         // admitted Account Collection contract to read or mutate.
-        activePluginAvailability.reader = createPluginAccountAvailabilityReader({
+        replacePluginAccountAvailabilityProjection({
             scope: { serverId: 'server-a', accountId: 'account-a' },
             snapshot: {
                 availabilityCursor: 1,
@@ -5855,7 +5780,7 @@ describe('PluginSurfacePlacementHost', () => {
         const firstExpiresAt = Date.now() + 10_000;
         const replacementExpiresAt = Date.now() + 60_000;
         const releaseVersion = '1.2.3';
-        activePluginAvailability.reader = createPluginAccountAvailabilityReader({
+        replacePluginAccountAvailabilityProjection({
             scope: { serverId: 'server-a', accountId: 'account-a' },
             snapshot: {
                 availabilityCursor: 1,
@@ -6201,7 +6126,7 @@ describe('PluginSurfacePlacementHost', () => {
             screen.findByTestId('plugin-rn-account-author-rows')?.props.accessibilityLabel
         );
 
-        pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
         const screen = await renderScreen(host(), { flushOptions: { cycles: 0 } });
         await vi.waitFor(() => {
             expect(readAuthorRows()).toBe('account-a-private-binding');
@@ -6218,7 +6143,7 @@ describe('PluginSurfacePlacementHost', () => {
 
         // Account B's read never settles, so only a retired author tree can
         // clear Account A's rows.
-        pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-b' });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-b' });
         await screen.update(host());
         await vi.waitFor(() => {
             expect(readAuthorRows()).toBe('no-rows-yet');
@@ -6226,7 +6151,7 @@ describe('PluginSurfacePlacementHost', () => {
         expect(authorMounts).toBe(2);
 
         currentAccountRow = 'account-a-private-binding';
-        pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
         await screen.update(host());
         await vi.waitFor(() => {
             expect(readAuthorRows()).toBe('account-a-private-binding');
@@ -6236,7 +6161,7 @@ describe('PluginSurfacePlacementHost', () => {
     });
 
     it('withholds a generated mount and Host API context until the current Account mode resolves', async () => {
-        pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
         reactNativeSurfaceProps.length = 0;
         let resolveAccountEncryptionMode!: (value: AccountEncryptionModeResult) => void;
         const accountEncryptionModePending = new Promise<AccountEncryptionModeResult>((resolve) => {
@@ -6282,7 +6207,7 @@ describe('PluginSurfacePlacementHost', () => {
     });
 
     it('mounts generated RNW with the canonical SDK render context and no invented Re.Pack identity', async () => {
-        pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
         reactNativeSurfaceProps.length = 0;
         surfaceEnvironment.dark = true;
         surfaceEnvironment.rtl = true;
@@ -6403,7 +6328,7 @@ describe('PluginSurfacePlacementHost', () => {
             persistentIdentity,
             bytes: entryBytes,
         }));
-        const generatedAccountAvailabilityReader = createPluginAccountAvailabilityReader({
+        const generatedAccountAvailability = {
             scope: { serverId: 'server_1', accountId: 'account-a' },
             snapshot: {
                 availabilityCursor: 44,
@@ -6453,8 +6378,8 @@ describe('PluginSurfacePlacementHost', () => {
                     },
                 }],
             } satisfies PluginAccountAvailabilitySnapshot,
-        });
-        activePluginAvailability.reader = generatedAccountAvailabilityReader;
+        } satisfies Parameters<typeof replacePluginAccountAvailabilityProjection>[0];
+        replacePluginAccountAvailabilityProjection(generatedAccountAvailability);
         const renderSurface = () => React.createElement('PluginNativeSurface');
         const loadInstalledBundle = vi.fn(async () => renderSurface);
         const reactNativeLoaderBackend = {
@@ -6778,7 +6703,7 @@ describe('PluginSurfacePlacementHost', () => {
         // its Account projection changes. That must not replace this mount's
         // Data client (and dispose its Data-owned pager) while the captured
         // Account lifetime remains current.
-        activePluginAvailability.reader = Object.freeze({ ...generatedAccountAvailabilityReader });
+        replacePluginAccountAvailabilityProjection(generatedAccountAvailability);
         await screen.update(renderPlacement());
         const availabilityRefreshedProps = reactNativeSurfaceProps.at(-1) as typeof props;
         expect(availabilityRefreshedProps.privateHostBindings?.dataClient).toBe(accountADataClient);
@@ -6843,7 +6768,7 @@ describe('PluginSurfacePlacementHost', () => {
     });
 
     it('keeps an Account-data RN renderer mounted through an all-daemons-offline cold start while daemon methods stay unavailable', async () => {
-        pluginSurfaceAccountLifetime.setScope({ serverId: 'server-a', accountId: 'account-a' });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server-a', accountId: 'account-a' });
         accountEncryptionModeFetch.mockResolvedValue({ mode: 'plain', updatedAt: 1 });
         reactNativeSurfaceProps.length = 0;
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
@@ -6879,7 +6804,7 @@ describe('PluginSurfacePlacementHost', () => {
             schemaVersion: contract.schemaVersion,
             contractDigest: contract.contractDigest,
         };
-        const admittingAvailabilityReader = createPluginAccountAvailabilityReader({
+        const admittingAvailability = {
             scope: { serverId: 'server-a', accountId: 'account-a' },
             snapshot: {
                 availabilityCursor: 1,
@@ -6926,9 +6851,9 @@ describe('PluginSurfacePlacementHost', () => {
                     },
                 }],
             } satisfies PluginAccountAvailabilitySnapshot,
-        });
+        } satisfies Parameters<typeof replacePluginAccountAvailabilityProjection>[0];
         recordAccountStoredContentServerRequirements({
-            serverUrl: 'https://plugin-data.example',
+            serverUrl: 'https://server-a',
             requirements: {
                 v: 1,
                 minimumProtocolVersion: 2,
@@ -7132,8 +7057,7 @@ describe('PluginSurfacePlacementHost', () => {
         // Availability projection has loaded. Its Data client cannot admit
         // anything yet, and a surface that read on mount has already been
         // told its Account is unreachable.
-        activePluginAvailability.reader = createPluginAccountAvailabilityReaderStore()
-            .bind({ serverId: 'server-a', accountId: 'account-a' });
+        clearPluginAccountAvailabilityProjection();
         const screen = await renderScreen(renderPlacement(false));
         await vi.waitFor(() => expect(reactNativeSurfaceProps).not.toHaveLength(0));
         const notLoadedProps = reactNativeSurfaceProps.at(-1) as {
@@ -7150,7 +7074,7 @@ describe('PluginSurfacePlacementHost', () => {
         // hands its surface a new Data client: that identity change is the one
         // signal a consumer keyed on its client has to read again, instead of
         // keeping the not-yet-loaded refusal until a manual retry.
-        activePluginAvailability.reader = admittingAvailabilityReader;
+        replacePluginAccountAvailabilityProjection(admittingAvailability);
         await screen.update(renderPlacement(false));
         await vi.waitFor(() => expect(
             (reactNativeSurfaceProps.at(-1) as typeof notLoadedProps).privateHostBindings?.dataClient,
@@ -7201,7 +7125,7 @@ describe('PluginSurfacePlacementHost', () => {
         // capability is still Account Data and keeps the mounted UI interactive
         // while every daemon is offline; an empty Collection inventory cannot
         // erase that separate public storage surface.
-        activePluginAvailability.reader = createPluginAccountAvailabilityReader({
+        replacePluginAccountAvailabilityProjection({
             scope: { serverId: 'server-a', accountId: 'account-a' },
             snapshot: {
                 availabilityCursor: 2,
@@ -7292,7 +7216,7 @@ describe('PluginSurfacePlacementHost', () => {
     });
 
     it('keeps structurally admitted RN Host API methods stable across reconnect without remounting it', async () => {
-        pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
         reactNativeSurfaceProps.length = 0;
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
         const renderMethodSets: string[] = [];
@@ -7375,7 +7299,7 @@ describe('PluginSurfacePlacementHost', () => {
     });
 
     it('EU-5a: carries openSurface launch input into the canonical render context and replaces it on reopen', async () => {
-        pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
         reactNativeSurfaceProps.length = 0;
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
         const { getInstalledPluginReactNativeBundleCache } = await import('@/components/plugins/reactNative/bundleCache');
@@ -7513,7 +7437,7 @@ describe('PluginSurfacePlacementHost', () => {
     });
 
     it('RN-2: does not revive the retired devHotReload executable source', async () => {
-        pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
         reactNativeSurfaceProps.length = 0;
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
         const devUrl = 'http://127.0.0.1:8082/index.bundle?platform=ios&dev=true';
@@ -7592,7 +7516,7 @@ describe('PluginSurfacePlacementHost', () => {
     });
 
     it('RN-2: does not build a dev load path for a denied devHotReload projection (no dev URL / fallback)', async () => {
-        pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
         reactNativeSurfaceProps.length = 0;
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
         const targetedFixture = primeExactTargetedContributions({
@@ -7640,7 +7564,7 @@ describe('PluginSurfacePlacementHost', () => {
     });
 
     it('keeps the declared RN renderer when its runtime is unavailable', async () => {
-        pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
         reactNativeSurfaceProps.length = 0;
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
         const targetedFixture = primeExactTargetedContributions({
@@ -7708,7 +7632,7 @@ describe('PluginSurfacePlacementHost', () => {
     });
 
     it('fails closed when the exact RN binding cannot install projected Host API requirements', async () => {
-        pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
         reactNativeSurfaceProps.length = 0;
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
         const targetedFixture = primeExactTargetedContributions({
@@ -8054,8 +7978,8 @@ describe('PluginSurfacePlacementHost', () => {
  * production code.
  */
 describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => {
-    beforeEach(() => {
-        pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
+    beforeEach(async () => {
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
     });
 
     const generatedArtifactEntry = `react-native/${reactNativeCacheIdentity.artifactId}/entry.cjs.bundle`;
@@ -8130,7 +8054,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
     it('forgets app-page A current UI before focus can restore it after navigation', async () => {
         reactNativeSurfaceProps.length = 0;
         await primeGeneratedArtifact();
-        pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
 
         type PublishedRecord = Readonly<{
             entityLabel: string | undefined;
@@ -8587,7 +8511,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
     });
 
     it('mounts a fresh all-daemons-offline process from the last-confirmed targeted admission in device custody', async () => {
-        pluginSurfaceAccountLifetime.setScope({ serverId: 'server-a', accountId: 'account-a' });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server-a', accountId: 'account-a' });
         reactNativeSurfaceProps.length = 0;
         await primeGeneratedArtifact();
         const { prepareWarmCacheEncryptionKey } = await import('@/sync/domains/state/warmCacheEncryptionKey');
@@ -9269,7 +9193,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
     });
 
     it('keeps B caller fallback through its issued generated V2 Artifact frame without borrowing the parent projection', async () => {
-        pluginSurfaceAccountLifetime.setScope({ serverId: 'server-a', accountId: 'account-a' });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server-a', accountId: 'account-a' });
         reactNativeSurfaceProps.length = 0;
         const mountedTarget = Object.freeze({
             pluginId: 'acme.browser',
@@ -9419,7 +9343,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
         const issuedUrl = `https://artifacts.happier.test/v1/plugins/availability/ui-artifacts/browser/${issuedCapability}/`;
         const expiresAt = Date.now() + 60_000;
         const releaseVersion = artifactProjection.pluginVersion;
-        activePluginAvailability.reader = createPluginAccountAvailabilityReader({
+        replacePluginAccountAvailabilityProjection({
             scope: { serverId: 'server-a', accountId: 'account-a' },
             snapshot: {
                 availabilityCursor: 1,
@@ -10922,7 +10846,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
         const initial = readMountedSurface();
         expect(initial.theme).toEqual(projectPluginUiTheme(lightTheme));
         expect(initial.locale).toBe('en');
-        expect(initial.translations).toEqual({
+        expect(initial.translations).toMatchObject({
             'panel.title': 'Native panel',
             'panel.onlyEnglish': 'English only',
             'happier.plugin-ui.form.submit': 'Submit',
@@ -10938,16 +10862,6 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             'happier.plugin-ui.list.moreActions': 'More actions',
             'happier.plugin-ui.select.choose': 'Choose…',
             'happier.plugin-ui.detailsPane.back': 'Back',
-            'happier.plugin-ui.presence.stopping': 'Stopping {agent}…',
-            'happier.plugin-ui.presence.stoppingDetail': 'Finishing its last action',
-            'happier.plugin-ui.presence.youHaveControl': 'You have control',
-            'happier.plugin-ui.presence.pausedUntilHandBack': '{agent} is paused until you hand back',
-            'happier.plugin-ui.presence.stopUnconfirmed': 'Couldn’t confirm the stop',
-            'happier.plugin-ui.presence.lastActionMayHaveLanded': '{agent}’s last action may have landed',
-            'happier.plugin-ui.presence.takeControl': 'Take control',
-            'happier.plugin-ui.presence.handBack': 'Hand back',
-            'happier.plugin-ui.presence.checkAgain': 'Check again',
-            'happier.plugin-ui.presence.watch': 'Watch',
         });
 
         // A locale change moves BOTH the locale fact and the resolved bundle;
@@ -10956,7 +10870,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
         await screen.update(render());
         const localized = readMountedSurface();
         expect(localized.locale).toBe('es');
-        expect(localized.translations).toEqual({
+        expect(localized.translations).toMatchObject({
             'panel.title': 'Panel nativo',
             'panel.onlyEnglish': 'English only',
             'happier.plugin-ui.form.submit': 'Enviar',
@@ -10972,16 +10886,6 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             'happier.plugin-ui.list.moreActions': 'Más acciones',
             'happier.plugin-ui.select.choose': 'Elegir…',
             'happier.plugin-ui.detailsPane.back': 'Atrás',
-            'happier.plugin-ui.presence.stopping': 'Deteniendo a {agent}…',
-            'happier.plugin-ui.presence.stoppingDetail': 'Terminando su última acción',
-            'happier.plugin-ui.presence.youHaveControl': 'Tienes el control',
-            'happier.plugin-ui.presence.pausedUntilHandBack': '{agent} está en pausa hasta que le devuelvas el control',
-            'happier.plugin-ui.presence.stopUnconfirmed': 'No se pudo confirmar la parada',
-            'happier.plugin-ui.presence.lastActionMayHaveLanded': 'Puede que la última acción de {agent} se haya realizado',
-            'happier.plugin-ui.presence.takeControl': 'Tomar el control',
-            'happier.plugin-ui.presence.handBack': 'Devolver',
-            'happier.plugin-ui.presence.checkAgain': 'Volver a comprobar',
-            'happier.plugin-ui.presence.watch': 'Ver',
         });
 
         // A theme change moves the projected values, not just `colorScheme`.
@@ -11883,7 +11787,7 @@ describe('installed Session widget through the mounted plugin controller', () =>
         onTestFinished(() => { storage.setState(previous, true); });
         storage.setState({ profileScope: { serverId: scope.serverId, accountId: scope.accountId },
             profile: AccountProfileSchema.parse({ id: scope.accountId }) });
-        pluginSurfaceAccountLifetime.setScope(scope);
+        await pluginSurfaceAccountLifetime.setScope(scope);
         contributionProjectionDescribeMock.mockClear();
         resourceReadMock.mockClear();
         reactNativeSurfaceProps.length = 0;
@@ -11992,7 +11896,7 @@ describe('installed Session widget through the mounted plugin controller', () =>
         });
         reactNativeSurfaceRuntime.enabled = true;
         reactNativeSurfaceRuntime.module = { renderSurface };
-        pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
         resourceReadMock.mockResolvedValue({ supported: true, result: {
             ok: true, contentType: 'text/plain', digest: `sha256:${'0'.repeat(64)}`,
             bytesBase64: encodeBase64(new TextEncoder().encode('Ready for the public widget review')),
@@ -12164,8 +12068,8 @@ describe('installed Session widget through the mounted plugin controller', () =>
 });
 
 describe('canonical action dispatch reaches every mounted placement (EU-2)', () => {
-    beforeEach(() => {
-        pluginSurfaceAccountLifetime.setScope({ serverId: 'server-1', accountId: 'account-a' });
+    beforeEach(async () => {
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server-1', accountId: 'account-a' });
     });
 
     const crossPathEntry = `react-native/${reactNativeCacheIdentity.artifactId}/entry.cjs.bundle`;

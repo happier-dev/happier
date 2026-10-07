@@ -999,6 +999,7 @@ describe('hosted web plugin host API adapter', () => {
         }));
         const mountedHostApi = createPluginSurfaceActionHostApi({
             surfaceContext: surface,
+            callerSourceCustody: targetSourceCustody,
             callerBinding: {
                 pluginId: surface.pluginId,
                 contributionLocalId: surface.contributionId,

@@ -1,153 +1,58 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { describe, expect, it } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
-import {
-    applyLocalServiceLauncherSnapshot,
-    createLocalServiceLauncherState,
-} from '@/sync/domains/local/services/launch';
-import { createBrowserLaunchpadDetailsTab } from '@/components/browser/surfaces';
-
+import { createSessionFixture, renderScreen } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storageStore';
 import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
+import { installSessionPaneRuntimeTestHarness } from './sessionPaneRuntimeTestHarness';
 
 installSessionDetailsPanelCommonModuleMocks();
-
-const detailsSurfaceHostSpy = vi.hoisted(() => vi.fn((props: unknown) => React.createElement('DetailsSurfaceHostMock', { props })));
-
-vi.mock('@/components/appShell/panes/details/surfaces', () => ({
-    DetailsSurfaceHost: (props: unknown) => detailsSurfaceHostSpy(props),
-    createDetailsSurfacePaneCallbacks: (callbacks: unknown) => callbacks,
-}));
-
-vi.mock('@/components/appShell/panes/details/workspace/DetailsSplitWorkspace', () => ({
-    DetailsSplitWorkspace: (props: {
-        renderTabContent?: (tab: unknown, presentation: Readonly<{ active: boolean }>) => React.ReactNode;
-    }) => React.createElement(
-        React.Fragment,
-        null,
-        props.renderTabContent?.({
-            key: 'browser:launchpad',
-            kind: 'browser-view',
-            title: 'Browser',
-            resource: {
-                kind: 'browser-view',
-                mode: 'launchpad',
-                browserSessionId: 'browser_surface:details:browser_launchpad',
-            },
-            isPinned: true,
-            isPreview: false,
-        }, { active: true }),
-    ),
-}));
-
-vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
-    useAppPaneScope: () => ({
-        scopeState: {
-            right: { isOpen: false },
-            details: {
-                isOpen: true,
-                activeTabKey: 'browser:launchpad',
-                tabs: [],
-                groups: [],
-                root: null,
-                tabState: {},
-            },
-        },
-        closeDetails: vi.fn(),
-        openDetailsTab: vi.fn(),
-        closeDetailsTab: vi.fn(),
-        pinDetailsTab: vi.fn(),
-        unpinDetailsTab: vi.fn(),
-        openRight: vi.fn(),
-        closeRight: vi.fn(),
-    }),
-}));
-
-vi.mock('@/components/sessions/terminal/SessionEmbeddedTerminalPane', () => ({
-    SessionEmbeddedTerminalPane: () => React.createElement('SessionEmbeddedTerminalPane'),
-}));
-
-vi.mock('./SessionDetailsPanelDetailViews', () => ({
-    SessionCommitDetailsViewForPanel: () => React.createElement('SessionCommitDetailsViewForPanel'),
-    SessionFileDetailsViewForPanel: () => React.createElement('SessionFileDetailsViewForPanel'),
-    SessionScmReviewDetailsViewForPanel: () => React.createElement('SessionScmReviewDetailsViewForPanel'),
-    SessionScmStashDetailsViewForPanel: () => React.createElement('SessionScmStashDetailsViewForPanel'),
-    SessionSubagentDetailsViewForPanel: () => React.createElement('SessionSubagentDetailsViewForPanel'),
-}));
-
-vi.mock('@/agents/registry/sessionSubagentUiBehavior', () => ({
-    renderProviderSessionDetailsTab: () => null,
-    resolveProviderSessionDetailsTabIconName: () => null,
-}));
-
-vi.mock('./registry/sessionSurfaces', () => ({
-    renderSessionSurfaceTab: () => null,
-    resolveSessionSurfaceTabIconName: () => null,
-}));
-
-function buildLauncherState() {
-    return applyLocalServiceLauncherSnapshot(createLocalServiceLauncherState(), {
-        v: 1,
-        machineId: 'machine-a',
-        sessionId: 'session-a',
-        updatedAt: 3_000,
-        targets: [{
-            id: 'preview:session-browser-feed',
-            source: 'registered_preview',
-            machineId: 'machine-a',
-            sessionId: 'session-a',
-            title: 'Session browser feed',
-            subtitle: 'localhost:5173',
-            confidence: 'high',
-            state: 'available',
-            actions: [],
-            browserTarget: {
-                kind: 'localServicePreview',
-                targetId: 'preview-session-browser-feed',
-                sessionId: 'session-a',
-                machineId: 'machine-a',
-            },
-        }],
-    });
-}
+const runtime = installSessionPaneRuntimeTestHarness({ sessionId: 'session-a' });
 
 describe('SessionDetailsPanel local service launcher handoff', () => {
-    it('passes supplied LSV launcher rows into the browser details renderer', async () => {
+    it('passes supplied LSV launcher rows into the real browser details renderer', async () => {
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
-        detailsSurfaceHostSpy.mockClear();
-
-        await renderScreen(
-            <SessionDetailsPanel
-                sessionId="session-a"
-                scopeId="session:session-a"
-                nowMs={() => 4_000}
-                localServiceLauncherState={buildLauncherState()}
-            />,
-        );
-
-        const hostProps = detailsSurfaceHostSpy.mock.calls.at(-1)?.[0] as {
-            renderers?: readonly Readonly<{
-                id: string;
-                render: (input: unknown) => React.ReactElement | null;
-            }>[];
-        };
-        const browserRenderer = hostProps.renderers?.find((renderer) => renderer.id === 'browser-view-details-surface');
-        const element = browserRenderer?.render({
-            tab: {
-                ...createBrowserLaunchpadDetailsTab(),
-                isPinned: true,
-                isPreview: false,
-            },
-            descriptor: { surfaceId: 'browser-launchpad' },
-            active: true,
-            callbacks: {},
-        }) as React.ReactElement<{ launchpadRows?: readonly { id: string; disabledReason: string | null }[] }> | null;
-
-        expect(element?.props.launchpadRows).toEqual(expect.arrayContaining([
-            expect.objectContaining({
-                id: 'localService:preview:session-browser-feed',
-                disabledReason: null,
-            }),
+        const { DetailsSurfaceHost, createDetailsSurfaceDescriptor } = await import('@/components/appShell/panes/details/surfaces');
+        const { applyLocalServiceLauncherSnapshot, createLocalServiceLauncherState } = await import('@/sync/domains/local/services/launch');
+        const { BrowserDetailsSurface, createBrowserLaunchpadDetailsTab } = await import('@/components/browser/surfaces');
+        const session = createSessionFixture({ id: 'session-a', serverId: runtime.serverId });
+        storage.getState().applySessions([{ ...session, metadata: { ...session.metadata!, machineId: 'machine-a' } }]);
+        const launcherState = applyLocalServiceLauncherSnapshot(createLocalServiceLauncherState(), {
+            v: 1, machineId: 'machine-a', sessionId: 'session-a', updatedAt: 3_000,
+            targets: [{
+                id: 'preview:session-browser-feed', source: 'registered_preview',
+                machineId: 'machine-a', sessionId: 'session-a', title: 'Session browser feed',
+                subtitle: 'localhost:5173', confidence: 'high', state: 'available', actions: [],
+                browserTarget: {
+                    kind: 'localServicePreview', targetId: 'preview-session-browser-feed',
+                    sessionId: 'session-a', machineId: 'machine-a',
+                },
+            }],
+        });
+        const screen = await renderScreen(<runtime.Wrapper>
+            <SessionDetailsPanel sessionId="session-a" routeServerId={runtime.serverId}
+                scopeId="session:session-a" nowMs={() => 4_000} localServiceLauncherState={launcherState} />
+        </runtime.Wrapper>);
+        await act(async () => runtime.pane.openDetailsTab({
+            key: 'unsupported:launcher-probe', kind: 'unsupported', title: 'Launcher probe',
+            resource: { kind: 'unsupported' },
+        }, { intent: 'pinned' }));
+        const host = screen.tree.findByType(DetailsSurfaceHost);
+        const tab = { ...createBrowserLaunchpadDetailsTab(), isPinned: true, isPreview: false };
+        const descriptor = createDetailsSurfaceDescriptor({ tab, scope: host.props.scope, region: 'details' });
+        const browserRenderer = host.props.renderers.find((renderer: { id: string }) => renderer.id === 'browser-view-details-surface');
+        expect(browserRenderer).toBeDefined();
+        const element = browserRenderer.render({
+            tab, descriptor, scope: host.props.scope, region: 'details', active: true, callbacks: host.props.callbacks,
+        });
+        expect(React.isValidElement(element)).toBe(true);
+        if (!React.isValidElement<React.ComponentProps<typeof BrowserDetailsSurface>>(element)) {
+            throw new Error('Expected the real browser details surface');
+        }
+        expect(element.type).toBe(BrowserDetailsSurface);
+        expect(element.props.launchpadRows).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'localService:preview:session-browser-feed', disabledReason: null }),
         ]));
     });
 });

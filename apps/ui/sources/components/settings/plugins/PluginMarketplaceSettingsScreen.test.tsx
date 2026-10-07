@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { act, type ReactTestInstance } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { NavigationContext } from '@react-navigation/native';
 
 import type {
     MarketplaceIndexQueryResultV1,
@@ -30,7 +31,14 @@ import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers
  * (`AppScopePaneHost`), exactly as in the app. Re-renders of the tree go through the same wrapper.
  */
 function inAppPanes(element: React.ReactElement): React.ReactElement {
-    return React.createElement(AppPaneProvider, null, element);
+    // The native navigation SDK is a presentation boundary. Its context must be present for the
+    // real optional-focus owner to read useIsFocused instead of its outside-a-screen default.
+    const navigation = {
+        isFocused: () => screenFocusState.value,
+        setOptions: (options: Readonly<Record<string, unknown>>) => navigationSetOptionsSpy(options),
+    } as unknown as NonNullable<React.ContextType<typeof NavigationContext>>;
+    return React.createElement(NavigationContext.Provider, { value: navigation },
+        React.createElement(AppPaneProvider, null, element));
 }
 
 async function renderInAppPanes(
@@ -6527,11 +6535,21 @@ describe('PluginMarketplaceSourcesScreen', () => {
             { serverId: 'server-a' },
         );
 
-        // Adding a source asks for the address only: the Protocol owner derives
-        // the display title, and Edit stays the owner of optional metadata.
-        modalPromptMock.mockResolvedValueOnce('https://new.example/index.json');
+        // The current editor keeps the address editable until Save. The daemon derives the
+        // display title, and Edit stays the owner of optional metadata.
         await act(async () => {
             screen.pressRow('settings.plugins.sources.add');
+            await flushAsync();
+        });
+        const address = screen.findByTestId('settings.plugins.sources.draft.sourceUrl');
+        expect(address).toBeTruthy();
+        expect(machineMarketplaceSourceRegistryMutateMock).toHaveBeenCalledTimes(1);
+        await act(async () => {
+            address?.props.onChangeText('https://new.example/index.json');
+        });
+        expect(screen.findByTestId('settings.plugins.sources.draft.sourceUrl')?.props.value).toBe('https://new.example/index.json');
+        await act(async () => {
+            screen.pressByTestId('settings.plugins.sources.draft.save');
             await flushAsync();
             await flushAsync();
         });
@@ -6540,5 +6558,6 @@ describe('PluginMarketplaceSourcesScreen', () => {
             { kind: 'upsert', input: { sourceUrl: 'https://new.example/index.json', origin: 'user', enabled: true } },
             { serverId: 'server-a' },
         );
+        expect(screen.findByTestId('settings.plugins.sources.draft.sourceUrl')).toBeNull();
     });
 });

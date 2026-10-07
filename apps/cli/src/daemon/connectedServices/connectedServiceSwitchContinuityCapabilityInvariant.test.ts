@@ -5,22 +5,18 @@
 // not support shared state must never resolve a shared-state-required continuity
 // mode, and a resolver-supported switch transition must be advertised by the
 // public declaration.
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type { AgentConnectedAccountSwitchTransitionV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ConnectedServiceId } from '@happier-dev/protocol';
 
 import type { CatalogAgentId, ConnectedServiceSwitchContinuityParams } from '@/agent/catalog/types';
 import {
-  resolveExecutablePluginRuntimeRegistry,
   type ResolvedExecutablePluginRuntimeRegistry,
 } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey } from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
-
-const acquireAuthoritativePluginRuntimeRegistryLease = vi.hoisted(() => vi.fn());
-vi.mock('@/plugins/runtime/reload/runtimeLease', () => ({
-  acquireAuthoritativePluginRuntimeRegistryLease,
-}));
 
 import {
   getConnectedServiceStateSharingDescriptor,
@@ -160,19 +156,19 @@ function createNativeToConnectedProfileParams(
 
 describe('connected-service switch continuity capability invariants', () => {
   let runtime!: ResolvedExecutablePluginRuntimeRegistry;
+  let fixture: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | null = null;
 
   beforeAll(async () => {
-    runtime = await resolveExecutablePluginRuntimeRegistry();
-    acquireAuthoritativePluginRuntimeRegistryLease.mockImplementation(async () => ({
-      registry: runtime,
-      source: 'ephemeral',
-      durableRevision: runtime.durableRevision ?? -1,
-      release: async () => {},
-    }));
+    fixture = await createAdmittedPluginRuntimeFixture({
+      controller: pluginReloadController,
+      runtimeOptions: { pluginIds: CONTINUITY_PROVIDERS.map((agentId) => `happier.agent.${agentId}`) },
+    });
+    runtime = fixture.registry;
   });
 
   afterAll(async () => {
-    await runtime.dispose();
+    await fixture?.dispose();
+    fixture = null;
   });
 
   it.each(CONTINUITY_PROVIDERS)(

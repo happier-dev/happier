@@ -1341,7 +1341,9 @@ await withJsonOwnerFileLock({
 
       const ambiguousRaw = JSON.stringify({
         pid: process.pid,
-        ownerToken: 'prior-incarnation',
+        // Current writes mark an OS-observed birth in the opaque token. An
+        // untagged live predecessor owner is deliberately not reclaimable.
+        ownerToken: 'observed:prior-incarnation',
         processStartedAtMs: 1,
         createdAtMs: 1,
         updatedAtMs: 1,

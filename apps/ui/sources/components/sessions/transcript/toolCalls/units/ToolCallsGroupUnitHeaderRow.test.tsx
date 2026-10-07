@@ -5,10 +5,6 @@ import { createToolCallMessageFixture, renderScreen } from '@/dev/testkit';
 import { installToolCallsGroupViewCommonModuleMocks } from '@/components/sessions/transcript/turns/toolCalls/toolCallsGroupViewTestHelpers';
 import { createTranscriptSessionCommonPropsFixture, flattenStyleProp } from './toolCallsGroupUnitsTestFixtures';
 
-// Loaded at the assertion, not at the top: an eager import would evaluate the spinner's module
-// graph before this file's mocks and per-test setup have run.
-const loadActivitySpinner = async () => (await import('@/components/ui/feedback/ActivitySpinner')).ActivitySpinner;
-
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 installToolCallsGroupViewCommonModuleMocks({
@@ -33,21 +29,17 @@ installToolCallsGroupViewCommonModuleMocks({
     },
 });
 
-vi.mock('@/components/ui/icons/Icon', () => ({
-    Icon: (props: Record<string, unknown>) => React.createElement('Icon', {
-        ...props,
-        testID: `icon:${String(props.name)}`,
-    }),
-}));
-
 vi.mock('@/components/sessions/transcript/motion/TranscriptEnterWrapper', () => ({
     TranscriptEnterWrapper: (props: any) => React.createElement('TranscriptEnterWrapper', props, props.children),
 }));
 
 const interaction = { canSendMessages: true, canApprovePermissions: true } as const;
+// Install native/transport boundaries before collecting the real host graph;
+// no case owns a cold graph import or its still-pending React lifetime.
+const { ToolCallsGroupUnitHeaderRowWithSessionCommon } = await import('./ToolCallsGroupUnitHeaderRow');
+const { ActivitySpinner } = await import('@/components/ui/feedback/ActivitySpinner');
 
 async function renderHeaderRow(props: Record<string, unknown>) {
-    const { ToolCallsGroupUnitHeaderRowWithSessionCommon } = await import('./ToolCallsGroupUnitHeaderRow');
     return renderScreen(React.createElement(ToolCallsGroupUnitHeaderRowWithSessionCommon, {
         sessionId: 's1',
         groupId: 'toolCalls:t1:m1',
@@ -71,9 +63,9 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
 
         expect(screen.getTextContent()).toContain('session.toolCalls');
         expect(screen.getTextContent()).toContain('2');
-        expect(screen.findByTestId('icon:check-circle')).not.toBeNull();
-        expect(screen.findByTestId('icon:stack-simple')).not.toBeNull();
-        expect(screen.findByTestId('icon:caret-up')).toBeNull();
+        expect(screen.findAllByProps({ name: 'check-circle' }).length).toBeGreaterThan(0);
+        expect(screen.findAllByProps({ name: 'stack-simple' }).length).toBeGreaterThan(0);
+        expect(screen.findAllByProps({ name: 'caret-up' })).toHaveLength(0);
     });
 
     it('derives a running status spinner when any tool is still running', async () => {
@@ -84,8 +76,8 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
             ],
         });
 
-        expect(screen.findAllByType(await loadActivitySpinner()).length).toBeGreaterThan(0);
-        expect(screen.findByTestId('icon:check-circle')).toBeNull();
+        expect(screen.findAllByType(ActivitySpinner).length).toBeGreaterThan(0);
+        expect(screen.findAllByProps({ name: 'check-circle' })).toHaveLength(0);
     });
 
     it('derives an error status when any tool errored and none are running', async () => {
@@ -96,7 +88,7 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
             ],
         });
 
-        expect(screen.findByTestId('icon:warning-circle')).not.toBeNull();
+        expect(screen.findAllByProps({ name: 'warning-circle' }).length).toBeGreaterThan(0);
         expect(screen.getTextContent()).toContain('common.error');
         expect(screen.findByTestId('tool-calls-group-status:error')).toMatchObject({
             props: {
@@ -178,9 +170,9 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
             ],
         });
 
-        expect(screen.findAllByType(await loadActivitySpinner())).toHaveLength(0);
-        expect(screen.findByTestId('icon:check-circle')).toBeNull();
-        expect(screen.findByTestId('icon:minus-circle')).not.toBeNull();
+        expect(screen.findAllByType(ActivitySpinner)).toHaveLength(0);
+        expect(screen.findAllByProps({ name: 'check-circle' })).toHaveLength(0);
+        expect(screen.findAllByProps({ name: 'minus-circle' }).length).toBeGreaterThan(0);
         expect(screen.findByTestId('tool-calls-group-status:permission_denied')).toMatchObject({
             props: {
                 accessible: true,
@@ -206,9 +198,9 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
             ],
         });
 
-        expect(screen.findAllByType(await loadActivitySpinner())).toHaveLength(0);
-        expect(screen.findByTestId('icon:check-circle')).toBeNull();
-        expect(screen.findByTestId('icon:minus-circle')).not.toBeNull();
+        expect(screen.findAllByType(ActivitySpinner)).toHaveLength(0);
+        expect(screen.findAllByProps({ name: 'check-circle' })).toHaveLength(0);
+        expect(screen.findAllByProps({ name: 'minus-circle' }).length).toBeGreaterThan(0);
         expect(screen.findByTestId('tool-calls-group-status:permission_canceled')).toMatchObject({
             props: {
                 accessibilityLabel: 'errors.permissionCanceled',
@@ -233,7 +225,7 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
             setExpanded,
         });
 
-        expect(expanded.findByTestId('icon:caret-up')).not.toBeNull();
+        expect(expanded.findAllByProps({ name: 'caret-up' }).length).toBeGreaterThan(0);
         await expanded.pressByTestIdAsync('transcript-tool-calls-header');
         expect(setExpanded).toHaveBeenCalledWith(false);
     });

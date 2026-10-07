@@ -1,311 +1,116 @@
 import * as React from 'react';
-import { createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
-import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createScmCapabilities, type ScmWorkingSnapshot } from '@happier-dev/protocol/scm';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createMachineFixture, createSessionFixture, flushHookEffects, renderScreen } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storageStore';
+import { installSessionDetailsPanelCommonModuleMocks } from '../sessionDetailsPanelTestHelpers';
+import { installSessionPaneRuntimeTestHarness } from '../sessionPaneRuntimeTestHarness';
 
-
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-let mockSnapshot: any = null;
-let lastScmOperationsInput: any = null;
-const useSessionRealtimeScmTranscriptConsumerMock = vi.hoisted(() => vi.fn());
-const invalidateFromUserAndAwaitMock = vi.hoisted(() => vi.fn());
-const invalidateFromAutoRefreshAndAwaitMock = vi.hoisted(() => vi.fn());
-
-
-// Hoist boundaries before any static dependency can cache its real module.
-vi.mock('react-native', async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            View: (props: any) => React.createElement('View', props, props.children),
-            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-            ActivityIndicator: 'ActivityIndicator',
-            Platform: {
-                OS: 'web',
-                select: (value: any) => value?.default ?? null,
-            },
-            AppState: {
-                addEventListener: () => ({ remove: () => {} }),
-            },
-        });
-});
-vi.mock('react-native-unistyles', async () => {
-        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-        return createUnistylesMock({
-            theme: {
-                dark: false,
-                colors: {
-                    textSecondary: '#666',
-                    text: '#111',
-                },
-            },
-        });
-});
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        return createPartialStorageModuleMock(
-            importOriginal,
-            {
-                useSetting: () => null,
-                useAllMachines: () => [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', homeDir: '/tmp' } }],
-                useProjectForSession: () => null,
-                useProjectSessions: () => [],
-                useMachine: () => ({ online: true }),
-                useSession: () => ({ active: true, metadata: { machineId: 'm1', path: '/repo' } }),
-                useSessionListRenderableWithServerScope: () => createSessionListRenderableSessionFixture({ id: 's1', ...{ active: true, metadata: { host: 'test-machine', machineId: 'm1', path: '/repo' } } }),
-                useSessionProjectScmCommitSelectionPaths: () => [],
-                useSessionProjectScmCommitSelectionPatches: () => [],
-                useSessionProjectScmInFlightOperation: () => null,
-                useSessionProjectScmOperationLog: () => [],
-                useSessionProjectScmSnapshot: () => mockSnapshot,
-                useSessionProjectScmSnapshotError: () => null,
-                useSessionRealtimeScmTranscriptConsumer: useSessionRealtimeScmTranscriptConsumerMock,
-                useWorkspaceScmTouchedPathsForSession: () => [],
-            },
-        );
-});
-vi.mock('@/text', async () => {
+installSessionDetailsPanelCommonModuleMocks({
+    text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('@expo/vector-icons', async () => {
-    const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
-    return createExpoVectorIconsMock();
-});
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock().module;
-});
-vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
-    useAppPaneScope: () => ({
-        scopeState: {},
-    }),
-}));
-
-vi.mock('@/components/workspaces/scm/useWorkspaceScmTabState', () => ({
-    useWorkspaceScmTabState: () => ({
-        activeGitSubTab: 'commit',
-        setActiveGitSubTab: vi.fn(),
-        commitDraftMessage: '',
-        setCommitDraftMessage: vi.fn(),
-    }),
-}));
-
-vi.mock('./useSessionRightPanelGitOpenDetails', () => ({
-    useSessionRightPanelGitOpenDetails: () => ({
-        openFileInDetails: vi.fn(),
-        openFileInDetailsPinned: vi.fn(),
-        openCommitInDetails: vi.fn(),
-    }),
-}));
-
-vi.mock('@/hooks/session/files/useScmCommitHistory', () => ({
-    useScmCommitHistory: () => ({
-        historyEntries: [],
-        historyLoading: false,
-        historyHasMore: false,
-        loadCommitHistory: vi.fn(),
-    }),
-}));
-
-vi.mock('@/hooks/session/files/useFilesScmOperations', () => ({
-    useFilesScmOperations: (input: any) => {
-        lastScmOperationsInput = input;
-        return {
-            scmOperationBusy: false,
-            scmOperationStatus: null,
-            commitPreflight: { allowed: true, message: null },
-            pullPreflight: { allowed: true, message: null },
-            pushPreflight: { allowed: true, message: null },
-            runRemoteOperation: vi.fn(),
-            createCommitFromMessage: vi.fn(),
-            commitMessageGeneratorEnabled: false,
-            generateCommitMessageSuggestion: vi.fn(),
-        };
     },
-}));
-
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: () => true,
-}));
-
-vi.mock('@/components/workspaces/scm/states', () => ({
-    SourceControlStaleSnapshotNotice: () => null,
-    NotSourceControlRepositoryState: () => React.createElement('NotSourceControlRepositoryState'),
-    SourceControlUnavailableState: () => React.createElement('SourceControlUnavailableState'),
-    SourceControlSessionInactiveState: () => React.createElement('SourceControlSessionInactiveState'),
-}));
-
-vi.mock('@/scm/registry/scmUiBackendRegistry', () => {
-    const scmUiBackendRegistry = {
-        getPluginForSnapshot: () => ({
-            displayName: 'Git',
-            commitActionConfig: () => ({ label: 'Commit' }),
-            mapCapabilitiesToUiPolicy: () => ({ supportedDiffAreas: ['pending'] }),
-        }),
-    };
-    return {
-        scmUiBackendRegistry,
-        createScmUiBackendRegistry: () => scmUiBackendRegistry,
-    };
 });
 
-vi.mock('@/scm/scmStatusSync', () => ({
-    scmStatusSync: {
-        invalidateFromUserAndAwait: invalidateFromUserAndAwaitMock,
-        invalidateFromAutoRefreshAndAwait: invalidateFromAutoRefreshAndAwaitMock,
-    },
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: (props: any) => React.createElement('Text', props, props.children),
-}));
-
-vi.mock('./SessionRightPanelGitCommitTabContent', () => ({
-    SessionRightPanelGitCommitTabContent: () => React.createElement('CommitTab', { testID: 'session-right-panel-git-commit-tab' }),
-}));
-
-function createTimeoutCapture() {
-    const scheduledTimeouts: Array<Readonly<{
-        callback: () => void;
-        delayMs: number | undefined;
-    }>> = [];
-    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation((
-        callback: Parameters<typeof setTimeout>[0],
-        delayMs?: number,
-        ...args: Array<unknown>
-    ) => {
-        if (typeof callback === 'function') {
-            scheduledTimeouts.push({
-                callback: () => callback(...args),
-                delayMs,
-            });
+let refreshSnapshot: ScmWorkingSnapshot | null = null;
+const rpc = vi.fn(async (method: string, _input: unknown) => {
+    if (method === RPC_METHODS.SCM_STATUS_SNAPSHOT) return refreshSnapshot
+        ? { success: true, snapshot: refreshSnapshot }
+        : { success: false, errorCode: 'BACKEND_UNAVAILABLE', error: 'Status unavailable' };
+    if (method === RPC_METHODS.SCM_LOG_LIST) return { success: true, entries: [] };
+    return { success: false, errorCode: 'FEATURE_UNSUPPORTED' };
+});
+function configureSocket(socket: import('socket.io-client').Socket) {
+    vi.mocked(socket.connect).mockImplementation(() => {
+        socket.connected = true;
+        for (const listener of socket.listeners('connect')) listener();
+        return socket;
+    });
+    vi.spyOn(socket, 'emit').mockReturnValue(socket);
+    vi.spyOn(socket, 'disconnect').mockImplementation(() => {
+        socket.connected = false;
+        for (const listener of socket.listeners('disconnect')) listener('io client disconnect');
+        return socket;
+    });
+    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event, payload: unknown) => {
+        if (event !== 'rpc-call' || !payload || typeof payload !== 'object' || !('method' in payload) || typeof payload.method !== 'string' || !('params' in payload)) {
+            throw new Error('Unexpected Socket RPC envelope');
         }
-        return 0 as unknown as ReturnType<typeof setTimeout>;
+        return { ok: true, result: await rpc(payload.method.slice(payload.method.indexOf(':') + 1), payload.params) };
     });
-
-    return {
-        scheduledTimeouts,
-        setTimeoutSpy,
-    };
 }
-
-function createValidSnapshot() {
+const runtime = installSessionPaneRuntimeTestHarness({ configureSocket });
+function createSnapshot(isRepo = true): ScmWorkingSnapshot {
     return {
-        fetchedAt: 1,
-        projectKey: 'm1:/repo',
-        repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git' },
-        capabilities: {
-            readStatus: true,
-            readDiffFile: true,
-            readDiffCommit: true,
-            readLog: true,
-            writeCommit: true,
-            writeInclude: true,
-            writeExclude: true,
-            writeRemoteFetch: true,
-            writeRemotePull: true,
-            writeRemotePush: true,
-            supportedDiffAreas: ['included', 'pending'],
-        },
+        fetchedAt: 1, projectKey: 'm1:/repo',
+        repo: { isRepo, rootPath: '/repo', backendId: 'git', mode: '.git', remotes: [], worktrees: [] },
+        capabilities: createScmCapabilities({ readStatus: true, readLog: true, readDiffFile: true, changeSetModel: 'index' }),
         branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
-        stashCount: 0,
-        hasConflicts: false,
-        entries: [],
-        totals: {
-            includedFiles: 0,
-            pendingFiles: 0,
-            untrackedFiles: 0,
-            includedAdded: 0,
-            includedRemoved: 0,
-            pendingAdded: 0,
-            pendingRemoved: 0,
-        },
+        stashCount: 0, hasConflicts: false, entries: [],
+        totals: { includedFiles: 0, pendingFiles: 0, untrackedFiles: 0, includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 },
     };
 }
+beforeEach(() => {
+    storage.getState().applySessions([createSessionFixture({
+        id: 's1', serverId: runtime.serverId, active: true,
+        metadata: { machineId: 'm1', path: '/repo', host: 'test-machine' },
+    })]);
+    storage.getState().applyMachines([createMachineFixture({ id: 'm1', storageMode: 'plain', activeAt: Date.now() })], true, { sourceServerId: runtime.serverId });
+    storage.getState().applySettingsLocal({ scmGitPaneLayout: 'tabs' });
+});
+async function render() {
+    const { SessionRightPanelGitView } = await import('./SessionRightPanelGitView');
+    return renderScreen(<runtime.Wrapper><SessionRightPanelGitView sessionId="s1" serverId={runtime.serverId} scopeId="session:s1" /></runtime.Wrapper>);
+}
 
-// Owner loading belongs to setup, not an individual interaction's timeout.
-const { SessionRightPanelGitView } = await import('./SessionRightPanelGitView');
-
+beforeEach(() => { refreshSnapshot = null; rpc.mockClear(); });
 describe('SessionRightPanelGitView (snapshot SWR)', () => {
-    it('registers the mounted git surface as a realtime SCM transcript consumer', async () => {
-        const validSnapshot = createValidSnapshot();
-        mockSnapshot = validSnapshot;
-        useSessionRealtimeScmTranscriptConsumerMock.mockClear();
-
-        await renderScreen(React.createElement(SessionRightPanelGitView, { sessionId: 's1', scopeId: 'session:s1', serverId: 'home-a' }));
-
-        // The exact Home travels with the registration: another Home hosting the same Session
-        // id must not receive this surface's realtime SCM routing.
-        expect(useSessionRealtimeScmTranscriptConsumerMock)
-            .toHaveBeenCalledWith({ serverId: 'home-a', sessionId: 's1' }, validSnapshot);
+    it('registers the mounted git surface for its exact Home and retires it on unmount', async () => {
+        const { readMountedSessionRealtimeScmConsumerScopes } = await import('@/sync/runtime/sessionRealtimeScmConsumers');
+        storage.getState().updateSessionProjectScmSnapshot('s1', createSnapshot(), runtime.serverId);
+        const screen = await render();
+        expect(readMountedSessionRealtimeScmConsumerScopes()).toEqual(expect.arrayContaining([
+            expect.objectContaining({ serverId: runtime.serverId, sessionId: 's1', needsMutationTranscript: true }),
+        ]));
+        expect(readMountedSessionRealtimeScmConsumerScopes().some((scope) => scope.serverId === 'other-home')).toBe(false);
+        await act(async () => screen.tree.unmount());
+        expect(readMountedSessionRealtimeScmConsumerScopes().some((scope) => scope.serverId === runtime.serverId && scope.sessionId === 's1')).toBe(false);
     });
 
-    it('keeps retrying source-control refresh while the first snapshot is still unavailable', async () => {
-        const { scheduledTimeouts, setTimeoutSpy } = createTimeoutCapture();
-        mockSnapshot = null;
-        invalidateFromUserAndAwaitMock.mockReset();
-        invalidateFromAutoRefreshAndAwaitMock.mockReset();
-
+    it('keeps retrying refresh while the first snapshot is unavailable', async () => {
+        const { SessionRightPanelGitView } = await import('./SessionRightPanelGitView');
+        vi.useFakeTimers();
         try {
-            await renderScreen(React.createElement(SessionRightPanelGitView, { sessionId: 's1', scopeId: 'session:s1' }));
-
-            expect(invalidateFromUserAndAwaitMock).not.toHaveBeenCalled();
-            expect(invalidateFromAutoRefreshAndAwaitMock).toHaveBeenCalledWith('s1', undefined);
-
-            await flushHookEffects({ cycles: 1, turns: 1 });
-            expect(invalidateFromAutoRefreshAndAwaitMock).toHaveBeenCalledTimes(2);
-
-            const nextTimeout = scheduledTimeouts.find(({ delayMs }) => delayMs === 20_000);
-            expect(nextTimeout).toBeDefined();
-            nextTimeout?.callback();
-            await flushHookEffects({ cycles: 1, turns: 1 });
-
-            expect(invalidateFromAutoRefreshAndAwaitMock).toHaveBeenCalledTimes(3);
+            await renderScreen(<runtime.Wrapper><SessionRightPanelGitView sessionId="s1" serverId={runtime.serverId} scopeId="session:s1" /></runtime.Wrapper>);
+            await flushHookEffects({ cycles: 2, turns: 2 });
+            const count = rpc.mock.calls.filter(([method]) => method === RPC_METHODS.SCM_STATUS_SNAPSHOT).length;
+            expect(count).toBeGreaterThan(0);
+            await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+            expect(rpc.mock.calls.filter(([method]) => method === RPC_METHODS.SCM_STATUS_SNAPSHOT).length).toBeGreaterThan(count);
         } finally {
-            setTimeoutSpy.mockRestore();
+            vi.useRealTimers();
         }
     });
 
     it('renders the first loaded snapshot without changing hook order', async () => {
-        mockSnapshot = null;
-
-        function Wrapper(props: Readonly<{ tick: number }>) {
-            return React.createElement(SessionRightPanelGitView, { sessionId: 's1', scopeId: `session:s1:${props.tick}` });
-        }
-
-        const screen = await renderScreen(React.createElement(Wrapper, { tick: 0 }));
-        expect(screen.findAllByTestId('session-right-panel-git-commit-tab')).toHaveLength(0);
-
-        mockSnapshot = createValidSnapshot();
-        await act(async () => { screen.tree.update(React.createElement(Wrapper, { tick: 1 })); });
-
-        expect(screen.findAllByTestId('session-right-panel-git-commit-tab')).toHaveLength(1);
+        const screen = await render();
+        expect(screen.findHostByTestId('session-rightpanel-git-surface:commit')).toBeNull();
+        await act(async () => storage.getState().updateSessionProjectScmSnapshot('s1', createSnapshot(), runtime.serverId));
+        expect(screen.findHostByTestId('session-rightpanel-git-surface:commit')).not.toBeNull();
     });
 
-    it('keeps last-known snapshot content visible while snapshot is revalidating', async () => {
-
-        const validSnapshot = createValidSnapshot();
-
-        mockSnapshot = validSnapshot;
-        lastScmOperationsInput = null;
-
-        function Wrapper(props: Readonly<{ tick: number }>) {
-            return React.createElement(SessionRightPanelGitView, { sessionId: 's1', scopeId: 'session:s1', onOpenFile: () => void props.tick });
-        }
-
-        const screen = await renderScreen(React.createElement(Wrapper, { tick: 0 }));
-
-        expect(screen.findAllByTestId('session-right-panel-git-commit-tab')).toHaveLength(1);
-        expect(lastScmOperationsInput?.scmSnapshot).toBe(validSnapshot);
-
-        mockSnapshot = null;
-        await act(async () => { screen.tree.update(React.createElement(Wrapper, { tick: 1 })); });
-
-        // Should keep the commit surface mounted, rather than falling back to the empty loading state.
-        expect(screen.findAllByTestId('session-right-panel-git-commit-tab')).toHaveLength(1);
-        expect(lastScmOperationsInput?.scmSnapshot).toBe(validSnapshot);
+    it('keeps last-known snapshot content visible while revalidating', async () => {
+        const { SessionRightPanelGitCommitTabContent } = await import('./SessionRightPanelGitCommitTabContent');
+        const snapshot = createSnapshot();
+        storage.getState().updateSessionProjectScmSnapshot('s1', snapshot, runtime.serverId);
+        const screen = await render();
+        const mounted = screen.findHostByTestId('session-rightpanel-git-surface:commit');
+        expect(mounted).not.toBeNull();
+        await act(async () => storage.getState().updateSessionProjectScmSnapshot('s1', null, runtime.serverId));
+        expect(screen.findHostByTestId('session-rightpanel-git-surface:commit')).toBe(mounted);
+        expect(screen.findByType(SessionRightPanelGitCommitTabContent)?.props.scmSnapshot).toBe(snapshot);
     });
 });

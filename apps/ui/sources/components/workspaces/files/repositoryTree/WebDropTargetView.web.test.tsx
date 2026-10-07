@@ -26,7 +26,6 @@ function flattenStyle(style: any): React.CSSProperties | undefined {
 
 installRepositoryTreeCommonModuleMocks({
     storage: importOriginal => importOriginal(),
-    typography: () => vi.importActual('@/constants/Typography'),
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('../../../../dev/testkit/mocks/reactNative');
         const nativeMock = await createReactNativeWebMock();

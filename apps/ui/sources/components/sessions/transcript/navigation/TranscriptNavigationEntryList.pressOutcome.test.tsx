@@ -7,17 +7,12 @@ import { installNavigationCommonModuleMocks } from '@/components/ui/navigation/n
 import type {
     TranscriptNavigationEntry,
     TranscriptNavigationEntryJumpOutcome,
+    TranscriptNavigationEntryPressHandler,
 } from './transcriptNavigationTypes';
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 installNavigationCommonModuleMocks({
-    typography: async () => ({
-        Typography: {
-            default: () => ({}),
-            tabular: () => ({}),
-        },
-    }),
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
@@ -35,6 +30,8 @@ installNavigationCommonModuleMocks({
 });
 
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
+
+const { TranscriptNavigationEntryList } = await import('./TranscriptNavigationEntryList');
 
 function entry(overrides: Partial<TranscriptNavigationEntry> & Pick<TranscriptNavigationEntry, 'id' | 'seq'>): TranscriptNavigationEntry {
     return {
@@ -73,14 +70,13 @@ function deferred(): Deferred {
 
 async function renderList(params: Readonly<{
     entries: readonly TranscriptNavigationEntry[];
-    onEntryPress: (entry: TranscriptNavigationEntry) => unknown;
+    onEntryPress: TranscriptNavigationEntryPressHandler;
 }>) {
-    const { TranscriptNavigationEntryList } = await import('./TranscriptNavigationEntryList');
     return renderScreen(
         <TranscriptNavigationEntryList
             entries={params.entries}
             activeEntryId={null}
-            onEntryPress={params.onEntryPress as never}
+            onEntryPress={params.onEntryPress}
             testIDPrefix="nav"
         />,
     );

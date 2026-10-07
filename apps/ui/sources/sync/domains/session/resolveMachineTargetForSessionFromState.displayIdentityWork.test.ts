@@ -9,13 +9,13 @@ import { resolveSessionDisplayTarget } from '@/sync/domains/machines/identity/re
  * allocates is multiplied by the session count on every store update. These are work counts, not
  * timings: they stay true under any machine load.
  */
-function countMapConstructions(run: () => void): number {
+function countMachineIndexConstructions(machineValues: ReadonlySet<unknown>, run: () => void): number {
     const RealMap = globalThis.Map;
-    let constructions = 0;
+    const allocated: Map<unknown, unknown>[] = [];
     class CountingMap<K, V> extends RealMap<K, V> {
         constructor(entries?: Iterable<readonly [K, V]> | null) {
             super(entries);
-            constructions += 1;
+            allocated.push(this);
         }
     }
     (globalThis as { Map: unknown }).Map = CountingMap;
@@ -24,7 +24,9 @@ function countMapConstructions(run: () => void): number {
     } finally {
         (globalThis as { Map: unknown }).Map = RealMap;
     }
-    return constructions;
+    // Classify final contents, including maps created empty and filled later.
+    // Legacy string lookup's SessionAddress candidates are not machine indexes.
+    return allocated.filter((map) => [...map.values()].some((value) => machineValues.has(value))).length;
 }
 
 function buildState(input: Readonly<{
@@ -58,7 +60,7 @@ function buildState(input: Readonly<{
 function resolveEverySession(sessionCount: number): Readonly<{ constructions: number; resolved: string[] }> {
     const state = buildState({ sessionCount, machineCount: 8 });
     const resolved: string[] = [];
-    const constructions = countMapConstructions(() => {
+    const constructions = countMachineIndexConstructions(new Set(Object.values(state.machines)), () => {
         for (let index = 0; index < sessionCount; index += 1) {
             const identity = resolveDisplayIdentityForSessionFromState({
                 state: state as never,
@@ -73,6 +75,11 @@ function resolveEverySession(sessionCount: number): Readonly<{ constructions: nu
 
 describe('session display identity resolution work', () => {
     it('does not build a machine index per session on a store update', () => {
+        const machine = { id: 'm-counter-control', active: true };
+        expect(countMachineIndexConstructions(new Set([machine]), () => {
+            const index = new Map<string, typeof machine>();
+            index.set(machine.id, machine);
+        })).toBe(1);
         const small = resolveEverySession(10);
         const large = resolveEverySession(80);
 

@@ -14,6 +14,8 @@ import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { createEmbedEncryption } from '@/embed/encryption/createEmbedEncryption';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { voiceHooks } from '@/voice/context/voiceHooks';
 import {
   fetchAndApplySessionById as fetchAndApplySessionByIdSource,
   type SessionByIdEncryption,
@@ -62,7 +64,7 @@ function fetchAndApplySessionById(
   });
 }
 
-const onAgentRequest = vi.fn();
+const onAgentRequest = vi.spyOn(voiceHooks, 'onAgentRequest');
 const OWNER_METADATA_ENVELOPE = sealSessionOwnerMetadataEnvelopeV1({
   material: {
     type: 'dataKey',
@@ -84,12 +86,6 @@ const OWNER_TEST_CREDENTIALS = {
     machineKey: encodeBase64(new Uint8Array(32).fill(42), 'base64'),
   },
 } as const;
-
-vi.mock('@/voice/context/voiceHooks', () => ({
-  voiceHooks: {
-    onAgentRequest: (...args: Parameters<typeof onAgentRequest>) => onAgentRequest(...args),
-  },
-}));
 
 function createDeferred<T>(): {
   promise: Promise<T>;
@@ -1245,12 +1241,15 @@ describe('fetchAndApplySessionById', () => {
   });
 
   it('announces new fetched agent requests relative to existing session state', async () => {
-    onAgentRequest.mockReset();
-    let currentSession = {
-      id: 's1',
+    onAgentRequest.mockClear();
+    const initialState = storage.getState();
+    try {
+    storage.setState(storage.getInitialState(), true);
+    storage.getState().applySessions([createSessionFixture({
+      id: 's1', serverId: 'server-a', encryptionMode: 'plain', agentStateVersion: 1,
       agentState: { controlledByUser: true, requests: {}, completedRequests: {} },
-    } as Session;
-    const applySessions = vi.fn(([session]: Session[]) => { currentSession = session; });
+    })]);
+    const applySessions = vi.fn((sessions: Session[]) => storage.getState().applySessions(sessions));
     const request = vi.fn(async () => new Response(JSON.stringify({
       session: {
         id: 's1',
@@ -1260,7 +1259,7 @@ describe('fetchAndApplySessionById', () => {
         active: true,
         activeAt: 2,
         encryptionMode: 'plain',
-        dataEncryptionKey: 'unused-plain-key',
+        dataEncryptionKey: null,
         metadataVersion: 1,
         metadata: JSON.stringify({ readStateV1: null }),
         agentStateVersion: 2,
@@ -1283,16 +1282,14 @@ describe('fetchAndApplySessionById', () => {
     await fetchAndApplySessionById({
       sessionId: 's1',
       serverId: 'server-a',
-      credentials: { token: 't' } as any,
-      encryption: {
-        decryptEncryptionKey: async () => null,
-        initializeSessions: async () => {},
-        getSessionEncryption: () => null,
-      },
+      accountCurrentness: PLAIN_ACCOUNT_CURRENTNESS,
+      credentials: { token: 't' },
+      encryption: PLAINTEXT_ACCOUNT_SESSION_ENCRYPTION,
       sessionDataKeys: new Map<string, Uint8Array>(),
       request,
       applySessions,
-      getExistingSession: () => currentSession,
+      getExistingSession: id => storage.getState().sessions[id],
+      includeTurnsProjection: false,
       log: { log: () => {} },
     });
 
@@ -1303,19 +1300,25 @@ describe('fetchAndApplySessionById', () => {
       'AskUserQuestion',
       { question: 'Pick a color' },
     );
+    } finally {
+      storage.setState(initialState, true);
+    }
   });
 
   it('captures the previous session before applySessions updates storage', async () => {
-    onAgentRequest.mockReset();
+    onAgentRequest.mockClear();
 
-    let storedSession = {
-      id: 's1',
+    const initialState = storage.getState();
+    try {
+    storage.setState(storage.getInitialState(), true);
+    storage.getState().applySessions([createSessionFixture({
+      id: 's1', serverId: 'server-a', encryptionMode: 'plain', agentStateVersion: 1,
       agentState: {
         controlledByUser: true,
         requests: {},
         completedRequests: {},
       },
-    } as any;
+    })]);
 
     const request = vi.fn(async () => new Response(JSON.stringify({
       session: {
@@ -1349,18 +1352,14 @@ describe('fetchAndApplySessionById', () => {
     await fetchAndApplySessionById({
       sessionId: 's1',
       serverId: 'server-a',
-      credentials: { token: 't' } as any,
-      encryption: {
-        decryptEncryptionKey: async () => null,
-        initializeSessions: async () => {},
-        getSessionEncryption: () => null,
-      },
+      accountCurrentness: PLAIN_ACCOUNT_CURRENTNESS,
+      credentials: { token: 't' },
+      encryption: PLAINTEXT_ACCOUNT_SESSION_ENCRYPTION,
       sessionDataKeys: new Map<string, Uint8Array>(),
       request,
-      applySessions: ([nextSession]) => {
-        storedSession = nextSession as any;
-      },
-      getExistingSession: () => storedSession,
+      applySessions: sessions => storage.getState().applySessions(sessions),
+      getExistingSession: id => storage.getState().sessions[id],
+      includeTurnsProjection: false,
       log: { log: () => {} },
     });
 
@@ -1371,10 +1370,13 @@ describe('fetchAndApplySessionById', () => {
       'AskUserQuestion',
       { question: 'Pick a color' },
     );
+    } finally {
+      storage.setState(initialState, true);
+    }
   });
 
   it('applies a plaintext session row by id', async () => {
-    onAgentRequest.mockReset();
+    onAgentRequest.mockClear();
     const applySessions = vi.fn();
     const decryptEncryptionKey = vi.fn(async () => null);
     const initializeSessions = vi.fn(async () => {});
@@ -1479,7 +1481,7 @@ describe('fetchAndApplySessionById', () => {
   });
 
   it('initializes session encryption when dataEncryptionKey is present', async () => {
-    onAgentRequest.mockReset();
+    onAgentRequest.mockClear();
     const applySessions = vi.fn();
     const decryptEncryptionKey = vi.fn(async () => sessionDataKey());
     const initializeSessions = vi.fn(async () => {});

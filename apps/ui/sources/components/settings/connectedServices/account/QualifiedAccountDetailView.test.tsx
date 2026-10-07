@@ -167,10 +167,15 @@ describe('QualifiedAccountDetailView', () => {
                 </OverlayPortalProvider>
             </PopoverPortalTargetContextProvider>,
             { createNodeMock: (element) => {
-                const props = React.isValidElement<{ ref?: unknown; children?: React.ReactNode }>(element) ? element.props : null;
+                // react-test-renderer passes a host descriptor, not a React
+                // element with $$typeof, to the native measurement boundary.
+                const props = element.props;
+                if (!props || typeof props !== 'object') throw new Error('native host descriptor props are unavailable');
+                const ref = 'ref' in props ? props.ref : undefined;
+                const children = 'children' in props ? props.children : undefined;
                 const bounds = () => {
                     const host = screen?.root.findAll((node) => node.type === element.type && (
-                        props?.ref ? node.props.ref === props.ref : node.props.children === props?.children
+                        ref ? node.props.ref === ref : node.props.children === children
                     ))[0];
                     return host && paintsText(host) ? { width: 390, height: 120 } : { width: 0, height: 0 };
                 };

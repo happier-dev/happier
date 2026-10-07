@@ -1,10 +1,10 @@
 import React from 'react';
 import renderer from 'react-test-renderer';
 import { act } from 'react-test-renderer';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createMessageStructuredPresentationV1 } from '@happier-dev/protocol';
-import { renderScreen } from '@/dev/testkit';
+import { renderWithSessionTranscriptSource as renderScreen } from '@/dev/testkit';
 import { createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import {
     createPluginMessageActionHost,
@@ -63,16 +63,13 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionI
     resolveServerIdForSessionIdFromLocalCache: () => 'server-1',
 }));
 
-let StructuredMessageBlock: typeof import('./StructuredMessageBlock').StructuredMessageBlock;
 const editableInteraction = deriveTranscriptInteraction({
     kind: 'session',
     access: createSessionAccessFixture('owner'),
     isSessionActive: true,
 });
 
-beforeAll(async () => {
-    ({ StructuredMessageBlock } = await import('./StructuredMessageBlock'));
-});
+const { StructuredMessageBlock } = await import('./StructuredMessageBlock');
 
 beforeEach(() => {
     machinePluginStructuredMessageActionExecuteMock.mockReset();
@@ -284,7 +281,7 @@ describe('StructuredMessageBlock', () => {
         // action owner without reviving the retired structured-message route.
         expect(machinePluginStructuredMessageActionExecuteMock).toHaveBeenCalledWith('machine-1', {
             serverId: 'server-1',
-            expectedContributorOccurrenceId: '7',
+            expectedContributorOccurrenceId: 'open-report-occurrence-a',
             qualifiedActionId: 'acme.preview/open-report',
             input: { reportId: 'report-1' },
             executionSurface: 'ui',
@@ -450,9 +447,7 @@ describe('StructuredMessageBlock', () => {
         const screen = await renderScreen(renderBlock());
 
         metaReadCount = 0;
-        await act(async () => {
-            screen.tree.update(renderBlock());
-        });
+        await screen.update(renderBlock());
 
         expect(metaReadCount).toBe(0);
     });
@@ -691,8 +686,8 @@ describe('StructuredMessageBlock', () => {
             onJumpToAnchor={() => {}}
         />);
 
-        expect(screen.findByTestId('execution-run-completion:run_1')).toBeTruthy();
-        expect(screen.getTextContent()).toContain('run_1');
+        expect(screen.findByTestId('worker-update:run_1')).toBeTruthy();
+        expect(screen.findByTestId('worker-update-result')?.props.children).toBe('Done');
         expect(screen.getTextContent()).toContain('Done');
         expect(screen.getTextContent()).not.toContain('<happier_execution_run_notification>');
     });

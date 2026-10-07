@@ -1,485 +1,221 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ExecutionRunStartResponseSchema, SessionCurrentProjectionRecordV1Schema, SessionMetadataTuplePatchV1Schema,
+  SessionMetadataTuplePatchSuccessV1Schema, MACHINE_PLAIN_DATA_KEY_MARKER,
+  SessionSpawnNewInputV2Schema, SessionOwnerMetadataEnvelopeV1Schema, projectSessionOwnerCompatibilityViewV1 } from '@happier-dev/protocol';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 
-const executionRunStart = vi.fn(async () => ({ ok: true, runId: 'run_1' }));
-const executionRunList = vi.fn(async () => []);
-const executionRunGet = vi.fn(async () => null);
-const executionRunSend = vi.fn(async () => ({ ok: true }));
-const executionRunStop = vi.fn(async () => ({ ok: true }));
-const executionRunAction = vi.fn(async () => ({ ok: true }));
-const listAgentBackendsForVoiceTool = vi.fn(async () => ({ items: [] }));
-const listAgentModelsForVoiceTool = vi.fn(async () => ({ items: [] }));
-const patchSessionMetadataWithRetry = vi.fn(async (_sessionId: string, updater: (metadata: any) => any) => {
-  updater({ path: '/tmp/project', host: 'localhost' });
-});
-
-vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
-  sessionExecutionRunStart: executionRunStart,
-  sessionExecutionRunList: executionRunList,
-  sessionExecutionRunGet: executionRunGet,
-  sessionExecutionRunSend: executionRunSend,
-  sessionExecutionRunStop: executionRunStop,
-  sessionExecutionRunAction: executionRunAction,
-}));
-
-vi.mock('@/sync/ops/sessions', () => ({
-  forkSession: vi.fn(),
-  rollbackSessionConversation: vi.fn(),
-  sessionRename: vi.fn(async () => ({ success: true })),
-}));
-
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', () => ({
-  sessionRpcWithServerScope: vi.fn(),
-}));
-
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage', () => ({
-  sendSessionMessageWithServerScope: vi.fn(),
-}));
-
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
-  machineRpcWithServerScope: vi.fn(),
-}));
-
-vi.mock('@/voice/session/voiceSession', () => ({
-  voiceSessionManager: { stopSession: vi.fn() },
-}));
-
-vi.mock('@/voice/tools/actionImpl/openSession', () => ({
-  openSessionForVoiceTool: vi.fn(),
-}));
-
-vi.mock('@/voice/tools/actionImpl/sessionTargets', () => ({
-  setPrimaryActionSessionId: vi.fn(),
-  setTrackedSessionIds: vi.fn(),
-}));
-
-vi.mock('@/voice/tools/actionImpl/sessionList', () => ({
-  listSessionsForVoiceTool: vi.fn(),
-}));
-
-vi.mock('@/voice/tools/actionImpl/sessionActivity', () => ({
-  getSessionActivityForVoiceTool: vi.fn(),
-}));
-
-vi.mock('@/voice/tools/actionImpl/sessionRecentMessages', () => ({
-  getSessionRecentMessagesForVoiceTool: vi.fn(),
-  getSessionTranscriptForVoiceTool: vi.fn(),
-}));
-
-vi.mock('@/voice/tools/actionImpl/pathsListRecent', () => ({
-  listRecentPathsForVoiceTool: vi.fn(),
-}));
-
-vi.mock('@/voice/tools/actionImpl/machinesList', () => ({
-  listMachinesForVoiceTool: vi.fn(),
-}));
-
-vi.mock('@/voice/tools/actionImpl/serversList', () => ({
-  listServersForVoiceTool: vi.fn(),
-}));
-
-vi.mock('@/voice/tools/actionImpl/reviewEnginesList', () => ({
-  listReviewEnginesForVoiceTool: vi.fn(),
-}));
-
-vi.mock('@/voice/tools/actionImpl/agentCatalogList', () => ({
-  listAgentBackendsForVoiceTool,
-  listAgentModelsForVoiceTool,
-}));
-
-vi.mock('@/sync/sync', () => ({
-  sync: {
-    patchSessionMetadataWithRetry,
-  },
-}));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: {
-    getState: () => ({
-      settings: { actionsSettingsV1: { v: 1, actions: {} } },
-      sessions: {
-        // The Agent identity is declared explicitly. It used to be implied by a
-        // metadata reader that coerced an unreadable identity to Claude, so this
-        // fixture silently exercised that coercion instead of mode publishing.
-        s1: { id: 's1', metadata: { path: '/tmp/project', host: 'localhost', flavor: 'claude' } },
-        s_acp: {
-          id: 's_acp',
-          metadata: {
-            path: '/tmp/project',
-            host: 'localhost',
-            flavor: 'opencode',
-            acpSessionModesV1: {
-              v: 1,
-              agentId: 'opencode',
-              updatedAt: 1,
-              currentModeId: 'build',
-              availableModes: [
-                { id: 'build', name: 'Build', description: 'Do the work' },
-                { id: 'plan', name: 'Plan', description: 'Think first' },
-              ],
-            },
-          },
-        },
-        s_codex: {
-          id: 's_codex',
-          metadata: {
-            path: '/tmp/project',
-            host: 'localhost',
-            flavor: 'codex',
-            sessionModesV1: {
-              v: 1,
-              agentId: 'codex',
-              updatedAt: 1,
-              currentModeId: 'plan',
-              availableModes: [
-                { id: 'default', name: 'Default', description: 'Standard collaboration mode' },
-                { id: 'plan', name: 'Plan', description: 'Think first' },
-              ],
-            },
-          },
-        },
-      },
-    }),
-  },
-    useSession: vi.fn(),
-});
-});
-
-describe('createDefaultActionExecutor plan mode integration', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+const outgoing: SocketRpcRequestPayload[] = [];
+let daemonAnswer: (request: SocketRpcRequestPayload) => unknown = () => { throw new Error('Unexpected daemon request'); };
+installDisconnectedServerSocketBoundary((socket) => {
+  vi.mocked(socket.connect).mockImplementation(() => {
+    socket.connected = true;
+    for (const listener of socket.listeners('connect')) listener();
+    return socket;
   });
-
-  it('forwards limit to agents.backends.list voice-tool routing', async () => {
-    const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-
-    const executor = createDefaultActionExecutor();
-    const result = await executor.execute(
-      'agents.backends.list',
-      { includeDisabled: true, limit: 2 },
-      { defaultSessionId: 's1', surface: 'voice', placement: 'voice_panel' },
-    );
-
-    expect(result.ok).toBe(true);
-    expect(listAgentBackendsForVoiceTool).toHaveBeenCalledWith({ includeDisabled: true, limit: 2 });
+  vi.spyOn(socket, 'timeout').mockReturnValue(socket);
+  vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event, payload) => {
+    if (event !== 'rpc-call') return { v: 1, ok: true, admittedSessionIds: [] };
+    if (!payload || typeof payload !== 'object' || !('method' in payload) || typeof payload.method !== 'string' || !('params' in payload)) {
+      throw new Error('Malformed socket RPC request');
+    }
+    const request: SocketRpcRequestPayload = { method: payload.method, params: payload.params };
+    outgoing.push(request);
+    return { ok: true, result: daemonAnswer(request) };
   });
+});
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+await loadSyncSingletonForTests();
+const restoreExecutorModuleLoader = await installRealActionExecutorModuleLoader();
+afterAll(restoreExecutorModuleLoader);
+const { storage } = await import('@/sync/domains/state/storage');
+const { createServerFetchAtEndpoint } = await import('@/sync/http/client');
+const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+const { resetDynamicModelProbeCacheForTests } = await import('@/sync/domains/models/dynamicModelProbeCache');
+const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
+const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
+const originalState = storage.getState();
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+let serverId = '';
+let webLocks: ReturnType<typeof installWebLockManagerMock> | undefined;
 
-  it('forwards limit to agents.models.list voice-tool routing', async () => {
-    const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-
-    const executor = createDefaultActionExecutor();
-    const result = await executor.execute(
-      'agents.models.list',
-      { agentId: 'claude', machineId: 'm1', limit: 3 },
-      { defaultSessionId: 's1', surface: 'voice', placement: 'voice_panel', serverId: 'server-b' },
-    );
-
-    expect(result.ok).toBe(true);
-    expect(listAgentModelsForVoiceTool).toHaveBeenCalledWith({
-      agentId: 'claude',
-      machineId: 'm1',
-      serverId: 'server-b',
-      limit: 3,
+function installSession(id: string, metadata: NonNullable<ReturnType<typeof createSessionFixture>['metadata']>) {
+  const session = createSessionFixture({ id, serverId, active: true, metadata });
+  storage.setState({ sessions: { ...storage.getState().sessions, [id]: session } });
+  let row = SessionCurrentProjectionRecordV1Schema.parse({
+    ...session, metadataLayoutVersion: 0, metadata: JSON.stringify(metadata),
+    effectiveAccess: { v: 1, level: session.access!.level, sources: [{ kind: 'owner' }], capabilities: session.access!.capabilities },
+    responsibleAccountId: null, responsibleAccount: null, share: null, archivedAt: null,
+    agentState: null, dataEncryptionKey: null, pendingCount: 0, pendingVersion: 0,
+  });
+  const answer = { select: (input: unknown) => {
+    if (input === undefined || input === null) return { body: { session: row } };
+    const patch = SessionMetadataTuplePatchV1Schema.parse(input);
+    if (patch.mode === 'shared_editor') throw new Error('Owner mode change used shared-editor metadata');
+    const target = patch.mode === 'owner_migration' ? patch.target : patch;
+    row = SessionCurrentProjectionRecordV1Schema.parse({ ...row,
+      metadataLayoutVersion: 1, metadata: target.sharedMetadata.ciphertext,
+      ownerMetadata: target.ownerMetadata, agentState: target.agentState.ciphertext,
+      metadataVersion: row.metadataVersion + 1, agentStateVersion: (row.agentStateVersion ?? 0) + 1,
     });
+    return { body: SessionMetadataTuplePatchSuccessV1Schema.parse({ success: true, metadataLayoutVersion: 1,
+      sharedMetadata: { version: row.metadataVersion }, agentState: { version: row.agentStateVersion } }) };
+  } };
+  homes.answer(serverId, `/v2/sessions/${id}`, answer);
+  homes.answer(serverId, `/v2/sessions/${id}?accessProjectionVersion=1`, answer);
+  return () => row;
+}
+
+const modes = (agentId: string, currentModeId: string, ids: readonly string[]) => ({
+  v: 1 as const, agentId, updatedAt: 1, currentModeId,
+  availableModes: ids.map((id) => ({ id, name: id === 'default' ? 'Default' : id === 'build' ? 'Build' : 'Plan' })),
+});
+const context = () => ({ surface: 'ui' as const, authority: 'present_user' as const, serverId });
+
+describe('default Action executor mode and catalog contracts', () => {
+  beforeEach(async () => {
+    webLocks = installWebLockManagerMock();
+    storage.setState(originalState, true);
+    await homes.reset();
+    resetDynamicModelProbeCacheForTests();
+    serverId = await homes.addHome({ name: 'Mode Home', serverUrl: 'https://mode-actions.test', accountId: 'alice' });
+    connection = await restoreServerAccountForTest({ serverUrl: 'https://mode-actions.test', accountId: 'alice',
+      request: async (url, init) => {
+        const endpoint = new URL(String(url));
+        const token = new Headers(init?.headers).get('Authorization')?.replace(/^Bearer /, '');
+        return createServerFetchAtEndpoint({ endpointUrl: endpoint.origin, ...(token ? { credentials: { token } } : {}) })(`${endpoint.pathname}${endpoint.search}`, init);
+      } });
+    storage.getState().activateProfileScope({ serverId, accountId: 'alice' });
+    await storage.getState().activateSettingsScope({ serverId, accountId: 'alice' });
+    homes.answer(serverId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
+    const machine = createMachineFixture({ id: 'machine-a' });
+    storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [serverId]: [machine] } });
+    homes.answer(serverId, '/v1/machines/machine-a', { body: { machine: { id: 'machine-a', kind: 'persistent', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } } });
+    outgoing.length = 0;
+    daemonAnswer = () => { throw new Error('Unexpected daemon request'); };
+  });
+  afterEach(async () => {
+    await connection?.dispose();
+    connection = undefined;
+    serverScopedRpcSocketPool.resetForTests();
+    resetScopedMachineTransportCacheForTests();
+    await homes.reset();
+    storage.setState(originalState, true);
+    webLocks?.restore();
+    webLocks = undefined;
+    vi.restoreAllMocks();
   });
 
-  it('forwards backendTargetKey to agents.models.list voice-tool routing', async () => {
-    const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-
-    const executor = createDefaultActionExecutor();
-    const result = await executor.execute(
-      'agents.models.list',
-      { backendTargetKey: 'acpBackend:review-bot', machineId: 'm1', limit: 2 },
-      { defaultSessionId: 's1', surface: 'voice', placement: 'voice_panel' },
-    );
-
-    expect(result.ok).toBe(true);
-    expect(listAgentModelsForVoiceTool).toHaveBeenCalledWith(expect.objectContaining({
-      backendTargetKey: 'acpBackend:review-bot',
-      machineId: 'm1',
-      limit: 2,
-    }));
+  it('limits the real backend catalog instead of dropping the requested limit', async () => {
+    const execute = createDefaultActionExecutor().execute;
+    const full = await execute('agents.backends.list', { includeDisabled: true }, context());
+    const limited = await execute('agents.backends.list', { includeDisabled: true, limit: 2 }, context());
+    expect(full.ok).toBe(true);
+    expect(limited.ok).toBe(true);
+    if (!full.ok || !limited.ok) throw new Error('Catalog action failed');
+    const parse = (value: unknown) => import('@happier-dev/protocol').then(({ AgentsBackendsListOutputSchema }) => AgentsBackendsListOutputSchema.parse(value));
+    expect((await parse(full.result)).items.length).toBeGreaterThan(2);
+    expect((await parse(limited.result)).items).toEqual((await parse(full.result)).items.slice(0, 2));
   });
 
-  it('forwards only the strict V2 session spawn contract through the server-scoped machine RPC', async () => {
-    const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-    const { machineRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
-    const signal = new AbortController().signal;
-    const spawnResult = {
-      type: 'success' as const,
-      disposition: 'created' as const,
-      sessionId: 'session-new',
-      executionTarget: {
-        serverId: 'server-b',
-        machineId: 'machine-explicit',
-      },
-      organizationPlacement: {
-        folderId: null,
-        tagIds: [],
-      },
-      initialInput: {
-        status: 'notRequested' as const,
-      },
-    };
-    vi.mocked(machineRpcWithServerScope).mockResolvedValueOnce(spawnResult);
+  it.each([
+    { agentId: 'claude', machineId: 'machine-a', limit: 3 },
+    { backendTargetKey: 'acpBackend:review-bot', machineId: 'machine-a', limit: 2 },
+  ])('limits model results from the requested daemon target: $agentId $backendTargetKey', async (input) => {
+    daemonAnswer = () => ({ ok: true, result: {
+      availableModels: ['one', 'two', 'three', 'four'].map((id) => ({ id, name: id })), supportsFreeform: false,
+    } });
+    const result = await createDefaultActionExecutor().execute('agents.models.list', input, context());
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { items: expect.any(Array) } });
+    if (!result.ok) throw new Error(result.error);
+    expect(result.result).toMatchObject({ source: 'preflight', items: [
+      { modelId: 'default', label: 'Default' },
+      ...['one', 'two'].slice(0, input.limit - 1).map((modelId) => ({ modelId, label: modelId })),
+    ] });
+    expect(outgoing).toContainEqual(expect.objectContaining({ method: expect.stringContaining('machine-a:'),
+      params: expect.objectContaining({ method: 'probeModels' }) }));
+    if (input.backendTargetKey) expect(outgoing).toContainEqual(expect.objectContaining({ params: expect.objectContaining({
+      params: expect.objectContaining({ backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' } }),
+    }) }));
+  });
 
-    const executor = createDefaultActionExecutor();
-    const result = await executor.execute(
-      'session.spawn_new',
-      {
-        creationKey: 'manual:voice-v2-contract',
-        executionTarget: {
-          serverId: 'server-b',
-          machineId: 'machine-explicit',
-        },
-        directory: '/tmp/project',
-        agentTarget: {
-          kind: 'agent',
-          identity: {
-            pluginId: 'happier.agent.codex',
-            localId: 'codex',
-          },
-        },
-        initialInput: {
-          text: 'Inspect this project.',
-        },
-      },
-      { defaultSessionId: 's1', surface: 'voice', placement: 'voice_panel', signal },
-    );
-
+  it('sends the strict V2 spawn input as the daemon wire request', async () => {
+    const input = SessionSpawnNewInputV2Schema.parse({ creationKey: 'manual:voice-v2-contract',
+      executionTarget: { serverId, machineId: 'machine-a' }, directory: { kind: 'path', path: '/tmp/project' },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      initialInput: { text: 'Inspect this project.' } });
+    const spawnResult = { type: 'success', disposition: 'created', sessionId: 'session-new', executionTarget: input.executionTarget,
+      organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'accepted', localId: 'message-new' } };
+    daemonAnswer = () => spawnResult;
+    const result = await createDefaultActionExecutor().execute('session.spawn_new', input, { ...context(), signal: new AbortController().signal });
     expect(result).toEqual({ ok: true, result: spawnResult });
-    expect(machineRpcWithServerScope).toHaveBeenCalledTimes(1);
-    expect(machineRpcWithServerScope).toHaveBeenCalledWith({
-      serverId: 'server-b',
-      machineId: 'machine-explicit',
-      method: RPC_METHODS.SESSION_SPAWN_NEW,
-      payload: {
-      creationKey: 'manual:voice-v2-contract',
-      executionTarget: {
-        serverId: 'server-b',
-        machineId: 'machine-explicit',
-      },
-      directory: '/tmp/project',
-      agentTarget: {
-        kind: 'agent',
-        identity: {
-          pluginId: 'happier.agent.codex',
-          localId: 'codex',
-        },
-      },
-      initialInput: {
-        text: 'Inspect this project.',
-      },
-      },
-      signal,
-    });
+    expect(outgoing).toContainEqual(expect.objectContaining({ method: `machine-a:${RPC_METHODS.SESSION_SPAWN_NEW}`, params: input }));
   });
 
-  it('routes terminal composer clear through the scoped session RPC with expected state', async () => {
-    const { SESSION_RPC_METHODS } = await import('@happier-dev/protocol/rpc');
-    const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-    const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
-
-    vi.mocked(sessionRpcWithServerScope).mockResolvedValueOnce({
-      ok: true,
-      status: 'cleared',
-      sessionId: 's1',
-    } as any);
-
-    const executor = createDefaultActionExecutor({
-      resolveServerIdForSessionId: (sessionId) => (sessionId === 's1' ? 'server-1' : null),
-    });
-    const result = await executor.execute(
-      'session.terminalComposer.clear',
-      { sessionId: 's1', expectedStateAtMs: 1234 },
-      { defaultSessionId: 's1', surface: 'ui', placement: 'pending_messages' },
-    );
-
-    expect(result.ok).toBe(true);
-    expect(sessionRpcWithServerScope).toHaveBeenCalledWith({
-      sessionId: 's1',
-      serverId: 'server-1',
-      method: SESSION_RPC_METHODS.SESSION_TERMINAL_COMPOSER_CLEAR,
-      payload: { sessionId: 's1', expectedStateAtMs: 1234 },
-    });
+  it('clears the terminal composer with the expected state at the Session RPC boundary', async () => {
+    installSession('s1', { path: '/tmp/project', host: 'localhost', flavor: 'claude' });
+    daemonAnswer = () => ({ ok: true, status: 'cleared', sessionId: 's1' });
+    expect(await createDefaultActionExecutor().execute('session.terminalComposer.clear',
+      { sessionId: 's1', expectedStateAtMs: 1234 }, context())).toMatchObject({ ok: true, result: { status: 'cleared', sessionId: 's1' } });
+    expect(outgoing).toContainEqual(expect.objectContaining({ method: `s1:${SESSION_RPC_METHODS.SESSION_TERMINAL_COMPOSER_CLEAR}`,
+      params: { sessionId: 's1', expectedStateAtMs: 1234 } }));
   });
 
-  it('does not publish a session-mode override when starting a planner subagent run', async () => {
-    const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-
-    const executor = createDefaultActionExecutor();
-    const result = await executor.execute(
-      'subagents.plan.start',
-      { sessionId: 's1', backendTargetKeys: ['agent:claude'], instructions: 'Plan the changes.' },
-      { defaultSessionId: 's1', surface: 'voice', placement: 'voice_panel' },
-    );
-
-    expect(result.ok).toBe(true);
-    expect(executionRunStart).toHaveBeenCalled();
-    expect(patchSessionMetadataWithRetry).not.toHaveBeenCalled();
+  it('starts a planner run without changing the parent Session mode', async () => {
+    const read = installSession('s1', { path: '/tmp/project', host: 'localhost', flavor: 'claude' });
+    const accepted = ExecutionRunStartResponseSchema.parse({ runId: 'run_1', callId: 'call_1', sidechainId: 'sidechain_1' });
+    daemonAnswer = () => accepted;
+    const result = await createDefaultActionExecutor().execute('subagents.plan.start',
+      { sessionId: 's1', backendTargetKeys: ['agent:claude'], instructions: 'Plan the changes.' }, context());
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { intent: 'plan', results: [{ ok: true, result: accepted }] } });
+    expect(outgoing).toContainEqual(expect.objectContaining({ method: expect.stringContaining('execution.run.start') }));
+    expect(read().metadataLayoutVersion).toBe(0);
+    expect(homes.requestsFor('/v2/sessions/s1').filter((request) => request.input != null)).toEqual([]);
   });
 
-  it('publishes a session-mode override when session.mode.set succeeds', async () => {
-    const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-
-    const executor = createDefaultActionExecutor();
-    const result = await executor.execute(
-      'session.mode.set',
-      { sessionId: 's1', modeId: 'plan' },
-      { defaultSessionId: 's1', surface: 'voice', placement: 'voice_panel' },
-    );
-
-    expect(result.ok).toBe(true);
-    expect(patchSessionMetadataWithRetry).toHaveBeenCalledWith('s1', expect.any(Function), undefined);
-    const updater = patchSessionMetadataWithRetry.mock.calls[0]?.[1];
-    const next = updater({ path: '/tmp/project', host: 'localhost' });
-    expect(next.acpSessionModeOverrideV1).toEqual(
-      expect.objectContaining({ v: 1, modeId: 'plan' }),
-    );
+  it.each([
+    ['claude', { flavor: 'claude' }, 'plan', 'plan'],
+    ['opencode', { flavor: 'opencode', acpSessionModesV1: modes('opencode', 'build', ['build', 'plan']), acpSessionModeOverrideV1: { v: 1, updatedAt: 5, modeId: 'plan' } }, 'default', null],
+    ['codex', { flavor: 'codex', sessionModesV1: modes('codex', 'plan', ['default', 'plan']), sessionModeOverrideV1: { v: 1, updatedAt: 5, modeId: 'plan' } }, 'default', 'default'],
+  ] as const)('publishes %s mode intent through the real owner metadata tuple', async (_agent, metadata, modeId, expectedModeId) => {
+    const read = installSession('s1', { path: '/tmp/project', host: 'localhost', ...metadata });
+    const result = await createDefaultActionExecutor().execute('session.mode.set', { sessionId: 's1', modeId }, context());
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+    expect(read().metadataLayoutVersion).toBe(1);
+    const owner = SessionOwnerMetadataEnvelopeV1Schema.parse(read().ownerMetadata);
+    if (owner.t !== 'plain') throw new Error('Unreadable owner metadata');
+    const flat = projectSessionOwnerCompatibilityViewV1({ sharedMetadata: JSON.parse(read().metadata), ownerMetadata: owner.v });
+    expect(flat.acpSessionModeOverrideV1 ?? flat.sessionModeOverrideV1).toMatchObject({ v: 1, modeId: expectedModeId });
   });
 
-  it('rejects session.mode.set when the requested mode is unavailable for the session', async () => {
-    const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-
-    const executor = createDefaultActionExecutor();
-    const result = await executor.execute(
-      'session.mode.set',
-      { sessionId: 's1', modeId: 'not-a-real-mode' },
-      { defaultSessionId: 's1', surface: 'voice', placement: 'voice_panel' },
-    );
-
-    expect(result).toEqual({
-      ok: false,
-      errorCode: 'invalid_parameters',
-      error: 'invalid_parameters',
-    });
-    expect(patchSessionMetadataWithRetry).not.toHaveBeenCalled();
+  it('rejects an unavailable mode without writing metadata', async () => {
+    const read = installSession('s1', { path: '/tmp/project', host: 'localhost', flavor: 'claude' });
+    expect(await createDefaultActionExecutor().execute('session.mode.set', { sessionId: 's1', modeId: 'not-a-real-mode' }, context()))
+      .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    expect(read().metadataLayoutVersion).toBe(0);
+    expect(homes.requestsFor('/v2/sessions/s1').filter((request) => request.input != null)).toEqual([]);
   });
 
-  it('clears the session-mode override when session.mode.set uses default', async () => {
-    const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-
-    const executor = createDefaultActionExecutor();
-    const result = await executor.execute(
-      'session.mode.set',
-      { sessionId: 's_acp', modeId: 'default' },
-      { defaultSessionId: 's_acp', surface: 'voice', placement: 'voice_panel' },
-    );
-
-    expect(result.ok).toBe(true);
-    expect(patchSessionMetadataWithRetry).toHaveBeenCalledWith('s_acp', expect.any(Function), undefined);
-    const updater = patchSessionMetadataWithRetry.mock.calls[0]?.[1];
-    const next = updater({
-      path: '/tmp/project',
-      host: 'localhost',
-      acpSessionModeOverrideV1: { v: 1, updatedAt: 5, modeId: 'plan' },
-    });
-    expect(next.acpSessionModeOverrideV1).toEqual(
-      expect.objectContaining({ v: 1, modeId: null }),
-    );
-  });
-
-  it('includes a default option when resolving session.mode.set options for ACP-backed modes', async () => {
-    const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-
-    const executor = createDefaultActionExecutor();
-    const result = await executor.execute(
-      'action.options.resolve',
-      { actionId: 'session.mode.set', fieldPath: 'modeId', sessionId: 's_acp' },
-      { defaultSessionId: 's_acp', surface: 'voice', placement: 'voice_panel' },
-    );
-
-    expect(result.ok).toBe(true);
-    expect((result as any).result.options).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ value: 'default', label: 'Default' }),
-        expect.objectContaining({ value: 'build', label: 'Build' }),
-        expect.objectContaining({ value: 'plan', label: 'Plan' }),
-      ]),
-    );
-  });
-
-  it('publishes the real default mode id when session.mode.set targets a provider mode literally named default', async () => {
-    const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-    const { normalizeRequestedSessionModeId, resolveSessionModeActionControl } = await import('./sessionModeActionSupport');
-
-    const control = resolveSessionModeActionControl({
-      metadata: {
-        path: '/tmp/project',
-        host: 'localhost',
-        flavor: 'codex',
-        sessionModesV1: {
-          v: 1,
-          agentId: 'codex',
-          updatedAt: 1,
-          currentModeId: 'plan',
-          availableModes: [
-            { id: 'default', name: 'Default', description: 'Standard collaboration mode' },
-            { id: 'plan', name: 'Plan', description: 'Think first' },
-          ],
-        },
-      },
-    } as any);
-    expect(control?.options.map((option) => option.id)).toEqual(['default', 'plan']);
-    expect(normalizeRequestedSessionModeId(control, 'default')).toBe('default');
-
-    const executor = createDefaultActionExecutor();
-    const result = await executor.execute(
-      'session.mode.set',
-      { sessionId: 's_codex', modeId: 'default' },
-      { defaultSessionId: 's_codex', surface: 'voice', placement: 'voice_panel' },
-    );
-
-    expect(result.ok).toBe(true);
-    expect(patchSessionMetadataWithRetry).toHaveBeenCalledWith('s_codex', expect.any(Function), undefined);
-    const updater = patchSessionMetadataWithRetry.mock.calls[0]?.[1];
-    const next = updater({
-      path: '/tmp/project',
-      host: 'localhost',
-      sessionModeOverrideV1: { v: 1, updatedAt: 5, modeId: 'plan' },
-    });
-    expect(next.sessionModeOverrideV1).toEqual(
-      expect.objectContaining({ v: 1, modeId: 'default' }),
-    );
-  });
-
-  it('resolves session.mode.set controls from canonical agent runtime metadata when flavor is missing', async () => {
-    const { resolveSessionModeActionControl } = await import('./sessionModeActionSupport');
-
-    const control = resolveSessionModeActionControl({
-      metadata: {
-        path: '/tmp/project',
-        host: 'localhost',
-        agentRuntimeDescriptorV1: {
-          v: 1,
-          agentId: 'opencode',
-          provider: {
-            backendMode: 'server',
-            providerSessionId: 'oc_1',
-            serverBaseUrl: 'http://127.0.0.1:4096/',
-            serverBaseUrlExplicit: true,
-          },
-        },
-        acpSessionModesV1: {
-          v: 1,
-          agentId: 'opencode',
-          updatedAt: 1,
-          currentModeId: 'build',
-          availableModes: [
-            { id: 'build', name: 'Build', description: 'Do the work' },
-            { id: 'plan', name: 'Plan', description: 'Think first' },
-          ],
-        },
-      },
-    } as any);
-
-    expect(control).toMatchObject({
-      currentModeId: 'build',
-      currentModeName: 'Build',
-      effectiveModeId: 'build',
-      effectiveModeName: 'Build',
-    });
+  it.each([
+    { runtimeDescriptorV1: { v: 1, agentId: 'opencode', agent: { backendMode: 'server', providerSessionId: 'oc_1', serverBaseUrl: 'http://127.0.0.1:4096/', serverBaseUrlExplicit: true } } },
+    { agentRuntimeDescriptorV1: { v: 1, agentId: 'opencode', provider: { backendMode: 'server', providerSessionId: 'oc_1', serverBaseUrl: 'http://127.0.0.1:4096/', serverBaseUrlExplicit: true } } },
+  ] as const)('resolves ACP modes and default from the canonical or supported deployed runtime carrier', async (descriptor) => {
+    installSession('s1', { path: '/tmp/project', host: 'localhost',
+      ...descriptor,
+      acpSessionModesV1: modes('opencode', 'build', ['build', 'plan']) });
+    const result = await createDefaultActionExecutor().execute('action.options.resolve',
+      { actionId: 'session.mode.set', fieldPath: 'modeId', sessionId: 's1' }, context());
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { options: expect.arrayContaining([
+      expect.objectContaining({ value: 'default' }), expect.objectContaining({ value: 'build' }), expect.objectContaining({ value: 'plan' }),
+    ]) } });
   });
 });

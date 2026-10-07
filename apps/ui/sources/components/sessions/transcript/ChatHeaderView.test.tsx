@@ -1,8 +1,11 @@
 import React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
     createExpoVectorIconsMock,
+    createExpoRouterMock,
+    createReactNavigationNativeMock,
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
@@ -14,23 +17,7 @@ const platformState = vi.hoisted(() => ({
     os: 'ios' as 'ios' | 'web',
 }));
 
-const headerMocks = vi.hoisted(() => ({
-    identityMode: 'avatar' as 'avatar' | 'agentLogo' | 'none',
-}));
-
 installTranscriptCommonModuleMocks({
-    // Only this one key is steered; every other setting still resolves through the real module, or
-    // the rest of the tree renders against undefined and the suite falls over.
-    storage: async (importOriginal: <T>() => Promise<T>) => {
-        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        const base = await createPartialStorageModuleMock(importOriginal, {});
-        return {
-            ...base,
-            useSetting: ((key: string) => (key === 'sessionHeaderIdentityDisplay'
-                ? headerMocks.identityMode
-                : (base.useSetting as (k: string) => unknown)(key))) as typeof base.useSetting,
-        };
-    },
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
@@ -75,9 +62,11 @@ vi.mock('react-native-safe-area-context', () => ({
     initialWindowMetrics: safeAreaState.initial,
 }));
 
-vi.mock('@react-navigation/native', () => ({
-    useNavigation: () => ({ goBack: vi.fn() }),
+vi.mock('@react-navigation/native', () => createReactNavigationNativeMock({
+    navigation: { goBack: vi.fn() },
 }));
+
+vi.mock('expo-router', () => createExpoRouterMock().module);
 
 vi.mock('@/utils/platform/responsive', () => ({
     useHeaderHeight: () => 44,
@@ -87,10 +76,6 @@ vi.mock('@expo/vector-icons', async () => createExpoVectorIconsMock());
 
 vi.mock('@/components/ui/avatar/Avatar', () => ({
     Avatar: (props: any) => React.createElement('Avatar', props),
-}));
-
-vi.mock('@/agents/registry/AgentIcon', () => ({
-    AgentIcon: (props: any) => React.createElement('AgentIcon', props),
 }));
 
 // Every Typography role resolves to no font styling; modules pulled in through the storage and list
@@ -119,10 +104,16 @@ function flattenStyle(style: unknown): Record<string, unknown> {
     return Object.assign({}, ...style.flat().filter((entry) => entry && typeof entry === 'object'));
 }
 
+// Configure the native boundary before the store can load and cache its platform graph.
+const { storage } = await import('@/sync/domains/state/storage');
+const { Platform } = await import('react-native');
+const { ChatHeaderView } = await import('./ChatHeaderView');
+
 describe('ChatHeaderView', () => {
-    afterEach(standardCleanup);
-    afterEach(resetTranscriptCommonModuleMockState);
-    afterEach(() => {
+    afterEach(async () => {
+        await standardCleanup();
+        resetTranscriptCommonModuleMockState();
+        storage.setState(storage.getInitialState(), true);
         platformState.os = 'ios';
         safeAreaState.insets.top = 0;
         safeAreaState.insets.bottom = 0;
@@ -139,25 +130,27 @@ describe('ChatHeaderView', () => {
     // already made.
     async function renderWithIdentity(
         mode: 'avatar' | 'agentLogo' | 'none',
-        props: { avatarId?: string; agentId?: string } = { avatarId: 'avatar-1', agentId: 'claude' },
+        props: Pick<React.ComponentProps<typeof ChatHeaderView>, 'avatarId' | 'agentIdentity'> = {
+            avatarId: 'avatar-1',
+            agentIdentity: React.createElement('AgentIdentityFixture', { testID: 'fixture-agent-identity' }),
+        },
     ) {
-        headerMocks.identityMode = mode;
-        const { ChatHeaderView } = await import('./ChatHeaderView');
-        return renderScreen(<ChatHeaderView title="Title" {...(props as object)} />);
+        await act(async () => {
+            storage.setState({ settings: { ...storage.getState().settings, sessionHeaderIdentityDisplay: mode } });
+        });
+        return renderScreen(<ChatHeaderView title="Title" {...props} />);
     }
 
     it('leads with the generated avatar by default', async () => {
         const screen = await renderWithIdentity('avatar');
         expect(screen.root.findAllByType('Avatar' as never)).toHaveLength(1);
-        expect(screen.root.findAllByType('AgentIcon' as never)).toHaveLength(0);
+        expect(screen.findByTestId('fixture-agent-identity')).toBeNull();
     });
 
     it('leads with the agent logo when the user picks it', async () => {
         const screen = await renderWithIdentity('agentLogo');
         expect(screen.root.findAllByType('Avatar' as never)).toHaveLength(0);
-        const icons = screen.root.findAllByType('AgentIcon' as never);
-        expect(icons).toHaveLength(1);
-        expect((icons[0] as unknown as { props: { agentId: string } }).props.agentId).toBe('claude');
+        expect(screen.findAllByTestId('fixture-agent-identity')).toHaveLength(1);
     });
 
     it('leads with the title when the user picks none', async () => {
@@ -169,13 +162,11 @@ describe('ChatHeaderView', () => {
     it('shows nothing rather than the avatar when the agent logo is picked but no agent resolves', async () => {
         const screen = await renderWithIdentity('agentLogo', { avatarId: 'avatar-1' });
         expect(screen.root.findAllByType('Avatar' as never)).toHaveLength(0);
-        expect(screen.root.findAllByType('AgentIcon' as never)).toHaveLength(0);
+        expect(screen.findByTestId('fixture-agent-identity')).toBeNull();
         expect(screen.findAllByTestId('session-header-avatar')).toHaveLength(0);
     });
 
     it('uses elevation to keep the header above scroll content on Android', async () => {
-        const { ChatHeaderView } = await import('./ChatHeaderView');
-
         const screen = await renderScreen(<ChatHeaderView title="Title" />);
 
         const allViews = screen.findAllByType('View' as any);
@@ -194,8 +185,6 @@ describe('ChatHeaderView', () => {
     });
 
     it('renders an optional rightElement', async () => {
-        const { ChatHeaderView } = await import('./ChatHeaderView');
-
         const screen = await renderScreen(
             <ChatHeaderView
                 title="Title"
@@ -271,6 +260,7 @@ describe('ChatHeaderView', () => {
     });
 
     it('pads the header below the status bar using chrome-safe-area fallback insets', async () => {
+        expect(Platform.OS).toBe('ios');
         safeAreaState.insets.top = 0;
         safeAreaState.insets.bottom = 0;
         safeAreaState.insets.left = 0;
@@ -346,6 +336,7 @@ describe('ChatHeaderView', () => {
 
     it('uses native head ellipsis for head-mode subtitles outside web', async () => {
         platformState.os = 'ios';
+        expect(Platform.OS).toBe('ios');
         const subtitle = '~/Documents/Development/happier/remote-dev';
         const { ChatHeaderView } = await import('./ChatHeaderView');
 

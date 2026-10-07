@@ -175,10 +175,24 @@ export function registerTransferRelayV2DownloadSessionResponder(params: Readonly
                     return;
                 }
 
-                const manifestHash = await resolveTransferPayloadManifestHash(createFileTransferPayloadSource({
-                    filePath: session.filePath,
-                    sizeBytes: session.sizeBytes,
-                }));
+                let manifestHash: string;
+                try {
+                    manifestHash = await resolveTransferPayloadManifestHash(createFileTransferPayloadSource({
+                        filePath: session.filePath,
+                        sizeBytes: session.sizeBytes,
+                    }));
+                } catch {
+                    // The admitted owner is already known, but no active transfer
+                    // exists yet for the ordinary streaming failure handler.
+                    await sendAbort({
+                        transferId: envelope.transferId,
+                        scopeUserId: payload.scopeUserId,
+                        reason: 'transfer_failed',
+                        closeSession: true,
+                        owner,
+                    });
+                    return;
+                }
                 activeTransfers.set(envelope.transferId, {
                     scopeUserId: payload.scopeUserId,
                     manifestHash,

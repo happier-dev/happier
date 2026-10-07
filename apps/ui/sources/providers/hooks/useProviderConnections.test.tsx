@@ -11,54 +11,21 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 
 const machineRpcWithServerScope = vi.hoisted(() => vi.fn());
-type TestAccountLifetime = Readonly<{
-    isCurrent(): boolean;
-    onRetire(cancel: () => void): Readonly<{ dispose(): void }>;
-}>;
-const activeAccountLifetime = vi.hoisted(() => {
-    const current: { value: TestAccountLifetime | null } = { value: null };
-    return {
-        current,
-        create() {
-            let retired = false;
-            const cancellations = new Set<() => void>();
-            const lifetime: TestAccountLifetime = {
-                isCurrent: () => !retired,
-                onRetire(cancel) {
-                    if (retired) {
-                        cancel();
-                        return { dispose() {} };
-                    }
-                    cancellations.add(cancel);
-                    return { dispose: () => cancellations.delete(cancel) };
-                },
-            };
-            return {
-                lifetime,
-                retire() {
-                    if (retired) return;
-                    retired = true;
-                    for (const cancel of [...cancellations]) cancel();
-                    cancellations.clear();
-                },
-            };
-        },
-    };
-});
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope }));
-vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
-    captureActiveServerAccountScopeLifetime: () => activeAccountLifetime.current.value,
-}));
+installDisconnectedServerSocketBoundary();
+let accountConnection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
 
 import { useProviderConnections } from './useProviderConnections';
 import { useProviderConnectionMutation } from './useProviderConnectionMutation';
 
 describe('useProviderConnections', () => {
-    afterEach(() => {
-        activeAccountLifetime.current.value = null;
+    afterEach(async () => {
         standardCleanup();
+        await accountConnection?.dispose();
+        accountConnection = null;
     });
     beforeEach(() => { machineRpcWithServerScope.mockReset(); });
 
@@ -200,9 +167,7 @@ describe('useProviderConnections', () => {
     });
 
     it('clears Account A, rejects its late read, and starts one Account B read when routing ids stay equal', async () => {
-        const accountA = activeAccountLifetime.create();
-        const accountB = activeAccountLifetime.create();
-        activeAccountLifetime.current.value = accountA.lifetime;
+        accountConnection = await restoreServerAccountForTest({ serverUrl: 'https://provider-lifetime.test', accountId: 'account-a' });
         let resolveA!: (value: unknown) => void;
         let resolveB!: (value: unknown) => void;
         machineRpcWithServerScope
@@ -217,8 +182,8 @@ describe('useProviderConnections', () => {
         expect(machineRpcWithServerScope).toHaveBeenCalledTimes(1);
 
         await act(async () => {
-            activeAccountLifetime.current.value = accountB.lifetime;
-            accountA.retire();
+            await accountConnection!.dispose();
+            accountConnection = await restoreServerAccountForTest({ serverUrl: 'https://provider-lifetime.test', accountId: 'account-b' });
             await hook.rerender();
         });
 
@@ -257,7 +222,7 @@ describe('useProviderConnections', () => {
         await act(async () => { await hook.getCurrent().refresh(); });
         expect(hook.getCurrent()).toMatchObject({
             data: { connections: [{ connectionId: 'pc_a' }] },
-            error: createProviderErrorV1('provider_rpc_response_invalid', {
+            error: createProviderErrorV1('agent_error', {
                 machineId: 'machine-a',
             }),
             loading: false,

@@ -87,11 +87,19 @@ installSessionShellCommonModuleMocks({
 });
 vi.mock('@react-navigation/native', async () => {
     const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
-    return { ...createReactNavigationNativeMock(), useIsFocused: () => focusState.focused };
+    return {
+        ...createReactNavigationNativeMock(),
+        // These scenarios render a navigator-owned screen, so the optional focus
+        // reader must observe a navigation context rather than a standalone host.
+        NavigationContext: React.createContext({}),
+        useIsFocused: () => focusState.focused,
+    };
 });
-vi.mock('expo-router', () => ({
-    usePathname: () => routeState.pathname,
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const boundary = createExpoRouterMock();
+    return { ...boundary.module, usePathname: () => routeState.pathname };
+});
 vi.mock('@/hooks/server/useEffectiveServerSelection', () => ({
     useResolvedActiveServerSelection: () => serverSelectionState.selection,
     // The canonical list's filter controller resolves feature decisions, which read

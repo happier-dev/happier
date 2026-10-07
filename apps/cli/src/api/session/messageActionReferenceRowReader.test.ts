@@ -32,6 +32,7 @@ function serveRow(mode: 'plain' | 'e2ee', content: unknown) {
     if (path === `/v1/sessions/${reference.sessionId}/messages`) {
       return { status: 200, data: { messages: [{
         id: reference.messageId, seq: durableMessage.seq,
+        createdAt: 10, updatedAt: 10,
         messageRole: durableMessage.messageRole,
         messageActionReference: reference, content,
       }], hasMore: false } };

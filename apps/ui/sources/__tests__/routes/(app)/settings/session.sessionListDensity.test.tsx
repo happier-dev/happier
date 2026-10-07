@@ -1,7 +1,14 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderSettingsView, standardCleanup } from '@/dev/testkit';
+import { renderSettingsView as renderBaseSettingsView, standardCleanup } from '@/dev/testkit';
+import 'fake-indexeddb/auto';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { storage } from '@/sync/domains/state/storageStore';
+import { settingsDefaults, settingsParse, type Settings } from '@/sync/domains/settings/settings';
+import { localSettingsParse } from '@/sync/domains/settings/localSettings';
 import {
     installSessionSettingsEntryModuleMocks,
     resetSessionSettingsEntryState,
@@ -10,21 +17,29 @@ import {
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const setSessionListDensity = vi.fn();
-const setSessionListOrderingMode = vi.fn();
-const setSessionListFolderSortMode = vi.fn();
-const setWorkspacePathDisplayMode = vi.fn();
-const setWorkspaceFaviconsEnabled = vi.fn();
-const setWorkspaceMachineSubtitlesEnabled = vi.fn();
-const setSessionListWorkingIndicatorStyle = vi.fn();
-const setSessionListIdentityDisplay = vi.fn();
-const setSessionHeaderIdentityDisplay = vi.fn();
-const setSessionListActiveColorMode = vi.fn();
-const setSessionListAttentionPromotionMode = vi.fn();
-const setSessionListWorkingPlacementMode = vi.fn();
-const setSessionListSeparateBackgroundWork = vi.fn();
-const setSessionListSectionMode = vi.fn();
-const applySettings = vi.fn();
+
+installDisconnectedServerSocketBoundary();
+const initialStorage = storage.getState();
+let account: Awaited<ReturnType<typeof createSecretSettingsTestHarness>> | undefined;
+
+async function renderSettingsView(element: React.ReactElement, options?: Parameters<typeof renderBaseSettingsView>[1]) {
+    if (!account) {
+        const fixture = Object.fromEntries(Object.entries(settingsDefaults).map(([key, value]) => [
+            key, readSessionSettingFixture(key) ?? value,
+        ]));
+        account = await createSecretSettingsTestHarness({ settings: settingsParse(fixture), sharedEnabled: false });
+        storage.setState({ localSettings: localSettingsParse({ sessionsRightPaneDefaultOpen: false, uiMultiPanePanelsEnabled: true }) });
+    }
+    const credentials = account.credentials;
+    const wrapper = ({ children }: React.PropsWithChildren) => <InjectedAuthProvider credentials={credentials}>{children}</InjectedAuthProvider>;
+    return renderBaseSettingsView(element, { ...options, wrapper });
+}
+
+async function expectPersistedSettings(delta: Partial<Settings>) {
+    await vi.waitFor(() => expect(storage.getState().settings).toMatchObject(delta));
+    await vi.waitFor(() => expect(account?.persistedSettings).toMatchObject(delta));
+}
+
 let translationPrefix = 'en';
 let sessionListOrderingModeSetting: 'custom' | 'created' | 'updated' = 'custom';
 let sessionListFolderSortModeSetting: 'foldersFirst' | 'mixed' = 'foldersFirst';
@@ -42,96 +57,61 @@ installSessionSettingsEntryModuleMocks({
             getPreferredLanguage: () => translationPrefix,
         });
     },
-    storageModule: async (importOriginal) => {
-        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        const original = await importOriginal<typeof import('@/sync/domains/state/storage')>();
-        return createStorageModuleMock({
-            importOriginal,
-            overrides: {
-                // Both readers answer from one fixture: the page also reads the effective list layout
-                // through `useSetting` (`useSessionListLayoutChoice`).
-                useSetting: ((key: string) => {
-                    const fixture = readSessionSettingFixture(key);
-                    return fixture ? fixture[0] : original.useSetting(key as never);
-                }) as any,
-                useSettingMutable: ((key: string) => readSessionSettingFixture(key) ?? [null, vi.fn()]) as any,
-                useLocalSettingMutable: ((key: string) => {
-                    if (key === 'sessionsRightPaneDefaultOpen') return [false, vi.fn()];
-                    if (key === 'uiMultiPanePanelsEnabled') return [true, vi.fn()];
-                    return [null, vi.fn()];
-                }) as any,
-            },
-        });
-    },
+    storageModule: (importOriginal) => importOriginal<typeof import('@/sync/domains/state/storage')>(),
 });
 
 /** The Account settings this screen reads, with the setter each test observes; `undefined` when not fixed here. */
-function readSessionSettingFixture(key: string): [unknown, (...args: any[]) => unknown] | undefined {
-    if (key === 'sessionTagsEnabled') return [true, vi.fn()];
-    if (key === 'sessionListDensity') return ['narrow', setSessionListDensity];
-    if (key === 'sessionListIdentityDisplay') return ['agentLogo', setSessionListIdentityDisplay];
-    if (key === 'sessionHeaderIdentityDisplay') return ['avatar', setSessionHeaderIdentityDisplay];
-    if (key === 'sessionListActiveColorModeV1') return ['activityAndAttention', setSessionListActiveColorMode];
-    if (key === 'sessionListAttentionPromotionModeV1') return ['global', setSessionListAttentionPromotionMode];
-    if (key === 'sessionListWorkingPlacementModeV1') return ['off', setSessionListWorkingPlacementMode];
-    if (key === 'sessionListSeparateBackgroundWorkV1') return [false, setSessionListSeparateBackgroundWork];
-    if (key === 'sessionListOrderingModeV1') return [sessionListOrderingModeSetting, setSessionListOrderingMode];
-    if (key === 'sessionListFolderSortModeV1') return [sessionListFolderSortModeSetting, setSessionListFolderSortMode];
-    if (key === 'sessionFolderViewModeV1') return ['tree', vi.fn()];
-    if (key === 'workspacePathDisplayModeV1') return ['name', setWorkspacePathDisplayMode];
-    if (key === 'workspaceFaviconsEnabled') return [true, setWorkspaceFaviconsEnabled];
-    if (key === 'workspaceMachineSubtitlesEnabled') return [true, setWorkspaceMachineSubtitlesEnabled];
-    if (key === 'sessionListNarrowWorkingIndicatorStyle') return ['spinner', setSessionListWorkingIndicatorStyle];
-    if (key === 'hideInactiveSessions') return [false, vi.fn()];
-    if (key === 'sessionListSectionModeV1') return ['activity', setSessionListSectionMode];
-    if (key === 'sessionListActiveGroupingV1') return ['project', vi.fn()];
-    if (key === 'sessionListInactiveGroupingV1') return ['date', vi.fn()];
-    if (key === 'agentInputActionBarLayout') return ['auto', vi.fn()];
-    if (key === 'agentInputChipDensity') return ['auto', vi.fn()];
-    if (key === 'alwaysShowContextSize') return [false, vi.fn()];
-    if (key === 'sessionUseTmux') return [false, vi.fn()];
-    if (key === 'sessionTmuxSessionName') return ['happy', vi.fn()];
-    if (key === 'sessionTmuxIsolated') return [true, vi.fn()];
-    if (key === 'sessionTmuxTmpDir') return [null, vi.fn()];
-    if (key === 'sessionMessageSendMode') return ['agent_queue', vi.fn()];
-    if (key === 'sessionBusySteerSendPolicy') return ['steer_immediately', vi.fn()];
-    if (key === 'agentInputEnterToSend') return [true, vi.fn()];
-    if (key === 'agentInputHistoryScope') return ['perSession', vi.fn()];
-    if (key === 'terminalConnectLegacySecretExportEnabled') return [false, vi.fn()];
-    if (key === 'sessionReplayEnabled') return [false, vi.fn()];
-    if (key === 'sessionReplayStrategy') return ['recent_messages', vi.fn()];
-    if (key === 'sessionReplayRecentMessagesCount') return [250, vi.fn()];
-    if (key === 'sessionReplayMaxSeedChars') return [120000, vi.fn()];
-    if (key === 'sessionReplaySummaryRunnerV1') return [null, vi.fn()];
-    if (key === 'usageLimitRecoverySettingsV1') return [{ v: 1, mode: 'ask' }, vi.fn()];
+function readSessionSettingFixture(key: string): unknown {
+    if (key === 'sessionTagsEnabled') return true;
+    if (key === 'sessionListDensity') return 'narrow';
+    if (key === 'sessionListIdentityDisplay') return 'agentLogo';
+    if (key === 'sessionHeaderIdentityDisplay') return 'avatar';
+    if (key === 'sessionListActiveColorModeV1') return 'activityAndAttention';
+    if (key === 'sessionListAttentionPromotionModeV1') return 'global';
+    if (key === 'sessionListWorkingPlacementModeV1') return 'off';
+    if (key === 'sessionListSeparateBackgroundWorkV1') return false;
+    if (key === 'sessionListOrderingModeV1') return sessionListOrderingModeSetting;
+    if (key === 'sessionListFolderSortModeV1') return sessionListFolderSortModeSetting;
+    if (key === 'sessionFolderViewModeV1') return 'tree';
+    if (key === 'workspacePathDisplayModeV1') return 'name';
+    if (key === 'workspaceFaviconsEnabled') return true;
+    if (key === 'workspaceMachineSubtitlesEnabled') return true;
+    if (key === 'sessionListNarrowWorkingIndicatorStyle') return 'spinner';
+    if (key === 'hideInactiveSessions') return false;
+    if (key === 'sessionListSectionModeV1') return 'activity';
+    if (key === 'sessionListActiveGroupingV1') return 'project';
+    if (key === 'sessionListInactiveGroupingV1') return 'date';
+    if (key === 'agentInputActionBarLayout') return 'auto';
+    if (key === 'agentInputChipDensity') return 'auto';
+    if (key === 'alwaysShowContextSize') return false;
+    if (key === 'sessionUseTmux') return false;
+    if (key === 'sessionTmuxSessionName') return 'happy';
+    if (key === 'sessionTmuxIsolated') return true;
+    if (key === 'sessionTmuxTmpDir') return null;
+    if (key === 'sessionMessageSendMode') return 'agent_queue';
+    if (key === 'sessionBusySteerSendPolicy') return 'steer_immediately';
+    if (key === 'agentInputEnterToSend') return true;
+    if (key === 'agentInputHistoryScope') return 'perSession';
+    if (key === 'terminalConnectLegacySecretExportEnabled') return false;
+    if (key === 'sessionReplayEnabled') return false;
+    if (key === 'sessionReplayStrategy') return 'recent_messages';
+    if (key === 'sessionReplayRecentMessagesCount') return 250;
+    if (key === 'sessionReplayMaxSeedChars') return 120000;
+    if (key === 'sessionReplaySummaryRunnerV1') return null;
+    if (key === 'usageLimitRecoverySettingsV1') return { v: 1, mode: 'ask' };
     return undefined;
 }
 
-vi.mock('@/sync/store/settingsWriters', () => ({
-    useApplySettings: () => applySettings,
-}));
 
 beforeEach(() => {
     sessionSettingsEntryState.options.featureEnabled = foldersEnabled;
 });
 
-afterEach(() => {
+afterEach(async () => {
     standardCleanup();
-    setSessionListDensity.mockClear();
-    setSessionListOrderingMode.mockClear();
-    setSessionListFolderSortMode.mockClear();
-    setWorkspacePathDisplayMode.mockClear();
-    setWorkspaceFaviconsEnabled.mockClear();
-    setWorkspaceMachineSubtitlesEnabled.mockClear();
-    setSessionListWorkingIndicatorStyle.mockClear();
-    setSessionListIdentityDisplay.mockClear();
-    setSessionHeaderIdentityDisplay.mockClear();
-    setSessionListActiveColorMode.mockClear();
-    setSessionListAttentionPromotionMode.mockClear();
-    setSessionListWorkingPlacementMode.mockClear();
-    setSessionListSeparateBackgroundWork.mockClear();
-    setSessionListSectionMode.mockClear();
-    applySettings.mockClear();
+    await account?.dispose();
+    account = undefined;
+    storage.setState(initialStorage, true);
     resetSessionSettingsEntryState();
     translationPrefix = 'en';
     sessionListOrderingModeSetting = 'custom';
@@ -140,11 +120,8 @@ afterEach(() => {
 
 describe('Session settings session list density', () => {
     it('defaults to the narrow density option and updates only the canonical density setting', async () => {
-        setSessionListDensity.mockClear();
         const mod = await import('../../../../app/(app)/settings/session');
-        const SessionSettingsScreen = (mod.default as unknown as {
-            type: React.ComponentType<Record<string, never>>;
-        }).type;
+        const SessionSettingsScreen = mod.default;
 
         const screen = await renderSettingsView(React.createElement(SessionSettingsScreen));
         const dropdowns = screen.findAllByType('DropdownMenu' as any);
@@ -172,40 +149,36 @@ describe('Session settings session list density', () => {
             densityTiles.props.onChange('cozy');
         });
 
-        expect(setSessionListDensity).toHaveBeenCalledWith('cozy');
+        await expectPersistedSettings({ sessionListDensity: 'cozy' });
 
         await act(async () => {
             headerIdentityDropdown!.props.onSelect('agentLogo');
         });
-
-        expect(setSessionHeaderIdentityDisplay).toHaveBeenCalledTimes(1);
-        expect(setSessionHeaderIdentityDisplay).toHaveBeenCalledWith('agentLogo');
+        await expectPersistedSettings({ sessionHeaderIdentityDisplay: 'agentLogo' });
 
         await act(async () => {
             orderingDropdown!.props.onSelect('ordering:updated');
         });
 
-        expect(applySettings).toHaveBeenCalledWith({ sessionListOrderingModeV1: 'updated' });
+        await expectPersistedSettings({ sessionListOrderingModeV1: 'updated' });
 
         await act(async () => {
             folderDisplayDropdown!.props.onSelect('folderDisplay:off');
         });
 
-        expect(applySettings).toHaveBeenCalledWith({ sessionFolderViewModeV1: 'off' });
+        await expectPersistedSettings({ sessionFolderViewModeV1: 'off' });
 
         await act(async () => {
             folderSortDropdown!.props.onSelect('folderSort:mixed');
         });
 
-        expect(applySettings).toHaveBeenCalledWith({ sessionListFolderSortModeV1: 'mixed' });
+        await expectPersistedSettings({ sessionListFolderSortModeV1: 'mixed' });
     });
 
     it('refreshes the density, ordering, and grouping dropdown labels when the language changes and the screen rerenders', async () => {
         translationPrefix = 'en';
         const mod = await import('../../../../app/(app)/settings/session');
-        const SessionSettingsScreen = (mod.default as unknown as {
-            type: React.ComponentType<Record<string, never>>;
-        }).type;
+        const SessionSettingsScreen = mod.default;
 
         const screen = await renderSettingsView(React.createElement(SessionSettingsScreen));
         const readDropdowns = () => {
@@ -274,9 +247,7 @@ describe('Session settings session list density', () => {
         sessionListFolderSortModeSetting = 'mixed';
 
         const mod = await import('../../../../app/(app)/settings/session');
-        const SessionSettingsScreen = (mod.default as unknown as {
-            type: React.ComponentType<Record<string, never>>;
-        }).type;
+        const SessionSettingsScreen = mod.default;
 
         const screen = await renderSettingsView(React.createElement(SessionSettingsScreen));
         const dropdowns = screen.findAllByType('DropdownMenu' as any);
@@ -290,14 +261,12 @@ describe('Session settings session list density', () => {
         await act(async () => {
             folderSortDropdown!.props.onSelect('folderSort:mixed');
         });
-        expect(applySettings).not.toHaveBeenCalled();
+        expect(account?.settingsWrites).toEqual([]);
     });
 
     it('exposes workspace name and favicon controls in the session list settings', async () => {
         const mod = await import('../../../../app/(app)/settings/session');
-        const SessionSettingsScreen = (mod.default as unknown as {
-            type: React.ComponentType<Record<string, never>>;
-        }).type;
+        const SessionSettingsScreen = mod.default;
 
         const screen = await renderSettingsView(React.createElement(SessionSettingsScreen));
         const dropdowns = screen.findAllByType('DropdownMenu' as any);
@@ -310,7 +279,7 @@ describe('Session settings session list density', () => {
         await act(async () => {
             workspaceNameDropdown!.props.onSelect('path');
         });
-        expect(setWorkspacePathDisplayMode).toHaveBeenCalledWith('path');
+        await expectPersistedSettings({ workspacePathDisplayModeV1: 'path' });
 
         const faviconItem = screen.findAllByType('Item' as any).find((node: any) =>
             node.props?.title === 'en:settingsSession.sessionList.workspaceFaviconsTitle');
@@ -318,7 +287,7 @@ describe('Session settings session list density', () => {
         await act(async () => {
             faviconItem!.props.onPress();
         });
-        expect(setWorkspaceFaviconsEnabled).toHaveBeenCalledWith(false);
+        await expectPersistedSettings({ workspaceFaviconsEnabled: false });
 
         const machineSubtitleItem = screen.findAllByType('Item' as any).find((node: any) =>
             node.props?.title === 'en:settingsSession.sessionList.workspaceMachineSubtitlesTitle');
@@ -326,7 +295,7 @@ describe('Session settings session list density', () => {
         await act(async () => {
             machineSubtitleItem!.props.onPress();
         });
-        expect(setWorkspaceMachineSubtitlesEnabled).toHaveBeenCalledWith(false);
+        await expectPersistedSettings({ workspaceMachineSubtitlesEnabled: false });
 
         const workingIndicatorDropdown = dropdowns.find((node: any) =>
             node.props?.itemTrigger?.itemProps?.testID === 'settings-session-workingIndicator-trigger');
@@ -337,14 +306,12 @@ describe('Session settings session list density', () => {
         await act(async () => {
             workingIndicatorDropdown!.props.onSelect('pulse');
         });
-        expect(setSessionListWorkingIndicatorStyle).toHaveBeenCalledWith('pulse');
+        await expectPersistedSettings({ sessionListNarrowWorkingIndicatorStyle: 'pulse' });
     });
 
     it('exposes the session list identity display selector near density', async () => {
         const mod = await import('../../../../app/(app)/settings/session');
-        const SessionSettingsScreen = (mod.default as unknown as {
-            type: React.ComponentType<Record<string, never>>;
-        }).type;
+        const SessionSettingsScreen = mod.default;
 
         const screen = await renderSettingsView(React.createElement(SessionSettingsScreen));
         const dropdowns = screen.findAllByType('DropdownMenu' as any);
@@ -360,14 +327,12 @@ describe('Session settings session list density', () => {
             identityDropdown!.props.onSelect('agentLogo');
         });
 
-        expect(setSessionListIdentityDisplay).toHaveBeenCalledWith('agentLogo');
+        await expectPersistedSettings({ sessionListIdentityDisplay: 'agentLogo' });
     });
 
     it('exposes the session list active color mode selector', async () => {
         const mod = await import('../../../../app/(app)/settings/session');
-        const SessionSettingsScreen = (mod.default as unknown as {
-            type: React.ComponentType<Record<string, never>>;
-        }).type;
+        const SessionSettingsScreen = mod.default;
 
         const screen = await renderSettingsView(React.createElement(SessionSettingsScreen));
         const dropdowns = screen.findAllByType('DropdownMenu' as any);
@@ -382,14 +347,12 @@ describe('Session settings session list density', () => {
             activeColorDropdown!.props.onSelect('attentionOnly');
         });
 
-        expect(setSessionListActiveColorMode).toHaveBeenCalledWith('attentionOnly');
+        await expectPersistedSettings({ sessionListActiveColorModeV1: 'attentionOnly' });
     });
 
     it('exposes the session list attention promotion selector', async () => {
         const mod = await import('../../../../app/(app)/settings/session');
-        const SessionSettingsScreen = (mod.default as unknown as {
-            type: React.ComponentType<Record<string, never>>;
-        }).type;
+        const SessionSettingsScreen = mod.default;
 
         const screen = await renderSettingsView(React.createElement(SessionSettingsScreen));
         const dropdowns = screen.findAllByType('DropdownMenu' as any);
@@ -404,14 +367,12 @@ describe('Session settings session list density', () => {
             attentionPromotionDropdown!.props.onSelect('attention:withinGroups');
         });
 
-        expect(applySettings).toHaveBeenCalledWith({ sessionListAttentionPromotionModeV1: 'withinGroups' });
+        await expectPersistedSettings({ sessionListAttentionPromotionModeV1: 'withinGroups' });
     });
 
     it('exposes the session list working placement selector', async () => {
         const mod = await import('../../../../app/(app)/settings/session');
-        const SessionSettingsScreen = (mod.default as unknown as {
-            type: React.ComponentType<Record<string, never>>;
-        }).type;
+        const SessionSettingsScreen = mod.default;
 
         const screen = await renderSettingsView(React.createElement(SessionSettingsScreen));
         const dropdowns = screen.findAllByType('DropdownMenu' as any);
@@ -426,14 +387,12 @@ describe('Session settings session list density', () => {
             workingPlacementDropdown!.props.onSelect('working:global');
         });
 
-        expect(applySettings).toHaveBeenCalledWith({ sessionListWorkingPlacementModeV1: 'global' });
+        await expectPersistedSettings({ sessionListWorkingPlacementModeV1: 'global' });
     });
 
     it('offers all layout previews as visible choices and applies the canonical atomic settings delta', async () => {
         const mod = await import('../../../../app/(app)/settings/session');
-        const SessionSettingsScreen = (mod.default as unknown as {
-            type: React.ComponentType<Record<string, never>>;
-        }).type;
+        const SessionSettingsScreen = mod.default;
 
         const screen = await renderSettingsView(React.createElement(SessionSettingsScreen));
         const layoutRow = screen.findByTestId('settings-session-sessionListLayout');
@@ -451,9 +410,13 @@ describe('Session settings session list density', () => {
 
         await picker.pressByTestIdAsync('settings-session-sessionListLayout:layout:recent_activity');
 
-        expect(applySettings).toHaveBeenCalledWith({
+        await expectPersistedSettings({
             sessionListSectionModeV1: 'single',
             sessionListActiveGroupingV1: 'date',
         });
+        expect(account?.settingsWrites).toHaveLength(1);
+        expect(account?.settingsWrites[0]).toMatchObject({ expectedVersion: 1, content: { t: 'plain', v: {
+            sessionListSectionModeV1: 'single', sessionListActiveGroupingV1: 'date',
+        } } });
     });
 });

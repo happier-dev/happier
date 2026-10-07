@@ -3,6 +3,9 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderSettingsView, standardCleanup } from '@/dev/testkit';
+import { localSettingsParse } from '@/sync/domains/settings/localSettings';
+import { settingsParse } from '@/sync/domains/settings/settings';
+import { storage } from '@/sync/domains/state/storageStore';
 import { BUILT_IN_THEME_PROFILES } from '@/theme/profiles/builtInThemeProfiles';
 import { installSessionSettingsEntryModuleMocks, resetSessionSettingsEntryState, sessionSettingsEntryState } from './sessionSettingsEntryTestHelpers';
 
@@ -30,16 +33,17 @@ const shared = vi.hoisted(() => ({
     documentElementAnimate: vi.fn(),
 }));
 
-type MutableSettingHook = (key: string) => [unknown, (next: unknown) => void];
+const initialStorage = storage.getState();
 
-const createMutableSettingHook = (settingsState: Record<string, unknown>): MutableSettingHook => {
-    return (key: string) => [
-        Object.prototype.hasOwnProperty.call(settingsState, key) ? settingsState[key] : null,
-        (next: unknown) => {
-            settingsState[key] = next;
-        },
-    ];
-};
+async function renderAppearance(element: React.ReactElement, options?: Parameters<typeof renderSettingsView>[1]) {
+    await act(async () => {
+        storage.setState({
+            localSettings: localSettingsParse(shared.settingsState),
+            settings: settingsParse(shared.settingsState),
+        });
+    });
+    return renderSettingsView(element, options);
+}
 
 installSessionSettingsEntryModuleMocks({
     reactNative: async () => {
@@ -72,17 +76,7 @@ installSessionSettingsEntryModuleMocks({
             SUPPORTED_LANGUAGES: { en: true },
         };
     },
-    storageModule: async (importOriginal) => {
-        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        const mutableSetting = createMutableSettingHook(shared.settingsState);
-        return createStorageModuleMock({
-            importOriginal,
-            overrides: {
-                useSettingMutable: mutableSetting as typeof import('@/sync/domains/state/storage')['useSettingMutable'],
-                useLocalSettingMutable: mutableSetting as typeof import('@/sync/domains/state/storage')['useLocalSettingMutable'],
-            },
-        });
-    },
+    storageModule: (importOriginal) => importOriginal<typeof import('@/sync/domains/state/storage')>(),
     useDeviceType: 'desktop',
 });
 
@@ -112,6 +106,7 @@ vi.mock('@/theme', async (importOriginal) => {
 
 afterEach(() => {
     standardCleanup();
+    storage.setState(initialStorage, true);
     resetSessionSettingsEntryState();
     Reflect.deleteProperty(globalThis, 'document');
     shared.settingsState.themePreference = 'light';
@@ -134,7 +129,7 @@ describe('Appearance settings theme preference', () => {
         shared.settingsState.themePreference = 'dark';
         shared.settingsState.themeProfiles = { activeProfileIds: { light: null, dark: 'nightDark' }, profiles: [] };
         const { default: Appearance } = await import('@/app/(app)/settings/appearance');
-        const screen = await renderSettingsView(<Appearance />);
+        const screen = await renderAppearance(<Appearance />);
 
         expect(screen.findByTestId('settings-theme-profile-preview')).toBeNull();
         const themesRow = screen.findRow('settings-appearance-themeProfiles') as any;
@@ -151,7 +146,7 @@ describe('Appearance settings theme preference', () => {
         for (const mode of ['dark', 'adaptive'] as const) {
             shared.settingsState.themePreference = mode;
             const mod = await import('@/app/(app)/settings/appearance');
-            const screen = await renderSettingsView(React.createElement(mod.default), {
+            const screen = await renderAppearance(React.createElement(mod.default), {
                 flushOptions: { cycles: 0 },
             });
 
@@ -162,7 +157,7 @@ describe('Appearance settings theme preference', () => {
 
     it('applies status bar style immediately when selecting dark mode', async () => {
         const mod = await import('@/app/(app)/settings/appearance');
-        const screen = await renderSettingsView(React.createElement(mod.default), {
+        const screen = await renderAppearance(React.createElement(mod.default), {
             flushOptions: { cycles: 0 },
         });
 
@@ -170,7 +165,7 @@ describe('Appearance settings theme preference', () => {
             findThemeModeTiles(screen).props.onChange('dark');
         });
 
-        expect(shared.settingsState.themePreference).toBe('dark');
+        expect(storage.getState().localSettings.themePreference).toBe('dark');
         expect(shared.setTheme).toHaveBeenCalledWith('dark');
         expect(shared.setStatusBarStyle).toHaveBeenCalledWith('light', true);
     });
@@ -187,7 +182,7 @@ describe('Appearance settings theme preference', () => {
         });
 
         const mod = await import('@/app/(app)/settings/appearance');
-        const screen = await renderSettingsView(React.createElement(mod.default), {
+        const screen = await renderAppearance(React.createElement(mod.default), {
             flushOptions: { cycles: 0 },
         });
 
@@ -206,7 +201,7 @@ describe('Appearance settings theme preference', () => {
         shared.settingsState.themePreference = 'light';
         shared.settingsState.themeProfiles = { activeProfileIds: { light: null, dark: 'premiumDark' }, profiles: [] };
         const mod = await import('@/app/(app)/settings/appearance');
-        const screen = await renderSettingsView(React.createElement(mod.default), {
+        const screen = await renderAppearance(React.createElement(mod.default), {
             flushOptions: { cycles: 0 },
         });
 
@@ -214,14 +209,14 @@ describe('Appearance settings theme preference', () => {
             findThemeModeTiles(screen).props.onChange('dark');
         });
 
-        const themeProfiles = shared.settingsState.themeProfiles as { activeProfileIds: { light: string | null; dark: string | null } };
-        expect(shared.settingsState.themePreference).toBe('dark');
+        const { themeProfiles, themePreference } = storage.getState().localSettings;
+        expect(themePreference).toBe('dark');
         expect(themeProfiles.activeProfileIds).toEqual({ light: null, dark: 'premiumDark' });
     });
 
     it('opens theme profile management from the theme group', async () => {
         const mod = await import('@/app/(app)/settings/appearance');
-        const screen = await renderSettingsView(React.createElement(mod.default), {
+        const screen = await renderAppearance(React.createElement(mod.default), {
             flushOptions: { cycles: 0 },
         });
 

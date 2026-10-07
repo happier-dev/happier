@@ -3,13 +3,11 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
-import type {
-    SessionBoardActionOutcome,
-    SessionBoardActionsPort,
-    SessionBoardItemUpsertInput,
-    SessionBoardMutationResult,
-} from '@/sync/domains/session/board';
-import { readSessionSurfaceNoteTextV1 } from '@happier-dev/protocol/sessions/board';
+import { dispatchEscapeToLayerStack } from '@/keyboard/escape';
+import type { CodeEditorHandle, CodeEditorProps } from '@/components/ui/code/editor/codeEditorTypes';
+import { unavailableSessionBoardActions } from '@/sync/domains/session/board/sessionBoardActionsPort';
+import { createSessionSurfaceNoteDocumentV1, readSessionSurfaceNoteTextV1, SessionBoardMutationV1Schema, SessionSurfaceItemV1Schema } from '@happier-dev/protocol/sessions/board';
+import { realBoardActions } from '../sessionBoardActionsTestkit';
 
 import { SessionBoardNoteEditorCard } from './SessionBoardNoteEditorCard';
 
@@ -26,28 +24,20 @@ const editorHarness = vi.hoisted(() => ({
 }));
 const alertRequested = vi.hoisted(() => vi.fn());
 
-const escapeHarness = vi.hoisted(() => ({
-    options: null as null | Readonly<{ onEscape: (event: unknown) => boolean | void }>,
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit');
+    return createExpoRouterMock({ navigation: { dispatch: navigationHarness.dispatch } }).module;
+});
 
-vi.mock('@/keyboard/escape', () => ({
-    ESCAPE_LAYER_PRIORITIES: { draftClear: 20 },
-    useEscapeLayer: (options: Readonly<{ onEscape: (event: unknown) => boolean | void }>) => {
-        escapeHarness.options = options;
-    },
-}));
-
-vi.mock('@react-navigation/native', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@react-navigation/native')>(),
-    useNavigation: () => ({ dispatch: navigationHarness.dispatch }),
-    usePreventRemove: (
-        enabled: boolean,
-        onPreventRemove: (event: { data: { action: unknown } }) => void,
-    ) => {
-        navigationHarness.enabled = enabled;
-        navigationHarness.onPreventRemove = onPreventRemove;
-    },
-}));
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit');
+    return createReactNavigationNativeMock({
+        usePreventRemove: (enabled, onPreventRemove) => {
+            navigationHarness.enabled = enabled;
+            navigationHarness.onPreventRemove = onPreventRemove;
+        },
+    });
+});
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit');
@@ -55,7 +45,7 @@ vi.mock('expo-router', async () => {
 });
 
 vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    const { createModalModuleMock } = await import('@/dev/testkit');
     return createModalModuleMock({ spies: {
         alert: (_title, _message, buttons) => {
             alertRequested();
@@ -64,27 +54,22 @@ vi.mock('@/modal', async () => {
     } }).module;
 });
 
-vi.mock('@/components/ui/markdown/editor/MarkdownCodeEditorField', () => ({
-    MarkdownCodeEditorField: (props: Readonly<{
-        editorRef?: { current: unknown };
-        testID?: string;
-    }>) => {
-        if (props.editorRef) {
-            props.editorRef.current = {
-                flushPendingChange: editorHarness.flushPendingChange,
-                getValue: () => editorHarness.value,
-                focus: editorHarness.focus,
-            };
-        }
-        return React.createElement('MockMarkdownCodeEditor', props);
-    },
+// The embedded CodeMirror platform surface cannot mount in react-test-renderer;
+// keep MarkdownCodeEditorField and its ref forwarding/mode decisions real.
+vi.mock('@/components/ui/code/editor/CodeEditor', () => ({
+    CodeEditor: React.forwardRef<CodeEditorHandle, CodeEditorProps>(function MockCodeEditor(props, ref) {
+        React.useImperativeHandle(ref, () => ({
+            flushPendingChange: editorHarness.flushPendingChange,
+            getValue: () => editorHarness.value,
+            focus: editorHarness.focus,
+        }), []);
+        return React.createElement('MockCodeEditor', props);
+    }),
 }));
 
-const actions: SessionBoardActionsPort = {
-    upsertItem: async () => ({ status: 'unavailable', reason: 'board_actions_unavailable' }),
-    removeItem: async () => ({ status: 'unavailable', reason: 'board_actions_unavailable' }),
-    updateLayout: async () => ({ status: 'unavailable', reason: 'board_actions_unavailable' }),
-};
+const actions = unavailableSessionBoardActions;
+const revision1 = 'ssr1.AAAACHN5c3JlY18xAAAAAQ';
+const revision2 = 'ssr1.AAAACHN5c3JlY18yAAAAAg';
 
 describe('SessionBoardNoteEditorCard', () => {
     afterEach(() => standardCleanup());
@@ -97,7 +82,6 @@ describe('SessionBoardNoteEditorCard', () => {
         editorHarness.flushPendingChange.mockClear();
         editorHarness.focus.mockClear();
         alertRequested.mockClear();
-        escapeHarness.options = null;
     });
 
     it('does not prompt to discard when the final embedded edit restored the saved Note', async () => {
@@ -114,7 +98,7 @@ describe('SessionBoardNoteEditorCard', () => {
                 onCancel={onCancel}
             />,
         );
-        act(() => { screen.findByTestId('session-board-note-editor-body')?.props.onChange('changed'); });
+        act(() => { screen.tree.root.findByType('MockCodeEditor').props.onChange('changed'); });
         editorHarness.value = 'base';
         await act(async () => { screen.findByTestId('session-board-note-editor-cancel')?.props.onPress(); });
         expect(onCancel).toHaveBeenCalledOnce();
@@ -143,28 +127,12 @@ describe('SessionBoardNoteEditorCard', () => {
     });
 
     it('uses the same flushed save for Cmd/Ctrl+Enter', async () => {
-        const submitted: SessionBoardItemUpsertInput[] = [];
-        const upsertItem = vi.fn(async (
-            input: SessionBoardItemUpsertInput,
-        ): Promise<SessionBoardActionOutcome<SessionBoardMutationResult>> => {
-            submitted.push(input);
-            return {
-            status: 'ok' as const,
-            value: {
-                v: 1 as const,
-                serverId: 'home-1',
-                sessionId: 'session-1',
-                result: {
-                    operation: 'upsert_item' as const,
-                    itemId: 'note-1',
-                    outcome: 'created' as const,
-                    itemRevision: 'rev-1',
-                    layoutRevision: 'layout-1',
-                },
-                destination: { tabId: 'overview', width: 'medium' as const },
-            },
-            };
-        });
+        const submitted: Array<ReturnType<typeof SessionBoardMutationV1Schema.parse>> = [];
+        const savingActions = realBoardActions(async (_path, init) => {
+            if (init?.method !== 'PUT') return Response.json({ record: null });
+            submitted.push(SessionBoardMutationV1Schema.parse(JSON.parse(String(init.body))));
+            return Response.json({ operation: 'upsert_item', itemId: 'note-1', outcome: 'created', itemRevision: revision1, layoutRevision: revision1 });
+        }, undefined, { serverId: 'home-1', sessionId: 'session-1' });
         const screen = await renderScreen(
             <SessionBoardNoteEditorCard
                 sessionId="session-1"
@@ -174,7 +142,7 @@ describe('SessionBoardNoteEditorCard', () => {
                 initialTitle="Release"
                 initialBody="Body"
                 reachable
-                actions={{ ...actions, upsertItem }}
+                actions={savingActions}
                 onCancel={vi.fn()}
             />,
         );
@@ -191,8 +159,10 @@ describe('SessionBoardNoteEditorCard', () => {
         });
 
         expect(preventDefault).toHaveBeenCalledOnce();
-        expect(upsertItem).toHaveBeenCalledOnce();
-        const item = submitted[0]?.item;
+        await vi.waitFor(() => expect(submitted).toHaveLength(1));
+        const mutation = submitted[0];
+        const item = mutation?.operation === 'upsert_item' && mutation.itemContent.t === 'plain'
+            ? SessionSurfaceItemV1Schema.parse(mutation.itemContent.v) : null;
         expect(item?.source.kind).toBe('declarative');
         expect(item?.source.kind === 'declarative'
             ? readSessionSurfaceNoteTextV1(item.source.document)
@@ -200,16 +170,10 @@ describe('SessionBoardNoteEditorCard', () => {
     });
 
     it('keeps the draft visible and explains when Save is awaiting approval', async () => {
-        const upsertItem: SessionBoardActionsPort['upsertItem'] = vi.fn(async (
-            _input: SessionBoardItemUpsertInput,
-        ): Promise<SessionBoardActionOutcome<SessionBoardMutationResult>> => ({
-            status: 'pending_approval',
-            approval: {
-                kind: 'approval_request_created',
-                artifactId: 'approval-1',
-                actionId: 'session.board.item.upsert',
-            },
-        }));
+        const approvalsCreate = vi.fn(async () => ({ artifactId: 'approval-1' }));
+        const approvalActions = realBoardActions(async () => {
+            throw new Error('Approval must precede the Board mutation');
+        }, approvalsCreate, { serverId: 'home-1', sessionId: 'session-1' });
         const screen = await renderScreen(
             <SessionBoardNoteEditorCard
                 sessionId="session-1"
@@ -219,7 +183,7 @@ describe('SessionBoardNoteEditorCard', () => {
                 initialTitle="Release"
                 initialBody="Body"
                 reachable
-                actions={{ ...actions, upsertItem }}
+                actions={approvalActions}
                 requestApprovalContinuation={vi.fn()}
                 onCancel={vi.fn()}
             />,
@@ -232,7 +196,13 @@ describe('SessionBoardNoteEditorCard', () => {
             await Promise.resolve();
         });
 
-        expect(upsertItem).toHaveBeenCalledOnce();
+        await vi.waitFor(async () => {
+            await act(async () => {});
+            expect(approvalsCreate).toHaveBeenCalledOnce();
+            expect(screen.findHostByTestId('session-board-note-editor-notice')).not.toBeNull();
+            expect(screen.findByTestId('session-board-note-editor-save')?.props.disabled).toBe(true);
+        });
+        expect(approvalsCreate).toHaveBeenCalledOnce();
         expect(screen.findByTestId('session-board-note-editor-title')?.props.value).toBe('Release plan');
         expect(screen.findHostByTestId('session-board-note-editor-notice')).not.toBeNull();
         expect(screen.findByTestId('session-board-note-editor-save')?.props.disabled).toBe(true);
@@ -244,22 +214,25 @@ describe('SessionBoardNoteEditorCard', () => {
             <SessionBoardNoteEditorCard
                 sessionId="session-1"
                 itemId="note-1"
-                expectedItemRevision="rev-1"
+                expectedItemRevision={revision1}
                 initialTitle="Release"
                 initialBody="Body"
                 latestRevision={null}
                 latestBody={null}
                 reachable
-                actions={{
-                    ...actions,
-                    upsertItem: async () => ({
-                        status: 'refused',
-                        error: {
-                            error: 'session_board_revision_conflict',
-                            currentItemRevision: 'rev-2',
-                        },
-                    }),
-                }}
+                actions={realBoardActions(async (_path, init) => {
+                    if (init?.method === 'PUT') throw new Error('Stale editor must not write');
+                    return Response.json({ record: {
+                        id: 'note-row',
+                        address: { owner: 'host', namespace: 'surface', kind: 'item.v1', localId: 'note-1' },
+                        content: { t: 'plain', v: {
+                            v: 1, title: 'Release', frame: 'card', height: { mode: 'auto', fallback: 'regular' },
+                            source: { kind: 'declarative', document: createSessionSurfaceNoteDocumentV1('New body') },
+                        } },
+                        revision: revision2,
+                        createdAt: '2026-09-05T00:00:00.000Z', updatedAt: '2026-09-05T00:00:00.000Z',
+                    } });
+                }, undefined, { serverId: 'home-1', sessionId: 'session-1' })}
                 requestRecoveryRefresh={requestRecoveryRefresh}
                 onCancel={vi.fn()}
             />,
@@ -271,7 +244,10 @@ describe('SessionBoardNoteEditorCard', () => {
             await Promise.resolve();
         });
 
-        expect(requestRecoveryRefresh).toHaveBeenCalledOnce();
+        await vi.waitFor(async () => {
+            await act(async () => {});
+            expect(requestRecoveryRefresh).toHaveBeenCalledOnce();
+        });
         expect(screen.findByTestId('session-board-note-editor-review-latest')?.props.disabled).toBe(true);
         expect(screen.findByTestId('session-board-note-editor-review')).toBeNull();
     });
@@ -293,7 +269,7 @@ describe('SessionBoardNoteEditorCard', () => {
         editorHarness.value = 'unsaved body';
 
         await act(async () => {
-            escapeHarness.options?.onEscape({ key: 'Escape' });
+            expect(dispatchEscapeToLayerStack({ key: 'Escape', target: { tagName: 'textarea' } })).toBe(true);
             await Promise.resolve();
             await Promise.resolve();
         });

@@ -1,198 +1,153 @@
 import * as React from 'react';
-
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createScmCapabilities, type ScmWorkingSnapshot } from '@happier-dev/protocol/scm';
+import { WorkspaceRefV1Schema, type WorkspaceRefV1 } from '@happier-dev/protocol';
+import { createMachineFixture, renderScreen } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
+import { installSessionRouteCommonModuleMocks } from '../../session/[id]/sessionRouteTestHelpers';
+import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
+import { storage } from '@/sync/domains/state/storageStore';
+import { buildRealmQualifiedMobileSurfaceStorageKey } from '@/sync/domains/settings/mobileSurfacePersistence';
+import type { LocalSettings } from '@/sync/domains/settings/localSettings';
+import type { Settings } from '@/sync/domains/settings/settings';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const routerMock = createExpoRouterMock({
-    params: {
-        workspaceRefId: 'wr_1',
-        worktreeId: 'gitwt_feature',
+const routerMock = createExpoRouterMock({ params: { workspaceRefId: 'wr_1', worktreeId: 'gitwt_feature' } });
+let deviceType: 'phone' | 'tablet' | 'desktop' = 'phone';
+let isFocused = true;
+let rightPaneState: { isOpen: boolean; activeTabId: string | null };
+let localSettingsFixture: Partial<LocalSettings> & { projectLastMobileRouteByWorkspaceRefId?: Record<string, string> };
+let accountSettingsFixture: Partial<Settings>;
+let mobileSurfaceFixture: LocalSettings['projectLastMobileSurfaceByWorkspaceRefId'];
+let workspaceRef: WorkspaceRefV1 | null;
+let snapshot: ScmWorkingSnapshot;
+let navigationBoundary: ReturnType<typeof import('@/dev/testkit/mocks/reactNavigation').createReactNavigationNativeMock>;
+let ProjectDetailScreen: typeof import('@/components/projects/ProjectDetailScreen').ProjectDetailScreen;
+let ProjectCockpitShell: typeof import('@/components/workspaceCockpit/project/ProjectCockpitShell').ProjectCockpitShell;
+
+installSessionRouteCommonModuleMocks({
+    router: () => routerMock.module,
+    reactNative: async () => {
+        const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeNativeMock({ platformOS: 'ios' }, {
+            useWindowDimensions: () => ({ width: deviceType === 'phone' ? 390 : 1280, height: deviceType === 'phone' ? 844 : 900, scale: 1, fontScale: 1 }),
+        });
+    },
+    nativeNavigation: async () => {
+        const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+        navigationBoundary = createReactNavigationNativeMock({ navigation: { canGoBack: () => true } });
+        return { ...navigationBoundary, useIsFocused: () => isFocused };
     },
 });
-let deviceTypeMock: 'phone' | 'tablet' | 'desktop' = 'phone';
-let rightPaneStateMock: { isOpen: boolean; activeTabId: string | null } = { isOpen: true, activeTabId: 'git' };
-let isFocusedMock = true;
-let localSettingsMock: Record<string, unknown> = {};
-let projectLastMobileSurfaceByWorkspaceRefIdMock: Record<string, string> = {};
-let accountSettingsMock: Record<string, unknown> = {};
-const projectDetailScreenSpy = vi.hoisted(() => vi.fn());
-const projectCockpitShellSpy = vi.hoisted(() => vi.fn());
-const setLocalSettingSpies = vi.hoisted(() => ({
-    projectLastActiveRootPathByWorkspaceRefId: vi.fn(),
-    projectLastActiveWorktreeIdByWorkspaceRefId: vi.fn(),
-}));
-let workspaceScmSnapshotMock: Record<string, unknown> | null = {
-    repo: {
-        isRepo: true,
-        worktrees: [
-            { id: 'gitwt_main', path: '/Users/test/repo', branch: 'main', isCurrent: true, isMain: true },
-            { id: 'gitwt_feature', path: '/Users/test/repo/.worktrees/feature-auth', branch: 'feature/auth', isCurrent: false },
-        ],
-    },
-};
-let workspaceRefMock: {
-    id: string;
-    serverId: string;
-    machineId: string;
-    rootPath: string;
-    label: string;
-    createdAtMs: number;
-} | null = {
-    id: 'wr_1',
-    serverId: 'server-1',
-    machineId: 'machine-1',
-    rootPath: '/Users/test/repo',
-    label: 'Project Alpha',
-    createdAtMs: 1,
-};
-
-vi.mock('expo-router', () => routerMock.module);
-
-vi.mock('@/utils/platform/responsive', () => ({
-    useDeviceType: () => deviceTypeMock,
-}));
-
-vi.mock('@react-navigation/native', () => ({
-    useIsFocused: () => isFocusedMock,
-    useNavigation: () => ({
-        canGoBack: () => true,
-    }),
-}));
-
-vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
-    useAppPaneScope: () => ({
-        scopeState: { right: rightPaneStateMock },
-    }),
-}));
-
-vi.mock('@/components/projects/ProjectDetailScreen', () => ({
-    ProjectDetailScreen: (props: Record<string, unknown>) => {
-        projectDetailScreenSpy(props);
-        return React.createElement('ProjectDetailScreenStub', props);
-    },
-}));
-
-vi.mock('@/components/workspaceCockpit/project/ProjectCockpitShell', () => ({
-    ProjectCockpitShell: (props: Record<string, unknown>) => {
-        projectCockpitShellSpy(props);
-        return React.createElement('ProjectCockpitShellStub', props);
-    },
-}));
-
-vi.mock('@/components/projects/detail/useWorkspaceRefById', () => ({
-    useWorkspaceRefById: () => workspaceRefMock,
-}));
-
-vi.mock('@/hooks/workspaces/scm/useWorkspaceScmSnapshotController', () => ({
-    useWorkspaceScmSnapshotController: () => ({
-        snapshot: workspaceScmSnapshotMock,
-        loading: false,
-        error: null,
-        refresh: vi.fn(async () => {}),
-    }),
-}));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        useSetting: (key: string) => accountSettingsMock[key],
-        useLocalSetting: (key: string) => {
-            if (key === 'mobileWorkspaceExperienceV1') {
-                throw new Error('mobileWorkspaceExperienceV1 must use synced account settings');
-            }
-            return localSettingsMock[key];
-        },
-        useLocalSettingMutable: (key: string) => [
-            localSettingsMock[key],
-            setLocalSettingSpies[key as keyof typeof setLocalSettingSpies] ?? vi.fn(),
-        ],
-        useProjectLastMobileSurface: (workspaceRefId: string | null) => (
-            workspaceRefId ? projectLastMobileSurfaceByWorkspaceRefIdMock[workspaceRefId] ?? null : null
-        ),
-        usePersistProjectLastMobileSurface: () => vi.fn(),
+function configureSocket(socket: import('socket.io-client').Socket) {
+    vi.mocked(socket.connect).mockImplementation(() => {
+        socket.connected = true;
+        for (const listener of socket.listeners('connect')) listener();
+        return socket;
     });
+    vi.spyOn(socket, 'emit').mockReturnValue(socket);
+    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event, payload: unknown) => {
+        if (event !== 'rpc-call' || !payload || typeof payload !== 'object' || !('method' in payload)
+            || typeof payload.method !== 'string' || !('params' in payload)) throw new Error('Unexpected Socket RPC envelope');
+        const method = payload.method.slice(payload.method.indexOf(':') + 1);
+        return { ok: true, result: method === RPC_METHODS.SCM_STATUS_SNAPSHOT
+            ? { success: true, snapshot } : { success: false, errorCode: 'FEATURE_UNSUPPORTED' } };
+    });
+}
+const runtime = installSessionPaneRuntimeTestHarness({ scopeId: 'project:wr_1', configureSocket });
+
+function createSnapshot(): ScmWorkingSnapshot {
+    return {
+        fetchedAt: 1, projectKey: 'machine-1:/Users/test/repo',
+        repo: { isRepo: true, rootPath: '/Users/test/repo', backendId: 'git', mode: '.git', remotes: [],
+            worktrees: [
+                { id: 'gitwt_main', path: '/Users/test/repo', branch: 'main', isCurrent: true, isMain: true },
+                { id: 'gitwt_feature', path: '/Users/test/repo/.worktrees/feature-auth', branch: 'feature/auth', isCurrent: false },
+            ] },
+        capabilities: createScmCapabilities({ readStatus: true }),
+        branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
+        stashCount: 0, hasConflicts: false, entries: [],
+        totals: { includedFiles: 0, pendingFiles: 0, untrackedFiles: 0, includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 },
+    };
+}
+
+beforeEach(() => {
+    deviceType = 'phone'; isFocused = true;
+    rightPaneState = { isOpen: true, activeTabId: 'git' };
+    localSettingsFixture = {}; accountSettingsFixture = {}; mobileSurfaceFixture = {};
+    snapshot = createSnapshot();
+    workspaceRef = WorkspaceRefV1Schema.parse({
+        id: 'wr_1', serverId: runtime.serverId, machineId: 'machine-1',
+        rootPath: '/Users/test/repo', label: 'Project Alpha', createdAtMs: 1,
+    });
+    routerMock.resetParams();
+    routerMock.state.router.setParams({ workspaceRefId: 'wr_1', worktreeId: 'gitwt_feature' });
+    routerMock.spies.replace.mockClear();
 });
+
+async function renderProjectRoute() {
+    storage.getState().applySettingsLocal({ mobileWorkspaceExperienceV1: 'classic', ...accountSettingsFixture,
+        workspaceRefsV1: workspaceRef ? [workspaceRef] : [] });
+    storage.getState().applyMachines([createMachineFixture({ id: 'machine-1', storageMode: 'plain', activeAt: Date.now() })], true, { sourceServerId: runtime.serverId });
+    const realm = storage.getState().profileScope;
+    if (!realm) throw new Error('Expected admitted Account realm');
+    const surfaces: LocalSettings['projectLastMobileSurfaceByWorkspaceRefId'] = {};
+    for (const [id, surface] of Object.entries(mobileSurfaceFixture)) {
+        const key = buildRealmQualifiedMobileSurfaceStorageKey('project', realm, id);
+        if (!key) throw new Error('Expected realm-qualified Project preference key');
+        surfaces[key] = surface;
+    }
+    storage.getState().applyLocalSettings({ ...localSettingsFixture, projectLastMobileSurfaceByWorkspaceRefId: surfaces });
+    storage.getState().updateWorkspaceScmSnapshot({ serverId: runtime.serverId, machineId: 'machine-1', rootPath: '/Users/test/repo' }, snapshot);
+    const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/index')).default;
+    ({ ProjectDetailScreen } = await import('@/components/projects/ProjectDetailScreen'));
+    ({ ProjectCockpitShell } = await import('@/components/workspaceCockpit/project/ProjectCockpitShell'));
+    const screen = await renderScreen(<runtime.Wrapper />);
+    if (rightPaneState.isOpen) await act(async () => runtime.pane.openRight({ tabId: rightPaneState.activeTabId ?? 'files' }));
+    await screen.update(<runtime.Wrapper>
+        <navigationBoundary.NavigationContext.Provider value={navigationBoundary.useNavigation()}><Screen /></navigationBoundary.NavigationContext.Provider>
+    </runtime.Wrapper>);
+    return screen;
+}
 
 describe('project index redirect', () => {
-    beforeEach(() => {
-        deviceTypeMock = 'phone';
-        isFocusedMock = true;
-        rightPaneStateMock = { isOpen: true, activeTabId: 'git' };
-        localSettingsMock = {};
-        projectLastMobileSurfaceByWorkspaceRefIdMock = {};
-        accountSettingsMock = {};
-        projectDetailScreenSpy.mockClear();
-        projectCockpitShellSpy.mockClear();
-        Object.values(setLocalSettingSpies).forEach((spy) => spy.mockClear());
-        workspaceScmSnapshotMock = {
-            repo: {
-                isRepo: true,
-                worktrees: [
-                    { id: 'gitwt_main', path: '/Users/test/repo', branch: 'main', isCurrent: true, isMain: true },
-                    { id: 'gitwt_feature', path: '/Users/test/repo/.worktrees/feature-auth', branch: 'feature/auth', isCurrent: false },
-                ],
-            },
-        };
-        workspaceRefMock = {
-            id: 'wr_1',
-            serverId: 'server-1',
-            machineId: 'machine-1',
-            rootPath: '/Users/test/repo',
-            label: 'Project Alpha',
-            createdAtMs: 1,
-        };
-        routerMock.state.router.setParams({ mobileSurface: undefined });
-    });
-
-    afterEach(() => {
-        standardCleanup();
-    });
-
     it('preserves the active root path search param when redirecting phone routes', async () => {
-        rightPaneStateMock = { isOpen: true, activeTabId: 'git' };
-        const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/index')).default;
-        const screen = await renderScreen(<Screen />);
+        rightPaneState = { isOpen: true, activeTabId: 'git' };
+        const screen = await renderProjectRoute();
 
-        const redirect = screen.tree.findByType('Redirect' as never);
+        const redirect = screen.findByType('Redirect');
         expect(redirect.props.href).toBe('/projects/wr_1/git?worktreeId=gitwt_feature');
     });
 
     it('renders the project cockpit shell on phone when the overview cockpit surface is enabled', async () => {
-        rightPaneStateMock = { isOpen: false, activeTabId: null };
-        accountSettingsMock = { mobileWorkspaceExperienceV1: 'cockpit' };
-        projectLastMobileSurfaceByWorkspaceRefIdMock = { wr_1: 'overview' };
+        rightPaneState = { isOpen: false, activeTabId: null };
+        accountSettingsFixture = { mobileWorkspaceExperienceV1: 'cockpit' };
+        mobileSurfaceFixture = { wr_1: 'overview' };
         routerMock.state.router.setParams({
             workspaceRefId: 'wr_1',
             worktreeId: undefined,
             activeRootPath: undefined,
         });
 
-        const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/index')).default;
-        const screen = await renderScreen(<Screen />);
+        const screen = await renderProjectRoute();
 
-        const cockpit = screen.tree.findByType('ProjectCockpitShellStub' as never);
+        const cockpit = screen.findByType(ProjectCockpitShell);
         expect(cockpit.props.workspaceRef.id).toBe('wr_1');
         expect(cockpit.props.surface).toBe('overview');
-        expect(screen.tree.findAllByType('Redirect' as never)).toHaveLength(0);
+        expect(screen.findAllByType('Redirect')).toHaveLength(0);
     });
 
     it('preserves a non-worktree active root path when canonicalizing cockpit index routes', async () => {
-        rightPaneStateMock = { isOpen: false, activeTabId: null };
-        accountSettingsMock = { mobileWorkspaceExperienceV1: 'cockpit' };
-        localSettingsMock = {
+        rightPaneState = { isOpen: false, activeTabId: null };
+        accountSettingsFixture = { mobileWorkspaceExperienceV1: 'cockpit' };
+        localSettingsFixture = {
             projectLastActiveRootPathByWorkspaceRefId: { wr_1: '/Users/test/repo/packages/ui' },
         };
-        projectLastMobileSurfaceByWorkspaceRefIdMock = { wr_1: 'services' };
-        workspaceScmSnapshotMock = {
-            repo: {
-                isRepo: false,
-            },
-        };
+        mobileSurfaceFixture = { wr_1: 'services' };
+        snapshot = { ...snapshot, repo: { ...snapshot.repo, isRepo: false } };
         routerMock.state.router.setParams({
             workspaceRefId: 'wr_1',
             worktreeId: undefined,
@@ -200,85 +155,79 @@ describe('project index redirect', () => {
             mobileSurface: undefined,
         });
 
-        const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/index')).default;
-        const screen = await renderScreen(<Screen />);
+        const screen = await renderProjectRoute();
 
-        const redirect = screen.tree.findByType('Redirect' as never);
+        const redirect = screen.findByType('Redirect');
         expect(redirect.props.href).toBe(
             '/projects/wr_1?activeRootPath=%2FUsers%2Ftest%2Frepo%2Fpackages%2Fui&mobileSurface=services',
         );
     });
 
     it('canonicalizes an invalid persisted worktree before reopening a cockpit-only surface from the index route', async () => {
-        rightPaneStateMock = { isOpen: false, activeTabId: null };
-        accountSettingsMock = { mobileWorkspaceExperienceV1: 'cockpit' };
-        localSettingsMock = {
+        rightPaneState = { isOpen: false, activeTabId: null };
+        accountSettingsFixture = { mobileWorkspaceExperienceV1: 'cockpit' };
+        localSettingsFixture = {
             projectLastActiveRootPathByWorkspaceRefId: { wr_1: '/Users/test/repo/.worktrees/deleted-worktree' },
             projectLastActiveWorktreeIdByWorkspaceRefId: { wr_1: 'gitwt_deleted' },
         };
-        projectLastMobileSurfaceByWorkspaceRefIdMock = { wr_1: 'terminal' };
+        mobileSurfaceFixture = { wr_1: 'terminal' };
         routerMock.state.router.setParams({
             workspaceRefId: 'wr_1',
             worktreeId: undefined,
             activeRootPath: undefined,
         });
 
-        const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/index')).default;
-        const screen = await renderScreen(<Screen />);
+        const screen = await renderProjectRoute();
 
-        const redirect = screen.tree.findByType('Redirect' as never);
+        const redirect = screen.findByType('Redirect');
         expect(redirect.props.href).toBe('/projects/wr_1/terminal?worktreeId=%40root');
 
-        expect(setLocalSettingSpies.projectLastActiveRootPathByWorkspaceRefId).not.toHaveBeenCalledWith(
-            expect.objectContaining({ wr_1: '/Users/test/repo/.worktrees/deleted-worktree' }),
-        );
+        expect(storage.getState().localSettings.projectLastActiveRootPathByWorkspaceRefId.wr_1).toBe('/Users/test/repo');
     });
 
     it('does not redirect or persist canonical route state while the index route is unfocused', async () => {
-        isFocusedMock = false;
-        rightPaneStateMock = { isOpen: false, activeTabId: null };
-        accountSettingsMock = { mobileWorkspaceExperienceV1: 'cockpit' };
-        localSettingsMock = {
+        isFocused = false;
+        rightPaneState = { isOpen: false, activeTabId: null };
+        accountSettingsFixture = { mobileWorkspaceExperienceV1: 'cockpit' };
+        localSettingsFixture = {
             projectLastActiveRootPathByWorkspaceRefId: { wr_1: '/Users/test/repo/.worktrees/deleted-worktree' },
             projectLastActiveWorktreeIdByWorkspaceRefId: { wr_1: 'gitwt_deleted' },
         };
-        projectLastMobileSurfaceByWorkspaceRefIdMock = { wr_1: 'terminal' };
+        mobileSurfaceFixture = { wr_1: 'terminal' };
         routerMock.state.router.setParams({
             workspaceRefId: 'wr_1',
             worktreeId: undefined,
             activeRootPath: undefined,
         });
 
-        const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/index')).default;
-        const screen = await renderScreen(<Screen />);
+        const screen = await renderProjectRoute();
 
-        expect(screen.tree.findAllByType('Redirect' as never)).toHaveLength(0);
-        expect(screen.tree.findByType('ProjectCockpitShellStub' as never)).toBeTruthy();
-        expect(setLocalSettingSpies.projectLastActiveRootPathByWorkspaceRefId).not.toHaveBeenCalled();
-        expect(setLocalSettingSpies.projectLastActiveWorktreeIdByWorkspaceRefId).not.toHaveBeenCalled();
+        expect(screen.findAllByType('Redirect')).toHaveLength(0);
+        expect(screen.findByType(ProjectCockpitShell)).toBeTruthy();
+        expect(storage.getState().localSettings.projectLastActiveRootPathByWorkspaceRefId.wr_1).toBe('/Users/test/repo/.worktrees/deleted-worktree');
+        expect(storage.getState().localSettings.projectLastActiveWorktreeIdByWorkspaceRefId.wr_1).toBe('gitwt_deleted');
     });
 
     it('defaults the phone redirect to files when no last project tab is remembered', async () => {
-        rightPaneStateMock = { isOpen: false, activeTabId: null };
-        accountSettingsMock = { mobileWorkspaceExperienceV1: 'classic' };
+        rightPaneState = { isOpen: false, activeTabId: null };
+        accountSettingsFixture = { mobileWorkspaceExperienceV1: 'classic' };
         routerMock.state.router.setParams({
             workspaceRefId: 'wr_1',
             worktreeId: undefined,
             activeRootPath: undefined,
         });
 
-        const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/index')).default;
-        const screen = await renderScreen(<Screen />);
+        const screen = await renderProjectRoute();
 
-        const redirect = screen.tree.findByType('Redirect' as never);
+        const redirect = screen.findByType('Redirect');
         expect(redirect.props.href).toBe('/projects/wr_1/files?worktreeId=%40root');
     });
 
     it.each(['browser', 'services'] as const)(
         'preserves %s surface intent when classic project routing handles an index deep link',
         async (surface) => {
-            rightPaneStateMock = { isOpen: true, activeTabId: 'files' };
-            accountSettingsMock = { mobileWorkspaceExperienceV1: 'classic' };
+            rightPaneState = { isOpen: true, activeTabId: 'files' };
+            accountSettingsFixture = { mobileWorkspaceExperienceV1: 'classic' };
             routerMock.state.router.setParams({
                 workspaceRefId: 'wr_1',
                 worktreeId: 'gitwt_feature',
@@ -288,15 +237,15 @@ describe('project index redirect', () => {
             const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/index')).default;
             const screen = await renderScreen(<Screen />);
 
-            const redirect = screen.tree.findByType('Redirect' as never);
+            const redirect = screen.findByType('Redirect');
             expect(redirect.props.href).toBe(`/projects/wr_1/files?worktreeId=gitwt_feature&mobileSurface=${surface}`);
         },
     );
 
     it('ignores the retired persisted mobile project route state when url state is absent', async () => {
-        rightPaneStateMock = { isOpen: false, activeTabId: null };
-        accountSettingsMock = { mobileWorkspaceExperienceV1: 'classic' };
-        localSettingsMock = {
+        rightPaneState = { isOpen: false, activeTabId: null };
+        accountSettingsFixture = { mobileWorkspaceExperienceV1: 'classic' };
+        localSettingsFixture = {
             projectLastMobileRouteByWorkspaceRefId: { wr_1: 'git' },
             projectLastActiveRootPathByWorkspaceRefId: { wr_1: '/Users/test/repo/.worktrees/feature-auth' },
             projectLastActiveWorktreeIdByWorkspaceRefId: { wr_1: 'gitwt_feature' },
@@ -307,37 +256,35 @@ describe('project index redirect', () => {
             activeRootPath: undefined,
         });
 
-        const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/index')).default;
-        const screen = await renderScreen(<Screen />);
+        const screen = await renderProjectRoute();
 
-        const redirect = screen.tree.findByType('Redirect' as never);
+        const redirect = screen.findByType('Redirect');
         expect(redirect.props.href).toBe('/projects/wr_1/files?worktreeId=gitwt_feature');
     });
 
     it('falls back to persisted cockpit-era mobile surface state when url state is absent', async () => {
-        rightPaneStateMock = { isOpen: false, activeTabId: null };
-        localSettingsMock = {
+        rightPaneState = { isOpen: false, activeTabId: null };
+        localSettingsFixture = {
             projectLastActiveRootPathByWorkspaceRefId: { wr_1: '/Users/test/repo/.worktrees/feature-auth' },
             projectLastActiveWorktreeIdByWorkspaceRefId: { wr_1: 'gitwt_feature' },
         };
-        projectLastMobileSurfaceByWorkspaceRefIdMock = { wr_1: 'browse' };
+        mobileSurfaceFixture = { wr_1: 'browse' };
         routerMock.state.router.setParams({
             workspaceRefId: 'wr_1',
             worktreeId: undefined,
             activeRootPath: undefined,
         });
 
-        const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/index')).default;
-        const screen = await renderScreen(<Screen />);
+        const screen = await renderProjectRoute();
 
-        const redirect = screen.tree.findByType('Redirect' as never);
+        const redirect = screen.findByType('Redirect');
         expect(redirect.props.href).toBe('/projects/wr_1/files?worktreeId=gitwt_feature');
     });
 
     it('drops an invalid persisted worktree selection before redirecting phone routes', async () => {
-        rightPaneStateMock = { isOpen: false, activeTabId: null };
-        accountSettingsMock = { mobileWorkspaceExperienceV1: 'classic' };
-        localSettingsMock = {
+        rightPaneState = { isOpen: false, activeTabId: null };
+        accountSettingsFixture = { mobileWorkspaceExperienceV1: 'classic' };
+        localSettingsFixture = {
             projectLastActiveRootPathByWorkspaceRefId: { wr_1: '/Users/test/repo/.worktrees/deleted-worktree' },
             projectLastActiveWorktreeIdByWorkspaceRefId: { wr_1: 'gitwt_deleted' },
         };
@@ -347,66 +294,69 @@ describe('project index redirect', () => {
             activeRootPath: undefined,
         });
 
-        const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/index')).default;
-        const screen = await renderScreen(<Screen />);
+        const screen = await renderProjectRoute();
 
-        const redirect = screen.tree.findByType('Redirect' as never);
+        const redirect = screen.findByType('Redirect');
         expect(redirect.props.href).toBe('/projects/wr_1/files?worktreeId=%40root');
     });
 
     it('repairs an invalid explicit worktreeId before redirecting phone routes', async () => {
-        rightPaneStateMock = { isOpen: false, activeTabId: null };
-        accountSettingsMock = { mobileWorkspaceExperienceV1: 'classic' };
+        rightPaneState = { isOpen: false, activeTabId: null };
+        accountSettingsFixture = { mobileWorkspaceExperienceV1: 'classic' };
         routerMock.state.router.setParams({
             workspaceRefId: 'wr_1',
             worktreeId: 'gitwt_deleted',
             activeRootPath: undefined,
         });
 
-        const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/index')).default;
-        const screen = await renderScreen(<Screen />);
+        const screen = await renderProjectRoute();
 
-        const redirect = screen.tree.findByType('Redirect' as never);
+        const redirect = screen.findByType('Redirect');
         expect(redirect.props.href).toBe('/projects/wr_1/files?worktreeId=%40root');
     });
 
     it('preserves a deep-linked activeRootPath before the workspace ref has loaded', async () => {
-        workspaceRefMock = null;
+        workspaceRef = null;
         routerMock.state.router.setParams({
             workspaceRefId: 'wr_1',
             worktreeId: 'gitwt_feature',
         });
 
-        const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/index')).default;
-        const screen = await renderScreen(<Screen />);
+        const screen = await renderProjectRoute();
 
-        const redirect = screen.tree.findByType('Redirect' as never);
+        const redirect = screen.findByType('Redirect');
         expect(redirect.props.href).toBe('/projects/wr_1/git?worktreeId=gitwt_feature');
     });
 
-    it('preserves persisted cockpit-only surfaces before the workspace ref has loaded', async () => {
-        workspaceRefMock = null;
-        accountSettingsMock = { mobileWorkspaceExperienceV1: 'cockpit' };
-        projectLastMobileSurfaceByWorkspaceRefIdMock = { wr_1: 'terminal' };
+    it('cannot borrow a realm-qualified Project preference before its target Home is proven', async () => {
+        workspaceRef = null;
+        accountSettingsFixture = { mobileWorkspaceExperienceV1: 'cockpit' };
+        mobileSurfaceFixture = { wr_1: 'terminal' };
         routerMock.state.router.setParams({
             workspaceRefId: 'wr_1',
             worktreeId: 'gitwt_feature',
         });
 
-        const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/index')).default;
-        const screen = await renderScreen(<Screen />);
+        const screen = await renderProjectRoute();
 
-        const redirect = screen.tree.findByType('Redirect' as never);
-        expect(redirect.props.href).toBe('/projects/wr_1/terminal?worktreeId=gitwt_feature');
+        const redirect = screen.findByType('Redirect');
+        expect(redirect.props.href).toBe('/projects/wr_1/git?worktreeId=gitwt_feature');
+    });
+
+    it('preserves the persisted terminal surface once the Project belongs to the admitted Home', async () => {
+        accountSettingsFixture = { mobileWorkspaceExperienceV1: 'cockpit' };
+        mobileSurfaceFixture = { wr_1: 'terminal' };
+        const screen = await renderProjectRoute();
+
+        expect(screen.findByType('Redirect').props.href).toBe('/projects/wr_1/terminal?worktreeId=gitwt_feature');
     });
 
     it('replaces the desktop route with the canonical project href when switching back to the main repository', async () => {
-        deviceTypeMock = 'desktop';
+        deviceType = 'desktop';
         routerMock.spies.replace.mockClear();
 
-        const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/index')).default;
-        const screen = await renderScreen(<Screen />);
-        const detail = screen.tree.findByType('ProjectDetailScreenStub' as never);
+        const screen = await renderProjectRoute();
+        const detail = screen.findByType(ProjectDetailScreen);
 
         await act(async () => {
             detail.props.onSelectRootPath('/Users/test/repo');
@@ -416,12 +366,11 @@ describe('project index redirect', () => {
     });
 
     it('uses the canonical visible-worktree matcher when selecting a desktop worktree path', async () => {
-        deviceTypeMock = 'desktop';
+        deviceType = 'desktop';
         routerMock.spies.replace.mockClear();
 
-        const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/index')).default;
-        const screen = await renderScreen(<Screen />);
-        const detail = screen.tree.findByType('ProjectDetailScreenStub' as never);
+        const screen = await renderProjectRoute();
+        const detail = screen.findByType(ProjectDetailScreen);
 
         await act(async () => {
             detail.props.onSelectRootPath('  /Users/test/repo/.worktrees/feature-auth  ');
@@ -431,15 +380,14 @@ describe('project index redirect', () => {
     });
 
     it('passes the desktop worktree-overview mode into the project screen when requested', async () => {
-        deviceTypeMock = 'desktop';
+        deviceType = 'desktop';
         routerMock.state.router.setParams({
             workspaceRefId: 'wr_1',
             showWorktrees: '1',
         });
 
-        const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/index')).default;
-        const screen = await renderScreen(<Screen />);
-        const detail = screen.tree.findByType('ProjectDetailScreenStub' as never);
+        const screen = await renderProjectRoute();
+        const detail = screen.findByType(ProjectDetailScreen);
 
         expect(detail.props.showWorktrees).toBe(true);
     });

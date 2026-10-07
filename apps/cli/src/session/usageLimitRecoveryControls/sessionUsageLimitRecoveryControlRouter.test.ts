@@ -392,7 +392,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       sessionUsageLimitRecoveryV1: {
         selectedAuth: {
           kind: 'group',
-          serviceId: 'openai-codex',
+          serviceId: 'happier.agent.codex/openai-codex',
           groupId: 'codex-main',
           profileId: null,
         },

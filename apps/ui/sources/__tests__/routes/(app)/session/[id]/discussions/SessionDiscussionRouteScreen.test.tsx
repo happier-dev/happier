@@ -1,116 +1,77 @@
 import * as React from 'react';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { renderScreen } from '@/dev/testkit';
+import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import { installSessionRouteCommonModuleMocks } from '../sessionRouteTestHelpers';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const detailsViewSpy = vi.fn((_props: unknown) => null);
 const routerReplaceSpy = vi.fn();
-const stackScreenSpy = vi.fn((_props: unknown) => null);
 let routeFocused = true;
-let routeParams: { id: string; discussionId: string } = {
-    id: 'session-1',
-    discussionId: 'discussion-1',
+let routeParams: { id: string; discussionId: string; serverId?: string } = {
+    id: 'session-1', discussionId: 'discussion-1',
 };
-let SessionDiscussionRouteScreen: typeof import('@/components/sessions/conversations/SessionDiscussionRouteScreen').SessionDiscussionRouteScreen;
+let navigationBoundary: ReturnType<typeof import('@/dev/testkit/mocks/reactNavigation').createReactNavigationNativeMock>;
 
 installSessionRouteCommonModuleMocks({
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-        const navigation = { canGoBack: vi.fn(() => false) };
-        const router = createExpoRouterMock({
-            params: routeParams,
-            navigation,
-            router: {
-                back: vi.fn(),
-                push: vi.fn(),
-                replace: routerReplaceSpy,
-                setParams: vi.fn(),
-            },
-        });
-        return {
-            ...router.module,
-            useLocalSearchParams: () => routeParams,
-            useNavigation: () => navigation,
-            Stack: { Screen: (props: unknown) => stackScreenSpy(props) },
-        };
+        const boundary = createExpoRouterMock({ router: { replace: routerReplaceSpy } });
+        return { ...boundary.module, useLocalSearchParams: () => routeParams };
+    },
+    nativeNavigation: async () => {
+        const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+        navigationBoundary = createReactNavigationNativeMock();
+        return { ...navigationBoundary, useIsFocused: () => routeFocused };
     },
 });
 
-vi.mock('@/components/workspaceCockpit/useMobileWorkspaceExperienceState', () => ({
-    useMobileWorkspaceExperienceState: () => ({ cockpitEnabled: true }),
-}));
+const runtime = installSessionPaneRuntimeTestHarness({ sessionId: 'session-1' });
 
-vi.mock('@/hooks/session/sessionRouteServerScope', async (importOriginal) => {
-    const original = await importOriginal<typeof import('@/hooks/session/sessionRouteServerScope')>();
-    return {
-        ...original,
-        createSessionRouteServerScope: () => ({
-            serverId: null,
-            candidateAddresses: [],
-            hydrationOptions: undefined,
-            withParams: <T extends Record<string, unknown>>(params: T) => params,
-            buildHref: () => '/session/session-1',
-        }),
-    };
+beforeEach(() => {
+    routeParams = { id: 'session-1', discussionId: 'discussion-1', serverId: runtime.serverId };
+    routeFocused = true;
+    routerReplaceSpy.mockClear();
 });
 
-vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
-    useHydrateSessionForRoute: () => ({ kind: 'ready', serverId: 'home-hydrated' }),
-}));
-
-vi.mock('@/sync/domains/session/sessionRouteHydrationState', () => ({
-    isSessionRouteHydrationAvailable: (value: { kind: string }) => value.kind === 'ready',
-    isSessionRouteHydrationMissing: (value: { kind: string }) => value.kind === 'missing',
-}));
-
-// Navigation focus is the platform boundary: a standalone route that is pushed
-// under another screen stays mounted but is no longer the visible surface.
-vi.mock('@react-navigation/native', () => ({
-    useIsFocused: () => routeFocused,
-}));
-
-vi.mock('@/components/sessions/conversations/SessionDiscussionDetailsView', () => ({
-    SessionDiscussionDetailsView: (props: unknown) => detailsViewSpy(props),
-}));
+async function renderDiscussionRoute() {
+    // The SDK context establishes a standalone screen. Its focus measurement is
+    // the native boundary; hydration, address qualification and the view are real.
+    const { SessionDiscussionRouteScreen } = await import('@/components/sessions/conversations/SessionDiscussionRouteScreen');
+    return renderScreen(<runtime.Wrapper>
+        <navigationBoundary.NavigationContext.Provider value={navigationBoundary.useNavigation()}>
+            <SessionDiscussionRouteScreen kind="discussion" />
+        </navigationBoundary.NavigationContext.Provider>
+    </runtime.Wrapper>);
+}
 
 describe('SessionDiscussionRouteScreen', () => {
-    beforeAll(async () => {
-        ({ SessionDiscussionRouteScreen } = await import('@/components/sessions/conversations/SessionDiscussionRouteScreen'));
-    }, 180_000);
-
-    afterEach(() => {
-        standardCleanup();
-        detailsViewSpy.mockClear();
-        routerReplaceSpy.mockClear();
-        stackScreenSpy.mockClear();
-        routeParams = { id: 'session-1', discussionId: 'discussion-1' };
-        routeFocused = true;
-    });
-
     it('mounts persisted discussion details against the exact Home resolved by hydration', async () => {
-        await renderScreen(<SessionDiscussionRouteScreen kind="discussion" />);
+        const { SessionDiscussionDetailsView } = await import('@/components/sessions/conversations/SessionDiscussionDetailsView');
+        const screen = await renderDiscussionRoute();
 
-        expect(detailsViewSpy).toHaveBeenCalledWith(expect.objectContaining({
+        expect(screen.findByType(SessionDiscussionDetailsView).props).toMatchObject({
             active: true,
             standaloneSurface: true,
             target: {
                 kind: 'discussion',
-                address: { serverId: 'home-hydrated', sessionId: 'session-1' },
+                address: { serverId: runtime.serverId, sessionId: 'session-1' },
                 discussionId: 'discussion-1',
             },
-        }));
+        });
+        expect(screen.findAllByTestId('session-discussion-route-loading')).toHaveLength(0);
     });
 
-    it('is the visible Discussion surface only while the route is focused', async () => {
+    it('keeps the Discussion mounted without declaring it visible when the native route loses focus', async () => {
         routeFocused = false;
-        await renderScreen(<SessionDiscussionRouteScreen kind="discussion" />);
+        const { SessionDiscussionDetailsView } = await import('@/components/sessions/conversations/SessionDiscussionDetailsView');
+        const screen = await renderDiscussionRoute();
 
-        expect(detailsViewSpy).toHaveBeenLastCalledWith(expect.objectContaining({
+        expect(screen.findByType(SessionDiscussionDetailsView).props).toMatchObject({
             active: false,
             standaloneSurface: true,
-        }));
+            target: { address: { serverId: runtime.serverId, sessionId: 'session-1' } },
+        });
     });
 });

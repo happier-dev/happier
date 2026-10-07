@@ -171,7 +171,7 @@ describe('materializeImportedMcpServerDrafts', () => {
                 github_token: {
                     mode: 'savedSecret',
                     secretName: 'GitHub token',
-                    secretValue: '   ',
+                    secretValue: '',
                     secretKind: 'token',
                 },
             },

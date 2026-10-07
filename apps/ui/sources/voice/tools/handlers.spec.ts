@@ -1657,7 +1657,6 @@ describe('voice tool handlers', () => {
       }),
     );
   });
-
   it('teleports the voice agent to the resolved session root', async () => {
     teleportVoiceAgentToSessionRoot.mockResolvedValue({ ok: true });
 
@@ -2305,5 +2304,85 @@ describe('voice tool handlers', () => {
     expect(parsed.errorCode).toBe('action_disabled');
     expect(sendSessionMessageWithServerScope).not.toHaveBeenCalled();
     expect(submitMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe('voice tool reset Account authority', () => {
+  it('increments and persists the transcript epoch through real host admission and Account settings', async () => {
+    // Keep untouched incumbent mock families separate from this authoritative case.
+    const internalModules = [
+      '@/sync/domains/state/storage', '@/auth/storage/tokenStorage', '@/voice/session/voiceSession',
+      '@/sync/runtime/getSyncSingleton', '@/sync/sync', '@/sync/ops', '@/sync/ops/sessionExecutionRuns',
+      '@/sync/domains/server/serverRuntime', '@/sync/domains/server/serverProfiles', '@/sync/domains/server/activeServerSwitch',
+      '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch',
+      '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage',
+      '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc',
+      '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', '@/voice/agent/teleportVoiceAgentToSessionRoot',
+    ] as const;
+    const incumbentMocks = await Promise.all(internalModules.map(async (id) => [id, await vi.importMock(id)] as const));
+    for (const id of internalModules) vi.doUnmock(id);
+    vi.resetModules();
+    let account: Awaited<ReturnType<typeof import('@/voice/settings/panels/voiceSettingsAccountTestHarness')['createVoiceSettingsAccountTestHarness']>> | undefined;
+    const controller = new AbortController();
+    let pendingReset: Promise<string> | undefined;
+    try {
+      const { installDisconnectedServerSocketBoundary } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+      installDisconnectedServerSocketBoundary();
+      const { adoptHomeProfile } = await import('@/sync/domains/server/serverProfiles');
+      await adoptHomeProfile({ descriptor: { serverUrl: 'https://voice-settings.example.test',
+        homeServerIdentityId: 'srv_voice-settings-account', displayName: 'Voice Settings Home' }, source: 'manual' });
+      const { settingsParse } = await import('@/sync/domains/settings/settings');
+      const { createVoiceSettingsAccountTestHarness } = await import('@/voice/settings/panels/voiceSettingsAccountTestHarness');
+      account = await createVoiceSettingsAccountTestHarness(settingsParse({ experiments: true,
+        featureToggles: { voice: true, 'voice.agent': true, 'execution.runs': true },
+        voiceSettingsV1: { providerId: 'local_conversation', providers: { local_conversation: { schemaVersion: 1,
+          config: { agent: { transcript: { persistenceMode: 'persistent', epoch: 2 } } } } } },
+      }));
+      const { createArtifactStoreBoundary } = await import('@/dev/testkit/harness/artifactStoreBoundary');
+      const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => account?.scope.accountId ?? null, encryptionMode: 'plain' });
+      const settingsRequest = account.request.getMockImplementation();
+      if (!settingsRequest) throw new Error('Account HTTP boundary missing');
+      account.request.mockImplementation((url, init) => {
+        const parsed = new URL(String(url));
+        return artifacts.handle(`${parsed.pathname}${parsed.search}`, init) ?? settingsRequest(url, init);
+      });
+      const { createVoiceToolHandlers } = await import('./handlers');
+      const tools = createVoiceToolHandlers({ resolveSessionId: () => null });
+      pendingReset = tools.resetGlobalVoiceAgent({}, { serverId: account.scope.serverId, effectId: 'voice-reset-test', signal: controller.signal });
+      const { ApprovalRequestSchema } = await import('@happier-dev/protocol');
+      const approval = await vi.waitFor(() => {
+        const row = artifacts.list().find((candidate) => {
+          const body = artifacts.readPlainBody(candidate.id);
+          return body !== null && ApprovalRequestSchema.safeParse(JSON.parse(body)).success;
+        });
+        expect(row).toBeDefined();
+        return row!;
+      });
+      const request = ApprovalRequestSchema.parse(JSON.parse(artifacts.readPlainBody(approval.id) ?? 'null'));
+      expect(request).toMatchObject({ v: 2, status: 'open', actionId: 'ui.voice_global.reset', executionOriginV1: {
+        authority: 'account_automation', surface: 'voice', serverId: account.scope.serverId,
+        serverIdentityId: 'srv_voice-settings-account', accountId: account.scope.accountId, requestId: 'voice-reset-test',
+      } });
+      expect(account.writes).toHaveLength(0);
+      expect(account.persistedSettings.voice.providers.local_conversation?.config).toMatchObject({ agent: { transcript: { epoch: 2 } } });
+      const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+      const decision = await createDefaultActionExecutor().execute('approval.request.decide',
+        { artifactId: approval.id, decision: 'approve' }, { surface: 'ui', serverId: account.scope.serverId });
+      expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true, result: { status: 'executed' } });
+      const result = JSON.parse(await pendingReset);
+      expect(result).toMatchObject({ ok: true });
+      await vi.waitFor(() => expect(account?.persistedSettings.voice.providers.local_conversation?.config).toMatchObject({
+        agent: { transcript: { persistenceMode: 'persistent', epoch: 3 } },
+      }));
+      expect(account.writes).toHaveLength(1);
+      expect(account.settings.voiceSettingsV1.providers.local_conversation?.config).toMatchObject({ agent: { transcript: { epoch: 3 } } });
+      expect(JSON.parse(artifacts.readPlainBody(approval.id) ?? 'null')).toMatchObject({ status: 'executed' });
+    } finally {
+      controller.abort();
+      await pendingReset?.catch(() => {});
+      await account?.dispose();
+      for (const [id, module] of incumbentMocks) vi.doMock(id, () => module);
+      vi.resetModules();
+    }
   });
 });

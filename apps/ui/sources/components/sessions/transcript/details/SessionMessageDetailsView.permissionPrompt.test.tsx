@@ -1,36 +1,48 @@
 import * as React from 'react';
 import renderer from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Message } from "@happier-dev/session-core/messages";
-import type { Session } from '@/sync/domains/state/storageTypes';
-import { renderScreen } from '@/dev/testkit';
+import type { ParticipantRecipientV1, PendingRequestedActionV1 } from '@happier-dev/protocol';
+import type { SessionParticipantTarget } from '@/sync/domains/session/participants/participantTargets';
+import { createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storageStore';
 import {
     installTranscriptCommonModuleMocks,
     resetTranscriptCommonModuleMockState,
 } from '../transcriptTestHelpers';
 
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const toolFullViewSpy = vi.fn();
 const participantComposerSpy = vi.fn();
-const participantTargetsState = vi.hoisted(() => ({
-    value: [] as Array<any>,
+const participantTargetsState = vi.hoisted<{ value: SessionParticipantTarget[] }>(() => ({
+    value: [],
 }));
-const autoRecipientState = vi.hoisted(() => ({
-    value: null as any,
+const autoRecipientState = vi.hoisted<{ value: ParticipantRecipientV1 | null }>(() => ({
+    value: null,
 }));
-const recipientStateState = vi.hoisted(() => ({
+const recipientStateState = vi.hoisted<{
     value: {
-        recipient: null as any,
+        recipient: ParticipantRecipientV1 | null;
+        executionRunRequestedAction: PendingRequestedActionV1;
+        setManualRecipient: ReturnType<typeof vi.fn>;
+        setExecutionRunRequestedAction: ReturnType<typeof vi.fn>;
+    };
+}>(() => ({
+    value: {
+        recipient: null,
         executionRunRequestedAction: { v: 1, kind: 'enqueue' },
         setManualRecipient: vi.fn(),
         setExecutionRunRequestedAction: vi.fn(),
     },
 }));
 
-installTranscriptCommonModuleMocks();
+installTranscriptCommonModuleMocks({
+    // Permission interaction is derived by the app source from the real storage owner.
+    storage: async (importOriginal) => importOriginal(),
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
@@ -53,10 +65,6 @@ vi.mock('@/components/sessions/model/useExternalSessionRuntime', () => ({
         externalSessionLink: null,
         status: null,
     }),
-}));
-
-vi.mock('@/sync/store/hooks', () => ({
-    useSessionMessages: () => ({ messages: [] }),
 }));
 
 vi.mock('@/sync/domains/session/participants/deriveExecutionRunPollingRefreshKey', () => ({
@@ -108,7 +116,7 @@ vi.mock('@/text', async () => {
 });
 
 describe('SessionMessageDetailsView permission prompt fallback', () => {
-    const session: Session = {
+    const session = createSessionFixture({
         id: 'session-1',
         serverId: 'home-b',
         seq: 0,
@@ -125,7 +133,17 @@ describe('SessionMessageDetailsView permission prompt fallback', () => {
         thinking: false,
         thinkingAt: 0,
         presence: 'online',
-    };
+    });
+
+    let previousState: ReturnType<typeof storage.getState>;
+    beforeEach(() => {
+        previousState = storage.getState();
+        storage.setState((state) => ({ sessions: { ...state.sessions, [session.id]: session } }));
+    });
+    afterEach(() => {
+        standardCleanup();
+        storage.setState(previousState, true);
+    });
 
     const message: Message = {
         kind: 'tool-call',
@@ -195,6 +213,7 @@ describe('SessionMessageDetailsView permission prompt fallback', () => {
             forcePermissionFooterInTranscript: true,
             owningMessageId: 'message-1',
             serverId: 'home-b',
+            interaction: expect.objectContaining({ canApprovePermissions: true }),
         }));
     });
 
@@ -237,10 +256,10 @@ describe('SessionMessageDetailsView permission prompt fallback', () => {
                     }),
                 }),
                 expect.objectContaining({
-                    key: 'execution-run-delivery',
+                    key: 'execution-run-requested-action',
                     controlId: 'delivery',
                     collapsedOptionsPopover: expect.objectContaining({
-                        selectedOptionId: 'interrupt',
+                        selectedOptionId: 'send_now',
                     }),
                 }),
             ]),

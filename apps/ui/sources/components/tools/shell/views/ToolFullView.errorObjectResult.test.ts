@@ -1,7 +1,7 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-    renderScreen,
+    renderWithSessionTranscriptSource as renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
 import { collectHostText, installToolShellCommonModuleMocks, makeToolCall } from './ToolView.testHelpers';
@@ -65,19 +65,14 @@ vi.mock('../permissions/PermissionFooter', () => ({
     PermissionFooter: () => null,
 }));
 
+const { ToolFullView } = await import('./ToolFullView');
+
 describe('ToolFullView (error message formatting)', () => {
     afterEach(() => {
         standardCleanup();
     });
 
     it('renders JSON for object-shaped tool errors', async () => {
-        let ToolFullView: any;
-        try {
-            ({ ToolFullView } = await import('./ToolFullView'));
-        } catch (e: any) {
-            throw new Error(e?.stack ? String(e.stack) : String(e));
-        }
-
         const tool = makeToolCall({
             name: 'UnknownTool',
             state: 'error',

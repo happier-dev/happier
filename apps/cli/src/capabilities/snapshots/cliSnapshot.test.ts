@@ -1,8 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest';
 import { mkdirSync, writeFileSync, chmodSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { detectCliSnapshotOnDaemonPath, probeAgentCliForInstall } from './cliSnapshot';
+import { detectCliSnapshotOnDaemonPath, invalidateCliSnapshots, probeAgentCliForInstall } from './cliSnapshot';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { reloadConfiguration } from '@/configuration';
 import { resolveAgentCliManagedCommandPath } from '@/packagedRuntime/managedTools/agentCliResolution';
 import { applyEnvValues, restoreEnvValues, snapshotEnvValues } from '@/testkit/env/envSnapshot';
 import { resolveSystemJavaScriptRuntimeBinary, writeExecutableShimSync } from '@/testkit/fs/executableShim';
@@ -25,7 +28,9 @@ const SCOPED_ENV_KEYS = [
   'HAPPIER_MANAGED_NODE_BIN',
   'HAPPIER_NODE_PATH',
   'HAPPIER_CLI_SNAPSHOT_PROBE_TIMEOUT_MS',
+  'HAPPIER_CLI_SNAPSHOT_LOGIN_STATUS_PROBE_TIMEOUT_MS',
   'ANTHROPIC_API_KEY',
+  'ANTHROPIC_AUTH_TOKEN',
   'OPENAI_API_KEY',
   'CODEX_API_KEY',
   'HAPPIER_ANTIGRAVITY_PATH',
@@ -59,6 +64,7 @@ describe('detectCliSnapshotOnDaemonPath', () => {
   let workDir: string;
   let homeDir: string;
   let envBaseline: Record<ScopedEnvKey, string | undefined>;
+  let nativeRuntime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | undefined;
 
   beforeEach(() => {
     envBaseline = snapshotEnvValues(SCOPED_ENV_KEYS) as Record<ScopedEnvKey, string | undefined>;
@@ -79,10 +85,16 @@ describe('detectCliSnapshotOnDaemonPath', () => {
     setEnv('HAPPIER_OHMYPI_PATH', undefined);
     setEnv('HAPPIER_OPENCODE_PATH', undefined);
     setEnv('HAPPIER_CLI_SNAPSHOT_PROBE_TIMEOUT_MS', undefined);
+    setEnv('HAPPIER_CLI_SNAPSHOT_LOGIN_STATUS_PROBE_TIMEOUT_MS', undefined);
+    setEnv('ANTHROPIC_API_KEY', undefined);
+    setEnv('ANTHROPIC_AUTH_TOKEN', undefined);
+    setEnv('OPENAI_API_KEY', undefined);
     setEnv('CODEX_API_KEY', undefined);
     setEnv('HAPPIER_ANTIGRAVITY_PATH', undefined);
     setEnv('HAPPIER_PI_PATH', undefined);
     setEnv('PI_CODING_AGENT_DIR', undefined);
+    reloadConfiguration();
+    invalidateCliSnapshots();
   });
 
   it('re-probes Pi when its configured vendor install root changes', async () => {
@@ -100,8 +112,17 @@ describe('detectCliSnapshotOnDaemonPath', () => {
   });
 
   afterEach(() => {
+    invalidateCliSnapshots();
     restoreEnvValues(envBaseline);
-    if (workDir) removeTempDirSync(workDir);
+    try {
+      reloadConfiguration();
+    } finally {
+      if (workDir) removeTempDirSync(workDir);
+    }
+  });
+
+  afterAll(async () => {
+    await nativeRuntime?.dispose();
   });
 
   it.each([
@@ -652,7 +673,11 @@ describe('detectCliSnapshotOnDaemonPath', () => {
       });
       setEnv('PATH', binDir);
 
-      const initial = await detectCliSnapshotOnDaemonPath({ includeLoginStatus: true });
+      // Keep one admitted daemon generation; each case owns only its OS/env fixture.
+      nativeRuntime ??= await createAdmittedPluginRuntimeFixture({
+        controller: pluginReloadController,
+      });
+      const initial = await detectCliSnapshotOnDaemonPath({ includeLoginStatus: true, requestedCliNames: ['codex'] });
       expect(initial.clis.codex.available).toBe(true);
       expect(initial.clis.codex.isLoggedIn).toBe(false);
       expect(initial.clis.codex.authStatus).toMatchObject({
@@ -673,7 +698,7 @@ describe('detectCliSnapshotOnDaemonPath', () => {
         'utf8',
       );
 
-      const refreshed = await detectCliSnapshotOnDaemonPath({ includeLoginStatus: true, bypassCache: true });
+      const refreshed = await detectCliSnapshotOnDaemonPath({ includeLoginStatus: true, requestedCliNames: ['codex'], bypassCache: true });
       expect(refreshed.clis.codex.available).toBe(true);
       expect(refreshed.clis.codex.isLoggedIn).toBe(true);
       expect(refreshed.clis.codex.authStatus).toMatchObject({
@@ -779,14 +804,13 @@ describe('detectCliSnapshotOnDaemonPath', () => {
     setEnv('PATH', binDir);
     setEnv('ANTHROPIC_API_KEY', 'sk-ant-test');
 
-    const snapshot = await detectCliSnapshotOnDaemonPath({ includeLoginStatus: true });
+    const snapshot = await detectCliSnapshotOnDaemonPath({ includeLoginStatus: true, requestedCliNames: ['claude'] });
     expect(snapshot.clis.claude.available).toBe(true);
     expect(snapshot.clis.claude.isLoggedIn).toBe(true);
     expect(snapshot.clis.claude.authStatus).toMatchObject({
       state: 'logged_in',
       method: 'api_key_env',
       source: 'env',
-      reason: null,
     });
   });
 
@@ -828,7 +852,7 @@ describe('detectCliSnapshotOnDaemonPath', () => {
       process.env.HAPPIER_CLI_SNAPSHOT_LOGIN_STATUS_PROBE_TIMEOUT_MS = '25';
 
       try {
-        const snapshot = await detectCliSnapshotOnDaemonPath({ includeLoginStatus: true, bypassCache: true });
+        const snapshot = await detectCliSnapshotOnDaemonPath({ includeLoginStatus: true, requestedCliNames: ['claude'], bypassCache: true });
         expect(snapshot.clis.claude.available).toBe(true);
         expect(snapshot.clis.claude.resolvedPath).toBe(claudePath);
         expect(snapshot.clis.claude.version).toBeUndefined();
@@ -837,7 +861,6 @@ describe('detectCliSnapshotOnDaemonPath', () => {
           state: 'logged_in',
           method: 'credentials_file',
           source: 'file',
-          accountLabel: 'tester@example.com',
         });
       } finally {
         if (typeof previousProbeTimeout === 'string') {
@@ -855,7 +878,7 @@ describe('detectCliSnapshotOnDaemonPath', () => {
   );
 
   it.skipIf(process.platform === 'win32')(
-    'parses OpenCode auth status from `auth list` output',
+    'reports OpenCode native auth from an admitted lazy Agent runtime',
     async () => {
       const binDir = join(workDir, 'bin');
       mkdirSync(binDir, { recursive: true });
@@ -878,7 +901,10 @@ describe('detectCliSnapshotOnDaemonPath', () => {
 
       setEnv('PATH', binDir);
 
-      const snapshot = await detectCliSnapshotOnDaemonPath({ includeLoginStatus: true });
+      nativeRuntime ??= await createAdmittedPluginRuntimeFixture({
+        controller: pluginReloadController,
+      });
+      const snapshot = await detectCliSnapshotOnDaemonPath({ includeLoginStatus: true, requestedCliNames: ['opencode'] });
       expect(snapshot.clis.opencode.available).toBe(true);
       expect(snapshot.clis.opencode.isLoggedIn).toBe(true);
       expect(snapshot.clis.opencode.authStatus).toMatchObject({

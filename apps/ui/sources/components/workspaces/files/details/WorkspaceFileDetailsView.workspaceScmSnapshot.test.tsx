@@ -28,20 +28,13 @@ vi.mock('react-native-unistyles', async () => {
     return createUnistylesMock();
 });
 
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
+vi.mock('@expo/vector-icons', async () => {
+    const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
+    return createExpoVectorIconsMock();
+});
 
 vi.mock('@/components/workspaces/files/file/FileHeader', () => ({
     FileHeader: (props: any) => React.createElement('FileHeader', props, props.rightElement ?? null),
-}));
-
-const fileActionToolbarProps = vi.hoisted(() => ({ current: null as any }));
-vi.mock('@/components/workspaces/files/file/FileActionToolbar', () => ({
-    FileActionToolbar: (props: any) => {
-        fileActionToolbarProps.current = props;
-        return React.createElement('FileActionToolbar', props, props.rightElement ?? null);
-    },
 }));
 
 vi.mock('@/components/workspaces/files/file/FileContentPanel', () => ({
@@ -258,6 +251,8 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     });
 });
 
+const { FileActionToolbar } = await import('@/components/workspaces/files/file/FileActionToolbar');
+
 describe('WorkspaceFileDetailsView (workspace SCM snapshot)', () => {
     it('states that file details are unavailable when the machine scope is missing', async () => {
         const { WorkspaceFileDetailsView } = await import('./WorkspaceFileDetailsView');
@@ -325,7 +320,7 @@ describe('WorkspaceFileDetailsView (workspace SCM snapshot)', () => {
 
         await act(async () => {});
 
-        let toolbar = screen.findAllByType('FileActionToolbar')[0];
+        let toolbar = screen.findAllByType(FileActionToolbar)[0];
         expect(toolbar?.props.lineSelectionEnabled).toBe(true);
         expect(toolbar?.props.lineSelectionActive).toBe(false);
 
@@ -333,7 +328,7 @@ describe('WorkspaceFileDetailsView (workspace SCM snapshot)', () => {
             toolbar?.props.onStartLineSelection();
         });
 
-        toolbar = screen.findAllByType('FileActionToolbar')[0];
+        toolbar = screen.findAllByType(FileActionToolbar)[0];
         const contentPanel = screen.findAllByType('FileContentPanel')[0];
         expect(toolbar?.props.lineSelectionActive).toBe(true);
         expect(contentPanel?.props.lineSelectionEnabled).toBe(true);
@@ -362,12 +357,12 @@ describe('WorkspaceFileDetailsView (workspace SCM snapshot)', () => {
 
         await act(async () => {});
 
-        let toolbar = screen.findAllByType('FileActionToolbar')[0];
+        let toolbar = screen.findAllByType(FileActionToolbar)[0];
         await act(async () => {
             toolbar?.props.onStartLineSelection();
         });
 
-        toolbar = screen.findAllByType('FileActionToolbar')[0];
+        toolbar = screen.findAllByType(FileActionToolbar)[0];
         let contentPanel = screen.findAllByType('FileContentPanel')[0];
         expect(toolbar?.props.rangeSelectionActive).toBe(false);
         expect(contentPanel?.props.rangeSelectionActive).toBe(false);
@@ -376,7 +371,7 @@ describe('WorkspaceFileDetailsView (workspace SCM snapshot)', () => {
             toolbar?.props.onStartRangeSelection();
         });
 
-        toolbar = screen.findAllByType('FileActionToolbar')[0];
+        toolbar = screen.findAllByType(FileActionToolbar)[0];
         contentPanel = screen.findAllByType('FileContentPanel')[0];
         expect(toolbar?.props.rangeSelectionActive).toBe(true);
         expect(contentPanel?.props.rangeSelectionActive).toBe(true);
@@ -385,7 +380,7 @@ describe('WorkspaceFileDetailsView (workspace SCM snapshot)', () => {
             contentPanel?.props.onToggleLine('additions:1');
         });
 
-        toolbar = screen.findAllByType('FileActionToolbar')[0];
+        toolbar = screen.findAllByType(FileActionToolbar)[0];
         contentPanel = screen.findAllByType('FileContentPanel')[0];
         expect(toolbar?.props.rangeSelectionActive).toBe(false);
         expect(contentPanel?.props.rangeSelectionActive).toBe(false);
@@ -416,7 +411,7 @@ describe('WorkspaceFileDetailsView (workspace SCM snapshot)', () => {
 
         await act(async () => {});
 
-        let toolbar = screen.findAllByType('FileActionToolbar')[0];
+        let toolbar = screen.findAllByType(FileActionToolbar)[0];
         let contentPanel = screen.findAllByType('FileContentPanel')[0];
         expect(toolbar?.props.reviewCommentsEnabled).toBe(true);
         expect(toolbar?.props.commentModeActive).toBe(false);
@@ -426,7 +421,7 @@ describe('WorkspaceFileDetailsView (workspace SCM snapshot)', () => {
             toolbar?.props.onToggleCommentMode(true);
         });
 
-        toolbar = screen.findAllByType('FileActionToolbar')[0];
+        toolbar = screen.findAllByType(FileActionToolbar)[0];
         contentPanel = screen.findAllByType('FileContentPanel')[0];
         expect(toolbar?.props.commentModeActive).toBe(true);
         expect(contentPanel?.props.reviewCommentModeActive).toBe(true);
@@ -455,7 +450,7 @@ describe('WorkspaceFileDetailsView (workspace SCM snapshot)', () => {
 
         await act(async () => {});
 
-        let toolbar = screen.findAllByType('FileActionToolbar')[0];
+        let toolbar = screen.findAllByType(FileActionToolbar)[0];
         await act(async () => {
             toolbar?.props.onStartLineSelection();
         });
@@ -465,39 +460,39 @@ describe('WorkspaceFileDetailsView (workspace SCM snapshot)', () => {
             contentPanel?.props.onToggleLine('additions:1');
         });
 
-        toolbar = screen.findAllByType('FileActionToolbar')[0];
+        toolbar = screen.findAllByType(FileActionToolbar)[0];
         await act(async () => {
             toolbar?.props.onStartRangeSelection();
         });
 
         expect(screen.findAllByType('FileContentPanel')[0]?.props.rangeSelectionActive).toBe(true);
 
-        toolbar = screen.findAllByType('FileActionToolbar')[0];
+        toolbar = screen.findAllByType(FileActionToolbar)[0];
         await act(async () => {
             await toolbar?.props.onApplySelectedLines();
         });
 
         expect(screen.findAllByType('FileContentPanel')[0]?.props.rangeSelectionActive).toBe(false);
-        expect(screen.findAllByType('FileActionToolbar')[0]?.props.lineSelectionActive).toBe(false);
+        expect(screen.findAllByType(FileActionToolbar)[0]?.props.lineSelectionActive).toBe(false);
 
-        toolbar = screen.findAllByType('FileActionToolbar')[0];
+        toolbar = screen.findAllByType(FileActionToolbar)[0];
         await act(async () => {
             toolbar?.props.onStartLineSelection();
         });
-        toolbar = screen.findAllByType('FileActionToolbar')[0];
+        toolbar = screen.findAllByType(FileActionToolbar)[0];
         await act(async () => {
             toolbar?.props.onStartRangeSelection();
         });
 
         expect(screen.findAllByType('FileContentPanel')[0]?.props.rangeSelectionActive).toBe(true);
 
-        toolbar = screen.findAllByType('FileActionToolbar')[0];
+        toolbar = screen.findAllByType(FileActionToolbar)[0];
         await act(async () => {
             toolbar?.props.onClearSelection();
         });
 
         expect(screen.findAllByType('FileContentPanel')[0]?.props.rangeSelectionActive).toBe(false);
-        expect(screen.findAllByType('FileActionToolbar')[0]?.props.lineSelectionActive).toBe(false);
+        expect(screen.findAllByType(FileActionToolbar)[0]?.props.lineSelectionActive).toBe(false);
     });
 
     it('shows applied partial commit selection when reopening file details', async () => {
@@ -535,7 +530,7 @@ describe('WorkspaceFileDetailsView (workspace SCM snapshot)', () => {
 
         await act(async () => {});
 
-        const toolbar = screen.findAllByType('FileActionToolbar')[0];
+        const toolbar = screen.findAllByType(FileActionToolbar)[0];
         const contentPanel = screen.findAllByType('FileContentPanel')[0];
         expect(toolbar?.props.lineSelectionActive).toBe(false);
         expect(toolbar?.props.selectedLineCount).toBe(0);
@@ -579,12 +574,12 @@ describe('WorkspaceFileDetailsView (workspace SCM snapshot)', () => {
 
         await act(async () => {});
 
-        let toolbar = screen.findAllByType('FileActionToolbar')[0];
+        let toolbar = screen.findAllByType(FileActionToolbar)[0];
         await act(async () => {
             toolbar?.props.onStartLineSelection();
         });
 
-        toolbar = screen.findAllByType('FileActionToolbar')[0];
+        toolbar = screen.findAllByType(FileActionToolbar)[0];
         const contentPanel = screen.findAllByType('FileContentPanel')[0];
         expect(toolbar?.props.lineSelectionActive).toBe(true);
         expect(toolbar?.props.selectedLineCount).toBe(2);
@@ -628,19 +623,19 @@ describe('WorkspaceFileDetailsView (workspace SCM snapshot)', () => {
 
         await act(async () => {});
 
-        let toolbar = screen.findAllByType('FileActionToolbar')[0];
+        let toolbar = screen.findAllByType(FileActionToolbar)[0];
         await act(async () => {
             toolbar?.props.onStartLineSelection();
         });
 
-        toolbar = screen.findAllByType('FileActionToolbar')[0];
+        toolbar = screen.findAllByType(FileActionToolbar)[0];
         expect(toolbar?.props.lineSelectionActive).toBe(true);
 
         await act(async () => {
             await toolbar?.props.onApplySelectedLines();
         });
 
-        toolbar = screen.findAllByType('FileActionToolbar')[0];
+        toolbar = screen.findAllByType(FileActionToolbar)[0];
         expect(workspaceStageActionsMock.applySelectedLines).toHaveBeenCalledTimes(1);
         expect(toolbar?.props.lineSelectionActive).toBe(true);
     });
@@ -668,7 +663,7 @@ describe('WorkspaceFileDetailsView (workspace SCM snapshot)', () => {
 
         await act(async () => {});
 
-        const toolbar = screen.findAllByType('FileActionToolbar')[0];
+        const toolbar = screen.findAllByType(FileActionToolbar)[0];
         expect(toolbar?.props.displayMode).toBe('markdown');
     });
 
@@ -756,7 +751,7 @@ describe('WorkspaceFileDetailsView (workspace SCM snapshot)', () => {
         );
         await act(async () => {});
 
-        expect(screen.findAllByTestId('file-editor-external-change-banner')).toHaveLength(1);
+        expect(screen.findAllHostsByTestId('file-editor-external-change-banner')).toHaveLength(1);
     });
 
     it('does not switch away from file mode while the file editor is active during an SCM refresh', async () => {
@@ -786,7 +781,7 @@ describe('WorkspaceFileDetailsView (workspace SCM snapshot)', () => {
             />,
         );
         await act(async () => {
-            fileActionToolbarProps.current?.onDisplayMode?.('file');
+            screen.findByType(FileActionToolbar).props?.onDisplayMode?.('file');
         });
         fileEditorState.isEditingFile = true;
         await act(async () => {
@@ -836,7 +831,7 @@ describe('WorkspaceFileDetailsView (workspace SCM snapshot)', () => {
         );
         await act(async () => {});
 
-        const firstCallback = fileActionToolbarProps.current?.onStartEditingFile;
+        const firstCallback = screen.findByType(FileActionToolbar).props?.onStartEditingFile;
         expect(typeof firstCallback).toBe('function');
 
         await act(async () => {
@@ -852,7 +847,7 @@ describe('WorkspaceFileDetailsView (workspace SCM snapshot)', () => {
         });
         await act(async () => {});
 
-        expect(fileActionToolbarProps.current?.onStartEditingFile).toBe(firstCallback);
+        expect(screen.findByType(FileActionToolbar).props?.onStartEditingFile).toBe(firstCallback);
     });
 
     it('keeps the selected-line apply callback stable across unchanged file-detail rerenders', async () => {
@@ -868,7 +863,7 @@ describe('WorkspaceFileDetailsView (workspace SCM snapshot)', () => {
         );
         await act(async () => {});
 
-        const firstCallback = fileActionToolbarProps.current?.onApplySelectedLines;
+        const firstCallback = screen.findByType(FileActionToolbar).props?.onApplySelectedLines;
         expect(typeof firstCallback).toBe('function');
 
         await act(async () => {
@@ -883,7 +878,7 @@ describe('WorkspaceFileDetailsView (workspace SCM snapshot)', () => {
         });
         await act(async () => {});
 
-        expect(fileActionToolbarProps.current?.onApplySelectedLines).toBe(firstCallback);
+        expect(screen.findByType(FileActionToolbar).props?.onApplySelectedLines).toBe(firstCallback);
     });
 
     it('renders a workspace-scoped download action when preview is too large (no sessionId required)', async () => {
@@ -910,8 +905,8 @@ describe('WorkspaceFileDetailsView (workspace SCM snapshot)', () => {
         await act(async () => {});
 
         expect(screen.findAllByType('FileErrorState')).toHaveLength(0);
-        expect(screen.findAllByType('FileActionToolbar')).toHaveLength(1);
-        expect(screen.findAllByTestId('file-preview-unavailable-banner')).toHaveLength(1);
+        expect(screen.findAllByType(FileActionToolbar)).toHaveLength(1);
+        expect(screen.findAllHostsByTestId('file-preview-unavailable-banner')).toHaveLength(1);
         expect(screen.findAllByType('WorkspaceFileDownloadButton')).toHaveLength(1);
     });
 });

@@ -31,10 +31,10 @@ describe('createExternalMcpServer Session Follow dependencies', () => {
     await client.connect(clientTransport);
 
     try {
-      expect(toolNames).toContain('session_follow_get');
+      expect(toolNames).toContain('action_execute');
       const result = await client.callTool({
-        name: 'session_follow_get',
-        arguments: { sessionId: 'session-1' },
+        name: 'action_execute',
+        arguments: { actionId: 'session.follow.get', input: { sessionId: 'session-1' } },
       });
       expect(result).toMatchObject({
         isError: false,

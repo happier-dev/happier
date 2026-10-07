@@ -1,542 +1,153 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
+import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+import { subscribeAuthCredentialsInvalidation, type AuthCredentialsInvalidationEvent } from '@/sync/runtime/orchestration/authCredentialsInvalidation';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
-afterEach(() => {
-    vi.unstubAllGlobals();
-    vi.resetModules();
-    vi.clearAllMocks();
+installTokenStorageWebPlatformMocks();
+
+const rejectedToken = createAccountTokenForTests('auth-account');
+// Renewed credentials retain the same Account while changing the opaque bearer.
+const replacementToken = rejectedToken.replace(/\.signature$/, '.signature-refreshed');
+let storageBoundary: ReturnType<typeof installLocalStorageMock>;
+let locksBoundary: ReturnType<typeof installWebLockManagerMock>;
+let unsubscribe: () => void;
+const events: AuthCredentialsInvalidationEvent[] = [];
+
+beforeEach(async () => {
+    storageBoundary = installLocalStorageMock();
+    locksBoundary = installWebLockManagerMock();
+    await upsertAndActivateServer({ serverUrl: 'http://localhost:3012', name: 'Authentication Home' });
+    events.length = 0;
+    unsubscribe = subscribeAuthCredentialsInvalidation((event) => { events.push(event); });
 });
 
-const readNoPendingExternalAuth = async () => ({
-    value: null,
-    serverMismatch: false,
+afterEach(async () => {
+    const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+    await resetServerReachabilitySupervisors();
+    const { stopAllEndpointSupervisorsForTests } = await import('@/sync/runtime/connectivity/endpointSupervisorPool');
+    await stopAllEndpointSupervisorsForTests();
+    unsubscribe();
+    resetRuntimeFetch();
+    locksBoundary.restore();
+    storageBoundary.restore();
+    vi.restoreAllMocks();
 });
-const classifyNoRejectedCredential =
-    async () => ({ kind: 'allowed' as const });
+
+function installRejectedBearerBoundary(onRequest?: (init?: RequestInit) => Promise<Response>) {
+    const requests: RequestInit[] = [];
+    setRuntimeFetch(async (input, init) => {
+        if (new URL(String(input)).pathname === '/v1/auth/ping') return Response.json({});
+        requests.push(init ?? {});
+        return onRequest ? await onRequest(init) : new Response(null, { status: 401 });
+    });
+    return requests;
+}
 
 describe('serverFetch auth invalidation', () => {
     it('retains marked first-key custody and credential bytes without retrying the rejected bearer', async () => {
-        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
-            getActiveServerSnapshot: () => ({
-                serverId: 'server-a',
-                serverUrl: 'http://localhost:3012',
-                kind: 'custom',
-                generation: 1,
-            }),
-        }));
-
-        const storedCredentials = {
-            token: 'token-invalid',
-            secret: 'secret-a',
-        };
-        const recoveredCredentials = {
-            token: 'token-recovered',
-            secret: 'secret-a',
-        };
-        let currentCredentials:
-            | typeof storedCredentials
-            | typeof recoveredCredentials
-            | null = storedCredentials;
+        const { serverId, serverUrl } = getActiveServerSnapshot();
         const markedCustody = {
-            provider: 'github',
-            proof: 'proof-a',
-            secret: 'secret-a',
-            serverId: 'server-a',
-            serverUrl: 'http://localhost:3012',
+            provider: 'github', proof: 'proof-a', secret: 'secret-a', serverId, serverUrl,
             accountEncryptionFirstKey: {
-                accountId: 'account-a',
-                requestDigest: `aemrb1_${'A'.repeat(43)}`,
-                requestJson: '{}',
-                pending: 'pending-a',
-                createdAt: 1,
-                expiresAt: Number.MAX_SAFE_INTEGER,
-                migrationSubmissionAttempted: true as const,
+                accountId: 'auth-account', requestDigest: `aemrb1_${'A'.repeat(43)}`,
+                requestJson: '{}', pending: 'pending-a', createdAt: Date.now(),
+                expiresAt: Number.MAX_SAFE_INTEGER, migrationSubmissionAttempted: true as const,
             },
         };
-        const getCredentials = vi.fn(
-            async () => currentCredentials,
-        );
-        let persistedRejectedToken:
-            string | null = null;
-        const invalidateCredentialsTokenForServerUrl = vi.fn(async () => true);
-        vi.doMock('@/auth/storage/tokenStorage', () => ({
-            TokenStorage: {
-                getCredentials,
-                classifyPendingExternalAuthFirstKeyRejectedCredential:
-                    vi.fn(async ({
-                        token,
-                    }: {
-                        token: string;
-                    }) =>
-                        token
-                        === persistedRejectedToken
-                            ? {
-                                kind:
-                                    'rejected',
-                                pending:
-                                    markedCustody,
-                            } as const
-                            : {
-                                kind:
-                                    'allowed',
-                            } as const),
-                readPendingExternalAuthStateForServerUrl: vi.fn(async () => ({
-                    value: markedCustody,
-                    serverMismatch: false,
-                })),
-                markPendingExternalAuthFirstKeyRejectedCredential:
-                    vi.fn(async ({
-                        expected,
-                        token,
-                    }: {
-                        expected:
-                            typeof markedCustody;
-                        token: string;
-                    }) => {
-                        if (
-                            currentCredentials?.token
-                            !== token
-                        ) {
-                            return {
-                                kind:
-                                    'not_current',
-                            } as const;
-                        }
-                        persistedRejectedToken =
-                            token;
-                        return {
-                                kind:
-                                    'recorded',
-                                pending: {
-                                    ...expected,
-                                    accountEncryptionFirstKey: {
-                                        ...expected
-                                            .accountEncryptionFirstKey,
-                                        rejectedCredentialTokenDigest:
-                                            'A'.repeat(43),
-                                    },
-                                },
-                            } as const;
-                    }),
-                invalidateCredentialsTokenForServerUrl,
-            },
+        expect(await TokenStorage.setCredentials({ token: rejectedToken, secret: 'secret-a' })).toBe(true);
+        expect(await TokenStorage.setPendingExternalAuth(markedCustody)).toBe(true);
+        const requests = installRejectedBearerBoundary(async (init) => new Response(null, {
+            status: new Headers(init?.headers).get('authorization') === `Bearer ${replacementToken}` ? 200 : 401,
         }));
-
-        const notifyAuthCredentialsInvalidated = vi.fn();
-        vi.doMock('@/sync/runtime/orchestration/authCredentialsInvalidation', () => ({
-            notifyAuthCredentialsInvalidated,
-        }));
-
-        const fetchMock = vi.fn(async (
-            input: unknown,
-            init?: RequestInit,
-        ) => {
-            const url = String(input);
-            if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
-                return {
-                    ok: true,
-                    status: 200,
-                    headers: new Headers(),
-                };
-            }
-            const requestHeaders = new Headers(
-                init?.headers,
-            );
-            if (
-                requestHeaders.get('Authorization')
-                === `Bearer ${recoveredCredentials.token}`
-            ) {
-                return {
-                    ok: true,
-                    status: 200,
-                    headers: new Headers(),
-                };
-            }
-            return {
-                ok: false,
-                status: 401,
-                headers: new Headers(),
-            };
-        });
-        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
-
         const { serverFetch } = await import('./client');
-        const response = await serverFetch('/v1/machines');
+        expect((await serverFetch('/v1/machines')).status).toBe(401);
+        expect(await TokenStorage.getCredentialsForServerUrl(serverUrl, { serverId })).toEqual({ token: rejectedToken, secret: 'secret-a' });
+        expect(events).toHaveLength(1);
+        expect(events[0]).toMatchObject({ kind: 'first_key_recovery_required', serverId, serverUrl,
+            recovery: { pending: { accountEncryptionFirstKey: { migrationSubmissionAttempted: true,
+                rejectedCredentialTokenDigest: expect.any(String) } } } });
+        const { peekServerReachabilityToken } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+        expect(peekServerReachabilityToken(serverUrl)).toBeNull();
 
-        expect(response.status).toBe(401);
-        expect(invalidateCredentialsTokenForServerUrl).not.toHaveBeenCalled();
-        expect(getCredentials).toHaveBeenCalledTimes(1);
-        expect(await getCredentials.mock.results[0]?.value).toBe(storedCredentials);
-        expect(notifyAuthCredentialsInvalidated).toHaveBeenCalledWith({
-            kind: 'first_key_recovery_required',
-            serverId: 'server-a',
-            serverUrl: 'http://localhost:3012',
-            recovery: expect.objectContaining({
-                pending: expect.objectContaining({
-                    ...markedCustody,
-                    accountEncryptionFirstKey:
-                        expect.objectContaining({
-                            ...markedCustody
-                                .accountEncryptionFirstKey,
-                            rejectedCredentialTokenDigest:
-                                'A'.repeat(43),
-                        }),
-                }),
-            }),
-        });
-        expect(fetchMock.mock.calls.filter(
-            ([input]) => String(input).endsWith('/v1/machines'),
-        )).toHaveLength(1);
-        const {
-            peekServerReachabilityToken,
-        } = await import(
-            '@/sync/runtime/connectivity/serverReachabilitySupervisorPool'
-        );
-        expect(
-            peekServerReachabilityToken(
-                'http://localhost:3012',
-            ),
-        ).toBeNull();
+        expect((await serverFetch('/v1/machines')).status).toBe(401);
+        expect((await serverFetch('/v1/machines', { headers: { Authorization: `Bearer ${rejectedToken}` } }, { includeAuth: false })).status).toBe(401);
+        expect(requests).toHaveLength(3);
+        expect(new Headers(requests[0]?.headers).get('authorization')).toBe(`Bearer ${rejectedToken}`);
+        expect(new Headers(requests[1]?.headers).get('authorization')).toBeNull();
+        expect(new Headers(requests[2]?.headers).get('authorization')).toBeNull();
+        expect(events).toHaveLength(1);
 
-        const repeatedResponse =
-            await serverFetch('/v1/machines');
-        expect(repeatedResponse.status).toBe(401);
-        expect(notifyAuthCredentialsInvalidated)
-            .toHaveBeenCalledTimes(1);
-        const repeatedRequests =
-            fetchMock.mock.calls.filter(
-                ([input]) =>
-                    String(input)
-                        .endsWith('/v1/machines'),
-            );
-        expect(
-            new Headers(
-                repeatedRequests[1]?.[1]?.headers,
-            ).get('Authorization'),
-        ).toBeNull();
-
-        const explicitRepeatedResponse =
-            await serverFetch('/v1/machines', {
-                headers: {
-                    Authorization:
-                        `Bearer ${storedCredentials.token}`,
-                },
-            }, { includeAuth: false });
-        expect(explicitRepeatedResponse.status).toBe(401);
-        expect(notifyAuthCredentialsInvalidated)
-            .toHaveBeenCalledTimes(1);
-        const explicitRepeatedRequests =
-            fetchMock.mock.calls.filter(
-                ([input]) =>
-                    String(input)
-                        .endsWith('/v1/machines'),
-            );
-        expect(
-            new Headers(
-                explicitRepeatedRequests[2]?.[1]
-                    ?.headers,
-            ).get('Authorization'),
-        ).toBeNull();
-
-        currentCredentials = recoveredCredentials;
-        const recoveredResponse =
-            await serverFetch('/v1/machines');
-        expect(recoveredResponse.status).toBe(200);
-        const recoveredRequests =
-            fetchMock.mock.calls.filter(
-                ([input]) =>
-                    String(input)
-                        .endsWith('/v1/machines'),
-            );
-        expect(
-            new Headers(
-                recoveredRequests[3]?.[1]?.headers,
-            ).get('Authorization'),
-        ).toBe(
-            `Bearer ${recoveredCredentials.token}`,
-        );
-
-        const staleResponse =
-            await serverFetch('/v1/machines', {
-                headers: {
-                    Authorization:
-                        `Bearer ${storedCredentials.token}`,
-                },
-            }, {
-                includeAuth: false,
-                retry: 'none',
-            });
-        expect(staleResponse.status).toBe(401);
-        expect(notifyAuthCredentialsInvalidated)
-            .toHaveBeenCalledTimes(1);
-        expect(invalidateCredentialsTokenForServerUrl)
-            .not.toHaveBeenCalled();
-
-        const currentResponse =
-            await serverFetch(
-                '/v1/machines',
-                undefined,
-                { retry: 'none' },
-            );
-        expect(currentResponse.status).toBe(200);
-        const currentRequests =
-            fetchMock.mock.calls.filter(
-                ([input]) =>
-                    String(input)
-                        .endsWith('/v1/machines'),
-            );
-        expect(
-            new Headers(
-                currentRequests[5]?.[1]?.headers,
-            ).get('Authorization'),
-        ).toBe(
-            `Bearer ${recoveredCredentials.token}`,
-        );
+        expect(await TokenStorage.setCredentials({ token: replacementToken, secret: 'secret-a' })).toBe(true);
+        expect((await serverFetch('/v1/machines')).status).toBe(200);
+        expect((await serverFetch('/v1/machines', { headers: { Authorization: `Bearer ${rejectedToken}` } }, { includeAuth: false, retry: 'none' })).status).toBe(401);
+        expect((await serverFetch('/v1/machines', undefined, { retry: 'none' })).status).toBe(200);
+        expect(new Headers(requests[3]?.headers).get('authorization')).toBe(`Bearer ${replacementToken}`);
+        expect(new Headers(requests[5]?.headers).get('authorization')).toBe(`Bearer ${replacementToken}`);
+        expect(events).toHaveLength(1);
+        expect(await TokenStorage.getCredentialsForServerUrl(serverUrl, { serverId })).toEqual({ token: replacementToken, secret: 'secret-a' });
     });
 
     it('invalidates stored credentials when the server returns 401 for an authenticated request', async () => {
-        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
-            getActiveServerSnapshot: () => ({
-                serverId: 'server-a',
-                serverUrl: 'http://localhost:3012',
-                kind: 'custom',
-                generation: 1,
-            }),
-        }));
-
-        const invalidateCredentialsTokenForServerUrl = vi.fn(async () => true);
-        vi.doMock('@/auth/storage/tokenStorage', () => ({
-            TokenStorage: {
-                getCredentials: vi.fn(async () => ({ token: 'token-invalid', secret: 'secret-a' })),
-                classifyPendingExternalAuthFirstKeyRejectedCredential:
-                    classifyNoRejectedCredential,
-                readPendingExternalAuthStateForServerUrl: readNoPendingExternalAuth,
-                invalidateCredentialsTokenForServerUrl,
-            },
-        }));
-
-        const fetchMock = vi.fn(async (input: unknown) => {
-            const url = String(input);
-            if (url.endsWith('/health')) {
-                return { ok: true, status: 200, headers: new Headers() };
-            }
-            if (url.endsWith('/v1/auth/ping')) {
-                return { ok: true, status: 200, headers: new Headers() };
-            }
-            return { ok: false, status: 401, headers: new Headers() };
-        });
-        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
-
+        await TokenStorage.setCredentials({ token: rejectedToken });
+        const requests = installRejectedBearerBoundary();
         const { serverFetch } = await import('./client');
-        const resp = await serverFetch('/v1/machines');
-
-        expect(resp.status).toBe(401);
-        expect(invalidateCredentialsTokenForServerUrl).toHaveBeenCalledTimes(1);
-        expect(invalidateCredentialsTokenForServerUrl).toHaveBeenCalledWith('http://localhost:3012', 'token-invalid', {
-            serverId: 'server-a',
-        });
+        expect((await serverFetch('/v1/machines')).status).toBe(401);
+        const { serverId, serverUrl } = getActiveServerSnapshot();
+        expect(await TokenStorage.getCredentialsForServerUrl(serverUrl, { serverId })).toBeNull();
+        expect(requests).toHaveLength(1);
+        expect(events).toMatchObject([{ kind: 'credentials_removed', serverId, serverUrl }]);
     });
 
     it('invalidates stored credentials when includeAuth=false but an Authorization header is present', async () => {
-        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
-            getActiveServerSnapshot: () => ({
-                serverId: 'server-a',
-                serverUrl: 'http://localhost:3012',
-                kind: 'custom',
-                generation: 1,
-            }),
-        }));
-
-        const invalidateCredentialsTokenForServerUrl = vi.fn(async () => true);
-        vi.doMock('@/auth/storage/tokenStorage', () => ({
-            TokenStorage: {
-                getCredentials: vi.fn(async () => null),
-                classifyPendingExternalAuthFirstKeyRejectedCredential:
-                    classifyNoRejectedCredential,
-                readPendingExternalAuthStateForServerUrl: readNoPendingExternalAuth,
-                invalidateCredentialsTokenForServerUrl,
-            },
-        }));
-
-        const fetchMock = vi.fn(async (input: unknown) => {
-            const url = String(input);
-            if (url.endsWith('/health')) {
-                return { ok: true, status: 200, headers: new Headers() };
-            }
-            if (url.endsWith('/v1/auth/ping')) {
-                return { ok: true, status: 200, headers: new Headers() };
-            }
-            return { ok: false, status: 401, headers: new Headers() };
-        });
-        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
-
+        await TokenStorage.setCredentials({ token: rejectedToken });
+        installRejectedBearerBoundary();
         const { serverFetch } = await import('./client');
-        const resp = await serverFetch('/v1/machines', {
-            headers: {
-                Authorization: 'Bearer token-invalid',
-            },
-        }, { includeAuth: false });
-
-        expect(resp.status).toBe(401);
-        expect(invalidateCredentialsTokenForServerUrl).toHaveBeenCalledTimes(1);
-        expect(invalidateCredentialsTokenForServerUrl).toHaveBeenCalledWith('http://localhost:3012', 'token-invalid', {
-            serverId: 'server-a',
-        });
+        expect((await serverFetch('/v1/machines', { headers: { Authorization: `Bearer ${rejectedToken}` } }, { includeAuth: false })).status).toBe(401);
+        const { serverId, serverUrl } = getActiveServerSnapshot();
+        expect(await TokenStorage.getCredentialsForServerUrl(serverUrl, { serverId })).toBeNull();
+        expect(events).toMatchObject([{ kind: 'credentials_removed', serverId, serverUrl }]);
     });
 
     it('retries idempotent requests once with refreshed credentials after invalidating a rejected token', async () => {
-        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
-            getActiveServerSnapshot: () => ({
-                serverId: 'server-a',
-                serverUrl: 'http://localhost:3012',
-                kind: 'custom',
-                generation: 1,
-            }),
-        }));
-
-        const invalidateCredentialsTokenForServerUrl = vi.fn(async () => true);
-        const getCredentials = vi.fn(async () => ({ token: 'token-refreshed', secret: 'secret-a' }));
-        vi.doMock('@/auth/storage/tokenStorage', () => ({
-            TokenStorage: {
-                getCredentials,
-                classifyPendingExternalAuthFirstKeyRejectedCredential:
-                    classifyNoRejectedCredential,
-                readPendingExternalAuthStateForServerUrl: readNoPendingExternalAuth,
-                invalidateCredentialsTokenForServerUrl,
-            },
-        }));
-
-        let profileCalls = 0;
-        const fetchMock = vi.fn(async (input: unknown) => {
-            const url = String(input);
-            if (url.endsWith('/health')) {
-                return { ok: true, status: 200, headers: new Headers() };
-            }
-            if (url.endsWith('/v1/auth/ping')) {
-                return { ok: true, status: 200, headers: new Headers() };
-            }
-            if (url.endsWith('/v1/account/profile')) {
-                const response = profileCalls === 0
-                    ? { ok: false, status: 401, headers: new Headers() }
-                    : { ok: true, status: 200, headers: new Headers() };
-                profileCalls += 1;
-                return response;
-            }
-            return { ok: true, status: 200, headers: new Headers() };
+        await TokenStorage.setCredentials({ token: rejectedToken });
+        let requestCount = 0;
+        const requests = installRejectedBearerBoundary(async () => new Response(null, { status: ++requestCount === 1 ? 401 : 200 }));
+        // The device credential boundary publishes a concurrently refreshed bearer
+        // when the real client re-reads after removing the rejected credential.
+        const readCredentials = TokenStorage.getCredentialsForServerUrl.bind(TokenStorage);
+        const refreshed = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementationOnce(async (...args) => {
+            await TokenStorage.setCredentials({ token: replacementToken });
+            return await readCredentials(...args);
         });
-        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
-
-        const { serverFetch } = await import('./client');
-        const resp = await serverFetch('/v1/account/profile', {
-            method: 'GET',
-            headers: {
-                Authorization: 'Bearer token-invalid',
-            },
-        }, { includeAuth: false });
-
-        expect(resp.status).toBe(200);
-        expect(invalidateCredentialsTokenForServerUrl).toHaveBeenCalledTimes(1);
-        expect(getCredentials).toHaveBeenCalledTimes(1);
-        expect(fetchMock.mock.calls.filter(([input]) => String(input).endsWith('/v1/account/profile'))).toHaveLength(2);
+        try {
+            const { serverFetch } = await import('./client');
+            expect((await serverFetch('/v1/account/profile', { method: 'GET', headers: { Authorization: `Bearer ${rejectedToken}` } }, { includeAuth: false })).status).toBe(200);
+            expect(requests).toHaveLength(2);
+            expect(new Headers(requests[1]?.headers).get('authorization')).toBe(`Bearer ${replacementToken}`);
+            expect(events).toHaveLength(1);
+        } finally { refreshed.mockRestore(); }
     });
 
     it('emits an auth-credential invalidation notification when a bearer token is rejected', async () => {
-        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
-            getActiveServerSnapshot: () => ({
-                serverId: 'server-a',
-                serverUrl: 'http://localhost:3012',
-                kind: 'custom',
-                generation: 1,
-            }),
-        }));
-
-        const notifyAuthCredentialsInvalidated = vi.fn();
-        vi.doMock('@/sync/runtime/orchestration/authCredentialsInvalidation', () => ({
-            notifyAuthCredentialsInvalidated,
-        }));
-
-        vi.doMock('@/auth/storage/tokenStorage', () => ({
-            TokenStorage: {
-                getCredentials: vi.fn(async () => null),
-                classifyPendingExternalAuthFirstKeyRejectedCredential:
-                    classifyNoRejectedCredential,
-                readPendingExternalAuthStateForServerUrl: readNoPendingExternalAuth,
-                invalidateCredentialsTokenForServerUrl: vi.fn(async () => true),
-            },
-        }));
-
-        const fetchMock = vi.fn(async (input: unknown) => {
-            const url = String(input);
-            if (url.endsWith('/health')) {
-                return { ok: true, status: 200, headers: new Headers() };
-            }
-            if (url.endsWith('/v1/auth/ping')) {
-                return { ok: true, status: 200, headers: new Headers() };
-            }
-            return { ok: false, status: 401, headers: new Headers() };
-        });
-        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
-
+        await TokenStorage.setCredentials({ token: rejectedToken });
+        installRejectedBearerBoundary();
         const { serverFetch } = await import('./client');
-        const response = await serverFetch('/v1/machines', {
-            headers: {
-                Authorization: 'Bearer token-invalid',
-            },
-        }, { includeAuth: false });
-
-        expect(response.status).toBe(401);
-        expect(notifyAuthCredentialsInvalidated).toHaveBeenCalledTimes(1);
-        expect(notifyAuthCredentialsInvalidated).toHaveBeenCalledWith({
-            kind: 'credentials_removed',
-            serverId: 'server-a',
-            serverUrl: 'http://localhost:3012',
-        });
+        expect((await serverFetch('/v1/machines', { headers: { Authorization: `Bearer ${rejectedToken}` } }, { includeAuth: false })).status).toBe(401);
+        const { serverId, serverUrl } = getActiveServerSnapshot();
+        expect(events).toMatchObject([{ kind: 'credentials_removed', serverId, serverUrl }]);
     });
 
     it('does not emit an auth-credential invalidation notification when the stored credentials were not invalidated', async () => {
-        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
-            getActiveServerSnapshot: () => ({
-                serverId: 'server-a',
-                serverUrl: 'http://localhost:3012',
-                kind: 'custom',
-                generation: 1,
-            }),
-        }));
-
-        const notifyAuthCredentialsInvalidated = vi.fn();
-        vi.doMock('@/sync/runtime/orchestration/authCredentialsInvalidation', () => ({
-            notifyAuthCredentialsInvalidated,
-        }));
-
-        vi.doMock('@/auth/storage/tokenStorage', () => ({
-            TokenStorage: {
-                getCredentials: vi.fn(async () => null),
-                classifyPendingExternalAuthFirstKeyRejectedCredential:
-                    classifyNoRejectedCredential,
-                readPendingExternalAuthStateForServerUrl: readNoPendingExternalAuth,
-                invalidateCredentialsTokenForServerUrl: vi.fn(async () => false),
-            },
-        }));
-
-        const fetchMock = vi.fn(async (input: unknown) => {
-            const url = String(input);
-            if (url.endsWith('/health')) {
-                return { ok: true, status: 200, headers: new Headers() };
-            }
-            if (url.endsWith('/v1/auth/ping')) {
-                return { ok: true, status: 200, headers: new Headers() };
-            }
-            return { ok: false, status: 401, headers: new Headers() };
-        });
-        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
-
+        await TokenStorage.setCredentials({ token: replacementToken });
+        installRejectedBearerBoundary();
         const { serverFetch } = await import('./client');
-        const response = await serverFetch('/v1/machines', {
-            headers: {
-                Authorization: 'Bearer token-invalid',
-            },
-        }, { includeAuth: false });
-
-        expect(response.status).toBe(401);
-        expect(notifyAuthCredentialsInvalidated).not.toHaveBeenCalled();
+        expect((await serverFetch('/v1/machines', { headers: { Authorization: `Bearer ${rejectedToken}` } }, { includeAuth: false })).status).toBe(401);
+        const { serverId, serverUrl } = getActiveServerSnapshot();
+        expect(await TokenStorage.getCredentialsForServerUrl(serverUrl, { serverId })).toEqual({ token: replacementToken });
+        expect(events).toHaveLength(0);
     });
 });

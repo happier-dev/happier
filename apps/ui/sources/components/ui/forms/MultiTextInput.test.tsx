@@ -1,8 +1,8 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
-import { installFormsCommonModuleMocks } from './formsTestHelpers';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storage';
 import type { MultiTextInputHandle as NativeMultiTextInputHandle } from './MultiTextInput';
 import type { MultiTextInputHandle as WebMultiTextInputHandle } from './MultiTextInput.web';
 import { TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT } from './largeTextInputPolicy';
@@ -10,34 +10,38 @@ import { TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT } from './largeTextInputPolicy
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const localSettingState = vi.hoisted(() => ({
-    uiFontScale: 1,
-}));
+const nativeBoundary = vi.hoisted(() => ({ platform: 'web' }));
 const recordLargeTextInputDiagnosticMock = vi.hoisted(() => vi.fn());
-
-vi.mock('@/sync/store/hooks', () => ({
-    useLocalSetting: (key: string) => {
-        if (key === 'uiFontScale') return localSettingState.uiFontScale;
-        return undefined;
-    },
-}));
 
 vi.mock('@/utils/system/userInteractionDiagnostics', () => ({
     recordLargeTextInputDiagnostic: (...args: unknown[]) => recordLargeTextInputDiagnosticMock(...args),
 }));
 
-installFormsCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            Platform: {
-                OS: 'web',
-            },
-            View: 'View',
-            TextInput: (props: any) => React.createElement('TextInput', props, null),
-        });
-    },
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        Platform: {
+            get OS() { return nativeBoundary.platform; },
+            select: (options: Record<string, unknown>) => options[nativeBoundary.platform] ?? options.default,
+        },
+        View: 'View',
+        TextInput: (props: Record<string, unknown>) => React.createElement('TextInput', props, null),
+    });
 });
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
+
+const initialStorageState = storage.getState();
+
+function setFontScale(uiFontScale: number) {
+    storage.setState({ localSettings: { ...storage.getState().localSettings, uiFontScale } });
+}
 
 function flattenStyle(style: unknown): Record<string, unknown> {
     if (!style) return {};
@@ -54,8 +58,14 @@ function flattenStyle(style: unknown): Record<string, unknown> {
 }
 
 describe('MultiTextInput', () => {
-    afterEach(() => {
-        localSettingState.uiFontScale = 1;
+    beforeEach(() => {
+        storage.setState(initialStorageState, true);
+        nativeBoundary.platform = 'web';
+    });
+    afterEach(async () => {
+        await standardCleanup();
+        storage.setState(initialStorageState, true);
+        nativeBoundary.platform = 'web';
         recordLargeTextInputDiagnosticMock.mockReset();
     });
 
@@ -88,7 +98,8 @@ describe('MultiTextInput', () => {
     });
 
     it('uses the caller textStyle font size as the scaled native input base', async () => {
-        localSettingState.uiFontScale = 1.25;
+        nativeBoundary.platform = 'ios';
+        setFontScale(1.25);
 
         const { MultiTextInput } = await import('./MultiTextInput');
         const tree = (await renderScreen(<MultiTextInput
@@ -479,7 +490,7 @@ describe('MultiTextInput', () => {
     });
 
     it('uses the caller textStyle font size as the scaled web textarea base', async () => {
-        localSettingState.uiFontScale = 1.25;
+        setFontScale(1.25);
 
         const { MultiTextInput } = await import('./MultiTextInput.web');
         const tree = (await renderScreen(React.createElement(MultiTextInput as unknown as React.ComponentType<Record<string, unknown>>, {

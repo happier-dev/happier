@@ -1,64 +1,100 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-
-import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
-import { installRealtimeCommonModuleMocks } from './realtimeTestHelpers';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as React from 'react';
+import type { RenderScreenResult } from '@/dev/testkit/render/renderScreen';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import type { VoiceCurrentUiToolPort } from '@/voice/tools/currentUiContextToolPort';
 
-const executeAction = vi.fn();
-
-const state: any = {
-  sessions: {
-    s1: {
-      active: true,
-      agentState: {
-        requests: {
-          req_a: { id: 'req_a', tool: 'Bash', kind: 'permission' },
-          req_b: { id: 'req_b', tool: 'Read', kind: 'permission' },
-        },
-      },
-    },
-  },
-};
-
-installRealtimeCommonModuleMocks({
-  storage: () =>
-    createStorageModuleStub({
-      storage: {
-        getState: () => state,
-      },
-    }),
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+const outgoing: SocketRpcRequestPayload[] = [];
+installDisconnectedServerSocketBoundary((socket) => {
+  socket.connected = true;
+  vi.spyOn(socket, 'emit').mockReturnValue(socket);
+  vi.spyOn(socket, 'timeout').mockReturnValue(socket);
+  vi.spyOn(socket, 'emitWithAck').mockImplementation(async (_event: string, payload: SocketRpcRequestPayload) => {
+    outgoing.push(payload);
+    return { ok: true, result: undefined };
+  });
 });
 
-vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
-  createDefaultActionExecutor: () => ({
-    execute: (...args: any[]) => executeAction(...args),
-  }),
-}));
+vi.mock('@/modal', async () => {
+  const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+  return createModalModuleMock().module;
+});
+vi.mock('@/text', async () => {
+  const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+  return createTextModuleMock();
+});
 
-vi.mock('@/sync/sync', () => ({
-  sync: {
-    sendMessage: vi.fn(),
-  },
-}));
+type StoreState = ReturnType<ReturnType<typeof import('@/sync/domains/state/storage').getStorage>['getState']>;
+let initialState: StoreState;
+let homeId: string;
+let webLocks: ReturnType<typeof installWebLockManagerMock>;
+let authScreen: RenderScreenResult;
+
+async function setCurrentUiPrivacy(currentUiContextMode: 'off' | 'on_demand' | 'automatic'): Promise<void> {
+  const { settingsParse } = await import('@/sync/domains/settings/settings');
+  const { getStorage } = await import('@/sync/domains/state/storage');
+  const state = getStorage().getState();
+  getStorage().setState({ settings: settingsParse({
+    ...state.settings,
+    voiceSettingsV1: {
+      ...state.settings.voiceSettingsV1,
+      privacy: { ...state.settings.voiceSettingsV1.privacy, currentUiContextMode },
+    },
+  }) });
+}
 
 describe('realtimeClientTools action projection', () => {
-  beforeEach(() => {
-    executeAction.mockReset();
-    executeAction.mockResolvedValue({ ok: true, result: { ok: true } });
-    state.sessions.s1.agentState.requests = {
-      req_a: { id: 'req_a', tool: 'Bash', kind: 'permission' },
-      req_b: { id: 'req_b', tool: 'Read', kind: 'permission' },
-    };
-    state.sessions.s1.active = true;
-    state.settings = {
-      voice: {
-        privacy: { currentUiContextMode: 'on_demand' },
-      },
-    };
+  beforeEach(async () => {
+    webLocks = installWebLockManagerMock();
+    await loadSyncSingletonForTests();
+    const { getStorage } = await import('@/sync/domains/state/storage');
+    initialState = getStorage().getState();
+    homeId = await homes.addHome({ name: 'Voice Home', serverUrl: 'https://realtime-tools.test', accountId: 'account-a' });
+    homes.answer(homeId, '/v2/cursor', { body: { cursor: '0' } });
+    const bearer = homes.findByServerUrl('https://realtime-tools.test')?.token;
+    if (!bearer) throw new Error('Expected Account credentials');
+    const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+    await restoreConnectionToActiveServer({ token: bearer });
+    const { AuthProvider } = await import('@/auth/context/AuthContext');
+    const { renderScreen } = await import('@/dev/testkit/render/renderScreen');
+    authScreen = await renderScreen(React.createElement(AuthProvider, { initialCredentials: { token: bearer }, children: null }));
+    getStorage().setState({ sessions: { s1: createSessionFixture({
+      id: 's1', serverId: homeId, active: true,
+      agentState: { requests: {
+        req_a: { tool: 'Bash', kind: 'permission', arguments: {} },
+        req_b: { tool: 'Read', kind: 'permission', arguments: {} },
+      } },
+    }) } });
+    await setCurrentUiPrivacy('on_demand');
+    outgoing.length = 0;
 
     useVoiceTargetStore.getState().setScope('global');
-    useVoiceTargetStore.getState().setPrimaryActionSessionAddress({ serverId: 'server-a', sessionId: 's1' });
+    useVoiceTargetStore.getState().setPrimaryActionSessionAddress({ serverId: homeId, sessionId: 's1' });
+  });
+
+  afterEach(async () => {
+    await authScreen?.unmount();
+    const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
+    await disconnectActiveServerConnection();
+    const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
+    const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
+    serverScopedRpcSocketPool.resetForTests();
+    resetScopedMachineTransportCacheForTests();
+    await homes.reset();
+    const { getStorage } = await import('@/sync/domains/state/storage');
+    getStorage().setState(initialState, true);
+    useVoiceTargetStore.getState().setPrimaryActionSessionAddress(null);
+    vi.restoreAllMocks();
+    webLocks.restore();
   });
 
   it('does not expose speech-driven permission approval as a provider tool', async () => {
@@ -66,39 +102,37 @@ describe('realtimeClientTools action projection', () => {
     const realtimeClientTools = createRealtimeClientTools();
 
     expect(realtimeClientTools).not.toHaveProperty('processPermissionRequest');
-    expect(executeAction).not.toHaveBeenCalled();
+    expect(outgoing).toEqual([]);
   });
 
   it('routes structured user-action answers through the shared voice handlers', async () => {
-    state.sessions.s1.agentState.requests = {
-      req_question: { id: 'req_question', tool: 'AskUserQuestion', kind: 'user_action' },
-      req_permission: { id: 'req_permission', tool: 'Bash', kind: 'permission' },
-    };
-    state.sessions.s1.active = true;
+    const { getStorage } = await import('@/sync/domains/state/storage');
+    getStorage().setState({ sessions: { s1: createSessionFixture({
+      id: 's1', serverId: homeId, active: true,
+      agentState: { requests: {
+        req_question: { tool: 'AskUserQuestion', kind: 'user_action', arguments: {} },
+        req_permission: { tool: 'Bash', kind: 'permission', arguments: {} },
+      } },
+    }) } });
 
     const { createRealtimeClientTools } = await import('./realtimeClientTools');
     const realtimeClientTools = createRealtimeClientTools();
 
-    const result = await (realtimeClientTools as any).answerUserActionRequest({
+    const result = await realtimeClientTools.answerUserActionRequest({
       answers: [{ question: 'Continue?', answer: 'Yes' }],
     });
 
     expect(JSON.parse(result)).toMatchObject({ ok: true });
-    expect(executeAction).toHaveBeenCalledWith(
-      'session.user_action.answer',
-      expect.objectContaining({
-        sessionId: 's1',
-        requestId: 'req_question',
-        answers: [{ question: 'Continue?', values: ['Yes'] }],
-      }),
-      expect.objectContaining({ surface: 'voice' }),
-    );
+    expect(outgoing).toEqual([expect.objectContaining({
+      method: 's1:' + RPC_METHODS.SESSION_USER_ACTION_ANSWER,
+      params: { id: 'req_question', approved: true, answers: { 'Continue?': ['Yes'] } },
+    })]);
   });
 
   it.each(['on_demand', 'automatic'] as const)(
     'projects current UI reads and effectful opaque commands in %s mode without exposing semantic payloads',
     async (currentUiContextMode) => {
-      state.settings.voice.privacy.currentUiContextMode = currentUiContextMode;
+      await setCurrentUiPrivacy(currentUiContextMode);
       const { createRealtimeClientTools } = await import('./realtimeClientTools');
       const invokeCurrentUiCommand = vi.fn(async () => ({
         ok: true as const,
@@ -132,11 +166,11 @@ describe('realtimeClientTools action projection', () => {
       expect(tools).toHaveProperty('invokeCurrentUiCommand');
       expect(tools).toHaveProperty('invokeAction');
 
-      const result = await (tools as any).readCurrentUiContext({});
+      const result = await tools.readCurrentUiContext({});
       expect(JSON.parse(result)).toEqual(port.readCurrentUiContext());
       expect(result).not.toContain('privateQuery');
 
-      const commandResult = await (tools as any).invokeCurrentUiCommand({
+      const commandResult = await tools.invokeCurrentUiCommand({
         commandId: 'current-ui-command:1',
       });
       expect(JSON.parse(commandResult)).toEqual({ ok: true, result: { kind: 'navigated' } });
@@ -146,7 +180,7 @@ describe('realtimeClientTools action projection', () => {
         commandId: 'current-ui-command:1',
       });
 
-      const actionResult = await (tools as any).invokeAction({
+      const actionResult = await tools.invokeAction({
         action: { pluginId: 'acme.triage', localId: 'refresh' },
         input: { source: 'voice' },
       });
@@ -163,7 +197,7 @@ describe('realtimeClientTools action projection', () => {
     expect(createRealtimeClientTools()).not.toHaveProperty('readCurrentUiContext');
     expect(createRealtimeClientTools()).not.toHaveProperty('invokeCurrentUiCommand');
 
-    state.settings.voice.privacy.currentUiContextMode = 'off';
+    await setCurrentUiPrivacy('off');
     const invokeAction = vi.fn(async () => ({ ok: true as const, result: { status: 'done' } }));
     const tools = createRealtimeClientTools({
       currentUiContext: {
@@ -204,7 +238,7 @@ describe('realtimeClientTools action projection', () => {
       },
     });
 
-    const stale = await (tools as any).invokeCurrentUiCommand({ commandId: 'current-ui-command:retired' });
+    const stale = await tools.invokeCurrentUiCommand({ commandId: 'current-ui-command:retired' });
     expect(JSON.parse(stale)).toEqual({
       ok: false,
       errorCode: 'stale_surface',
@@ -212,7 +246,7 @@ describe('realtimeClientTools action projection', () => {
     });
     expect(stale).not.toContain('current-ui-command:retired');
 
-    const denied = await (tools as any).invokeAction({
+    const denied = await tools.invokeAction({
       action: { pluginId: 'acme.triage', localId: 'refresh' },
       input: { private: 'must-not-be-echoed' },
     });
@@ -225,7 +259,7 @@ describe('realtimeClientTools action projection', () => {
 
     const cancelled = new AbortController();
     cancelled.abort();
-    await expect((tools as any).invokeCurrentUiCommand(
+    await expect(tools.invokeCurrentUiCommand(
       { commandId: 'current-ui-command:cancelled' },
       { signal: cancelled.signal },
     )).resolves.toBe(JSON.stringify({

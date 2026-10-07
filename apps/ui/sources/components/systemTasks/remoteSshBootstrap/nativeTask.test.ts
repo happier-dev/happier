@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { SystemTaskSpec } from '@happier-dev/protocol';
 import { SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks';
 import type { NativeSshModule } from '@happier-dev/ssh-native';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 
 const HOME_TARGET = {
     profileId: 'home-profile',
@@ -30,6 +31,56 @@ const HOME_TARGET = {
 
 const REMOTE_PUBLIC_KEY = Buffer.alloc(32, 3).toString('base64');
 const PAIRING_SECRET = Buffer.alloc(32, 7).toString('base64url');
+const VERIFIED_INSTALL_COMMAND = 'verified self-download install command';
+
+const resolveInstallPlan = async () => ({
+    binaryPath: '$HOME/.happier/cli/current/happier',
+    versionId: '1.2.3',
+    source: 'https://downloads.example.test/happier.tar.gz',
+    command: VERIFIED_INSTALL_COMMAND,
+});
+
+function readInstallationTextResult(command: string) {
+    if (command.includes('uname -s')) {
+        return { status: 0, stdout: JSON.stringify({ platform: 'linux', arch: 'x86_64' }), stderr: '' };
+    }
+    if (command === VERIFIED_INSTALL_COMMAND) return { status: 0, stdout: '', stderr: '' };
+    return null;
+}
+
+async function prepareApprovalBoundary(serverUrl: string, runtimeOrigin = serverUrl) {
+    const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+    const { setServerProfileIdentityForUrl } = await import('@/sync/domains/server/serverProfiles');
+    const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+    const { setRuntimeFetch, resetRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+    const machineKey = new Uint8Array(32).fill(5);
+    const publicKey = (await import('tweetnacl')).default.box.keyPair.fromSecretKey(machineKey).publicKey;
+    const credentials = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({
+        token: 'home-token',
+        encryption: { publicKey: Buffer.from(publicKey).toString('base64'), machineKey: Buffer.from(machineKey).toString('base64') },
+    });
+    const approvals: Array<{ url: string; authorization: string | null; body: unknown }> = [];
+    setRuntimeFetch(async (url, init) => {
+        const target = new URL(String(url));
+        if (target.origin !== new URL(runtimeOrigin).origin && target.origin !== new URL(serverUrl).origin) {
+            throw new Error(`Unexpected approval origin: ${target.origin}`);
+        }
+        if (target.pathname === '/health' || target.pathname === '/v1/auth/ping') return Response.json({});
+        if (target.pathname === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({
+            capabilities: { serverIdentity: { serverIdentityId: HOME_TARGET.homeServerIdentityId } },
+        }));
+        if (target.pathname === '/v1/account/encryption') return Response.json({ mode: 'e2ee', updatedAt: 0 });
+        if (target.pathname === '/v1/auth/request/status') return Response.json({ status: 'pending', supportsV2: true });
+        if (target.pathname === '/v1/auth/response') {
+            approvals.push({ url: String(url), authorization: new Headers(init?.headers).get('Authorization'), body: JSON.parse(String(init?.body)) });
+            return Response.json({ success: true });
+        }
+        throw new Error(`Unexpected approval path: ${target.pathname}`);
+    });
+    const profile = await upsertAndActivateServer({ serverUrl });
+    await setServerProfileIdentityForUrl(serverUrl, HOME_TARGET.homeServerIdentityId);
+    return { profile, credentials, approvals, dispose() { credentials.mockRestore(); resetRuntimeFetch(); } };
+}
 
 function completeRemoteEnrollment(
     options: Readonly<{ onStdoutChunk?: (text: string) => void }>,
@@ -110,6 +161,8 @@ describe('runNativeRemoteSshBootstrapTask', () => {
             } as const),
             exec: vi.fn(async (request) => {
                 commands.push(request.command);
+                const installation = readInstallationTextResult(request.command);
+                if (installation) return { exitCode: installation.status, stdout: installation.stdout, stderr: installation.stderr };
                 if (request.command.includes('auth status')) {
                     return {
                         exitCode: 0,
@@ -142,6 +195,7 @@ describe('runNativeRemoteSshBootstrapTask', () => {
             taskId: 'task-a',
             nativeModule,
             spec: createRemoteBootstrapSpec(),
+            resolveInstallPlan,
         })).resolves.toEqual({
             machineId: 'machine-a',
         });
@@ -171,15 +225,11 @@ describe('runNativeRemoteSshBootstrapTask', () => {
             cancelRequest: vi.fn(async () => undefined),
         } satisfies NativeSshModule;
         const commands: string[] = [];
-        let serverConfigureAttempts = 0;
         const commandRunner = {
             runJsonCommand: vi.fn(async ({ command }: { command: string }) => {
                 commands.push(command);
                 if (command.includes('server set')) {
-                    serverConfigureAttempts += 1;
-                    return serverConfigureAttempts === 1
-                        ? { ok: false, data: {} }
-                        : { ok: true, data: {} };
+                    return { ok: true, data: {} };
                 }
                 if (command.includes('auth status')) {
                     return {
@@ -267,7 +317,8 @@ describe('runNativeRemoteSshBootstrapTask', () => {
                 }
                 return { ok: true, data: {} };
             }),
-            runTextCommand: vi.fn(async (options: { onStdoutChunk?: (text: string) => void }) => completeRemoteEnrollment(options)),
+            runTextCommand: vi.fn(async (options: { command: string; onStdoutChunk?: (text: string) => void }) =>
+                readInstallationTextResult(options.command) ?? completeRemoteEnrollment(options)),
         };
 
         await expect(loaded!.runNativeRemoteSshBootstrapTask({
@@ -275,6 +326,7 @@ describe('runNativeRemoteSshBootstrapTask', () => {
             nativeModule,
             spec: createRemoteBootstrapSpec(),
             commandRunner,
+            resolveInstallPlan,
             prompt: async () => ({ approved: true }),
             approveLocalAuthRequest: async () => undefined,
         })).resolves.toEqual({
@@ -329,7 +381,8 @@ describe('runNativeRemoteSshBootstrapTask', () => {
                 }
                 return { ok: true, data: {} };
             }),
-            runTextCommand: vi.fn(async (options: { onStdoutChunk?: (text: string) => void }) => completeRemoteEnrollment(options)),
+            runTextCommand: vi.fn(async (options: { command: string; onStdoutChunk?: (text: string) => void }) =>
+                readInstallationTextResult(options.command) ?? completeRemoteEnrollment(options)),
         };
         const approveLocalAuthRequest = vi.fn(async () => undefined);
 
@@ -338,6 +391,7 @@ describe('runNativeRemoteSshBootstrapTask', () => {
             nativeModule,
             spec: createRemoteBootstrapSpec(),
             commandRunner,
+            resolveInstallPlan,
             prompt: async () => ({ approved: true }),
             approveLocalAuthRequest,
         })).resolves.toEqual({
@@ -404,7 +458,8 @@ describe('runNativeRemoteSshBootstrapTask', () => {
                 }
                 return { ok: true, data: {} };
             }),
-            runTextCommand: vi.fn(async () => ({ status: 0, stdout: '', stderr: '' })),
+            runTextCommand: vi.fn(async ({ command }: { command: string }) =>
+                readInstallationTextResult(command) ?? { status: 0, stdout: '', stderr: '' }),
         };
 
         await expect(loaded!.runNativeRemoteSshBootstrapTask({
@@ -420,6 +475,7 @@ describe('runNativeRemoteSshBootstrapTask', () => {
                 },
             }),
             commandRunner,
+            resolveInstallPlan,
         })).resolves.toEqual({
             machineId: 'machine-relay',
             relayRuntime: {
@@ -448,38 +504,7 @@ describe('runNativeRemoteSshBootstrapTask', () => {
 
     it('posts a pairing-bound data-key v3 response to the exact Home target', async () => {
         vi.resetModules();
-        const authApproveWithTransport = vi.fn(async () => 'approved' as const);
-        const machineKey = new Uint8Array(32).fill(5);
-        const contentPublicKey = (await import('tweetnacl')).default.box.keyPair.fromSecretKey(machineKey).publicKey;
-        const getCredentialsForServerUrl = vi.fn(async () => ({
-            token: 'home-token',
-            encryption: {
-                publicKey: Buffer.from(contentPublicKey).toString('base64'),
-                machineKey: Buffer.from(machineKey).toString('base64'),
-            },
-        }));
-        vi.doMock('@/auth/storage/tokenStorage', async (importOriginal) => {
-            const actual = await importOriginal<typeof import('@/auth/storage/tokenStorage')>();
-            return {
-                ...actual,
-                TokenStorage: {
-                    getCredentialsForServerUrl,
-                },
-            };
-        });
-        vi.doMock('@/auth/flows/approve', () => ({ authApproveWithTransport }));
-        vi.doMock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
-            const profile = {
-                id: 'home-profile',
-                serverIdentityId: 'srv_home_identity',
-                serverUrl: 'https://relay.example.test',
-            };
-            return {
-                ...await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>(),
-                listServerProfiles: () => [profile],
-                getServerProfileById: (profileId: string) => profileId === profile.id ? profile : null,
-            };
-        });
+        const boundary = await prepareApprovalBoundary(HOME_TARGET.applicationUrl);
 
         try {
             const loaded = await import('./nativeTask');
@@ -541,7 +566,9 @@ describe('runNativeRemoteSshBootstrapTask', () => {
                     }
                     return { ok: true, data: {} };
                 }),
-                runTextCommand: vi.fn(async (options: { onStdoutChunk?: (text: string) => void }) => {
+                runTextCommand: vi.fn(async (options: { command: string; onStdoutChunk?: (text: string) => void }) => {
+                    const installation = readInstallationTextResult(options.command);
+                    if (installation) return installation;
                     const result = completeRemoteEnrollment(options, {
                         homeServerIdentityId: remoteHomeServerIdentityId,
                         publicKey,
@@ -559,23 +586,20 @@ describe('runNativeRemoteSshBootstrapTask', () => {
                 spec: createRemoteBootstrapSpec({
                     params: {
                         ...createRemoteBootstrapSpec().params as Record<string, unknown>,
-                        homeTarget: HOME_TARGET,
+                        homeTarget: { ...HOME_TARGET, profileId: boundary.profile.id },
                     },
                 }),
                 commandRunner,
+                resolveInstallPlan,
                 prompt: async () => ({ approved: true }),
             })).resolves.toMatchObject({ machineId: 'machine-paired' });
-            expect(authApproveWithTransport).toHaveBeenCalledWith(expect.objectContaining({
-                transport: expect.objectContaining({
-                    runtimeOrigin: 'https://relay.example.test',
-                    homeServerIdentityId: 'srv_home_identity',
-                }),
-                token: 'home-token',
-                responseKind: 'dataKey',
-            }));
-            expect(getCredentialsForServerUrl).toHaveBeenCalledWith(
+            expect(boundary.approvals).toEqual([{
+                url: 'https://relay.example.test/v1/auth/response', authorization: 'Bearer home-token',
+                body: expect.objectContaining({ publicKey, responseKind: 'dataKey', response: expect.any(String) }),
+            }]);
+            expect(boundary.credentials).toHaveBeenCalledWith(
                 'https://relay.example.test',
-                { serverId: 'home-profile' },
+                { serverId: boundary.profile.id },
             );
 
             remoteHomeServerIdentityId = 'srv_different_home';
@@ -585,17 +609,16 @@ describe('runNativeRemoteSshBootstrapTask', () => {
                 spec: createRemoteBootstrapSpec({
                     params: {
                         ...createRemoteBootstrapSpec().params as Record<string, unknown>,
-                        homeTarget: HOME_TARGET,
+                        homeTarget: { ...HOME_TARGET, profileId: boundary.profile.id },
                     },
                 }),
                 commandRunner,
+                resolveInstallPlan,
                 prompt: async () => ({ approved: true }),
             })).rejects.toMatchObject({ code: 'home_identity_mismatch' });
-            expect(authApproveWithTransport).toHaveBeenCalledTimes(1);
+            expect(boundary.approvals).toHaveLength(1);
         } finally {
-            vi.doUnmock('@/auth/storage/tokenStorage');
-            vi.doUnmock('@/auth/flows/approve');
-            vi.doUnmock('@/sync/domains/server/serverProfiles');
+            boundary.dispose();
             vi.resetModules();
         }
     });
@@ -603,46 +626,20 @@ describe('runNativeRemoteSshBootstrapTask', () => {
     it('acquires and releases the canonical Iroh enrollment transport for an Iroh-only Home target', async () => {
         vi.resetModules();
         const irohEndpointId = 'a'.repeat(64);
-        const authApproveWithTransport = vi.fn(async () => 'approved' as const);
         const release = vi.fn(async () => undefined);
-        const acquireIrohHomeRuntimeOrigin = vi.fn(async () => ({
+        const ensureHomeTunnel = vi.fn(async () => ({
             leaseId: 'native-task-iroh-lease',
-            localUrl: 'http://127.0.0.1:45992',
             runtimeOrigin: 'http://127.0.0.1:45992',
             homeServerIdentityId: 'srv_home_identity',
-            endpointId: irohEndpointId,
+            homeEndpointId: irohEndpointId,
             carrier: 'iroh' as const,
             observedPath: 'direct' as const,
-            status: 'ready' as const,
-            release,
+            startedAtMs: Date.now(),
         }));
-        const machineKey = new Uint8Array(32).fill(5);
-        const contentPublicKey = (await import('tweetnacl')).default.box.keyPair.fromSecretKey(machineKey).publicKey;
-        const getCredentialsForServerUrl = vi.fn(async () => ({
-            token: 'home-token',
-            encryption: {
-                publicKey: Buffer.from(contentPublicKey).toString('base64'),
-                machineKey: Buffer.from(machineKey).toString('base64'),
-            },
-        }));
-        vi.doMock('@/auth/storage/tokenStorage', async (importOriginal) => ({
-            ...await importOriginal<typeof import('@/auth/storage/tokenStorage')>(),
-            TokenStorage: { getCredentialsForServerUrl },
-        }));
-        vi.doMock('@/auth/flows/approve', () => ({ authApproveWithTransport }));
-        vi.doMock('@/sync/runtime/nativeIrohTunnels/runtime', () => ({ acquireIrohHomeRuntimeOrigin }));
-        vi.doMock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
-            const profile = {
-                id: 'home-profile',
-                serverIdentityId: 'srv_home_identity',
-                serverUrl: 'http://localhost:3010',
-            };
-            return {
-                ...await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>(),
-                listServerProfiles: () => [profile],
-                getServerProfileById: (profileId: string) => profileId === profile.id ? profile : null,
-            };
-        });
+        const boundary = await prepareApprovalBoundary('http://localhost:3010', 'http://127.0.0.1:45992');
+        const { getIrohHomeTunnelRuntime, disposeIrohHomeTunnelRuntime } = await import('@/sync/runtime/nativeIrohTunnels/runtime');
+        await disposeIrohHomeTunnelRuntime();
+        getIrohHomeTunnelRuntime({ native: { ensureHomeTunnel, releaseHomeTunnel: release } });
 
         try {
             const loaded = await import('./nativeTask');
@@ -676,7 +673,9 @@ describe('runNativeRemoteSshBootstrapTask', () => {
                     }
                     return { ok: true, data: {} };
                 }),
-                runTextCommand: vi.fn(async (options: { onStdoutChunk?: (text: string) => void }) => {
+                runTextCommand: vi.fn(async (options: { command: string; onStdoutChunk?: (text: string) => void }) => {
+                    const installation = readInstallationTextResult(options.command);
+                    if (installation) return installation;
                     const result = completeRemoteEnrollment(options, {
                         createdAtMs: Date.now() - 1_000,
                         expiresAtMs: Date.now() + 60_000,
@@ -687,6 +686,7 @@ describe('runNativeRemoteSshBootstrapTask', () => {
             };
             const irohHomeTarget = {
                 ...HOME_TARGET,
+                profileId: boundary.profile.id,
                 descriptor: {
                     v: 1 as const,
                     homeServerIdentityId: 'srv_home_identity',
@@ -717,29 +717,22 @@ describe('runNativeRemoteSshBootstrapTask', () => {
                     },
                 }),
                 commandRunner,
+                resolveInstallPlan,
                 prompt: async () => ({ approved: true }),
             })).resolves.toMatchObject({ machineId: 'machine-paired' });
 
-            expect(acquireIrohHomeRuntimeOrigin).toHaveBeenCalledWith({
+            expect(ensureHomeTunnel).toHaveBeenCalledWith(expect.objectContaining({
                 homeServerIdentityId: 'srv_home_identity',
-                endpoint: { kind: 'iroh', endpointId: irohEndpointId },
-                canonicalServerUrl: 'http://localhost:3010',
-                verification: { kind: 'enrollment' },
-            });
-            expect(authApproveWithTransport).toHaveBeenCalledWith(expect.objectContaining({
-                transport: expect.objectContaining({
-                    carrier: 'iroh',
-                    endpointUrl: 'http://localhost:3010',
-                    runtimeOrigin: 'http://127.0.0.1:45992',
-                    homeServerIdentityId: 'srv_home_identity',
-                }),
+                endpointId: irohEndpointId,
             }));
+            expect(boundary.approvals).toEqual([expect.objectContaining({
+                url: 'http://127.0.0.1:45992/v1/auth/response', authorization: 'Bearer home-token',
+                body: expect.objectContaining({ responseKind: 'dataKey' }),
+            })]);
             expect(release).toHaveBeenCalledTimes(1);
         } finally {
-            vi.doUnmock('@/auth/storage/tokenStorage');
-            vi.doUnmock('@/auth/flows/approve');
-            vi.doUnmock('@/sync/runtime/nativeIrohTunnels/runtime');
-            vi.doUnmock('@/sync/domains/server/serverProfiles');
+            await disposeIrohHomeTunnelRuntime();
+            boundary.dispose();
             vi.resetModules();
         }
     });

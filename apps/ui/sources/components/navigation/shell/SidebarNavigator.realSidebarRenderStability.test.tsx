@@ -1,8 +1,7 @@
 import React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
-import { installPartialStorageModuleMock } from '@/dev/testkit/mocks/storage';
 import { installReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 import type { DesktopWindowState } from '@/utils/platform/desktopWindowBridge';
 
@@ -94,9 +93,6 @@ function resolveMainContentMouseDownListener(records: RegisteredDocumentListener
 
 installNavigationShellCommonModuleMocks({
     reactNative: installReactNativeWebMock({
-        View: (props: any) => React.createElement('View', props, props.children),
-        Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-        Text: (props: any) => React.createElement('Text', props, props.children),
         Dimensions: {
             get: () => ({
                 width: hoistedState.mockWindowDimensions.width,
@@ -133,25 +129,8 @@ installNavigationShellCommonModuleMocks({
             },
         }).module;
     },
-    storage: installPartialStorageModuleMock({
-        useLocalSetting: (key: string) => {
-            if (key === 'sidebarCollapsed') return false;
-            if (key === 'sidebarWidthPx') return 320;
-            if (key === 'sidebarWidthBasisPx') return 1200;
-            return null;
-        },
-        useLocalSettingMutable: (key: string) => {
-            if (key === 'sidebarCollapsed') return [false, vi.fn()] as const;
-            if (key === 'sidebarWidthPx') return [320, vi.fn()] as const;
-            if (key === 'sidebarWidthBasisPx') return [1200, vi.fn()] as const;
-            return [null, vi.fn()] as const;
-        },
-        useFriendRequests: () => [],
-        useSetting: () => false,
-        useSocketStatus: () => ({ status: 'connected', lastError: null }),
-        useSyncError: () => null,
-        useRealtimeStatus: () => 'disconnected',
-    }),
+    storage: async (importOriginal) => importOriginal<typeof import('@/sync/domains/state/storage')>(),
+    appPaneProvider: async () => vi.importActual<typeof import('@/components/appShell/panes/AppPaneProvider')>('@/components/appShell/panes/AppPaneProvider'),
 });
 
 vi.mock('@/auth/context/AuthContext', () => ({
@@ -243,15 +222,17 @@ vi.mock('@/components/appShell/search/UniversalSearchRuntimeContext', async (imp
     useUniversalSearchRuntime: () => ({ open: vi.fn(), buildCommands: vi.fn() }),
 }));
 
-vi.mock('@/components/ui/popover', () => ({
-    PopoverBoundaryProvider: ({ children }: any) => React.createElement(React.Fragment, null, children),
-    PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
-}));
-
 // Configure the platform boundaries before loading the real shell, outside behavior-test timeouts.
+const { storage } = await import('@/sync/domains/state/storage');
+const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
 const { SidebarNavigator } = await import('./SidebarNavigator');
+const initialStorageState = storage.getState();
 
-afterEach(() => {
+beforeEach(() => {
+    storage.setState({ ...initialStorageState, localSettings: { ...initialStorageState.localSettings,
+        sidebarCollapsed: false, sidebarWidthPx: 320, sidebarWidthBasisPx: 1200 } }, true);
+});
+afterEach(async () => {
     hoistedState.isDesktopHost = false;
     hoistedState.startDesktopWindowDragging.mockReset();
     hoistedState.getDesktopWindowChromePolicy.mockReset();
@@ -260,7 +241,8 @@ afterEach(() => {
     hoistedState.getDesktopWindowState.mockResolvedValue({ isMaximized: false });
     hoistedState.listenDesktopWindowState.mockReset();
     hoistedState.listenDesktopWindowState.mockResolvedValue(async () => {});
-    standardCleanup();
+    await standardCleanup();
+    storage.setState(initialStorageState, true);
 });
 
 function flattenStyle(style: unknown): Record<string, unknown> {
@@ -272,7 +254,7 @@ function flattenStyle(style: unknown): Record<string, unknown> {
 
 describe('SidebarNavigator real sidebar render stability', () => {
     it('renders the authenticated app shell with the real rail and Sessions column on web', async () => {
-        const screen = await renderScreen(<SidebarNavigator />);
+        const screen = await renderScreen(<AppPaneProvider><SidebarNavigator /></AppPaneProvider>);
 
         expect(screen.findByTestId('main-view')).toBeTruthy();
         expect(screen.findByTestId('app-rail')).toBeTruthy();
@@ -285,7 +267,7 @@ describe('SidebarNavigator real sidebar render stability', () => {
         hoistedState.isDesktopHost = true;
         const documentListenerSpy = installDocumentEventListenerSpy();
         try {
-            const screen = await renderScreen(<SidebarNavigator />);
+            const screen = await renderScreen(<AppPaneProvider><SidebarNavigator /></AppPaneProvider>);
             const dragSurface = screen.findByTestId('desktop-main-content-drag-surface');
 
             expect(dragSurface).toBeTruthy();

@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { renderWithSessionTranscriptSource as renderScreen } from '@/dev/testkit';
+import { renderScreen as renderBaseScreen } from '@/dev/testkit';
+import { AppSessionTranscriptSourceProvider } from '../source/appSessionTranscriptSource';
 import { t } from '@/text';
 import type { AgentEvent } from "@happier-dev/session-core/raw";
 
@@ -9,6 +10,14 @@ import { TranscriptEventRow } from '@/components/sessions/transcript/events/Tran
 
 const MARK_TEST_ID_PREFIX = 'transcript-agent-transition-divider-mark-';
 const DIVIDER_LOCAL_ID = 'agent-transition:local-1';
+
+function renderScreen(element: React.ReactElement) {
+    return renderBaseScreen(
+        <AppSessionTranscriptSourceProvider sessionId="sess-1" serverId="server-1">
+            {element}
+        </AppSessionTranscriptSourceProvider>,
+    );
+}
 
 /**
  * The divider's label, read the way it is laid out: every word in order, with

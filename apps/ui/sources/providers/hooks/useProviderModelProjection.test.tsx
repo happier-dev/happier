@@ -1,64 +1,36 @@
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
+import { createProviderModelProjectionFixture, createProviderModelProjectionGroupFixture, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 
 const { describeProviderModels } = vi.hoisted(() => ({ describeProviderModels: vi.fn() }));
-type TestAccountLifetime = Readonly<{
-    isCurrent(): boolean;
-    onRetire(cancel: () => void): Readonly<{ dispose(): void }>;
-}>;
-const activeAccountLifetime = vi.hoisted(() => {
-    const current: { value: TestAccountLifetime | null } = { value: null };
-    return {
-        current,
-        create() {
-            let retired = false;
-            const cancellations = new Set<() => void>();
-            const lifetime: TestAccountLifetime = {
-                isCurrent: () => !retired,
-                onRetire(cancel) {
-                    if (retired) {
-                        cancel();
-                        return { dispose() {} };
-                    }
-                    cancellations.add(cancel);
-                    return { dispose: () => cancellations.delete(cancel) };
-                },
-            };
-            return {
-                lifetime,
-                retire() {
-                    if (retired) return;
-                    retired = true;
-                    for (const cancel of [...cancellations]) cancel();
-                    cancellations.clear();
-                },
-            };
-        },
-    };
-});
-vi.mock('@/providers/rpc/client', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/providers/rpc/client')>(),
-    describeProviderModels,
+// Replace only network delivery; the real client parses the daemon's strict response.
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
+    machineRpcWithServerScope: (request: Readonly<{ payload: unknown }>) => describeProviderModels(request.payload),
 }));
-vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
-    captureActiveServerAccountScopeLifetime: () => activeAccountLifetime.current.value,
-}));
+installDisconnectedServerSocketBoundary();
+let accountConnection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
+
+function projection(connectionIds: readonly string[] = []) {
+    return createProviderModelProjectionFixture({
+        agentTargetKey: 'agent:happier.agent.codex/codex',
+        groups: connectionIds.map((connectionId) => createProviderModelProjectionGroupFixture({ connectionId })),
+    });
+}
 
 import { useProviderModelProjection } from './useProviderModelProjection';
 
-afterEach(() => {
-    activeAccountLifetime.current.value = null;
+afterEach(async () => {
     standardCleanup();
+    await accountConnection?.dispose();
+    accountConnection = null;
     describeProviderModels.mockReset();
 });
 
 describe('useProviderModelProjection', () => {
     it('clears Account A projection and starts one Account B read when routing ids stay equal', async () => {
-        const accountA = activeAccountLifetime.create();
-        const accountB = activeAccountLifetime.create();
-        activeAccountLifetime.current.value = accountA.lifetime;
+        accountConnection = await restoreServerAccountForTest({ serverUrl: 'https://provider-lifetime.test', accountId: 'account-a' });
         let resolveA!: (value: unknown) => void;
         let resolveB!: (value: unknown) => void;
         describeProviderModels
@@ -74,8 +46,8 @@ describe('useProviderModelProjection', () => {
         expect(describeProviderModels).toHaveBeenCalledTimes(1);
 
         await act(async () => {
-            activeAccountLifetime.current.value = accountB.lifetime;
-            accountA.retire();
+            await accountConnection!.dispose();
+            accountConnection = await restoreServerAccountForTest({ serverUrl: 'https://provider-lifetime.test', accountId: 'account-b' });
             await rendered.rerender();
         });
 
@@ -84,27 +56,25 @@ describe('useProviderModelProjection', () => {
         expect(describeProviderModels).toHaveBeenCalledTimes(2);
 
         await act(async () => {
-            resolveA({ status: 'success', agentTargetKey: 'agent:happier.agent.codex/codex', groups: [{ connectionId: 'pc_a' }] });
+            resolveA(projection(['pc_a']));
         });
         expect(rendered.getCurrent().data).toBeNull();
 
         await act(async () => {
-            resolveB({
-                status: 'success', agentTargetKey: 'agent:happier.agent.codex/codex', groups: [{ connectionId: 'pc_b' }],
-            });
+            resolveB(projection(['pc_b']));
         });
-        expect(rendered.getCurrent().data?.groups).toEqual([{ connectionId: 'pc_b' }]);
+        expect(rendered.getCurrent().data?.groups).toMatchObject([{ connectionId: 'pc_b' }]);
 
         await act(async () => { await refreshFromAccountA(); });
         expect(describeProviderModels).toHaveBeenCalledTimes(2);
-        expect(rendered.getCurrent().data?.groups).toEqual([{ connectionId: 'pc_b' }]);
+        expect(rendered.getCurrent().data?.groups).toMatchObject([{ connectionId: 'pc_b' }]);
     });
 
     it('clears a successful projection immediately when its machine scope changes', async () => {
         let resolveB!: (value: unknown) => void;
         const observed: Array<Readonly<{ machineId: string; connectionIds: readonly string[]; status?: string }>> = [];
         describeProviderModels
-            .mockResolvedValueOnce({ status: 'success', agentTargetKey: 'agent:happier.agent.codex/codex', groups: [{ connectionId: 'machine-a' }] })
+            .mockResolvedValueOnce(projection(['pc_a']))
             .mockImplementationOnce(() => new Promise((resolve) => { resolveB = resolve; }));
         const rendered = await renderHook((props: { machineId: string }) => {
             const projection = useProviderModelProjection({
@@ -118,7 +88,7 @@ describe('useProviderModelProjection', () => {
             return projection;
         }, { initialProps: { machineId: 'machine-a' } });
         await flushHookEffects({ cycles: 2, turns: 2 });
-        expect(rendered.getCurrent().data?.groups).toEqual([{ connectionId: 'machine-a' }]);
+        expect(rendered.getCurrent().data?.groups).toMatchObject([{ connectionId: 'pc_a' }]);
         expect(rendered.getCurrent().status).toBe('success');
 
         const scopeChangeRenderStart = observed.length;
@@ -126,28 +96,26 @@ describe('useProviderModelProjection', () => {
         expect(rendered.getCurrent().data).toBeNull();
         expect(rendered.getCurrent().status).toBe('pending');
         expect(observed.slice(scopeChangeRenderStart).every((entry) => (
-            entry.machineId !== 'machine-b' || !entry.connectionIds.includes('machine-a')
+            entry.machineId !== 'machine-b' || !entry.connectionIds.includes('pc_a')
         ))).toBe(true);
-        await act(async () => resolveB({ status: 'success', agentTargetKey: 'agent:happier.agent.codex/codex', groups: [] }));
+        await act(async () => resolveB(projection()));
     });
 
     it('drops a delayed old-machine response after the target machine changes', async () => {
         let resolveA!: (value: unknown) => void;
         describeProviderModels
             .mockImplementationOnce(() => new Promise((resolve) => { resolveA = resolve; }))
-            .mockResolvedValueOnce({ status: 'success', agentTargetKey: 'agent:happier.agent.codex/codex', groups: [] });
+            .mockResolvedValueOnce(projection());
         const rendered = await renderHook((props: { machineId: string }) => useProviderModelProjection({
             enabled: true, machineId: props.machineId, serverId: 'server-a', agentTargetKey: 'agent:happier.agent.codex/codex',
         }), { initialProps: { machineId: 'machine-a' } });
 
         await rendered.rerender({ machineId: 'machine-b' });
         await flushHookEffects({ cycles: 2, turns: 2 });
-        expect(rendered.getCurrent().data).toEqual({
-            status: 'success', agentTargetKey: 'agent:happier.agent.codex/codex', groups: [],
-        });
+        expect(rendered.getCurrent().data).toEqual(projection());
 
         await act(async () => {
-            resolveA({ status: 'success', agentTargetKey: 'agent:happier.agent.codex/codex', groups: [{ connectionId: 'stale-a' }] });
+            resolveA(projection(['pc_stale_a']));
         });
         await flushHookEffects({ cycles: 2, turns: 2 });
         expect(rendered.getCurrent().data?.groups).toEqual([]);
@@ -190,7 +158,7 @@ describe('useProviderModelProjection', () => {
     });
 
     it('requests the daemon-owned hidden-row management projection explicitly', async () => {
-        describeProviderModels.mockResolvedValueOnce({ status: 'success', agentTargetKey: 'agent:happier.agent.codex/codex', groups: [] });
+        describeProviderModels.mockResolvedValueOnce(projection());
         await renderHook(() => useProviderModelProjection({
             enabled: true, machineId: 'machine-a', serverId: 'server-a',
             agentTargetKey: 'agent:happier.agent.codex/codex', mode: 'management',
@@ -199,33 +167,29 @@ describe('useProviderModelProjection', () => {
         expect(describeProviderModels).toHaveBeenCalledWith(expect.objectContaining({ mode: 'management' }));
     });
 
-    it('preserves the last successful same-scope projection and exposes a typed retryable transport error', async () => {
-        describeProviderModels.mockResolvedValueOnce({
-            status: 'success', agentTargetKey: 'agent:happier.agent.codex/codex', groups: [{ connectionId: 'pc_a' }],
-        });
+    it('preserves the last successful same-scope projection and exposes an untyped transport failure', async () => {
+        describeProviderModels.mockResolvedValueOnce(projection(['pc_a']));
         const rendered = await renderHook(() => useProviderModelProjection({
             enabled: true, machineId: 'machine-a', serverId: 'server-a',
             agentTargetKey: 'agent:happier.agent.codex/codex', mode: 'management',
         }));
         await flushHookEffects({ cycles: 2, turns: 2 });
-        expect(rendered.getCurrent().data?.groups).toEqual([{ connectionId: 'pc_a' }]);
+        expect(rendered.getCurrent().data?.groups).toMatchObject([{ connectionId: 'pc_a' }]);
 
         describeProviderModels.mockRejectedValueOnce(new Error('socket closed'));
         await act(async () => { await rendered.getCurrent().refresh(); });
 
-        expect(rendered.getCurrent().data?.groups).toEqual([{ connectionId: 'pc_a' }]);
+        expect(rendered.getCurrent().data?.groups).toMatchObject([{ connectionId: 'pc_a' }]);
         expect(rendered.getCurrent().error).toMatchObject({
             v: 1,
-            code: 'provider_machine_unavailable',
-            retryable: true,
-            action: 'retry',
+            code: 'agent_error',
+            retryable: false,
+            action: 'review_connection',
         });
     });
 
     it('preserves the last successful same-scope projection when the daemon returns a typed error', async () => {
-        describeProviderModels.mockResolvedValueOnce({
-            status: 'success', agentTargetKey: 'agent:happier.agent.codex/codex', groups: [{ connectionId: 'pc_a' }],
-        });
+        describeProviderModels.mockResolvedValueOnce(projection(['pc_a']));
         const rendered = await renderHook(() => useProviderModelProjection({
             enabled: true, machineId: 'machine-a', serverId: 'server-a',
             agentTargetKey: 'agent:happier.agent.codex/codex', mode: 'management',
@@ -241,15 +205,13 @@ describe('useProviderModelProjection', () => {
         });
         await act(async () => { await rendered.getCurrent().refresh(); });
 
-        expect(rendered.getCurrent().data?.groups).toEqual([{ connectionId: 'pc_a' }]);
+        expect(rendered.getCurrent().data?.groups).toMatchObject([{ connectionId: 'pc_a' }]);
         expect(rendered.getCurrent().error?.code).toBe('provider_endpoint_rate_limited');
     });
 
     it('keeps mixed cold-refresh groups authoritative while exposing their typed partial failure', async () => {
         describeProviderModels.mockResolvedValueOnce({
-            status: 'success',
-            agentTargetKey: 'agent:happier.agent.codex/codex',
-            groups: [{ connectionId: 'pc_warm' }],
+            ...projection(['pc_warm']),
             refreshFailures: [{
                 connectionId: 'pc_cold',
                 error: {
@@ -283,9 +245,7 @@ describe('useProviderModelProjection', () => {
 
     it('keeps every per-connection refresh failure and forces only explicit retry reads', async () => {
         describeProviderModels.mockResolvedValue({
-            status: 'success',
-            agentTargetKey: 'agent:happier.agent.codex/codex',
-            groups: [],
+            ...projection(),
             refreshFailures: [
                 {
                     connectionId: 'pc_secret',

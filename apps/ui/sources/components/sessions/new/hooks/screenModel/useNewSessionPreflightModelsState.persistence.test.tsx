@@ -1,609 +1,135 @@
-import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
+import { renderHook, standardCleanup } from '@/dev/testkit';
+import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import type { PreflightModelList } from '@/sync/domains/models/modelOptions';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
-import { resetDynamicModelProbeCacheForTests } from '@/sync/domains/models/dynamicModelProbeCache';
 import { buildDynamicModelProbeCacheKey } from '@/sync/domains/models/dynamicModelProbeCacheKey';
-import { renderScreen } from '@/dev/testkit';
 
+const target = { kind: 'backend', backendId: 'codex' } as const;
+const storageEntries = new Map<string, string>();
+const localStorageBoundary = {
+    getItem: (key: string) => storageEntries.get(key) ?? null,
+    setItem: (key: string, value: string) => { storageEntries.set(key, value); },
+    removeItem: (key: string) => { storageEntries.delete(key); },
+};
+const thinkingOption = {
+    id: 'reasoning_effort', name: 'Thinking', type: 'select', currentValue: 'medium',
+    options: [{ value: 'low', name: 'Low' }, { value: 'medium', name: 'Medium' }],
+} as const;
+const speedOption = {
+    id: 'service_tier', name: 'Speed', type: 'select', currentValue: 'standard',
+    options: [{ value: 'standard', name: 'Standard' }, { value: 'fast', name: 'Fast' }],
+} as const;
+const legacySpeedOption = {
+    id: 'speed', name: 'Fast', type: 'boolean', currentValue: 'standard',
+    options: [{ value: 'standard', name: 'Standard' }, { value: 'fast', name: 'Fast' }],
+} as const;
+let probeResult: Readonly<Record<string, unknown>>;
+const capabilityRpc = vi.fn(async () => ({ ok: true, result: probeResult }));
+let network: Awaited<ReturnType<typeof installSessionOpsNetworkBoundary>> | undefined;
+let serverId: string;
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-type ProbeModelsResult = Readonly<{
-  provider?: string;
-  source?: 'dynamic' | 'static';
-  availableModels: Array<{
-    id: string;
-    name: string;
-    modelOptions?: Array<{
-      id: string;
-      name: string;
-      type: string;
-      currentValue: string;
-      options?: Array<{ value: string; name: string }>;
-    }>;
-  }>;
-  supportsFreeform: boolean;
-}>;
-
-type ProbeResponse = Readonly<{
-  supported: true;
-  response: Readonly<{
-    ok: true;
-    result: ProbeModelsResult;
-  }>;
-}>;
-
-const CODEX_BACKEND_TARGET = { kind: 'backend', backendId: 'codex' } as const;
-const CODEX_BACKEND_TARGET_KEY = resolveBackendTargetKeyV2(CODEX_BACKEND_TARGET);
-
-const machineCapabilitiesInvokeMock = vi.fn(async (_machineId: any, _request: any, _options: any): Promise<ProbeResponse> => ({
-  supported: true as const,
-  response: {
-    ok: true as const,
-    result: {
-      availableModels: [{
-        id: 'm1',
-        name: 'Model 1',
-        modelOptions: [{
-          id: 'reasoning_effort',
-          name: 'Thinking',
-          type: 'select',
-          currentValue: 'medium',
-          options: [
-            { value: 'low', name: 'Low' },
-            { value: 'medium', name: 'Medium' },
-          ],
-        }],
-      }],
-      supportsFreeform: false,
-    },
-  },
-}));
-
-vi.mock('@/sync/ops/capabilities', () => ({
-  machineCapabilitiesInvoke: machineCapabilitiesInvokeMock,
-}));
-
-vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/agents/catalog/catalog')>();
-  return {
-    ...actual,
-    getAgentCore: () => ({ model: { supportsSelection: true, allowedModes: [], defaultMode: 'default', supportsFreeform: false } }),
-  };
-});
-
-describe('useNewSessionPreflightModelsState (persistence)', () => {
-  it('does not reuse a native probe cache entry for a provider connection on the same target', async () => {
+async function loadOwnerGraph() {
+    network?.dispose();
     vi.resetModules();
-    machineCapabilitiesInvokeMock.mockClear();
-    resetDynamicModelProbeCacheForTests();
+    // Keep Home credential admission, RPC schemas, discovery and persisted cache real.
+    network = await installSessionOpsNetworkBoundary();
+    serverId = (await network.addHome('https://model-probe-persistence.test', 'account-a')).id;
+    network.setRpcResponder(async (request) => {
+        expect(request.targetId).toBe('machine-1');
+        expect(request.method).toBe(RPC_METHODS.CAPABILITIES_INVOKE);
+        return capabilityRpc();
+    });
+    await loadSyncSingletonForTests();
+    return import('./useNewSessionPreflightModelsState');
+}
+
+async function mountOwner(providerConnectionId: string | null = null) {
     const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
-
-    function Harness(props: { providerConnectionId: string | null }) {
-      useNewSessionPreflightModelsState({
-        backendTarget: { kind: 'backend', backendId: 'codex' },
-        providerConnectionId: props.providerConnectionId,
-        selectedMachineId: 'machine-1',
-        capabilityServerId: 'server-1',
-        cwd: '/repo',
-      } as any).preflightModels;
-      return null;
-    }
-
-    const first = await renderScreen(React.createElement(Harness, { providerConnectionId: null }));
-    await act(async () => first.tree.unmount());
-    const second = await renderScreen(React.createElement(Harness, {
-      providerConnectionId: 'pc_01J00000000000000000000000',
+    return renderHook(() => useNewSessionPreflightModelsState({
+        backendTarget: target, providerConnectionId, selectedMachineId: 'machine-1',
+        capabilityServerId: serverId, cwd: '/repo',
     }));
-    await act(async () => second.tree.unmount());
+}
 
-    expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(2);
-  });
-
-  it('hydrates cached results across module reloads (app restarts)', async () => {
-    vi.resetModules();
-    machineCapabilitiesInvokeMock.mockClear();
-    resetDynamicModelProbeCacheForTests();
-
-    const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
-
-    let latestPreflightModels: any = null;
-    function Harness() {
-      latestPreflightModels = useNewSessionPreflightModelsState({
-        backendTarget: { kind: 'backend', backendId: 'codex' },
-        selectedMachineId: 'machine-1',
-        capabilityServerId: 'server-1',
-        cwd: '/repo',
-      }).preflightModels;
-      return null;
-    }
-
-    let root1!: renderer.ReactTestRenderer;
-    root1 = (await renderScreen(React.createElement(Harness))).tree;
-    await act(async () => {
-      root1.unmount();
-    });
-
-    // Simulate app restart: module registry cleared, in-memory cache gone, MMKV/localStorage remains.
-    vi.resetModules();
-
-    const { useNewSessionPreflightModelsState: useNewSessionPreflightModelsState2 } = await import('./useNewSessionPreflightModelsState');
-
-    let latestPreflightModelsAfterReload: any = null;
-    function Harness2() {
-      latestPreflightModelsAfterReload = useNewSessionPreflightModelsState2({
-        backendTarget: { kind: 'backend', backendId: 'codex' },
-        selectedMachineId: 'machine-1',
-        capabilityServerId: 'server-1',
-        cwd: '/repo',
-      }).preflightModels;
-      return null;
-    }
-
-    let root2!: renderer.ReactTestRenderer;
-    root2 = (await renderScreen(React.createElement(Harness2))).tree;
-    await act(async () => {
-      root2.unmount();
-    });
-
-    expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
-    expect(latestPreflightModels).toEqual({
-      availableModels: [{
-        id: 'm1',
-        name: 'Model 1',
-        modelOptions: [{
-          id: 'reasoning_effort',
-          name: 'Thinking',
-          type: 'select',
-          currentValue: 'medium',
-          options: [
-            { value: 'low', name: 'Low' },
-            { value: 'medium', name: 'Medium' },
-          ],
-        }],
-      }],
-      supportsFreeform: false,
-    });
-    expect(latestPreflightModelsAfterReload).toEqual(latestPreflightModels);
-  });
-
-  it('does not persist static fallback probe results across module reloads', async () => {
-    vi.resetModules();
-    resetDynamicModelProbeCacheForTests();
-    machineCapabilitiesInvokeMock.mockClear();
-
-    machineCapabilitiesInvokeMock.mockResolvedValue({
-      supported: true as const,
-      response: {
-        ok: true as const,
-        result: {
-          provider: 'codex',
-          source: 'static',
-          availableModels: [{ id: 'm1', name: 'Model 1', modelOptions: [] }],
-          supportsFreeform: false,
-        },
-      },
-    });
-
-    const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
-
-    function Harness() {
-      useNewSessionPreflightModelsState({
-        backendTarget: { kind: 'backend', backendId: 'codex' },
-        selectedMachineId: 'machine-1',
-        capabilityServerId: 'server-1',
-        cwd: '/repo',
-      }).preflightModels;
-      return null;
-    }
-
-    let root1!: renderer.ReactTestRenderer;
-    root1 = (await renderScreen(React.createElement(Harness))).tree;
-    await act(async () => {
-      root1.unmount();
-    });
-
-    // Simulate app restart: module registry cleared, in-memory cache gone.
-    vi.resetModules();
-
-    const { useNewSessionPreflightModelsState: useNewSessionPreflightModelsState2 } = await import('./useNewSessionPreflightModelsState');
-
-    function Harness2() {
-      useNewSessionPreflightModelsState2({
-        backendTarget: { kind: 'backend', backendId: 'codex' },
-        selectedMachineId: 'machine-1',
-        capabilityServerId: 'server-1',
-        cwd: '/repo',
-      }).preflightModels;
-      return null;
-    }
-
-    let root2!: renderer.ReactTestRenderer;
-    root2 = (await renderScreen(React.createElement(Harness2))).tree;
-    await act(async () => {
-      root2.unmount();
-    });
-
-    expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(2);
-  });
-
-  it('ignores legacy persisted model-option cache entries after the model-option contract changes', async () => {
-    vi.resetModules();
-    machineCapabilitiesInvokeMock.mockClear();
-
-    const cacheKey = buildDynamicModelProbeCacheKey({
-      machineId: 'machine-1',
-      targetKey: CODEX_BACKEND_TARGET_KEY,
-      providerConnectionId: null,
-      serverId: 'server-1',
-      cwd: '/repo',
-    });
-    if (!cacheKey) {
-      throw new Error('expected dynamic model cache key');
-    }
-
-    const previousWindow = (globalThis as Record<string, unknown>).window;
-    const previousDocument = (globalThis as Record<string, unknown>).document;
-    const storageEntries = new Map<string, string>();
-    const localStorage = {
-      getItem(key: string): string | null {
-        return storageEntries.get(key) ?? null;
-      },
-      setItem(key: string, value: string): void {
-        storageEntries.set(key, value);
-      },
-      removeItem(key: string): void {
-        storageEntries.delete(key);
-      },
-    };
-    (globalThis as Record<string, unknown>).window = { localStorage };
-    (globalThis as Record<string, unknown>).document = {};
-    localStorage.setItem('dynamic-model-probe-cache-v1', JSON.stringify({
-      version: 3,
-      entries: {
-        [cacheKey]: {
-          updatedAt: Date.now(),
-          value: {
-            availableModels: [{
-              id: 'gpt-5.4',
-              name: 'gpt-5.4',
-              modelOptions: [{
-                id: 'speed',
-                name: 'Fast',
-                type: 'boolean',
-                currentValue: false,
-              }],
-            }],
-            supportsFreeform: false,
-          },
-        },
-      },
-    }));
-
-    try {
-      machineCapabilitiesInvokeMock.mockResolvedValueOnce({
-        supported: true as const,
-        response: {
-          ok: true as const,
-          result: {
-            availableModels: [{
-              id: 'gpt-5.4',
-              name: 'gpt-5.4',
-              modelOptions: [{
-                id: 'speed',
-                name: 'Fast',
-                type: 'boolean',
-                currentValue: 'standard',
-                options: [
-                  { value: 'standard', name: 'Standard' },
-                  { value: 'fast', name: 'Fast' },
-                ],
-              }],
-            }],
-            supportsFreeform: false,
-          },
-        },
-      });
-
-      const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
-
-      let latestPreflightModels: any = null;
-      function Harness() {
-        latestPreflightModels = useNewSessionPreflightModelsState({
-          backendTarget: { kind: 'backend', backendId: 'codex' },
-          selectedMachineId: 'machine-1',
-          capabilityServerId: 'server-1',
-          cwd: '/repo',
-        }).preflightModels;
-        return null;
-      }
-
-      let root!: renderer.ReactTestRenderer;
-      root = (await renderScreen(React.createElement(Harness))).tree;
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        root.unmount();
-      });
-
-      expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
-      expect(latestPreflightModels).toEqual({
-        availableModels: [{
-          id: 'gpt-5.4',
-          name: 'gpt-5.4',
-          modelOptions: [{
-            id: 'speed',
-            name: 'Fast',
-            type: 'boolean',
-            currentValue: 'standard',
-            options: [
-              { value: 'standard', name: 'Standard' },
-              { value: 'fast', name: 'Fast' },
-            ],
-          }],
-        }],
+function expectModelFields(list: PreflightModelList | null, modelId: string, option: typeof thinkingOption | typeof speedOption | typeof legacySpeedOption) {
+    expect(list).toMatchObject({
         supportsFreeform: false,
-      });
-    } finally {
-      if (previousWindow === undefined) {
-        delete (globalThis as Record<string, unknown>).window;
-      } else {
-        (globalThis as Record<string, unknown>).window = previousWindow;
-      }
-      if (previousDocument === undefined) {
-        delete (globalThis as Record<string, unknown>).document;
-      } else {
-        (globalThis as Record<string, unknown>).document = previousDocument;
-      }
-    }
-  });
-
-  it('re-probes when a persisted dynamic-model cache entry predates model options metadata', async () => {
-    vi.resetModules();
-    machineCapabilitiesInvokeMock.mockClear();
-
-    const cacheKey = buildDynamicModelProbeCacheKey({
-      machineId: 'machine-1',
-      targetKey: CODEX_BACKEND_TARGET_KEY,
-      providerConnectionId: null,
-      serverId: 'server-1',
-      cwd: '/repo',
+        availableModels: [{ id: modelId, name: modelId, modelOptions: [option] }],
     });
-    if (!cacheKey) {
-      throw new Error('expected dynamic model cache key');
-    }
+    expect(list?.availableModels).toHaveLength(1);
+}
 
-    const previousWindow = (globalThis as Record<string, unknown>).window;
-    const previousDocument = (globalThis as Record<string, unknown>).document;
-    const storageEntries = new Map<string, string>();
-    const localStorage = {
-      getItem(key: string): string | null {
-        return storageEntries.get(key) ?? null;
-      },
-      setItem(key: string, value: string): void {
-        storageEntries.set(key, value);
-      },
-      removeItem(key: string): void {
-        storageEntries.delete(key);
-      },
-    };
-    (globalThis as Record<string, unknown>).window = { localStorage };
-    (globalThis as Record<string, unknown>).document = {};
-    localStorage.setItem('dynamic-model-probe-cache-v1', JSON.stringify({
-      version: 4,
-      entries: {
-        [cacheKey]: {
-          updatedAt: Date.now(),
-          value: {
-            availableModels: [{
-              id: 'gpt-5.4',
-              name: 'gpt-5.4',
-            }],
-            supportsFreeform: false,
-          },
-        },
-      },
-    }));
-
-    try {
-      machineCapabilitiesInvokeMock.mockResolvedValueOnce({
-        supported: true as const,
-        response: {
-          ok: true as const,
-          result: {
-            availableModels: [{
-              id: 'gpt-5.4',
-              name: 'gpt-5.4',
-              modelOptions: [{
-                id: 'reasoning_effort',
-                name: 'Thinking',
-                type: 'select',
-                currentValue: 'medium',
-                options: [
-                  { value: 'low', name: 'Low' },
-                  { value: 'medium', name: 'Medium' },
-                ],
-              }],
-            }],
-            supportsFreeform: false,
-          },
-        },
-      });
-
-      const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
-
-      let latestPreflightModels: any = null;
-      function Harness() {
-        latestPreflightModels = useNewSessionPreflightModelsState({
-          backendTarget: { kind: 'backend', backendId: 'codex' },
-          selectedMachineId: 'machine-1',
-          capabilityServerId: 'server-1',
-          cwd: '/repo',
-        }).preflightModels;
-        return null;
-      }
-
-      let root!: renderer.ReactTestRenderer;
-      root = (await renderScreen(React.createElement(Harness))).tree;
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        root.unmount();
-      });
-
-      expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
-      expect(latestPreflightModels).toEqual({
-        availableModels: [{
-          id: 'gpt-5.4',
-          name: 'gpt-5.4',
-          modelOptions: [{
-            id: 'reasoning_effort',
-            name: 'Thinking',
-            type: 'select',
-            currentValue: 'medium',
-            options: [
-              { value: 'low', name: 'Low' },
-              { value: 'medium', name: 'Medium' },
-            ],
-          }],
-        }],
-        supportsFreeform: false,
-      });
-    } finally {
-      if (previousWindow === undefined) {
-        delete (globalThis as Record<string, unknown>).window;
-      } else {
-        (globalThis as Record<string, unknown>).window = previousWindow;
-      }
-      if (previousDocument === undefined) {
-        delete (globalThis as Record<string, unknown>).document;
-      } else {
-        (globalThis as Record<string, unknown>).document = previousDocument;
-      }
-    }
-  });
-
-  it('re-probes when a persisted dynamic-model cache entry predates GPT 5.6 Speed metadata', async () => {
-    vi.resetModules();
-    machineCapabilitiesInvokeMock.mockClear();
-
-    const cacheKey = buildDynamicModelProbeCacheKey({
-      machineId: 'machine-1',
-      targetKey: CODEX_BACKEND_TARGET_KEY,
-      providerConnectionId: null,
-      serverId: 'server-1',
-      cwd: '/repo',
+describe('useNewSessionPreflightModelsState persistence through scoped daemon transport', () => {
+    beforeEach(async () => {
+        storageEntries.clear();
+        capabilityRpc.mockClear();
+        probeResult = { availableModels: [{ id: 'm1', name: 'm1', modelOptions: [thinkingOption] }], supportsFreeform: false };
+        // Browser storage is a genuine persistence boundary and survives module reloads.
+        vi.stubGlobal('window', { localStorage: localStorageBoundary });
+        vi.stubGlobal('document', {});
+        await loadOwnerGraph();
+        const { resetDynamicModelProbeCacheForTests } = await import('@/sync/domains/models/dynamicModelProbeCache');
+        resetDynamicModelProbeCacheForTests();
     });
-    if (!cacheKey) {
-      throw new Error('expected dynamic model cache key');
-    }
+    afterEach(async () => {
+        await standardCleanup();
+        network?.dispose();
+        network = undefined;
+        vi.unstubAllGlobals();
+    });
 
-    const previousWindow = (globalThis as Record<string, unknown>).window;
-    const previousDocument = (globalThis as Record<string, unknown>).document;
-    const storageEntries = new Map<string, string>();
-    const localStorage = {
-      getItem(key: string): string | null {
-        return storageEntries.get(key) ?? null;
-      },
-      setItem(key: string, value: string): void {
-        storageEntries.set(key, value);
-      },
-      removeItem(key: string): void {
-        storageEntries.delete(key);
-      },
-    };
-    (globalThis as Record<string, unknown>).window = { localStorage };
-    (globalThis as Record<string, unknown>).document = {};
-    localStorage.setItem('dynamic-model-probe-cache-v1', JSON.stringify({
-      version: 6,
-      entries: {
-        [cacheKey]: {
-          updatedAt: Date.now(),
-          value: {
-            availableModels: [{
-              id: 'gpt-5.6-sol',
-              name: 'GPT 5.6 Sol',
-            }],
-            supportsFreeform: false,
-          },
-        },
-      },
-    }));
+    it('does not reuse a native probe cache entry for a Provider connection on the same target', async () => {
+        const native = await mountOwner();
+        expectModelFields(native.getCurrent().preflightModels, 'm1', thinkingOption);
+        await native.unmount();
+        const provider = await mountOwner('pc_01J00000000000000000000000');
+        expectModelFields(provider.getCurrent().preflightModels, 'm1', thinkingOption);
+        expect(capabilityRpc).toHaveBeenCalledTimes(2);
+    });
 
-    try {
-      machineCapabilitiesInvokeMock.mockResolvedValueOnce({
-        supported: true as const,
-        response: {
-          ok: true as const,
-          result: {
-            availableModels: [{
-              id: 'gpt-5.6-sol',
-              name: 'GPT 5.6 Sol',
-              modelOptions: [{
-                id: 'service_tier',
-                name: 'Speed',
-                type: 'select',
-                currentValue: 'standard',
-                options: [
-                  { value: 'standard', name: 'Standard' },
-                  { value: 'fast', name: 'Fast' },
-                ],
-              }],
-            }],
-            supportsFreeform: false,
-          },
-        },
-      });
+    it('hydrates cached results across module reloads without another daemon probe', async () => {
+        const first = await mountOwner();
+        expectModelFields(first.getCurrent().preflightModels, 'm1', thinkingOption);
+        await first.unmount();
+        await loadOwnerGraph();
+        const restarted = await mountOwner();
+        expectModelFields(restarted.getCurrent().preflightModels, 'm1', thinkingOption);
+        expect(capabilityRpc).toHaveBeenCalledTimes(1);
+    });
 
-      const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
+    it('does not persist static fallback probe results across module reloads', async () => {
+        probeResult = { provider: 'codex', source: 'static', availableModels: [{ id: 'm1', name: 'm1' }], supportsFreeform: false };
+        const first = await mountOwner();
+        expect(first.getCurrent().preflightModels?.availableModels.map((model) => model.id)).toEqual(['m1']);
+        await first.unmount();
+        await loadOwnerGraph();
+        const restarted = await mountOwner();
+        expect(restarted.getCurrent().preflightModels?.availableModels.map((model) => model.id)).toEqual(['m1']);
+        expect(capabilityRpc).toHaveBeenCalledTimes(2);
+    });
 
-      let latestPreflightModels: any = null;
-      function Harness() {
-        latestPreflightModels = useNewSessionPreflightModelsState({
-          backendTarget: { kind: 'backend', backendId: 'codex' },
-          selectedMachineId: 'machine-1',
-          capabilityServerId: 'server-1',
-          cwd: '/repo',
-        }).preflightModels;
-        return null;
-      }
-
-      let root!: renderer.ReactTestRenderer;
-      root = (await renderScreen(React.createElement(Harness))).tree;
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        root.unmount();
-      });
-
-      expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
-      expect(latestPreflightModels).toEqual({
-        availableModels: [{
-          id: 'gpt-5.6-sol',
-          name: 'GPT 5.6 Sol',
-          modelOptions: [{
-            id: 'service_tier',
-            name: 'Speed',
-            type: 'select',
-            currentValue: 'standard',
-            options: [
-              { value: 'standard', name: 'Standard' },
-              { value: 'fast', name: 'Fast' },
-            ],
-          }],
-        }],
-        supportsFreeform: false,
-      });
-    } finally {
-      if (previousWindow === undefined) {
-        delete (globalThis as Record<string, unknown>).window;
-      } else {
-        (globalThis as Record<string, unknown>).window = previousWindow;
-      }
-      if (previousDocument === undefined) {
-        delete (globalThis as Record<string, unknown>).document;
-      } else {
-        (globalThis as Record<string, unknown>).document = previousDocument;
-      }
-    }
-  });
+    it.each([
+        { version: 3, reason: 'legacy model-option contract', modelId: 'gpt-5.4', option: legacySpeedOption,
+            legacyOptions: [{ id: 'speed', name: 'Fast', type: 'boolean', currentValue: false }] },
+        { version: 4, reason: 'model options metadata', modelId: 'gpt-5.4', option: thinkingOption, legacyOptions: undefined },
+        { version: 6, reason: 'GPT 5.6 Speed metadata', modelId: 'gpt-5.6-sol', option: speedOption, legacyOptions: undefined },
+    ])('re-probes persisted version $version entries predating $reason', async ({ version, modelId, option, legacyOptions }) => {
+        const key = buildDynamicModelProbeCacheKey({ machineId: 'machine-1', targetKey: resolveBackendTargetKeyV2(target),
+            providerConnectionId: null, serverId, cwd: '/repo' });
+        if (!key) throw new Error('Expected an exact scoped model cache key');
+        localStorageBoundary.setItem('dynamic-model-probe-cache-v1', JSON.stringify({
+            version, entries: { [key]: { updatedAt: Date.now(), value: {
+                availableModels: [{ id: modelId, name: modelId, ...(legacyOptions ? { modelOptions: legacyOptions } : {}) }],
+                supportsFreeform: false,
+            } } },
+        }));
+        probeResult = { availableModels: [{ id: modelId, name: modelId, modelOptions: [option] }], supportsFreeform: false };
+        const current = await mountOwner();
+        expectModelFields(current.getCurrent().preflightModels, modelId, option);
+        expect(capabilityRpc).toHaveBeenCalledTimes(1);
+    });
 });

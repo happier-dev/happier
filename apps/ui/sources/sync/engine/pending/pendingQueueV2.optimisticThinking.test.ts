@@ -1,4 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+
+beforeAll(loadSyncSingletonForTests);
 
 import { createDeferred } from '@/dev/testkit';
 import { Encryption } from '@/sync/encryption/encryption';
@@ -81,8 +84,8 @@ async function persistLocalPending(params: Readonly<{
 
 describe('pendingQueueV2 optimistic thinking', () => {
     beforeEach(async () => {
-        vi.useFakeTimers();
         await resetPendingQueueState(testOutboxScope);
+        vi.useFakeTimers();
     });
 
     afterEach(() => {

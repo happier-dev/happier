@@ -159,6 +159,7 @@ describe('Home Customize entity reorder binding', () => {
         const list = () => screen.root.findByType(EntityFlatReorderList);
         const admission = list().props.binding.resolve('setup', { anchorId: 'start', placement: 'before' });
         expect(admission.status).toBe('allowed');
+        if (admission.status !== 'allowed') throw new Error('Expected the layout move to be admitted');
         let outcome: unknown;
         await act(async () => { outcome = await list().props.binding.execute(admission.effect); });
         expect(outcome).not.toMatchObject({ status: 'applied' });
@@ -203,6 +204,7 @@ describe('Home Customize entity reorder binding', () => {
         expect(artifact.layout().hidden).not.toContain('setup');
         const effect = list().props.binding.resolve('setup', { anchorId: 'start', placement: 'before' });
         expect(effect.status).toBe('allowed');
+        if (effect.status !== 'allowed') throw new Error('Expected the layout move to be admitted');
         await act(async () => { await list().props.binding.execute(effect.effect); });
         await flushHookEffects({ cycles: 3 });
         expect(artifact.layout().order.indexOf('setup')).toBeLessThan(artifact.layout().order.indexOf('start'));

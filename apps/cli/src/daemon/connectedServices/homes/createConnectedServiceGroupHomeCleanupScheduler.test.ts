@@ -24,7 +24,7 @@ describe('createConnectedServiceGroupHomeCleanupScheduler', () => {
               connectedServices: {
                 v: 2,
                 bindingsByServiceId: {
-                  'openai-codex': {
+                  'happier.agent.codex/openai-codex': {
                     source: 'connected',
                     selection: 'group',
                     groupId: 'main',
@@ -90,7 +90,7 @@ describe('createConnectedServiceGroupHomeCleanupScheduler', () => {
               connectedServices: {
                 v: 2,
                 bindingsByServiceId: {
-                  'openai-codex': {
+                  'happier.agent.codex/openai-codex': {
                     source: 'connected',
                     selection: 'group',
                     groupId: 'main',

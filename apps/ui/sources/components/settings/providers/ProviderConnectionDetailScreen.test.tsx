@@ -651,7 +651,8 @@ describe('ProviderConnectionDetailScreen', () => {
         await pressAndFlush(testRow);
 
         const updatedTestRow = findTestRow(screen);
-        expect(updatedTestRow?.props.subtitle).toBe('settingsProviders.errors.rpcResponseInvalidDescription');
+        expect(updatedTestRow?.props.subtitle).toBe('externalSessions.browseAgentFailed');
+        expect(updatedTestRow?.props.subtitle).not.toContain('socket implementation detail');
     });
 
     it('clears the previous machine probe result when the target machine changes', async () => {

@@ -135,6 +135,8 @@ export function installPickerCommonModuleMocks(options: PickerCommonModuleMocksO
     }
 
     beforeEach(async () => {
+        const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
+        await loadSyncSingletonForTests();
         const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
         clearDaemonMergedProjectionCacheForTests();
     });
@@ -251,14 +253,18 @@ export function installPickerCommonModuleMocks(options: PickerCommonModuleMocksO
         return createExpoVectorIconsMock();
     });
 
-    vi.mock('@/components/ui/lists/ItemList', async () => {
+    vi.mock('react-native-typography', async () => {
+        const { createReactNativeTypographyMock } = await import('@/dev/testkit/mocks/reactNativeTypography');
+        return createReactNativeTypographyMock();
+    });
+
+    vi.mock('@/components/ui/lists/ItemList', async (importOriginal) => {
         const activeOptions = pickerCommonModuleMocksState.options;
         if (activeOptions.itemList) {
             return await activeOptions.itemList();
         }
 
-        const { createPassThroughModule } = await import('@/dev/testkit/mocks/components');
-        return createPassThroughModule(['ItemList']);
+        return await importOriginal();
     });
 
     vi.mock('react-native-unistyles', async () => {
@@ -284,11 +290,7 @@ export function installPickerCommonModuleMocks(options: PickerCommonModuleMocksO
         if (activeOptions.storage) {
             return await activeOptions.storage(importOriginal);
         }
-        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleMock({
-            importOriginal,
-            overrides: {},
-        });
+        return await importOriginal();
     });
 }
 

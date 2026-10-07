@@ -11,6 +11,7 @@ import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { getRetainedLocalVoiceEffectOutcomes } from '@/voice/tools/localVoiceEffectOutcomeCustody';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -236,6 +237,7 @@ vi.mock('@/sync/domains/features/featureDecisionInputs', () => ({
   isRuntimeFeatureEnabled: (args: any) => isRuntimeFeatureEnabled(args),
   resolveRuntimeFeatureDecision: (args: any) => resolveRuntimeFeatureDecision(args),
 }));
+await loadSyncSingletonForTests();
 
 describe('VoiceExecutionTransport (streaming)', () => {
   let createVoiceExecutionTransport: () => any;

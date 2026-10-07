@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { renderScreen } from '@/dev/testkit';
+import { createLayoutChangeEvent } from '@/dev/testkit/fixtures/nativeEventFixtures';
 import { createWebDomScrollObservation } from '@/components/sessions/transcript/viewport/driver/webDomObservation';
 import type { WebScrollMovementFact } from '@/components/sessions/transcript/scroll/resolveWebGenuineScrollMovement';
 import { resolveRendererAtEndViewportChange } from '@/components/sessions/transcript/scroll/rendererAtEndViewportChange';
@@ -891,17 +892,22 @@ describe('Legend transcript renderer adapter', () => {
             onWheel,
             scrollEventThrottle: 16,
         });
-        const layoutEvent = { nativeEvent: { layout: { height: 600, width: 800, x: 0, y: 0 } } };
+        const layoutEvent = createLayoutChangeEvent({ height: 600, width: 800, x: 0, y: 0 });
         const scrollEvent = { nativeEvent: { contentOffset: { x: 0, y: 0 } } };
         const identityHost = screen.tree.root.findAllByType(View).find((node) => (
             typeof node.props.onLayout === 'function' && node.findAllByType('LegendList' as any).length > 0
         ));
         expect(identityHost).toBeTruthy();
-        identityHost!.props.onLayout(layoutEvent);
+        const onIdentityLayout = identityHost?.props.onLayout;
+        if (!onIdentityLayout) throw new Error('Expected transcript identity host layout handler');
+        onIdentityLayout(layoutEvent);
         capturedLegendListProps.onScroll(scrollEvent);
         capturedLegendListProps.onScrollBeginDrag(scrollEvent);
         capturedLegendListProps.onStartReached();
-        expect(onLayout).toHaveBeenCalledWith(layoutEvent);
+        // Match the forwarded native event by identity. Generic argument formatting
+        // enumerates geometry-fixture host getters even when the matcher passes.
+        expect(onLayout.mock.calls.length).toBe(1);
+        expect(onLayout.mock.calls[0]?.[0] === layoutEvent).toBe(true);
         expect(onScroll).toHaveBeenCalledWith(scrollEvent);
         expect(onScrollBeginDrag).toHaveBeenCalledWith(scrollEvent);
         capturedLegendListProps.onScrollEndDrag(scrollEvent);

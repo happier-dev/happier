@@ -2,7 +2,7 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createMessageStructuredPresentationV1 } from '@happier-dev/protocol';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { renderWithSessionTranscriptSource as renderScreen, standardCleanup } from '@/dev/testkit';
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
 import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 import type {
@@ -121,6 +121,8 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
+await import('./MessageView');
+
 describe('MessageView timestamps', () => {
     beforeEach(() => {
         platformState.os = 'web';
@@ -138,7 +140,6 @@ describe('MessageView timestamps', () => {
     });
 
     it('does not render message timestamps by default before web hover actions are visible', async () => {
-        vi.resetModules();
         const { MessageView } = await import('./MessageView');
 
         const screen = await renderScreen(
@@ -153,7 +154,6 @@ describe('MessageView timestamps', () => {
     });
 
     it('projects eligible whole-message Actions through user, assistant, and structured MessageActionRows', async () => {
-        vi.resetModules();
         const { MessageView } = await import('./MessageView');
         const {
             createPluginMessageActionHost,
@@ -255,7 +255,6 @@ describe('MessageView timestamps', () => {
     });
 
     it('exports transcript message views through React memo boundaries', async () => {
-        vi.resetModules();
         const { MessageView, MessageViewWithSessionCommon } = await import('./MessageView');
 
         expect(typeof (MessageView as any).$$typeof).toBe('symbol');
@@ -266,7 +265,6 @@ describe('MessageView timestamps', () => {
 
     it('renders message timestamps with web hover actions in the default mode', async () => {
         copyButtonsVisible = true;
-        vi.resetModules();
         const { MessageView } = await import('./MessageView');
 
         const userScreen = await renderScreen(
@@ -295,7 +293,6 @@ describe('MessageView timestamps', () => {
     it('renders always-visible web timestamps after hover action space', async () => {
         timestampDisplayMode = 'always';
         copyButtonsVisible = false;
-        vi.resetModules();
         const { MessageView } = await import('./MessageView');
 
         const screen = await renderScreen(
@@ -319,7 +316,6 @@ describe('MessageView timestamps', () => {
     it('does not render message timestamps in never mode even when actions are visible', async () => {
         timestampDisplayMode = 'never';
         copyButtonsVisible = true;
-        vi.resetModules();
         const { MessageView } = await import('./MessageView');
 
         const screen = await renderScreen(
@@ -336,7 +332,6 @@ describe('MessageView timestamps', () => {
     it('omits invalid message timestamps instead of throwing during render', async () => {
         timestampDisplayMode = 'always';
         vi.restoreAllMocks();
-        vi.resetModules();
         const { MessageView } = await import('./MessageView');
 
         const screen = await renderScreen(
@@ -354,7 +349,6 @@ describe('MessageView timestamps', () => {
         platformState.os = 'ios';
         timestampDisplayMode = 'hover_web_always_mobile';
         copyButtonsVisible = true;
-        vi.resetModules();
         const { MessageView } = await import('./MessageView');
 
         const screen = await renderScreen(
@@ -370,7 +364,6 @@ describe('MessageView timestamps', () => {
     });
 
     it('renders timestamps from parent-provided transcript session common', async () => {
-        vi.resetModules();
         const { MessageViewWithSessionCommon } = await import('./MessageView');
 
         const screen = await renderScreen(
