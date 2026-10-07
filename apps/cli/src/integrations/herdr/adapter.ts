@@ -278,6 +278,8 @@ export function createHerdrTerminalHostAdapter(params: Readonly<{
       );
       const submitted = await runTerminalPromptSubmission({
         promptText: input.text,
+        signal: input.signal,
+        resolveDeliveryState: input.resolveDeliveryState,
         remainingTimeoutMs: () => remainingTerminalHostDeadlineMs(submissionDeadline),
         ...(policy?.shouldVerifyAfterSubmit(input.text)
           ? {

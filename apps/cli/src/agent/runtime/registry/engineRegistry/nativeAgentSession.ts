@@ -772,7 +772,9 @@ function createNativeAgentTerminalHostScope(params: Readonly<{
         async injectUserPrompt(handle, input) {
             assertScopeAvailable();
             assertOwnedHandle(handle);
-            return await params.owner.injectUserPrompt(handle, input);
+            return await params.owner.injectUserPrompt(handle, {
+                ...input, signal: combineSessionOperationSignal(params.signal, input.signal),
+            });
         },
         async interruptTurn(handle) {
             assertScopeAvailable();

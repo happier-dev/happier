@@ -103,6 +103,7 @@
     "../../packages/plugins/claude/src/agent/runtime/terminal/unified/launchIntent.ts",
     "../../packages/plugins/claude/src/agent/runtime/terminal/unified/lifecycleEvents.ts",
     "../../packages/plugins/claude/src/agent/runtime/terminal/unified/nativeSession.ts",
+    "../../packages/plugins/claude/src/agent/runtime/terminal/unified/ownComposerDraftClassification.ts",
     "../../packages/plugins/claude/src/agent/runtime/terminal/unified/ownInjectedTextLog.ts",
     "../../packages/plugins/claude/src/agent/runtime/terminal/unified/pastedTextMarker.ts",
     "../../packages/plugins/claude/src/agent/runtime/terminal/unified/pendingInputInterruptAndRunActivation.ts",

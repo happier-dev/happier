@@ -5,7 +5,81 @@ import {
 } from './promptSubmitVerification';
 
 describe('runTerminalPromptSubmission', () => {
-    it('waits for exact prompt staging before sending Enter', async () => {
+  it('waits for provider redraw beyond the write budget until the session ends', async () => {
+    const lifetime = new AbortController();
+    let elapsedMs = 0;
+    let enterCount = 0;
+    const result = await runTerminalPromptSubmission({
+      promptText: 'loaded prompt',
+      signal: lifetime.signal,
+      remainingTimeoutMs: () => Math.max(0, 15_000 - elapsedMs),
+      verifyStagedBeforeSubmit: async () => elapsedMs >= 20_000,
+      submitEnter: async () => { enterCount += 1; return 'success'; },
+      verifyAfterSubmit: async () => elapsedMs < 30_000,
+      wait: async delayMs => { elapsedMs += delayMs; },
+    });
+
+    expect(result).toEqual({ success: true });
+    expect(enterCount).toBe(1);
+    expect(elapsedMs).toBeGreaterThanOrEqual(30_000);
+  });
+
+  it.each([false, true])('stops on session cancellation without another Enter (submitted=%s)', async submitted => {
+    const lifetime = new AbortController();
+    let enterCount = 0;
+    let elapsedMs = 0;
+    const result = await runTerminalPromptSubmission({
+      promptText: 'loaded prompt',
+      signal: lifetime.signal,
+      remainingTimeoutMs: () => Math.max(0, 1_000 - elapsedMs),
+      verifyStagedBeforeSubmit: async () => submitted,
+      submitEnter: async () => { enterCount += 1; return 'success'; },
+      verifyAfterSubmit: async () => true,
+      wait: async () => { elapsedMs += 100; lifetime.abort(); },
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      reason: 'verification_failed',
+      phase: submitted ? 'after_enter_unknown' : 'after_write_before_enter',
+      submitMayHaveReachedPane: submitted,
+    });
+    expect(enterCount).toBe(submitted ? 1 : 0);
+    expect(elapsedMs).toBe(100);
+  });
+
+  it.each(['accepted', 'retired'] as const)('stops waiting when canonical delivery is %s before staging is observed', async state => {
+    let deliveryState: 'accepted' | 'retired' | null = null;
+    let enterCount = 0;
+    const result = await runTerminalPromptSubmission({
+      promptText: 'loaded prompt',
+      signal: new AbortController().signal,
+      resolveDeliveryState: () => deliveryState,
+      remainingTimeoutMs: () => 0,
+      verifyStagedBeforeSubmit: async () => { deliveryState = state; return false; },
+      submitEnter: async () => { enterCount += 1; return 'success'; },
+    });
+    expect(result).toMatchObject(state === 'accepted'
+      ? { success: true }
+      : { success: false, phase: 'after_write_before_enter', submitMayHaveReachedPane: false });
+    expect(enterCount).toBe(0);
+  });
+
+    it('honors canonical acceptance arriving during a failed staging capture without Enter', async () => {
+    let accepted = false;
+    let enterCount = 0;
+    const result = await runTerminalPromptSubmission({
+      promptText: 'manually accepted prompt',
+      signal: new AbortController().signal,
+      resolveDeliveryState: () => accepted ? 'accepted' : null,
+      verifyStagedBeforeSubmit: async () => { accepted = true; throw new Error('capture unavailable'); },
+      submitEnter: async () => { enterCount += 1; return 'success'; },
+    });
+    expect(result).toEqual({ success: true });
+    expect(enterCount).toBe(0);
+  });
+
+  it('waits for exact prompt staging before sending Enter', async () => {
         const calls: string[] = [];
         let staged = false;
 

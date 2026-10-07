@@ -4098,6 +4098,7 @@ describe('native Agent session host adapter', () => {
 
     it('projects the canonical terminal host only into an eligible session scope and fences its lifecycle', async () => {
         const handles: TerminalHostHandle[] = [];
+        const injectionSignals: AbortSignal[] = [];
         const disposeHost = vi.fn(async (_input: Readonly<{ intent: unknown }>) => undefined);
         const controlPort: TerminalControlPort = {
             hostKind: 'tmux',
@@ -4129,14 +4130,18 @@ describe('native Agent session host adapter', () => {
                 handles.push(handle);
                 return handle;
             }),
-            injectUserPrompt: vi.fn(async (handle): Promise<TerminalInputInjectionResult> => ({
-                status: 'injected',
-                injectedAt: 2,
-                bytesWritten: 5,
-                hostKind: handle.kind,
-                hostSessionName: handle.sessionName,
-                paneId: handle.paneId,
-            })),
+            injectUserPrompt: vi.fn(async (handle, input): Promise<TerminalInputInjectionResult> => {
+                if (!input.signal) throw new Error('Terminal input must carry the session lifetime');
+                injectionSignals.push(input.signal);
+                return {
+                    status: 'injected',
+                    injectedAt: 2,
+                    bytesWritten: 5,
+                    hostKind: handle.kind,
+                    hostSessionName: handle.sessionName,
+                    paneId: handle.paneId,
+                };
+            }),
             interruptTurn: vi.fn(async () => undefined),
             evaluateLiveness: vi.fn(async () => ({ paneAlive: true, observedAt: 3 })),
             captureInputState: vi.fn(async () => ({ stable: true, currentInput: '', observedAt: 4 })),
@@ -4259,6 +4264,8 @@ describe('native Agent session host adapter', () => {
             code: 'PLUGIN_TERMINAL_HOST_SCOPE_RETIRED',
         });
         await created.operations.resetOrDisposeRuntime();
+        expect(injectionSignals.length).toBeGreaterThan(0);
+        expect(injectionSignals.every(signal => signal.aborted)).toBe(true);
         await created.operations.resetOrDisposeRuntime();
         expect(disposeHost).toHaveBeenCalledTimes(2);
         expect(disposeHost.mock.calls.map(([input]) => input.intent)).toEqual([
