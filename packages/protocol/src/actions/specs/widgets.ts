@@ -57,7 +57,8 @@ export const WIDGET_DEFINITION_ACTION_SPECS_V1: readonly (PreNormalizedActionSpe
     toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
     inputSchema: WidgetDefinitionActionInputSchemasV1[id], outputSchema: WidgetDefinitionActionOutputSchemasV1[id],
     inputHints: { fields: [] },
-    cli: { acceptsServerId: true, commands: [{ path: id.split('.'), visibility: 'canonical' }] },
+    cli: { acceptsServerId: true, commands: [{ path: id === 'widgets.definition.saveFromSession'
+      ? ['widgets', 'definition', 'save-from-session'] : id.split('.'), visibility: 'canonical' }] },
   } as const satisfies PreNormalizedActionSpec;
 });
 

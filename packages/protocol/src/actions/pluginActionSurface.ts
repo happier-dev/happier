@@ -72,7 +72,6 @@ export function isHumanSecretApiExcludedActionId(
  */
 export const PLUGIN_SURFACE_EXCLUSION_REASONS = Object.freeze({
   ...INTERNAL_ACTION_REASONS,
-  ...HUMAN_SECRET_API_EXCLUSION_REASONS,
   'sessions.external.candidates.list': 'Machine/source-scoped discovery seam; authors use SessionsService.external.list, which delegates to this same candidate-query owner.',
   'sessions.external.candidate.delete': 'Host-synthesized destructive control over an Agent-owned session record; the External Sessions contribution deliberately owns discovery and transcripts only, never Agent session lifecycle.',
   'sessions.external.link.ensure': 'Machine/source-scoped linking seam; authors use SessionsService.external.attach, which delegates to this same idempotent link operation.',
@@ -81,10 +80,6 @@ export const PLUGIN_SURFACE_EXCLUSION_REASONS = Object.freeze({
   'sessions.external.transcript.page': 'Machine/source-scoped transcript seam; authors use SessionsService.external.readTranscript.',
   'sessions.external.transcript.readAfter': 'Machine/source-scoped transcript seam; authors use SessionsService.external.readTranscript.',
   'sessions.external.takeover.start': 'Raw durable takeover Start; SessionsService.external.takeover privately delegates to it and is the documented author workflow.',
-  'session.permission.respond': 'Present-user permission approval cannot be represented by trusted-plugin provenance; plugins use session.permission.remote.respond for mediated external-human approval.',
-  'session.approval_reviewer.set': 'Only an Account user may enable automatic approval review; automation and plugins cannot enable it.',
-  'session.attention.set': 'Settling or snoozing Inbox attention is the present user\u2019s own triage; automation and plugins cannot clear what needs a person.',
-  'session.permission_mode.set': 'Global Session permission policy is present-user or causal Agent authority, never generic trusted-plugin authority.',
 } as const satisfies Readonly<Partial<Record<ActionId, string>>>);
 
 export type PluginSurfaceExcludedActionId = keyof typeof PLUGIN_SURFACE_EXCLUSION_REASONS;

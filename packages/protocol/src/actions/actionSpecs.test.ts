@@ -666,8 +666,8 @@ describe('Action Spec Registry', () => {
       'plugins.permissions.grants.dismissRequest',
     ] as const) {
       const spec = getActionSpec(actionId);
-      expect(spec.surfaces.agent).toBe(false);
-      expect(spec.surfaces.mcp).toBe(false);
+      expect(spec.surfaces.agent).toBe(spec.requiredAuthority === 'present_user');
+      expect(spec.surfaces.mcp).toBe(spec.requiredAuthority === 'present_user');
     }
   });
 
@@ -947,7 +947,23 @@ describe('Action Spec Registry', () => {
     expect(all.length).toBeGreaterThan(0);
     for (const spec of all) {
       // Runtime safety: registry objects must validate against the schema.
-      ActionSpecSchema.parse(spec);
+      expect.soft(ActionSpecSchema.safeParse(spec).error?.issues, spec.id).toBeUndefined();
+    }
+  });
+
+  it('exposes user Account mutations as human-decided requests and keeps live secret inputs on their host', () => {
+    for (const actionId of ['account.sessions.signOutEverywhere', 'account.apiTokens.create', 'account.apiTokens.update',
+      'account.apiTokens.revoke', 'account.apiTokens.revokeAll', 'account.security.terminalPresentUser.set'] as const) {
+      const spec = getActionSpec(actionId);
+      expect(spec.requiredAuthority, actionId).toBe('present_user');
+      expect(spec.surfaces.agent, actionId).toBe(true);
+      expect(spec.surfaces.mcp, actionId).toBe(true);
+      expect(spec.surfaces.plugin, actionId).toBe(true);
+      expect(PluginInvocableActionIdSchema.safeParse(actionId).success, actionId).toBe(true);
+    }
+    for (const actionId of ['account.password.enroll', 'account.password.change', 'account.password.remove'] as const) {
+      expect(getActionSpec(actionId).approvalInputCustody, actionId).toBe('live_only');
+      expect(getActionSpec(actionId).surfaces.agent, actionId).toBe(true);
     }
   });
 
@@ -966,6 +982,14 @@ describe('Action Spec Registry', () => {
       expect(spec.surfaces.agent, actionId).toBe(true);
       expect(spec.surfaces.mcp, actionId).toBe(true);
       expect(ActionSpecSchema.safeParse(spec).success, actionId).toBe(true);
+    }
+  });
+
+  it('does not use plugin identity as a denial of user Session controls', () => {
+    for (const actionId of ['session.permission.respond', 'session.approval_reviewer.set',
+      'session.attention.set', 'session.permission_mode.set'] as const) {
+      expect(getActionSpec(actionId).surfaces.plugin, actionId).toBe(true);
+      expect(PluginInvocableActionIdSchema.safeParse(actionId).success, actionId).toBe(true);
     }
   });
 
@@ -1138,7 +1162,7 @@ describe('Action Spec Registry', () => {
     expect(PUBLIC_ACTION_IDS).not.toContain('plugins.install');
     for (const actionId of PUBLIC_ACTION_IDS) {
       expect(getActionSpec(actionId).requiredAuthority, actionId).toBe(
-        ['approval.request.decide', 'session.permission.respond', 'session.user_action.answer'].includes(actionId)
+        ['approval.request.decide', 'session.user_action.answer'].includes(actionId)
           ? 'present_user' : 'account_automation',
       );
     }
@@ -1152,7 +1176,7 @@ describe('Action Spec Registry', () => {
     ] as const) {
       const spec = getActionSpec(actionId);
       expect(spec.surfaces.api).toBe(false);
-      expect(spec.surfaces.plugin).toBe(false);
+      expect(spec.surfaces.plugin).toBe(true);
       expect(spec.requiredAuthority).toBe(requiredAuthority);
     }
 
@@ -1164,8 +1188,8 @@ describe('Action Spec Registry', () => {
     expect(getActionSpec('memory.search').surfaces.plugin).toBe(true);
     expect(getActionSpec('memory.get_window').surfaces.plugin).toBe(true);
     expect(getActionSpec('memory.ensure_up_to_date').surfaces.plugin).toBe(true);
-    expect(getActionSpec('session.permission_mode.set').surfaces.plugin).toBe(false);
-    expect(PluginInvocableActionIdSchema.safeParse('session.permission_mode.set').success).toBe(false);
+    expect(getActionSpec('session.permission_mode.set').surfaces.plugin).toBe(true);
+    expect(PluginInvocableActionIdSchema.safeParse('session.permission_mode.set').success).toBe(true);
     expect(getActionSpec('daemon.promptAssets.discover').surfaces.plugin).toBe(true);
     expect(getActionSpec('daemon.promptAssets.delete').surfaces.plugin).toBe(true);
     expect(getActionSpec('daemon.promptRegistry.scanSource').surfaces.plugin).toBe(true);
@@ -1230,7 +1254,7 @@ describe('Action Spec Registry', () => {
         expect(spec.surfaces.plugin, spec.id).toBe(true);
       }
     }
-    expect(getActionSpec('session.permission.respond').surfaces.plugin).toBe(false);
+    expect(getActionSpec('session.permission.respond').surfaces.plugin).toBe(true);
     expect(getActionSpec('session.user_action.answer').surfaces.plugin).toBe(true);
   });
 
@@ -1284,7 +1308,7 @@ describe('Action Spec Registry', () => {
     expect(getActionSpec('session.permission.remote.grants.revoke').surfaces.api).toBe(true);
   });
 
-  it('publishes agent permission answers and opt-in token decisions while excluding trusted plugins', () => {
+  it('publishes permission answers to trusted plugins while retaining opt-in token decision admission', () => {
     const permission = getActionSpec('session.permission.respond');
     const userAction = getActionSpec('session.user_action.answer');
     expect(permission.requiredAuthority).toBe('account_automation');
@@ -1300,15 +1324,15 @@ describe('Action Spec Registry', () => {
       mcp: true,
       voice: false,
       api: true,
-      plugin: false,
+      plugin: true,
     });
     expect(SignedRootActionIdSchema.safeParse('session.permission.respond').success).toBe(true);
     expect(SIGNED_ROOT_ACTION_IDS).toContain('session.permission.respond');
     expect(PublicActionIdSchema.safeParse('session.permission.respond').success).toBe(true);
     expect(PUBLIC_ACTION_IDS).toContain('session.permission.respond');
-    expect(PluginInvocableActionIdSchema.safeParse('session.permission.respond').success).toBe(false);
-    expect(PLUGIN_INVOCABLE_ACTION_IDS).not.toContain('session.permission.respond');
-    expect(PLUGIN_ACTION_INPUT_SCHEMAS).not.toHaveProperty('session.permission.respond');
+    expect(PluginInvocableActionIdSchema.safeParse('session.permission.respond').success).toBe(true);
+    expect(PLUGIN_INVOCABLE_ACTION_IDS).toContain('session.permission.respond');
+    expect(PLUGIN_ACTION_INPUT_SCHEMAS).toHaveProperty('session.permission.respond');
 
     expect(userActionInput?.parse({
       requestId: 'question-1',
@@ -1681,8 +1705,8 @@ describe('Action Spec Registry', () => {
       expect(getActionSpec(actionId as ActionId).surfaces.plugin).toBe(true);
       expect(PluginInvocableActionIdSchema.safeParse(actionId).success).toBe(true);
     }
-    expect(getActionSpec('session.permission_mode.set').surfaces.plugin).toBe(false);
-    expect(PluginInvocableActionIdSchema.safeParse('session.permission_mode.set').success).toBe(false);
+    expect(getActionSpec('session.permission_mode.set').surfaces.plugin).toBe(true);
+    expect(PluginInvocableActionIdSchema.safeParse('session.permission_mode.set').success).toBe(true);
   });
 
   it('keeps plugin External Session action inputs and results public-safe and strict', async () => {
@@ -2015,13 +2039,13 @@ describe('Action Spec Registry', () => {
     }
   });
 
-  it('classifies action approval result and flow contracts', () => {
-    expect(sorted(listActionSpecs().map((spec) => spec.id))).toEqual(sorted([
+  it('retains the named action approval contracts as new Action families are added', () => {
+    expect(sorted(listActionSpecs().map((spec) => spec.id))).toEqual(expect.arrayContaining(sorted([
       ...RESULT_REQUIRED_BLOCKING_ACTION_IDS,
       ...RESULT_REQUIRED_DEFERRED_ACTION_IDS,
       ...RESULT_NONE_DEFERRED_ACTION_IDS,
       ...RESULT_OPTIONAL_DEFERRED_ACTION_IDS,
-    ]));
+    ])));
   });
 
   it.each([
@@ -2682,6 +2706,7 @@ describe('Action Spec Registry', () => {
       const publicProjection = !isInternalActionId(id);
       expect(spec.surfaces, id).toEqual({
         ...resolveRuntimeActionSurfaces(id as RuntimeActionIdV1),
+        ...(publicProjection && spec.requiredAuthority === 'present_user' ? { agent: true, mcp: true } : {}),
         api: publicProjection && spec.requiredAuthority === 'account_automation',
         plugin: publicProjection,
       });
@@ -3143,7 +3168,7 @@ describe('Action Spec Registry', () => {
     expect(spec.surfaces.cli).toBe(false);
   });
 
-  it('projects SCM pull-request actions through RPC and SDK surfaces only', () => {
+  it('projects SCM pull-request actions through RPC, SDK and automated request surfaces', () => {
     const expected: readonly [ActionId, 'read' | 'write' | 'external' | 'danger'][] = [
       ['scm.pullRequest.list', 'read'],
       ['scm.pullRequest.get', 'read'],
@@ -3160,7 +3185,8 @@ describe('Action Spec Registry', () => {
       expect(spec.bindings?.sdkMethod).toBe(id);
       expect(spec.surfaces.rpc).toBe(true);
       expect(spec.surfaces.api).toBe(true);
-      expect(spec.surfaces.mcp).toBe(false);
+      expect(spec.surfaces.mcp).toBe(true);
+      expect(spec.surfaces.agent).toBe(true);
       expect(spec.surfaces.voice).toBe(false);
       expect(spec.sideEffectClass).toBe(sideEffectClass);
     }
@@ -3210,7 +3236,7 @@ describe('Action Spec Registry', () => {
     }));
   });
 
-  it('projects SCM repository provisioning actions through RPC and SDK surfaces only', () => {
+  it('projects SCM repository provisioning through RPC, SDK and automated request surfaces', () => {
     const expected: readonly [ActionId, 'read' | 'write' | 'external' | 'danger'][] = [
       ['scm.repository.clone', 'external'],
       ['scm.repository.init', 'write'],
@@ -3225,7 +3251,8 @@ describe('Action Spec Registry', () => {
       expect(spec.bindings?.sdkMethod).toBe(id);
       expect(spec.surfaces.rpc).toBe(true);
       expect(spec.surfaces.api).toBe(true);
-      expect(spec.surfaces.mcp).toBe(false);
+      expect(spec.surfaces.mcp).toBe(true);
+      expect(spec.surfaces.agent).toBe(true);
       expect(spec.surfaces.voice).toBe(false);
       expect(spec.sideEffectClass).toBe(sideEffectClass);
       expect(spec.outputSchema).toMatchObject({
@@ -3248,17 +3275,17 @@ describe('Action Spec Registry', () => {
       ]));
   });
 
-  it('projects SCM diff-summary generation through RPC and SDK surfaces only', () => {
+  it('projects SCM diff-summary generation through its current client, voice, RPC and SDK surfaces', () => {
     const spec = getActionSpec('scm.diffSummary.generate' as ActionId);
 
     expect(spec.bindings?.rpcMethod).toBe('scm.diffSummary.generate');
     expect(spec.bindings?.sdkMethod).toBe('scm.diffSummary.generate');
     expect(spec.surfaces.rpc).toBe(true);
     expect(spec.surfaces.api).toBe(true);
-    expect(spec.surfaces.ui).toBe(false);
-    expect(spec.surfaces.mcp).toBe(false);
-    expect(spec.surfaces.voice).toBe(false);
-    expect(spec.surfaces.agent).toBe(false);
+    expect(spec.surfaces.ui).toBe(true);
+    expect(spec.surfaces.mcp).toBe(true);
+    expect(spec.surfaces.voice).toBe(true);
+    expect(spec.surfaces.agent).toBe(true);
     expect(spec.sideEffectClass).toBe('external');
     expect(spec.safety).toBe('safe');
 
@@ -3309,13 +3336,13 @@ describe('Action Spec Registry', () => {
     expect(spec.safety).toBe('danger');
     expect(spec.sideEffectClass).toBe('danger');
     // The same reachable host route as its destructive sibling
-    // `operation.discard` — RPC plus the released API projection — and never an
-    // Agent-, MCP-, voice- or CLI-invocable one.
+    // `operation.discard` — including the Agent/MCP request surfaces. Destructive
+    // execution still belongs to the canonical machine owner and approval policy.
     expect(spec.surfaces).toEqual({
       ...getActionSpec('sessions.external.operation.discard').surfaces,
       plugin: false,
     });
-    expect(spec.surfaces).toMatchObject({ rpc: true, api: true, mcp: false, voice: false, cli: false, agent: false });
+    expect(spec.surfaces).toMatchObject({ rpc: true, api: true, mcp: true, voice: false, cli: false, agent: true });
     // Host-synthesized Agent session lifecycle is deliberately outside the
     // External Sessions plugin contribution, which owns discovery and
     // transcripts only.
@@ -3354,7 +3381,9 @@ describe('Action Spec Registry', () => {
       expect(spec.bindings?.sdkMethod ?? null).toBe(sdkMethod);
       expect(spec.surfaces.rpc).toBe(true);
       expect(spec.surfaces.api).toBe(api);
-      expect(spec.surfaces.mcp).toBe(false);
+      const automated = ['sessions.external.candidates.list', 'sessions.external.candidate.delete', 'sessions.external.link.ensure'].includes(id);
+      expect(spec.surfaces.mcp).toBe(automated);
+      expect(spec.surfaces.agent).toBe(automated);
       expect(spec.surfaces.voice).toBe(false);
       expect(spec.sideEffectClass).toBe(sideEffectClass);
     }

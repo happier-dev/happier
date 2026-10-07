@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { EntityDragScopeV1Schema, EntityDragSessionAddressV1Schema } from '../plugins/ui/entityDragDrop.js';
-import type { PreNormalizedActionSpec } from './actionSpecs.js';
+import type { ActionInputFieldHint, PreNormalizedActionSpec } from './actionSpecs.js';
 
 import { SESSION_CANVAS_ACTION_IDS, type SessionCanvasActionId } from './sessionCanvasActionIds.js';
 export { SESSION_CANVAS_ACTION_IDS, type SessionCanvasActionId } from './sessionCanvasActionIds.js';
@@ -37,6 +37,26 @@ export const SESSION_CANVAS_ACTION_OUTPUT_SCHEMAS = {
   'session.canvas.tabs.pin': mutation,
 } as const;
 export type SessionCanvasActionOutcome = z.infer<typeof list> | z.infer<typeof mutation>;
+const scopeHint = { path: 'scope', title: 'Exact Home and Account', widget: 'json', required: true } satisfies ActionInputFieldHint;
+const canvasHint = { path: 'canvasKey', title: 'Mounted Session canvas key', widget: 'text', required: true } satisfies ActionInputFieldHint;
+const tabHint = { path: 'tabId', title: 'Canvas tab id', widget: 'text', required: true } satisfies ActionInputFieldHint;
+const beforeHint = { path: 'beforeTabId', title: 'Insert before tab (null appends)', widget: 'text' } satisfies ActionInputFieldHint;
+const placementHint = { path: 'placement', title: 'Placement', widget: 'select', options: [
+  { value: 'center', label: 'Same pane' }, { value: 'left', label: 'Left' }, { value: 'right', label: 'Right' },
+  { value: 'up', label: 'Above' }, { value: 'down', label: 'Below' },
+] } satisfies ActionInputFieldHint;
+const inputFields = {
+  'session.canvas.tabs.list': [scopeHint, canvasHint],
+  'session.canvas.tabs.open': [scopeHint, canvasHint,
+    { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+    { path: 'leafId', title: 'Destination pane id', widget: 'text', required: true }, placementHint, beforeHint],
+  'session.canvas.tabs.activate': [scopeHint, canvasHint, tabHint],
+  'session.canvas.tabs.close': [scopeHint, canvasHint, tabHint],
+  'session.canvas.tabs.move': [scopeHint, canvasHint, tabHint,
+    { path: 'targetLeafId', title: 'Destination pane id', widget: 'text', required: true }, placementHint, beforeHint],
+  'session.canvas.tabs.reorder': [scopeHint, canvasHint, tabHint, { ...beforeHint, required: true }],
+  'session.canvas.tabs.pin': [scopeHint, canvasHint, tabHint, { path: 'pinned', title: 'Keep pinned', widget: 'boolean', required: true }],
+} satisfies Record<SessionCanvasActionId, readonly ActionInputFieldHint[]>;
 function row<const T extends SessionCanvasActionId>(actionId: T, title: string) {
   return {
     id: actionId, title, description: 'Operate on the answering mounted Session canvas in the exact Home, Account and workspace. Opening keeps existing Sessions; an unavailable canvas performs no effect.',
@@ -45,6 +65,7 @@ function row<const T extends SessionCanvasActionId>(actionId: T, title: string) 
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: false, rpc: false },
     bindings: { mcpToolName: actionId.replaceAll('.', '_') },
     inputSchema: SESSION_CANVAS_ACTION_INPUT_SCHEMAS[actionId], outputSchema: SESSION_CANVAS_ACTION_OUTPUT_SCHEMAS[actionId],
+    inputHints: { title, fields: inputFields[actionId] },
   } satisfies PreNormalizedActionSpec;
 }
 export const SESSION_CANVAS_ACTION_SPECS = [

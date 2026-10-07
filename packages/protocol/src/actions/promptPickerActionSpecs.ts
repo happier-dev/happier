@@ -24,4 +24,5 @@ export const PROMPT_PICKER_ACTION_SPECS = [{
   surfaces: { ui: true, voice: false, agent: true, mcp: false, cli: false, rpc: false },
   inputSchema: UiPromptPickerOpenInputSchema,
   outputSchema: UiPromptPickerOpenOutputSchema,
+  inputHints: { fields: [{ path: 'composerRef', title: 'Mounted composer address', widget: 'json' }] },
 }] as const satisfies readonly PreNormalizedActionSpec[];

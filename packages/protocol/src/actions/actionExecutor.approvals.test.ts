@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { isDeepStrictEqual } from 'node:util';
 
-import type { ApprovalRequest, ApprovalRequestV1, ApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
+import { ApprovalRequestSchema, type ApprovalRequest, type ApprovalRequestV1, type ApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
 import { getActionSpec } from './actionSpecs.js';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
@@ -16,6 +16,7 @@ import { resolveWorkflowDefinitionRefV1 } from '../workflows/workflowDefinitionR
 import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
 import { createWorkBoardArtifactBoundary } from '../boards/workBoardArtifactV1.testkit.js';
 import { createWidgetDefinitionArtifactPortV1 } from '../widgets/widgetDefinitionArtifactV1.js';
+import { createBlockingApprovalCoordinator } from './blockingApprovalCoordinator.js';
 
 const defaultActionsSettings = ActionsSettingsV1Schema.parse({ v: 1 });
 const securityTokenSummary = {
@@ -456,6 +457,7 @@ describe('createActionExecutor (approvals)', () => {
     ['account.apiTokens.revoke', { tokenId: 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d' }],
     ['account.apiTokens.revokeAll', {}],
     ['account.security.terminalPresentUser.set', { policy: 'allowed' }],
+    ['account.sessions.signOutEverywhere', {}],
   ] as const)('requires a human decision for an agent request for %s, then executes once', async (actionId, input) => {
     let request: ApprovalRequest | null = null;
     const effects: string[] = [];
@@ -467,6 +469,7 @@ describe('createActionExecutor (approvals)', () => {
       accountApiTokensRevokeAction: async () => { effects.push(actionId); return { revoked: true }; },
       accountApiTokensRevokeAllAction: async () => { effects.push(actionId); return { revokedCount: 1 }; },
       accountSecurityTerminalPresentUserSetAction: async () => { effects.push(actionId); return { policy: 'allowed' }; },
+      accountSessionsSignOutEverywhereAction: async () => { effects.push(actionId); return { status: 'signed_out' }; },
       // Even an explicit waiver cannot make a security request automatic.
       isActionApprovalRequired: () => false,
       approvalsCreate: async ({ request: value }) => { request = value; return { artifactId: 'security-request' }; },
@@ -474,12 +477,16 @@ describe('createActionExecutor (approvals)', () => {
       approvalsUpdate: async ({ request: value }) => { request = value; return { ok: true }; },
       observeActionExecution: async ({ result }) => { observations.push(result); },
     });
-    for (const surface of ['agent', 'mcp'] as const) {
+    for (const surface of ['agent', 'mcp', 'plugin'] as const) {
+      const actionCaller = surface === 'plugin'
+        ? { kind: 'plugin' as const, pluginId: 'acme.author', contributionLocalId: 'surface',
+            sourceCustody: { kind: 'development' as const, registeredRootId: 'plugin-root' } }
+        : { kind: 'host' as const };
       expect(await executor.execute(actionId, input, {
-        surface, authority: 'account_automation', actionCaller: { kind: 'host' }, bypassApprovals: true,
+        surface, authority: 'account_automation', actionCaller, bypassApprovals: true,
       })).toMatchObject({ ok: false, errorCode: 'present_user_required' });
       expect(await executor.execute(actionId, input, {
-        surface, authority: 'account_automation', actionCaller: { kind: 'host' },
+        surface, authority: 'account_automation', actionCaller,
       })).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'security-request' } });
     }
     expect(effects).toEqual([]);
@@ -516,6 +523,84 @@ describe('createActionExecutor (approvals)', () => {
     expect(request.status).toBe('open');
     expect(await executor.execute('approval.request.decide', { artifactId: 'request', decision: 'reject' }, ctx))
       .toMatchObject({ ok: true, result: { status: 'rejected' } });
+  });
+
+  it('projects unknown stored approval fields without deriving human authority from the Artifact', async () => {
+    const canonical = createApprovalRequest('open', {
+      actionId: 'account.sessions.signOutEverywhere', actionArgs: {},
+    });
+    if (canonical.v !== 2) throw new Error('Expected current approval fixture');
+    const stored = {
+      ...canonical, future: true,
+      createdBy: { ...canonical.createdBy, future: true },
+      executionOriginV1: { ...canonical.executionOriginV1, future: true,
+        caller: { ...canonical.executionOriginV1.caller, future: true } },
+    };
+    let request: unknown = stored;
+    let signedOut = false;
+    const executor = createExecutor({
+      approvalsGet: async () => request as ApprovalRequest,
+      approvalsUpdate: async ({ request: next }) => { request = next; return { ok: true }; },
+      accountSessionsSignOutEverywhereAction: async () => { signedOut = true; return { status: 'signed_out' }; },
+    });
+    const automation = { surface: 'mcp' as const, authority: 'account_automation' as const };
+    expect(await executor.execute('approval.request.decide', { artifactId: 'request', decision: 'approve' }, automation))
+      .toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    expect(signedOut).toBe(false);
+    expect(await executor.execute('approval.request.decide', { artifactId: 'request', decision: 'approve' }))
+      .toMatchObject({ ok: true, result: { status: 'executed' } });
+    expect(signedOut).toBe(true);
+    expect(JSON.stringify(request)).not.toContain('future');
+  });
+
+  it('keeps an automated secret-input request on its live waiter until authenticated human replay', async () => {
+    const coordinator = createBlockingApprovalCoordinator();
+    const passwordInput = { v: 1 as const, kind: 'plain' as const, expectedCredentialRevision: 1,
+      currentPassword: 'current password secret', newPassword: 'replacement password secret' };
+    let request: ApprovalRequest | null = null;
+    let performed: unknown = null;
+    let waiterReady: (() => void) | undefined;
+    const ready = new Promise<void>(resolve => { waiterReady = resolve; });
+    const executor = createExecutor({
+      approvalsCreate: async ({ request: next }) => { request = next; return { artifactId: 'password-request' }; },
+      approvalsGet: async () => request,
+      approvalsUpdate: async ({ request: next }) => { request = next; coordinator.notifyApprovalUpdated({ artifactId: 'password-request', request: next }); return { ok: true }; },
+      approvalsResolveBlockingDecision: async (args) => coordinator.resolveBlockingDecision(args),
+      approvalsWaitForDecision: async (args) => {
+        const pending = coordinator.waitForDecision(args);
+        waiterReady?.();
+        const result = await pending;
+        return { ...result, request: ApprovalRequestSchema.parse(result.request) };
+      },
+      accountPasswordChangeAction: async ({ input, context }) => {
+        performed = { input, authority: context.authority };
+        return { v: 1, status: 'updated' };
+      },
+    });
+    const pending = executor.execute('account.password.change', passwordInput, {
+      surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' },
+      defaultSessionId: 's1', defaultSessionMachineId: 'machine',
+    });
+    const admission = await Promise.race([
+      pending.then(result => ({ kind: 'completed' as const, result })),
+      ready.then(() => ({ kind: 'waiting' as const })),
+    ]);
+    expect(admission).toEqual({ kind: 'waiting' });
+    expect(performed).toBeNull();
+    expect(JSON.stringify(request)).not.toContain(passwordInput.currentPassword);
+    expect(JSON.stringify(request)).not.toContain(passwordInput.newPassword);
+    if (admission.kind !== 'waiting' || !request) return;
+    request = { ...ApprovalRequestSchema.parse(request), status: 'approved', decision: { kind: 'approve', decidedAtMs: Date.now() } };
+    expect(await executor.replayApprovedApprovalRequest({ artifactId: 'password-request', callerAuthority: 'account_automation' }))
+      .toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    expect(performed).toBeNull();
+    expect(await executor.replayApprovedApprovalRequest({ artifactId: 'password-request', callerAuthority: 'present_user' }))
+      .toMatchObject({ ok: true });
+    expect(await pending).toMatchObject({ ok: true, result: { status: 'updated' } });
+    expect(performed).toEqual({ input: passwordInput, authority: 'present_user' });
+    expect(JSON.stringify(request)).not.toContain(passwordInput.currentPassword);
+    expect(JSON.stringify(request)).not.toContain(passwordInput.newPassword);
+    coordinator.dispose();
   });
   it('requires approval before an agent trigger removal and replays the approved write without another approval', async () => {
     let request: ApprovalRequest | null = null;

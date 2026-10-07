@@ -1012,12 +1012,13 @@ describe('plugin-surface approval posture (§4.1)', () => {
     ).toBeGreaterThan(0);
   });
 
-  it('routes dangerous plugin Actions and host capture viewing through approval by default', () => {
+  it('routes dangerous plugin Actions, human mutations and host capture viewing through approval by default', () => {
     const promptedOnPluginSurface = pluginSurfacedActionIds
       .filter((id) => routingRequired(id, 'plugin'));
 
     expect(promptedOnPluginSurface).toEqual(
-      pluginSurfacedActionIds.filter((id) => (getActionSpec(id).safety === 'danger' || id === 'capture.view')
+      pluginSurfacedActionIds.filter((id) => (getActionSpec(id).safety === 'danger' || id === 'capture.view'
+        || (getActionSpec(id).requiredAuthority === 'present_user' && id !== 'session.permission.respond'))
         && !id.startsWith('approval.request.')
         && id !== DIRECT_SCOPED_SESSION_TRIGGER_REMOVAL),
     );
@@ -1025,7 +1026,8 @@ describe('plugin-surface approval posture (§4.1)', () => {
 
   it('keeps ordinary safe plugin Actions unprompted while host viewing requires consent', () => {
     const safePluginActionIds = pluginSurfacedActionIds
-      .filter((id) => getActionSpec(id).safety !== 'danger' && id !== 'capture.view');
+      .filter((id) => getActionSpec(id).safety !== 'danger' && id !== 'capture.view'
+        && getActionSpec(id).requiredAuthority !== 'present_user');
 
     for (const actionId of safePluginActionIds) {
       expect(routingRequired(actionId, 'plugin')).toBe(false);

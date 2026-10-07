@@ -1,11 +1,11 @@
-import { ApprovalRequestSchema, type ApprovalRequest } from './approvalRequestV1.js';
+import { StoredApprovalRequestSchema, type ApprovalRequest } from './approvalRequestV1.js';
 import { APPROVAL_ARTIFACT_KINDS_V1 } from './approvalArtifactKindV1.js';
 import {
-  ExecutionRunHostActionApprovalRequestV1Schema,
+  StoredExecutionRunHostActionApprovalRequestV1Schema,
   type ExecutionRunHostActionApprovalRequestV1,
 } from './executionRunHostActionApprovalRequestV1.js';
 import {
-  TargetActionApprovalRequestV1Schema,
+  StoredTargetActionApprovalRequestV1Schema,
   type TargetActionApprovalRequestV1,
 } from './targetActionApprovalRequestV1.js';
 
@@ -187,19 +187,19 @@ export function approvalArtifactBodyMatchesHeaderV1(
   }
 
   if (header.kind === APPROVAL_ARTIFACT_KINDS_V1.builtIn) {
-    const parsed = ApprovalRequestSchema.safeParse(value);
+    const parsed = StoredApprovalRequestSchema.safeParse(value);
     return parsed.success && approvalRequestArtifactHeaderMatches(header, parsed.data)
       ? { family: 'built_in', request: parsed.data }
       : null;
   }
   if (header.kind === APPROVAL_ARTIFACT_KINDS_V1.targetAction) {
-    const parsed = TargetActionApprovalRequestV1Schema.safeParse(value);
+    const parsed = StoredTargetActionApprovalRequestV1Schema.safeParse(value);
     return parsed.success && targetActionApprovalArtifactHeaderMatches(header, parsed.data)
       ? { family: 'target_action', request: parsed.data }
       : null;
   }
   if (header.kind === APPROVAL_ARTIFACT_KINDS_V1.executionRunHostAction) {
-    const parsed = ExecutionRunHostActionApprovalRequestV1Schema.safeParse(value);
+    const parsed = StoredExecutionRunHostActionApprovalRequestV1Schema.safeParse(value);
     return parsed.success && executionRunHostActionApprovalArtifactHeaderMatches(header, parsed.data)
       ? { family: 'execution_run_host_action', request: parsed.data }
       : null;

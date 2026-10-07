@@ -12,7 +12,7 @@ import { parseWorkflowDefinitionRefV1 } from '../workflows/workflowDefinitionRef
 import { ComputerSelectedTargetResponseV1Schema, ComputerTargetSelectRequestV1Schema, ComputerTargetsListResponseV1Schema, computerTargetKeyV1, type ComputerApprovalDisplayV1 } from '../computer/v1.js';
 import { isSessionFollowActionIdV1 } from '../sessions/follow/actions.js';
 import { evaluateApiTokenGrantV1, isApiTokenGrantTargetMemberV1, isPermissionModeGrantedV1 } from '../auth/apiTokenGrant.js';
-import { resolveCredentialActionAdmissionV1, isAgentRequestablePresentUserActionId, requiresPresentUserDecisionForActionInputV1, requiresPresentUserExecutionAuthorityForActionInputV1 } from './decisionAuthority.js';
+import { resolveCredentialActionAdmissionV1, canRequestPresentUserApprovalForActionInputV1, requiresPresentUserDecisionForActionInputV1, requiresPresentUserExecutionAuthorityForActionInputV1 } from './decisionAuthority.js';
 import { SESSION_PERMISSION_MODES } from '../sessions/metadata/sessionPermissionModes.js';
 import { SessionPermissionRespondActionDecisionV1Schema, SessionPermissionRespondRpcParamsV1Schema } from '../sessions/permissions/respondRpcParamsV1.js';
 import { StructuredQuestionAnswersV1Schema } from '../tools/structuredQuestionAnswersV1.js';
@@ -152,7 +152,7 @@ import { ParticipantRecipientRoutingIdentityV1Schema } from '../messages/structu
 import {
   ApprovalExecutionOriginV1Schema,
   ApprovalRequestOriginV1Schema,
-  ApprovalRequestSchema,
+  StoredApprovalRequestSchema,
   type ApprovalExecutionOriginCallerV1,
   type ApprovalExecutionOriginV1,
   type ApprovalRequest,
@@ -1464,6 +1464,7 @@ type ExecutionRunCallOptions = NonNullable<
 >;
 
 function buildExecutionRunCallOptions(
+  authority: ActionExecutorContext['authority'],
   serverId: string | null,
   signal?: AbortSignal,
   originSessionId?: string | null,
@@ -1478,7 +1479,7 @@ function buildExecutionRunCallOptions(
   const actionCaller = actionContext?.actionCaller;
   if (!serverId && !signal && !origin && !target
     && permissionRequestStore === undefined && workflowObservationSink === undefined
-    && !actionRequestId && !actionCaller) return undefined;
+    && !actionRequestId && !actionCaller && !authority) return undefined;
   return {
     ...(serverId ? { serverId } : {}),
     ...(origin ? { originSessionId: origin } : {}),
@@ -1488,6 +1489,7 @@ function buildExecutionRunCallOptions(
     ...(workflowObservationSink === undefined ? {} : { workflowObservationSink }),
     ...(actionRequestId ? { actionRequestId } : {}),
     ...(actionCaller ? { actionCaller } : {}),
+    ...(authority ? { authority } : {}),
     ...(actionCaller?.kind === 'workflowRun' ? { workflowRunId: actionCaller.runId } : {}),
   };
 }
@@ -2169,8 +2171,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
   ): Extract<ActionExecuteResult, Readonly<{ ok: false }>> | null {
     // Request admission is not replay authority. Only the decision owner may
     // stamp the human authority after claiming a present-user approval below.
-    if (ctx.bypassApprovals && requiresPresentUserExecutionAuthorityForActionInputV1(spec, input)
-      && (isAgentRequestablePresentUserActionId(spec.id) || spec.id === 'session.open')
+    if (ctx.bypassApprovals && canRequestPresentUserApprovalForActionInputV1(spec, input)
       && resolveHostStampedAuthority(ctx) !== 'present_user') {
       return { ok: false, errorCode: 'present_user_required', error: 'present_user_required' };
     }
@@ -2712,7 +2713,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       if (!existingRaw) {
         return { ok: false, errorCode: 'approval_not_found', error: 'approval_not_found' };
       }
-      const parsed = ApprovalRequestSchema.safeParse(existingRaw);
+      const parsed = StoredApprovalRequestSchema.safeParse(existingRaw);
       if (!parsed.success) {
         return { ok: false, errorCode: 'approval_invalid', error: 'approval_invalid' };
       }
@@ -2765,6 +2766,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         });
         return failed.ok ? buildApprovalDecisionResult(failed.request) : failed;
       }
+      if (isBlockingApprovalRequest(request) && await resolveBlockingDecisionIfClaimed({
+        artifactId,
+        request,
+        decision: 'approve',
+        decisionAuthority: args.callerAuthority ?? 'account_automation',
+        serverId: artifactServerId,
+      })) return buildApprovalDecisionResult(request);
       const executed = await executeApprovedActionForRequest({
         artifactId,
         request,
@@ -2791,12 +2799,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
   async function resolveBlockingDecisionIfClaimed(args: Readonly<{
     artifactId: string;
     decision: 'approve' | 'reject';
+    decisionAuthority: ActionRequiredAuthority;
     request: ApprovalRequest;
     serverId: string | null;
   }>): Promise<boolean> {
     const resolved = await deps.approvalsResolveBlockingDecision?.({
       artifactId: args.artifactId,
       decision: args.decision,
+      decisionAuthority: args.decisionAuthority,
       request: args.request,
       serverId: args.serverId,
     });
@@ -3435,6 +3445,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const liveOnlyCustody = spec.approvalInputCustody === 'live_only'
             ? { liveOnlyActionArgs: admittedInput }
             : {};
+          // Only the exact live decision continuation carries authenticated
+          // authority. Artifact notifications and durable reads carry none.
+          const continuationContext = decision.decisionAuthority === 'present_user'
+            ? { ...ctx, authority: 'present_user' as const }
+            : ctx;
 
           if (options?.prepareOnly) {
             const approvedAdmission: PreparedCoreAdmission = {
@@ -3449,7 +3464,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                 artifactId,
                 request: approvedRequest,
                 artifactServerId: effectiveServerId,
-                ctx,
+                ctx: continuationContext,
                 ...liveOnlyCustody,
               });
               return executed.ok ? executed.exec : executed;
@@ -3460,7 +3475,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             artifactId,
             request: approvedRequest,
             artifactServerId: effectiveServerId,
-            ctx,
+            ctx: continuationContext,
             ...liveOnlyCustody,
           });
           return executed.ok ? executed.exec : executed;
@@ -4573,6 +4588,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         const machineTarget = detached && ctx.externalActionTarget?.kind === 'machine' ? ctx.externalActionTarget : undefined;
         const serverId = resolveServerIdForExecutionRunScope(deps, ctx, sessionId);
         const opts = buildExecutionRunCallOptions(
+          ctx.authority,
           serverId, ctx.signal, detached ? ctx.defaultSessionId : undefined,
           detached ? machineTarget?.machineId ?? ctx.executionRunTargetMachineId : undefined,
           detached ? ctx.executionRunPermissionRequestStore : undefined,
@@ -4788,6 +4804,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           ? ctx.externalActionTarget : undefined;
         const serverId = resolveServerIdForExecutionRunScope(deps, ctx, sessionId);
         const opts = buildExecutionRunCallOptions(
+          ctx.authority,
           serverId, ctx.signal,
           detached ? ctx.defaultSessionId : undefined,
           detached ? machineTarget?.machineId ?? ctx.executionRunTargetMachineId : undefined,
@@ -5353,6 +5370,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const sessionId = resolveExecutionRunScope(parsed.data, ctx);
           const serverId = resolveServerIdForExecutionRunScope(deps, ctx, sessionId);
           const opts = buildExecutionRunCallOptions(
+            ctx.authority,
             serverId,
             ctx.signal,
             sessionId === null ? ctx.defaultSessionId : undefined,
@@ -5567,6 +5585,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const sessionId = resolveExecutionRunScope(parsed.data, ctx);
           const serverId = resolveServerIdForExecutionRunScope(deps, ctx, sessionId);
           const opts = buildExecutionRunCallOptions(
+            ctx.authority,
             serverId,
             ctx.signal,
             sessionId === null ? ctx.defaultSessionId : undefined,
@@ -5582,6 +5601,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const sessionId = resolveExecutionRunScope(parsed.data, ctx);
           const serverId = resolveServerIdForExecutionRunScope(deps, ctx, sessionId);
           const opts = buildExecutionRunCallOptions(
+            ctx.authority,
             serverId,
             ctx.signal,
             sessionId === null ? ctx.defaultSessionId : undefined,
@@ -5603,6 +5623,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const sessionId = detachedInput.sessionId;
           const serverId = resolveServerIdForExecutionRunScope(deps, ctx, sessionId);
           const opts = buildExecutionRunCallOptions(
+            ctx.authority,
             serverId,
             ctx.signal,
             sessionId === null ? ctx.defaultSessionId : undefined,
@@ -5638,6 +5659,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           }
           const serverId = resolveServerIdForExecutionRunScope(deps, ctx, sessionId);
           const opts = buildExecutionRunCallOptions(
+            ctx.authority,
             serverId,
             ctx.signal,
             sessionId === null ? ctx.defaultSessionId : undefined,
@@ -5661,6 +5683,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           }
           const serverId = resolveServerIdForExecutionRunScope(deps, ctx, sessionId);
           const opts = buildExecutionRunCallOptions(
+            ctx.authority,
             serverId,
             ctx.signal,
             sessionId === null ? ctx.defaultSessionId : undefined,
@@ -5712,6 +5735,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           }
           const serverId = resolveServerIdForExecutionRunScope(deps, ctx, sessionId);
           const opts = buildExecutionRunCallOptions(
+            ctx.authority,
             serverId,
             ctx.signal,
             sessionId === null ? ctx.defaultSessionId : undefined,
@@ -5751,6 +5775,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           }
           const serverId = resolveServerIdForExecutionRunScope(deps, ctx, sessionId);
           const opts = buildExecutionRunCallOptions(
+            ctx.authority,
             serverId,
             ctx.signal,
             sessionId === null ? ctx.defaultSessionId : undefined,
@@ -5775,6 +5800,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           }
           const serverId = resolveServerIdForExecutionRunScope(deps, ctx, sessionId);
           const opts = buildExecutionRunCallOptions(
+            ctx.authority,
             serverId,
             ctx.signal,
             sessionId === null ? ctx.defaultSessionId : undefined,
@@ -5794,6 +5820,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const sessionId = resolveExecutionRunScope(parsed.data, ctx);
           const serverId = resolveServerIdForExecutionRunScope(deps, ctx, sessionId);
           const opts = buildExecutionRunCallOptions(
+            ctx.authority,
             serverId, ctx.signal,
             sessionId === null ? ctx.defaultSessionId : undefined,
             sessionId === null ? ctx.executionRunTargetMachineId : undefined,
@@ -5811,6 +5838,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const sessionId = resolveExecutionRunScope(parsed.data, ctx);
           const serverId = resolveServerIdForExecutionRunScope(deps, ctx, sessionId);
           const opts = buildExecutionRunCallOptions(
+            ctx.authority,
             serverId,
             ctx.signal,
             sessionId === null ? ctx.defaultSessionId : undefined,
@@ -5834,6 +5862,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const sessionId = resolveExecutionRunScope(parsed.data, ctx);
           const serverId = resolveServerIdForExecutionRunScope(deps, ctx, sessionId);
           const opts = buildExecutionRunCallOptions(
+            ctx.authority,
             serverId,
             ctx.signal,
             sessionId === null ? ctx.defaultSessionId : undefined,
@@ -5871,13 +5900,19 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const result = await executeWaitActionV1(request, {
             execution: async (target, options) => unwrap(await execute('execution.run.wait', {
               runId: target.runId,
+              ...(options.condition.kind === 'terminal' ? {} : { condition: options.condition.kind }),
               ...(target.sessionId ? { sessionId: target.sessionId } : { target: { kind: 'detached' } }),
               ...(options.timeoutMs === null ? {} : { timeoutSeconds: options.timeoutMs / 1000 }),
-            }, { ...ctx, executionRunTargetMachineId: target.machineId, ...(options.signal ? { signal: options.signal } : {}) })),
+            }, { ...ctx, executionRunTargetMachineId: target.machineId,
+              ...(options.onSnapshot ? { onWaitSnapshot: options.onSnapshot } : {}),
+              ...(options.signal ? { signal: options.signal } : {}) })),
             workflow: async (target, options) => unwrap(await execute('workflow.run.wait', {
               runId: target.runId,
+              conditions: options.condition.kind === 'terminal' ? ['terminal']
+                : options.condition.kind === 'needs_attention' ? ['attention'] : ['terminal', 'attention'],
               ...(options.timeoutMs === null ? {} : { timeoutSeconds: options.timeoutMs / 1000 }),
-            }, { ...ctx, ...(options.signal ? { signal: options.signal } : {}) })),
+            }, { ...ctx, ...(options.onSnapshot ? { onWaitSnapshot: options.onSnapshot } : {}),
+              ...(options.signal ? { signal: options.signal } : {}) })),
             ...(deps.invokeContributedAction ? {
               plugin: async (input, options) => {
                 if (input.target.kind !== 'plugin_source' || input.condition.kind !== 'plugin') return { disposition: 'unsupported_condition' };
@@ -5921,6 +5956,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const sessionId = resolveExecutionRunScope(parsed.data, ctx);
           const serverId = resolveServerIdForExecutionRunScope(deps, ctx, sessionId);
           const opts = buildExecutionRunCallOptions(
+            ctx.authority,
             serverId,
             ctx.signal,
             sessionId === null ? ctx.defaultSessionId : undefined,
@@ -5934,7 +5970,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               ...(typeof data.timeoutSeconds === 'number' ? { timeoutSeconds: data.timeoutSeconds } : {}),
               ...(data.condition ? { condition: ExecutionRunWaitConditionSchema.parse(data.condition) } : {}),
               ...(data.after ? { after: ExecutionRunGetResponseSchema.parse(data.after) } : {}),
-            }, capability.opts);
+            }, { ...capability.opts, ...(ctx.onWaitSnapshot ? { onSnapshot: ctx.onWaitSnapshot } : {}) });
             const wait = parseExecutionRunWaitResult(res);
             if (wait.success) return { ok: true, result: wait.data };
             if (readRecord(res).ok === true) {
@@ -7971,7 +8007,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         const existingRaw = await deps.approvalsGet({ artifactId, serverId: null });
         if (!existingRaw) return { ok: false, errorCode: 'approval_not_found', error: 'approval_not_found' };
 
-        const existingParsed = ApprovalRequestSchema.safeParse(existingRaw);
+        const existingParsed = StoredApprovalRequestSchema.safeParse(existingRaw);
         if (!existingParsed.success) return { ok: false, errorCode: 'approval_invalid', error: 'approval_invalid' };
         const existing = existingParsed.data;
         const editsComputerSelection = data.computerTarget !== undefined || data.computerAccess !== undefined;
@@ -8057,6 +8093,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             await resolveBlockingDecisionIfClaimed({
               artifactId,
               decision: 'reject',
+              decisionAuthority: resolveHostStampedAuthority(ctx),
               request: nextRejected,
               serverId: effectiveServerId,
             });
@@ -8156,6 +8193,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const claimed = await resolveBlockingDecisionIfClaimed({
             artifactId,
             decision: 'approve',
+            decisionAuthority: resolveHostStampedAuthority(ctx),
             request: approvedRequest,
             serverId: effectiveServerId,
           });
@@ -8184,10 +8222,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           ctx,
           observeExecution: true,
         });
-        // A newly minted bearer is delivered once to the deciding human, never
-        // persisted in the Artifact or returned on a duplicate decision.
+        // A deferred mint has no original live waiter: deliver its bearer once
+        // to the deciding human. A detached blocking invocation has lost its
+        // secret custody and cannot recover it through another decision call.
         const liveResult = executed.ok && resolveHostStampedAuthority(ctx) === 'present_user'
-          && isAgentRequestablePresentUserActionId(approvedRequest.actionId)
+          && approvedRequest.approval?.flow === 'deferred'
           && requestedActionId.success && getActionSpec(requestedActionId.data).approvalResultCustody === 'live_only'
           ? executed.exec : undefined;
         return executed.ok ? buildApprovalDecisionResult(executed.request, liveResult) : executed;

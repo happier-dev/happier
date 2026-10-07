@@ -51,7 +51,7 @@ describe('verified invocation authority', () => {
       expect(resolveCredentialActionAdmissionV1({ spec, actionInput: { sessionId: 's1' },
         authority: 'account_automation', grant: null, surface })).toEqual({ ok: true });
       expect(resolveCredentialActionAdmissionV1({ spec, actionInput, authority: 'account_automation', grant: null, surface }))
-        .toEqual(surface === 'agent' || surface === 'mcp' ? { ok: true } : { ok: false, errorCode: 'present_user_required' });
+        .toEqual(surface === 'agent' || surface === 'mcp' || surface === 'plugin' ? { ok: true } : { ok: false, errorCode: 'present_user_required' });
       expect(resolveCredentialActionAdmissionV1({ spec, actionInput, authority: 'present_user', grant: null, surface }))
         .toEqual({ ok: true });
       expect(resolveCredentialActionAdmissionV1({ spec, actionInput, authority: 'account_automation',
