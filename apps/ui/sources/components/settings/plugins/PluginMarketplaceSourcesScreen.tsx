@@ -219,10 +219,10 @@ export const PluginMarketplaceSourcesScreen = React.memo(function PluginMarketpl
                 {state.marketplaceSourceRegistry === null && !state.marketplaceSourceRegistryLoading && !state.marketplaceSourceRegistryLoadError ? (
                     <Item
                         testID="settings.plugins.sources.unavailable"
-                        title={t('common.unavailable')}
+                        title={t(state.administrationTargetLabel ? 'common.unavailable' : 'newSession.selectMachineTitle')}
                         subtitle={state.administrationTargetLabel
                             ? `${state.administrationTargetLabel.machine} · ${state.administrationTargetLabel.server}`
-                            : t('newSession.noMachineSelected')}
+                            : undefined}
                         subtitleLines={0}
                         detail={state.daemonAdministrationAvailable ? t('common.retry') : undefined}
                         onPress={state.daemonAdministrationAvailable ? state.refreshMarketplaceSourceRegistry : undefined}
