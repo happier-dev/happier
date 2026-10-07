@@ -55,6 +55,7 @@ describe('pending activation authorization owner', () => {
         };
         const result = await armPendingActivationAuthorizationInTx({
             tx: createTx(session),
+            currentAccess: { accountId: 'owner', sessionId: 's1', level: 'owner' },
             sessionId: 's1',
             requestId: 'p1',
             now: new Date(50),
@@ -79,6 +80,7 @@ describe('pending activation authorization owner', () => {
         };
         await armPendingActivationAuthorizationInTx({
             tx: createTx(session),
+            currentAccess: { accountId: 'owner', sessionId: 's1', level: 'owner' },
             sessionId: 's1',
             requestId: 'p1',
             now: new Date(90),
@@ -120,12 +122,14 @@ describe('pending activation authorization owner', () => {
             tx,
             sessionId: 's1',
             requestId: 'p1',
+            currentAccess: { accountId: 'owner', sessionId: 's1', level: 'owner' },
         })).resolves.toBeUndefined();
         await expect(armPendingActivationAuthorizationInTx({
             tx,
             sessionId: 's1',
             requestId: 'p1',
             resumeWhenAvailable: true,
+            currentAccess: { accountId: 'owner', sessionId: 's1', level: 'owner' },
         })).resolves.toEqual({ accountId: 'owner', requestId: 'p1' });
     });
 
@@ -157,6 +161,7 @@ describe('pending activation authorization owner', () => {
             tx,
             sessionId: 's1',
             requestId: 'p1',
+            currentAccess: { accountId: 'owner', sessionId: 's1', level: 'owner' },
         })).resolves.toBeUndefined();
         expect(tx.session.update).not.toHaveBeenCalled();
     });
@@ -196,6 +201,7 @@ describe('pending activation authorization owner', () => {
             tx,
             sessionId: 's1',
             requestId: 'p1',
+            currentAccess: { accountId: 'owner', sessionId: 's1', level: 'owner' },
         })).resolves.toBeUndefined();
         expect(tx.session.update).not.toHaveBeenCalled();
     });

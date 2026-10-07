@@ -5,6 +5,7 @@ import {
     type PendingActivationFailureCodeV1,
 } from '@happier-dev/protocol';
 import type { Tx } from '@/storage/inTx';
+import type { EffectiveSessionAccess } from '@/app/session/access/sessionAccess';
 
 export type PendingActivationTarget = Readonly<{ accountId: string; requestId: string }>;
 
@@ -76,9 +77,14 @@ export async function armPendingActivationAuthorizationInTx(params: Readonly<{
     tx: Tx;
     sessionId: string;
     requestId: string;
+    /** Access resolved for this mutation's credential in the same transaction. */
+    currentAccess: Pick<EffectiveSessionAccess, 'accountId' | 'sessionId' | 'level'>;
     now?: Date;
     resumeWhenAvailable?: true;
 }>): Promise<PendingActivationTarget | undefined> {
+    // Immutable input provenance is not current mutation authority. An editor
+    // may change an owner's queued input without borrowing its owner activation.
+    if (params.currentAccess.level !== 'owner' || params.currentAccess.sessionId !== params.sessionId) return undefined;
     const eligible = await params.tx.sessionPendingMessage.findUnique({
         where: { sessionId_localId: { sessionId: params.sessionId, localId: params.requestId }, targetExecutionRunId: null },
         select: {
@@ -116,6 +122,7 @@ export async function armPendingActivationAuthorizationInTx(params: Readonly<{
     });
     if (
         inputAdmissionReceipt.data.sessionRelationship !== 'owner'
+        || session.accountId !== params.currentAccess.accountId
         || session.accountId !== inputAdmissionReceipt.data.actorAccountId
         || (
             eligible.authorAccountId !== null

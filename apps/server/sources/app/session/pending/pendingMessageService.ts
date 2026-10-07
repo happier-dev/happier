@@ -1105,6 +1105,7 @@ async function enqueuePendingMessageWithAdmission(
                 tx,
                 sessionId,
                 requestId: localId,
+                currentAccess: access.access,
                 ...(params.resumeWhenAvailable === true ? { resumeWhenAvailable: true as const } : {}),
             }) : undefined;
             const { pendingCount, pendingBlockedCount, pendingVersion, recipientCursors, badgeAttentionChanged, meaningfulActivityAt } = await applyPendingSessionStateChange({
@@ -1855,6 +1856,7 @@ export async function updatePendingRequestedAction(params: Readonly<{
                             tx,
                             sessionId,
                             requestId: localId,
+                            currentAccess: access.access,
                             ...(params.resumeWhenAvailable === true ? { resumeWhenAvailable: true as const } : {}),
                         })
                         : undefined;
@@ -1908,6 +1910,7 @@ export async function updatePendingRequestedAction(params: Readonly<{
                     tx,
                     sessionId,
                     requestId: localId,
+                    currentAccess: access.access,
                     ...(params.resumeWhenAvailable === true ? { resumeWhenAvailable: true as const } : {}),
                 })
                 : undefined;
