@@ -190,7 +190,7 @@ export type BrowserContextActionResultById = {
             addressLabel?: string | undefined;
             folderLabel?: string | undefined;
             iconToken?: string | undefined;
-            tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
         } | undefined;
         url?: string | undefined;
         title?: string | undefined;
@@ -381,7 +381,7 @@ export type BrowserContextActionResultById = {
             addressLabel?: string | undefined;
             folderLabel?: string | undefined;
             iconToken?: string | undefined;
-            tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
         } | undefined;
         url?: string | undefined;
         title?: string | undefined;
@@ -652,7 +652,7 @@ export type BrowserContextActionResultById = {
             addressLabel?: string | undefined;
             folderLabel?: string | undefined;
             iconToken?: string | undefined;
-            tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
         } | undefined;
         url?: string | undefined;
         title?: string | undefined;
@@ -843,7 +843,7 @@ export type BrowserContextActionResultById = {
             addressLabel?: string | undefined;
             folderLabel?: string | undefined;
             iconToken?: string | undefined;
-            tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
         } | undefined;
         url?: string | undefined;
         title?: string | undefined;
@@ -1114,7 +1114,7 @@ export type BrowserContextActionResultById = {
             addressLabel?: string | undefined;
             folderLabel?: string | undefined;
             iconToken?: string | undefined;
-            tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
         } | undefined;
         url?: string | undefined;
         title?: string | undefined;
@@ -1305,7 +1305,7 @@ export type BrowserContextActionResultById = {
             addressLabel?: string | undefined;
             folderLabel?: string | undefined;
             iconToken?: string | undefined;
-            tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
         } | undefined;
         url?: string | undefined;
         title?: string | undefined;
@@ -1576,7 +1576,7 @@ export type BrowserContextActionResultById = {
             addressLabel?: string | undefined;
             folderLabel?: string | undefined;
             iconToken?: string | undefined;
-            tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
         } | undefined;
         url?: string | undefined;
         title?: string | undefined;
@@ -1767,7 +1767,7 @@ export type BrowserContextActionResultById = {
             addressLabel?: string | undefined;
             folderLabel?: string | undefined;
             iconToken?: string | undefined;
-            tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
         } | undefined;
         url?: string | undefined;
         title?: string | undefined;
@@ -2038,7 +2038,7 @@ export type BrowserContextActionResultById = {
             addressLabel?: string | undefined;
             folderLabel?: string | undefined;
             iconToken?: string | undefined;
-            tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
         } | undefined;
         url?: string | undefined;
         title?: string | undefined;
@@ -2229,7 +2229,7 @@ export type BrowserContextActionResultById = {
             addressLabel?: string | undefined;
             folderLabel?: string | undefined;
             iconToken?: string | undefined;
-            tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
         } | undefined;
         url?: string | undefined;
         title?: string | undefined;
@@ -2500,7 +2500,7 @@ export type BrowserContextActionResultById = {
             addressLabel?: string | undefined;
             folderLabel?: string | undefined;
             iconToken?: string | undefined;
-            tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
         } | undefined;
         url?: string | undefined;
         title?: string | undefined;
@@ -2691,7 +2691,7 @@ export type BrowserContextActionResultById = {
             addressLabel?: string | undefined;
             folderLabel?: string | undefined;
             iconToken?: string | undefined;
-            tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
         } | undefined;
         url?: string | undefined;
         title?: string | undefined;
@@ -2962,7 +2962,7 @@ export type BrowserContextActionResultById = {
             addressLabel?: string | undefined;
             folderLabel?: string | undefined;
             iconToken?: string | undefined;
-            tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
         } | undefined;
         url?: string | undefined;
         title?: string | undefined;
@@ -3153,7 +3153,7 @@ export type BrowserContextActionResultById = {
             addressLabel?: string | undefined;
             folderLabel?: string | undefined;
             iconToken?: string | undefined;
-            tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
         } | undefined;
         url?: string | undefined;
         title?: string | undefined;
@@ -3424,7 +3424,7 @@ export type BrowserContextActionResultById = {
             addressLabel?: string | undefined;
             folderLabel?: string | undefined;
             iconToken?: string | undefined;
-            tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
         } | undefined;
         url?: string | undefined;
         title?: string | undefined;
@@ -3615,7 +3615,7 @@ export type BrowserContextActionResultById = {
             addressLabel?: string | undefined;
             folderLabel?: string | undefined;
             iconToken?: string | undefined;
-            tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
         } | undefined;
         url?: string | undefined;
         title?: string | undefined;
@@ -3886,7 +3886,7 @@ export type BrowserContextActionResultById = {
             addressLabel?: string | undefined;
             folderLabel?: string | undefined;
             iconToken?: string | undefined;
-            tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
         } | undefined;
         url?: string | undefined;
         title?: string | undefined;
@@ -4077,7 +4077,7 @@ export type BrowserContextActionResultById = {
             addressLabel?: string | undefined;
             folderLabel?: string | undefined;
             iconToken?: string | undefined;
-            tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
         } | undefined;
         url?: string | undefined;
         title?: string | undefined;
@@ -4348,7 +4348,7 @@ export type BrowserContextActionResultById = {
             addressLabel?: string | undefined;
             folderLabel?: string | undefined;
             iconToken?: string | undefined;
-            tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
         } | undefined;
         url?: string | undefined;
         title?: string | undefined;
@@ -4539,7 +4539,7 @@ export type BrowserContextActionResultById = {
             addressLabel?: string | undefined;
             folderLabel?: string | undefined;
             iconToken?: string | undefined;
-            tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
         } | undefined;
         url?: string | undefined;
         title?: string | undefined;
@@ -4810,7 +4810,7 @@ export type BrowserContextActionResultById = {
             addressLabel?: string | undefined;
             folderLabel?: string | undefined;
             iconToken?: string | undefined;
-            tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
         } | undefined;
         url?: string | undefined;
         title?: string | undefined;
@@ -5001,7 +5001,7 @@ export type BrowserContextActionResultById = {
             addressLabel?: string | undefined;
             folderLabel?: string | undefined;
             iconToken?: string | undefined;
-            tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
         } | undefined;
         url?: string | undefined;
         title?: string | undefined;
@@ -5272,7 +5272,7 @@ export type BrowserContextActionResultById = {
             addressLabel?: string | undefined;
             folderLabel?: string | undefined;
             iconToken?: string | undefined;
-            tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
         } | undefined;
         url?: string | undefined;
         title?: string | undefined;
@@ -5463,7 +5463,7 @@ export type BrowserContextActionResultById = {
             addressLabel?: string | undefined;
             folderLabel?: string | undefined;
             iconToken?: string | undefined;
-            tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
         } | undefined;
         url?: string | undefined;
         title?: string | undefined;
@@ -5874,7 +5874,7 @@ export type BrowserContextActionResultById = {
             addressLabel?: string | undefined;
             folderLabel?: string | undefined;
             iconToken?: string | undefined;
-            tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
         } | undefined;
         url?: string | undefined;
         title?: string | undefined;
@@ -6065,7 +6065,7 @@ export type BrowserContextActionResultById = {
             addressLabel?: string | undefined;
             folderLabel?: string | undefined;
             iconToken?: string | undefined;
-            tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
         } | undefined;
         url?: string | undefined;
         title?: string | undefined;

@@ -4,6 +4,25 @@
 import type { JsonValue } from '../../identity.js';
 
 export type SessionPermissionsActionInputById = {
+    readonly "session.permission.respond": {
+        [x: string]: unknown;
+        decision: 'abort' | 'allow' | 'deny' | 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied';
+        sessionId?: string | undefined;
+        requestId?: string | undefined;
+        turnId?: string | undefined;
+        reason?: string | undefined;
+        mode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | undefined;
+        allowedTools?: string[] | undefined;
+        execPolicyAmendment?: {
+            command: string[];
+        } | undefined;
+        updatedPermissions?: unknown;
+        answers?: unknown;
+    };
+    readonly "session.approval_reviewer.set": {
+        sessionId: string;
+        enabled: boolean;
+    };
     readonly "session.permission.remote.pending.list": {
         sessionId: string;
         sourceRef: string;
@@ -63,6 +82,12 @@ export type SessionPermissionsActionInputById = {
     };
 };
 export type SessionPermissionsActionResultById = {
+    readonly "session.permission.respond": {
+        ok: true;
+    };
+    readonly "session.approval_reviewer.set": {
+        updated: true;
+    };
     readonly "session.permission.remote.pending.list": {
         requests: ({
             kind: 'permission';
@@ -112,7 +137,7 @@ export type SessionPermissionsActionResultById = {
             grantId: string;
             sourceRef: string;
             sourceRevisionOrEpoch: string;
-            admittedPermissionCeiling: 'default' | 'read-only' | 'safe-yolo' | 'yolo' | 'plan';
+            admittedPermissionCeiling: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo';
         };
     } | {
         status: 'applied' | 'alreadyApplied';
@@ -141,7 +166,7 @@ export type SessionPermissionsActionResultById = {
             grantId: string;
             sourceRef: string;
             sourceRevisionOrEpoch: string;
-            admittedPermissionCeiling: 'default' | 'read-only' | 'safe-yolo' | 'yolo' | 'plan';
+            admittedPermissionCeiling: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo';
             actor: {
                 namespace: string;
                 principalId: string;

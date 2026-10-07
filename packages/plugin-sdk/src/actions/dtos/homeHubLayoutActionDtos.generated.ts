@@ -128,6 +128,7 @@ export type HomeHubLayoutActionInputById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            nativeServicePath?: string | undefined;
                         }[] | undefined;
                     };
                 };
@@ -238,6 +239,7 @@ export type HomeHubLayoutActionInputById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            nativeServicePath?: string | undefined;
                         }[] | undefined;
                     };
                 };
@@ -380,6 +382,7 @@ export type HomeHubLayoutActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            nativeServicePath?: string | undefined;
                         }[] | undefined;
                     };
                 };
@@ -495,6 +498,7 @@ export type HomeHubLayoutActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            nativeServicePath?: string | undefined;
                         }[] | undefined;
                     };
                 };
@@ -609,6 +613,7 @@ export type HomeHubLayoutActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            nativeServicePath?: string | undefined;
                         }[] | undefined;
                     };
                 };
@@ -724,6 +729,7 @@ export type HomeHubLayoutActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            nativeServicePath?: string | undefined;
                         }[] | undefined;
                     };
                 };

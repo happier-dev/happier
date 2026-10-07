@@ -128,6 +128,7 @@ export type DiscoveryActionInputById = {
                             pluginId: string;
                             localId: string;
                         };
+                        nativeServicePath?: string | undefined;
                     }[] | undefined;
                 };
             };

@@ -3,6 +3,7 @@ export type { InputTypePickerLaunchInputV1 } from './inputHints.js';
 export { readInputTypePickerLaunchInput } from './inputHints.js';
 export type { SessionTerminalLayoutV1, QualifiedAudienceSelection, SessionAudienceSelectionV1 } from './dtos/pluginActionDtoSupport.generated.js';
 /** Named dependencies of the canonical host Action input/result maps. */
+export type { AccountApiTokensActionInputById, AccountApiTokensActionResultById } from './dtos/accountApiTokensActionDtos.generated.js';
 export type { AccountPluginDataActionInputById, AccountPluginDataActionResultById } from './dtos/accountPluginDataActionDtos.generated.js';
 export type { AccountSecurityActionInputById, AccountSecurityActionResultById } from './dtos/accountSecurityActionDtos.generated.js';
 export type { AccountSessionsActionInputById, AccountSessionsActionResultById } from './dtos/accountSessionsActionDtos.generated.js';
@@ -72,6 +73,7 @@ export type { ScmPullRequestActionInputById, ScmPullRequestActionResultById } fr
 export type { ScmRepositoryActionInputById, ScmRepositoryActionResultById } from './dtos/scmRepositoryActionDtos.generated.js';
 export type { ScopeActionInputById, ScopeActionResultById } from './dtos/scopeActionDtos.generated.js';
 export type { SessionAccessActionInputById, SessionAccessActionResultById } from './dtos/sessionAccessActionDtos.generated.js';
+export type { SessionAttentionActionInputById, SessionAttentionActionResultById } from './dtos/sessionAttentionActionDtos.generated.js';
 export type { SessionBoardActionInputById, SessionBoardActionResultById } from './dtos/sessionBoardActionDtos.generated.js';
 export type { SessionControlActionInputById, SessionControlActionResultById } from './dtos/sessionControlActionDtos.generated.js';
 export type { SessionDiscussionActionInputById, SessionDiscussionActionResultById } from './dtos/sessionDiscussionActionDtos.generated.js';

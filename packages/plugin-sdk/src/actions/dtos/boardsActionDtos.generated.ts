@@ -125,6 +125,7 @@ export type BoardsActionInputById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            nativeServicePath?: string | undefined;
                         }[] | undefined;
                     };
                 };
@@ -290,6 +291,7 @@ export type BoardsActionInputById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            nativeServicePath?: string | undefined;
                         }[] | undefined;
                     };
                 };
@@ -700,6 +702,7 @@ export type BoardsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                nativeServicePath?: string | undefined;
                             }[] | undefined;
                         };
                     };
@@ -878,6 +881,7 @@ export type BoardsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                nativeServicePath?: string | undefined;
                             }[] | undefined;
                         };
                     };

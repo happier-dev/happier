@@ -471,8 +471,24 @@ export type ReviewCommentsActionInputById = {
     };
     readonly "reviews.comments.claimPublicationDispatch": {
         target: {
-            providerId: string;
             configuredAccountId: string;
+            providerId: string;
+            entryRef: {
+                sourceId: string;
+                kindId: string;
+                collisionScope: string;
+                entryId: string;
+            };
+            subtarget: {
+                kindId: 'review-thread' | 'review-comment';
+                targetId: string;
+            } | null;
+        } | {
+            nativeService: {
+                pluginId: string;
+                localId: string;
+            };
+            providerId: string;
             entryRef: {
                 sourceId: string;
                 kindId: string;
