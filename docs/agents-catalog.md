@@ -218,6 +218,9 @@ native discovery is pending. The scope includes machine/server/account, operatio
 runtime descriptor, project, profile, Connected Service bindings, and selected authentication.
 Profile selections carry the strict V2 `SecretReferenceOverlay`; the daemon materializes those
 references through the launch secret owner rather than receiving GUI-decrypted profile values.
+Explicit Connected Account selections require a declared native credential destination and usable
+materialized credentials; unsupported selections fail before native discovery. Native-only and empty
+bindings continue to use native authentication without account materialization.
 Selected native skills retain any agent-supplied identifier and source reference through structured
 input. Catalog reference identifiers synthesized for lookup are not native invocation identifiers;
 entries without a native identifier retain name/source-path resolution. An older daemon without
@@ -226,12 +229,16 @@ entries without a native identifier retain name/source-path resolution. An older
 Pre-session discovery requires managed prerequisites to be ready: the canonical managed-dependency
 executable resolver requires readiness and does not install missing dependencies. Actual session
 launch retains its configured installation policy.
+Gemini pre-session probes receive the host's native `CI=1` control to suppress OAuth browser launch;
+cached authentication remains usable, while missing authentication reports discovery unavailable.
 
-OpenCode V2 cold pre-session discovery is unavailable in development source: its public API does
-not expose a plugin-activation completion barrier that makes a cold command/skill inventory
-authoritative. Discovery must report that limitation rather than submit a bootstrap prompt or
-publish an unverified empty catalog. Existing-session V2 command and skill dispatch is a separate
-runtime contract.
+In development source, the OpenCode V2 native catalog client waits for the selected project's
+plugin activation through `GET /api/integration` before reading commands or skills. The released
+2.0.15 and 2.0.20 integration-list handlers await activation; command and skill readers alone can
+return a cold, empty registry. Pre-session discovery, existing-session catalogs, refresh, and legacy
+skill lookup use that same client owner. Discovery creates no Happier session and sends no native
+prompt or inference request; readiness failures propagate instead of publishing an unverified empty
+catalog. OpenCode V1 retains its direct native catalog reads.
 
 The current development Copilot plugin probes `copilot --acp` through that host-owned JSON-RPC
 client, passing the host-selected working directory to `session/new`. It projects observed effort
@@ -293,8 +300,8 @@ a subtask, or no inference.
 Actual execution and assistant events supply provider-origin lifecycle and streaming evidence;
 the response alone supplies neither a native user message ID nor proof of parent inference.
 Built-in V2 config subtasks deliver internal synthetic input to the parent and resume its normal
-assistant continuation. Commands are refreshed after a real prompt activates native plugins;
-a cold V2 session can lack project commands until then. Happier sends no hidden bootstrap prompt.
+assistant continuation. Commands are also refreshed after a real prompt is accepted; V2 catalog
+reads await the same read-only activation barrier before the first prompt and after refresh.
 
 The existing dynamic-model cache owns stale-while-revalidate, in-flight sharing and exact-key
 subscriptions. Scope includes the machine, server, target, working directory, selected profile,

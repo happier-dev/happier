@@ -28,7 +28,7 @@ import { probeAgentModesBestEffort } from '@/capabilities/probes/agentModesProbe
 import { probeAgentConfigOptionsBestEffort } from '@/capabilities/probes/agentConfigOptionsProbe';
 import { probeAgentCatalogs } from '@/capabilities/probes/agentCatalogsProbe';
 import { createPreflightCatalogCleanupScope, type PreflightCatalogCleanupScope } from '@/capabilities/probes/preflightCatalogCleanupScope';
-import { SecretReferenceOverlayV1Schema } from '@happier-dev/protocol';
+import { SecretReferenceOverlayV1Schema } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
 import { sanitizeEnvVarRecord } from '@/terminal/runtime/envVarSanitization';
 import { stripSessionControlEnvOverrides } from '@/session/runtime/control/sessionControlEnvironment';
 import { logger } from '@/ui/logger';
@@ -60,9 +60,10 @@ import {
     withPreflightSessionControlsProbeEnvironment,
 } from '@/capabilities/probes/preflightSessionControlsProbeEnvironment';
 import { resolveProfileProbeEnvironment } from '@/capabilities/probes/resolveProfileProbeEnvironment';
-import { readDeclaredCatalogConnectedServiceIds, resolveCatalogAgentConnectedServiceIds } from '@/agent/catalog/registry';
+import { readDeclaredCatalogConnectedServiceIds, resolveCatalogAgentConnectedServiceIds, readDeclaredCatalogConnectedAccountServiceIds, resolveCatalogAgentConnectedAccountServiceIds } from '@/agent/catalog/registry';
 import { withAgentPreflightCatalog } from '@/capabilities/probes/withAgentPreflightCatalog';
 import { resolveConnectedServiceAuthForSpawn } from '@/daemon/connectedServices/resolveConnectedServiceAuthForSpawn';
+import { parseConnectedServiceBindingSelections } from '@/daemon/connectedServices/parseConnectedServicesBindings';
 import { generateConnectedServiceMaterializationIdentityV1 } from '@/daemon/connectedServices/materialization/identity';
 import { resolveConnectedServiceMaterializedRootDir } from '@/daemon/connectedServices/materialize/resolveConnectedServiceMaterializedRootDir';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
@@ -166,6 +167,9 @@ async function resolveConnectedServiceProbeEnvironment(params: Readonly<{
     credentials: Awaited<ReturnType<typeof resolveProbeBackendContext>>['credentials'];
     accountSettings: Record<string, unknown> | null;
     requiresMaterializedAuth: boolean;
+    nativeCatalog: boolean;
+    signal?: AbortSignal;
+    cleanupScope?: PreflightCatalogCleanupScope;
     dependencies: CliProbeDependencies;
     processEnv: NodeJS.ProcessEnv;
 }>): Promise<ConnectedServiceProbeEnvironment> {
@@ -192,7 +196,13 @@ async function resolveConnectedServiceProbeEnvironment(params: Readonly<{
     );
     const registry = params.dependencies.agentRegistrySnapshot ?? readCurrentContributionRegistry();
     const consumer = registry.agentDefinitionsById.get(params.agentId)?.identity ?? null;
+    const stateSharing = params.nativeCatalog
+        ? await params.dependencies.agentCatalogEntry?.getConnectedServiceStateSharingDescriptor?.() ?? null
+        : null;
+    params.signal?.throwIfAborted();
     const resolved = await resolveConnectedServiceAuthForSpawn({
+        signal: params.signal,
+        retainCleanup: params.cleanupScope?.retain,
         agentId: params.agentId,
         sessionDirectory: params.cwd,
         connectedServicesBindingsRaw: params.connectedServices,
@@ -203,13 +213,31 @@ async function resolveConnectedServiceProbeEnvironment(params: Readonly<{
         api: await params.dependencies.createApiClient(params.credentials),
         accountSettings: params.accountSettings,
         processEnv: params.processEnv,
-        resolveQualifiedPurposeBindingSnapshot: (bindings) =>
-            resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
+        resolveQualifiedPurposeBindingSnapshot: (bindings) => {
+            const snapshot = resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
                 agentId: params.agentId,
                 bindings,
                 contributions: registry,
                 catalogEntry: params.dependencies.agentCatalogEntry,
-            }),
+            });
+            if (params.nativeCatalog && snapshot) {
+                // A purpose declaration alone does not put credentials in a native process.
+                // Admit only the launch destinations consumed by the existing materializer.
+                for (const binding of snapshot.bindings) {
+                    const key = qualifiedPurposeKey(binding.purpose);
+                    const hasEnvironment = snapshot.environmentUses?.some(use => qualifiedPurposeKey(use.purpose) === key);
+                    const hasFileEnvironment = snapshot.fileEnvironmentUses?.some(use => qualifiedPurposeKey(use.purpose) === key);
+                    const hasNativeHome = stateSharing?.providerSupportStatus === 'supported'
+                        && stateSharing.nativeHome
+                        && stateSharing.authIsolation.secretEntries.length > 0
+                        && snapshot.fileMaterializationPurposes?.some(scope => qualifiedPurposeKey(scope.purpose) === key);
+                    if (!hasEnvironment && !hasFileEnvironment && !hasNativeHome) {
+                        throw new Error('Selected Connected Account has no declared native catalog credential destination');
+                    }
+                }
+            }
+            return snapshot;
+        },
         ...(params.dependencies.activatePurposeBindings && consumer
             ? {
                 activateQualifiedPurposeBindings: (snapshot) =>
@@ -218,7 +246,7 @@ async function resolveConnectedServiceProbeEnvironment(params: Readonly<{
                             kind: 'operation',
                             operationId: materializationIdentity.id,
                             consumer,
-                            isCurrent: () => params.dependencies.isAgentRegistryCurrent?.() === true,
+                            isCurrent: () => !params.signal?.aborted && params.dependencies.isAgentRegistryCurrent?.() === true,
                         },
                         purposes: snapshot.purposes,
                         bindings: snapshot.bindings,
@@ -374,15 +402,20 @@ async function invokeCliPreflightMethod(
     if (method === 'probeCatalogs' && params?.connectedServices != null && !parsedConnectedServices.success) {
         return { ok: false, error: { code: 'connected-service-preflight-failed', message: 'Could not prepare the selected connected-service account for this probe.' } };
     }
+    const hasConnectedServiceSelection = parseConnectedServiceBindingSelections(connectedServices).length > 0;
     const explicitEnvironment = method === 'probeCatalogs'
         ? stripSessionControlEnvOverrides(sanitizeEnvVarRecord(params?.environmentVariables))
         : {};
     const materializationAgentId =
         (dependencies.agentCatalogEntry === undefined
-            ? resolveCatalogAgentConnectedServiceIds(agentId)
-            : readDeclaredCatalogConnectedServiceIds(dependencies.agentCatalogEntry)).length > 0
+            ? resolveCatalogAgentConnectedServiceIds(agentId).length + resolveCatalogAgentConnectedAccountServiceIds(agentId).length
+            : readDeclaredCatalogConnectedServiceIds(dependencies.agentCatalogEntry).length
+                + readDeclaredCatalogConnectedAccountServiceIds(dependencies.agentCatalogEntry).length) > 0
             ? agentId
             : null;
+    if (method === 'probeCatalogs' && hasConnectedServiceSelection && !materializationAgentId) {
+        return { ok: false, error: { code: 'connected-service-preflight-failed', message: 'Could not prepare the selected connected-service account for this probe.' } };
+    }
     const preflightAdapter = method === 'probePassiveRealtimeSetup'
         ? await resolvePreflightSessionControlsProbeAdapter(agentId, dependencies.agentCatalogEntry).catch(() => null)
         : null;
@@ -390,14 +423,14 @@ async function invokeCliPreflightMethod(
         method === 'probePassiveRealtimeSetup'
         && (
             !materializationAgentId
-            || !connectedServices
+            || !hasConnectedServiceSelection
         )
     ) {
         return { ok: true, result: { v: 1, status: 'unavailable' } };
     }
     const requiresMaterializedAuth = Boolean(
         materializationAgentId
-        && connectedServices,
+        && hasConnectedServiceSelection,
     );
     const probeContext = await resolveProbeBackendContext(
         { ...params, agentId },
@@ -446,8 +479,32 @@ async function invokeCliPreflightMethod(
             },
         };
     }
+    const nativeLaunchPreferences = method === 'probeCatalogs'
+        ? await dependencies.agentCatalogEntry?.resolveSessionRuntimePreferences?.({
+            isExplicitCliSubcommand: false,
+            parsed: { agentArgs: [] },
+            settings: probeContext.accountSettings ?? {},
+            pluginSettings: probeContext.pluginSettings ?? {},
+            environment: { ...process.env, ...explicitEnvironment, ...(profileProbeEnvironment?.env ?? {}) },
+            startOrigin: 'daemon',
+        })
+        : undefined;
+    requestContext.signal?.throwIfAborted();
+    const nativeHome = method === 'probeCatalogs'
+        ? (await dependencies.agentCatalogEntry?.getConnectedServiceStateSharingDescriptor?.())?.nativeHome
+        : null;
+    requestContext.signal?.throwIfAborted();
+    const nativeHomeValue = nativeHome
+        ? sanitizeEnvVarRecord(nativeLaunchPreferences?.environmentVariables)[nativeHome.environmentKey]
+        : undefined;
+    // Session preferences may carry the whole launch environment. Cold catalogs consume
+    // only the declared native-home destination; scoped credentials retain their own owners.
+    const nativeLaunchEnvironment = nativeHome && nativeHomeValue !== undefined
+        ? { [nativeHome.environmentKey]: nativeHomeValue }
+        : {};
     const profileProcessEnv: NodeJS.ProcessEnv = {
         ...process.env,
+        ...nativeLaunchEnvironment,
         ...explicitEnvironment,
         ...(profileProbeEnvironment?.env ?? {}),
     };
@@ -465,6 +522,9 @@ async function invokeCliPreflightMethod(
                 credentials: probeContext.credentials,
                 accountSettings: probeContext.accountSettings,
                 requiresMaterializedAuth,
+                nativeCatalog: method === 'probeCatalogs',
+                signal: requestContext.signal,
+                cleanupScope: requestContext.cleanupScope,
                 dependencies,
                 processEnv: profileProcessEnv,
             });
@@ -481,6 +541,7 @@ async function invokeCliPreflightMethod(
     try {
     requestContext.signal?.throwIfAborted();
     const materializedEnv = {
+        ...nativeLaunchEnvironment,
         ...explicitEnvironment,
         ...(profileProbeEnvironment?.env ?? {}),
         ...(connectedServiceProbeEnvironment.materializedEnv ?? {}),

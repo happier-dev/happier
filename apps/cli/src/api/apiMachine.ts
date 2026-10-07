@@ -438,6 +438,13 @@ export class ApiMachineClient {
         DaemonConnectedAccountPurposeBindingRuntime,
         'activatePurposeBindings' | 'listActionFormConnectedAccountOptions'
     > | null = null;
+    private readonly activateCapabilitiesPurposeBindings: DaemonConnectedAccountPurposeBindingRuntime['activatePurposeBindings'] = (input) => {
+        const runtime = this.connectedAccountPurposeBindingRuntime;
+        if (!runtime) {
+            throw new Error('Connected Account purpose authority is unavailable for this capability probe');
+        }
+        return runtime.activatePurposeBindings(input);
+    };
     private sessionSpawnV1OutcomeRequired = false;
     private externalActionExecutionAuthorizationV1OutcomeRequired = false;
     private currentIrohMachineEndpoint: IrohEndpointDescriptorV1 | null = null;
@@ -760,13 +767,7 @@ export class ApiMachineClient {
                         this.lifecycleDependencies.createCapabilitiesApiClient,
                 }
                 : {}),
-            activateCapabilitiesPurposeBindings: (input) => {
-                const runtime = this.connectedAccountPurposeBindingRuntime;
-                if (!runtime) {
-                    throw new Error('Connected Account purpose authority is unavailable for this capability probe');
-                }
-                return runtime.activatePurposeBindings(input);
-            },
+            activateCapabilitiesPurposeBindings: this.activateCapabilitiesPurposeBindings,
             getAgentCatalogObservation: () => this.agentCatalogObservation
                 ? { machineId: this.machine.id, service: this.agentCatalogObservation }
                 : null,
@@ -1002,6 +1003,7 @@ export class ApiMachineClient {
                             this.lifecycleDependencies.createCapabilitiesApiClient,
                     }
                     : {}),
+                activateCapabilitiesPurposeBindings: this.activateCapabilitiesPurposeBindings,
                 sessionServerStart: {
                     machineId: this.machine.id,
                     token: this.token,

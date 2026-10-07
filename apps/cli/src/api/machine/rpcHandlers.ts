@@ -313,6 +313,9 @@ export type MachineRpcHandlerDeps = Readonly<{
   createCapabilitiesApiClient?: NonNullable<
     Parameters<typeof registerCapabilitiesHandlers>[1]
   >['createApiClient'];
+  activateCapabilitiesPurposeBindings?: NonNullable<
+    Parameters<typeof registerCapabilitiesHandlers>[1]
+  >['activatePurposeBindings'];
   runReplaySummaryForDialog?: typeof runReplaySummaryForDialog;
   resolveExecutionSurfaces?: SessionLifecycleMachineDeps['resolveExecutionSurfaces'];
   awaitAgentSessionOpen?: SessionLifecycleMachineDeps['awaitAgentSessionOpen'];
@@ -495,6 +498,9 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
   registerCapabilitiesHandlers(rpcHandlerManager, {
     ...(params.deps?.createCapabilitiesApiClient
       ? { createApiClient: params.deps.createCapabilitiesApiClient }
+      : {}),
+    ...(params.deps?.activateCapabilitiesPurposeBindings
+      ? { activatePurposeBindings: params.deps.activateCapabilitiesPurposeBindings }
       : {}),
   });
   registerMachineAgentInstallJobRpcHandlers({ rpcHandlerManager });

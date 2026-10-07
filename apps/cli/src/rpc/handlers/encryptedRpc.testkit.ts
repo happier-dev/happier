@@ -7,6 +7,7 @@ type EncryptionVariant = 'legacy';
 
 interface CreateEncryptedRpcTestClientOptions {
   scopePrefix: string;
+  manager?: RpcHandlerManager;
   /** Models the Home's authenticated ingress stamp, not encrypted caller input. */
   callerAuthority?: RpcRequest['callerAuthority'];
   registerHandlers: (manager: RpcHandlerManager) => void;
@@ -27,7 +28,7 @@ export function createEncryptedRpcTestClient(
   const encryptionVariant = options.encryptionVariant ?? 'legacy';
   const logger = options.logger ?? (() => undefined);
 
-  const manager = new RpcHandlerManager({
+  const manager = options.manager ?? new RpcHandlerManager({
     scopePrefix: options.scopePrefix,
     encryptionKey,
     encryptionVariant,

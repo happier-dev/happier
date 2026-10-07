@@ -7,6 +7,7 @@ function fixture(options: Readonly<{ generation?: string; version?: string; vers
   const requests: ManagedServiceRequest[] = [];
   const services: ManagedServiceSpec[] = [];
   let disposed = false;
+  let ready = false;
   const context: AgentPreflightSessionControlsProbeContextV1 = {
     cwd: '/repo', accountSettings: { opencodeCliGeneration: options.generation ?? 'stable' },
     environment: {}, signal: new AbortController().signal,
@@ -19,10 +20,18 @@ function fixture(options: Readonly<{ generation?: string; version?: string; vers
       try {
         return await inspect({ request: async (request) => {
           requests.push(request);
-          if (options.failSkills && request.pathAndQuery.startsWith('/skill?')) throw new Error('skill transport failed');
-          const value = request.pathAndQuery.startsWith('/command?')
+          const route = new URL(request.pathAndQuery, 'http://opencode.invalid');
+          const v2 = route.pathname.startsWith('/api/');
+          if (v2) expect(route.searchParams.get('location[directory]')).toBe(context.cwd);
+          if (route.pathname === '/api/integration') {
+            ready = true;
+            return { ok: true, status: 200, statusText: 'OK', headers: { 'content-type': 'application/json' }, body: new Response(JSON.stringify({ data: [] })).body };
+          }
+          if (options.failSkills && route.pathname.endsWith('/skill')) throw new Error('skill transport failed');
+          const items = route.pathname.endsWith('/command')
             ? [{ name: 'review', description: 'Review project', template: 'native template' }]
-            : [{ name: 'project-skill', description: 'Use project skill', location: '/repo/.opencode/skills/project-skill/SKILL.md' }];
+            : [{ ...(v2 ? { id: 'native-project-skill' } : {}), name: 'project-skill', description: 'Use project skill', location: '/repo/.opencode/skills/project-skill/SKILL.md' }];
+          const value = v2 ? { data: ready ? items : [] } : items;
           return { ok: true, status: 200, statusText: 'OK', headers: { 'content-type': 'application/json' }, body: new Response(JSON.stringify(value)).body };
         } }, context.signal);
       } finally { disposed = true; }
@@ -51,11 +60,15 @@ describe('OpenCode before-session native catalogs', () => {
     expect(f.disposed()).toBe(true);
   });
 
-  it.each([{ generation: 'v2', version: '2.0.20' }, { generation: 'stable', version: 'opencode v2.0.20' }])('rejects cold V2 catalogs even when stable resolves to V2 ($generation)', async (selection) => {
+  it.each([{ generation: 'v2', version: '2.0.20' }, { generation: 'stable', version: 'opencode v2.0.20' }])('reads cold V2 catalogs even when stable resolves to V2 ($generation)', async (selection) => {
     const f = fixture(selection);
-    await expect(probe(f.context)).rejects.toThrow('no read-only plugin activation barrier');
-    expect(f.services).toEqual([]);
-    expect(f.requests).toEqual([]);
+    await expect(probe(f.context)).resolves.toEqual({
+      commands: [{ name: 'review', description: 'Review project', template: 'native template' }],
+      skills: [{ id: 'native-project-skill', name: 'project-skill', displayName: 'project-skill', description: 'Use project skill', path: '/repo/.opencode/skills/project-skill/SKILL.md', origin: 'opencode_native', enabled: true }],
+    });
+    expect(f.requests.every((request) => request.method === 'GET')).toBe(true);
+    expect(f.requests.some((request) => request.pathAndQuery.startsWith('/api/session'))).toBe(false);
+    expect(f.disposed()).toBe(true);
   });
 
   it.each([{ versionOk: false, version: '' }, { versionOk: true, version: 'unrecognized CLI output' }])('rejects an unproven native generation before opening catalog routes', async (observation) => {

@@ -138,6 +138,7 @@ import type {
   AgentFeatureDecisionService,
   AgentLaunchEnvironment,
   AgentPermissionIntent,
+  AgentPreflightExecutableSelectorV1,
   AgentPreflightJsonRpcRequestClientV1,
   AgentPreflightSessionControlsCommandResultV1,
   AgentPreflightSessionControlsCommandV1,

@@ -17,7 +17,8 @@ vi.mock('./capabilitiesProbeContext', () => ({
   resolveProbeBackendContext: mocks.resolveProbeBackendContext,
 }));
 
-vi.mock('@/agent/catalog/registry', () => ({
+vi.mock('@/agent/catalog/registry', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/agent/catalog/registry')>()),
   resolveCatalogAgentConnectedServiceIds: () => [],
   AGENTS: {
     opencode: { id: 'opencode' },

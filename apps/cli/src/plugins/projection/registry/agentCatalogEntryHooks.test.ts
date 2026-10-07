@@ -703,11 +703,12 @@ describe('Agent registration catalog projections', () => {
       fileName: process.platform === 'win32' ? 'models.cmd' : 'models',
       contents: process.platform === 'win32' ? '@echo off\necho primary' : '#!/bin/sh\nprintf primary',
     });
-    let nowMs = 0;
-    const dateNow = vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+    const realDateNow = Date.now.bind(Date);
+    let elapsedMs = 0;
+    const dateNow = vi.spyOn(Date, 'now').mockImplementation(() => realDateNow() + elapsedMs);
     const primaryParseOutput = vi.fn(({ stdout }: Readonly<{ stdout: string }>) => {
       expect(stdout.trim()).toBe('primary');
-      nowMs = 1_500;
+      elapsedMs = 1_500;
       return null;
     });
     const fallbackParseOutput = vi.fn(() => 'fallback');

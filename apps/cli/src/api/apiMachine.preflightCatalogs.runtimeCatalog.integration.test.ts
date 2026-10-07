@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import axios from 'axios';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, delimiter, dirname, join, sep } from 'node:path';
 import {
   FeaturesResponseSchema, PluginManifestV2Schema, QualifiedConnectedAccountCredentialSnapshotV4Schema,
   QualifiedConnectedAccountListResponseV4Schema, sealQualifiedConnectedAccountContentEnvelope,
@@ -10,9 +10,9 @@ import {
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { ApiClient } from '@/api/api';
 import type { Machine } from '@/api/types';
-import { decodeBase64, decrypt, encodeBase64, encrypt } from '@/api/encryption';
 import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
-import { reloadConfiguration } from '@/configuration';
+import { configuration, reloadConfiguration } from '@/configuration';
+import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
 import { writeCredentialsLegacy } from '@/persistence';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { createQualifiedConnectedAccountEstablishedRuntimeOwner } from '@/daemon/connectedServices/qualifiedConnectedAccountEstablishedRuntimeOwner';
@@ -23,8 +23,43 @@ import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/contro
 import { registerCapabilitiesHandlers } from '@/rpc/handlers/capabilities';
 import { createEncryptedRpcTestClient } from '@/rpc/handlers/encryptedRpc.testkit';
 import { ApiMachineClient } from './apiMachine';
+import { resolveConnectedServiceAuthForSpawn } from '@/daemon/connectedServices/resolveConnectedServiceAuthForSpawn';
+import { resolveQualifiedPurposeBindingSnapshotForAgentSpawn } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
+import { createPreflightCatalogCleanupScope } from '@/capabilities/probes/preflightCatalogCleanupScope';
+import { generateConnectedServiceMaterializationIdentityV1 } from '@/daemon/connectedServices/materialization/identity';
 import { materializeSamplePluginFixture, SAMPLE_PLUGIN_ID } from '@/plugins/testkit/samplePackage';
 import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/currentState.testkit';
+
+const filesystemBoundary = vi.hoisted(() => ({
+  gate: undefined as Readonly<{ kind: 'mkdir' | 'open'; wait: Promise<void>; entered(path: string): void }> | undefined,
+  rejectedRemoval: undefined as string | undefined,
+}));
+// Delay/fail only actual OS operations; the real custody/materialization owners remain loaded.
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual,
+    async mkdir(...args: Parameters<typeof actual.mkdir>) {
+      const path = String(args[0]);
+      if (filesystemBoundary.gate?.kind === 'mkdir' && path.includes(`${sep}.attempts${sep}`)) {
+        const gate = filesystemBoundary.gate; gate.entered(path); await gate.wait;
+      }
+      return actual.mkdir(...args);
+    },
+    async open(...args: Parameters<typeof actual.open>) {
+      const path = String(args[0]);
+      if (filesystemBoundary.gate?.kind === 'open' && path.endsWith('.credential')) {
+        const gate = filesystemBoundary.gate; gate.entered(path); await gate.wait;
+      }
+      return actual.open(...args);
+    },
+    async rm(...args: Parameters<typeof actual.rm>) {
+      if (String(args[0]) === filesystemBoundary.rejectedRemoval) {
+        throw Object.assign(new Error('OS denied artifact removal'), { code: 'EACCES' });
+      }
+      return actual.rm(...args);
+    },
+  };
+});
 
 // Only HTTP credential transport and native executables are simulated. Purpose
 // selection, envelope opening, materialization, final registration and RPC remain real.
@@ -70,6 +105,7 @@ describe('final machine native catalog scope admission', () => {
       configurationRevision: null, content, metadata: { scopes: [] } });
     vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
       const path = new URL(String(url)).pathname;
+      if (path === '/v1/account/profile') return { status: 200, data: { id: 'fixture-account' } };
       if (path === '/v4/connect/qualified/accounts') return { status: 200,
         data: QualifiedConnectedAccountListResponseV4Schema.parse({ service, accounts: [{ ref: account,
           authenticationModeId: 'oauth', status: 'connected', kind: 'oauth', expiresAt: Date.now() + 3_600_000,
@@ -122,8 +158,42 @@ describe('final machine native catalog scope admission', () => {
         sessionRunnerFactory: {`));
     await seedCurrentLocalPathPluginFixture({ happyHomeDir: home, pluginRoot: externalRoot,
       pluginId: SAMPLE_PLUGIN_ID, manifestVersion: manifest.version });
+    const emptyConsumerPluginIds: string[] = [];
+    for (const kind of ['environment', 'file', 'native-home', 'file-success', 'undeclared'] as const) {
+      const pluginId = `acme.empty-${kind}`;
+      emptyConsumerPluginIds.push(pluginId);
+      const pluginRoot = join(root, pluginId);
+      await materializeSamplePluginFixture(pluginRoot);
+      const environmentKey = 'UNSUPPORTED_CREDENTIAL';
+      const connectedAccountLaunch = kind === 'environment'
+        ? { environmentUses: [{ purpose: 'selected-account', environmentKey }] }
+        : kind === 'file' || kind === 'file-success'
+          ? { fileEnvironmentUses: [{ purpose: 'selected-account', environmentKey, fileId: kind === 'file-success' ? 'auth.json' : 'unsupported.json' }] }
+          : { stateSharingDescriptor: {
+            nativeHome: { environmentKey, defaultRelativePath: '.fixture' },
+            providerSupportStatus: 'supported',
+            config: { supported: false, modes: ['isolated'], entries: [], unavailableReason: 'not_implemented' },
+            state: { supported: false, modes: ['isolated'], entries: [], unavailableReason: 'not_implemented' },
+            authIsolation: { mode: 'materialized_home', secretEntries: ['unsupported.json'] },
+          } };
+      writeFileSync(join(pluginRoot, '.happier-plugin', 'plugin.json'), JSON.stringify({
+        ...manifest, id: pluginId, activation: undefined,
+        hostAccess: { required: [{ id: 'native-auth', capability: 'environment', reason: 'Native auth destination',
+          scope: { keys: [environmentKey] } }], optional: [] },
+        contributes: { ...manifest.contributes, agents: manifest.contributes?.agents?.map(agent => ({ ...agent,
+          connectedAccounts: kind === 'undeclared' ? [] : [{ purpose: 'selected-account', service, required: false,
+            materializationKinds: [kind === 'environment' ? 'environment' : 'files'] }],
+        })) },
+      }));
+      const pluginDaemon = join(pluginRoot, 'daemon.mjs');
+      writeFileSync(pluginDaemon, readFileSync(pluginDaemon, 'utf8').replace('sessionRunnerFactory: {',
+        `connectedAccountLaunch: ${JSON.stringify(connectedAccountLaunch)},
+          preflightSessionControls: { probeCatalogs: async () => ({ commands: [{ name: 'unscoped-command' }], skills: null }) },
+          sessionRunnerFactory: {`));
+      await seedCurrentLocalPathPluginFixture({ happyHomeDir: home, pluginRoot, pluginId, manifestVersion: manifest.version });
+    }
     lease = await pluginReloadController.acquireRuntimeRegistry({ resolveRuntimeRegistry: () => resolveExecutablePluginRuntimeRegistry({
-      happyHomeDir: home, pluginIds: ['happier.agent.codex', 'happier.agent.ohmypi', SAMPLE_PLUGIN_ID], connectedAccounts: purposeOwner,
+      happyHomeDir: home, pluginIds: ['happier.agent.codex', 'happier.agent.ohmypi', SAMPLE_PLUGIN_ID, ...emptyConsumerPluginIds], connectedAccounts: purposeOwner,
       accountSettingsRecordAdapter: { async bindOperation() { return {
         async readRecord(model) { return model.identity.pluginId === 'happier.agent.ohmypi'
           ? { status: 'present' as const, revision: 1, values: { ohMyPiAgentDir: configuredNativeHome } }
@@ -156,14 +226,23 @@ describe('final machine native catalog scope admission', () => {
         for(const line of lines){if(!line.trim())continue;const req=JSON.parse(line);if(req.id===undefined)continue;
           if(req.method==='initialize')send({id:req.id,result:{protocolVersion:1,agentCapabilities:{sessionCapabilities:{close:{}}}}});
           else if(req.method==='session/new'){send({id:req.id,result:{sessionId:'native-fixture'}});
-            send({method:'session/update',params:{sessionId:'native-fixture',update:{sessionUpdate:'available_commands_update',availableCommands:[{name:'native-command'}]}}});}
+            send({method:'session/update',params:{sessionId:'native-fixture',update:{sessionUpdate:'available_commands_update',availableCommands:[{name:'native-command',description:'Native fixture command'}]}}});}
           else send({id:req.id,result:{}});}});`);
     chmodSync(omp, 0o755);
+    for (const [name, script] of [['codex', codex], ['omp', omp]]) {
+      writeExecutableShimSync({ dir: root, fileName: process.platform === 'win32' ? `${name}.cmd` : name,
+        contents: process.platform === 'win32'
+          ? `@"${process.execPath}" "${script}" %*\r\n`
+          : `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`,
+      });
+    }
+    process.env.PATH = `${root}${delimiter}${process.env.PATH ?? ''}`;
     process.env.HAPPIER_CODEX_PATH = codex;
     process.env.HAPPIER_OHMYPI_PATH = omp;
     process.env.HAPPIER_OH_MY_PI_PATH = omp;
   }, 90_000);
   afterEach(async () => {
+    filesystemBoundary.gate = undefined; filesystemBoundary.rejectedRemoval = undefined;
     holdNativeCredential = false; releaseCredentialRead?.(); releaseCredentialRead = undefined; credentialReadEntered = undefined;
     await machineClient?.shutdown(); machineClient = undefined;
     rmSync(capture, { force: true }); rmSync(join(root, 'hang-native'), { force: true });
@@ -188,16 +267,89 @@ describe('final machine native catalog scope admission', () => {
     machineClient.setRPCHandlers({ spawnSession: async () => ({ type: 'success', sessionId: 'unused' }),
       stopSession: async () => true, requestShutdown: () => undefined });
     // The existing Machine test boundary exposes its real private RPC manager.
-    return { machine, rpc: (machineClient as unknown as { rpcHandlerManager: RpcHandlerManager }).rpcHandlerManager };
+    return createEncryptedRpcTestClient({ scopePrefix: machine.id, encryptionKey: machine.encryptionKey,
+      manager: (machineClient as unknown as { rpcHandlerManager: RpcHandlerManager }).rpcHandlerManager,
+      registerHandlers() {},
+    });
   }
+  async function prepareAuth(agentId: string, signal: AbortSignal, cleanupScope: ReturnType<typeof createPreflightCatalogCleanupScope>) {
+    const catalogEntry = await lease.registry.acquireAgentCatalogEntry?.(agentId);
+    const consumer = lease.registry.contributes.agentDefinitionsById.get(agentId)?.identity;
+    if (!consumer) throw new Error('Fixture Agent identity unavailable');
+    const identity = generateConnectedServiceMaterializationIdentityV1();
+    return resolveConnectedServiceAuthForSpawn({
+      agentId, connectedServicesBindingsRaw: connectedServices, credentials, api: await createApiClient(),
+      materializationKey: identity.id, activeServerDir: configuration.activeServerDir,
+      baseDir: join(home, 'daemon', 'connected-services', 'materialized'), sessionDirectory: root,
+      signal, retainCleanup: cleanupScope.retain,
+      resolveQualifiedPurposeBindingSnapshot: bindings => resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
+        agentId, bindings, contributions: lease.registry.contributes, catalogEntry,
+      }),
+      activateQualifiedPurposeBindings: snapshot => purposeOwner.activatePurposeBindings({
+        subject: { kind: 'operation', operationId: identity.id, consumer, isCurrent: () => !signal.aborted },
+        purposes: snapshot.purposes, bindings: snapshot.bindings,
+      }),
+    });
+  }
+  it.each(['mkdir', 'open'] as const)('waits for a started host %s before cancel cleanup and prevents artifact resurrection', async kind => {
+    const controller = new AbortController();
+    const cleanupScope = createPreflightCatalogCleanupScope();
+    let release = () => {};
+    const wait = new Promise<void>(resolve => { release = resolve; });
+    let enteredPath = '';
+    const entered = new Promise<void>(resolve => { filesystemBoundary.gate = { kind, wait,
+      entered(path) { enteredPath = path; resolve(); } }; });
+    const preparation = prepareAuth(kind === 'mkdir' ? 'codex' : 'acme.empty-file-success/sample-provider', controller.signal, cleanupScope);
+    const outcome = preparation.then(() => null, error => error);
+    await entered;
+    controller.abort();
+    const disposal = cleanupScope.dispose();
+    let settled = false;
+    void disposal.then(() => { settled = true; }, () => { settled = true; });
+    try {
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(settled).toBe(false);
+      if (kind === 'open') expect(existsSync(dirname(enteredPath))).toBe(true);
+    } finally {
+      filesystemBoundary.gate = undefined; release();
+      await disposal;
+    }
+    expect(await outcome).toBeInstanceOf(Error);
+    expect(existsSync(kind === 'mkdir' ? enteredPath : dirname(enteredPath))).toBe(false);
+    expect(existsSync(capture)).toBe(false);
+    // A subsequent selected operation must remain available after the canceled producer settles.
+    expect(await directRpc().call(RPC_METHODS.CAPABILITIES_INVOKE, { id: 'cli.codex', method: 'probeCatalogs',
+      params: { cwd: root, timeoutMs: 10_000, connectedServices, runtimeKindOverride: 'appServer' } }))
+      .toMatchObject({ ok: true });
+  }, 30_000);
+  it('surfaces an OS cleanup failure and keeps a late credential response from launching discovery', async () => {
+    holdNativeCredential = true;
+    const entered = new Promise<void>(resolve => { credentialReadEntered = resolve; });
+    const controller = new AbortController();
+    const cleanupScope = createPreflightCatalogCleanupScope();
+    const outcome = prepareAuth('codex', controller.signal, cleanupScope).then(() => null, error => error);
+    await entered;
+    const attempt = heldAttemptRoots[0]!;
+    filesystemBoundary.rejectedRemoval = attempt;
+    controller.abort();
+    await expect(cleanupScope.dispose()).rejects.toBeInstanceOf(AggregateError);
+    expect(existsSync(attempt)).toBe(true);
+    filesystemBoundary.rejectedRemoval = undefined;
+    releaseCredentialRead?.();
+    expect(await outcome).toBeInstanceOf(Error);
+    expect(existsSync(capture)).toBe(false);
+    // Restore the intentionally denied OS artifact for isolation of later fixture operations.
+    rmSync(attempt, { recursive: true, force: true });
+    holdNativeCredential = false;
+    expect(await directRpc().call(RPC_METHODS.CAPABILITIES_INVOKE, { id: 'cli.codex', method: 'probeCatalogs',
+      params: { cwd: root, timeoutMs: 10_000, connectedServices, runtimeKindOverride: 'appServer' } }))
+      .toMatchObject({ ok: true });
+  }, 30_000);
   it('retains selected account materialization after the final machine-owned registration', async () => {
-    const { machine, rpc } = finalMachineRpc();
-    const encoded = await rpc.handleRequest({ method: `${machine.id}:${RPC_METHODS.CAPABILITIES_INVOKE}`,
-      params: encodeBase64(encrypt(machine.encryptionKey, machine.encryptionVariant, {
-        id: 'cli.codex', method: 'probeCatalogs', params: { cwd: root, timeoutMs: 10_000, connectedServices,
-          runtimeKindOverride: 'appServer' },
-      })) });
-    const result = decrypt(machine.encryptionKey, machine.encryptionVariant, decodeBase64(encoded));
+    const result = await finalMachineRpc().call(RPC_METHODS.CAPABILITIES_INVOKE, {
+      id: 'cli.codex', method: 'probeCatalogs', params: { cwd: root, timeoutMs: 10_000, connectedServices,
+        runtimeKindOverride: 'appServer' },
+    });
     expect(result).toMatchObject({ ok: true, result: { skills: { supported: true,
       items: [expect.objectContaining({ name: 'selected-skill', origin: 'vendor' })] } } });
     const observation = JSON.parse(readFileSync(capture, 'utf8')) as { nativeHome: string; selected: boolean; pid: number };
@@ -207,13 +359,10 @@ describe('final machine native catalog scope admission', () => {
   }, 30_000);
   it('removes the selected native auth root before a timed-out final Machine RPC returns', async () => {
     writeFileSync(join(root, 'hang-native'), 'hang');
-    const { machine, rpc } = finalMachineRpc();
-    const encoded = await rpc.handleRequest({ method: `${machine.id}:${RPC_METHODS.CAPABILITIES_INVOKE}`,
-      params: encodeBase64(encrypt(machine.encryptionKey, machine.encryptionVariant, {
-        id: 'cli.codex', method: 'probeCatalogs', params: { cwd: root, timeoutMs: 5_000, connectedServices,
-          runtimeKindOverride: 'appServer' },
-      })) });
-    const result = decrypt(machine.encryptionKey, machine.encryptionVariant, decodeBase64(encoded));
+    const result = await finalMachineRpc().call(RPC_METHODS.CAPABILITIES_INVOKE, {
+      id: 'cli.codex', method: 'probeCatalogs', params: { cwd: root, timeoutMs: 5_000, connectedServices,
+        runtimeKindOverride: 'appServer' },
+    });
     expect(result).toMatchObject({ ok: false, error: { code: 'preflight-catalog-unavailable' } });
     const observation = JSON.parse(readFileSync(capture, 'utf8')) as { nativeHome: string; selected: boolean; pid: number };
     expect(observation.selected).toBe(true);
@@ -252,6 +401,27 @@ describe('final machine native catalog scope admission', () => {
       params: { cwd: root, timeoutMs: 10_000, connectedServices },
     })).toMatchObject({ ok: false, error: { code: 'connected-service-preflight-failed' } });
   }, 30_000);
+  it('refuses selected native discovery when the Agent declares no Connected Account services', async () => {
+    expect(await directRpc().call(RPC_METHODS.CAPABILITIES_INVOKE, {
+      id: 'cli.acme.empty-undeclared/sample-provider', method: 'probeCatalogs',
+      params: { cwd: root, timeoutMs: 10_000, connectedServices },
+    })).toMatchObject({ ok: false, error: { code: 'connected-service-preflight-failed' } });
+  }, 30_000);
+  it('keeps native-only binding discovery available without materializing a Connected Account', async () => {
+    expect(await directRpc().call(RPC_METHODS.CAPABILITIES_INVOKE, {
+      id: 'cli.ohMyPi', method: 'probeCatalogs',
+      params: { cwd: root, timeoutMs: 10_000, connectedServices: { v: 2,
+        bindingsByServiceId: { 'happier.agent.codex/openai-codex': { source: 'native' } } } },
+    })).toMatchObject({ ok: true, result: { commands: { supported: true, items: [{ command: 'native-command' }] } } });
+    const observation = JSON.parse(readFileSync(capture, 'utf8')) as { nativeHome: string };
+    expect(observation.nativeHome).toBe(configuredNativeHome);
+  }, 30_000);
+  it.each(['environment', 'file', 'native-home'])('refuses selected %s discovery when its declared destination receives no credential bytes', async kind => {
+    expect(await directRpc().call(RPC_METHODS.CAPABILITIES_INVOKE, {
+      id: `cli.acme.empty-${kind}/sample-provider`, method: 'probeCatalogs',
+      params: { cwd: root, timeoutMs: 10_000, connectedServices },
+    })).toMatchObject({ ok: false, error: { code: 'connected-service-preflight-failed' } });
+  }, 30_000);
   it('keeps native OhMyPi discovery available without a selected Connected Account', async () => {
     expect(await directRpc().call(RPC_METHODS.CAPABILITIES_INVOKE, { id: 'cli.ohMyPi', method: 'probeCatalogs',
       params: { cwd: root, timeoutMs: 10_000 } }))
@@ -260,5 +430,31 @@ describe('final machine native catalog scope admission', () => {
     const observation = JSON.parse(readFileSync(capture, 'utf8')) as { pid: number; nativeHome: string };
     expect(observation.nativeHome).toBe(configuredNativeHome);
     expect(() => process.kill(observation.pid, 0)).toThrow();
+  }, 30_000);
+  it('drains the retired runtime after cancellation while credential HTTP remains unsettled', async () => {
+    // Release the fixture's caller lease so only the live materializer can retain this runtime.
+    await lease.release();
+    holdNativeCredential = true;
+    const entered = new Promise<void>(resolve => { credentialReadEntered = resolve; });
+    const controller = new AbortController();
+    const cleanupScope = createPreflightCatalogCleanupScope();
+    const outcome = prepareAuth('codex', controller.signal, cleanupScope).then(() => null, error => error);
+    await entered;
+    controller.abort();
+    await cleanupScope.dispose();
+    let drained = false;
+    const shutdown = pluginReloadController.shutdown().then(() => { drained = true; });
+    try {
+      // Observe the real controller's lease drain; HTTP intentionally remains held.
+      await expect.poll(() => drained).toBe(true);
+      expect(heldCredentialSignal?.aborted).toBe(true);
+      expect(existsSync(capture)).toBe(false);
+    } finally {
+      releaseCredentialRead?.();
+      await outcome;
+      await shutdown;
+    }
+    for (const path of heldAttemptRoots) expect(existsSync(path)).toBe(false);
+    expect(existsSync(capture)).toBe(false);
   }, 30_000);
 });

@@ -1,4 +1,4 @@
-import { readBuiltInLegacyConnectedAccountServiceKeyIngress, type ConnectedServiceId } from '@happier-dev/protocol';
+import { readBuiltInLegacyConnectedAccountServiceKeyIngress, type ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
 
 import { resolveTrackedSessionCatalogAgentId } from '../../sessions/resolveTrackedSessionCatalogAgentId';
 import type { TrackedSession } from '../../types';

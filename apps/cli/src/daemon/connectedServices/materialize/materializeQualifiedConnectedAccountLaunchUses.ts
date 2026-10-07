@@ -26,6 +26,7 @@ export async function materializeQualifiedConnectedAccountLaunchUses(input: Read
   exactPurposeBindingSubjectId?: string;
   sessionId?: string;
   signal: AbortSignal;
+  writeArtifacts?: <T>(write: () => Promise<T>) => Promise<T>;
   isPurposeBound?(purpose: QualifiedConnectedAccountPurposeV1): boolean;
   expectedAccountsByPurposeKey?: ReadonlyMap<string, QualifiedConnectedAccountRef>;
   credentialFileScope?: CredentialFileScope;
@@ -88,15 +89,17 @@ export async function materializeQualifiedConnectedAccountLaunchUses(input: Read
       }),
       signal: input.signal,
     });
+    input.signal.throwIfAborted();
     if (materialization.kind !== 'environment') {
       throw new Error(
         `Connected Account launch environment '${use.environmentKey}' returned the wrong materialization kind`,
       );
     }
     const value = materialization.env[use.environmentKey];
-    if (typeof value === 'string' && value.length > 0) {
-      materializedEnvironment[use.environmentKey] = value;
+    if (typeof value !== 'string' || value.length === 0) {
+      throw new Error('Connected Account launch credential environment is unavailable');
     }
+    materializedEnvironment[use.environmentKey] = value;
   }
 
   const files: Record<string, Uint8Array> = Object.create(null);
@@ -121,12 +124,16 @@ export async function materializeQualifiedConnectedAccountLaunchUses(input: Read
       }),
       signal: input.signal,
     });
+    input.signal.throwIfAborted();
     if (materialization.kind !== 'files') {
       throw new Error(
         `Connected Account launch file '${use.fileId}' returned the wrong materialization kind`,
       );
     }
-    if (!Object.prototype.hasOwnProperty.call(materialization.files, use.fileId)) continue;
+    if (!Object.prototype.hasOwnProperty.call(materialization.files, use.fileId)
+      || materialization.files[use.fileId]!.byteLength === 0) {
+      throw new Error('Connected Account launch credential file is unavailable');
+    }
     const materializedId = String(index);
     files[materializedId] = materialization.files[use.fileId]!;
     environmentKeysByMaterializedId.set(materializedId, use.environmentKey);
@@ -140,11 +147,13 @@ export async function materializeQualifiedConnectedAccountLaunchUses(input: Read
     ) {
       throw new Error('Connected Account credential-file authority is unavailable');
     }
-    const credentialFiles = await input.credentialFileOwner.materialize({
+    input.signal.throwIfAborted();
+    const writeArtifacts = input.writeArtifacts ?? (async <T>(write: () => Promise<T>) => await write());
+    const credentialFiles = await writeArtifacts(() => input.credentialFileOwner!.materialize({
       scope: input.credentialFileScope,
       files: Object.freeze(files),
-      retainCleanup: input.retainCredentialFileCleanup,
-    });
+      retainCleanup: input.retainCredentialFileCleanup!,
+    }));
     for (const [materializedId, environmentKey] of environmentKeysByMaterializedId) {
       const path = credentialFiles.pathsByFileId[materializedId];
       if (!path) {
