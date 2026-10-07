@@ -94,7 +94,8 @@ describe('SCM diff summary state', () => {
             } } },
         } };
         const edited = applyScmDiffSummaryEvent(original, { type: 'saved_result', key: 'progressive', result, observedAtMs: 130 });
-        expect(selectScmDiffSummaryViewModel(edited, 'progressive')).toMatchObject({ revision: 3, outputs: result.output.outputs, savedResult: result });
+        expect(selectScmDiffSummaryViewModel(edited, 'progressive')).toMatchObject({ revision: 3, outputs: result.output.outputs, savedResult: result, observedAtMs: 130 });
+        expect(selectScmDiffSummaryViewModel(createInitialScmDiffSummaryState(), 'unobserved').observedAtMs).toBeNull();
         expect(applyScmDiffSummaryEvent(edited, { type: 'saved_result', key: 'progressive', result: { ...result, revision: 1 }, observedAtMs: 140 })).toBe(edited);
         expect(applyScmDiffSummaryEvent(edited, { type: 'saved_result', key: 'progressive', result: { ...result, resultId: 'foreign' }, observedAtMs: 140 })).toBe(edited);
         const scoped = { ...edited, entriesByKey: { ...edited.entriesByKey, progressive: { ...edited.entriesByKey.progressive!, scopeKey: 'account-a' } } };
@@ -102,6 +103,9 @@ describe('SCM diff summary state', () => {
             actionId: 'scm.diffSummary.generate', input, error: 'Machine unavailable', failedAtMs: 145, intent: 'regenerate' });
         expect(failedRefresh.entriesByKey.progressive?.scopeKey).toBe('account-a');
         expect(selectScmDiffSummaryViewModel(failedRefresh, 'progressive')?.savedResult).toEqual(result);
+        const recovered = applyScmDiffSummaryEvent(failedRefresh, { type: 'saved_result', key: 'progressive', result, observedAtMs: 146 });
+        expect(recovered).not.toBe(failedRefresh);
+        expect(selectScmDiffSummaryViewModel(recovered, 'progressive')).toMatchObject({ error: null, savedResult: result });
         for (const structuredOutput of [
             { ...pending, resultId: 'foreign', revision: 4 },
             { ...pending, success: false as const, error: 'An old failure', errorCode: 'SUMMARY_FAILED' as const, revision: 2 },

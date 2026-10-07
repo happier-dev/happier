@@ -14,7 +14,7 @@ import type { ExecutionRunBackendCapabilityMap } from '@/sync/domains/executionR
 import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { useSettings } from '@/sync/domains/state/storage';
+import { getStorage, useSettingsSelector } from '@/sync/domains/state/storage';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 
@@ -43,7 +43,6 @@ export function useSessionExecutionRunLaunchability(
     session: Session | null | undefined,
     explicitServerId?: string | null,
 ): UseSessionExecutionRunLaunchabilityResult {
-    const settings = useSettings();
     const normalizedExplicitServerId = typeof explicitServerId === 'string' && explicitServerId.trim().length > 0
         ? explicitServerId.trim()
         : null;
@@ -56,6 +55,12 @@ export function useSessionExecutionRunLaunchability(
         && !areServerProfileIdentifiersEquivalent(session.serverId, sessionTargetServerId)
         ? null
         : session;
+    // Settings affect resume admission only for inactive Sessions. Active
+    // launchers must not subscribe to unrelated Account preference changes.
+    const resumeSettings = useSettingsSelector(React.useCallback(
+        (settings) => scopedSession?.active === false ? settings : null,
+        [scopedSession?.active],
+    ));
     const executionRunsEnabled = useFeatureEnabled(
         'execution.runs',
         sessionTargetServerId ? { scopeKind: 'spawn', serverId: sessionTargetServerId } : undefined,
@@ -81,7 +86,7 @@ export function useSessionExecutionRunLaunchability(
         agentId,
         machineId: machineTarget?.machineId ?? resolveSessionMachineId(ownerMetadata),
         serverId: sessionTargetServerId,
-        settings,
+        settings: resumeSettings ?? getStorage().getState().settings,
         enabled: scopedSession?.active === false,
     });
     const allowWhileInactive = React.useMemo(() => {

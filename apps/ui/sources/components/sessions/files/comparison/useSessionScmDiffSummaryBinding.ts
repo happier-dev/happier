@@ -10,7 +10,7 @@ import { useSessionExecutionRunLaunchability } from '@/hooks/session/useSessionE
 import { resolveScmDiffSummaryModelSelection, SCM_DIFF_SUMMARY_SETTING_KEYS } from '@/settings/scmDiffSummary/settings';
 import { scmComparisonSourceOf, scmReviewComparisonMatchesSource } from '@/sync/domains/scm/diffSummary/selection';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
-import { useSession, useSettings } from '@/sync/domains/state/storage';
+import { getStorage, useSession, useSetting } from '@/sync/domains/state/storage';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import {
     applySavedScmDiffSummaryResult,
@@ -47,8 +47,7 @@ export function useSessionScmDiffSummaryBinding(params: Readonly<{
     const external = useSessionExternalSessionRuntime({ sessionId, metadata: session ? readSessionOwnerMetadataView(session) : null, serverId });
     const canControl = Boolean(scope && machineReachable && (external.externalSessionLink === null || external.status?.runnerActive === true));
     const canSend = canControl && Boolean(session && deriveTranscriptInteractionFromSession(session).canSendMessages);
-    const settings = useSettings();
-    const storedModel = settings[SCM_DIFF_SUMMARY_SETTING_KEYS.modelProfileOverride];
+    const storedModel = useSetting(SCM_DIFF_SUMMARY_SETTING_KEYS.modelProfileOverride);
     const [model, setModel] = React.useState(typeof storedModel === 'string' ? storedModel : '');
     const [modelAvailability, setModelAvailability] = React.useState({ value: '', available: false });
     const onModelAvailability = React.useCallback((available: boolean) => setModelAvailability({ value: model, available }), [model]);
@@ -66,27 +65,37 @@ export function useSessionScmDiffSummaryBinding(params: Readonly<{
 
     // Machine persistence, not the request cache, restores an edited result after reopening.
     React.useEffect(() => {
-        if (!binding || !scope || !machine || !operations || !comparison || viewModel) return;
+        if (!binding || !scope || !machine || !machineReachable || !operations || !comparison || viewModel) return;
         const abort = new AbortController();
         const current = () => binding.isCurrent() && !abort.signal.aborted;
         const inventory = createScmDiffSummarySavedResultOperations({ machineId: machine.machineId, serverId: scope.serverId,
             accountId: scope.accountId, signal: abort.signal, shouldContinue: current });
+        let pending = false;
+        let invalidated = false;
         const restore = async () => {
-            const listed = await inventory.list();
-            if (!listed.success || !current()) return;
-            const candidate = listed.results.find((item) => item.cwd === machine.basePath && item.sessionId === sessionId
-                && (!comparison.comparisonId || item.comparisonId === comparison.comparisonId)
-                && scmReviewComparisonMatchesSource(comparison, item.source));
-            if (!candidate) return;
-            const response = await operations.read({ cwd: candidate.cwd, resultId: candidate.resultId });
-            if (response.success && current()) loadSavedScmDiffSummaryResult({ sessionId, scope, result: response.result });
+            if (!current()) return;
+            if (pending) { invalidated = true; return; }
+            pending = true;
+            try {
+                const listed = await inventory.list();
+                if (!listed.success || !current()) return;
+                const candidate = listed.results.find((item) => item.cwd === machine.basePath && item.sessionId === sessionId
+                    && (!comparison.comparisonId || item.comparisonId === comparison.comparisonId)
+                    && scmReviewComparisonMatchesSource(comparison, item.source));
+                if (!candidate) return;
+                const response = await operations.read({ cwd: candidate.cwd, resultId: candidate.resultId });
+                if (response.success && current()) loadSavedScmDiffSummaryResult({ sessionId, scope, result: response.result });
+            } finally {
+                pending = false;
+                if (invalidated && current()) { invalidated = false; void restore(); }
+            }
         };
         void restore();
         // A result another producer saves later (a review's narration) arrives with that Session's Run
         // activity, the existing invalidation owner; once a result is bound this listener retires.
         const unsubscribe = subscribeExecutionRunActivity({ sessionId, serverId: scope.serverId }, () => { if (current()) void restore(); });
         return () => { abort.abort(); unsubscribe(); };
-    }, [binding, scope?.serverId, scope?.accountId, machine?.machineId, machine?.basePath, operations, sessionId, comparison, Boolean(viewModel)]);
+    }, [binding, scope?.serverId, scope?.accountId, machine?.machineId, machine?.basePath, machineReachable, operations, sessionId, comparison, Boolean(viewModel)]);
 
     const onStart = React.useCallback(async (outputs: readonly ScmDiffSummaryOutputKind[] = [output]) => {
         if (!binding?.isCurrent() || !scope || !cwd || !comparison || !selected.success || !modelAvailable || !canSend || !launch.canLaunchExecutionRuns || starting) return;
@@ -97,20 +106,20 @@ export function useSessionScmDiffSummaryBinding(params: Readonly<{
                 shouldContinue: () => binding.isCurrent(), backendTarget: selected.backendTarget,
                 input: { cwd, source, ...(comparison.comparisonId ? { comparisonId: comparison.comparisonId } : {}),
                     outputs: [...outputs], modelSelector: selected.modelSelector },
-                settings: { ...settings, [SCM_DIFF_SUMMARY_SETTING_KEYS.modelProfileOverride]: model },
+                settings: { ...getStorage().getState().settings, [SCM_DIFF_SUMMARY_SETTING_KEYS.modelProfileOverride]: model },
                 intent: viewModel ? 'regenerate' : 'generate' });
             if (binding.isCurrent() && !result.ok) setError(result.error);
         } catch (failure) {
             if (binding.isCurrent()) setError(failure instanceof Error ? failure.message : t('walkthroughStart.unavailable'));
         } finally { if (binding.isCurrent()) setStarting(false); }
-    }, [binding, scope?.serverId, scope?.accountId, cwd, comparison, sessionId, output, selected, modelAvailable, canSend, launch.canLaunchExecutionRuns, starting, settings, model, Boolean(viewModel)]);
+    }, [binding, scope?.serverId, scope?.accountId, cwd, comparison, sessionId, output, selected, modelAvailable, canSend, launch.canLaunchExecutionRuns, starting, model, Boolean(viewModel)]);
 
     const key = viewModel?.requestKey;
     const resultId = viewModel?.resultId;
     const runId = viewModel?.executionRunId ?? null;
     // Run activity/reconnect is the existing invalidation owner. No polling timer or generated text authority.
     React.useEffect(() => {
-        if (!scope || !binding || !key || !operations || !cwd) return;
+        if (!scope || !binding || !machineReachable || !key || !operations || !cwd) return;
         const abort = new AbortController();
         const current = () => binding.isCurrent() && !abort.signal.aborted;
         let pending = false;
@@ -142,10 +151,10 @@ export function useSessionScmDiffSummaryBinding(params: Readonly<{
         // saved linkage on Session activity too, rather than filtering out that new Run.
         const unsubscribe = subscribeExecutionRunActivity({ sessionId, serverId: scope.serverId }, () => { void refresh(); });
         return () => { abort.abort(); unsubscribe(); };
-    }, [binding, scope?.serverId, scope?.accountId, key, resultId, runId, operations, cwd, sessionId]);
+    }, [binding, scope?.serverId, scope?.accountId, machineReachable, key, resultId, runId, operations, cwd, sessionId]);
 
     return {
-        binding, scope, machine, canControl, canSend, launch, viewModel, capturedComparison, cwd, operations,
+        binding, scope, machine, machineReachable, canControl, canSend, launch, viewModel, capturedComparison, cwd, operations,
         error, setError,
         model, setModel, onModelAvailability, modelAvailable, selected, starting, onStart,
     } as const;

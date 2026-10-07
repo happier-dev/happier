@@ -4,13 +4,18 @@ import { StrictJsonValueSchema, isScmCommitPlanApplicationLocked } from '@happie
 import { useRouter } from 'expo-router';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { t } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
 
 import type { SessionScmReviewComparison } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 import { resolveScmDiffSummaryDiscussionTarget } from '@/sync/domains/scm/diffSummary/discussion';
 import { writeExistingSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { ScmDiffSummaryModelPicker } from '@/components/settings/sourceControl/ScmDiffSummaryModelPicker';
 import { applySavedScmDiffSummaryResult } from '@/sync/ops/scmDiffSummary/generate';
+import { getStorage } from '@/sync/domains/state/storage';
+import { resolveServerScopedMachine } from '@/sync/store/domains/machines/resolveServerScopedMachine';
+import { useSessionMachineDisplayIdentity } from '@/components/sessions/model/useSessionMachineTarget';
+import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
+import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 
 import { useSessionScmDiffSummaryBinding } from '@/components/sessions/files/comparison/useSessionScmDiffSummaryBinding';
 import { WalkthroughView, type WalkthroughViewLayout } from './WalkthroughView';
@@ -49,8 +54,21 @@ export type SessionWalkthroughViewProps = Readonly<{
 export const SessionWalkthroughView = React.memo(function SessionWalkthroughView(props: SessionWalkthroughViewProps) {
     // The comparison's saved result, restore/reread and START: the one binding Walkthrough and Commits share.
     const bound = useSessionScmDiffSummaryBinding({ sessionId: props.sessionId, serverId: props.serverId, comparison: props.comparison, output: 'walkthrough' });
-    const { binding, scope, machine, canControl, canSend, launch, viewModel, capturedComparison, cwd, operations,
+    const { binding, scope, machine, machineReachable, canControl, canSend, launch, viewModel, capturedComparison, cwd, operations,
         error, setError, model, setModel, onModelAvailability, modelAvailable, selected, starting } = bound;
+    const displayHomeId = scope?.serverId ?? props.serverId;
+    const displayIdentity = useSessionMachineDisplayIdentity(props.sessionId, displayHomeId);
+    // Subscribe to attribution, not heartbeat objects. Exact Home lookup and
+    // machine naming stay at their existing owners while the machine is offline.
+    const machineName = getStorage()(state => getMachineDisplayName(
+        resolveServerScopedMachine(state, displayHomeId, displayIdentity.machineId) ?? { absence: 'unlisted' },
+    ));
+    const observedAtMs = viewModel?.observedAtMs ?? null;
+    const offline = capturedComparison && !machineReachable ? {
+        machine: machineName,
+        time: observedAtMs === null ? t('common.unavailable')
+            : formatWithCachedDateTimeFormatter(observedAtMs, getPreferredLanguage(), { dateStyle: 'medium', timeStyle: 'short' }),
+    } : null;
     const boundStart = bound.onStart;
     const onStart = React.useCallback(() => boundStart(), [boundStart]);
     const [choosingModel, setChoosingModel] = React.useState(false);
@@ -194,6 +212,7 @@ export const SessionWalkthroughView = React.memo(function SessionWalkthroughView
                 review={reviewView?.slots ?? null}
                 layout={props.layout}
                 active={props.active}
+                offline={offline}
                 onToggleReviewed={onToggleReviewed}
                 reviewedProgressAvailable={marksAvailable}
                 onAsk={onAsk}

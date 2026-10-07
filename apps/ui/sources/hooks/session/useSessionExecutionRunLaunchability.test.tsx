@@ -5,9 +5,6 @@ import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 
 import { installServerHookCommonModuleMocks } from '../server/serverHookModuleTestHelpers';
 
-const resolveSessionTargetServerIdSpy = vi.hoisted(() =>
-    vi.fn<(sessionId: string, fallbackServerId?: string | null) => string | null>(() => 'server-canonical'),
-);
 const useExecutionRunsBackendsForSessionSpy = vi.hoisted(() =>
     vi.fn<(...args: unknown[]) => { claude: { available: true; intents: ['review'] } }>(
         () => ({ claude: { available: true, intents: ['review'] } }),
@@ -26,9 +23,6 @@ const externalSessionRuntimeSpy = vi.hoisted(() => vi.fn((..._args: unknown[]) =
     externalSessionLink: null,
     status: { runnerActive: true },
 })));
-const preferredServerIdState = vi.hoisted(() => ({
-    value: 'server-canonical' as string | null,
-}));
 const sessionMachineTargetState = vi.hoisted(() => ({
     value: null as null | { machineId: string; basePath: string },
 }));
@@ -78,13 +72,6 @@ vi.mock('@/agents/hooks/useResumeCapabilityOptions', () => ({
     useResumeCapabilityOptions: (args: unknown) => resumeCapabilityOptionsSpy(args),
 }));
 
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession', () => ({
-    usePreferredServerIdForSession: (sessionId: string, fallbackServerId?: string | null) => {
-        resolveSessionTargetServerIdSpy(sessionId, fallbackServerId);
-        return preferredServerIdState.value ?? fallbackServerId ?? null;
-    },
-}));
-
 vi.mock('@/components/sessions/model/useSessionExternalSessionRuntime', () => ({
     useSessionExternalSessionRuntime: (...args: unknown[]) => externalSessionRuntimeSpy(...args),
 }));
@@ -107,7 +94,6 @@ vi.mock('@/sync/domains/session/external/resolveSessionMachineId', () => ({
 describe('useSessionExecutionRunLaunchability', () => {
     afterEach(() => {
         standardCleanup();
-        resolveSessionTargetServerIdSpy.mockReset();
         useExecutionRunsBackendsForSessionSpy.mockReset();
         useSessionExecutionRunsSupportedSpy.mockReset();
         resumeCapabilityOptionsSpy.mockReset();
@@ -115,7 +101,6 @@ describe('useSessionExecutionRunLaunchability', () => {
         featureScopeSpy.mockClear();
         machineReachabilitySpy.mockClear();
         externalSessionRuntimeSpy.mockClear();
-        preferredServerIdState.value = 'server-canonical';
         sessionMachineTargetState.value = null;
         sessionState.value = {
             id: 'session-1',
@@ -161,10 +146,9 @@ describe('useSessionExecutionRunLaunchability', () => {
         const { useSessionExecutionRunLaunchability } = await import('./useSessionExecutionRunLaunchability');
         const hook = await renderHook(() => useSessionExecutionRunLaunchability('session-1', sessionState.value));
 
-        expect(resolveSessionTargetServerIdSpy).toHaveBeenCalledWith('session-1', 'server-explicit');
-        expect(useExecutionRunsBackendsForSessionSpy).toHaveBeenCalledWith('session-1', 'server-canonical');
+        expect(useExecutionRunsBackendsForSessionSpy).toHaveBeenCalledWith('session-1', 'server-explicit');
         expect(hook.getCurrent()).toMatchObject({
-            sessionServerId: 'server-canonical',
+            sessionServerId: 'server-explicit',
             executionRunsSupported: true,
             executionRunsBackends: { claude: { available: true, intents: ['review'] } },
         });
@@ -172,15 +156,15 @@ describe('useSessionExecutionRunLaunchability', () => {
         await hook.unmount();
     });
 
-    it('refreshes backend lookup when the preferred session server changes', async () => {
+    it('refreshes backend lookup when the exact session Home changes', async () => {
         const { useSessionExecutionRunLaunchability } = await import('./useSessionExecutionRunLaunchability');
         const hook = await renderHook((session: typeof sessionState.value) => useSessionExecutionRunLaunchability('session-1', session), {
             initialProps: sessionState.value,
         });
 
-        expect(useExecutionRunsBackendsForSessionSpy).toHaveBeenLastCalledWith('session-1', 'server-canonical');
+        expect(useExecutionRunsBackendsForSessionSpy).toHaveBeenLastCalledWith('session-1', 'server-explicit');
 
-        preferredServerIdState.value = 'server-updated';
+        sessionState.value = { ...sessionState.value, serverId: 'server-updated' };
         await hook.rerender(sessionState.value);
 
         expect(useExecutionRunsBackendsForSessionSpy).toHaveBeenLastCalledWith('session-1', 'server-updated');
@@ -188,9 +172,7 @@ describe('useSessionExecutionRunLaunchability', () => {
         await hook.unmount();
     });
 
-    it('falls back to the direct session server id while the preferred server lookup is unresolved', async () => {
-        preferredServerIdState.value = null;
-
+    it('uses the direct session Home without requiring a legacy bare-id lookup', async () => {
         const { useSessionExecutionRunLaunchability } = await import('./useSessionExecutionRunLaunchability');
         const hook = await renderHook(() => useSessionExecutionRunLaunchability('session-1', sessionState.value));
 
@@ -208,7 +190,6 @@ describe('useSessionExecutionRunLaunchability', () => {
             serverId: 'home-a',
             metadata: { flavor: 'claude', machineId: 'machine-a' },
         } as any;
-        preferredServerIdState.value = 'home-a';
         sessionMachineTargetState.value = { machineId: 'machine-b', basePath: '/home-b/workspace' };
 
         const { useSessionExecutionRunLaunchability } = await import('./useSessionExecutionRunLaunchability');
