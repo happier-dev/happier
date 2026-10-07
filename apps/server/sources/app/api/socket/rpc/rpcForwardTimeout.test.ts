@@ -2,9 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/actions';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { resolveRpcForwardTimeoutMs } from './rpcForwardTimeout';
+import { isRpcForwardCallerLifecycleOwned, resolveRpcForwardTimeoutMs } from './rpcForwardTimeout';
 
 describe('resolveRpcForwardTimeoutMs', () => {
+    it('keeps an authored nonce observer deadline under caller lifecycle instead of the generic five-minute cutoff', () => {
+        const method = `machine-one:${RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE}`;
+        const observerTimeoutMs = 20 * 60_000;
+        expect(resolveRpcForwardTimeoutMs(method, observerTimeoutMs)).toBeGreaterThanOrEqual(observerTimeoutMs);
+        expect(isRpcForwardCallerLifecycleOwned(method)).toBe(true);
+    });
+
     it('keeps managed-service response-body reads under caller and lifecycle cancellation', () => {
         for (const method of [
             SESSION_RPC_METHODS.SESSION_MANAGED_SERVICE_ENDPOINT_READ_NEXT_V1,

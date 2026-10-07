@@ -2,7 +2,7 @@ import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
 import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/actions';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import type { Server } from 'socket.io';
+import { Server } from 'socket.io';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const machineFindFirstMock = vi.hoisted(() => vi.fn());
@@ -31,6 +31,49 @@ describe('forwardRpcCall', () => {
             revokedAt: null,
             replacedByMachineId: null,
         });
+    });
+
+    it('preserves a twenty-minute nonce observation through the real Socket.IO acknowledgement timer', async () => {
+        vi.useFakeTimers();
+        const io = new Server();
+        try {
+            let respond!: (response: unknown) => void;
+            // The adapter is the network boundary. Keep Socket.IO's real
+            // BroadcastOperator acknowledgement and timer implementation.
+            const dispatch = vi.spyOn(io.of('/').adapter, 'broadcastWithAck').mockImplementation(
+                (_packet, _options, clientCount, acknowledgement) => {
+                    respond = acknowledgement;
+                    clientCount(1);
+                },
+            );
+            const target = {
+                id: 'daemon-socket',
+                timeout: (ms: number) => io.to('daemon-socket').timeout(ms),
+            };
+            const fetchSockets = vi.fn().mockResolvedValue([target]);
+            vi.spyOn(io, 'in').mockReturnValue({
+                timeout: () => ({ fetchSockets }),
+                fetchSockets,
+            } as unknown as ReturnType<Server['in']>);
+            let settled = false;
+            const forwarded = forwardRpcCall({
+                io,
+                targetUserId: 'user-one',
+                method: `machine-one:${RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE}`,
+                callParams: 'encrypted-nonce-observer-request',
+                timeoutMs: 20 * 60_000,
+            }).finally(() => { settled = true; });
+
+            await vi.advanceTimersByTimeAsync(11 * 60_000);
+            expect(settled).toBe(false);
+            respond('encrypted-resolved-session');
+            await expect(forwarded).resolves.toEqual({ ok: true, result: ['encrypted-resolved-session'] });
+            expect(dispatch).toHaveBeenCalledTimes(1);
+            expect(vi.getTimerCount()).toBe(0);
+        } finally {
+            vi.restoreAllMocks();
+            vi.useRealTimers();
+        }
     });
 
     it('forwards machine-encrypted transcript refresh bytes without inspecting or rewriting them', async () => {
