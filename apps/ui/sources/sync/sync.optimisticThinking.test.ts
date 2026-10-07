@@ -3671,7 +3671,7 @@ describe('sync.sendMessage rejection and auth through the applied Account', () =
                 return { ok: true, id: 'admitted-message', seq: 1, localId: 'frozen-permission', didWrite: true };
             }
             if (event === 'update-metadata') {
-                return { result: 'success', version: 1, metadata: (payload as { metadata: string }).metadata };
+                return { result: 'success', version: 2, metadata: (payload as { metadata: string }).metadata };
             }
             throw new Error(`Unexpected socket event: ${event}`);
         });
@@ -3693,7 +3693,7 @@ describe('sync.sendMessage rejection and auth through the applied Account', () =
         state.getState().updateSessionPermissionMode(sessionId, 'yolo');
         accountTransport.ack.mockImplementation(async (event: string, payload: unknown) => {
             if (event === 'message') return { ok: true, id: 'admitted-message', seq: 1, localId: 'admitted-permission', didWrite: true };
-            if (event === 'update-metadata') return { result: 'success', version: 1, metadata: (payload as { metadata: string }).metadata };
+            if (event === 'update-metadata') return { result: 'success', version: 2, metadata: (payload as { metadata: string }).metadata };
             throw new Error(`Unexpected socket event: ${event}`);
         });
 
