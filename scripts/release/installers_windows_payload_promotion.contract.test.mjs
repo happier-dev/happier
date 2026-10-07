@@ -214,7 +214,7 @@ class Fixture {
     if (args.Length > 0 && (args[0] == "service" || args[0] == "daemon")) {
       Console.WriteLine(String.Join(" ", args));
       Console.WriteLine(Environment.GetEnvironmentVariable("HAPPIER_HOME_DIR"));
-      return 0;
+      return Environment.GetEnvironmentVariable("HAPPIER_TEST_HYGIENE_FAIL") == "1" ? 19 : 0;
     }
     if (args.Length < 2 || args[0] != "self" || args[1] != "__install-payload") return 3;
     Console.WriteLine("promotion-ready");
@@ -260,10 +260,23 @@ class Fixture {
       $stopped = Invoke-InstallerCommandWithDaemonServiceContextCapturingOutputWithTimeout -CliPath ${quote(binary)} -CommandArgs $command -HomeDir ${quote(join(scratch, 'home'))} -TimeoutMs 30000
       if ($stopped.ExitCode -ne 0 -or $stopped.TimedOut -or -not $stopped.Output.Contains(($command -join ' ')) -or -not $stopped.Output.Contains(${quote(join(scratch, 'home'))})) { throw ('Lock hygiene failed: ' + ($stopped | ConvertTo-Json -Compress)) }
       if ($env:HAPPIER_HOME_DIR -ne 'prior-home') { throw 'Lock hygiene did not restore the caller home' }
+      $env:HAPPIER_TEST_HYGIENE_FAIL = '1'
+      try {
+        $failedStop = Invoke-InstallerCommandWithDaemonServiceContextCapturingOutputWithTimeout -CliPath ${quote(binary)} -CommandArgs $command -HomeDir ${quote(join(scratch, 'home'))} -TimeoutMs 30000
+        if ($failedStop.ExitCode -ne 19 -or $failedStop.TimedOut -or -not $failedStop.Output.Contains(($command -join ' '))) { throw ('Failed lock hygiene result was not preserved: ' + ($failedStop | ConvertTo-Json -Compress)) }
+        if ($env:HAPPIER_HOME_DIR -ne 'prior-home') { throw 'Failed lock hygiene did not restore the caller home' }
+      } finally { $env:HAPPIER_TEST_HYGIENE_FAIL = '0' }
     }`,
     '$lockedPath = Join-Path $InstallerTempDir "locked.log"',
     '$locked = [IO.File]::Open($lockedPath, [IO.FileMode]::Create, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)',
-    'try { Remove-InstallerTemporaryFiles -Paths @($lockedPath, (Join-Path $InstallerTempDir "missing.log")) } finally { $locked.Dispose() }',
+    `try {
+      $caught = $null
+      try {
+        try { throw 'promotion-exception-sentinel' }
+        finally { Remove-InstallerTemporaryFiles -Paths @($lockedPath, (Join-Path $InstallerTempDir "missing.log")) }
+      } catch { $caught = $_ }
+      if ($null -eq $caught -or $caught.Exception.Message -ne 'promotion-exception-sentinel') { throw ('Cleanup replaced the original exception: ' + $caught) }
+    } finally { $locked.Dispose() }`,
     'Remove-InstallerTemporaryFiles -Paths @($lockedPath)',
     `foreach ($legacy in @('0', '1')) {
       $env:HAPPIER_TEST_LEGACY_INVENTORY = $legacy
@@ -290,7 +303,7 @@ class Fixture {
     }`,
     '$env:HAPPIER_TEST_PROMOTION_FAIL = "1"',
     `$failed = Invoke-InstallerPayloadPromotionWithTimeout -BinaryPath ${quote(binary)} -PayloadRoot ${quote(payload)} -Version '1.2.3' -ChannelValue 'dev' -InstallHomeDir ${quote(join(scratch, 'home'))}`,
-    'if ($failed.ExitCode -ne 17 -or $failed.TimedOut -or -not $failed.Output.Contains("promotion-ready")) { throw "Cleanup hid the failed promotion result" }',
+    'if ($failed.ExitCode -ne 17 -or $failed.TimedOut -or -not $failed.Output.Contains("promotion-ready")) { throw ("Failed promotion result was not preserved: " + ($failed | ConvertTo-Json -Compress)) }',
     '$env:HAPPIER_TEST_PROMOTION_FAIL = "0"',
     `$result = Invoke-InstallerPayloadPromotionWithTimeout -BinaryPath ${quote(binary)} -PayloadRoot ${quote(payload)} -Version '1.2.3' -ChannelValue 'dev' -InstallHomeDir ${quote(join(scratch, 'home'))}`,
     '$result | ConvertTo-Json -Compress',

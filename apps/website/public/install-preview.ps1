@@ -1043,6 +1043,9 @@ function Invoke-InstallerCommandWithDaemonServiceContextCapturingOutputWithTimeo
     }
 
     $process = Start-Process -FilePath $CliPath -ArgumentList $CommandArgs -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -WindowStyle Hidden
+    # Windows PowerShell 5.1 needs a cached handle to retain redirected exit codes.
+    # https://github.com/PowerShell/PowerShell/issues/5421
+    $null = $process.Handle
     $completed = $process.WaitForExit($timeoutMs)
     if (-not $completed) {
       Stop-InstallerProcessTree -Process $process
@@ -2612,6 +2615,9 @@ finally {
     $powerShellExecutablePath = Resolve-InstallerPowerShellExecutablePath
     $process = Start-Process -FilePath $powerShellExecutablePath -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ('"{0}"' -f $runnerScriptPath)) -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -WindowStyle Hidden
 
+    # Windows PowerShell 5.1 needs a cached handle to retain redirected exit codes.
+    # https://github.com/PowerShell/PowerShell/issues/5421
+    $null = $process.Handle
     $completed = $process.WaitForExit($timeoutMs)
     if (-not $completed) {
       Stop-InstallerProcessTree -Process $process
