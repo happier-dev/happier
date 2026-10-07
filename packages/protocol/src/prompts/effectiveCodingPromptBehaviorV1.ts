@@ -1,4 +1,5 @@
 import { readAiLaunchProfileCollection } from '../profiles/read.js';
+import type { ArtifactSharingResourceV1 } from '../artifacts/artifactSharingV1.js';
 import {
   applyCodingPromptBehaviorOverridesV1,
   resolveCodingPromptBehaviorV1,
@@ -20,6 +21,8 @@ import {
 export function resolveEffectiveCodingPromptBehaviorV1(params: Readonly<{
   settings: unknown;
   profileId?: string | null | undefined;
+  /** Already-authorized, opened profile documents from the Account Artifact owner. */
+  artifactsById?: ReadonlyMap<string, ArtifactSharingResourceV1>;
 }>): CodingPromptBehaviorV1 {
   const base = resolveCodingPromptBehaviorV1(params.settings);
   const profileId = typeof params.profileId === 'string' ? params.profileId.trim() : '';
@@ -28,7 +31,8 @@ export function resolveEffectiveCodingPromptBehaviorV1(params: Readonly<{
     ? (params.settings as Record<string, unknown>)
     : null;
   if (!record) return base;
-  for (const entry of readAiLaunchProfileCollection(record.profiles).entries) {
+  for (const entry of readAiLaunchProfileCollection(record.profiles, params.artifactsById
+    ? { artifactsById: params.artifactsById, includeShared: true } : undefined).entries) {
     if (entry.kind === 'opaque' || entry.profile.id !== profileId) continue;
     return applyCodingPromptBehaviorOverridesV1(base, entry.profile.codingPromptBehaviorOverrides);
   }
