@@ -53,7 +53,7 @@ import { writeRuntimeSnapshotLayout } from '../testkit/core/runtime_snapshot_lay
 import { publishBuiltRepositoryRuntimeSnapshot } from './build_stack_artifacts.mjs';
 import { packControlledRuntimeSnapshot, importControlledRuntimeArchive } from '../utils/dev_targets/runtime_artifact_transfer.mjs';
 import { resolveServerRuntimeLaunchSpec } from '../runtime/launch/resolveServerRuntimeLaunchSpec.mjs';
-import { resolveStackRuntimeLaunchContext } from '../runtime/launch/resolveStackRuntimeLaunchContext.mjs';
+import { resolveNativeDaemonRuntimeSnapshot, resolveStackRuntimeLaunchContext } from '../runtime/launch/resolveStackRuntimeLaunchContext.mjs';
 
 test('server-only foreign publication selects and transfers without inventing web or daemon artifacts', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'runtime-server-only-'));
@@ -129,6 +129,43 @@ test('server-only foreign publication selects and transfers without inventing we
   });
   assert.equal(remoteServerContext.snapshot.snapshotId, published.snapshotId,
     'a server-only shared-DB launch must use its imported server without requiring a native daemon');
+});
+
+test('daemon-only shared-DB launch uses its selected snapshot without resolving a producer-native companion', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'runtime-daemon-only-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const stackBaseDir = join(root, 'remote');
+  const target = { platform: process.platform, arch: process.arch };
+  const daemon = await createArtifact(join(stackBaseDir, 'artifacts'), 'daemon',
+    { happier: 'selected daemon' }, { extraManifest: { target } });
+  await publishRuntimeSnapshot({ producerStackBaseDir: stackBaseDir, snapshotId: 'selected-daemon', artifacts: { daemon },
+    requiredComponents: ['daemon'], sourceMetadata: createSourceMetadata() });
+  await selectRuntimeSnapshot({ consumerStackBaseDir: stackBaseDir, producerStackBaseDir: stackBaseDir,
+    snapshotId: 'selected-daemon', target, requiredComponents: ['daemon'] });
+  const context = await resolveStackRuntimeLaunchContext({
+    argv: ['--runtime', '--no-server', '--no-ui', '--no-dev-targets'], target, purpose: 'deployment', requiredComponents: ['server'],
+    env: { HAPPIER_STACK_STACK: 'remote', HAPPIER_STACK_STORAGE_DIR: root,
+      HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'missing-producer',
+      HAPPIER_STACK_SHARED_DB_SOURCE_STACK: 'dev', HAPPIER_DEV_TARGET_EXECUTION: '1' },
+  });
+  assert.equal(context.snapshot.snapshotId, 'selected-daemon');
+  assert.deepEqual(Object.keys(context.snapshot.manifest.components), ['daemon']);
+});
+
+test('native daemon runtime selection accepts the daemon worker target', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'runtime-worker-daemon-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const producerStackBaseDir = join(root, 'producer');
+  const target = { platform: process.platform === 'darwin' ? 'linux' : 'darwin', arch: 'arm64' };
+  const daemon = await createArtifact(join(producerStackBaseDir, 'artifacts'), 'daemon',
+    { happier: 'worker daemon' }, { extraManifest: { target } });
+  await publishRuntimeSnapshot({ producerStackBaseDir, snapshotId: 'worker-daemon', artifacts: { daemon },
+    requiredComponents: ['daemon'], platform: target.platform, arch: target.arch, sourceMetadata: createSourceMetadata() });
+  const snapshot = await resolveNativeDaemonRuntimeSnapshot({ stackName: 'qa', target, env: {
+    HAPPIER_STACK_STORAGE_DIR: root, HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'producer',
+  } });
+  assert.equal(snapshot.snapshotId, 'worker-daemon');
+  assert.deepEqual(snapshot.manifest.target, target);
 });
 
 function createSourceMetadata() {

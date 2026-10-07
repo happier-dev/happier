@@ -4,10 +4,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import {
-    buildReviewCommentTextSnapshotHashes,
-    REVIEW_COMMENT_TEXT_SNAPSHOT_MAX_LINE_BYTES_V1,
-} from '@happier-dev/protocol';
+import { buildReviewCommentTextSnapshotHashes } from '@happier-dev/protocol';
 
 import { resolveReviewCommentSnapshot } from './snapshots';
 
@@ -92,14 +89,14 @@ describe('resolveReviewCommentSnapshot', () => {
         });
     });
 
-    it('uses server-compatible bidi minified and truncation metadata', async () => {
+    it('preserves long lines and derives metadata from the complete captured text', async () => {
         const root = join(tmpdir(), `happier-review-snapshot-policy-${Date.now()}-${Math.random()}`);
         await mkdir(join(root, 'src'), { recursive: true });
         await writeFile(
             join(root, 'src', 'policy.ts'),
             [
                 'const bidi = "\u061C";',
-                'x'.repeat(5000),
+                `${'x'.repeat(5000)}\u202E`,
                 'y'.repeat(1500),
             ].join('\n'),
             'utf8',
@@ -127,27 +124,37 @@ describe('resolveReviewCommentSnapshot', () => {
         });
         expect(longLineSnapshot).toMatchObject({
             kind: 'text',
-            truncated: true,
-            truncationReason: 'line_too_long',
+            truncated: false,
+            hasBidiControls: true,
             likelyMinified: true,
         });
         expect(longLineSnapshot?.kind).toBe('text');
         if (longLineSnapshot?.kind === 'text') {
-            expect(longLineSnapshot.selectedLines[0]!.length).toBeLessThanOrEqual(
-                REVIEW_COMMENT_TEXT_SNAPSHOT_MAX_LINE_BYTES_V1,
-            );
+            expect(longLineSnapshot.selectedLines).toEqual([`${'x'.repeat(5000)}\u202E`]);
+            expect(longLineSnapshot.selectedLinesHash).toBe(buildReviewCommentTextSnapshotHashes(longLineSnapshot).selectedLinesHash);
         }
         expect(mediumLineSnapshot).toMatchObject({
             kind: 'text',
-            truncated: true,
-            truncationReason: 'line_too_long',
+            truncated: false,
             likelyMinified: true,
         });
         expect(mediumLineSnapshot?.kind).toBe('text');
         if (mediumLineSnapshot?.kind === 'text') {
-            expect(mediumLineSnapshot.beforeContext.every(
-                (line) => line.length <= REVIEW_COMMENT_TEXT_SNAPSHOT_MAX_LINE_BYTES_V1,
-            )).toBe(true);
+            expect(mediumLineSnapshot.beforeContext[1]).toBe(`${'x'.repeat(5000)}\u202E`);
         }
+    });
+
+    it('captures a selected window from a file larger than the former 5 MiB cutoff', async () => {
+        const root = join(tmpdir(), `happier-review-snapshot-large-${Date.now()}-${Math.random()}`);
+        await mkdir(root, { recursive: true });
+        await writeFile(join(root, 'large.ts'), `${'x'.repeat(5 * 1024 * 1024)}\nlast line`, 'utf8');
+
+        const snapshot = await resolveReviewCommentSnapshot({
+            cwd: root,
+            anchor: { kind: 'line', filePath: 'large.ts', line: 2 },
+            now: () => 123,
+        });
+        expect(snapshot).toMatchObject({ kind: 'text', selectedLines: ['last line'], truncated: false });
+        if (snapshot?.kind === 'text') expect(snapshot.beforeContext[0]).toHaveLength(5 * 1024 * 1024);
     });
 });

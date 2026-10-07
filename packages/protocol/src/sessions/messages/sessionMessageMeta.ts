@@ -6,7 +6,17 @@ import {
   SESSION_MEDIA_MESSAGE_META_KIND_V1,
   createSessionMediaMessageMetaV1Schema,
 } from './sessionMediaV1.js';
-import { ConversationTurnOriginV1Schema } from '../../messages/structured/conversationTurnOriginV1.js';
+import { HappierMetaEnvelopeSchema } from '../../messages/structured/HappierMetaEnvelope.js';
+import { BrowserContextMessageMetaV1Schema } from '../../browser/context/v1.js';
+import {
+  HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1,
+  HAPPIER_VENDOR_PLUGIN_MENTIONS_METADATA_KEY,
+  HAPPIER_SKILL_MENTIONS_METADATA_KEY,
+  HappierStructuredInputV1Schema,
+} from '../../runtime/input/structuredInputV1.js';
+import { VendorPluginMentionV1Schema } from '../../runtime/input/vendorPluginMentionV1.js';
+import { SkillMentionV1Schema } from '../../runtime/input/skillMentionV1.js';
+import { ExecutionRunInputTurnV1Schema } from '../../execution/runs/responseSchemas.js';
 import {
   SESSION_INPUT_AUTHORITY_META_KEY,
   SESSION_INPUT_REQUEST_META_KEY,
@@ -28,6 +38,17 @@ const SESSION_USER_MESSAGE_DELIVERY_INTENTS = new Set<SessionUserMessageDelivery
   'explicit_immediate',
   'interrupt',
 ]);
+
+/** Optional segment details are best-effort; only the version and kind identify a segment. */
+export const SessionMessageStreamSegmentV1Schema = z.object({
+  v: z.literal(1),
+  segmentKind: z.enum(['assistant', 'thinking']),
+  segmentLocalId: z.string().min(1).nullish().catch(undefined),
+  segmentState: z.enum(['streaming', 'complete', 'interrupted']).nullish().catch(undefined),
+  startedAtMs: z.number().nullish().catch(undefined),
+  updatedAtMs: z.number().nullish().catch(undefined),
+  interruptedReason: z.string().optional().catch(undefined),
+}).strict();
 
 export const SESSION_USER_MESSAGE_DELIVERY_INTENT_META_KEY = 'happierDeliveryIntentV1';
 export const SESSION_TOOL_ANSWER_DELIVERY_KIND = 'tool-answer-delivery.v1';
@@ -65,11 +86,19 @@ export function withSessionUserMessageDeliveryIntentMeta(
 /**
  * Message-level metadata (stored in encrypted message bodies).
  *
- * Forward compatibility is critical here: older clients must not fail to parse
- * messages when new fields or new enum values are introduced.
+ * Stored readers derive a known-field projection with createStoredReadSchema;
+ * additive domain fields are ignored rather than copied into application state.
+ * Source-owned opaque payloads remain intact for their codecs to interpret.
  */
 export function createSessionMessageMetaSchema(zod: typeof z) {
   const sessionMediaMessageMetaV1Schema = createSessionMediaMessageMetaV1Schema(zod);
+  const happierEnvelopeSchema = zod.union([
+    sessionMediaMessageMetaV1Schema.safeExtend({
+      resources: HappierMetaEnvelopeSchema.shape.resources,
+      conversationTurnOriginV1: HappierMetaEnvelopeSchema.shape.conversationTurnOriginV1,
+    }),
+    HappierMetaEnvelopeSchema.passthrough().refine((value) => value.kind !== SESSION_MEDIA_MESSAGE_META_KIND_V1),
+  ]);
   return zod
     .object({
       sentFrom: createSentFromSchema(zod).optional(),
@@ -91,27 +120,34 @@ export function createSessionMessageMetaSchema(zod: typeof z) {
       [SESSION_MESSAGE_PROVENANCE_META_KEY]: SessionMessageProvenanceSchema.optional(),
       [SESSION_INPUT_REQUEST_META_KEY]: SessionInputRequestSchema.optional(),
       [SESSION_INPUT_AUTHORITY_META_KEY]: SessionInputAuthoritySchema.optional(),
-      happier: zod
-        .object({
-          kind: zod.string(),
-          payload: zod.unknown(),
-          conversationTurnOriginV1: ConversationTurnOriginV1Schema.optional(),
-        })
-        .passthrough()
-        .superRefine((value, ctx) => {
-          if (value.kind !== SESSION_MEDIA_MESSAGE_META_KIND_V1) return;
-          const parsed = sessionMediaMessageMetaV1Schema.safeParse(value);
-          if (parsed.success) return;
-          for (const issue of parsed.error.issues) {
-            ctx.addIssue({
-              code: 'custom',
-              path: issue.path,
-              message: issue.message,
-            });
-          }
-        })
-        .optional(),
+      happier: happierEnvelopeSchema.optional(),
       happierMedia: sessionMediaMessageMetaV1Schema.optional(),
+      [SESSION_USER_MESSAGE_DELIVERY_INTENT_META_KEY]: zod.unknown().optional(),
+      happierStreamSegmentV1: SessionMessageStreamSegmentV1Schema.optional().catch(undefined),
+      happierStreamKey: zod.unknown().optional(),
+      happierSidechainStreamKey: zod.unknown().optional(),
+      happierSyntheticNoResponseV1: zod.unknown().optional(),
+      happierUnsupportedContentV1: zod.unknown().optional(),
+      // These optional source projections must not make otherwise readable transcript text unparsed.
+      // Their input admission remains at the structured-input/browser/Run owners.
+      [HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1]: HappierStructuredInputV1Schema.optional().catch(undefined),
+      [HAPPIER_VENDOR_PLUGIN_MENTIONS_METADATA_KEY]: zod.array(VendorPluginMentionV1Schema).optional().catch(undefined),
+      [HAPPIER_SKILL_MENTIONS_METADATA_KEY]: zod.array(SkillMentionV1Schema).optional().catch(undefined),
+      happierBrowserContext: BrowserContextMessageMetaV1Schema.optional().catch(undefined),
+      happierExecutionRunInputTurnV1: ExecutionRunInputTurnV1Schema.optional().catch(undefined),
+      // Legacy attachment/native identity carriers are decoded by their existing source owners.
+      happierAttachments: zod.unknown().optional(),
+      opencodeMessageId: zod.unknown().optional(),
+      opencodeRemoteSessionId: zod.unknown().optional(),
+      remoteSessionId: zod.unknown().optional(),
+      providerSessionId: zod.unknown().optional(),
+      sidechainId: zod.unknown().optional(),
+      sidechain_id: zod.unknown().optional(),
+      isSidechain: zod.unknown().optional(),
+      is_sidechain: zod.unknown().optional(),
+      isThinking: zod.unknown().optional(),
+      runtimeEventKind: zod.unknown().optional(),
+      runtimeIssueCode: zod.unknown().optional(),
     })
     .passthrough()
     .superRefine((value, ctx) => {

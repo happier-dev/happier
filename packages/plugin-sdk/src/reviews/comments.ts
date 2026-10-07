@@ -19,14 +19,14 @@ import type {
     ReviewCommentPublicationResultV1,
     ReviewCommentPublicationRoutingV1,
     ReviewCommentPublicationTargetV1,
-    ReviewCommentPublicationTargetExpectationV1,
     ReviewCommentPublicationVerdictV1,
     ReviewCommentPublicationVerdictResultV1,
 } from '@happier-dev/protocol';
 import { createReviewCommentLinkedIssueIdV1 } from '@happier-dev/protocol/reviews/comments/v1';
-import { createReviewCommentPublicationSettlementRequestV1, formatReviewCommentPublicationMarkerV1, matchReviewCommentPublicationMarkerV1, parseReviewCommentPublicationPlanV1, preflightReviewCommentPublicationRoutingV1, reviewCommentPublicationEntryIsDiffLessV1, reviewCommentPublicationTargetMatchesV1, validateReviewCommentPublicationClaimAgainstPlanV1, validateReviewCommentPublicationResultAgainstPlanV1 } from '@happier-dev/protocol/reviews/comments/actions';
+import { createReviewCommentPublicationSettlementRequestV1, formatReviewCommentPublicationMarkerV1, matchReviewCommentPublicationMarkerV1, parseReviewCommentPublicationPlanV1, preflightReviewCommentPublicationRoutingV1, reviewCommentPublicationEntryIsDiffLessV1, reviewCommentPublicationTargetMatchesV1 as canonicalReviewCommentPublicationTargetMatchesV1, validateReviewCommentPublicationClaimAgainstPlanV1, validateReviewCommentPublicationResultAgainstPlanV1 } from '@happier-dev/protocol/reviews/comments/actions';
 
 import { redactBugReportSensitiveText } from '../diagnostics.js';
+import { PluginContributionIdentityV1Schema, type PluginContributionIdentity } from '../manifest.js';
 import {
     defineProtocolArray,
     defineProtocolLiteral,
@@ -36,6 +36,20 @@ import {
     defineProtocolUnion,
     type ProtocolComposableSchema,
 } from '../protocol/index.js';
+
+export type ReviewCommentPublicationTargetExpectationV1 = (
+    | Readonly<{ configuredAccountId: string }>
+    | Readonly<{ nativeService: PluginContributionIdentity }>
+) & Readonly<{
+    providerId: string;
+    sourceId: string;
+    localRef: Readonly<{
+        kindId: string;
+        collisionScope: string;
+        entryId: string;
+    }>;
+    subtarget: ReviewCommentPublicationTargetV1['subtarget'];
+}>;
 
 const nonEmptyPublicationString = defineProtocolString({ minLength: 1 });
 const publicationBoolean = defineProtocolUnion([
@@ -162,9 +176,8 @@ const publicationSnapshot = defineProtocolUnion([
         capturedAt: defineProtocolNumber({ integer: true, minimum: 0 }),
     }, { policy: 'closed' }),
 ]);
-const publicationTarget = defineProtocolObject({
+const publicationTargetFields = {
     providerId: nonEmptyPublicationString,
-    configuredAccountId: nonEmptyPublicationString,
     entryRef: defineProtocolObject({
         sourceId: nonEmptyPublicationString,
         kindId: nonEmptyPublicationString,
@@ -181,7 +194,11 @@ const publicationTarget = defineProtocolObject({
             targetId: nonEmptyPublicationString,
         }, { policy: 'closed' }),
     ]),
-}, { policy: 'closed' });
+};
+const publicationTarget = defineProtocolUnion([
+    defineProtocolObject({ ...publicationTargetFields, configuredAccountId: nonEmptyPublicationString }, { policy: 'closed' }),
+    defineProtocolObject({ ...publicationTargetFields, nativeService: PluginContributionIdentityV1Schema }, { policy: 'closed' }),
+]);
 const publicationEntry = defineProtocolObject({
     happierCommentId: nonEmptyPublicationString,
     expectedServerRevision: defineProtocolNumber({ integer: true, minimum: 1 }),
@@ -505,7 +522,6 @@ export type {
     ReviewCommentPublicationResultV1,
     ReviewCommentPublicationRoutingV1,
     ReviewCommentPublicationTargetV1,
-    ReviewCommentPublicationTargetExpectationV1,
     ReviewCommentPublicationVerdictV1,
     ReviewCommentPublicationVerdictResultV1,
 };
@@ -523,4 +539,7 @@ export { preflightReviewCommentPublicationRoutingV1 };
 export { reviewCommentPublicationEntryIsDiffLessV1 };
 export { formatReviewCommentPublicationMarkerV1 };
 export { matchReviewCommentPublicationMarkerV1 };
-export { reviewCommentPublicationTargetMatchesV1 };
+export const reviewCommentPublicationTargetMatchesV1: (
+    target: ReviewCommentPublicationTargetV1,
+    expected: ReviewCommentPublicationTargetExpectationV1,
+) => boolean = canonicalReviewCommentPublicationTargetMatchesV1;

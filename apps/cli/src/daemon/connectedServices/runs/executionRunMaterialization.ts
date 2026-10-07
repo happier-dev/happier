@@ -25,7 +25,13 @@ import {
     sanitizeConnectedServiceDiagnosticError,
 } from '../runtimeAuth/sanitizeConnectedServiceDiagnosticString';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY, readConnectedServiceChildSelectionsFromEnv, type ConnectedServiceChildSelection } from '../connectedServiceChildEnvironment';
-import { ConnectedServiceRunRejectedStartRequestSchema, type ConnectedServiceRunRejectedStartHandler } from './materializeContract';
+import { ConnectedServiceRunRejectedStartRequestSchema, ConnectedServiceRunRuntimeAuthRefreshRequestSchema,
+    type ConnectedServiceRunRuntimeAuthRefreshHandler, type ConnectedServiceRunRejectedStartHandler } from './materializeContract';
+import { refreshConnectedServiceRuntimeAuthForTarget, resolveCurrentRefreshSelection, type ResolveDaemonAuthBridge } from '../sessionRuntimeAuthRefresh';
+import { runtimeTargetOwnsConnectedServiceRuntimeAuthRefreshSelection } from '../runtimeAuthRefreshAuthorization';
+import type { ConnectedServiceRuntimeTarget } from '../runtimeRegistry/target';
+import type { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
+import { ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import type { ConnectedServiceAuthGroupSwitchCoordinator } from '../accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
 import type { QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol';
 import {
@@ -100,9 +106,14 @@ export type ExecutionRunTargetRegistration = Readonly<{
     connectedServiceSelectionsEnv: Readonly<Record<string, string>>;
     sessionId?: string | null;
     sessionDirectory?: string | null;
+    exactPurposeBindingSubjectId?: string;
 }>;
 
 export type CreateExecutionRunConnectedServicesBridgeDeps = Readonly<{
+    getRunRuntimeTarget?: (runKey: string) => ConnectedServiceRuntimeTarget | null;
+    adoptRunCredentialRevision?: ConnectedServiceRuntimeRegistry['adoptExactCredentialRevisionForRun'];
+    resolveRunCredentialRevisionTarget?: ConnectedServiceRuntimeRegistry['resolveExactRunCredentialRevisionTarget'];
+    resolveDaemonAuthBridge?: ResolveDaemonAuthBridge;
     recoverRejectedStart?: (input: Readonly<{
         selection: Extract<ConnectedServiceChildSelection, { kind: 'group' }>;
         modelId: string;
@@ -164,6 +175,7 @@ export type ExecutionRunConnectedServicesBridge = Readonly<{
     materialize: ConnectedServiceRunMaterializationHandler;
     release: ConnectedServiceRunReleaseHandler;
     recoverRejectedStart: ConnectedServiceRunRejectedStartHandler;
+    refreshRuntimeAuth: ConnectedServiceRunRuntimeAuthRefreshHandler;
     adoptLiveMaterialization: (input: Readonly<{
         runId: string;
         runnerPid: number;
@@ -785,6 +797,7 @@ export function createExecutionRunConnectedServicesBridge(
                         registration.connectedServicesBindings,
                     connectedServiceSelectionsEnv:
                         registration.connectedServiceSelectionsEnv,
+                    ...(entry.purposeBindingLease ? { exactPurposeBindingSubjectId: entry.purposeBindingLease.subjectId } : {}),
                     sessionId: runner.parentSessionId,
                     sessionDirectory: registration.sessionDirectory,
                 });
@@ -994,15 +1007,13 @@ export function createExecutionRunConnectedServicesBridge(
                             ? deps.createAdoptedRootCleanup({ runKey, agentId, materializedRoot })
                             : null);
                     cleanupOnFailure ??= cleanupOnExit;
-                    if (resolved.ongoingRuntimeRegistrationAllowed === false) {
-                        throw new Error(
-                            'Legacy unfenced connected service materialization cannot be registered as an execution-run runtime target',
-                        );
-                    }
                     const connectedServicesBindings = resolved.connectedServicesBindings ?? input.connectedServices;
                     const activationId = randomUUID();
                     const agentContribution = await contributionLease
                         .resolveAgentContributionIdentity();
+                    // Resolution's launch-only subject has finished materializing. Retire it
+                    // before the retained activation takes custody of the same real Run subject.
+                    await resolved.materializationPurposeLease?.dispose();
                     entry = await prepareEntry({
                         activationId,
                         ...(input.modelId ? { modelId: input.modelId } : {}),
@@ -1019,7 +1030,6 @@ export function createExecutionRunConnectedServicesBridge(
                         cleanupOnExit,
                         contributionLease,
                     });
-                    await resolved.materializationPurposeLease?.dispose();
                     const registration: ExecutionRunConnectedServicesRegistrationV1 = {
                         v: 1,
                         activationId,
@@ -1041,6 +1051,7 @@ export function createExecutionRunConnectedServicesBridge(
                         connectedServicesBindingsRaw: connectedServicesBindings,
                         connectedServiceSelectionsEnv:
                             registration.connectedServiceSelectionsEnv,
+                        ...(entry.purposeBindingLease ? { exactPurposeBindingSubjectId: entry.purposeBindingLease.subjectId } : {}),
                         sessionId: runner.parentSessionId,
                         sessionDirectory: input.cwd,
                     });
@@ -1077,6 +1088,62 @@ export function createExecutionRunConnectedServicesBridge(
                 }
             }
         });
+    };
+
+    const refreshRuntimeAuth: ConnectedServiceRunRuntimeAuthRefreshHandler = async (raw) => {
+        const refused = { status: 'unavailable' as const, reason: 'connected_service_run_refresh_forbidden' };
+        const parsed = ConnectedServiceRunRuntimeAuthRefreshRequestSchema.safeParse(raw);
+        if (!parsed.success) return refused;
+        const request = parsed.data;
+        const entry = retainedCleanupByRunKey.get(request.runId);
+        const runner = deps.captureRunnerIdentity({ runnerPid: request.runnerPid });
+        let target = deps.getRunRuntimeTarget?.(request.runId);
+        const hasCurrentAuthority = () => Boolean(entry && entry.authorityActive && !entry.retiring
+            && retainedCleanupByRunKey.get(request.runId) === entry
+            && entry.activationId === request.activationId && entry.runnerPid === request.runnerPid
+            && runner?.identity === entry.runnerIdentity && runner.isCurrent() && entry.isCurrent());
+        const isCurrent = () => Boolean(entry && hasCurrentAuthority() && target
+            && target.pid === request.runnerPid && target.agentId === entry.agentId && target.materializationKey === request.runId
+            && deps.getRunRuntimeTarget?.(request.runId) === target);
+        const current = target ? resolveCurrentRefreshSelection({ target, serviceId: request.serviceId }) : null;
+        if (!isCurrent() || !entry || !target || !current || request.serviceId !== request.selection.serviceId
+            || !runtimeTargetOwnsConnectedServiceRuntimeAuthRefreshSelection({ target, selection: request.selection })
+            || (request.selection.kind === 'profile' && (current.selection.kind !== 'profile'
+                || current.selection.profileId !== request.selection.profileId))) return refused;
+        if (!deps.resolveDaemonAuthBridge) return { status: 'unavailable', reason: 'connected_service_daemon_auth_bridge_unavailable' };
+        // Do not hold the materialization mutex across provider I/O: release revokes this exact
+        // activation while the shared core rechecks authority before disclosing its settlement.
+        try {
+            const result = await refreshConnectedServiceRuntimeAuthForTarget({ target, request,
+                scope: { runId: request.runId }, authority: entry, isCurrent, resolveDaemonAuthBridge: deps.resolveDaemonAuthBridge,
+                acceptSettledCredentialRevision: (revision) => {
+                    if (!hasCurrentAuthority() || !target) return null;
+                    const accepted = deps.resolveRunCredentialRevisionTarget?.({ runKey: request.runId, target,
+                        serviceId: request.serviceId, expectedCredentialRevision: current.credentialRevision,
+                        credentialRevision: revision });
+                    if (!hasCurrentAuthority() || !accepted) return null;
+                    target = accepted;
+                    return accepted;
+                } });
+            if (result.ok && result.result.status === 'refreshed'
+                && Object.prototype.hasOwnProperty.call(result.result.result, 'credentialRevision')) {
+                const revision = ConnectedServiceCredentialRevisionV1Schema.safeParse(result.result.result.credentialRevision);
+                if (!revision.success) return { status: 'failed', reason: 'runtime_auth_refresh_invalid_bridge_result' };
+                if (!isCurrent()) return refused;
+                const updated = deps.adoptRunCredentialRevision?.({ runKey: request.runId, target,
+                    serviceId: request.serviceId, expectedCredentialRevision: resolveCurrentRefreshSelection({ target,
+                        serviceId: request.serviceId })?.credentialRevision ?? current.credentialRevision,
+                    credentialRevision: revision.data });
+                if (!updated) return refused;
+                target = updated;
+                entry.selections = new Map(updated.connectedServiceSelections.map((selection) => [selection.serviceId, selection]));
+                if (!isCurrent()) return refused;
+            }
+            return result.ok ? result.result : { status: 'unavailable', reason: result.errorCode === 'connected_service_session_refresh_forbidden'
+                ? refused.reason : result.errorCode };
+        } catch {
+            return isCurrent() ? { status: 'failed', reason: 'runtime_auth_refresh_failed' } : refused;
+        }
     };
 
     const recoverRejectedStart: ConnectedServiceRunRejectedStartHandler = async (raw) => {
@@ -1255,6 +1322,7 @@ export function createExecutionRunConnectedServicesBridge(
         materialize,
         release,
         recoverRejectedStart,
+        refreshRuntimeAuth,
         adoptLiveMaterialization,
         cleanupTerminalMaterialization,
         releaseForRunnerExit,

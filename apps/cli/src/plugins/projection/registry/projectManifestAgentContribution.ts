@@ -1,3 +1,4 @@
+import type { AgentPreflightSessionControlsContributionV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type {
     PluginAgentContributionV2,
     PluginSourceSpecV1,
@@ -177,5 +178,33 @@ export function projectManifestAgentContribution(params: Readonly<{
         ...(params.devDaemonEntryPath !== undefined
             ? { devDaemonEntryPath: params.devDaemonEntryPath }
             : {}),
+    });
+}
+
+/** Native declarative ACP reads reuse configured authentication and never initiate login. */
+export function projectManifestAgentAcpCatalogPreflight(
+    definition: PluginAgentContributionV2,
+    pluginId: string,
+): Readonly<{ contribution: AgentPreflightSessionControlsContributionV1; environment?: Readonly<Record<string, string>> }> | null {
+    if (!('runtime' in definition)) return null;
+    const runtime = definition.runtime;
+    if (runtime.kind !== 'acp' || runtime.transport.kind !== 'stdio') return null;
+    const transport = runtime.transport;
+    const ref = transport.executable;
+    const args = Object.freeze([...(transport.args ?? [])]);
+    const prepareCommand = transport.preferredPath === undefined ? {} : {
+        prepareCommand: () => ({ args, preferredPath: transport.preferredPath }),
+    };
+    const command = ref.kind === 'managedDependency'
+        ? { executable: ref, args, ...prepareCommand }
+        : typeof ref.id === 'string'
+            ? { toolId: ref.id, args, ...prepareCommand }
+            : ref.id.pluginId === pluginId
+                ? { toolId: ref.id.localId, args, ...prepareCommand }
+                : null;
+    if (!command) return null;
+    return Object.freeze({
+        contribution: Object.freeze({ catalogs: Object.freeze({ kind: 'acp' as const, command: Object.freeze(command) }) }),
+        ...(transport.env ? { environment: transport.env } : {}),
     });
 }

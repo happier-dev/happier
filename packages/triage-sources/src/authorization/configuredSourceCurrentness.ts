@@ -5,6 +5,7 @@ import {
 import {
   TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1,
   TriageReadConfiguredSourceInstancesResultV1Schema,
+  triageSourceBindingComponentsV1,
   type TriageConfiguredSourceInstanceV1,
 } from '@happier-dev/triage-protocol/v1';
 
@@ -19,10 +20,7 @@ export function deriveTriageConfiguredSourceInstanceDigestV1(
       instance.instance.source.pluginId,
       instance.instance.source.localId,
       instance.instance.sourceInstanceId,
-      instance.binding.purpose,
-      instance.binding.account.service.pluginId,
-      instance.binding.account.service.localId,
-      instance.binding.account.accountId,
+      ...triageSourceBindingComponentsV1(instance.binding),
       instance.localInstanceKey,
       String(instance.configuration.v),
       instance.configuration.token,

@@ -16,7 +16,7 @@ import {
   MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
   MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1,
   MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
-  TriageConfiguredSourceInstanceV1Schema,
+  TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   TriageSourceEntryLocalRefV1Schema,
   TriageSourceFailureV1Schema,
   TriageSourceObservationV1Schema,
@@ -47,7 +47,7 @@ const revisionedSingleEntryPublicationPlanSchema =
 
 const publicationTargetShape = {
   v: defineProtocolLiteral(1),
-  instance: TriageConfiguredSourceInstanceV1Schema,
+  instance: TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
   routingToken: RoutingTokenSchema,
 } as const;
@@ -125,7 +125,7 @@ const BooleanSchema = defineProtocolUnion([
  */
 export const AzureCompleteInputV1Schema = defineProtocolObject({
   v: defineProtocolLiteral(1),
-  instance: TriageConfiguredSourceInstanceV1Schema,
+  instance: TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
   routingToken: RoutingTokenSchema,
   /** `lastMergeSourceCommit.commitId` as the user's own read reported it. */
@@ -149,7 +149,7 @@ export type AzureCompleteInputV1 = ReturnType<typeof AzureCompleteInputV1Schema.
  */
 export const AzureAbandonInputV1Schema = defineProtocolObject({
   v: defineProtocolLiteral(1),
-  instance: TriageConfiguredSourceInstanceV1Schema,
+  instance: TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
   routingToken: RoutingTokenSchema,
 }, { policy: 'closed' });
@@ -164,7 +164,7 @@ export type AzureAbandonInputV1 = ReturnType<typeof AzureAbandonInputV1Schema.pa
  */
 export const AzureReactivateInputV1Schema = defineProtocolObject({
   v: defineProtocolLiteral(1),
-  instance: TriageConfiguredSourceInstanceV1Schema,
+  instance: TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
   routingToken: RoutingTokenSchema,
 }, { policy: 'closed' });
@@ -189,7 +189,7 @@ const IdentityIdSchema = defineProtocolUtf8String({
  */
 export const AzureRequestReviewInputV1Schema = defineProtocolObject({
   v: defineProtocolLiteral(1),
-  instance: TriageConfiguredSourceInstanceV1Schema,
+  instance: TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
   routingToken: RoutingTokenSchema,
   /** `lastMergeSourceCommit.commitId` as the user's own read reported it. */
@@ -335,7 +335,7 @@ const AzureObservedThreadStatusV1Schema = defineProtocolUnion([
  */
 export const AzureThreadStatusInputV1Schema = defineProtocolObject({
   v: defineProtocolLiteral(1),
-  instance: TriageConfiguredSourceInstanceV1Schema,
+  instance: TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
   routingToken: RoutingTokenSchema,
   threadId: defineProtocolUtf8String({

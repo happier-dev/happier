@@ -60,6 +60,7 @@ export type LocalServiceLauncherLeafRoutes = Readonly<{
     ): Promise<DaemonLocalServiceLauncherOpenPreviewResponseV1>;
     registerPreview(
         request: DaemonLocalServiceLauncherLeafRequestV1,
+        signal?: AbortSignal,
     ): Promise<DaemonLocalServiceLauncherRegisterPreviewResponseV1>;
     clearHistory(
         request: DaemonLocalServiceLauncherLeafRequestV1,
@@ -133,7 +134,8 @@ export function createLocalServiceLauncherLeafRoutes(input: Readonly<{
             };
         },
 
-        async registerPreview(request) {
+        async registerPreview(request, signal) {
+            signal?.throwIfAborted();
             const resolved = await resolveTarget(request);
             if (!resolved.ok) {
                 return {
@@ -161,7 +163,7 @@ export function createLocalServiceLauncherLeafRoutes(input: Readonly<{
                     machineId: input.machineId,
                     ...(request.sessionId ? { sessionId: request.sessionId } : {}),
                     inventoryEntryId,
-                });
+                }, signal);
                 if (!result.ok) {
                     return {
                         protocolVersion: 1,

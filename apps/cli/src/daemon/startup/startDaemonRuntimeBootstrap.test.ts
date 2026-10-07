@@ -1,15 +1,22 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { randomBytes } from 'node:crypto';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { startDaemonRuntimeBootstrap } from './startDaemonRuntimeBootstrap';
 import { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from '../connectedServices/accountGroups/quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
 import { createProviderAccountUsageStore } from '../connectedServices/accountUsage/store';
-import { resolveConnectedServicesQuotasDaemonEnabled } from '../connectedServices/quotas/resolveConnectedServicesQuotasDaemonEnabled';
+import { ConnectedServiceRuntimeRegistry } from '../connectedServices/runtimeRegistry/registry';
 import { startConnectedServiceQuotasLoop } from '../connectedServices/quotas/startConnectedServiceQuotasLoop';
 import { startConnectedServiceRefreshLoop } from '../connectedServices/refresh/startConnectedServiceRefreshLoop';
 import {
-  buildConnectedServiceCredentialRecord,
+  QualifiedConnectedAccountCredentialSnapshotV4Schema,
+  sealQualifiedConnectedAccountContentEnvelope,
   type QualifiedConnectedAccountServiceRef,
 } from '@happier-dev/protocol';
+import { createSessionNotificationContextFixture } from '@/testkit/backends/sessionFixtures';
+import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '../connectedServices/connectedServiceChildEnvironment';
+import { buildConnectedServiceAuthGroupCommittedGenerationFact } from '../connectedServices/sessionAuthSwitch/connectedServiceAuthSwitchOutcome';
+import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 
 const sessionsHttp = vi.hoisted(() => ({
   fetchSessionByIdCompat: vi.fn(),
@@ -25,6 +32,7 @@ const qualifiedConnectedAccountApi = vi.hoisted(() => ({
   listGroups: vi.fn(async () => ({ groups: [] })),
   resolveUsageSource: vi.fn(async () => null),
   readUsageRecord: vi.fn(async () => null),
+  readCredential: vi.fn<typeof import('@/api/client/qualifiedConnectedAccountApi')['readQualifiedConnectedAccountCredentialV4']>(),
 }));
 
 vi.mock('@/session/transport/http/sessionsHttp', () => sessionsHttp);
@@ -39,11 +47,9 @@ vi.mock('@/api/client/qualifiedConnectedAccountApi', async (importOriginal) => (
   listQualifiedConnectedAccountGroupsV4: qualifiedConnectedAccountApi.listGroups,
   resolveQualifiedProviderAccountUsageSourceV4: qualifiedConnectedAccountApi.resolveUsageSource,
   readQualifiedProviderAccountUsageRecordV4: qualifiedConnectedAccountApi.readUsageRecord,
+  readQualifiedConnectedAccountCredentialV4: qualifiedConnectedAccountApi.readCredential,
 }));
 
-vi.mock('../connectedServices/quotas/resolveConnectedServicesQuotasDaemonEnabled', () => ({
-  resolveConnectedServicesQuotasDaemonEnabled: vi.fn(async () => false),
-}));
 vi.mock('../connectedServices/quotas/startConnectedServiceQuotasLoop', () => ({
   startConnectedServiceQuotasLoop: vi.fn(() => ({ stop: vi.fn(), pause: vi.fn(), resume: vi.fn() })),
 }));
@@ -70,9 +76,25 @@ function createQualifiedV4RuntimeFixture() {
   };
 }
 
+function stubQuotaFeatureHttp(enabled: boolean) {
+  vi.stubGlobal('fetch', vi.fn<typeof fetch>(async (input) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    if (url.pathname !== '/v1/features') throw new Error(`Unexpected HTTP request: ${url.pathname}`);
+    return new Response(JSON.stringify(FeaturesResponseSchema.parse({
+      features: { connectedServices: { enabled: true, quotas: { enabled } } },
+      capabilities: {},
+    })), { status: 200, headers: { 'content-type': 'application/json' } });
+  }));
+}
+
 describe('startDaemonRuntimeBootstrap', () => {
+  beforeEach(() => {
+    stubQuotaFeatureHttp(false);
+  });
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    resetServerFeaturesClientForTests();
     vi.clearAllMocks();
     sessionsHttp.fetchSessionByIdCompat.mockReset();
     qualifiedConnectedAccountApi.listAccounts.mockReset().mockImplementation(
@@ -81,10 +103,12 @@ describe('startDaemonRuntimeBootstrap', () => {
     qualifiedConnectedAccountApi.listGroups.mockReset().mockResolvedValue({ groups: [] });
     qualifiedConnectedAccountApi.resolveUsageSource.mockReset().mockResolvedValue(null);
     qualifiedConnectedAccountApi.readUsageRecord.mockReset().mockResolvedValue(null);
+    qualifiedConnectedAccountApi.readCredential.mockReset();
+    vi.useRealTimers();
   });
 
   it('keeps quota automation disabled when authoritative current-source hydration fails', async () => {
-    vi.mocked(resolveConnectedServicesQuotasDaemonEnabled).mockResolvedValueOnce(true);
+    stubQuotaFeatureHttp(true);
     qualifiedConnectedAccountApi.listAccounts.mockRejectedValueOnce(new Error('inventory unavailable'));
     vi.stubEnv('HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED', 'false');
     vi.stubEnv('HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED', 'false');
@@ -135,8 +159,7 @@ describe('startDaemonRuntimeBootstrap', () => {
   });
 
   it('delegates scheduler enablement to the canonical gates instead of inferring a server-wide legacy mode', async () => {
-    vi.mocked(resolveConnectedServicesQuotasDaemonEnabled)
-      .mockResolvedValueOnce(true);
+    stubQuotaFeatureHttp(true);
     vi.stubEnv('HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED', 'false');
     const getServerFeaturesSnapshot = vi.fn(async () => ({
       status: 'ready' as const,
@@ -207,7 +230,6 @@ describe('startDaemonRuntimeBootstrap', () => {
 
     expect(result.connectedServiceRefreshCoordinator).not.toBeNull();
     expect(result.connectedServiceQuotasCoordinator).not.toBeNull();
-    expect(resolveConnectedServicesQuotasDaemonEnabled).toHaveBeenCalledOnce();
     expect(getServerFeaturesSnapshot).not.toHaveBeenCalled();
     expect(startConnectedServiceRefreshLoop).toHaveBeenCalledOnce();
     expect(startConnectedServiceQuotasLoop).toHaveBeenCalledOnce();
@@ -314,6 +336,19 @@ describe('startDaemonRuntimeBootstrap', () => {
         generation: input.generation,
       })),
     }, { applyCredentialUpdate });
+    const runtimeRegistry = new ConnectedServiceRuntimeRegistry();
+    runtimeRegistry.registerTarget({
+      pid: 42,
+      agentId: 'codex',
+      sessionId: 'session-42',
+      materializationKey: 'materialization-42',
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: {
+          'acme.accounts/session-auth': { source: 'connected', selection: 'profile', profileId: 'work' },
+        },
+      },
+    });
 
     const result = await startDaemonRuntimeBootstrap({
       api: { push: () => ({}), listConnectedServiceProfiles: () => ({}) } as never,
@@ -343,6 +378,7 @@ describe('startDaemonRuntimeBootstrap', () => {
       connectedServicesRestartRequestedPids: new Set(),
       pidToTrackedSession: new Map(),
       connectedServiceAuthGroupPreTurnSwitchCoordinator: authGroupCoordinator,
+      connectedServiceRuntimeRegistry: runtimeRegistry,
       connectedServiceRuntimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
       providerAccountUsageStore: createProviderAccountUsageStore(),
     });
@@ -354,12 +390,7 @@ describe('startDaemonRuntimeBootstrap', () => {
     }>;
     await refreshCoordinator.params.onAuthUpdated({
       binding: { serviceId: 'openai-codex', profileId: 'work' },
-      affectedTargets: [{
-        pid: 42,
-        agentId: 'codex',
-        sessionId: 'session-42',
-        materializationKey: 'materialization-42',
-      }],
+      affectedTargets: runtimeRegistry.listRefreshTargets(),
       trigger: 'refresh_triggered_restart',
       executionAuthority: 'runtime_recovery',
     });
@@ -373,26 +404,32 @@ describe('startDaemonRuntimeBootstrap', () => {
     });
   });
 
-  it('keeps legacy-unfenced persisted identity out of same-account fanout authority', async () => {
-    vi.mocked(resolveConnectedServicesQuotasDaemonEnabled).mockResolvedValueOnce(true);
+  it.each(['exact', 'legacy_unfenced', 'delayed_session', 'delayed_credential', 'failed_session'] as const)('admits only exact persisted fanout proof without a guessed local cutoff (%s)', async (scenario) => {
+    stubQuotaFeatureHttp(true);
     vi.stubEnv('HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED', 'false');
     vi.stubEnv('HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED', 'false');
-    sessionsHttp.fetchSessionByIdCompat.mockResolvedValue({ id: 'session-1' });
-    const record = buildConnectedServiceCredentialRecord({
-      now: 1_000,
-      serviceId: 'openai-codex',
-      profileId: 'work',
-      kind: 'oauth',
-      expiresAt: null,
-      oauth: {
-        accessToken: 'legacy-access',
-        refreshToken: 'legacy-refresh',
-        idToken: null,
-        scope: null,
-        tokenType: null,
-        providerAccountId: 'provider-account',
-        providerEmail: null,
-      },
+    const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+    const snapshot = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+      ref: { service, accountId: 'work' },
+      authenticationModeId: 'oauth',
+      revisionSemantics: scenario === 'legacy_unfenced' ? 'legacy_unfenced' : 'revisioned',
+      credentialRevision: scenario === 'legacy_unfenced' ? null : 'csr_0123456789ABCDEFGHJKMNPQRS',
+      configurationRevision: null,
+      content: sealQualifiedConnectedAccountContentEnvelope({
+        kind: 'credential', accountMode: 'plain',
+        payload: { v: 1, values: { accessToken: 'access', refreshToken: 'refresh', providerAccountId: 'provider-account' } },
+        randomBytes,
+      }),
+      metadata: { scopes: [], providerIdentity: { accountId: 'provider-account' } },
+    });
+    sessionsHttp.fetchSessionByIdCompat.mockImplementation(async () => {
+      if (scenario === 'failed_session') throw new Error('session HTTP unavailable');
+      if (scenario === 'delayed_session') await new Promise((resolve) => setTimeout(resolve, 3_000));
+      return createSessionNotificationContextFixture('session-1');
+    });
+    qualifiedConnectedAccountApi.readCredential.mockImplementation(async () => {
+      if (scenario === 'delayed_credential') await new Promise((resolve) => setTimeout(resolve, 3_000));
+      return snapshot;
     });
     const result = await startDaemonRuntimeBootstrap({
       api: {
@@ -402,19 +439,8 @@ describe('startDaemonRuntimeBootstrap', () => {
           profiles: [],
         }),
         getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
-        getConnectedServiceCredentialPlain: vi.fn(async () => ({
-          content: { t: 'plain' as const, v: record },
-          revisionSemantics: 'legacy_unfenced' as const,
-          credentialRevision: null,
-        })),
       } as never,
-      credentials: {
-        token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array(32).fill(7),
-        },
-      },
+      credentials: { token: 'token', encryption: null },
       logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn() },
       processEnv: {
         HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: 'false',
@@ -457,27 +483,46 @@ describe('startDaemonRuntimeBootstrap', () => {
         }),
       }],
     });
-    const fanoutReader = (result.connectedServiceQuotasCoordinator as unknown as {
-      readPersistedSessionAccountIdentity(input: Readonly<{
-        sessionId: string;
-        serviceId: 'openai-codex';
-        profileId: string;
-        groupId: string;
-        expectedGroupGeneration: number;
-      }>): Promise<unknown>;
-    }).readPersistedSessionAccountIdentity;
-
-    await expect(fanoutReader({
-      sessionId: 'session-1',
-      serviceId: 'openai-codex',
-      profileId: 'work',
-      groupId: 'team',
-      expectedGroupGeneration: 1,
-    })).resolves.toBeNull();
+    const coordinator = result.connectedServiceQuotasCoordinator;
+    if (!coordinator) throw new Error('Expected activated quota coordinator');
+    coordinator.registerSpawnTarget({
+      pid: 123, sessionId: 'session-1', agentId: 'codex',
+      connectedServicesBindingsRaw: { v: 1, bindingsByServiceId: {
+        'openai-codex': { source: 'connected', selection: 'group', groupId: 'team' },
+      } },
+      connectedServiceSelectionsEnv: { [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+        kind: 'group', serviceId: 'openai-codex', groupId: 'team', activeProfileId: 'work',
+        fallbackProfileId: 'backup', generation: 1,
+      }]) },
+    });
+    // Account HTTP currentness is unavailable at the live transport boundary; internal
+    // identity matching and the persisted credential resolver remain real.
+    const currentnessRead = vi.spyOn(await import('@/api/client/connectedServiceCredentialApi'), 'fetchAccountEncryptionCurrentness')
+      .mockRejectedValue(new Error('live session transport unavailable'));
+    vi.useFakeTimers();
+    try {
+      const serviceId = 'happier.agent.codex/openai-codex';
+      const fanout = coordinator.recordAccountExhaustionAndFanout({
+        sourceSessionId: 'source', serviceId, groupId: 'team', exhaustedProfileId: 'work',
+        providerAccountId: 'provider-account', resetAtMs: null, reason: 'usage_limit',
+        resolvedFanoutStrategy: 'provider_account_id', sourceRequiresConvergence: false,
+        committedGeneration: buildConnectedServiceAuthGroupCommittedGenerationFact({
+          decisionId: 'persisted-proof-test', provenance: 'hard_limit',
+          decisionCommittedTarget: { serviceId, groupId: 'team', profileId: 'backup', generation: 2 },
+        }),
+      });
+      await vi.advanceTimersByTimeAsync(3_000);
+      await expect(fanout).resolves.toMatchObject({
+        status: 'recorded', fanoutCandidates: scenario === 'exact' || scenario.startsWith('delayed_') ? 1 : 0,
+      });
+    } finally {
+      currentnessRead.mockRestore();
+      coordinator.disposeInBandQuotaPersistence();
+    }
   });
 
   it('wires exact live runtime identity reader into connected-service quota fanout', async () => {
-    vi.mocked(resolveConnectedServicesQuotasDaemonEnabled).mockResolvedValueOnce(true);
+    stubQuotaFeatureHttp(true);
     vi.stubEnv('HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED', 'false');
     vi.stubEnv('HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED', 'false');
     const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn() };

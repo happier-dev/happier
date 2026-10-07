@@ -83,10 +83,12 @@ function watchInvocationBoundary(
     }
     onAbort = () => fail('ACP session/list was cancelled');
     bounds.signal.addEventListener('abort', onAbort, { once: true });
-    timer = setTimeout(
-      () => fail('ACP session/list exceeded its deadline'),
-      Math.max(0, bounds.deadlineAtMs - Date.now()),
-    );
+    if (bounds.deadlineAtMs !== undefined) {
+      timer = setTimeout(
+        () => fail('ACP session/list exceeded its deadline'),
+        Math.max(0, bounds.deadlineAtMs - Date.now()),
+      );
+    }
   });
   // The boundary rejection is a race participant; the losing branch must not
   // surface as an unhandled rejection.

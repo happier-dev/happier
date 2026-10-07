@@ -1,4 +1,4 @@
-import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
+import type { HostingProviderRuntimeServices, ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
 import { describe, expect, it } from 'vitest';
 import { GITHUB_API_VERSION } from '../observations/githubProviderContracts.js';
 import { createGithubRestAdapter } from './restAdapter.js';
@@ -34,6 +34,55 @@ function jsonResponse(body: unknown, init?: Readonly<{
 }
 
 describe('GitHub REST pull request adapter', () => {
+  it('cancels pending host credential materialization before making an HTTP request', async () => {
+    const controller = new AbortController();
+    const abortReason = new DOMException('Cancelled', 'AbortError');
+    const requests: string[] = [];
+    let materializationCancelled = false;
+    let endMaterialization = () => {};
+    let notifyStarted = () => {};
+    const started = new Promise<void>((resolve) => { notifyStarted = resolve; });
+    // The plugin host service is the process boundary that owns the native gh
+    // subprocess. Keep the real REST adapter and runtime resolver underneath it.
+    const runtimeServices: HostingProviderRuntimeServices = {
+      resolveScmHostingTokenMaterialization: async (_request, options) => {
+        const pending = new Promise<never>((_resolve, reject) => {
+          endMaterialization = () => reject(abortReason);
+          const signal = options?.signal;
+          if (signal) {
+            signal.addEventListener('abort', () => {
+              materializationCancelled = true;
+              reject(signal.reason);
+            }, { once: true });
+          }
+        });
+        notifyStarted();
+        return pending;
+      },
+    };
+    const adapter = createGithubRestAdapter({
+      fetcher: async (url) => { requests.push(url); return jsonResponse([]); },
+    });
+    const outcome = adapter.listPullRequests({
+      provider: githubProvider,
+      head: 'feature/cancel-auth',
+      signal: controller.signal,
+      runtimeServices,
+    }).then(() => null, (error: unknown) => error);
+    await started;
+
+    try {
+      controller.abort(abortReason);
+      expect(materializationCancelled).toBe(true);
+      expect(await outcome).toMatchObject({ name: 'AbortError' });
+      expect(requests).toEqual([]);
+    } finally {
+      // Also settle the boundary when RED proves the signal never reached it.
+      endMaterialization();
+      await outcome;
+    }
+  });
+
   it('marks a definite provider rejection as a non-effect without assuming the same for server errors', async () => {
     const create = { provider: githubProvider, base: 'main', head: 'feature', title: 'Review' };
     const rejected = createGithubRestAdapter({
@@ -158,10 +207,14 @@ describe('GitHub REST pull request adapter', () => {
     expect(adapter.getPullRequestAuthProfileKey({ provider: otherProvider })).toBe('github:other');
   });
 
-  it('does not send github.com token material to Enterprise hosts', async () => {
-    const requests: unknown[] = [];
+  it('requests Enterprise-scoped authorization and sends it to the Enterprise REST API', async () => {
+    const requests: Array<Readonly<{ url: string; init?: RequestInit }>> = [];
+    const requestedHosts: string[] = [];
     const adapter = createGithubRestAdapter({
-      resolveToken: async () => ({ kind: 'available', token: 'redacted-test-token', profileKey: 'github:work' }),
+      resolveToken: async ({ host }) => {
+        requestedHosts.push(host);
+        return { kind: 'available', token: 'redacted-enterprise-token' };
+      },
       fetcher: async (url: string, init?: RequestInit) => {
         requests.push({ url, init });
         return jsonResponse([]);
@@ -171,10 +224,10 @@ describe('GitHub REST pull request adapter', () => {
     await expect(adapter.listPullRequests({
       provider: enterpriseProvider,
       head: 'feature/rest',
-    })).rejects.toMatchObject({
-      errorCode: 'REMOTE_AUTH_REQUIRED',
-    });
-    expect(requests).toEqual([]);
+    })).resolves.toEqual([]);
+    expect(requestedHosts).toEqual(['ghe.internal.test']);
+    expect(requests[0]?.url).toBe('https://ghe.internal.test/api/v3/repos/happier-dev/happier/pulls?state=open&head=feature%2Frest');
+    expect(requests[0]?.init?.headers).toMatchObject({ Authorization: 'Bearer redacted-enterprise-token' });
   });
 
   it('rejects forged github.com provider base URLs before attaching token material', async () => {

@@ -211,6 +211,7 @@ async function collectRolloutMatchesFromFlatDir(params: Readonly<{
       filePath,
       signal: params.signal,
       deadlineAtMs: params.deadlineAtMs,
+      onProgress: params.onProgress,
     });
     throwIfCodexExternalSessionInvocationStopped(params);
     if (!match) continue;
@@ -254,6 +255,7 @@ async function collectTargetedRolloutMatches(params: Readonly<{
         membership: params.membership,
         signal: params.signal,
         deadlineAtMs: params.deadlineAtMs,
+        onProgress: params.onProgress,
       })),
     )
   ).flatMap(
@@ -299,6 +301,7 @@ async function collectTargetedRootSessionRolloutMatches(params: Readonly<{
           examinedFilePaths: params.examinedFilePaths,
           signal: params.signal,
           deadlineAtMs: params.deadlineAtMs,
+          onProgress: params.onProgress,
         }),
     ),
   );
@@ -443,6 +446,7 @@ async function collectCodexRolloutFilesByMembership(params: Readonly<{
         membership: params.membership,
         signal: params.signal,
         deadlineAtMs: params.deadlineAtMs,
+        onProgress: params.onProgress,
       });
       throwIfCodexExternalSessionInvocationStopped(params);
       if (match) {
@@ -495,6 +499,7 @@ export async function inventoryCodexRootSessionRolloutFiles(params: Readonly<{
       signal: params.signal,
       examinedFilePaths: knownFilePaths,
       deadlineAtMs: params.deadlineAtMs,
+      onProgress: params.onProgress,
     });
   for (const [remoteSessionId, targetedMatches] of targetedMatchesBySessionId) {
     if (targetedMatches.length > 0) {

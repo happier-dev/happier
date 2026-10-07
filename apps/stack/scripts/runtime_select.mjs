@@ -2,10 +2,11 @@ import './utils/env/env.mjs';
 import { parseArgs } from './utils/cli/args.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { getRootDir } from './utils/paths/paths.mjs';
-import { selectActiveProducerRuntimeSnapshot } from './build/activate_runtime_snapshot.mjs';
+import { resolveStackRuntimeComponentSnapshots } from './runtime/launch/resolveStackRuntimeLaunchContext.mjs';
 import { resolveRuntimeBuildAuthority } from './runtime/shared/runtime_build_authority.mjs';
 import { resolveControlledRuntimePlacement } from './utils/dev_targets/service_placement.mjs';
 import { assertRuntimeSnapshotId } from './runtime/shared/runtime_paths.mjs';
+import { resolveStackDaemonStartRequested } from './utils/auth/daemon_gate.mjs';
 
 function assertNamedStack(env) {
   const stackName = String(env.HAPPIER_STACK_STACK ?? '').trim() || 'main';
@@ -46,15 +47,15 @@ async function main() {
   const placement = await resolveControlledRuntimePlacement({
     stackName, stackBaseDir: authority.consumerStackBaseDir, sourceDir: authority.repoDir, env: process.env,
   });
-  const selectedRuntime = await selectActiveProducerRuntimeSnapshot({
-    consumerStackBaseDir: authority.consumerStackBaseDir,
-    producerStackBaseDir: authority.producerStackBaseDir,
-    producerStackName: authority.producerStackName,
-    consumerStackName: authority.consumerStackName,
-    target: placement.runtimeTarget,
-    requiredComponents: flags.has('--server') || process.env.HAPPIER_STACK_SHARED_DB_SOURCE_STACK ? ['server'] : undefined,
+  const components = flags.has('--server')
+    ? ['server', ...(resolveStackDaemonStartRequested({ env: process.env }) ? ['daemon'] : [])]
+    : undefined;
+  const composition = await resolveStackRuntimeComponentSnapshots({
+    stackName, stackBaseDir: authority.consumerStackBaseDir, placement, env: process.env, components, select: true,
     snapshotId: kv.has('--snapshot') ? assertRuntimeSnapshotId(kv.get('--snapshot')) : '',
   });
+  if (!composition.valid) throw new Error(composition.errors[0]);
+  const selectedRuntime = composition.selectedRuntime;
 
   printResult({
     json,
@@ -68,6 +69,8 @@ async function main() {
       currentPath: selectedRuntime.currentPath,
       reused: true,
       selected: true,
+      componentSnapshotIds: Object.fromEntries(Object.entries(composition.componentSnapshots).map(([component, snapshot]) => [component, snapshot.snapshotId])),
+      componentTargets: composition.componentTargets,
     },
     text: [
       `[runtime] selected ${authority.consumerStackName}`,

@@ -92,6 +92,8 @@ export type SentryIssueSummaryV1 = Readonly<{
     dateCreatedAtMs?: number;
     dateReleasedAtMs?: number;
   }>;
+  /** The last 24 hours of events, hourly, oldest first. */
+  eventTrend?: readonly Readonly<{ atMs: number; count: number }>[];
 }>;
 
 /**

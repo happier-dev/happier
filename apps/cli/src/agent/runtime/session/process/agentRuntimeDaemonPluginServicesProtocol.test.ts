@@ -114,6 +114,7 @@ const retainedRunnerOperationClassification = [
             'plugin_connected_accounts.request_selection_v1',
             'plugin_sessions.external.capabilities_v1',
             'plugin_sessions.external.list_v1',
+            'plugin_sessions.external.close_list_v1',
             'plugin_sessions.external.attach_v1',
             'plugin_sessions.external.read_transcript_v1',
             'plugin_sessions.external.follow_transcript.open_v1',

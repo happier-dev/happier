@@ -1,6 +1,7 @@
 import {
   AgentExternalSessionTranscriptRawRecordSchema,
   compareExternalSessionCandidatePrecedence,
+  getAgentExternalSessionsInvocationFailure as invocationFailure,
 } from '@happier-dev/plugin-sdk/sessions/external';
 import type {
   AgentExternalSessionCandidate,
@@ -55,21 +56,6 @@ function failed(
     message,
     ...(typeof retryable === 'boolean' ? { retryable } : {}),
   };
-}
-
-function invocationFailure(
-  invocation: AgentExternalSessionsInvocation,
-): AgentExternalSessionsResult<never> | null {
-  if (invocation.signal.aborted) {
-    return failed('cancelled', 'Oh My Pi external-session operation was cancelled.');
-  }
-  if (Date.now() >= invocation.deadlineAtMs) {
-    return failed('timeout', 'Oh My Pi external-session operation exceeded its deadline.', true);
-  }
-  if (!Number.isFinite(invocation.maxSerializedBytes) || invocation.maxSerializedBytes < 1) {
-    return failed('invalid_request', 'Oh My Pi external-session result byte bound must be positive.');
-  }
-  return null;
 }
 
 function readOptionalString(value: AgentExternalSessionLinkDataValue | undefined): string | null {
@@ -318,9 +304,9 @@ function candidateResultFits(params: Readonly<{
   nextCursor: string | null;
   searchIncomplete: boolean | undefined;
   preparation: Readonly<{ kind: 'building_candidate_index'; scanned: number }> | undefined;
-  maxSerializedBytes: number;
+  maxSerializedBytes?: number;
 }>): boolean {
-  return serializedByteLength(ok({
+  return params.maxSerializedBytes === undefined || serializedByteLength(ok({
     candidates: params.candidates,
     nextCursor: params.nextCursor,
     ...(params.searchIncomplete !== undefined ? { searchIncomplete: params.searchIncomplete } : {}),

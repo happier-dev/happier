@@ -31,4 +31,15 @@ export const FIND_ACTION_SPECS = [{
   surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: false, rpc: false },
   bindings: { voiceClientToolName: 'findInSurface', mcpToolName: 'ui_find' },
   inputSchema: UiFindInputSchema, outputSchema: UiFindOutputSchema,
+  inputHints: { fields: [
+    { path: 'op', title: 'Operation', widget: 'select', required: true, options: [
+      { value: 'read', label: 'Read' }, { value: 'set', label: 'Search' },
+      { value: 'step', label: 'Next or previous result' }, { value: 'stop', label: 'Stop' }, { value: 'close', label: 'Close' },
+    ] },
+    { path: 'query', title: 'Search text', widget: 'text' },
+    { path: 'options', title: 'Case and regular-expression options', widget: 'json' },
+    { path: 'target', title: 'Mounted surface id', widget: 'text' },
+    { path: 'direction', title: 'Next (1) or previous (-1)', widget: 'text' },
+  ] },
+  examples: { voice: { argsExample: '{"op":"set","query":"TODO"}' } },
 }] as const satisfies readonly PreNormalizedActionSpec[];

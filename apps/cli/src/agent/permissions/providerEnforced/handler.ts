@@ -19,7 +19,7 @@ import {
 } from '@/agent/permissions/BasePermissionHandler';
 import type { ToolTraceProtocol } from '@/agent/tools/trace/toolTrace';
 import { resolveProviderPermissionForHappierAction } from '@/agent/tools/happierTools/resolveHappierActionForMcpToolName';
-import type { AccountSettings } from '@happier-dev/protocol';
+import type { AccountSettings, CodingPromptBehaviorV1 } from '@happier-dev/protocol';
 import type { AcpPermissionCallContext } from '@/agent/acp/permissions/acpPermissionHandler';
 import {
   isSharedPermissionSafeToolName,
@@ -36,6 +36,7 @@ export type { PermissionResult, PendingRequest };
 type HandlerOpts = Readonly<{
   pushSender?: PermissionRequestPushSender | null;
   getAccountSettings?: (() => AccountSettings | null) | null;
+  getCodingPromptBehavior?: (() => CodingPromptBehaviorV1 | null) | null;
   getWorkspaceWrites?: (() => 'allow' | 'deny' | undefined) | null;
   getAccountSettingsSecretsReadKeys?: (() => ReadonlyArray<Uint8Array | null | undefined>) | null;
   onAbortRequested?: (() => void | Promise<void>) | null;
@@ -75,6 +76,7 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
     super(session, {
       pushSender: params.pushSender ?? null,
       getAccountSettings: params.getAccountSettings ?? null,
+      getCodingPromptBehavior: params.getCodingPromptBehavior ?? null,
       getWorkspaceWrites: params.getWorkspaceWrites ?? null,
       getAccountSettingsSecretsReadKeys: params.getAccountSettingsSecretsReadKeys ?? null,
       onAbortRequested: params.onAbortRequested ?? null,
@@ -207,6 +209,7 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
 
     if (shouldDenyAgentSessionTitleToolCall({
       settings: this.getAccountSettingsSnapshot(),
+      codingPromptBehavior: this.getCodingPromptBehavior(),
       profileId: this.getSessionProfileId(),
       toolName,
       input,

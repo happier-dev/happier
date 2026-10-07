@@ -4,11 +4,9 @@ import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendi
 import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import { AgentSessionStartupInstructionsV1Schema } from '@happier-dev/protocol/runtime/agentSessionStartupInstructionsV1';
 import { readStructuredInputMentionSourcesV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
-import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { renderSessionInputContextPromptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import { validatePluginHookPayloadV1 } from '@happier-dev/protocol/plugins/hooks';
 import { isModelRefGrantedV1, isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
-import type { SessionPendingQueueDeliveryTiming, ProviderBoundModelRef, SessionModelTransitionResultV1, ComposerAttachmentValueV1, ComposerAttachmentResolveRequestV1, ComposerAttachmentResolveResultV1, PluginContributionIdentityV1, AgentSessionStartupInstructionsMarkerV1 } from '@happier-dev/protocol';
+import type { SessionPendingQueueDeliveryTiming, ProviderBoundModelRef, SessionModelTransitionResultV1, AgentSessionStartupInstructionsMarkerV1 } from '@happier-dev/protocol';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 
 import type { ApiSessionClient } from '@/api/session/sessionClient';
@@ -73,51 +71,14 @@ import {
   resetAssistantTextSnapshotTurnScope,
   type AssistantTextSnapshotTurnScope,
 } from '@/agent/runtime/turns/assistantTextSnapshotTurnScope';
-import {
-  resolveStructuredInputProviderDispatchContext,
-  ResolvedMentionContextTooLargeError,
-  StructuredInputComposerAttachmentResolutionError,
-  StructuredInputComposerAttachmentUnavailableError,
-  StructuredInputComposerReferenceUnavailableError,
-  StructuredInputSessionMediaProjectionError,
-  StructuredInputMentionResolutionError,
-  type StructuredInputComposerAttachmentResolver,
-  type StructuredInputComposerReferenceResolver,
-} from '@/agent/runtime/turns/resolveStructuredInputProviderContext';
+import type { StructuredInputComposerReferenceResolver } from '@/agent/runtime/turns/resolveStructuredInputProviderContext';
+import { prepareSessionInputForProviderDispatch, readStructuredInputPreparationFailure, type ComposerAttachmentDispatchResolver } from '@/agent/runtime/turns/prepareSessionInputForProviderDispatch';
 import { logger } from '@/ui/logger';
 import type { AgentCompositionToolSelection } from '@/plugins/runtime/hooks/execution/dispatchAgentTurnHooks';
 import type { HostPreparedContext } from '@/agent/runtime/session/contextOnly/hostContextOnlyInput';
 
-export type ComposerAttachmentDispatchResolver = (input: Readonly<{
-  sessionId: string;
-  attachment: PluginContributionIdentityV1;
-  request: ComposerAttachmentResolveRequestV1<ComposerAttachmentValueV1>;
-  signal: AbortSignal;
-}>) => Promise<ComposerAttachmentResolveResultV1>;
-
-export function projectSessionComposerAttachmentDispatchInput(
-  input: Parameters<StructuredInputComposerAttachmentResolver['resolve']>[0],
-  sessionId: string,
-): Parameters<ComposerAttachmentDispatchResolver>[0] {
-  const request = 'scope' in input.request
-    ? (() => {
-        if (input.request.scope.kind !== 'session' || input.request.scope.sessionId !== sessionId) {
-          throw new StructuredInputComposerAttachmentUnavailableError();
-        }
-        return Object.freeze({
-          sessionId,
-          localId: input.request.localId,
-          attachments: input.request.attachments,
-        });
-      })()
-    : input.request;
-  return Object.freeze({
-    sessionId,
-    attachment: input.attachment,
-    request,
-    signal: input.signal,
-  });
-}
+export { projectSessionComposerAttachmentDispatchInput } from '@/agent/runtime/turns/prepareSessionInputForProviderDispatch';
+export type { ComposerAttachmentDispatchResolver } from '@/agent/runtime/turns/prepareSessionInputForProviderDispatch';
 
 export type PermissionModePromptLoopTurnOperations = RuntimeTurnOperations & Readonly<{
   supportsInFlightSteer?: () => boolean;
@@ -417,37 +378,8 @@ function readPreTurnFailure(error: unknown): PreTurnFailure {
   if (error instanceof PreTurnPromptFailure) {
     return error.settlement;
   }
-  if (error instanceof StructuredInputComposerAttachmentResolutionError) {
-    return {
-      code: error.code,
-      message: error.message,
-      retryable: error.retryable,
-    };
-  }
-  if (error instanceof StructuredInputComposerReferenceUnavailableError) {
-    return {
-      code: error.code,
-      message: error.message,
-      retryable: true,
-    };
-  }
-  if (error instanceof StructuredInputSessionMediaProjectionError) {
-    return {
-      code: error.code,
-      message: error.message,
-      retryable: false,
-    };
-  }
-  if (
-    error instanceof StructuredInputMentionResolutionError
-    || error instanceof ResolvedMentionContextTooLargeError
-  ) {
-    return {
-      code: error.code,
-      message: error.message,
-      retryable: false,
-    };
-  }
+  const structuredFailure = readStructuredInputPreparationFailure(error);
+  if (structuredFailure) return structuredFailure;
   const candidate = error && typeof error === 'object' && !Array.isArray(error)
     ? error as Readonly<{ code?: unknown; retryable?: unknown }>
     : null;
@@ -1263,8 +1195,6 @@ export async function runPermissionModePromptLoop(opts: {
       }
       const providerNativeCommand = special.type === null
         && opts.runtime.isProviderNativeCommand?.(message.message.text) === true;
-      const dispatchProviderNativeCommandVerbatim = providerNativeCommand
-        && !(message.message.inputContextBlock?.trim());
       const runProviderInputDispatch = async (
         dispatch: () => Promise<void>,
       ): Promise<'dispatched' | 'cancelled'> => {
@@ -1374,7 +1304,7 @@ export async function runPermissionModePromptLoop(opts: {
         activeCheckpointFinalStatus = 'unknown';
         const nowMs = Date.now();
         const dispatchAbortSignal = opts.getAbortSignal();
-        const resolvedReplaySeed = providerPromptAlreadyResolved || dispatchProviderNativeCommandVerbatim
+        const resolvedReplaySeed = providerPromptAlreadyResolved || providerNativeCommand
           ? null
           : await resolveProviderPromptWithReplaySeed({
               session: opts.session,
@@ -1443,7 +1373,7 @@ export async function runPermissionModePromptLoop(opts: {
         if (replaySeedWasOmitted) {
           await releaseReplaySeedBeforeProviderDispatch();
         }
-        const agentComposition = dispatchProviderNativeCommandVerbatim
+        const agentComposition = providerNativeCommand
           ? undefined
           : await opts.resolveAgentCompositionBeforeDispatch?.({
               signal: dispatchAbortSignal,
@@ -1453,7 +1383,7 @@ export async function runPermissionModePromptLoop(opts: {
             ? agentComposition.prompt.trim()
             : '';
         snapshotFreshForNextPromptBoundary = false;
-        const resolveSessionPlan = !providerPromptAlreadyResolved && !dispatchProviderNativeCommandVerbatim;
+        const resolveSessionPlan = !providerPromptAlreadyResolved && !providerNativeCommand;
         const explicitBaseOverride = resolveAppendSystemPromptBaseOverride(message.mode);
         const freshSessionSystemPrompt = resolveSessionPlan
           ? await opts.resolveFreshSessionSystemPrompt?.({
@@ -1523,7 +1453,7 @@ export async function runPermissionModePromptLoop(opts: {
           effectiveAgentCompositionPrompt,
           seedResolution.providerPrompt,
         ].filter((part) => part.length > 0).join('\n\n');
-        const transformedDispatchPrompt = dispatchProviderNativeCommandVerbatim
+        const transformedDispatchPrompt = providerNativeCommand
           ? message.message.text
           : await transformAgentContextPromptBeforeDispatch({
               transformAgentContextBeforeDispatch: opts.transformAgentContextBeforeDispatch,
@@ -1538,76 +1468,24 @@ export async function runPermissionModePromptLoop(opts: {
         // point, after the queue has drained and immediately before the provider call.
         // Resolving at admission would freeze a snapshot for however long the message sits
         // in the permission-mode queue.
-        const composerAttachmentDispatch =
-          typeof opts.resolveComposerAttachmentForDispatch === 'function'
-          && localIds.length === 1
-          && localId !== null
-            ? {
-                scope: { kind: 'session' as const, sessionId: opts.session.sessionId },
-                localId,
-                resolve: async (input: Parameters<StructuredInputComposerAttachmentResolver['resolve']>[0]) => {
-                  try {
-                    return await opts.resolveComposerAttachmentForDispatch!(
-                      projectSessionComposerAttachmentDispatchInput(input, opts.session.sessionId),
-                    );
-                  } catch (error) {
-                    if (isAbortLikeError(error)) throw error;
-                    if (error instanceof StructuredInputComposerAttachmentResolutionError) {
-                      throw error;
-                    }
-                    throw new StructuredInputComposerAttachmentUnavailableError();
-                  }
-                },
-                signal: dispatchAbortSignal,
-              }
-            : undefined;
-        // A provider-native command changes how the TEXT is composed, never whether
-        // the message's structured input reaches the Agent. Skipping this resolver
-        // durably accepted and cleared a message whose attachments, media and
-        // resolved evidence were then discarded, and skipped its fail-closed
-        // rejection of input that cannot be resolved.
-        const resolvedDispatchContext = await resolveStructuredInputProviderDispatchContext({
-          structuredInput: message.message.structuredInput,
-          sessionMedia: message.message.sessionMedia,
-          catalogs: {
-            ...(typeof opts.runtime.listSkills === 'function'
-              ? { listSkills: () => opts.runtime.listSkills!() }
-              : {}),
-            ...(typeof opts.runtime.listVendorPlugins === 'function'
-              ? { listVendorPlugins: () => opts.runtime.listVendorPlugins!() }
-              : {}),
-          },
-          ...(typeof opts.runtime.resolveComposerReference === 'function'
-            ? {
-                composerReferences: {
-                  resolve: async (input) => await opts.runtime.resolveComposerReference!(input),
-                  signal: dispatchAbortSignal,
-                },
-              }
-            : {}),
-          ...(composerAttachmentDispatch
-            ? { composerAttachments: composerAttachmentDispatch }
-            : {}),
-          onDiagnostic: (diagnostic) => {
-            logger.debug(
-              `[PromptDispatch] ${diagnostic.catalog} catalog ${diagnostic.reason}; `
-              + `${diagnostic.referenceCount} composer reference(s) contributed no provider item`,
-            );
+        const preparedDispatch = await prepareSessionInputForProviderDispatch({
+          prompt: message.message,
+          transformedUserText: transformedDispatchPrompt,
+          providerNativeCommand,
+          signal: dispatchAbortSignal,
+          localId: localIds.length === 1 ? localId : null,
+          services: {
+            sessionId: opts.session.sessionId,
+            catalogs: {
+              ...(typeof opts.runtime.listSkills === 'function' ? { listSkills: () => opts.runtime.listSkills!() } : {}),
+              ...(typeof opts.runtime.listVendorPlugins === 'function' ? { listVendorPlugins: () => opts.runtime.listVendorPlugins!() } : {}),
+            },
+            ...(opts.runtime.resolveComposerReference ? { resolveComposerReference: (input) => opts.runtime.resolveComposerReference!(input) } : {}),
+            ...(opts.resolveComposerAttachmentForDispatch ? { resolveComposerAttachmentForDispatch: opts.resolveComposerAttachmentForDispatch } : {}),
           },
         });
-        // Follow is host context for this already-admitted input. Collect it at the final
-        // composition boundary so no queue reservation or pseudo-message can advance its
-        // frontier before the provider accepts the real input.
-        const requiredDispatchPrompt = dispatchProviderNativeCommandVerbatim
-          ? message.message.text
-          : renderSessionInputContextPromptV1({
-              provenanceBlock: message.message.inputContextBlock ?? '',
-              ...resolvedDispatchContext.promptContext,
-              transformedUserText: transformedDispatchPrompt,
-            });
-        const requiredProviderContextForBudget = resolvedDispatchContext.structuredInput
-          ? `${requiredDispatchPrompt}\n${JSON.stringify(resolvedDispatchContext.structuredInput)}`
-          : requiredDispatchPrompt;
+        const requiredDispatchPrompt = preparedDispatch.requiredPrompt;
+        const requiredProviderContextForBudget = preparedDispatch.requiredProviderContextForBudget;
         // The checkpoint hook captures the repository, which is arbitrary-duration
         // filesystem and Git work. Running it before Follow preparation keeps the
         // final Follow authorization the last decision before dispatch, instead of
@@ -1624,7 +1502,7 @@ export async function runPermissionModePromptLoop(opts: {
         // Required workflow text is already FIN-materialized, not optional context.
         let preparedHostContext: HostPreparedContext | null = hostContextOnly?.kind === 'session_follow'
           ? hostContextOnly.prepared
-          : hostContextOnly?.kind === 'workflow_step' || dispatchProviderNativeCommandVerbatim
+          : hostContextOnly?.kind === 'workflow_step' || providerNativeCommand
           || !localId
           ? null
           : await prepareHostContext?.({
@@ -1693,20 +1571,13 @@ export async function runPermissionModePromptLoop(opts: {
             return;
           }
         }
-        // The provider parses its own command grammar from the first characters of
-        // this text, so only an unattributed native command is dispatched verbatim.
-        // Attributed input takes the canonical composed path so provenance cannot vanish.
-        const dispatchPrompt = dispatchProviderNativeCommandVerbatim
-          ? requiredDispatchPrompt
-          : renderSessionInputContextPromptV1({
-              provenanceBlock: message.message.inputContextBlock ?? '',
-              ...resolvedDispatchContext.promptContext,
-              ...(preparedHostContext
-                ? { sessionFollowUpdates: preparedHostContext.updates, workerUpdates: preparedHostContext.workerUpdates }
-                : {}),
-              ...(contextOnlyWorkerUpdate ? { workerUpdates: [contextOnlyWorkerUpdate, ...(preparedHostContext?.workerUpdates ?? [])] } : {}),
-              transformedUserText: transformedDispatchPrompt,
-            });
+        // Native grammar stays first; the canonical resolved context follows as arguments.
+        const dispatchPrompt = preparedDispatch.renderPrompt({
+          ...(preparedHostContext && !providerNativeCommand
+            ? { sessionFollowUpdates: preparedHostContext.updates, workerUpdates: preparedHostContext.workerUpdates }
+            : {}),
+          ...(contextOnlyWorkerUpdate && !providerNativeCommand ? { workerUpdates: [contextOnlyWorkerUpdate, ...(preparedHostContext?.workerUpdates ?? [])] } : {}),
+        });
 
         if (localIds.length > 0 && opts.readActiveModelSelection && opts.onProviderPromptDispatchPrepared) {
           opts.onProviderPromptDispatchPrepared({
@@ -1714,14 +1585,14 @@ export async function runPermissionModePromptLoop(opts: {
             selection: opts.readActiveModelSelection(),
           });
         }
-        const resolvedStructuredInput = resolvedDispatchContext.structuredInput;
+        const resolvedStructuredInput = preparedDispatch.structuredInput;
         const promptDeliveryMeta = {
           ...(localId === null ? {} : { localId }),
           ...(localIds.length === 0 ? {} : { localIds }),
           ...(userMessageSeq === null ? {} : { userMessageSeq }),
           ...(userMessageSeqs.length === 0 ? {} : { userMessageSeqs }),
           ...(resolvedStructuredInput
-            ? { structuredInput: normalizeStrictJsonValue(resolvedStructuredInput) }
+            ? { structuredInput: resolvedStructuredInput }
             : {}),
           ...(message.message.causalPermissionAuthority
             ? { causalPermissionAuthority: message.message.causalPermissionAuthority }

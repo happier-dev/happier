@@ -237,6 +237,33 @@ describe('feature decision engine', () => {
     expect(explained.get('teams.credentialResources.externalApi')?.blockingDependencyId).toBe('teams.credentialResources');
   });
 
+  it('selects one server decision with the same dependency policy without evaluating unrelated features', () => {
+    const response = FeaturesResponseSchema.parse({
+      features: { automations: { enabled: false }, workflows: { enabled: true } },
+      capabilities: {},
+    });
+    const all = evaluateServerFeatureDecisions({ serverPayload: response });
+    const selected = evaluateServerFeatureDecisions({
+      serverPayload: { features: response.features },
+      featureIds: ['workflows'],
+      buildPolicy: (featureId) => {
+        if (featureId !== 'workflows' && featureId !== 'automations') {
+          throw new Error(`Unrelated policy evaluated: ${featureId}`);
+        }
+        return 'neutral';
+      },
+    });
+
+    expect([...selected.keys()]).toEqual(['workflows']);
+    expect(selected.get('workflows')).toEqual(all.get('workflows'));
+    expect(selected.get('workflows')).toMatchObject({
+      state: 'disabled', blockingDependencyId: 'automations',
+    });
+    expect(evaluateServerFeatureDecisions({
+      serverPayload: { features: response.features }, featureIds: ['sessions.direct'],
+    }).size).toBe(0);
+  });
+
   it('lists the transitive dependents a parent takes with it', () => {
     expect(listFeatureDependents('automations')).toContain('workflows');
     const teamsDependents = listFeatureDependents('teams');

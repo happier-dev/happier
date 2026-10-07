@@ -253,7 +253,7 @@ export function createLocalServicesDaemonRuntimeActionExecutor(
                 return await leaves.openPreview(request.data);
             }
             if (args.actionId === 'localServices.launcher.registerPreview') {
-                return await leaves.registerPreview(request.data);
+                return await leaves.registerPreview(request.data, args.context.signal);
             }
             return await leaves.clearHistory(request.data);
         }
@@ -274,7 +274,7 @@ export function createLocalServicesDaemonRuntimeActionExecutor(
                 buildPreviewOpenOrCreateRequest(parsed.input),
             );
             if (!request.success) return invalidParametersResult;
-            const result = await routes.openOrCreate(request.data);
+            const result = await routes.openOrCreate(request.data, args.context.signal);
             return result.ok
                 ? result.response
                 : previewLifecycleDisabledResult(result.reasonCode);

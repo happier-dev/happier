@@ -30,7 +30,8 @@ async function withQaPlacementFixture(run) {
 
 test('explicit fresh controlled QA uses the native automatic selector over its own pool', async () => {
   await withQaPlacementFixture(async ({ root, config, env }) => {
-    await writeJsonAtomic(join(root, 'qa', 'dev-targets.json'), config);
+    await writeJsonAtomic(join(root, 'qa', 'dev-targets.json'), { ...config,
+      runtimePlacement: { ...config.runtimePlacement, daemon: { mode: 'local' } } });
     const result = await placement.resolveControlledRuntimePlacement({ stackName: 'qa', stackBaseDir: join(root, 'qa'), sourceDir: '/repo', env }, {
       runCaptureResult: async (command, args, options) => {
         assert.ok(command.endsWith('/apps/stack/bin/hstack-exec'));
@@ -44,7 +45,8 @@ test('explicit fresh controlled QA uses the native automatic selector over its o
     assert.equal(result.target.name, 'linux3');
     assert.deepEqual(result.runtimeTarget, { platform: 'linux', arch: 'x64' });
     assert.equal(result.targetPlans.length, 1);
-    assert.deepEqual(result.targetPlans[0].services, { server: true, daemon: true, expo: false });
+    assert.deepEqual(result.targetPlans[0].services, { server: true, daemon: false, expo: false });
+    assert.equal(result.policy.daemons.mode, 'local');
     assert.equal(result.config.runtimePlacement.build, undefined);
   });
 });
@@ -105,23 +107,82 @@ test('shared database QA places only its server on the source host and keeps its
     await writeJsonAtomic(join(root, 'qa', 'dev-targets.json'), { ...config, runtimePlacement: {
       server: { mode: 'prefer-target', target: 'mac-host', fallback: 'error' }, daemon: { mode: 'local' } } });
     env.HAPPIER_STACK_SHARED_DB_SOURCE_STACK = 'producer';
+    const probes = [];
     const result = await placement.resolveControlledRuntimePlacement({ stackName: 'qa', sourceDir: '/repo', env }, {
-      runCaptureResult: async () => ({ ok: true, out: 'HSTACK_QA_HOST={"platform":"darwin","arch":"arm64","remote":true}\n', err: '' }),
+      runCaptureResult: async (command, args) => {
+        probes.push(args.find(arg => arg.startsWith('--target=')) ?? 'pool');
+        return { ok: true, out: 'HSTACK_QA_HOST={"platform":"darwin","arch":"arm64","remote":true}\n', err: '' };
+      },
     });
+    assert.deepEqual(probes, ['--target=mac-host'], 'an explicit local daemon must not probe the command pool');
     assert.deepEqual(result.targetPlans[0].services, { server: true, daemon: false, expo: false });
     assert.equal(result.policy.daemons.mode, 'local');
   });
 });
 
-test('unproven inherited QA default preserves existing local placement without probing', async () => {
+test('fresh QA keeps its Machine local regardless of producer QA or command pools', async () => {
   await withQaPlacementFixture(async ({ root, config, env }) => {
+    await writeJsonAtomic(join(root, 'producer', 'dev-targets.json'), { ...config,
+      runtimePlacement: { ...config.runtimePlacement, qa: { mode: 'auto', targets: ['mac3-linux', 'linux3'] } },
+      commandExecution: { mode: 'auto', targets: ['mac3-linux', 'linux3'], includeLocal: true },
+    });
+    const result = await placement.resolveControlledRuntimePlacement({ stackName: 'qa', sourceDir: '/repo', env }, {
+      runCaptureResult: async () => { assert.fail('an unpinned Machine must not probe a pool'); }, logger: { warn() {} },
+    });
+    assert.equal(result.target, null);
+    assert.equal(result.policy.daemons.mode, 'local');
+  });
+});
+
+test('shared database QA pins its Machine to one named host independently of changing pools', async () => {
+  await withQaPlacementFixture(async ({ root, config, env }) => {
+    await writeJsonAtomic(join(root, 'producer', 'dev-targets.json'), { ...config,
+      runtimePlacement: { ...config.runtimePlacement, qa: { mode: 'local' } },
+      commandExecution: { mode: 'auto', targets: ['mac3-linux', 'linux3'] },
+    });
+    await writeJsonAtomic(join(root, 'qa', 'dev-targets.json'), { ...config, runtimePlacement: {
+      server: { mode: 'prefer-target', target: 'mac-host', fallback: 'error' },
+      qa: { mode: 'auto', targets: ['linux2', 'linux3'] },
+      daemon: { mode: 'prefer-target', target: 'mac3-linux' } } });
+    const result = await placement.resolveControlledRuntimePlacement({ stackName: 'qa', sourceDir: '/repo',
+      env: { ...env, HAPPIER_STACK_SHARED_DB_SOURCE_STACK: 'producer' } }, {
+      runCaptureResult: async (command, args, options) => {
+        const server = args.includes('--target=mac-host');
+        if (!server) {
+          const projection = JSON.parse(await readFile(options.env.HAPPIER_EXEC_CONFIG_PATH, 'utf8'));
+          assert.ok(args.includes('--target=mac3-linux'), 'Machine placement must use the exact pin');
+          assert.equal(projection.commandExecution.target, 'mac3-linux');
+        }
+        return { ok: true, out: `HSTACK_QA_HOST=${JSON.stringify({ platform: server ? 'darwin' : 'linux', arch: server ? 'arm64' : 'x64', remote: true })}\n`,
+          err: server ? '' : '[preferred-execution] selected mac3-linux (load=0.1)\n' };
+      }, logger: { warn() {} },
+    });
+    assert.equal(result.target.name, 'mac-host');
+    assert.equal(result.daemonTarget.name, 'mac3-linux');
+    assert.deepEqual(result.daemonRuntimeTarget, { platform: 'linux', arch: 'x64' });
+    assert.equal(result.policy.daemons.target, 'mac3-linux');
+    assert.deepEqual(result.targetPlans.map(plan => [plan.target.name, plan.services]), [
+      ['mac-host', { server: true, daemon: false, expo: false }],
+      ['mac3-linux', { server: false, daemon: true, expo: false }],
+    ]);
+    await assert.rejects(placement.resolveControlledRuntimePlacement({ stackName: 'qa', sourceDir: '/repo',
+      env: { ...env, HAPPIER_STACK_SHARED_DB_SOURCE_STACK: 'producer' } }, {
+      runCaptureResult: async (_command, args) => args.includes('--target=mac-host')
+        ? { ok: true, out: 'HSTACK_QA_HOST={"platform":"darwin","arch":"arm64","remote":true}\n', err: '' }
+        : { ok: false, exitCode: 255, err: 'offline' }, logger: { warn() {} },
+    }), /daemon placement.*mac3-linux.*unavailable/);
+  });
+});
+
+test('explicit local QA ignores even an invalid inherited QA policy without probing', async () => {
+  await withQaPlacementFixture(async ({ root, config, env }) => {
+    await writeJsonAtomic(join(root, 'qa', 'dev-targets.json'), { ...config, runtimePlacement: { qa: { mode: 'local' } } });
     const warnings = [];
     const result = await placement.resolveControlledRuntimePlacement({ stackName: 'qa', stackBaseDir: join(root, 'qa'), sourceDir: '/repo', env }, {
       runCaptureResult: async () => { throw new Error('an existing stack must not probe inherited placement'); },
       logger: { warn: message => warnings.push(message) },
     });
     assert.equal(result.target, null);
-    assert.ok(warnings.some(message => message.includes('local') && message.includes('default')));
     await writeJsonAtomic(join(root, 'producer', 'dev-targets.json'), { ...config, runtimePlacement: { qa: { mode: 'auto', targets: ['invalid-default-target'] } } });
     const unchanged = await placement.resolveControlledRuntimePlacement({ stackName: 'qa', sourceDir: '/repo', env }, {
       runCaptureResult: async () => { throw new Error('invalid producer default must not affect local activation'); },
@@ -217,7 +278,8 @@ test('ready remote QA persists server authority without changing the producer bu
     const own = JSON.parse(await readFile(join(root, 'qa', 'dev-targets.json'), 'utf8'));
     assert.equal(own.runtimePlacement.server.target, 'linux3');
     assert.equal(own.runtimePlacement.build, undefined);
-    assert.deepEqual(own.runtimePlacement.qa.targets, ['linux2', 'linux3']);
+    assert.equal(own.runtimePlacement.daemon, undefined, 'persisting server authority must not manufacture a local daemon pin');
+    assert.equal(own.runtimePlacement.qa.mode, 'local');
     const producer = JSON.parse(await readFile(join(root, 'producer', 'dev-targets.json'), 'utf8'));
     assert.deepEqual(producer.runtimePlacement.build.targets, ['builder']);
     await assert.rejects(placement.persistControlledServerPlacement({ stackName: 'qa', sourceDir: '/repo', targetName: 'linux2', env }), /authoritative.*linux3/);

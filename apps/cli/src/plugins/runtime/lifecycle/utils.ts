@@ -1,5 +1,4 @@
-import { PLUGIN_FAILURE_TEXT_MAX_UTF8_BYTES, projectPluginFailureMessage, projectPluginFailureText } from '@happier-dev/protocol/plugins/failureProjection';
-import { trimBugReportTextHeadToMaxBytes } from '@happier-dev/protocol/bugs/reports/redaction';
+import { projectPluginFailureMessage, projectPluginFailureText } from '@happier-dev/protocol/plugins/failureProjection';
 
 import type { PluginCompatibilityDiagnostic } from '../../validation/diagnostics/types';
 import {
@@ -16,12 +15,10 @@ import {
  * lifecycle modules do not each grow their own duplicate copy.
  */
 
-export const DEFAULT_PLUGIN_INITIALIZATION_TIMEOUT_MS = 30_000;
-
-/** A cold daemon start spends one outer wait budget across plugin phases. */
-export function remainingPluginInitializationTimeoutMs(startupDeadlineAtMs?: number): number {
+/** Plugin phases inherit the containing startup deadline, when one exists. */
+export function remainingPluginInitializationTimeoutMs(startupDeadlineAtMs?: number): number | null {
     return startupDeadlineAtMs === undefined
-        ? DEFAULT_PLUGIN_INITIALIZATION_TIMEOUT_MS
+        ? null
         : Math.max(0, startupDeadlineAtMs - Date.now());
 }
 
@@ -29,7 +26,7 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object';
 }
 
-export { PLUGIN_FAILURE_TEXT_MAX_UTF8_BYTES, projectPluginFailureMessage, projectPluginFailureText } from '@happier-dev/protocol/plugins/failureProjection';
+export { projectPluginFailureMessage, projectPluginFailureText } from '@happier-dev/protocol/plugins/failureProjection';
 
 /**
  * The local-development realm marker. A caller supplies the author's
@@ -114,11 +111,7 @@ function projectLocalDevelopmentStack(
             .replaceAll(normalizedRoot, '.');
         const redacted = projectPluginFailureMessage(rebased).trim();
         if (!redacted) return undefined;
-        const bounded = trimBugReportTextHeadToMaxBytes(
-            redacted,
-            PLUGIN_FAILURE_TEXT_MAX_UTF8_BYTES,
-        ).trim();
-        return bounded || undefined;
+        return redacted;
     } catch {
         return undefined;
     }
@@ -151,10 +144,7 @@ export function projectPluginFailureDiagnostic(
     if (!source) {
         return { message, ...(stack ? { stack } : {}) };
     }
-    const located = trimBugReportTextHeadToMaxBytes(
-        prefixPluginDiagnosticSourceLocation(source, message),
-        PLUGIN_FAILURE_TEXT_MAX_UTF8_BYTES,
-    ).trim();
+    const located = prefixPluginDiagnosticSourceLocation(source, message);
     return {
         message: located || message,
         source,

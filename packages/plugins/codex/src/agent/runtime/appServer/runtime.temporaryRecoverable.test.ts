@@ -8,6 +8,7 @@ import { buildAgentAccountUsageRecordId } from '@happier-dev/plugin-sdk/agents/r
 import type {
   AgentAccountUsageSnapshot,
   AgentExecutionRunConversationEventV1,
+  AgentExecutionRunRuntimeContextV1,
   AgentSessionConversationRollbackRequest,
   AgentSessionRuntimeEvent,
 } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -410,6 +411,7 @@ import {
 } from './runtime.js';
 import {
   createCodexNativeAppServerExecutionRunConversationRuntime,
+  createCodexNativeAppServerExecutionRunRuntimeHost,
   createCodexNativeAppServerSessionRuntime,
 } from './native.js';
 import {
@@ -514,6 +516,8 @@ function createRuntime(overrides: Readonly<{
   initialProviderBinding?: typeof providerBindingMaterialization.engineConfig;
   publishGeneratedMedia?: (candidate: import('./media/generatedMedia.js').CodexGeneratedMediaCandidate) => Promise<void>;
   observeGoal?: (payload: unknown) => void | Promise<void>;
+  host?: CodexAppServerRuntimeHost;
+  executionRunId?: string;
 }> = {}) {
   const fixture = createCodexTestContextFixture({
     sessionId: overrides.happierSessionId ?? 'session-1',
@@ -523,7 +527,7 @@ function createRuntime(overrides: Readonly<{
   const ctx = fixture.context;
   const codexHome = overrides.processEnv?.CODEX_HOME;
   return createCodexAppServerRuntime({
-    host: {
+    host: overrides.host ?? {
       baseProcessEnv: ctx.env.list(),
       ...(codexHome ? {
         nativeHome: {
@@ -564,7 +568,9 @@ function createRuntime(overrides: Readonly<{
       ...(overrides.publishGeneratedMedia ? { publishGeneratedMedia: overrides.publishGeneratedMedia } : {}),
     },
     directory: '/workspace',
-    happierSessionId: overrides.happierSessionId ?? 'session-1',
+    ...(overrides.executionRunId
+      ? { executionRunId: overrides.executionRunId }
+      : { happierSessionId: overrides.happierSessionId ?? 'session-1' }),
     processEnv: overrides.processEnv,
     initialModelId: overrides.initialModelId,
     initialCollaborationModeId: overrides.initialCollaborationModeId,
@@ -3746,6 +3752,71 @@ describe('Codex app-server temporary recoverable turn failures', () => {
       // A rejected initialization must not leave a usable half-authenticated client.
       await expect(startCodexAppServerRuntime(runtime)).resolves.toBe('thread-1');
     } finally {
+      await rm(codexHome, { recursive: true, force: true });
+    }
+  });
+
+  it('opens and refreshes a connected detached Run through its native host without a Session handle', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-detached-auth-'));
+    const controller = new AbortController();
+    const refreshRequests: unknown[] = [];
+    let runtime: ReturnType<typeof createRuntime> | undefined;
+    try {
+      await writeFile(join(codexHome, 'auth.json'), JSON.stringify({
+        auth_mode: 'chatgptAuthTokens',
+        tokens: { access_token: buildJwt({ exp: 4_102_444_800 }), account_id: 'acct_target' },
+      }));
+      const processEnv = {
+        CODEX_HOME: codexHome,
+        HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
+          kind: 'profile', serviceId: 'happier.agent.codex/openai-codex', profileId: 'target',
+          credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+        }]),
+      };
+      // Supplies only the native host's consumed services. The actual runtime and auth codec
+      // run below; the existing app-server client fixture represents the process/RPC boundary.
+      const context = {
+        signal: controller.signal,
+        services: { logger: { debug: vi.fn(), warn: vi.fn() }, interactions: {} },
+        executionRun: { id: 'detached-run', services: {
+          nativeHome: { root: codexHome, readFiles: async () => ({ 'auth.json': new Uint8Array(await readFile(join(codexHome, 'auth.json'))) }) },
+          auth: { services: { refreshRuntimeAuth: async (request: unknown) => {
+            refreshRequests.push(request);
+            // The daemon owns refresh and exact-home rematerialization; the plugin only decodes it.
+            await writeFile(join(codexHome, 'auth.json'), JSON.stringify({
+              auth_mode: 'chatgptAuthTokens', tokens: { access_token: 'synthetic-refreshed', account_id: 'acct_target' },
+            }));
+            return { status: 'refreshed', result: {
+              credentialRevision: 'csr_ZYXWVUTSRQPONMLKJHGFEDCBA1',
+            } };
+          } } },
+        } },
+      } as unknown as AgentExecutionRunRuntimeContextV1;
+      const host = createCodexNativeAppServerExecutionRunRuntimeHost({
+        context, processEnv,
+        sharedAppServer: {
+          endpoint: 'ws+unix:///fixture',
+          createClient: async (request) => await createCodexAppServerClient({
+            exec: Object.freeze({}) as unknown as ExecService,
+            cwd: request.cwd, processEnv: request.processEnv,
+          }),
+          dispose: async () => {},
+        },
+      });
+      runtime = createRuntime({ host, processEnv, executionRunId: 'detached-run', initialModelId: 'gpt-6.1-luna' });
+      await expect(startCodexAppServerRuntime(runtime)).resolves.toBe('thread-1');
+      expect(clientState.requests.findIndex(({ method }) => method === 'account/login/start'))
+        .toBeLessThan(clientState.requests.findIndex(({ method }) => method === 'thread/start'));
+      await expect(clientState.invokeRequestHandler('account/chatgptAuthTokens/refresh', { chatgptPlanType: 'plus' }))
+        .resolves.toMatchObject({ chatgptAccountId: 'acct_target', chatgptPlanType: 'plus' });
+      expect(refreshRequests).toEqual([expect.objectContaining({
+        serviceId: 'openai-codex', expectedCredentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+        selection: { kind: 'profile', serviceId: 'openai-codex', profileId: 'target' },
+      })]);
+      expect(refreshRequests[0]).not.toHaveProperty('sessionId');
+    } finally {
+      controller.abort();
+      await runtime?.dispose();
       await rm(codexHome, { recursive: true, force: true });
     }
   });

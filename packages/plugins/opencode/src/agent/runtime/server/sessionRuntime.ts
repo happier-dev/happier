@@ -67,8 +67,15 @@ function mapIssue(issue: OpenCodeRuntimeIssue) {
 function mapRuntimeEvent(
   event: Exclude<OpenCodeRuntimeEvent, { kind: 'model-catalog-observed' | 'mode-catalog-observed' }>,
 ): NativeEventInput | null {
+  if (event.kind === 'available-commands') {
+    return { kind: 'available-commands', commands: event.commands };
+  }
   if (event.kind === 'turn-start') {
-    return { kind: 'turn-start', turnId: event.turnId, startedBy: 'host' };
+    return { kind: 'turn-start', turnId: event.turnId, startedBy: event.startedBy ?? 'host' };
+  }
+  if (event.kind === 'message-delta') {
+    return { kind: 'message-delta', turnId: event.turnId, channel: event.channel, text: event.text,
+      ...(event.messageId ? { messageId: event.messageId } : {}) };
   }
   if (event.kind === 'turn-complete') {
     return { kind: 'turn-complete', turnId: event.turnId };
@@ -219,6 +226,7 @@ export function createOpenCodeSessionRuntime(params: Readonly<{
   let latestCompletedTurnId: string | null = null;
   let providerSessionId: string | null = null;
   let effectiveModelId: string | null = null;
+  let availableCommands: Array<Readonly<{ name: string; description?: string }>> | null = null;
   const canonicalProviderBindingModelId = params.request.providerBinding
     ? params.request.providerBinding.model.id.trim()
     : null;
@@ -343,6 +351,11 @@ export function createOpenCodeSessionRuntime(params: Readonly<{
     return pending;
   };
   const unsubscribeOperations = params.operations.subscribeRuntimeEvents((event) => {
+    if (event.kind === 'available-commands') {
+      availableCommands = event.commands;
+      publish({ kind: 'available-commands', commands: event.commands }, event.emittedAtMs);
+      return;
+    }
     if (event.kind === 'mode-catalog-observed') {
       const snapshot = params.operations.readModeCatalog();
       for (const listener of Array.from(modeListeners)) listener(snapshot);
@@ -371,7 +384,7 @@ export function createOpenCodeSessionRuntime(params: Readonly<{
             event.issue.sanitizedPreview,
           );
         }
-      } else if (event.issue.code === 'opencode_runtime_startup_failed') {
+      } else if (event.issue.code === 'opencode_runtime_startup_failed' || event.issue.code === 'opencode_prompt_rejected') {
         if (deferUntilCustody) {
           publishInputCustody(
             deferUntilCustody,
@@ -492,7 +505,7 @@ export function createOpenCodeSessionRuntime(params: Readonly<{
         modelId: null,
         promptParts,
       };
-      let providerUserMessageId: string;
+      let providerUserMessageId: string | null;
       let effectivePromptModelId: string | null | undefined;
       let priorCompletedTurnId: string | null = null;
       if (request.delivery.kind === 'steer') {
@@ -515,7 +528,7 @@ export function createOpenCodeSessionRuntime(params: Readonly<{
         ownedPendingSend.providerInvocationStarted = true;
         ({ providerUserMessageId, effectiveModelId: effectivePromptModelId } =
           await params.operations.sendTurnPrompt(request.input.text, meta));
-        if (priorCompletedTurnId) {
+        if (priorCompletedTurnId && providerUserMessageId) {
           publish({
             kind: 'turn-rollback-boundary',
             turnId: priorCompletedTurnId,
@@ -706,6 +719,7 @@ export function createOpenCodeSessionRuntime(params: Readonly<{
     watch(listener) {
       listeners.add(listener);
       publishProviderIdentity();
+      if (availableCommands) publish({ kind: 'available-commands', commands: availableCommands });
       return {
         dispose: () => {
           listeners.delete(listener);

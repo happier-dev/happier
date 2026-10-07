@@ -8,7 +8,6 @@ import {
   isPidAlive,
   isStackRuntimeProcessTrusted,
   readStackRuntimeStateFile,
-  resolveTrustedStackRuntimeServerPort,
 } from '../stack/runtime_state.mjs';
 import { readEnvObjectFromFile } from '../env/read.mjs';
 import { getWebappUrlEnvOverride, resolveServerUrls, resolveStackServerEndpoint } from '../server/urls.mjs';
@@ -386,12 +385,12 @@ export async function startDaemonPostAuth({
     cliHomeDir: join(baseDir, 'cli'),
   });
   if (lifecycleOwnerTrusted) {
-    const runtimePort = Number(runtimeState?.ports?.server);
+    const { runtimePort } = await resolveStackServerEndpoint({ env, stackName: name, runtimeState, defaultPort: null });
     return {
       ok: true,
       status: 'delegated_to_lifecycle_owner',
       ownerPid: lifecycleOwnerPid,
-      ...(Number.isFinite(runtimePort) && runtimePort > 0
+      ...(runtimePort
         ? { internalServerUrl: `http://127.0.0.1:${runtimePort}` }
         : {}),
     };

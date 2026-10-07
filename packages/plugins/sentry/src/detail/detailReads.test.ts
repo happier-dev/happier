@@ -81,6 +81,30 @@ describe('Sentry issue projections', () => {
     }
   });
 
+  it('carries the hourly event series the issue read already states, and no series it cannot read', async () => {
+    async function overviewOf(stats: unknown) {
+      const harness = client(respond({ id: '1234', status: 'unresolved', count: '1030', stats }));
+      const result = await readSentryIssueProjection(harness.client, {
+        instance: INSTANCE, entryId: '1234', projection: 'overview', nowMs: 0,
+      });
+      expect(harness.request).toHaveBeenCalledTimes(1);
+      if (!result.ok || result.value.kind !== 'overview') throw new Error('expected the overview arm');
+      return result.value;
+    }
+    // `[DOC]` Retrieve an Issue: `stats: { "24h": [[unixSeconds, count], ...], "30d": [...] }`.
+    const stated = await overviewOf({
+      '24h': [[1541451600, 557], [1541455200, 473]],
+      '30d': [[1538870400, 565], [1538956800, 12862]],
+    });
+    expect(stated.eventTrend).toEqual([
+      { atMs: 1_541_451_600_000, count: 557 },
+      { atMs: 1_541_455_200_000, count: 473 },
+    ]);
+    // A series with an unreadable bucket would draw a shape Sentry never stated.
+    expect((await overviewOf({ '24h': [[1541451600, 557], [1541455200, 'many']] })).eventTrend).toBeUndefined();
+    expect((await overviewOf(undefined)).eventTrend).toBeUndefined();
+  });
+
   it('keeps the overview arm free of every Tier-B collection', async () => {
     const harness = client(respond({
       id: '1234',

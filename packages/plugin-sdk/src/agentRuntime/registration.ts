@@ -4,7 +4,10 @@ import type {
   AttachSessionMetadata,
   RuntimeDescriptorV1,
 } from './projections.js';
+import type { ManagedExecutableRef } from '@happier-dev/protocol';
 import type { JsonValue } from '../identity.js';
+import type { PluginJsonRpcClient } from '../services/io.js';
+import type { ManagedServiceHandle, ManagedServiceSpec } from '../managed-services/contract.js';
 import type { AgentConnectedAccountContinuityV1 } from './connectedAccountContinuity.js';
 
 /**
@@ -186,6 +189,7 @@ export type AgentProviderCliAttachHostFactsV1 = Readonly<{
 
 export type AgentSettingsSelectedSystemToolInputV1 = Readonly<{
   accountSettings: Readonly<Record<string, JsonValue>> | null;
+  pluginSettings?: AgentCliSessionCommandPluginSettingsV1;
 }>;
 
 export type AgentSettingsSelectedSystemToolV1 = Readonly<{
@@ -493,9 +497,14 @@ export type AgentConnectedAccountLaunchContributionV1 = Readonly<{
  * and opt out of the host's default `CI=1` projection when its native CLI
  * requires that behavior.
  */
-export type AgentPreflightSessionControlsCommandV1 = Readonly<{
-  toolId: string;
+export type AgentPreflightExecutableSelectorV1 =
+  | Readonly<{ toolId: string; executable?: never }>
+  | Readonly<{ toolId?: never; executable: Extract<ManagedExecutableRef, { kind: 'managedDependency' }> }>;
+
+export type AgentPreflightSessionControlsCommandV1 = AgentPreflightExecutableSelectorV1 & Readonly<{
   args: readonly string[];
+  /** Static native protocol input; the host writes UTF-8 and closes stdin. */
+  stdin?: string;
   /** Host materializes prepared arguments; the declared tool and environment policy remain authoritative. */
   prepareCommand?: (
     input: AgentPreflightSessionControlsProbeInputV1 & Readonly<{ bypassCache?: boolean }>,
@@ -504,6 +513,7 @@ export type AgentPreflightSessionControlsCommandV1 = Readonly<{
       | Readonly<{ kind: 'temporaryTextFile'; suffix: string; contents: string }>
       | Readonly<{ kind: 'environmentPath'; key: string; relativePath: string }>
     )[];
+    preferredPath?: string;
   }>;
   environmentKeys?: readonly string[];
   environmentExcludeKeys?: readonly string[];
@@ -519,11 +529,13 @@ export type AgentPreflightSessionControlsCommandResultV1 = Readonly<{
 }>;
 
 /**
- * Request/notification-only view of a host-scoped JSON-RPC client. The host creates,
+ * Protocol-only view of a host-scoped JSON-RPC client. The host creates,
  * bounds, cancels, and disposes the backing process; the Agent can only issue
- * protocol requests and interpret their responses.
+ * protocol requests, observe native notifications, and answer protocol requests.
  */
 export type AgentPreflightJsonRpcRequestClientV1 = Readonly<{
+  onNotification: PluginJsonRpcClient['onNotification'];
+  onRequest: PluginJsonRpcClient['onRequest'];
   request(
     method: string,
     params?: JsonValue,
@@ -540,6 +552,10 @@ export type AgentPreflightSessionControlsProbeInputV1 = Readonly<{
   runtimeKindOverride?: string;
   accountSettings: Readonly<Record<string, JsonValue>> | null;
   environment: Readonly<Record<string, boolean>>;
+  /** Exact nonblank values in the same host-selected environment; values remain private. */
+  nonblankEnvironment?: Readonly<Record<string, boolean>>;
+  /** Persisted non-secret settings for the owning Agent, kept account/daemon qualified. */
+  pluginSettings?: AgentCliSessionCommandPluginSettingsV1;
 }>;
 
 /**
@@ -556,9 +572,20 @@ export type AgentPreflightSessionControlsProbeContextV1 =
       toolId: string;
       args: readonly string[];
     }>): Promise<AgentPreflightSessionControlsCommandResultV1>;
+    /** Inspect commands through the host's canonical ACP parser and declared process owner. */
+    probeDeclaredAcpCatalogs(input: AgentPreflightExecutableSelectorV1 & Readonly<{
+      args: readonly string[];
+      authenticationMethodId?: string;
+    }>): Promise<Readonly<{ commands: readonly unknown[] | null; skills: readonly unknown[] | null }>>;
+    /** Resolves only a manifest-declared system tool; no executable or process handle is exposed. */
+    resolveDeclaredSystemTool(input: Readonly<{ toolId: string }>): Promise<Readonly<{ executablePath: string }>>;
+    /** Host supervises the statically declared spawn and disposes it after inspection. */
+    withDeclaredManagedService<TResult>(
+      spec: ManagedServiceSpec,
+      inspect: (client: Pick<ManagedServiceHandle, 'request'>, signal: AbortSignal) => Promise<TResult> | TResult,
+    ): Promise<TResult>;
     withDeclaredJsonRpcClient<TResult>(
-      input: Readonly<{
-        toolId: string;
+      input: AgentPreflightExecutableSelectorV1 & Readonly<{
         args: readonly string[];
       }>,
       inspect: (
@@ -569,12 +596,12 @@ export type AgentPreflightSessionControlsProbeContextV1 =
   }>;
 
 export type AgentPreflightSessionControlsModelsV1 = Readonly<{
-  command: AgentPreflightSessionControlsCommandV1;
+  command: Extract<AgentPreflightSessionControlsCommandV1, { toolId: string }>;
   parseOutput?: (
     result: AgentPreflightSessionControlsCommandResultV1,
   ) => Promise<unknown | null> | unknown | null;
   fallback?: Readonly<{
-    command: AgentPreflightSessionControlsCommandV1;
+    command: Extract<AgentPreflightSessionControlsCommandV1, { toolId: string }>;
     parseOutput?: (
       result: AgentPreflightSessionControlsCommandResultV1,
     ) => Promise<unknown | null> | unknown | null;
@@ -592,7 +619,23 @@ export type AgentPreflightSessionControlsContributionV1 = Readonly<{
     input: AgentPreflightSessionControlsProbeInputV1,
   ) => string | null | undefined;
   models?: AgentPreflightSessionControlsModelsV1;
+  catalogs?: (Readonly<{
+    command: Extract<AgentPreflightSessionControlsCommandV1, { toolId: string }>;
+    parseOutput(result: AgentPreflightSessionControlsCommandResultV1): unknown | Promise<unknown>;
+  }> | Readonly<{
+    kind: 'acp';
+    command: AgentPreflightSessionControlsCommandV1;
+    authenticationMethodId?: string;
+    /** Provider-owned selection from the native handshake and host-selected probe facts. */
+    selectAuthentication?(input: Readonly<{
+      initializeResult: JsonValue;
+      probe: AgentPreflightSessionControlsProbeInputV1;
+    }>): Readonly<{ methodId: string; metadata?: JsonValue }> | null;
+  }>) & AgentSettingsSelectedSystemToolV1;
+  probeCatalogs?: (context: AgentPreflightSessionControlsProbeContextV1) => unknown | Promise<unknown>;
   jsonRpcCommands?: readonly AgentPreflightSessionControlsCommandV1[];
+  /** Static tool, argv, and private launch-environment policy for managed preflight servers. */
+  managedServiceCommands?: readonly Extract<AgentPreflightSessionControlsCommandV1, { toolId: string }>[];
   probeModels?: (
     context: AgentPreflightSessionControlsProbeContextV1,
   ) => Promise<unknown | null> | unknown | null;

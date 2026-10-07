@@ -49,7 +49,7 @@ test('readStackInfoSnapshot reports active runtime snapshot metadata', async (t)
   }
 });
 
-test('stack info reports the selected foreign server snapshot for a shared database consumer', async (t) => {
+test('stack info exposes the foreign server pin but rejects a shared database consumer without admitted component placement', async (t) => {
   const fixture = await createRuntimeSnapshotFixture(t, { stackName: 'qa-shared-info' });
   const manifestPath = join(fixture.snapshotDir, 'manifest.json');
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
@@ -62,7 +62,9 @@ test('stack info reports the selected foreign server snapshot for a shared datab
   const restore = withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: fixture.storageDir });
   try {
     const out = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName: fixture.stackName });
-    assert.equal(out.runtime.valid, true, out.runtime.errors.join('; '));
+    assert.equal(out.runtime.valid, false);
+    assert.match(out.runtime.errors.join('; '), /target is incompatible/);
+    assert.match(out.runtime.errors.join('; '), /daemon snapshot.*placement host/);
     assert.equal(out.runtime.selectedSnapshotId, 'snap-1');
     assert.deepEqual(Object.keys(out.runtime.snapshotComponents), ['server']);
   } finally { restore(); }

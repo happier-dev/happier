@@ -3,6 +3,7 @@ import { definePlugin } from '@happier-dev/plugin-sdk';
 
 import { QWEN_ACP_RUNTIME_DEFINITION } from './agent/acp/definition.js';
 import { AGENT_DEFINITION } from './agent/definition.js';
+import { QWEN_ACP_COMMAND } from './agent/acp/preflight.js';
 
 export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   id: 'happier.agent.qwen',
@@ -15,7 +16,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
       id: 'qwen-process',
       capability: 'process',
       reason: 'Run the declared Qwen CLI executable.',
-      scope: { executables: [{ kind: 'systemTool', id: 'qwen-cli' }] },
+      scope: { executables: [{ kind: 'systemTool', id: QWEN_ACP_COMMAND.toolId }] },
     }],
     optional: [],
   },
@@ -28,7 +29,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
           transport: {
             kind: 'stdio',
             executable: { kind: 'systemTool', id: 'qwen-cli' },
-            args: ['--acp'],
+            args: [...QWEN_ACP_COMMAND.args],
           },
           definition: QWEN_ACP_RUNTIME_DEFINITION,
         },

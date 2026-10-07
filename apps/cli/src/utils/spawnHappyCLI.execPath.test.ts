@@ -17,6 +17,7 @@ describe('spawnHappyCLI runtime executable selection', () => {
     vi.doUnmock('child_process');
     vi.resetModules();
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     envScope.restore();
 
     if (originalGlobalBun === undefined) {
@@ -47,6 +48,26 @@ describe('spawnHappyCLI runtime executable selection', () => {
 
       expect(spawnMock).toHaveBeenCalled();
       expect(spawnMock.mock.calls[0]?.[0]).toBe(process.execPath);
+    });
+  });
+
+  it('resolves the runtime from the requested child environment without changing the parent', async () => {
+    await withTempHappyCliEntrypoint(async (entrypoint) => {
+      vi.stubEnv('HAPPIER_JS_RUNTIME_PATH', '');
+      vi.stubEnv('HAPPIER_NODE_PATH', '');
+      envScope.patch({ HAPPIER_MANAGED_NODE_BIN: '/missing-parent-runtime' });
+      const environment: NodeJS.ProcessEnv = {
+        ...process.env,
+        HAPPIER_CLI_SUBPROCESS_RUNTIME: 'node',
+        HAPPIER_CLI_SUBPROCESS_ENTRYPOINT: entrypoint,
+        HAPPIER_MANAGED_NODE_BIN: process.execPath,
+      };
+      const mod = await import('@/utils/spawnHappyCLI');
+      const launchSpec = mod.buildHappyCliSubprocessLaunchSpec(['--version'], { environment });
+
+      expect(launchSpec.filePath).toBe(process.execPath);
+      expect(launchSpec.args).toContain(entrypoint);
+      expect(process.env.HAPPIER_MANAGED_NODE_BIN).toBe('/missing-parent-runtime');
     });
   });
 

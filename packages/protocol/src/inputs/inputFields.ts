@@ -294,7 +294,6 @@ function isSameOrDescendantPath(candidate: string, parent: string): boolean {
 type InputHintCrossField = Readonly<{
   path: string;
   widget: unknown;
-  staticOptionCount: number;
   connectedAccountOptions: boolean;
   visibleWhen: unknown;
   requiredWhen: unknown;
@@ -307,11 +306,9 @@ function readInputHintCrossField(value: unknown): InputHintCrossField | null {
   const fields = new Map(Object.entries(value));
   const path = fields.get('path');
   if (typeof path !== 'string') return null;
-  const options = fields.get('options');
   return {
     path,
     widget: fields.get('widget'),
-    staticOptionCount: Array.isArray(options) ? options.length : 0,
     connectedAccountOptions: fields.get('connectedAccountOptions') === true,
     visibleWhen: fields.get('visibleWhen'),
     requiredWhen: fields.get('requiredWhen'),
@@ -328,7 +325,6 @@ function validateInputHintsCrossField(
     return field ? [{ field, index }] : [];
   });
   const seenPaths = new Map<string, number>();
-  let staticOptionCount = 0;
   const secretPaths = new Set<string>();
   const connectedAccountOptionFieldIndexes: number[] = [];
 
@@ -343,18 +339,9 @@ function validateInputHintsCrossField(
     } else {
       seenPaths.set(field.path, index);
     }
-    staticOptionCount += field.staticOptionCount;
     if (field.widget === 'secret') secretPaths.add(field.path);
     if (field.connectedAccountOptions) connectedAccountOptionFieldIndexes.push(index);
   });
-
-  if (staticOptionCount > 256) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['fields'],
-      message: 'Action input hints may declare at most 256 static options in total.',
-    });
-  }
 
   for (const index of connectedAccountOptionFieldIndexes.slice(1)) {
     context.addIssue({
@@ -413,7 +400,7 @@ function createInputHintsSchemasForSharedField<
     title: textSchema,
     description: textSchema.optional(),
     placeholder: textSchema.optional(),
-    options: z.array(optionSchema).max(256).readonly().optional(),
+    options: z.array(optionSchema).readonly().optional(),
   }).strict().superRefine((value, context) => {
     validateInputHintField(value, context, validationOptions);
   });
@@ -421,7 +408,7 @@ function createInputHintsSchemasForSharedField<
     title: textSchema.optional(),
     description: textSchema.optional(),
     submitLabel: textSchema.optional(),
-    fields: z.array(fieldSchema).max(64).readonly().default([]),
+    fields: z.array(fieldSchema).readonly().default([]),
   }).strict().superRefine((value, context) => {
     validateInputHintsCrossField(value.fields, context);
   });

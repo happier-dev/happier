@@ -231,6 +231,25 @@ const remoteProviderUsageSnapshot = {
 } as const;
 
 describe('built-in legacy Connected Services compatibility', () => {
+    it('retains predecessor Claude OAuth plan facts when reading historical credentials', () => {
+        // Native credential metadata produced by ../0.2 at ba32a228cdb99b4f6edb50d699234261a970b56b.
+        const ref = { service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }, accountId: 'work' };
+        const plaintext = {
+            v: 1, serviceId: 'claude-subscription', profileId: 'work', createdAt: 1, updatedAt: 1, expiresAt: null,
+            kind: 'oauth', token: null,
+            oauth: {
+                accessToken: 'access', refreshToken: 'refresh', idToken: null, tokenType: null, scope: null,
+                providerAccountId: null, providerEmail: 'person@example.test',
+                raw: { claudeAiOauth: { subscriptionType: 'max', rateLimitTier: 'max_20x' } },
+            },
+        };
+        const payload = parseQualifiedConnectedAccountCredentialPlaintextV1({ ref, authenticationModeId: 'oauth', plaintext });
+        expect(payload.values).toMatchObject({ subscriptionType: 'max', rateLimitTier: 'max_20x' });
+        const currentPayload = { ...payload, values: { ...payload.values, lastRefreshAtMs: '2' } };
+        const projected = projectQualifiedConnectedAccountCredentialPlaintextV1({ ref, authenticationModeId: 'oauth', payload: currentPayload, now: 2 });
+        expect(projected).toMatchObject({ oauth: { raw: { claudeAiOauth: { subscriptionType: 'max', rateLimitTier: 'max_20x' } } } });
+        expect(parseQualifiedConnectedAccountCredentialPlaintextV1({ ref, authenticationModeId: 'oauth', plaintext: projected })).toEqual(currentPayload);
+    });
     it.each([
         {
             serviceId: 'openai-codex',

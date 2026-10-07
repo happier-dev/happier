@@ -65,6 +65,7 @@ import { readConnectedServiceCredentialProviderAccountId } from '../connectedSer
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from '../connectedServices/accountGroups/quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
 import { ConnectedServiceRuntimeRegistry } from '../connectedServices/runtimeRegistry/registry';
+import { resolveConnectedServiceRefreshSessionIds } from './connectedServiceRefreshSessionNotifications';
 import type { StopSessionResult } from '../sessions/stopSessionContract';
 import { resolveConnectedServicesMaterializationBaseDir } from '../connectedServices/materialize/resolveConnectedServicesMaterializationBaseDir';
 import type { ProviderAccountUsageStore } from '../connectedServices/accountUsage/store';
@@ -407,13 +408,11 @@ export async function startDaemonRuntimeBootstrap(
     );
 
     const onAuthUpdated: NonNullable<ConstructorParameters<typeof ConnectedServiceRefreshCoordinator>[0]['onAuthUpdated']> = async (event) => {
-      const sessionIds = new Set<string>();
-      for (const target of event.affectedTargets) {
-        const sessionId = target.sessionId?.trim()
-          || params.pidToTrackedSession.get(target.pid)?.happySessionId?.trim()
-          || '';
-        if (sessionId) sessionIds.add(sessionId);
-      }
+      const sessionIds = resolveConnectedServiceRefreshSessionIds({
+        affectedTargets: event.affectedTargets,
+        registry: connectedServiceRuntimeRegistry,
+        trackedSessions: params.pidToTrackedSession,
+      });
       for (const sessionId of sessionIds) {
         const result = await params.connectedServiceAuthGroupPreTurnSwitchCoordinator.applyCredentialUpdate({
           sessionId,
@@ -582,6 +581,7 @@ export async function startDaemonRuntimeBootstrap(
       failureBackoffMinMs,
       failureBackoffMaxMs,
       failureBackoffJitterPct,
+      quotaPersistenceMaxConsecutiveFailures,
     } = resolveConnectedServiceQuotasDaemonOptions(params.processEnv);
     const quotaFetchLeaseMs = resolvePositiveIntEnv(
       params.processEnv.HAPPIER_CONNECTED_SERVICES_QUOTA_FETCH_LEASE_MS,
@@ -720,11 +720,7 @@ export async function startDaemonRuntimeBootstrap(
         : {}),
       serverWorkScheduler: daemonServerWorkScheduler,
       quotaPersistenceServerScope: params.activeServerDir,
-      quotaPersistenceMaxConsecutiveFailures: resolvePositiveIntEnv(
-        params.processEnv.HAPPIER_CONNECTED_SERVICES_QUOTA_IN_BAND_MAX_CONSECUTIVE_FAILURES,
-        5,
-        { min: 1, max: 100 },
-      ),
+      quotaPersistenceMaxConsecutiveFailures,
       groupSwitchCheckMinIntervalMs,
       onAutomaticQuotaResetConsumed: async (event) => {
         const settingsSnapshot = getActiveAccountSettingsSnapshot();
@@ -775,43 +771,26 @@ export async function startDaemonRuntimeBootstrap(
       // Durable same-account fanout fallback (codex): when the live runtime-identity probe cannot
       // verify a sibling's account, prove it from PERSISTED artifacts that survive daemon restarts —
       // the session's persisted metadata (canonical session read proves durability) plus the persisted
-      // profile's credential provider-account id (canonical resolver). Best-effort under a bounded 2s
-      // timeout: any read failure yields null so the candidate stays suppressed (fail-closed).
+      // profile's credential provider-account id (canonical resolver). The canonical transports
+      // own their request lifetimes; the quota fanout owner suppresses candidates on read failure.
       readPersistedSessionAccountIdentity: async (input) => {
-        const boundedMs = 2_000;
-        const runBounded = async <T>(work: Promise<T>): Promise<T | null> => {
-          let timer: ReturnType<typeof setTimeout> | null = null;
-          try {
-            return await Promise.race<T | null>([
-              work,
-              new Promise<null>((resolve) => {
-                timer = setTimeout(() => resolve(null), boundedMs);
-                (timer as unknown as { unref?: () => void })?.unref?.();
-              }),
-            ]);
-          } catch {
-            return null;
-          } finally {
-            if (timer) clearTimeout(timer);
-          }
-        };
         const token = typeof params.credentials.token === 'string' ? params.credentials.token.trim() : '';
         if (!token) return null;
         // Require durable evidence the session persists (canonical session read) before trusting a
         // persisted-identity fanout proof; do NOT introduce a second metadata reader.
-        const persistedSession = await runBounded(fetchSessionByIdCompat({ token, sessionId: input.sessionId }));
+        const persistedSession = await fetchSessionByIdCompat({ token, sessionId: input.sessionId });
         if (!persistedSession) return null;
-        // The released V2/V3 credential resolver consumes the legacy scalar service id only.
-        // Reverse-project the qualified key once at this legacy resolver; the scalar id is used
-        // only for the binding/map lookup while the returned proof keeps the qualified identity.
+        // The native credential projection takes a scalar binding and delegates to the current
+        // qualified credential reader. Only its binding/map lookup uses the scalar id; the
+        // returned proof keeps the qualified identity.
         const legacyServiceId = resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(input.serviceId);
         if (!legacyServiceId) return null;
-        const byServiceId = await runBounded(resolveConnectedServiceCredentialResolutions({
+        const byServiceId = await resolveConnectedServiceCredentialResolutions({
           credentials: params.credentials,
           api: params.api,
           bindings: [{ serviceId: legacyServiceId, profileId: input.profileId }],
-        }));
-        const resolution = byServiceId?.get(legacyServiceId) ?? null;
+        });
+        const resolution = byServiceId.get(legacyServiceId) ?? null;
         if (resolution?.revisionSemantics !== 'revisioned') return null;
         const record = resolution.record;
         const providerAccountId = readConnectedServiceCredentialProviderAccountId(record);

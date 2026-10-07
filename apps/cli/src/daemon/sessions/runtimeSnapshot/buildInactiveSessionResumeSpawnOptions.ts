@@ -2,7 +2,7 @@ import {
   resolveSessionMetadataAgentIdentity,
 } from '@happier-dev/agents';
 import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
-import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { agentRoutingIdAddressesContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
@@ -82,7 +82,7 @@ function resolveExactPersistedBackendIdentity(metadata: Record<string, unknown>)
   const runtimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(metadata);
   const identity = resolveSessionMetadataAgentIdentity(metadata);
 
-  const correspondence = SessionCreationCorrespondenceV1Schema.safeParse(
+  const correspondence = SessionCreationCorrespondenceV1ReadSchema.safeParse(
     metadata.sessionCreationCorrespondenceV1,
   );
   const linked = resolveLinkedExternalSessionMetadataV1(metadata);
@@ -143,7 +143,7 @@ export function buildInactiveSessionResumeSpawnOptions(
   if (rawMachineId && metadataMachineId && rawMachineId !== metadataMachineId) return null;
 
   const rawCorrespondence = params.metadata.sessionCreationCorrespondenceV1;
-  const parsedCorrespondence = SessionCreationCorrespondenceV1Schema.safeParse(rawCorrespondence);
+  const parsedCorrespondence = SessionCreationCorrespondenceV1ReadSchema.safeParse(rawCorrespondence);
   if (rawCorrespondence !== undefined && !parsedCorrespondence.success) return null;
   const correspondence = parsedCorrespondence.success ? parsedCorrespondence.data : null;
 

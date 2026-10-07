@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { Server } from 'socket.io';
 import { io } from 'socket.io-client';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { callSocketRpc, emitWithAckCancellable, type SocketRpcAckScope } from './callSocketRpc.js';
 import { readRpcRequestDisposition } from './rpcDisposition.js';
 import { socketRpcCodec, type SocketRpcContent } from './socketRpcCodec.js';
@@ -40,8 +40,63 @@ async function setup() {
   return socket;
 }
 afterEach(async () => {
+  vi.useRealTimers();
   await destroy?.();
   if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+});
+it('accepts a delayed real Socket.IO acknowledgement for a deadline beyond its native timer range', async () => {
+  const socket = await setup();
+  server.sockets.sockets.forEach((remote) => remote.on('rpc-call', (_payload, ack) => {
+    setTimeout(() => ack({ ok: true, result: { status: 'success', sessionId: 'long-spawn' } }), 30);
+  }));
+  const result = await callSocketRpc({ socket, target: { kind: 'machine', id: 'm' },
+    method: RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE, params: { spawnNonce: 'long-spawn' },
+    content: { mode: 'plain' }, timeoutMs: 30 * 24 * 60 * 60_000,
+  }).catch((error: unknown) => error);
+  expect(result).toEqual({ status: 'success', sessionId: 'long-spawn' });
+});
+
+it('keeps a long acknowledgement deadline through timer chunks and cancels only its issued occurrence', async () => {
+  vi.useFakeTimers();
+  // The transport does not deliver an ACK; the real host cancellation/deadline logic owns settlement.
+  const cancelled: unknown[] = [];
+  const socket = {
+    connected: true,
+    emit: (event: string, payload: unknown) => { if (event === 'rpc-cancel') cancelled.push(payload); },
+    emitWithAck: () => new Promise<unknown>(() => {}),
+  };
+  const timeoutMs = 30 * 24 * 60 * 60_000;
+  let settled = false;
+  const wait = emitWithAckCancellable({ socket, event: 'rpc-call', payload: {}, timeoutMs })
+    .catch((error: unknown) => { settled = true; return error; });
+  await vi.advanceTimersByTimeAsync(2_147_483_647);
+  expect(settled).toBe(false);
+  await vi.advanceTimersByTimeAsync(timeoutMs - 2_147_483_647);
+  expect(await wait).toMatchObject({ message: 'operation has timed out' });
+  expect(readRpcRequestDisposition(await wait)).toBe('outcomeUnknown');
+
+  const controller = new AbortController();
+  const stopped = emitWithAckCancellable({ socket, event: 'rpc-call', payload: {}, timeoutMs,
+    signal: controller.signal, requestId: 'rpc-long-cancel',
+  }).catch((error: unknown) => error);
+  await vi.advanceTimersByTimeAsync(2_147_483_647);
+  controller.abort();
+  expect(await stopped).toMatchObject({ name: 'AbortError', code: 'SOCKET_RPC_ABORTED' });
+  expect(cancelled).toEqual([{ requestId: 'rpc-long-cancel' }]);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it('preserves the raw callback acknowledgement convention when a long deadline bypasses the native scope', async () => {
+  const response = { status: 'success', sessionId: 'callback-spawn' };
+  // Socket.IO uses (error, value) in its timeout scope, but (value) on the raw socket.
+  const socket = {
+    emit: (_event: string, _payload: unknown, ack: (value: unknown) => void) => ack(response),
+    timeout: () => ({
+      emit: (_event: string, _payload: unknown, ack: (error: unknown, value: unknown) => void) => ack(null, response),
+    }),
+  };
+  await expect(emitWithAckCancellable({ socket, event: 'rpc-call', payload: {}, timeoutMs: 30 * 24 * 60 * 60_000 }))
+    .resolves.toEqual(response);
 });
 it('issues prefixed RPC with session-write authority and decodes the ack', async () => {
   const socket = await setup();

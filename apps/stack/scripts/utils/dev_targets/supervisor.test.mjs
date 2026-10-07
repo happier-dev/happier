@@ -80,6 +80,8 @@ test('controlled supervisor transfers admitted bytes, waits for loaded identity 
   const calls = [];
   const spawned = [];
   const states = [];
+  let resolveRunning;
+  const running = new Promise(resolve => { resolveRunning = resolve; });
   const authorityPath = join(root, 'server-authority.json');
   const execFileAsync = promisify(execFile);
   const controller = await startStackDevTargets({
@@ -90,7 +92,10 @@ test('controlled supervisor transfers admitted bytes, waits for loaded identity 
     remoteServerRuntimeConfig: remoteLightSqliteRuntimeConfig,
     targetPlans: [{ target, services: { server: true, expo: false, daemon: true } }],
     onServerDataAuthority: async ({ targetName }) => { await writeFile(authorityPath, JSON.stringify({ targetName })); },
-    onTargetStateChange: state => states.push(state), env: {},
+    onTargetStateChange: state => {
+      states.push(state);
+      if (state.status === 'running') resolveRunning();
+    }, env: {},
   }, {
     // SSH/process and network readiness are the only substituted boundaries.
     runProcess: async input => {
@@ -106,7 +111,7 @@ test('controlled supervisor transfers admitted bytes, waits for loaded identity 
     transferFile: async ({ localPath, remotePath }) => { await copyFile(localPath, remotePath); },
     runDependencyBootstrap: async () => { throw new Error('controlled snapshots cannot bootstrap the moving source'); },
     spawnProcess: input => {
-      const child = { ...input, exitCode: null };
+      const child = { ...input, pid: process.pid, exitCode: null };
       spawned.push(child);
       if (input.command === 'ssh' && input.args.at(-1).includes('stack start')) {
         assert.equal(JSON.parse(readFileSync(authorityPath, 'utf8')).targetName, target.name);
@@ -119,7 +124,8 @@ test('controlled supervisor transfers admitted bytes, waits for loaded identity 
     waitForServerReady: async () => {}, waitForDaemonReady: async () => {},
   });
   try {
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await running;
+    assert.equal(states.find(state => state.status === 'running')?.forwardPid, process.pid);
     assert.ok(states.some(state => state.status === 'running' && state.runtimeSnapshotId === snapshot.snapshotId));
     const pointer = JSON.parse(await readFile(join(paths.stackBaseDir, 'runtime/current.json'), 'utf8'));
     assert.equal(pointer.snapshotId, snapshot.snapshotId);
@@ -130,6 +136,77 @@ test('controlled supervisor transfers admitted bytes, waits for loaded identity 
   } finally { await controller.close(); }
   assert.ok(calls.some(input => input.command === 'ssh' && input.args.at(-1).includes('stack stop')));
   assert.ok(spawned.every(child => child.exitCode === 0));
+});
+
+test('controlled supervisor imports and verifies each separate server and daemon snapshot', async (t) => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-controlled-mixed-' });
+  const serverSnapshot = await writeManagedRuntimeSnapshotLayout({ stackDir: join(root, 'producer'), snapshotId: 'server-selected' });
+  const daemonSnapshot = await writeManagedRuntimeSnapshotLayout({ stackDir: join(root, 'producer'), snapshotId: 'daemon-selected' });
+  for (const [snapshot, component] of [[serverSnapshot, 'server'], [daemonSnapshot, 'daemon']]) {
+    snapshot.manifest.components = { [component]: snapshot.manifest.components[component] };
+    await writeFile(join(snapshot.snapshotPath, 'manifest.json'), JSON.stringify(snapshot.manifest));
+  }
+  const serverTarget = { name: 'server-host', platform: 'posix', ssh: 'server-ssh', repoDir: process.cwd(), cliHomeDir: join(root, 'server-state') };
+  const daemonTarget = { name: 'daemon-worker', platform: 'posix', ssh: 'daemon-ssh', repoDir: process.cwd(), cliHomeDir: join(root, 'daemon-state') };
+  const syncStackBaseDir = join(root, 'producer-sync');
+  await mkdir(join(syncStackBaseDir, 'mutagen'), { recursive: true });
+  await writeFile(join(syncStackBaseDir, 'mutagen/mutagen.yml'), renderMutagenProject({ sourceDir: process.cwd(), targets: [serverTarget, daemonTarget], ownerId: 'producer' }));
+  const credentialPath = join(root, 'credential');
+  await writeFile(credentialPath, '{}');
+  const states = [];
+  const calls = [];
+  const spawned = [];
+  const execFileAsync = promisify(execFile);
+  let finishRunning;
+  const running = new Promise(resolve => { finishRunning = resolve; });
+  const controller = await startStackDevTargets({
+    stackName: 'agent-qa', stackBaseDir: join(root, 'consumer'), syncStackBaseDir, sourceDir: process.cwd(),
+    localServerPort: 3005, publicServerUrl: 'http://127.0.0.1:3005', credentialPath,
+    runtimeSnapshot: serverSnapshot, runtimeTarget: serverSnapshot.manifest.target,
+    remoteServerRuntimeConfig: remoteLightSqliteRuntimeConfig,
+    targetPlans: [
+      { target: serverTarget, services: { server: true, expo: false, daemon: false } },
+      { target: daemonTarget, services: { server: false, expo: false, daemon: true }, runtimeSnapshot: daemonSnapshot, runtimeTarget: daemonSnapshot.manifest.target },
+    ],
+    onTargetStateChange: state => {
+      states.push(state);
+      if ([serverTarget, daemonTarget].every(target => states.some(value => value.name === target.name && value.status === 'running'))) finishRunning();
+    }, env: {},
+  }, {
+    runProcess: async input => {
+      calls.push(input);
+      const command = input.args.at(-1);
+      if (input.command === 'ssh' && !/stack (?:start|stop)/.test(command)
+        && (/runtime_artifact_transfer\.mjs|mkdir -p|s\.runtimeSnapshotId/.test(command))) await execFileAsync('/bin/bash', ['-c', command]);
+      return { code: 0, out: JSON.stringify([serverTarget, daemonTarget].map(value => JSON.parse(readySyncResult(value).out)[0])) };
+    },
+    runCommand: async () => ({ code: 0, out: JSON.stringify({ retainedRemoteData: false }) }),
+    transferFile: async ({ localPath, remotePath }) => { await copyFile(localPath, remotePath); },
+    runDependencyBootstrap: async () => { throw new Error('controlled snapshots cannot bootstrap source'); },
+    spawnProcess: input => {
+      const child = { ...input, exitCode: null }; spawned.push(child);
+      if (input.command === 'ssh' && input.args.at(-1).includes('stack start')) {
+        const daemon = input.args.includes(daemonTarget.ssh);
+        const paths = resolveRemoteStackStatePaths(daemon ? daemonTarget : serverTarget, { stackName: 'agent-qa', runtimeMode: 'controlled' });
+        writeFileSync(join(paths.stackBaseDir, 'stack.runtime.json'), JSON.stringify({ runtimeSnapshotId: (daemon ? daemonSnapshot : serverSnapshot).snapshotId }));
+      }
+      return child;
+    },
+    stopProcess: async child => { child.exitCode = 0; }, waitForProcess: async () => await new Promise(() => {}),
+    waitForServerReady: async () => {}, waitForDaemonReady: async () => {},
+  });
+  try {
+    await running;
+    for (const [target, snapshot, component] of [[serverTarget, serverSnapshot, 'server'], [daemonTarget, daemonSnapshot, 'daemon']]) {
+      assert.ok(states.some(state => state.name === target.name && state.status === 'running' && state.runtimeSnapshotId === snapshot.snapshotId));
+      const paths = resolveRemoteStackStatePaths(target, { stackName: 'agent-qa', runtimeMode: 'controlled' });
+      assert.equal(JSON.parse(await readFile(join(paths.stackBaseDir, 'runtime/current.json'), 'utf8')).snapshotId, snapshot.snapshotId);
+      assert.ok(calls.some(input => input.command === 'ssh' && input.args.includes(target.ssh) && input.args.at(-1).includes(`--required-components=${component}`)));
+      assert.ok(calls.some(input => input.command === 'ssh' && input.args.includes(target.ssh) && input.args.at(-1).includes('s.runtimeSnapshotId') && input.args.at(-1).includes(snapshot.snapshotId)));
+    }
+    const daemonTunnel = spawned.find(child => child.args?.includes(daemonTarget.ssh) && child.args.includes('-R'));
+    assert.ok(daemonTunnel.args.some(arg => arg.endsWith(':127.0.0.1:3005')));
+  } finally { await controller.close(); }
 });
 
 test('controlled pre-dispatch SSH unavailability is distinguishable from a rejected runtime or data contract', async (t) => {

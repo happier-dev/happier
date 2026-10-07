@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
 import { SessionOrganizationPlacementV1Schema } from '../sessions/creation/sessionSpawnNewResultV1.js';
 import { EmbedStyleV1Schema } from './embedStyleV1.js';
@@ -12,3 +13,4 @@ export const EmbedConfigV1Schema = z.object({
   style: EmbedStyleV1Schema.nullable(),
 }).strict();
 export type EmbedConfigV1 = z.infer<typeof EmbedConfigV1Schema>;
+export const StoredEmbedConfigV1Schema = createStoredReadSchema(EmbedConfigV1Schema);

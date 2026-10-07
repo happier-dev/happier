@@ -274,8 +274,6 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
                         },
                     }
                     : {}),
-                allowLegacyUnfencedOneShotMaterialization: true,
-                serverContract: input.serverContract,
             });
         } catch (error) {
             if (error instanceof ConnectedServiceAuthGroupQuotaProbeIncompleteError) {
@@ -380,9 +378,7 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
     const effectiveBindings = auth?.connectedServicesBindings ?? options.connectedServices;
     const effectiveBindingsV1 = readConnectedServiceBindingsOrNull(effectiveBindings);
     const qualifiedPurposeBindingSnapshot =
-        auth?.ongoingRuntimeRegistrationAllowed === false
-        ? null
-        : auth
+        auth
         ? auth.qualifiedPurposeBindingSnapshot
         : effectiveBindingsV1 && input.catalogAgentId
         ? resolveQualifiedPurposeBindingSnapshotForAgentSpawn({

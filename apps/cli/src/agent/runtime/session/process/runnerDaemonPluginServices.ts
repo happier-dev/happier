@@ -588,6 +588,7 @@ export async function prepareRunnerDaemonPluginServices(
             || operation.kind === 'plugin_mcp.client.close_v1'
             || operation.kind
                 === 'plugin_exec.launch.release_v1'
+            || operation.kind === 'plugin_sessions.external.close_list_v1'
             || operation.kind
                 === 'plugin_storage.transaction.rollback_v1';
         const ensurePreparedAfterObservedAuthority = async () => {
@@ -2774,6 +2775,14 @@ export async function prepareRunnerDaemonPluginServices(
                 }, options?.signal
                     ? { signal: options.signal }
                     : undefined));
+            },
+            async closeList(cursor, options) {
+                await dispatch({
+                    kind: 'plugin_sessions.external.close_list_v1',
+                    requestId: randomUUID(),
+                    invocationId: input.invocationId,
+                    cursor,
+                }, options?.signal ? { signal: options.signal } : undefined);
             },
             async attach(ref, options) {
                 return RunnerDaemonExternalSessionsAttachResultV1Schema.parse(await dispatch<Awaited<ReturnType<

@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import {
+  Badge,
   Banner,
   Button,
   CodeBlock,
@@ -22,6 +23,27 @@ import { HAPPIER_WORK_STATUS_SEMANTIC_TONE } from '@happier-dev/plugin-ui/presen
 import { describeTriageAgentStatusV1 } from './agentState.js';
 import { TriageLinkedSessions } from './linkedSessions.js';
 import { useLinkedSessionOpen } from './useLinkedSessionOpen.js';
+
+type TriageFindingV1 = ReturnType<typeof useReviewCommentProposalsForEntry>['proposals'][number];
+
+/** Where a finding points, as a reader would type it: `path:line`, `path:start-end`, a path, or nothing. */
+function readTriageFindingLocationV1(anchor: TriageFindingV1['anchor']): string | null {
+  switch (anchor.kind) {
+    case 'line': return `${anchor.filePath}:${anchor.line}`;
+    case 'range': return `${anchor.filePath}:${anchor.startLine}-${anchor.endLine}`;
+    case 'hunk':
+    case 'file': return anchor.filePath;
+    case 'folder': return anchor.folderPath;
+    default: return null;
+  }
+}
+
+const FINDING_SEVERITY_TONE = Object.freeze({
+  blocker: 'danger', high: 'danger', medium: 'warning', low: 'info', nit: 'secondary',
+} as const satisfies Record<NonNullable<TriageFindingV1['findingSeverity']>, 'danger' | 'warning' | 'info' | 'secondary'>);
+const FINDING_SEVERITY_LABEL = Object.freeze({
+  blocker: 'Blocker', high: 'High', medium: 'Medium', low: 'Low', nit: 'Nit',
+} as const satisfies Record<NonNullable<TriageFindingV1['findingSeverity']>, string>);
 
 /** How many of the agent's findings the step lists before counting the rest. */
 const SHOWN_FINDINGS = 3;
@@ -65,7 +87,9 @@ export function TriageAgentStep(props: Readonly<{
   // field; in that case use the story's current linked Session destination.
   const omittedFinding = findings.proposals[SHOWN_FINDINGS];
   const findingsSessionId = omittedFinding?.sessionId ?? props.sessions[0]?.sessionId;
-  const title = text('plugins.triage.surface.detail.story.agent', 'Agent work');
+  // ③ is named after the Session doing the work (its own title), and only falls back to the generic words when
+  // the Session has none to give.
+  const title = props.sessions[0]?.displayTitle ?? text('plugins.triage.surface.detail.story.agent', 'Agent work');
   const content = (
     <>
       {status === null ? null : (
@@ -79,9 +103,27 @@ export function TriageAgentStep(props: Readonly<{
               count: String(findings.proposals.length),
             })}
           />
-          {shown.map((finding) => (
-            <Text key={finding.id} variant="caption" value={finding.body} />
-          ))}
+          {shown.map((finding) => {
+            const location = readTriageFindingLocationV1(finding.anchor);
+            const severity = finding.findingSeverity;
+            return (
+              <Stack key={finding.id} gap="xsmall">
+                {severity === undefined && location === null ? null : (
+                  <Row gap="xsmall" align="center" wrap>
+                    {severity === undefined ? null : (
+                      <Badge
+                        variant="tinted"
+                        tone={FINDING_SEVERITY_TONE[severity]}
+                        value={text(`plugins.triage.surface.detail.finding.severity.${severity}`, FINDING_SEVERITY_LABEL[severity])}
+                      />
+                    )}
+                    {location === null ? null : <Text variant="caption" tone="secondary" value={location} numberOfLines={1} />}
+                  </Row>
+                )}
+                <Text variant="reading" value={finding.body} />
+              </Stack>
+            );
+          })}
           {omittedFinding === undefined || findingsSessionId === undefined ? null : (
             <Button
               titleKey="plugins.triage.surface.detail.agent.seeAll"
@@ -104,7 +146,7 @@ export function TriageAgentStep(props: Readonly<{
       <Stack gap="small" testID="triage-activity-agent">
         <Row gap="small" align="center">
           <Stack style={{ flex: 1, minWidth: 0 }}>
-            <Text variant="label" value={props.sessions[0]?.displayTitle ?? title} />
+            <Text variant="label" value={title} />
           </Stack>
           {whereLabel === undefined ? null : <Text variant="caption" tone="secondary" value={whereLabel} />}
         </Row>

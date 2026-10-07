@@ -2796,11 +2796,12 @@ describe('dynamic resource invalidation is owed to observers, not to the last re
 });
 
 describe('dynamic resource producer callbacks are bounded at the boundary (EU-4b)', () => {
-    it('bounds several stalled global admissions to one initialization window and keeps a healthy resource', async () => {
+    it('bounds several stalled global admissions to one supplied startup window and keeps a healthy resource', async () => {
         vi.useFakeTimers();
         const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
         try {
             const pending = createStablePluginResourcesOwner({
+                startupDeadlineAtMs: Date.now() + 30_000,
                 registry: registry([
                     dynamicContribution('acme.alpha', 'healthy'),
                     ...['stalled-a', 'stalled-b', 'stalled-c', 'stalled-d', 'stalled-e']
@@ -2843,6 +2844,7 @@ describe('dynamic resource producer callbacks are bounded at the boundary (EU-4b
         try {
             let admissionSignal: AbortSignal | undefined;
             const pending = createStablePluginResourcesOwner({
+                startupDeadlineAtMs: Date.now() + 30_000,
                 registry: registry([dynamicContribution('acme.alpha', 'live')]),
                 generations: new Map(),
                 dynamicOccurrenceIdsByPluginId: dynamicGenerationIds(),
@@ -2884,10 +2886,13 @@ describe('dynamic resource producer callbacks are bounded at the boundary (EU-4b
         }
     });
 
-    it('ends a hung global admission within the remaining daemon startup budget', async () => {
+    it('ends a slow global admission at the supplied daemon startup deadline and refuses its late bytes', async () => {
         vi.useFakeTimers();
         const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
         try {
+            let releaseRead!: (bytes: Uint8Array) => void;
+            const read = new Promise<Uint8Array>((resolve) => { releaseRead = resolve; });
+            let admissionSignal: AbortSignal | undefined;
             const pending = createStablePluginResourcesOwner({
                 registry: registry([dynamicContribution('acme.alpha', 'live')]),
                 generations: new Map(),
@@ -2896,15 +2901,27 @@ describe('dynamic resource producer callbacks are bounded at the boundary (EU-4b
                 dynamicProducers: [{
                     pluginId: 'acme.alpha', localId: 'live',
                     runtime: {
-                        read: () => new Promise<Uint8Array>(() => undefined),
+                        read: (options) => {
+                            admissionSignal = options?.signal;
+                            return read;
+                        },
                         observe: () => ({ dispose: () => undefined }),
                     },
                 }],
             });
             let settled = false;
             void pending.then(() => { settled = true; });
-            await vi.advanceTimersByTimeAsync(1_000);
+            await vi.advanceTimersByTimeAsync(999);
+            expect(settled).toBe(false);
+            await vi.advanceTimersByTimeAsync(1);
             expect(settled).toBe(true);
+            expect(admissionSignal?.aborted).toBe(true);
+            const owner = await pending;
+            const service = owner.bind({ pluginId: 'acme.alpha', signal: new AbortController().signal, isOccurrenceCurrent: () => true });
+            releaseRead(new Uint8Array(Buffer.from('late')));
+            await vi.advanceTimersByTimeAsync(0);
+            expect(() => service.describe('live')).toThrowError(expect.objectContaining({ code: 'plugin_resource_admission_unavailable' }));
+            await expect(service.read('live')).rejects.toMatchObject({ code: 'plugin_resource_admission_unavailable' });
         } finally {
             warn.mockRestore();
             vi.useRealTimers();
@@ -2918,6 +2935,7 @@ describe('dynamic resource producer callbacks are bounded at the boundary (EU-4b
             const healthyRead = vi.fn(() => new Uint8Array(Buffer.from('ready')));
             const ids = ['stalled-a', 'stalled-b', 'stalled-c', 'stalled-d', 'healthy'];
             const pending = createStablePluginResourcesOwner({
+                startupDeadlineAtMs: Date.now() + 30_000,
                 registry: registry(ids.map((id) => dynamicContribution('acme.alpha', id))),
                 generations: new Map(),
                 dynamicOccurrenceIdsByPluginId: dynamicGenerationIds(),
@@ -2948,10 +2966,12 @@ describe('dynamic resource producer callbacks are bounded at the boundary (EU-4b
         }
     });
 
-    it('admits a valid global producer after the old five-second cutoff', async () => {
+    it.each([undefined, 45_000])('admits a slow global producer beyond thirty seconds using only a supplied startup deadline (%s)', async (startupBudgetMs) => {
         vi.useFakeTimers();
         try {
+            let admissionSignal: AbortSignal | undefined;
             const pending = createStablePluginResourcesOwner({
+                ...(startupBudgetMs === undefined ? {} : { startupDeadlineAtMs: Date.now() + startupBudgetMs }),
                 registry: registry([dynamicContribution('acme.alpha', 'live')]),
                 generations: new Map(),
                 dynamicOccurrenceIdsByPluginId: dynamicGenerationIds(),
@@ -2959,15 +2979,21 @@ describe('dynamic resource producer callbacks are bounded at the boundary (EU-4b
                     pluginId: 'acme.alpha',
                     localId: 'live',
                     runtime: {
-                        read: async () => {
-                            await new Promise((resolve) => setTimeout(resolve, 10_000));
+                        read: async (options) => {
+                            admissionSignal = options?.signal;
+                            await new Promise((resolve) => setTimeout(resolve, 31_000));
                             return new Uint8Array(Buffer.from('ready'));
                         },
                         observe: () => ({ dispose: () => undefined }),
                     },
                 }],
             });
-            await vi.advanceTimersByTimeAsync(10_000);
+            let settled = false;
+            void pending.then(() => { settled = true; });
+            await vi.advanceTimersByTimeAsync(30_001);
+            expect(settled).toBe(false);
+            expect(admissionSignal?.aborted).toBe(false);
+            await vi.advanceTimersByTimeAsync(999);
             const owner = await pending;
             const service = owner.bind({ pluginId: 'acme.alpha', signal: new AbortController().signal, isOccurrenceCurrent: () => true });
             expect(service.describe('live')).toMatchObject({ digest: digest(Buffer.from('ready')) });

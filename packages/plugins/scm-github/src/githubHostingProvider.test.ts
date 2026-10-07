@@ -69,6 +69,7 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
             id: 'github-account',
             authentication: {
               defaultModeId: 'fine-grained-pat',
+              native: { systemTool: 'gh' },
               modes: [expect.objectContaining({
                 id: 'fine-grained-pat',
                 kind: 'manual',

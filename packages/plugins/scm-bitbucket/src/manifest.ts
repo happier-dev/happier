@@ -8,8 +8,8 @@
  * plugin contributed nothing at all. `contribute` types the required surface roles, so the same
  * omission is now a compile error in this file rather than a silent runtime non-contribution.
  *
- * Every Action's input and result schema is the exact published Triage schema read from the role
- * declaration rather than a local restatement, so a drift between this manifest and the shared
+ * Every Action's input and result schema is published by the Triage protocol, with the
+ * shared account-only input specialization rather than a local restatement, so drift in the shared
  * contract fails conformance instead of admitting a source that speaks a private dialect.
  */
 
@@ -22,6 +22,7 @@ import {
   TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
   TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
   TriageSourcesContributionProtocolV1,
+  TriageSourceConnectedAccountInputsV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import { bitbucketConnectedAccountRuntime } from './auth/connectedAccountRuntime.js';
@@ -235,7 +236,7 @@ export const BITBUCKET_PLUGIN = definePlugin({
       description: 'Reads one bounded page of pull requests for one configured Bitbucket Cloud workspace.',
       surfaces: sources.operations.scan.declaration.surfaces,
       dangerLevel: sources.operations.scan.declaration.dangerLevel,
-      inputSchema: sources.operations.scan.declaration.input.schema.jsonSchema,
+      inputSchema: TriageSourceConnectedAccountInputsV1.scan.jsonSchema,
       resultSchema: sources.operations.scan.declaration.resultSchema.jsonSchema,
       hostAccess: READ_HOST_ACCESS,
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
@@ -251,7 +252,7 @@ export const BITBUCKET_PLUGIN = definePlugin({
       // Action from global placement discovery — it disables no invocation.
       placementBindings: [],
       dangerLevel: sources.operations.get.declaration.dangerLevel,
-      inputSchema: sources.operations.get.declaration.input.schema.jsonSchema,
+      inputSchema: TriageSourceConnectedAccountInputsV1.get.jsonSchema,
       resultSchema: sources.operations.get.declaration.resultSchema.jsonSchema,
       hostAccess: READ_HOST_ACCESS,
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
@@ -262,7 +263,7 @@ export const BITBUCKET_PLUGIN = definePlugin({
       description: 'Reauthorizes and rereads one Bitbucket Cloud pull request before preparing its selected local workspace.',
       surfaces: sources.operations.prepareReviewWorkspace.declaration.surfaces,
       dangerLevel: sources.operations.prepareReviewWorkspace.declaration.dangerLevel,
-      inputSchema: sources.operations.prepareReviewWorkspace.declaration.input.schema.jsonSchema,
+      inputSchema: TriageSourceConnectedAccountInputsV1.prepareReviewWorkspace.jsonSchema,
       resultSchema: sources.operations.prepareReviewWorkspace.declaration.resultSchema.jsonSchema,
       hostAccess: READ_HOST_ACCESS,
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
@@ -273,7 +274,7 @@ export const BITBUCKET_PLUGIN = definePlugin({
       description: 'Rereads one Bitbucket Cloud pull request and verifies the already prepared local workspace before review starts.',
       surfaces: sources.operations.verifyReviewWorkspace.declaration.surfaces,
       dangerLevel: sources.operations.verifyReviewWorkspace.declaration.dangerLevel,
-      inputSchema: sources.operations.verifyReviewWorkspace.declaration.input.schema.jsonSchema,
+      inputSchema: TriageSourceConnectedAccountInputsV1.verifyReviewWorkspace.jsonSchema,
       resultSchema: sources.operations.verifyReviewWorkspace.declaration.resultSchema.jsonSchema,
       hostAccess: READ_HOST_ACCESS,
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,

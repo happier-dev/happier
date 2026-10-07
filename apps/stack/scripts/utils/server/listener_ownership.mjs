@@ -2,7 +2,9 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { listListenPids, listListenPidsWithStatus } from '../net/ports.mjs';
 import { getProcessGroupId, isPidOwnedByStack, resolvePidStackOwnership } from '../proc/ownership.mjs';
 
-const DEFAULT_LISTENER_DISCOVERY_ATTEMPT_TIMEOUT_MS = 1000;
+// Stack tooling observations share the existing info/diagnostic budget;
+// enclosing operations supply their remaining time instead of a private cutoff.
+export const STACK_LISTENER_OBSERVATION_TIMEOUT_MS = 5_000;
 
 function inconclusiveListenerError(observation) {
   const error = new Error(`listener discovery is inconclusive: ${observation?.reason ?? observation?.status ?? 'error'}`);
@@ -36,9 +38,9 @@ function createObservationImpl({ listListenPidsImpl, listListenPidsWithStatusImp
 }
 
 export function createListenerOwnershipObservationScope({
-  totalTimeoutMs = 750,
+  totalTimeoutMs = STACK_LISTENER_OBSERVATION_TIMEOUT_MS,
   // The scope deadline remains authoritative; this only avoids repeatedly aborting a loaded lsof at 250ms.
-  attemptTimeoutMs = DEFAULT_LISTENER_DISCOVERY_ATTEMPT_TIMEOUT_MS,
+  attemptTimeoutMs = STACK_LISTENER_OBSERVATION_TIMEOUT_MS,
   processGroupAttemptTimeoutMs = Number.POSITIVE_INFINITY,
   retryDelayMs = 25,
   retryInconclusive = true,
@@ -284,7 +286,7 @@ export async function resolveSpawnedProcessGroupListenPid(
     listListenPidsWithStatusImpl = listListenPidsWithStatus,
     getProcessGroupIdImpl = getProcessGroupId,
     observationScope,
-    listenerOwnershipTimeoutMs = 3_000,
+    listenerOwnershipTimeoutMs = STACK_LISTENER_OBSERVATION_TIMEOUT_MS,
     listenerOwnershipRetryDelayMs = 25,
   } = {},
 ) {
@@ -309,7 +311,7 @@ export async function resolveSpawnedProcessGroupListenPid(
   if (spawnedGroupListenerPid) return spawnedGroupListenerPid;
 
   let rootPgid = await getProcessGroupIdImpl(spawnedPid, {
-    timeoutMs: Math.max(1, Math.min(250, Math.floor(scope.remainingMs() / 2))),
+    timeoutMs: Math.max(1, scope.remainingMs()),
   }).catch(() => null);
   if (rootPgid) {
     const processGroupListenerPid = await observeProcessGroup(rootPgid);
@@ -358,8 +360,8 @@ export async function resolveStackOwnedListenPid(
     listListenPidsImpl,
     listListenPidsWithStatusImpl = listListenPidsWithStatus,
     observationScope,
-    listenerTotalTimeoutMs = 750,
-    listenerAttemptTimeoutMs = DEFAULT_LISTENER_DISCOVERY_ATTEMPT_TIMEOUT_MS,
+    listenerTotalTimeoutMs = STACK_LISTENER_OBSERVATION_TIMEOUT_MS,
+    listenerAttemptTimeoutMs = STACK_LISTENER_OBSERVATION_TIMEOUT_MS,
     listenerRetryDelayMs = 25,
     isPidOwnedByStackImpl = isPidOwnedByStack,
     getProcessGroupIdImpl = getProcessGroupId,

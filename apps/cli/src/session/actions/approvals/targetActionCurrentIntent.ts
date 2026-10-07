@@ -1,8 +1,8 @@
 import { PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
-import { TargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
+import { TargetActionApprovalRequestV1Schema, StoredTargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import type { PluginLocalizedStringV2, TargetActionApprovalRequestV1 } from '@happier-dev/protocol';
 import type { TargetActionCurrentIntentRequest, TargetActionCurrentIntentResult } from '@/plugins/runtime/invocation/actionExecutor';
-import { getSharedBlockingApprovalCoordinator } from './blockingApprovalCoordinator';
+import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 import { targetActionApprovalSubjectsEqual } from './targetActionApprovalSubject';
 
 function resolveLocalizedConfirmationText(value: PluginLocalizedStringV2): string {
@@ -117,7 +117,7 @@ export function createTargetActionCurrentIntentAdapter(deps: Readonly<{
         subscribeChanges: (onChange, onError) => subscribeChanges(artifactId, onChange, onError),
       } : {}),
     });
-    const decidedRequest = TargetActionApprovalRequestV1Schema.safeParse(result.request);
+    const decidedRequest = StoredTargetActionApprovalRequestV1Schema.safeParse(result.request);
     if (!decidedRequest.success
       || decidedRequest.data.subjectFingerprint !== fingerprint
       || !targetActionApprovalSubjectsEqual(request, decidedRequest.data)) {

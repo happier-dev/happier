@@ -8,12 +8,15 @@ import { fileURLToPath } from 'node:url';
 import { hstackBinPath, runNodeCapture } from './testkit/auth_testkit.mjs';
 import { buildStackFixtureEnv } from './testkit/core/env_scope.mjs';
 import { createHappierCliMonorepoFixture } from './testkit/happier_cli_monorepo_testkit.mjs';
+import { buildStubHappierServerSetSource } from './testkit/core/stub_happier_cli_server_set.mjs';
 import { buildStackStableScopeId } from './utils/auth/stable_scope_id.mjs';
 
 async function createMonorepoFixture(t, { prefix, distIndexScript }) {
   return createHappierCliMonorepoFixture(t, {
     prefix,
     distIndexScript: distIndexScript ?? [
+      "const args = process.argv.slice(2);",
+      buildStubHappierServerSetSource(),
       "// Parse --server-url from argv",
       "let serverUrlFromArg = null;",
       "for (let i = 0; i < process.argv.length; i++) {",
@@ -47,34 +50,25 @@ test('stack-scoped invocations initialize a canonical profile and use loopback o
   const fixture = await createMonorepoFixture(t, {
     prefix: 'hstack-happier-canonical-profile-',
     distIndexScript: [
-      "import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';",
+      "import { readFileSync } from 'node:fs';",
       "import { join } from 'node:path';",
       "const args = process.argv.slice(2);",
-      "const flag = (name) => args[args.indexOf(name) + 1];",
       "const settingsPath = join(process.env.HAPPIER_HOME_DIR, 'settings.json');",
-      "if (args[0] === 'server' && args[1] === 'set') {",
-      "  const id = flag('--server-id');",
-      "  mkdirSync(process.env.HAPPIER_HOME_DIR, { recursive: true });",
-      "  writeFileSync(settingsPath, JSON.stringify({ schemaVersion: 6, activeServerId: id, servers: {",
-      "    [id]: { id, serverUrl: flag('--server-url'), localServerUrl: flag('--local-server-url'), webappUrl: flag('--webapp-url') }",
-      "  } }));",
-      "} else {",
-      "  console.log(JSON.stringify({ serverUrl: process.env.HAPPIER_SERVER_URL,",
-      "    publicServerUrl: process.env.HAPPIER_PUBLIC_SERVER_URL, localServerUrl: process.env.HAPPIER_LOCAL_SERVER_URL,",
-      "    activeServerId: process.env.HAPPIER_ACTIVE_SERVER_ID,",
-      "    settings: JSON.parse(readFileSync(settingsPath, 'utf8')) }));",
-      "}",
+      buildStubHappierServerSetSource(),
+      "console.log(JSON.stringify({ serverUrl: process.env.HAPPIER_SERVER_URL,",
+      "  publicServerUrl: process.env.HAPPIER_PUBLIC_SERVER_URL, localServerUrl: process.env.HAPPIER_LOCAL_SERVER_URL,",
+      "  activeServerId: process.env.HAPPIER_ACTIVE_SERVER_ID,",
+      "  settings: JSON.parse(readFileSync(settingsPath, 'utf8')) }));",
     ].join('\n'),
   });
   const storageDir = join(fixture.dir, 'storage');
   const stackDir = join(storageDir, 'test-stack');
   const port = await reserveUnusedPort();
   await mkdir(stackDir, { recursive: true });
-  await writeFile(join(stackDir, 'env'), '', 'utf8');
+  await writeFile(join(stackDir, 'env'), `HAPPIER_STACK_SERVER_PORT=${port}\n`, 'utf8');
   const env = createHappierCommandEnv({ fixtureDir: fixture.dir, storageDir });
   env.HAPPIER_STACK_ENV_FILE = join(stackDir, 'env');
   env.HAPPIER_STACK_SERVER_PORT = String(port);
-  env.HAPPIER_PUBLIC_SERVER_URL = `http://happier-test-stack.localhost:${port}`;
   const res = await runNodeCapture([hstackBinPath(rootDir), 'happier', 'server', 'current', '--json'], { cwd: rootDir, env });
   assert.equal(res.code, 0, `stderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
   const parsed = JSON.parse(res.stdout.trim());
@@ -90,7 +84,14 @@ test('stack-scoped invocations initialize a canonical profile and use loopback o
 
 test('a fresh stack CLI home fails closed when the CLI does not persist its profile', async (t) => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
-  const fixture = await createMonorepoFixture(t, { prefix: 'hstack-happier-missing-profile-' });
+  const fixture = await createMonorepoFixture(t, {
+    prefix: 'hstack-happier-missing-profile-',
+    distIndexScript: [
+      'const args = process.argv.slice(2);',
+      buildStubHappierServerSetSource({ ignoreServerSet: true }),
+      'console.log("requested-command-launched");',
+    ].join('\n'),
+  });
   const storageDir = join(fixture.dir, 'storage');
   const stackDir = join(storageDir, 'test-stack');
   await mkdir(stackDir, { recursive: true });
@@ -132,11 +133,14 @@ function createHappierCommandEnv({
   extraEnv = {},
 }) {
   const env = buildStackFixtureEnv({
+    homeDir: join(fixtureDir, 'stack-home'),
     storageDir,
     stackName,
     stripStackEnv: true,
     extraEnv: {
       HAPPIER_STACK_REPO_DIR: fixtureDir,
+      HAPPIER_STACK_CANONICAL_HOME_DIR: join(fixtureDir, 'canonical-home'),
+      HAPPIER_STACK_SYNC_BUNDLED_WORKSPACES: '0',
       ...extraEnv,
     },
   });

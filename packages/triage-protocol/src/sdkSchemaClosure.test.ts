@@ -198,6 +198,7 @@ async function installIsolatedConsumer(
         }, null, 2)}\n`, 'utf8'),
         writeFile(join(consumerRoot, 'src', 'consumer.ts'), `
 import type { QualifiedConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
+import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
 import type {
     TriageEntryRefV1,
     TriageSourceAccountBindingV1,
@@ -229,10 +230,14 @@ declare const observation: TriageSourceObservationV1;
 // a copy that drops, renames, or widens a field still compiles at the schema
 // binding (the composable schema is covariant in its parsed type) and would
 // silently publish a different public contract.
-declare const boundAccount: TriageSourceAccountBindingV1['account'];
+declare const boundAccount: Extract<TriageSourceAccountBindingV1, { account: unknown }>['account'];
 declare const canonicalAccount: QualifiedConnectedAccountRef;
 export const emittedAccountIsCanonical: QualifiedConnectedAccountRef = boundAccount;
-export const canonicalIsEmittedAccount: TriageSourceAccountBindingV1['account'] = canonicalAccount;
+export const canonicalIsEmittedAccount: Extract<TriageSourceAccountBindingV1, { account: unknown }>['account'] = canonicalAccount;
+declare const nativeService: Extract<TriageSourceAccountBindingV1, { source: 'native' }>['service'];
+declare const canonicalService: PluginContributionIdentity;
+export const emittedNativeServiceIsCanonical: PluginContributionIdentity = nativeService;
+export const canonicalIsEmittedNativeService: Extract<TriageSourceAccountBindingV1, { source: 'native' }>['service'] = canonicalService;
 
 export type TriageProtocolExternalConsumerProof = readonly [
     typeof entryRef.source.pluginId,

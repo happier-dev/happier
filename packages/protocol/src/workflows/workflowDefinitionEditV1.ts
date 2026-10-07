@@ -4,7 +4,7 @@ import { WorkflowArtifactRevisionV1Schema, WorkflowDefinitionMetadataV1Schema } 
 import { WorkflowDefinitionIdV1Schema } from './workflowIdsV1.js';
 import {
   WorkflowBlockSchema, WorkflowDefinitionV1Schema, WorkflowInputDefinitionSchema, WorkflowStepExecutionSelectionSchema,
-  WorkflowStepSchema, WorkflowActionLeafV1Schema, WorkflowInsertBlockV1Schema,
+  WorkflowStepSchema, WorkflowActionLeafV1Schema, WorkflowInsertBlockV1Schema, WorkflowBlockNameV1Schema,
 } from './workflowV1.js';
 import type { WorkflowCondition, WorkflowAuthoredProducerRef, WorkflowValueReference } from './workflowReferenceV1.js';
 import type { WorkflowActionLeafV1 } from './workflowLeafV1.js';
@@ -267,6 +267,18 @@ export function updateWorkflowBlock<TDraft extends WorkflowDefinitionDraftV1>(
 
   const blocks = rewriteList(draft.blocks);
   return changed || blocks !== draft.blocks ? { ...draft, blocks } : draft;
+}
+
+/** The editor and edit Action share the same authored-name mutation. */
+export function setWorkflowBlockName<TDraft extends WorkflowDefinitionDraftV1>(
+  draft: TDraft, blockId: string, name: string | undefined,
+): TDraft {
+  const normalized = WorkflowBlockNameV1Schema.parse(name);
+  return updateWorkflowBlock(draft, blockId, (block) => {
+    if (block.name === normalized) return block;
+    const { name: _name, ...unnamed } = block;
+    return normalized === undefined ? unnamed : { ...unnamed, name: normalized };
+  });
 }
 
 /**
@@ -955,6 +967,7 @@ export const WorkflowDefinitionEditOpV1Schema = z.union([
   z.object({ kind: z.literal('remove_block'), blockId: WorkflowBlockIdSchema }).strict(),
   z.object({ kind: z.literal('move_block'), blockId: WorkflowBlockIdSchema, direction: z.enum(['up', 'down', 'in', 'out']) }).strict(),
   z.object({ kind: z.literal('set_step_prompt'), blockId: WorkflowBlockIdSchema, text: z.string() }).strict(),
+  z.object({ kind: z.literal('set_block_name'), blockId: WorkflowBlockIdSchema, name: WorkflowBlockNameV1Schema }).strict(),
   selectionEditSchema('set_step_setting'),
   z.object({ kind: z.literal('set_step_setting'), blockId: WorkflowBlockIdSchema, field: z.literal('timeoutMs'), value: WorkflowStepSchema.shape.timeoutMs }).strict(),
   selectionEditSchema('set_default'),
@@ -1023,6 +1036,10 @@ export function applyWorkflowDefinitionEditsV1<TDraft extends WorkflowDefinition
       case 'set_step_prompt':
         if (target?.kind !== 'step') return fail('invalid_target');
         next = setWorkflowStepText(next, op.blockId, op.text);
+        if (next !== before) changed.add(op.blockId);
+        break;
+      case 'set_block_name':
+        next = setWorkflowBlockName(next, op.blockId, op.name);
         if (next !== before) changed.add(op.blockId);
         break;
       case 'set_step_setting':

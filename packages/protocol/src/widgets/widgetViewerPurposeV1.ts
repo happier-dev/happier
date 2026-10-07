@@ -5,11 +5,11 @@ import type { QualifiedConnectedAccountPurposeBindingsV1 } from '../connect/conn
 import { resolveConnectedAccountPurposeSelectedAccountV1 } from '../connect/connectedAccountPurposeSelectionV1.js';
 import type { PluginConnectedAccountAuthenticationV2 } from '../connect/pluginConnectedAccountAuthenticationV2.js';
 import type { PluginContributionIdentityV1 } from '../plugins/contributionIdentity.js';
-import type { QualifiedConnectedAccountRef } from '../connect/qualifiedConnectedAccountPersistence.js';
+import { QualifiedConnectedAccountRefSchema, sameQualifiedConnectedAccountRef, type QualifiedConnectedAccountRef } from '../connect/qualifiedConnectedAccountPersistence.js';
 import { isQualifiedConnectedAccountProfileActiveV4 } from '../connect/qualifiedConnectedAccountsV4.js';
-import type { InputOption } from '../inputs/inputFields.js';
+import type { InputFieldHint, InputOption } from '../inputs/inputFields.js';
 import { WidgetConnectedAccountPurposeBindingV1Schema, type WidgetInputDescriptorV1 } from './widgetInputAdmissionV1.js';
-import type { WidgetInputIssueV1, WidgetInstanceV1 } from './widgetInstanceV1.js';
+import type { WidgetInputBindingV1, WidgetInputIssueV1, WidgetInstanceV1, WidgetSurfaceRefV1 } from './widgetInstanceV1.js';
 
 export type WidgetViewerPurposeResolutionV1 = Readonly<{
     values: Readonly<Record<string, QualifiedConnectedAccountRef>>;
@@ -17,6 +17,29 @@ export type WidgetViewerPurposeResolutionV1 = Readonly<{
 }>;
 
 type PurposeDescriptor = WidgetInputDescriptorV1 & Readonly<{ resources?: readonly PluginContributionIdentityV1[] }>;
+
+/** Supplied selections must match the current viewer purpose or an active personal connection. */
+export function isWidgetConnectedAccountSelectionEligibleV1(input: Readonly<{
+    field: InputFieldHint;
+    binding: WidgetInputBindingV1 | undefined;
+    surface: WidgetSurfaceRefV1;
+    selection: QualifiedConnectedAccountRef;
+    viewerValues: WidgetViewerPurposeResolutionV1['values'];
+    profile: AccountProfile | null;
+    now: number;
+}>): boolean {
+    if (input.binding?.kind === 'viewer') {
+        const selected = input.viewerValues[input.field.path];
+        return selected !== undefined && sameQualifiedConnectedAccountRef(selected, input.selection);
+    }
+    if (!input.field.connectedAccountOptions || input.surface.owner.kind === 'sessionBoard') return false;
+    if (input.binding?.kind === 'value') {
+        const pinned = QualifiedConnectedAccountRefSchema.safeParse(input.binding.value);
+        if (!pinned.success || !sameQualifiedConnectedAccountRef(pinned.data, input.selection)) return false;
+    }
+    return input.profile?.connectedAccountsV4.some(account => sameQualifiedConnectedAccountRef(account.ref, input.selection)
+        && isQualifiedConnectedAccountProfileActiveV4(account, input.now)) === true;
+}
 
 /** The declared read Resource is the authority for both defaults and pin choices. */
 export function readWidgetConnectedAccountPurposeV1(input: Readonly<{ descriptor: PurposeDescriptor; resources: readonly PluginProjectedResourceV2[];

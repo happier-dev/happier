@@ -26,7 +26,7 @@ import {
   type RpcRequestDisposition,
   type SocketRpcContent,
 } from '@happier-dev/sync-client';
-import { withUserScopedRpcSocket } from './withUserScopedRpcSocket';
+import { readRpcObservation, withUserScopedRpcSocket, type RpcObservationOptions } from './withUserScopedRpcSocket';
 
 export type MachineRpcRequestDisposition = RpcRequestDisposition;
 export const readMachineRpcRequestDisposition = readRpcRequestDisposition;
@@ -148,6 +148,7 @@ async function resolveMachineRpcContentCodec(params: Readonly<{
 /** One exact account-scoped machine RPC; retry and target selection stay caller-owned. */
 export async function callExactMachineRpc(params: Readonly<{
   credentials: StoredCredentials;
+  authorityCeiling?: 'account_automation';
   machineId: string;
   serverUrl?: string;
   method: string;
@@ -164,7 +165,7 @@ export async function callExactMachineRpc(params: Readonly<{
   /** Null delegates acknowledgement lifetime to the caller signal/server lifecycle. */
   timeoutMs?: number | null;
   /** Only read-only observations may be repeated after transport reconnect. */
-  reattachOnReconnect?: true;
+  reattachOnReconnect?: true | RpcObservationOptions;
   signal?: AbortSignal;
   externalAction?: Readonly<{
     context: ActionExecutorContext;
@@ -184,6 +185,7 @@ export async function callExactMachineRpc(params: Readonly<{
       ? setupTimeoutMs : resolveSessionControlSocketConnectTimeoutMs();
     return await withUserScopedRpcSocket({
       token: params.credentials.token,
+      ...(params.authorityCeiling ? { authorityCeiling: params.authorityCeiling } : {}),
       ...(params.serverUrl ? { serverUrl: params.serverUrl } : {}),
       connectTimeoutMs,
       signal: params.signal,
@@ -225,18 +227,20 @@ export async function callExactMachineRpc(params: Readonly<{
           if (!execution) throw new Error('External Action Machine RPC authorization is unavailable');
           return execution;
         } : undefined;
-      return callSocketRpc({
+      return await readRpcObservation({ request: params.request, signal: attemptSignal,
+        observation: params.reattachOnReconnect === true ? undefined : params.reattachOnReconnect,
+        read: request => callSocketRpc({
         socket,
         target: { kind: 'machine', id: machineId },
         method: params.method,
-        params: params.request,
+        params: request,
         content,
         requestId: randomUUID(),
         timeoutMs,
         signal: attemptSignal,
         authorization: params.authorization,
         ...(createExternalActionExecution ? { createExternalActionExecution } : {}),
-      });
+      }) });
     });
   } catch (error) {
     if (isSocketIoAckTimeoutError(error)) {
@@ -294,6 +298,7 @@ async function resolveSuccessorMachineId(params: Readonly<{
  */
 export async function callMachineRpc(params: Readonly<{
   credentials: StoredCredentials;
+  authorityCeiling?: 'account_automation';
   machineId: string;
   method: string;
   request: unknown;

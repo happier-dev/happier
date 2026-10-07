@@ -103,9 +103,10 @@ function harness(fixtures: Fixtures = {}) {
     executionRunStart: async (sessionId, request) => {
       if (request.intent === 'review' && fixtures.reviewLaunchFailure && !reviewLaunchRejected) {
         reviewLaunchRejected = true;
-        throw Object.assign(new Error('native_review_launch_failed'), {
-          code: 'native_review_launch_failed', details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated'),
-        });
+        // The native start boundary returns a typed pre-creation refusal;
+        // arbitrary thrown error codes are intentionally normalized upstream.
+        return { ok: false, code: 'execution_run_target_unavailable',
+          details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated') };
       }
       const runId = `native-${nativeRuns.size}`;
       launches.push({ sessionId, request });
@@ -324,8 +325,8 @@ describe('built-ins through accepted materialization and native leaf adapters', 
     const h = harness({ checks: [{ verdict: 'continue' }], reviewLaunchFailure: true });
     expect(await h.run(builtin('review-and-converge'), { engines: [engine, otherEngine], maxRounds: 1 }))
       .toMatchObject({ state: 'succeeded', finalOutput: { kind: 'exhausted', rounds: 1 } });
-    expect(h.store.list().some((row) => row.blockKind === 'action' && row.lifecycle === 'failed'
-      && row.reason === 'native_review_launch_failed')).toBe(true);
+    expect(h.store.list().map(({ blockKind, lifecycle, reason }) => ({ blockKind, lifecycle, reason })))
+      .toContainEqual({ blockKind: 'action', lifecycle: 'failed', reason: 'execution_run_target_unavailable' });
     expect(h.launches.filter(({ request }) => request.intent === 'review')).toHaveLength(1);
     expect(h.notifications).toHaveLength(1);
   });

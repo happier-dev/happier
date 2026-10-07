@@ -88,22 +88,23 @@ function requestFor(
 ): BoundedContributionRequest {
     const invocation = {
         signal,
-        deadlineAtMs: Number.MAX_SAFE_INTEGER,
-        maxSerializedBytes: Number.MAX_SAFE_INTEGER,
+        deadlineAtMs: Date.now() + 60_000,
+        maxSerializedBytes: method === 'listCandidates' ? 1_048_576
+            : method === 'pageTranscript' || method === 'readAfterTranscript' ? 524_288 : 262_144,
     };
     switch (method) {
         case 'resolveSource':
             return { ...invocation, source };
         case 'listCandidates':
-            return { ...invocation, source, cursor: undefined, maxItems: 9_999, searchTerm: 'needle', searchMode: 'fast' as const };
+            return { ...invocation, source, cursor: undefined, maxItems: 50, searchTerm: 'needle', searchMode: 'fast' as const };
         case 'resolveLinkIdentity':
             return { ...invocation, source, remoteSessionId: 'remote-1', linkData: { key: 'value' } };
         case 'resolveLinkedIdentity':
             return { ...invocation, source, remoteSessionId: 'remote-1', linkData: { key: 'value' } };
         case 'pageTranscript':
-            return { ...invocation, source, remoteSessionId: 'remote-1', direction: 'older' as const, maxItems: 9_999 };
+            return { ...invocation, source, remoteSessionId: 'remote-1', direction: 'older' as const, maxItems: 200 };
         case 'readAfterTranscript':
-            return { ...invocation, source, remoteSessionId: 'remote-1', cursor: 'leaf-cursor', maxItems: 9_999 };
+            return { ...invocation, source, remoteSessionId: 'remote-1', cursor: 'leaf-cursor', maxItems: 200 };
     }
 }
 
@@ -195,6 +196,55 @@ function createWrapper(params?: Readonly<{
 }
 
 describe('bounded Agent External Sessions invocation', () => {
+    it('preserves a caller deadline beyond the native timer range and cancels its rearmed timer', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        try {
+            const pending = deferred<AgentExternalSessionsResult<unknown>>();
+            const wrapped = createWrapper({ contribution: contributionWith(() => pending.promise) });
+            const result = wrapped.resolveSource({ ...requestFor('resolveSource'), deadlineAtMs: Date.now() + 2_147_483_647 + 2_000 });
+            await vi.advanceTimersByTimeAsync(2_147_483_647 + 1_000);
+            pending.resolve(successFor('resolveSource'));
+            await expect(result).resolves.toEqual(successFor('resolveSource'));
+            expect(vi.getTimerCount()).toBe(0);
+
+            const caller = new AbortController();
+            const cancelled = wrapped.resolveSource({ ...requestFor('resolveSource', caller.signal), deadlineAtMs: Date.now() + 2_147_483_647 + 2_000 });
+            caller.abort();
+            await expect(cancelled).resolves.toMatchObject({ ok: false, code: 'cancelled' });
+            expect(vi.getTimerCount()).toBe(0);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('lets a valid contribution settle beyond fifteen seconds within its caller deadline', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        try {
+            const pending = deferred<AgentExternalSessionsResult<unknown>>();
+            const wrapped = createWrapper({ contribution: contributionWith(() => pending.promise) });
+            const result = wrapped.resolveSource({ ...requestFor('resolveSource'), deadlineAtMs: 61_000 });
+            await vi.advanceTimersByTimeAsync(46_000);
+            pending.resolve(successFor('resolveSource'));
+            await expect(result).resolves.toEqual(successFor('resolveSource'));
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('preserves an explicitly requested candidate page above the old fifty-item cap', async () => {
+        const candidates = Array.from({ length: 75 }, (_, index) => ({ remoteSessionId: `remote-${index}`, updatedAtMs: index }));
+        const wrapped = createWrapper({ contribution: contributionWith(() => ({ ok: true, value: { candidates, nextCursor: null } })) });
+        await expect(wrapped.listCandidates({ ...requestFor('listCandidates'), maxItems: 75, maxSerializedBytes: 2_097_152 })).resolves.toMatchObject({ ok: true, value: { candidates } });
+    });
+
+    it('admits valid transcript content above the old host cap within the caller byte budget', async () => {
+        const items = [{ id: 'large-message', createdAtMs: 1, raw: { role: 'user' as const, content: { type: 'text' as const, text: 'x'.repeat(600_000) } } }];
+        const wrapped = createWrapper({ contribution: contributionWith(() => ({ ok: true, value: { items, nextCursor: null } })) });
+        await expect(wrapped.pageTranscript({ ...requestFor('pageTranscript'), maxSerializedBytes: 1_048_576 })).resolves.toMatchObject({ ok: true, value: { items } });
+    });
+
     it('runs packaged ripgrep on the source file set and cancels it with the invocation', async () => {
         const started = deferred<AbortSignal>();
         const run = vi.spyOn(packagedRipgrep, 'run').mockImplementation(async (_args, options) => {
@@ -252,8 +302,8 @@ describe('bounded Agent External Sessions invocation', () => {
         const hostRequest = {
             source,
             signal,
-            deadlineAtMs: Number.MAX_SAFE_INTEGER,
-            maxSerializedBytes: Number.MAX_SAFE_INTEGER,
+            deadlineAtMs: Date.now() + 60_000,
+            maxSerializedBytes: 1_048_576,
         } satisfies Parameters<typeof wrapped.resolveSource>[0];
         // An untyped host caller could still append this property at runtime;
         // the wrapper must stamp its generation-owned authority over it.
@@ -567,7 +617,7 @@ describe('bounded Agent External Sessions invocation', () => {
         ['resolveLinkedIdentity', 262_144, undefined],
         ['pageTranscript', 524_288, 200],
         ['readAfterTranscript', 524_288, 200],
-    ] as const)('applies the sole host policy to %s', async (method, maxSerializedBytes, maxItems) => {
+    ] as const)('preserves the caller operation budget for %s', async (method, maxSerializedBytes, maxItems) => {
         vi.useFakeTimers();
         vi.setSystemTime(1_000);
         const observed = vi.fn();
@@ -586,7 +636,7 @@ describe('bounded Agent External Sessions invocation', () => {
         expect(observed).toHaveBeenCalledOnce();
         expect(observed.mock.calls[0]?.[0]).toBe(method);
         expect(observed.mock.calls[0]?.[1]).toMatchObject({
-            deadlineAtMs: 16_000,
+            deadlineAtMs: 61_000,
             maxSerializedBytes,
             ...(maxItems === undefined ? {} : { maxItems }),
         });
@@ -704,8 +754,8 @@ describe('bounded Agent External Sessions invocation', () => {
         const remove = vi.spyOn(caller.signal, 'removeEventListener');
         const wrapped = createWrapper({ contribution: contributionWith(() => pending.promise) });
 
-        const resultPromise = wrapped.resolveSource(requestFor('resolveSource', caller.signal));
-        await vi.advanceTimersByTimeAsync(EXTERNAL_SESSIONS_INVOCATION_POLICY.deadlineMs);
+        const resultPromise = wrapped.resolveSource({ ...requestFor('resolveSource', caller.signal), deadlineAtMs: Date.now() + 60_000 });
+        await vi.advanceTimersByTimeAsync(60_000);
         await expect(resultPromise).resolves.toEqual({
             ok: false,
             code: 'timeout',
@@ -782,7 +832,7 @@ describe('bounded Agent External Sessions invocation', () => {
         });
         expect(called).toHaveBeenCalledOnce();
         pending.resolve(successFor('resolveSource'));
-        await vi.advanceTimersByTimeAsync(EXTERNAL_SESSIONS_INVOCATION_POLICY.deadlineMs);
+        await vi.advanceTimersByTimeAsync(60_000);
         vi.useRealTimers();
     });
 

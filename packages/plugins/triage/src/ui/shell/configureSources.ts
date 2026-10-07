@@ -32,6 +32,8 @@ export type TriageConfigureSourceOfferV1 = Readonly<{
   destination: Readonly<{ pluginId: string; localId: string }>;
   /** The source's own name for itself, as its descriptor states it. */
   displayName: string;
+  /** What the source brings, in its own words: each declared kind's plural name ("Pull requests", "Issues"). */
+  kindNames: readonly string[];
 }>;
 
 const NONE: readonly TriageConfigureSourceOfferV1[] = Object.freeze([]);
@@ -68,6 +70,7 @@ export function planTriageConfigureSourceOffersV1(
         localId: settingsPageId,
       }),
       displayName: admitted.descriptor.displayName,
+      kindNames: Object.freeze(admitted.descriptor.kinds.map((kind) => kind.pluralDisplayName ?? kind.displayName)),
     }));
   }
   return Object.freeze(offers);

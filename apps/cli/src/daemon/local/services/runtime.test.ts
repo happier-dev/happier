@@ -10,6 +10,7 @@ import {
     unregisterLocalServicePreview,
 } from './preview/registry';
 import type { NormalizedLocalServiceInventorySnapshot } from './inventory/scanner';
+import { createLocalServiceEndpointEnricher } from './inventory/endpoint';
 import { LocalServicePreviewResourceV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
 
 function previewServerBoundary() {
@@ -527,21 +528,11 @@ describe('createLocalServicesDaemonRuntime', () => {
                     return { title: 'Local Vite App', source: 'html_title' };
                 },
             },
-            endpointEnricher: {
-                enrich: async (snapshot) => ({
-                    ...snapshot,
-                    entries: snapshot.entries.map((entry) => ({
-                        ...entry,
-                        endpoint: {
-                            scheme: 'http' as const,
-                            host: '127.0.0.1',
-                            port: entry.port,
-                            probeState: 'ready' as const,
-                            probedAt: 2_000,
-                        },
-                    })),
-                }),
-            },
+            endpointEnricher: createLocalServiceEndpointEnricher({
+                now: () => 2_000, timeoutMs: 250, concurrency: 1,
+                successTtlMs: 30_000, failureTtlMs: 5_000,
+                probe: async ({ scheme }) => scheme === 'http',
+            }),
             now: () => 2_000,
             startLoop: false,
         });

@@ -9,6 +9,49 @@ import { withPatchedProcessEnv } from './testkit/core/env_scope.mjs';
 import { spawnDetachedInlineNodeTestProcess } from './testkit/core/spawn_test_process.mjs';
 import { readStackInfoSnapshot, resolveStackComponentRuntime } from './stack/stack_info_snapshot.mjs';
 import { createRuntimeSnapshotFixture } from './testkit/runtime_snapshot_testkit.mjs';
+import { resolvePreferredStackDaemonStatePaths } from './utils/auth/credentials_paths.mjs';
+import { applyStackDaemonLifecycleScopeEnv } from './utils/auth/stable_scope_id.mjs';
+
+test('stack info shares daemon transport observation within a snapshot and refreshes the next snapshot', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-info-daemon-observation-'));
+  t.after(() => rm(tmp, { recursive: true, force: true }));
+  const stackName = 'daemon-observation';
+  const baseDir = join(tmp, stackName);
+  await mkdir(baseDir);
+  await writeFile(join(baseDir, 'env'), 'HAPPIER_STACK_DAEMON=0\nHAPPIER_STACK_SERVE_UI=0\n');
+  await writeFile(join(baseDir, 'stack.runtime.json'), JSON.stringify({ stackName, processes: {} }));
+  withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: tmp });
+  const cliHomeDir = join(baseDir, 'cli');
+  const child = await spawnStackOwnedRuntimeProcess(t, { stackName, envPath: join(baseDir, 'env'), cliHomeDir });
+  let requests = 0;
+  let reachable = true;
+  // Genuine daemon HTTP boundary: use real state selection, PID ownership,
+  // reconciliation and presentation rather than replacing their domain owner.
+  const server = http.createServer((req, res) => {
+    assert.equal(req.url, '/ping');
+    assert.equal(req.headers['x-happier-daemon-token'], 'fixture-token');
+    requests++;
+    res.writeHead(reachable ? 200 : 503, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ok: reachable }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const env = applyStackDaemonLifecycleScopeEnv({ env: process.env, stackName, cliIdentity: 'default' });
+  const { statePath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir, env });
+  await mkdir(join(statePath, '..'), { recursive: true });
+  const writeState = pid => writeFile(statePath, JSON.stringify({ pid, httpPort: server.address().port, controlToken: 'fixture-token' }));
+  await writeState(child.pid);
+  const first = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName });
+  assert.equal(first.runtime.components.daemon.status, 'running');
+  assert.equal(requests, 1, 'one snapshot must not repeat the daemon transport probe');
+  reachable = false;
+  const second = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName });
+  assert.equal(second.runtime.components.daemon.status, 'unreachable');
+  assert.equal(requests, 2, 'the next snapshot must obtain fresh daemon evidence');
+  await writeState(process.pid);
+  await readStackInfoSnapshot({ rootDir: process.cwd(), stackName });
+  assert.equal(requests, 2, 'foreign daemon state must not receive a control token or be sampled before ownership proof');
+});
 
 test('status does not project a server endpoint when listener ownership discovery is inconclusive', async () => {
   const result = await resolveStackComponentRuntime({
@@ -726,7 +769,7 @@ test('readStackInfoSnapshot projects the owned runtime port when a foreign pinne
   });
   await writeFile(
     envPath,
-    `HAPPIER_STACK_SERVER_PORT=${foreignListener.port}\nHAPPIER_STACK_DAEMON=0\n`,
+    `HAPPIER_STACK_STACK=${stackName}\nHAPPIER_STACK_SERVER_PORT=${foreignListener.port}\nHAPPIER_STACK_DAEMON=0\n`,
     'utf-8',
   );
   await writeFile(
@@ -741,9 +784,17 @@ test('readStackInfoSnapshot projects the owned runtime port when a foreign pinne
     'utf-8',
   );
 
-  const restore = withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: storageDir });
+  const restore = withPatchedProcessEnv(t, {
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_ENV_FILE: join(storageDir, 'foreign-stack', 'env'),
+  });
   try {
-    const out = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName });
+    const out = await readStackInfoSnapshot({
+      rootDir: process.cwd(), stackName,
+      // A later bounded diagnostic can be inconclusive without invalidating the
+      // canonical endpoint owner's independent proof of the real owned listener.
+      listListenPidsWithStatusImpl: async () => ({ status: 'timeout', supported: true, pids: [] }),
+    });
     assert.equal(out.runtime.components.server.running, true);
     assert.equal(out.urls.internalServerUrl, `http://127.0.0.1:${runtimeServer.port}`);
     assert.equal(out.ports.server, runtimeServer.port);

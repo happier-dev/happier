@@ -68,7 +68,7 @@ import { createServiceDaemonAutostarter } from './utils/service/daemon_autostart
 import { applyRuntimeServerLightSqliteEnv } from './utils/server/apply_runtime_server_light_sqlite_env.mjs';
 import { spawnSourceServerScript } from './utils/server/source_server_workspace_deps.mjs';
 import { applyEffectiveDbProviderEnv } from './utils/server/effective_db_provider.mjs';
-import { resolveNativeDaemonRuntimeSnapshot, resolveStackRuntimeLaunchContext } from './runtime/launch/resolveStackRuntimeLaunchContext.mjs';
+import { resolveStackRuntimeLaunchContext } from './runtime/launch/resolveStackRuntimeLaunchContext.mjs';
 import {
   resolveCliRuntimeLaunchProvenance,
   resolveCliRuntimeLaunchSpec,
@@ -195,12 +195,14 @@ async function main() {
     ? await resolveControlledRuntimePlacement({ stackName: autostart.stackName, stackBaseDir: autostart.baseDir, sourceDir: process.env.HAPPIER_STACK_REPO_DIR, env: process.env })
     : null;
   const requiredComponents = process.env.HAPPIER_STACK_SHARED_DB_SOURCE_STACK ? ['server'] : undefined;
-  let runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv, env: process.env, target: controlledPlacement?.runtimeTarget, requiredComponents });
+  let runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv, env: process.env,
+    target: controlledPlacement?.runtimeTarget, requiredComponents, purpose: 'deployment', placement: controlledPlacement });
   let runtimeSnapshot = runtimeLaunchContext.snapshot;
   const unavailableTargets = [];
   while (runtimeSnapshot && controlledPlacement?.target) {
     try {
-      await runControlledRemoteStack({ rootDir, argv, flags, json, autostart, runtimeSnapshot, placement: controlledPlacement, serverComponentName });
+      await runControlledRemoteStack({ rootDir, argv, flags, json, autostart, runtimeSnapshot,
+        runtimeLaunchContext, placement: controlledPlacement, serverComponentName });
       return;
     } catch (error) {
       if (!error.remotePreDispatchUnavailable || controlledPlacement.config.runtimePlacement.server.mode === 'prefer-target') throw error;
@@ -208,7 +210,8 @@ async function main() {
       console.warn(`[dev-targets] QA target ${controlledPlacement.target.name} became unavailable before dispatch; selecting another runtime host`);
       controlledPlacement = await resolveControlledRuntimePlacement({ stackName: autostart.stackName,
         stackBaseDir: autostart.baseDir, sourceDir: getRepoDir(rootDir), env: process.env, excludeTargetNames: unavailableTargets });
-      runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv, env: process.env, target: controlledPlacement.runtimeTarget, requiredComponents });
+      runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv, env: process.env,
+        target: controlledPlacement.runtimeTarget, requiredComponents, purpose: 'deployment', placement: controlledPlacement });
       runtimeSnapshot = runtimeLaunchContext.snapshot;
     }
   }
@@ -216,7 +219,8 @@ async function main() {
     process.chdir(join(autostart.baseDir, 'workspace'));
   }
   const runtimeBackedStart = Boolean(runtimeSnapshot);
-  const cliLaunchSpec = runtimeSnapshot && !flags.has('--no-daemon') ? resolveCliRuntimeLaunchSpec({ snapshot: runtimeSnapshot }) : null;
+  const cliLaunchSpec = runtimeSnapshot && !flags.has('--no-daemon')
+    ? resolveCliRuntimeLaunchSpec({ snapshot: runtimeLaunchContext.componentSnapshots?.daemon ?? runtimeSnapshot }) : null;
   const cliRuntimeProvenance = resolveCliRuntimeLaunchProvenance(cliLaunchSpec);
   const dbProvider = applyEffectiveDbProviderEnv({ serverComponentName, env: process.env });
   const serverLaunchSpec = runtimeSnapshot
@@ -1064,7 +1068,7 @@ async function main() {
   await new Promise(() => {});
 }
 
-async function runControlledRemoteStack({ rootDir, flags, json, autostart, runtimeSnapshot, placement, serverComponentName }) {
+async function runControlledRemoteStack({ rootDir, flags, json, autostart, runtimeSnapshot, runtimeLaunchContext, placement, serverComponentName }) {
   const env = { ...process.env, HAPPIER_STACK_DAEMON_WAIT_FOR_AUTH: '1' };
   const context = resolveStackContext({ env, autostart });
   const serverPort = await selectLocalServerPortCandidateForStack({ env, stackMode: true,
@@ -1072,23 +1076,26 @@ async function runControlledRemoteStack({ rootDir, flags, json, autostart, runti
   const urls = await resolveServerUrls({ env, serverPort, allowEnable: false });
   const cliHomeDir = env.HAPPIER_STACK_CLI_HOME_DIR?.trim() || join(autostart.baseDir, 'cli');
   const credentialPath = findExistingStackCredentialPath({ cliHomeDir, serverUrl: `http://127.0.0.1:${serverPort}`, env });
-  const localDaemonRequested = Boolean(env.HAPPIER_STACK_SHARED_DB_SOURCE_STACK)
-    && resolveStackDaemonStartRequested({ env, noDaemon: flags.has('--no-daemon') });
-  const daemonSnapshot = localDaemonRequested ? await resolveNativeDaemonRuntimeSnapshot({ stackName: context.stackName, env }) : null;
-  const localCli = daemonSnapshot ? resolveCliRuntimeLaunchSpec({ snapshot: daemonSnapshot }) : null;
+  const daemonRequested = resolveStackDaemonStartRequested({ env, noDaemon: flags.has('--no-daemon') });
+  const localDaemonRequested = placement.policy.daemons.mode === 'local' && daemonRequested;
+  const daemonSnapshot = daemonRequested ? runtimeLaunchContext.componentSnapshots?.daemon ?? null : null;
+  const localCli = localDaemonRequested && daemonSnapshot ? resolveCliRuntimeLaunchSpec({ snapshot: daemonSnapshot }) : null;
   const targetPlans = placement.targetPlans.map(plan => ({ ...plan,
-    services: { ...plan.services, daemon: plan.services.daemon && resolveStackDaemonStartRequested({ env, noDaemon: flags.has('--no-daemon') }) } }));
+    services: { ...plan.services, daemon: plan.services.daemon && daemonRequested },
+    ...(plan.services.daemon && daemonSnapshot ? { runtimeSnapshot: daemonSnapshot, runtimeTarget: placement.daemonRuntimeTarget } : {}) }));
+  const daemonPlacement = localDaemonRequested ? 'local'
+    : targetPlans.find(plan => plan.services.daemon)?.target.name ?? 'disabled';
   if (json) {
     printResult({ json, data: { mode: 'start', launchMode: 'runtime', runtimeSnapshotId: runtimeSnapshot.snapshotId,
       target: placement.target.name, runtimeTarget: placement.runtimeTarget, serverPort,
-      publicServerUrl: urls.publicServerUrl, cliHomeDir, daemonPlacement: localDaemonRequested ? 'local' : targetPlans.some(plan => plan.services.daemon) ? placement.target.name : 'disabled',
+      publicServerUrl: urls.publicServerUrl, cliHomeDir, daemonPlacement,
       daemonSnapshotId: daemonSnapshot?.snapshotId ?? null } });
     return;
   }
   const started = await recordStackRuntimeStart(context.runtimeStatePath, { stackName: context.stackName,
     script: 'run.mjs', ephemeral: context.ephemeral, ownerPid: process.pid, ports: { server: serverPort },
     runtimeSnapshotId: null, serveUi: !flags.has('--no-ui'),
-    placement: { server: placement.target.name, daemon: localDaemonRequested ? 'local' : targetPlans.some(plan => plan.services.daemon) ? placement.target.name : 'disabled', expo: env.HAPPIER_STACK_EXPO_SOURCE_STACK ? 'borrowed' : 'disabled' } });
+    placement: { server: placement.target.name, daemon: daemonPlacement, expo: env.HAPPIER_STACK_EXPO_SOURCE_STACK ? 'borrowed' : 'disabled' } });
   spawnStackOwnerDeathWatchdog({ rootDir, stackName: context.stackName, baseDir: autostart.baseDir,
     envPath: context.envPath, runtimeStatePath: context.runtimeStatePath, ownerPid: process.pid, ownerStartedAt: started.startedAt, env });
   let controller;
@@ -1116,7 +1123,7 @@ async function runControlledRemoteStack({ rootDir, flags, json, autostart, runti
       onTargetStateChange: async ({ name, ...state }) => {
         await recordStackRuntimeUpdate(context.runtimeStatePath, {
           remoteTargets: { [name]: state },
-          ...(state.runtimeSnapshotId ? { runtimeSnapshotId: state.runtimeSnapshotId } : {}),
+          ...(state.services?.server && state.runtimeSnapshotId ? { runtimeSnapshotId: state.runtimeSnapshotId } : {}),
         });
       }, env,
     });

@@ -63,21 +63,74 @@ afterEach(async () => {
 });
 
 describe('the mounted Bitbucket pull-request detail tablist', () => {
-  it('composes host Activity as a story while keeping native activity records', async () => {
+  it('reads comments and activity as one chronological stream, each remark once', async () => {
     const detail = await mountDetail({ ...FIXTURE.detailInput, panel: 'activity' } as unknown as JsonValue, {
       [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.listActivity]: {
-        kind: 'activity', rows: [{ key: 'approval-1', kind: 'approval', rawKind: 'approval', actor: 'Mara', summary: 'Source-only approval.' }],
+        kind: 'activity',
+        rows: [
+          { key: 'approval:Anouk', kind: 'approval', rawKind: 'approval', actor: 'Anouk', atMs: 1_700_000_000_000 },
+          // Bitbucket's activity feed carries every comment again; the comments read owns it.
+          { key: 'comment:7', kind: 'comment', rawKind: 'comment', actor: 'Mara', atMs: 1_700_000_500_000, summary: 'Ship it after the fix' },
+        ],
+        omittedRowCount: 0, projectionTruncated: false,
+      },
+      [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.listComments]: {
+        kind: 'comments',
+        rows: [{ id: '7', author: 'Mara', body: 'Ship it after the fix', atMs: 1_700_000_500_000, deleted: false, resolution: 'unresolved' }],
         omittedRowCount: 0, projectionTruncated: false,
       },
     });
-    await expect(detail.getByRole('heading', { name: 'Activity' })).resolves.toBeDefined();
-    await expect(detail.getByText('Source-only approval.')).resolves.toBeDefined();
+    await expect(detail.getByText('Ship it after the fix')).resolves.toBeDefined();
+    const text = document.body.textContent ?? '';
+    // Exact text nodes: the reply picker's option label also names the remark, inside its own sentence.
+    const walker = document.createTreeWalker(document.body, 4);
+    let remarks = 0;
+    for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+      if (node.textContent?.trim() === 'Ship it after the fix') remarks += 1;
+    }
+    expect(remarks).toBe(1);
+    // The earlier approval reads before the later remark, not below a separate comments block.
+    expect(text.indexOf('Anouk')).toBeGreaterThanOrEqual(0);
+    expect(text.indexOf('Anouk')).toBeLessThan(text.lastIndexOf('Ship it after the fix'));
+    // The remark keeps its resolution controls inside the stream.
+    await expect(detail.getByRole('button', { name: 'Resolve comment 7' })).resolves.toBeDefined();
+    await expect(detail.queryByRole('heading', { name: 'Activity' })).resolves.toBeUndefined();
     await expect(detail.queryByRole('tab')).resolves.toBeUndefined();
   });
   it('renders the host Overview as the ask and changes story, without a source tab strip', async () => {
-    const detail = await mountDetail({ ...FIXTURE.detailInput, panel: 'overview' } as unknown as JsonValue);
+    if (FIXTURE.getResult.kind !== 'present') throw new Error('fixture must be present');
+    const detail = await mountDetail({ ...FIXTURE.detailInput, panel: 'overview' } as unknown as JsonValue, {
+      [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.readOverview]: {
+        kind: 'overview',
+        observedAtMs: 1_780_000_000_000,
+        observation: FIXTURE.getResult as unknown as JsonValue,
+        description: 'Repair the poller.',
+        descriptionTruncated: false,
+      } as unknown as JsonValue,
+      [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.readDiff]: {
+        kind: 'diff',
+        files: [
+          { path: 'src/provider.ts', status: 'modified', linesAdded: 12, linesRemoved: 4 },
+          { path: 'src/poller.ts', status: 'added', linesAdded: 30, linesRemoved: 0 },
+        ],
+        omittedRowCount: 0,
+        projectionTruncated: false,
+        raw: { kind: 'available', text: 'diff --git a/src/provider.ts b/src/provider.ts', truncated: false },
+      } as unknown as JsonValue,
+    });
     await expect(detail.getByRole('heading', { name: 'The ask' })).resolves.toBeDefined();
     await expect(detail.getByRole('heading', { name: 'What changed' })).resolves.toBeDefined();
+    // Bitbucket's diffstat counts lines per file: totals beside the title, one bar per file, largest first.
+    await expect(detail.getByText('+42')).resolves.toBeDefined();
+    await expect(detail.getByText('in 2 files')).resolves.toBeDefined();
+    const bars = [...document.querySelectorAll('[role="img"]')].map((node) => node.getAttribute('aria-label'))
+      .filter((name) => name?.startsWith('src/'));
+    expect(bars).toEqual(['src/poller.ts: 30 added, 0 removed', 'src/provider.ts: 12 added, 4 removed']);
+    for (const chrome of ['Observation', 'Observed', 'No projected facts', 'Answered in the panels beside this one, not on the list row:']) {
+      await expect(detail.queryByText(chrome)).resolves.toBeUndefined();
+    }
+    // A settled read needs no Re-read control; one appears only beside a read that failed.
+    await expect(detail.queryByRole('button', { name: 'Re-read this overview from Bitbucket' })).resolves.toBeUndefined();
     await expect(detail.queryByRole('tab')).resolves.toBeUndefined();
     await expect(detail.queryByRole('heading', { name: 'Builds' })).resolves.toBeUndefined();
   });
@@ -98,7 +151,6 @@ describe('the mounted Bitbucket pull-request detail tablist', () => {
       'Activity',
       'Diff',
       'Builds',
-      'Comments',
     ]);
   });
 
@@ -253,14 +305,14 @@ describe('the mounted Bitbucket pull-request detail tablist', () => {
     });
 
     await detail.press(await detail.getByRole('tab', { name: 'Activity' }));
-    await expect(detail.getByText('Approved · Reviewer One')).resolves.toBeDefined();
+    await expect(detail.getByText('Reviewer One')).resolves.toBeDefined();
 
     // The second page fails. The control stays mounted and enabled, so pressing it again must
     // actually retry that position rather than exit on a position the walk never consumed.
     await detail.press(await detail.getByRole('button', { name: 'Show more activity' }));
-    await expect(detail.getByText('Approved · Reviewer One')).resolves.toBeDefined();
+    await expect(detail.getByText('Reviewer One')).resolves.toBeDefined();
     await detail.press(await detail.getByRole('button', { name: 'Show more activity' }));
-    await expect(detail.getByText('Approved · Reviewer Two')).resolves.toBeDefined();
+    await expect(detail.getByText('Reviewer Two')).resolves.toBeDefined();
     expect(activityReads).toBe(3);
 
     // An explicit refresh is a warm replacement: a refresh that fails must not leave the reader
@@ -269,8 +321,8 @@ describe('the mounted Bitbucket pull-request detail tablist', () => {
       name: 'Re-read this activity from Bitbucket',
     }));
     expect(activityReads).toBe(4);
-    await expect(detail.getByText('Approved · Reviewer One')).resolves.toBeDefined();
-    await expect(detail.getByText('Approved · Reviewer Two')).resolves.toBeDefined();
+    await expect(detail.getByText('Reviewer One')).resolves.toBeDefined();
+    await expect(detail.getByText('Reviewer Two')).resolves.toBeDefined();
   });
 
   it('shows when an Action result could not carry Bitbucket\'s next-page position', async () => {

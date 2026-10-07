@@ -1,7 +1,9 @@
+import { readClaudeSettingSourcesV2, type ClaudeSettingSourceV2 } from '@happier-dev/plugin-sdk/first-party/claude';
 import type { AgentLaunchEnvironment } from '@happier-dev/plugin-sdk/agents/runtime';
 import { readFileSync } from 'node:fs';
 
 import {
+  CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS,
   parseClaudeRemoteAdvancedOptionsJson,
   type ClaudeRemoteAdvancedOptions,
 } from '../../protocol/remoteSettings.js';
@@ -16,6 +18,7 @@ const CLAUDE_EXTERNAL_SANDBOX_ENV_KEY = 'IS_SANDBOX';
 
 type ClaudeSettingsReader = Readonly<{
   get(key: string): unknown | Promise<unknown>;
+  snapshot(): Promise<Readonly<{ values: Readonly<Record<string, unknown>> }>>;
 }>;
 
 export function resolveClaudeExternalSandboxEnv(
@@ -153,6 +156,10 @@ export function resolveClaudeUnifiedTerminalLaunchEnvironment(
   };
 }
 
+export function buildClaudeSettingSourcesArgs(sources: readonly ClaudeSettingSourceV2[] | undefined): string[] {
+  return sources === undefined ? [] : ['--setting-sources', sources.join(',')];
+}
+
 export async function resolveClaudeNativeLaunchSettings(input: Readonly<{
   settings: ClaudeSettingsReader;
   launchEnv: Readonly<Record<string, string>>;
@@ -160,12 +167,14 @@ export async function resolveClaudeNativeLaunchSettings(input: Readonly<{
 }>): Promise<Readonly<{
   launchEnv: Readonly<Record<string, string>>;
   advancedOptions: ClaudeRemoteAdvancedOptions;
+  settingSources: readonly ClaudeSettingSourceV2[];
 }>> {
-  const [agentTeamsEnabled, advancedOptionsJson] = await Promise.all([
+  const [agentTeamsEnabled, advancedOptionsJson, settingsSnapshot] = await Promise.all([
     readSetting(input.settings, CLAUDE_AGENT_TEAMS_SETTING_KEY),
     input.includeAdvancedOptions
       ? readSetting(input.settings, CLAUDE_ADVANCED_OPTIONS_SETTING_KEY)
       : Promise.resolve(null),
+    input.settings.snapshot(),
   ]);
   return {
     launchEnv: agentTeamsEnabled === true
@@ -174,6 +183,7 @@ export async function resolveClaudeNativeLaunchSettings(input: Readonly<{
           [CLAUDE_AGENT_TEAMS_ENV_KEY]: '1',
         }
       : input.launchEnv,
+    settingSources: readClaudeSettingSourcesV2(CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS, settingsSnapshot.values),
     advancedOptions: input.includeAdvancedOptions
       ? parseClaudeRemoteAdvancedOptionsJson(advancedOptionsJson)
       : {},

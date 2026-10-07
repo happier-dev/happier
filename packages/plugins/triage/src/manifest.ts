@@ -29,7 +29,8 @@ import {
 } from './actions/entryDetailProtocol.js';
 
 import { createTriageListEntriesActionHandler } from './actions/listEntries.js';
-import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, TriageMountedUiInputV1Schema, TriageMountedUiResultV1Schema } from './actions/mountedUiProtocol.js';
+import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, TriageMountedUiInputV1Schema, TriageMountedUiResultV1Schema, TriageMountedSourceRevealInputV1Schema, TriageMountedSourceInsertInputV1Schema } from './actions/mountedUiProtocol.js';
+import { TRIAGE_SOURCE_PANEL_REVEAL_ACTION_V1, TRIAGE_SOURCE_PANEL_INSERT_ACTION_V1 } from '@happier-dev/triage-sources/runtime';
 import {
   TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1,
   TriageListEntriesInputV1Schema,
@@ -206,9 +207,31 @@ function createTriagePlugin() {
       },
     },
     actions: {
+      [TRIAGE_SOURCE_PANEL_REVEAL_ACTION_V1]: {
+        title: 'Reveal selected occurrence user details',
+        description: 'Reveals user details already read by the addressed active source panel. Concealment uses the ordinary mounted Action.',
+        surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: [], dangerLevel: 'safe',
+        confirmation: {
+          title: { key: 'plugins.triage.sourcePanel.revealTitle', fallback: 'Show event user details' },
+          body: { key: 'plugins.triage.sourcePanel.revealConfirmation', fallback: 'Event user details may include names, email addresses and IP addresses.' },
+        },
+        execution: { target: 'client', client: { artifactId: 'triage-mounted-ui-action-native', exportName: 'createTriageMountedSourceRevealActionHandler' }, platforms: ['web', 'ios', 'android'] },
+        inputSchema: TriageMountedSourceRevealInputV1Schema, resultSchema: TriageMountedUiResultV1Schema,
+      },
+      [TRIAGE_SOURCE_PANEL_INSERT_ACTION_V1]: {
+        title: 'Add selected occurrence to message',
+        description: 'Inserts the active source panel’s selected evidence reference into the bound draft through its existing Composer transaction.',
+        surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: [], dangerLevel: 'safe',
+        confirmation: {
+          title: { key: 'plugins.triage.sourcePanel.insertTitle', fallback: 'Add selected occurrence to message' },
+          body: { key: 'plugins.triage.sourcePanel.insertConfirmation', fallback: 'The selected occurrence will be attached to this message. Its title, stack frames, source context, breadcrumbs and allowed tags may be sent to the agent when you send the message. User fields, frame local variables and raw request data are excluded.' },
+        },
+        execution: { target: 'client', client: { artifactId: 'triage-mounted-ui-action-native', exportName: 'createTriageMountedSourceInsertActionHandler' }, platforms: ['web', 'ios', 'android'] },
+        inputSchema: TriageMountedSourceInsertInputV1Schema, resultSchema: TriageMountedUiResultV1Schema,
+      },
       [TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1]: {
         title: 'Control the mounted PRs & Issues view',
-        description: 'Open or close detail, select a tab, switch List/Board or lens, choose a saved view, set bulk selection, refresh or load more on the addressed mounted page. Read current UI context for its mountId.',
+        description: 'Control the addressed mounted page, including detail, tabs, views, lenses, bulk selection, refresh, paging and active source occurrence selection/ordering. Read current UI context for its mountId and available commands. Sensitive reveal and insertion use their separate named Actions.',
         surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli'],
         placementBindings: [],
         execution: { target: 'client', client: { artifactId: 'triage-mounted-ui-action-native', exportName: 'createTriageMountedUiActionHandler' }, platforms: ['web', 'ios', 'android'] },

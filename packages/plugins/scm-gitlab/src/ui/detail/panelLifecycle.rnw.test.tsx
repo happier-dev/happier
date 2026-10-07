@@ -147,24 +147,42 @@ async function openTab(detail: PluginUiTestkit, name: string): Promise<void> {
 }
 
 describe('the mounted GitLab detail-panel lifecycle', () => {
-  it('composes host Activity as a story while keeping the native discussion', async () => {
-    const detail = await mountDetail(async ({ action }) => {
+  it('reads merge-request Activity as one stream with each remark once and no story step', async () => {
+    const note = { id: 'note-1', author: 'Mara', body: 'Source-only discussion.', system: false, atMs: 1_760_000_100_000 };
+    const detail = await mountDetail(async ({ action, input }) => {
       const localId = (action as Readonly<{ localId?: string }>).localId;
       if (localId === GITLAB_TRIAGE_DETAIL_ACTION_IDS.listNotes) return {
-        kind: 'notes', rows: [{ id: 'note-1', author: 'Mara', body: 'Source-only discussion.', system: false }],
+        kind: 'notes', rows: [note], omittedRowCount: 0, projectionTruncated: false,
+      };
+      if (localId === GITLAB_TRIAGE_DETAIL_ACTION_IDS.listDiscussions) return {
+        kind: 'discussions',
+        rows: [{ id: 'discussion-1', individualNote: true, resolved: false, notes: [note], omittedNoteCount: 0 }],
         omittedRowCount: 0, projectionTruncated: false,
       };
+      if (localId === GITLAB_TRIAGE_DETAIL_ACTION_IDS.listActivityEvents) {
+        const source = (input as Readonly<{ eventSource?: string }>).eventSource ?? 'state';
+        return {
+          kind: 'activityEvents', source,
+          rows: source === 'state' ? [{ id: 'state-1', source: 'state', action: 'closed', actor: 'Jonas', atMs: 1_760_000_200_000 }] : [],
+          omittedRowCount: 0, projectionTruncated: false,
+        };
+      }
       return { kind: 'unavailable', failure: { class: 'transient', code: 'fixture-unavailable' } };
     }, 'activity');
-    await expect(detail.getByRole('heading', { name: 'Activity' })).resolves.toBeDefined();
-    await expect(detail.getByText('Source-only discussion.')).resolves.toBeDefined();
+    await expect(detail.getByText('closed')).resolves.toBeDefined();
+    const text = document.body.textContent ?? '';
+    // One remark, one event: the notes walk and the discussions walk return the same note.
+    expect(text.split('Source-only discussion.').length - 1).toBe(1);
+    expect(text.indexOf('Source-only discussion.')).toBeLessThan(text.indexOf('closed'));
+    // Activity is the host tab, not a numbered step inside it.
+    await expect(detail.queryByRole('heading', { name: 'Activity' })).resolves.toBeUndefined();
     await expect(detail.queryByRole('tab')).resolves.toBeUndefined();
   });
   it.each([
-    [1, 2, 3, '1 failed'],
-    [0, 2, 3, 'Running'],
-    [0, 0, 3, 'Passed'],
-  ] as const)('uses the canonical job rollup for the story state (%s failing, %s running)', async (failingCount, runningCount, passingCount, label) => {
+    [1, 2, 3, '1 failed', '· 3 passed · 2 running'],
+    [0, 2, 3, 'Running', '2 running · 3 passed'],
+    [0, 0, 3, 'Passed', 'All 3 passed'],
+  ] as const)('uses the canonical job rollup for the story state (%s failing, %s running)', async (failingCount, runningCount, passingCount, label, summary) => {
     const detail = await mountDetail(async ({ action }) => {
       const localId = (action as Readonly<{ localId?: string }>).localId;
       if (localId === GITLAB_TRIAGE_DETAIL_ACTION_IDS.readOverview) return overviewResult('Repair');
@@ -177,6 +195,7 @@ describe('the mounted GitLab detail-panel lifecycle', () => {
     }, 'overview');
     await expect(detail.getByRole('heading', { name: 'Pipelines' })).resolves.toBeDefined();
     await expect(detail.getByRole('image', { name: label })).resolves.toBeDefined();
+    await expect(detail.getByText(summary)).resolves.toBeDefined();
   });
   it('does not turn an unavailable job breakdown into a passing story state', async () => {
     const detail = await mountDetail(async ({ action }) => {
@@ -202,6 +221,14 @@ describe('the mounted GitLab detail-panel lifecycle', () => {
     await expect(detail.getByRole('heading', { name: 'What changed' })).resolves.toBeDefined();
     await expect(detail.getByText('The requested repair.')).resolves.toBeDefined();
     await expect(detail.getByText('src/story.ts')).resolves.toBeDefined();
+    // GitLab's changes read carries no line counts; the story says so instead of listing every file as a fact.
+    await expect(detail.getByText('1 file')).resolves.toBeDefined();
+    await expect(detail.getByText('Line counts not reported')).resolves.toBeDefined();
+    await expect(detail.queryByText('1 file(s) read.')).resolves.toBeUndefined();
+    for (const chrome of ['No projected facts', 'Answered in the panels beside this one, not on the list row:']) {
+      await expect(detail.queryByText(chrome)).resolves.toBeUndefined();
+    }
+    await expect(detail.queryByRole('button', { name: 'Re-read this overview from GitLab' })).resolves.toBeUndefined();
     await expect(detail.queryByRole('tab')).resolves.toBeUndefined();
   });
   it('reads the provider description when the initially active Overview mounts', async () => {

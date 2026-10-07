@@ -40,7 +40,7 @@ const ReviewStringListSchema = z.array(ReviewNonEmptyStringSchema).max(64)
   .refine((values) => new Set(values).size === values.length);
 
 /**
- * A bounded compatibility diagnostic carried inside the review.
+ * A compatibility diagnostic carried inside the review.
  *
  * Diagnostic codes are opaque bounded facts here: the closed producing-host
  * code vocabulary stays owned by that host's diagnostics schema, and the
@@ -49,7 +49,7 @@ const ReviewStringListSchema = z.array(ReviewNonEmptyStringSchema).max(64)
  */
 export const PluginInstallationReviewCompatibilityDiagnosticSchema = z.object({
   code: ReviewNonEmptyStringSchema,
-  message: ReviewNonEmptyStringSchema,
+  message: PluginDiagnosticTextV1Schema,
   contribution: asProtocolZod(PluginContributionIdentityV1Schema).optional(),
   details: PluginJsonValueV2Schema.optional(),
   stage: PluginDiagnosticStageV1Schema.optional(),

@@ -116,8 +116,6 @@ type PluginRuntimeDisposalOptions = Readonly<{
     }>) => void;
 }>;
 
-const DEFAULT_PLUGIN_RETIREMENT_TIMEOUT_MS = 5_000;
-
 type ActivatedHandlerRegistry = Readonly<{
     hookHandlersByHookId: ReadonlyMap<string, readonly ResolvedPluginHookHandler[]>;
 }>;
@@ -191,8 +189,7 @@ async function runPluginDisposalStep(params: Readonly<{
     options: PluginRuntimeDisposalOptions;
     operation: () => Promise<void>;
 }>): Promise<boolean> {
-    const timeoutMs = normalizePositiveTimeoutMs(params.options.timeoutMs)
-        ?? DEFAULT_PLUGIN_RETIREMENT_TIMEOUT_MS;
+    const timeoutMs = normalizePositiveTimeoutMs(params.options.timeoutMs);
     try {
         await runWithOptionalTimeout(
             timeoutMs,
@@ -1121,7 +1118,7 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
                 const diagnostics = Object.freeze([
                     ...(registry.pluginDiagnosticsByPluginId[pluginId] ?? []),
                 ]);
-                await registry.dispose({ timeoutMs: 5_000 }).catch((error: unknown) => {
+                await registry.dispose().catch((error: unknown) => {
                     logger.warn('[PLUGIN RUNTIME] Failed to dispose retryable lazy activation preparation', {
                         pluginId,
                         error: projectPluginFailureText(error),
@@ -1131,7 +1128,7 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
             }
             if (lifecycleState !== 'active') {
                 appendLazyActivationUnavailableDiagnostic(pluginId);
-                await registry.dispose({ timeoutMs: 5_000 }).catch((error: unknown) => {
+                await registry.dispose().catch((error: unknown) => {
                     logger.warn('[PLUGIN RUNTIME] Failed to dispose late lazy activation after registry disposal', {
                         pluginId,
                         error: projectPluginFailureText(error),

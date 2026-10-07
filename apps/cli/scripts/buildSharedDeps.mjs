@@ -1039,6 +1039,7 @@ function resolveWorkspaceExpectedOutputPaths({
 function isSourceDevWorkspaceBuildStale({
   packageDir,
   dependencyDirs = [],
+  buildMode = 'qa-runtime',
   includeUiArtifacts = true,
   exists = existsSync,
   readFile = readFileSync,
@@ -1068,7 +1069,7 @@ function isSourceDevWorkspaceBuildStale({
     return true;
   }
 
-  return !isWorkspacePackageOutputCurrent(packageDir, { dependencyDirs });
+  return !isWorkspacePackageOutputCurrent(packageDir, { dependencyDirs, buildMode });
 }
 
 function resolveSourceDevWorkspaceDependencyDirs({ repoRoot, workspaceNames, workspaceName, readFile }) {
@@ -1102,6 +1103,7 @@ function resolveSourceDevWorkspaceDependencyDirs({ repoRoot, workspaceNames, wor
 function collectStaleSourceDevWorkspaceBuilds({
   repoRoot,
   workspaceNames,
+  buildMode = 'qa-runtime',
   includeUiArtifacts = true,
   exists = existsSync,
   readFile = readFileSync,
@@ -1115,6 +1117,7 @@ function collectStaleSourceDevWorkspaceBuilds({
     if (!exists(tsconfigPath)) continue;
     if (!isSourceDevWorkspaceBuildStale({
       packageDir,
+      buildMode,
       dependencyDirs: resolveSourceDevWorkspaceDependencyDirs({
         repoRoot, workspaceNames, workspaceName, readFile,
       }),
@@ -1844,6 +1847,7 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
   const collectStaleBuilds = () => collectStaleSourceDevWorkspaceBuilds({
     repoRoot,
     workspaceNames,
+    buildMode: env[WORKSPACE_BUILD_MODE_ENV],
     includeUiArtifacts: includeRuntimeDependencies,
     exists,
     readFile,

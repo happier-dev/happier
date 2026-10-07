@@ -30,6 +30,7 @@ import {
     MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
     projectTriageDisplayTextV1,
     TriageGetInputV1Schema,
+    isTriageSourceConnectedAccountInstanceV1,
     TriageListInstancesInputV1Schema,
     TriageScanInputV1Schema,
     type TriageGetResultV1,
@@ -802,6 +803,10 @@ export async function scanPosthogSource(
         failure,
     });
 
+    if (!isTriageSourceConnectedAccountInstanceV1(parsed.instance)) {
+        return failed(sourceFailure('unsupportedContract', 'unsupported-credential-source'));
+    }
+
     const routed = resolveInvokedInstance(parsed.instance);
     if (!routed.ok) return failed(routed.failure);
     const { origin, configuration } = routed;
@@ -1053,6 +1058,10 @@ async function readPosthogSourceEntry(
         observation: { kind: 'unresolved' as const, localRef, failure },
     });
 
+    if (!isTriageSourceConnectedAccountInstanceV1(parsed.instance)) {
+        return unresolved(sourceFailure('unsupportedContract', 'unsupported-credential-source'));
+    }
+
     // Exact get and every source-native detail plane share one admission owner. A ref
     // from another deployment/environment is refused before a request is built, never
     // re-scoped onto the invoked instance.
@@ -1061,12 +1070,13 @@ async function readPosthogSourceEntry(
     const { origin, configuration, environment } = scope;
 
     const client = createPosthogInvocationClient(context, parsed.instance.binding.account, origin);
+    const detailWindow = resolvePosthogWindowPolicy(configuration.detailWindowPolicy, Date.now());
     const outcome = await getPosthogIssue(
         client,
         {
             teamRouteId: environment.teamPathId,
             issueId: parsed.localRef.entryId,
-            detailWindow: resolvePosthogWindowPolicy(configuration.detailWindowPolicy, Date.now()),
+            detailWindow,
         },
         { signal },
     );
@@ -1128,7 +1138,24 @@ async function readPosthogSourceEntry(
         ...(outcome.enrichmentFailure === undefined ? {} : {
             enrichmentFailure: toTriageSourceFailure(outcome.enrichmentFailure),
         }),
+        ...posthogSparklineTrend(outcome.queryDetail?.sparkline ?? null, detailWindow),
     };
+}
+
+/**
+ * PostHog states its sparkline as bare counts in equal-width buckets across the request's
+ * `dateRange`, so each bucket's start is that window divided evenly — the provider's own
+ * geometry, not an estimate. A window this source cannot read states no trend.
+ */
+function posthogSparklineTrend(
+    counts: readonly number[] | null,
+    window: PosthogResolvedWindow,
+): Pick<PosthogNativeOverviewResultV1, 'trend'> {
+    const fromMs = Date.parse(window.from);
+    const toMs = window.to === null ? Date.now() : Date.parse(window.to);
+    if (counts === null || !Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) return {};
+    const stepMs = (toMs - fromMs) / counts.length;
+    return { trend: counts.map((count, index) => ({ atMs: Math.round(fromMs + index * stepMs), count })) };
 }
 
 export type PosthogSourceEntryReader = (

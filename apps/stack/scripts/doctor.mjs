@@ -17,7 +17,7 @@ import {
 import { killPortListeners } from './utils/net/ports.mjs';
 import { getServerComponentName } from './utils/server/server.mjs';
 import { fetchHappierHealth } from './utils/server/server.mjs';
-import { daemonStatusSummary } from './daemon.mjs';
+import { checkDaemonStatePingAware } from './daemon.mjs';
 import { tailscaleServeStatus } from './tailscale.mjs';
 import { findExistingStackCredentialPath, resolveStackCredentialPaths } from './utils/auth/credentials_paths.mjs';
 import { join } from 'node:path';
@@ -126,7 +126,7 @@ async function main() {
   const stackName = (process.env.HAPPIER_STACK_STACK ?? '').toString().trim() || getStackName(process.env);
   const { baseDir: stackBaseDir } = resolveStackBaseDir(stackName, process.env);
   const runtimeMode = resolveStackRuntimeMode({ argv, env: process.env });
-  const runtimeInspection = await inspectStackRuntimeSelection({ stackBaseDir });
+  const runtimeInspection = await inspectStackRuntimeSelection({ stackName, stackBaseDir });
   const runtimeSnapshot = runtimeMode.mode === 'source' ? null : runtimeInspection.snapshot;
   const runtimeSnapshotRequired = runtimeMode.mode === 'require' && !runtimeInspection.valid;
   const borrowedExpoProducerStackName = String(process.env.HAPPIER_STACK_EXPO_SOURCE_STACK ?? '').trim();
@@ -169,7 +169,6 @@ async function main() {
 
 	  const serverDir = getComponentDir(rootDir, serverComponentName);
 	  const cliDir = getComponentDir(rootDir, 'happier-cli');
-	  const cliBin = join(cliDir, 'bin', 'happier.mjs');
 
   assertServerComponentDirMatches({ rootDir, serverComponentName, serverDir });
 
@@ -193,6 +192,8 @@ async function main() {
       valid: runtimeInspection.valid,
       errors: runtimeInspection.errors,
       components: runtimeInspection.manifest?.components ?? null,
+      componentSnapshotIds: Object.fromEntries(Object.entries(runtimeInspection.componentSnapshots ?? {}).map(([component, snapshot]) => [component, snapshot.snapshotId])),
+      componentTargets: runtimeInspection.componentTargets ?? null,
       borrowedExpo,
     },
     env: {
@@ -344,29 +345,23 @@ async function main() {
     if (!json) console.log(`${dim('ℹ')} ui serving disabled (HAPPIER_STACK_SERVE_UI=0)`);
   }
 
-  function resolveDaemonStatusCheck(output) {
-    const lines = String(output ?? '')
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean);
-    const stopped = lines.find((line) => /Daemon is not running/i.test(line));
-    if (stopped) return { ok: false, line: stopped };
-    const starting = lines.find((line) => /Daemon is starting/i.test(line));
-    if (starting) return { ok: false, line: starting };
-    const running = lines.find((line) => /Daemon is running/i.test(line));
-    if (running) return { ok: true, line: running };
-    return { ok: false, line: null };
-  }
-
   // Daemon status
   try {
-    const out = await daemonStatusSummary({
-      cliBin,
-      cliHomeDir,
-      internalServerUrl,
-      publicServerUrl,
+    const daemonState = await checkDaemonStatePingAware(cliHomeDir, {
+      serverUrl: internalServerUrl,
+      env: process.env,
+      stackName: stackMode ? stackName : null,
     });
-    const daemonCheck = resolveDaemonStatusCheck(out);
+    const daemonCheck = {
+      ok: daemonState.status === 'running',
+      line: daemonState.status === 'running'
+        ? '✓ Daemon is running'
+        : daemonState.status === 'starting'
+          ? '⚠ Daemon is starting'
+          : daemonState.status === 'unreachable'
+            ? '❌ Daemon is unreachable'
+            : '❌ Daemon is not running',
+    };
     report.checks.daemon = daemonCheck;
     if (!json) {
       const statusText = daemonCheck.line ?? 'status unavailable';

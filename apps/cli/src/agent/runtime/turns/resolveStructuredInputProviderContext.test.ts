@@ -1,4 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { existsSync, readFileSync } from 'node:fs';
+
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 
 import {
   HappierStructuredInputV1Schema,
@@ -11,6 +15,9 @@ import {
 } from '@happier-dev/protocol';
 
 import { buildCodexAppServerTurnInput } from '@happier-dev/plugins-codex/agent/runtime/appServer/turnInput';
+import { SessionSkillCatalogListResponseV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
+import { buildOpenCodePromptParts } from '../../../../../../packages/plugins/opencode/src/agent/runtime/server/promptParts';
+import { createOpenCodeServerClient, type OpenCodeRuntimeFetch } from '../../../../../../packages/plugins/opencode/src/agent/runtime/server/openCodeServerClient';
 import {
   ResolvedMentionContextTooLargeError,
   StructuredInputMentionResolutionError,
@@ -173,6 +180,7 @@ const MENTIONS_ONLY = envelope({ mentions: [SKILL_MENTION, VENDOR_MENTION] });
 /** The legacy envelope the composer writes today for the same two selections. */
 const LEGACY = envelope({
   skillMentions: [{
+    id: 'vendor:codex:review',
     name: 'review',
     path: '/w/.codex/skills/review/SKILL.md',
     displayName: 'Review',
@@ -183,7 +191,110 @@ const LEGACY = envelope({
   vendorPluginMentions: [{ vendorPluginRef: 'plugin://linear@happier', label: 'Linear' }],
 });
 
+describe('structured input catalog diagnostics', () => {
+  const envKeys = ['DEBUG', 'HAPPIER_HOME_DIR', 'HAPPIER_LOG_LEVEL'] as const;
+  let envScope = createEnvKeyScope(envKeys);
+  let tempDir: string;
+
+  beforeEach(() => {
+    envScope = createEnvKeyScope(envKeys);
+    tempDir = createTempDirSync('happier-structured-dispatch-log-');
+    envScope.patch({ HAPPIER_HOME_DIR: tempDir, DEBUG: undefined, HAPPIER_LOG_LEVEL: undefined });
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    envScope.restore();
+    removeTempDirSync(tempDir);
+  });
+
+  it.each([
+    { catalog: 'skills', reason: 'failed', read: async () => { throw new Error('private catalog failure'); } },
+    { catalog: 'skills', reason: 'malformed', read: async () => 'private malformed catalog' },
+    { catalog: 'vendorPlugins', reason: 'unsupported', read: async () => ({ supported: false, vendorPlugins: [] }) },
+  ] as const)('records $catalog catalog $reason in normal file logs without a caller diagnostic hook', async ({ catalog, reason, read }) => {
+    const { resolveStructuredInputProviderDispatchContext: resolveDispatch } = await import('./resolveStructuredInputProviderContext');
+    const { logger } = await import('@/ui/logger');
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const resolution = await resolveDispatch({
+        structuredInput: envelope({ mentions: [catalog === 'skills' ? SKILL_MENTION : VENDOR_MENTION] }),
+        catalogs: catalog === 'skills' ? { listSkills: read } : { listVendorPlugins: read },
+      });
+      logger.flushSync();
+
+      expect(buildCodexAppServerTurnInput({ text: 'private user prompt', structuredInput: resolution.structuredInput })).toEqual([
+        { type: 'text', text: 'private user prompt' },
+      ]);
+      expect(renderPromptContext(resolution)).toBe('');
+      expect(logSpy).not.toHaveBeenCalled();
+      expect(existsSync(logger.getLogPath())).toBe(true);
+      const content = readFileSync(logger.getLogPath(), 'utf8');
+      expect(content).toContain(`${catalog} catalog ${reason}`);
+      expect(content).toContain('1 composer reference(s) contributed no provider item');
+      expect(content).not.toContain('private');
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+});
+
 describe('resolveStructuredInputProviderContext', () => {
+  it.each([
+    { suppliedId: undefined, nativeId: 'native-review-directory' },
+    { suppliedId: 'vendor:opencode:Reviewer', nativeId: 'vendor:opencode:Reviewer' },
+  ])('resolves a legacy canonical skill reference with supplied ID $suppliedId to its actual V2 native identity before HTTP admission', async ({ suppliedId, nativeId }) => {
+    const skillPath = '/repo/.opencode/skills/review/SKILL.md';
+    const catalog = SessionSkillCatalogListResponseV1Schema.parse({ skills: [{
+      ...(suppliedId ? { id: suppliedId } : {}), name: 'Reviewer', location: skillPath, origin: 'opencode_native',
+    }] });
+    const result = await resolveStructuredInputProviderDispatchContext({
+      structuredInput: envelope({ mentions: [{
+        ...SKILL_MENTION,
+        ref: buildMentionRefForKindV1(MENTION_KIND_V1.skill, catalog.skills[0]!.id),
+      }] }),
+      catalogs: { listSkills: async () => catalog },
+    });
+    const admitted: unknown[] = [];
+    // HTTP is the boundary; catalog schemas, resolver, semantic projection and V2 wire stay real.
+    const request: OpenCodeRuntimeFetch = async (input) => {
+      if (input.method === 'POST') admitted.push(JSON.parse(String(input.body)));
+      const payload = input.method === 'GET'
+        ? { data: [{ id: nativeId, name: 'Reviewer', path: skillPath },
+          { id: 'other-native-review', name: 'Reviewer', path: '/other/SKILL.md' }] }
+        : null;
+      return { ok: true, status: payload ? 200 : 204, headers: {},
+        text: async () => JSON.stringify(payload), json: async () => payload,
+        arrayBuffer: async () => new ArrayBuffer(0) };
+    };
+    const client = createOpenCodeServerClient({
+      dialect: 'v2', directory: '/repo', transport: { request, fetch: async () => new Response(null, { status: 204 }) },
+    });
+    await client.sessionPromptAsync({ sessionId: 'ses-1', text: 'Review this',
+      parts: await buildOpenCodePromptParts({ text: 'Review this', structuredInput: result.structuredInput }) });
+    expect(admitted).toEqual([{ text: 'Review this', skills: [{ id: nativeId }] }]);
+  });
+
+  it('retains the authoritative native skill id when resolving a composer reference', async () => {
+    const result = await resolveStructuredInputProviderDispatchContext({
+      structuredInput: envelope({ mentions: [{
+        ...SKILL_MENTION,
+        ref: buildMentionRefForKindV1(MENTION_KIND_V1.skill, 'review-directory'),
+      }] }),
+      catalogs: catalogs({ listSkills: async () => ({ skills: [{
+        id: 'review-directory',
+        name: 'security-review',
+        path: '/repo/.opencode/skills/review-directory/SKILL.md',
+        origin: 'vendor',
+        backendId: 'opencode',
+      }] }) }),
+    });
+    expect(result.structuredInput).toMatchObject({ skillMentions: [{
+      id: 'review-directory',
+      name: 'security-review',
+      path: '/repo/.opencode/skills/review-directory/SKILL.md',
+    }] });
+  });
   it('projects a selected verified SessionMedia image into the canonical trusted image input', async () => {
     const result = await resolveStructuredInputProviderDispatchContext({
       structuredInput: envelope({
@@ -559,7 +670,7 @@ describe('resolveStructuredInputProviderContext', () => {
       candidateId: 'issue:42',
       signal: expect.any(AbortSignal),
     });
-    expect(result.structuredInput?.skillMentions).toEqual(LEGACY.skillMentions);
+    expect(result.structuredInput?.skillMentions).toEqual(LEGACY.skillMentions?.map((item) => ({ ...item, idSource: 'generated' })));
     expect(result.structuredInput?.mentions).toBeUndefined();
     expect(JSON.stringify(result.structuredInput)).not.toContain('The issue is ready for review.');
     const contextBlock = renderPromptContext(result);
@@ -640,7 +751,7 @@ describe('resolveStructuredInputProviderContext', () => {
       catalogs: catalogs(),
     });
 
-    expect(resolved?.skillMentions).toEqual(LEGACY.skillMentions);
+    expect(resolved?.skillMentions).toEqual(LEGACY.skillMentions?.map((item) => ({ ...item, idSource: 'generated' })));
     expect(resolved?.vendorPluginMentions).toEqual(LEGACY.vendorPluginMentions);
     expect(resolved?.mentions).toBeUndefined();
   });

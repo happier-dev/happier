@@ -7,6 +7,7 @@ import type {
 
 import { buildKiloAcpEnv } from '../acp/callbacks.js';
 import { KILO_ACP_RUNTIME_DEFINITION } from '../acp/definition.js';
+import { KILO_ACP_COMMAND } from '../acp/command.js';
 
 function createKiloAcpOptions(
   request: Pick<AgentSessionOpenRequest, 'launchEnvironment'> & Readonly<{
@@ -17,8 +18,8 @@ function createKiloAcpOptions(
   return {
     transport: {
       kind: 'stdio',
-      executable: { kind: 'systemTool', id: 'kilo-cli' },
-      args: ['acp'],
+      executable: { kind: 'systemTool', id: KILO_ACP_COMMAND.toolId },
+      args: [...KILO_ACP_COMMAND.args],
       env: buildKiloAcpEnv({
         launchEnvironment: request.launchEnvironment,
         permissionIntent: request.configuration.permissionIntent.value,

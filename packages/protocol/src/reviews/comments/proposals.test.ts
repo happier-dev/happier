@@ -35,10 +35,19 @@ describe('ReviewCommentProposalV1Schema', () => {
     },
   );
 
-  it('rejects proposal sets whose aggregate comment material exceeds the bounded envelope', () => {
-    expect(ReviewCommentProposalsV1Schema.safeParse(Array.from({ length: 20 }, (_, index) => ({
+  it('preserves valid proposals above the former count cutoff', () => {
+    const compact = Array.from({ length: 201 }, (_, index) => ({
+      body: `Finding ${index}`,
+      anchor: { kind: 'file' as const, filePath: `src/${index}.ts` },
+    }));
+    expect(ReviewCommentProposalsV1Schema.parse(compact)).toHaveLength(201);
+  });
+
+  it('preserves valid proposals above the former aggregate byte cutoff', () => {
+    const large = Array.from({ length: 20 }, (_, index) => ({
       body: `${index}:${'x'.repeat(65_000)}`,
-      anchor: { kind: 'file', filePath: `src/${index}.ts` },
-    }))).success).toBe(false);
+      anchor: { kind: 'file' as const, filePath: `src/${index}.ts` },
+    }));
+    expect(ReviewCommentProposalsV1Schema.parse(large)).toEqual(large);
   });
 });

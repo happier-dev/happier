@@ -448,12 +448,12 @@ describe('createStablePluginExecService', () => {
     });
 
     it('owns a failed legacy process-exit rejection before a consumer observes it', async () => {
+        // A real OS spawn error supplies a failed terminal fact; incomplete
+        // termination leaves exit pending and is covered by the supervisor owner.
         const supervised = spawnSupervisedPluginProcess({
-            command: process.execPath,
-            args: ['-e', 'setInterval(() => {}, 1000)'],
+            command: `${process.execPath}.missing-executable`,
+            args: [],
             env: {},
-            terminationJoinTimeoutMs: 10,
-            terminateProcessTree: async () => undefined,
         });
         const unhandled: unknown[] = [];
         const onUnhandled = (reason: unknown) => {
@@ -462,16 +462,16 @@ describe('createStablePluginExecService', () => {
         process.on('unhandledRejection', onUnhandled);
         try {
             const processHandle = adaptStablePluginExecLegacyProcessHandle(supervised);
-            await supervised.dispose('runtimeRecovery');
+            await supervised.handle.wait();
             await new Promise<void>((resolve) => setImmediate(resolve));
 
             expect(unhandled).toEqual([]);
             await expect(processHandle.exit).rejects.toMatchObject({
-                code: 'PLUGIN_EXEC_TERMINATION_TIMEOUT',
+                code: 'PLUGIN_EXEC_PROCESS_FAILED',
             });
         } finally {
             process.off('unhandledRejection', onUnhandled);
-            supervised.child.kill('SIGKILL');
+            await supervised.dispose('runtimeRecovery');
         }
     });
 

@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 
 import type { SidecarBrowserBinaryCandidate } from './binary';
+import { createBrowserSidecarLaunchOwnerControlAdapterFactory } from './launchOwner';
+import { createBrowserProfileStore } from '../profiles/store';
+import { createBrowserStoragePartitionOwner } from '../storage/partitions';
 import * as productSource from './productSource';
 
 const MANAGED_PROVENANCE = {
@@ -22,6 +27,52 @@ function managedCandidate(): SidecarBrowserBinaryCandidate {
 }
 
 describe('browser sidecar product source owner', () => {
+    it('settles a pending process acquisition before purging a closed Session profile', async () => {
+        class StartingProcess extends EventEmitter {
+            pid = 42;
+            stderr = new PassThrough();
+            exited = false;
+            kill() {
+                queueMicrotask(() => {
+                    this.exited = true;
+                    this.emit('exit', 0, 'SIGTERM');
+                });
+                return true;
+            }
+        }
+        const process = new StartingProcess();
+        const removed: string[] = [];
+        const profileStore = createBrowserProfileStore({
+            storageRootDirectory: '/unused',
+            partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: '/unused' }),
+            removeDirectory: async (directory) => {
+                expect(process.exited).toBe(true);
+                removed.push(directory);
+            },
+        });
+        const factory = productSource.createProductBrowserSidecarControlAdapterFactory({
+            platform: 'linux', featureEnabled: true, profileStore,
+            resolveManagedCandidate: async () => managedCandidate(),
+            createLaunchOwnerFactory: (input) => createBrowserSidecarLaunchOwnerControlAdapterFactory({
+                ...input, spawnProcess: () => process,
+            }),
+        });
+        const runtime = await factory({ machineId: 'machine' });
+        expect(runtime.ok).toBe(true);
+        if (!runtime.ok) return;
+        const opening = runtime.adapter.dispatchCommand({
+            kind: 'openView', commandId: 'open', browserSessionId: 'session', viewId: 'view', platform: 'web', focus: true,
+            target: { kind: 'externalUrl', targetId: 'target', url: 'https://example.test' },
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(profileStore.listProfiles()).toHaveLength(1);
+        expect(removed).toEqual([]);
+        await expect(profileStore.purgeForSessionDeleted({ sessionId: 'session' })).resolves.toMatchObject({ failedProfileIds: [] });
+        await expect(opening).resolves.toMatchObject({ status: 'failed', error: { code: 'adapter_unavailable' } });
+        expect(removed).toHaveLength(1);
+        expect(profileStore.listProfiles()).toEqual([]);
+    });
     it('fails closed with a typed blocker when no managed or packaged Browser executable is registered', async () => {
         const mod = await import('./productSource');
 

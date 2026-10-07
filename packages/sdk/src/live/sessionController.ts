@@ -266,12 +266,13 @@ export async function createSessionController(params: LiveParams): Promise<Happi
     else if (event.kind === 'session-updated') {
       const update = event.update;
       if (update.metadataLayoutVersion !== undefined && update.metadata && update.metadata.version > metadataVersion) metadataLayoutVersion = update.metadataLayoutVersion;
-      if (update.active !== undefined) facts = { ...facts, active: update.active };
+      const activeChanged = update.active !== undefined && update.active !== facts.active;
+      if (activeChanged) facts = { ...facts, active: update.active! };
       if (event.agentState?.status === 'ready' && update.agentState) applyAgentState(event.agentState.value, update.agentState.version);
       if (update.metadata) void openField(update.metadata.value, captured).then((value) => {
         if (!captured.aborted) applyMetadata(value, update.metadata!.version);
       }).catch((error: unknown) => { if (!captured.aborted) supervisor?.reportProbeResult?.(probeFailure(error), scope); });
-      refreshPending();
+      if (activeChanged) refreshPending();
     } else {
       streamOpening = streamOpening.then(async () => {
         if (captured.aborted || signal.aborted) return;
@@ -294,6 +295,7 @@ export async function createSessionController(params: LiveParams): Promise<Happi
     if (closePromise) return closePromise;
     owner.abort(new HappierClientClosedError());
     closePromise = Promise.resolve().then(async () => { await supervisor?.stop(); }).finally(() => {
+      assembler.releaseTranscriptStreamSegmentAssemblyForSession(params.sessionId);
       unregisterCleanup?.(); signal.removeEventListener('abort', onAbort); disposeContent();
       snapshot = { ...snapshot, connection: 'closed', actions: unavailableActions };
       for (const listener of listeners) listener();

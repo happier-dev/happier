@@ -105,8 +105,16 @@ function resolveClaudeSubscriptionPlanLabel(record: OauthCredentialRecord | Toke
         : isRecord(raw?.['claude.ai_oauth'])
             ? raw['claude.ai_oauth']
             : null;
-    return normalizeNonEmptyString(claudeAiOauth?.subscriptionType)
-        ?? normalizeNonEmptyString(claudeAiOauth?.rateLimitTier);
+    return resolveClaudeSubscriptionPlanLabelFromMetadata(claudeAiOauth);
+}
+
+/** Native and Connected Account probes project the same provider-declared fact. */
+export function resolveClaudeSubscriptionPlanLabelFromMetadata(metadata: Readonly<{
+    subscriptionType?: unknown;
+    rateLimitTier?: unknown;
+}> | null): string | null {
+    return normalizeNonEmptyString(metadata?.subscriptionType)
+        ?? normalizeNonEmptyString(metadata?.rateLimitTier);
 }
 
 function parseIsoDateMs(value: unknown): number | null {

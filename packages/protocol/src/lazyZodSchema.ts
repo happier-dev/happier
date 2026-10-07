@@ -1,4 +1,4 @@
-import { core, globalRegistry, type ZodType } from 'zod';
+import { core, globalRegistry, toJSONSchema, ZodType } from 'zod';
 
 const SCHEMA_METHODS = new Set([
   'check', 'with', 'clone', 'refine', 'superRefine', 'overwrite', 'optional',
@@ -57,6 +57,14 @@ function createLazyDefinition<TSchema extends object>(create: () => TSchema, def
           value: Object.create(concreteSchema._zod, {
             processJSONSchema: { value: processJSONSchema },
           }),
+        };
+      }
+      if (deferZodMethods && concrete instanceof ZodType) {
+        // Keep the concrete root's projection identity while using Zod's
+        // native processors for genuine Core/Mini child definitions.
+        descriptors.toJSONSchema = {
+          ...descriptors.toJSONSchema,
+          value: (params?: core.ToJSONSchemaParams) => toJSONSchema(concrete, params),
         };
       }
       Object.defineProperties(target, descriptors);

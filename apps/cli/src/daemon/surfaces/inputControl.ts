@@ -30,7 +30,7 @@ type ActiveInput = Readonly<{
 }>;
 
 /** One instance belongs to one actual input target. The transport owns target lookup and authority. */
-export function createSurfaceInputControl(options: Readonly<{ requireObservation?: boolean }> = {}): SurfaceInputControl {
+export function createSurfaceInputControl(options: Readonly<{ requireObservation?: boolean; onStatusChange?: () => void }> = {}): SurfaceInputControl {
   let controlEpoch = 0;
   let humanHeld = false;
   let closed = false;
@@ -60,6 +60,7 @@ export function createSurfaceInputControl(options: Readonly<{ requireObservation
       if (closed || active || epoch !== controlEpoch || (uncertain && !humanHeld && observationRequirement !== 'hand_back')) return false;
       uncertain = false;
       observationRequirement = null;
+      options.onStatusChange?.();
       return true;
     },
     invalidateObservation() { observationRequirement ??= 'required'; },
@@ -76,7 +77,8 @@ export function createSurfaceInputControl(options: Readonly<{ requireObservation
       let resolveDrained: (completion: SurfaceInputCompletion) => void = () => undefined;
       const drained = new Promise<SurfaceInputCompletion>((resolve) => { resolveDrained = resolve; });
       active = { requestedBy: input.requestedBy, abort, drained };
-      const cancelFromCaller = () => { observationRequirement = 'required'; abort.abort('user_canceled'); };
+      options.onStatusChange?.();
+      const cancelFromCaller = () => { observationRequirement = 'required'; abort.abort('user_canceled'); options.onStatusChange?.(); };
       if (input.signal?.aborted) cancelFromCaller();
       else input.signal?.addEventListener('abort', cancelFromCaller, { once: true });
 
@@ -93,6 +95,7 @@ export function createSurfaceInputControl(options: Readonly<{ requireObservation
         if (completion === 'unknown') uncertain = true;
         active = null;
         resolveDrained(completion);
+        options.onStatusChange?.();
       }
     },
     async takeOver(reason = 'user_canceled') {
@@ -101,6 +104,7 @@ export function createSurfaceInputControl(options: Readonly<{ requireObservation
       observationRequirement = 'required';
       const current = active;
       current?.abort.abort(reason);
+      options.onStatusChange?.();
       return { active: current !== null, completion: current ? await current.drained : uncertain ? 'unknown' : 'known' };
     },
     handBack() {
@@ -110,12 +114,14 @@ export function createSurfaceInputControl(options: Readonly<{ requireObservation
       // Hand back changes admission, not the unsettled-effect fact. A fresh agent
       // observation must clear that fact before its next mutation.
       observationRequirement = 'hand_back';
+      options.onStatusChange?.();
       return true;
     },
     async close(reason = 'closed') {
       closed = true;
       const current = active;
       current?.abort.abort(reason);
+      options.onStatusChange?.();
       return current ? await current.drained : uncertain ? 'unknown' : 'known';
     },
   };

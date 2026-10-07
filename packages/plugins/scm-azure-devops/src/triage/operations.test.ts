@@ -480,6 +480,26 @@ describe('Azure DevOps Triage listInstances', () => {
 });
 
 describe('Azure DevOps Triage scan', () => {
+  it('refuses a native credential binding before account or provider access', async () => {
+    const recorder = createRecorder(() => page([]));
+    const result = await runAzureTriageScan({
+      request: {
+        v: 1,
+        instance: configuredInstance({ binding: {
+          purpose: AZURE_DEVOPS_TRIAGE_PURPOSE,
+          source: 'native',
+          service: accountRef('account-1').service,
+        } }),
+        page: { kind: 'initial', limit: 30 },
+      },
+      services: recorder.services,
+      signal: new AbortController().signal,
+    });
+    expect(result).toMatchObject({ kind: 'failed', failure: { class: 'unsupportedContract' } });
+    expect(recorder.materializedAccounts).toEqual([]);
+    expect(recorder.urls).toEqual([]);
+  });
+
   it('walks projects, then repositories, then the two viewer lanes, with every URL version-pinned', async () => {
     const recorder = createRecorder(happyPath());
     const result = await runAzureTriageScan({

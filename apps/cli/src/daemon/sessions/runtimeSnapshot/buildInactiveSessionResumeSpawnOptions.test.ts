@@ -21,7 +21,7 @@ describe('buildInactiveSessionResumeSpawnOptions', () => {
       rawSession: { machineId: 'machine-1', path: '/private/chat' },
       metadata: {
         machineId: 'machine-1', path: '/private/chat', flavor: 'codex',
-        sessionDirectoryV1: { v: 1, kind: 'managed' },
+        sessionDirectoryV1: { v: 1, kind: 'managed', futureField: 'ignored' },
       },
     });
     expect(result).toMatchObject({ directoryKind: 'managed', approvedNewDirectoryCreation: false });
@@ -87,7 +87,7 @@ describe('buildInactiveSessionResumeSpawnOptions', () => {
         machineId: 'machine-1',
         path: '/home/coder/project',
         flavor: 'codex',
-        sessionCreationCorrespondenceV1: correspondence,
+        sessionCreationCorrespondenceV1: { ...correspondence, futureField: 'ignored' },
       },
     });
 

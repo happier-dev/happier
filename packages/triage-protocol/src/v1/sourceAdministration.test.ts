@@ -30,6 +30,21 @@ describe('Triage source administration Action identity', () => {
 });
 
 describe('Triage source administration input', () => {
+    it('admits native service metadata without a synthetic account or credential', () => {
+        const binding = {
+            purpose: 'github-account-use',
+            source: 'native',
+            service: { pluginId: 'happier.scm.forge.github', localId: 'github-account' },
+        };
+        const input = { v: 1, kind: 'create', draft: { ...draft, binding } };
+        expect(TriageSourceAdministrationActionInputV1Schema.parse(input)).toEqual(input);
+        for (const extra of [{ account: fixture.configuredInstance.binding }, { token: 'secret' }, { credential: 'secret' }]) {
+            expect(TriageSourceAdministrationActionInputV1Schema.safeParse({
+                ...input, draft: { ...input.draft, binding: { ...binding, ...extra } },
+            }).success).toBe(false);
+        }
+    });
+
     it('admits exactly the four lifecycle arms', () => {
         expect(draft).toBeDefined();
         for (const input of [

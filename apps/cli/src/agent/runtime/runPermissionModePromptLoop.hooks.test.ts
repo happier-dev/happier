@@ -845,7 +845,7 @@ describe('runPermissionModePromptLoop hook dispatch', () => {
     expect(transformAgentContextBeforeDispatch).toHaveBeenCalledTimes(1);
   });
 
-  it('uses the attributed dispatch path for a provider-native command with provenance', async () => {
+  it('keeps a provider-native command before its provenance without agent context transformation', async () => {
     const session = createMutableApiSessionClientFixture<Metadata>({
       overrides: { sessionId: 'session-attributed-provider-command' } as Partial<Parameters<typeof runPermissionModePromptLoop>[0]['session']>,
     });
@@ -895,9 +895,9 @@ describe('runPermissionModePromptLoop hook dispatch', () => {
       registerProviderAcceptedEffect: () => undefined,
     } as Parameters<typeof runPermissionModePromptLoop>[0]);
 
-    expect(transformAgentContextBeforeDispatch).toHaveBeenCalledTimes(1);
+    expect(transformAgentContextBeforeDispatch).not.toHaveBeenCalled();
     expect(runtime.sendTurnPrompt).toHaveBeenCalledWith(
-      `${inputContextBlock}\n\n/goal fix authentication [context]`,
+      `/goal fix authentication\n\n${inputContextBlock}`,
       { localId: 'local-attributed-goal', localIds: ['local-attributed-goal'] },
     );
   });

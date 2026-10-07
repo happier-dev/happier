@@ -37,8 +37,10 @@ async function defaultStopProcess(child, signal) {
   return await killProcessTree(child, signal, { graceMs: 2_000 });
 }
 
-function assertReadySyncStatus(status, { allowSynchronizing = false } = {}) {
+function assertReadySyncStatus(status, { allowSynchronizing = false, allowRescan = false, allowNeedsFlush = false } = {}) {
   if (status.state === 'ready' || (allowSynchronizing && status.state === 'synchronizing')) return;
+  if (allowNeedsFlush && status.state === 'needs-flush') return;
+  if (allowRescan && status.recovery === 'rescan') return;
   const reason = status.lastError || status.error;
   const detail = reason ? `: ${reason}` : '';
   throw new Error(
@@ -93,6 +95,32 @@ export async function inspectDevTargetSync(
   }
 }
 
+/** Read-only worker observation, independent of admission and sync readiness. */
+export async function inspectDevTargetAdmission({ target, env = process.env },
+  { runCaptureResult: capture = defaultRunCaptureResult } = {}) {
+  if (target.platform === 'windows') return { state: 'unsupported', owners: [] };
+  const remoteCommand = buildRemoteExecCommand(target, {
+    executionId: randomUUID(), commandArgs: ['node', './apps/stack/scripts/utils/proc/service_memory.mjs', '--admission-status'],
+  });
+  try {
+    const result = await capture({ command: 'ssh', args: buildSshWorkerArgs(target, {
+      remoteCommand, tty: false, sshArgs: target.sshConfigFile ? ['-F', target.sshConfigFile] : [],
+    }), env });
+    if (!result?.ok) return { state: 'unavailable', error: result?.err || 'worker admission observation failed' };
+    const progress = JSON.parse(result.out);
+    if (!['observed', 'unsupported'].includes(progress?.state) || !Array.isArray(progress.owners)
+      || progress.owners.some(owner => !Number.isSafeInteger(owner.pid) || owner.pid <= 1
+        || typeof owner.token !== 'string' || !/^\d+$/.test(owner.token)
+        || typeof owner.className !== 'string' || !/^[a-z][a-z-]*$/.test(owner.className)
+        || ![owner.ageSeconds, owner.cpuSeconds, owner.recentCpuPercent].every(value => value === null || (Number.isFinite(value) && value >= 0)))) {
+      return { state: 'unavailable', error: 'invalid worker admission observation' };
+    }
+    return progress;
+  } catch (error) {
+    return { state: 'unavailable', error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 async function flushDevTarget(
   { target, stackBaseDir, env = process.env, timeoutMs = null },
   { runCaptureResult: runCaptureResultImpl = defaultRunCaptureResult } = {},
@@ -136,7 +164,7 @@ export async function syncDevTarget(
   dependencies = {},
 ) {
   const status = await inspectDevTargetSync(options, dependencies);
-  assertReadySyncStatus(status, { allowSynchronizing: true });
+  assertReadySyncStatus(status, { allowSynchronizing: true, allowRescan: true, allowNeedsFlush: true });
   return await flushDevTarget(options, dependencies);
 }
 
@@ -242,7 +270,7 @@ export async function runDevTargetCommand(
       { target, stackBaseDir, env },
       { runCaptureResult: runCaptureResultImpl },
     );
-    assertReadySyncStatus(syncStatus);
+    assertReadySyncStatus(syncStatus, { allowRescan: flush !== false, allowNeedsFlush: flush !== false });
   }
   if (flush === true || (flush === null && !syncAlreadyVerified)) {
     await flushDevTarget(
@@ -320,7 +348,7 @@ export async function runDevTargetCommand(
     tty,
     lifetimeStdin,
     onLine: ({ stream, line }) => {
-      if (stream === 'stderr' && line === '[preferred-execution] heavyweight admission declined before dispatch') admissionDeclined = true;
+      if (stream === 'stderr' && line === `HSTACK_ADMISSION_BUSY:${executionId}`) admissionDeclined = true;
     },
   });
   const recordProvenance = async (record) => {

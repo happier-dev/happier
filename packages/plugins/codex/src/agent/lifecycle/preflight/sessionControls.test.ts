@@ -4,6 +4,7 @@ import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type {
   AgentPreflightJsonRpcRequestClientV1,
   AgentPreflightSessionControlsProbeContextV1,
+  AgentPreflightSessionControlsContributionV1,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { CODEX_PREFLIGHT_SESSION_CONTROLS } from './sessionControls.js';
@@ -11,15 +12,20 @@ import { CODEX_PREFLIGHT_SESSION_CONTROLS } from './sessionControls.js';
 function createPreflightContext(params: Readonly<{
   accountSettings?: Readonly<Record<string, JsonValue>> | null;
   environment?: Readonly<Record<string, boolean>>;
+  nonblankEnvironment?: Readonly<Record<string, boolean>>;
+  catalogs?: Awaited<ReturnType<AgentPreflightSessionControlsProbeContextV1['probeDeclaredAcpCatalogs']>>;
   runtimeDescriptorV1?: AgentPreflightSessionControlsProbeContextV1['runtimeDescriptorV1'];
   runtimeKindOverride?: string;
   request(method: string, requestParams?: JsonValue): Promise<JsonValue>;
 }>) {
   const controller = new AbortController();
-  const commands: Array<Readonly<{ toolId: string; args: readonly string[] }>> = [];
+  const commands: Array<Parameters<AgentPreflightSessionControlsProbeContextV1['withDeclaredJsonRpcClient']>[0]> = [];
   const requests: Array<Readonly<{ method: string; params: JsonValue | undefined }>> = [];
   const notifications: Array<Readonly<{ method: string; params: JsonValue | undefined }>> = [];
+  const catalogRequests: Array<Parameters<AgentPreflightSessionControlsProbeContextV1['probeDeclaredAcpCatalogs']>[0]> = [];
   const client: AgentPreflightJsonRpcRequestClientV1 = Object.freeze({
+    onNotification: () => ({ dispose() {} }),
+    onRequest: () => ({ dispose() {} }),
     request: async (method, requestParams) => {
       requests.push({ method, params: requestParams });
       return await params.request(method, requestParams);
@@ -34,6 +40,7 @@ function createPreflightContext(params: Readonly<{
     runtimeDescriptorV1: params.runtimeDescriptorV1,
     runtimeKindOverride: params.runtimeKindOverride,
     environment: params.environment ?? Object.freeze({}),
+    nonblankEnvironment: params.nonblankEnvironment,
     signal: controller.signal,
     runDeclaredSystemToolCommand: async () => ({
       ok: false,
@@ -41,15 +48,81 @@ function createPreflightContext(params: Readonly<{
       stderr: '',
       exitCode: null,
     }),
+    probeDeclaredAcpCatalogs: async (input) => {
+      catalogRequests.push(input);
+      return params.catalogs ?? { commands: null, skills: null };
+    },
+    resolveDeclaredSystemTool: async () => { throw new Error('Native Codex preflight owns no managed service'); },
+    withDeclaredManagedService: async () => { throw new Error('Native Codex preflight owns no managed service'); },
     withDeclaredJsonRpcClient: async <TResult>(command, inspect) => {
       commands.push(command);
       return await inspect(client, controller.signal);
     },
   };
-  return { context, commands, requests, notifications };
+  return { context, commands, requests, notifications, catalogRequests };
 }
 
 describe('CODEX_PREFLIGHT_SESSION_CONTROLS', () => {
+  it('reads native skills before a first turn through the declared app-server scope', async () => {
+    const fixture = createPreflightContext({
+      request: async (method) => {
+        if (method === 'initialize') return {};
+        if (method === 'skills/list') return { data: [{ cwd: process.cwd(), skills: [{
+          name: 'review', path: '/skills/review/SKILL.md', enabled: true,
+          description: 'Review code',
+        }] }] };
+        throw new Error(`Unexpected native preflight request: ${method}`);
+      },
+    });
+    const contribution: AgentPreflightSessionControlsContributionV1 = CODEX_PREFLIGHT_SESSION_CONTROLS;
+    expect(await contribution.probeCatalogs?.(fixture.context)).toMatchObject({
+      commands: null,
+      skills: [{ id: 'vendor:codex:review', name: 'review', path: '/skills/review/SKILL.md', origin: 'vendor' }],
+    });
+    expect(fixture.requests).toEqual([
+      expect.objectContaining({ method: 'initialize' }),
+      { method: 'skills/list', params: { cwds: [process.cwd()] } },
+    ]);
+    expect(fixture.commands).toEqual([expect.objectContaining({
+      toolId: 'codex-cli', args: ['app-server', '--listen', 'stdio://'],
+    })]);
+  });
+
+  it('preserves an observable diagnostic when native skill listing is unsupported', async () => {
+    const fixture = createPreflightContext({
+      request: async (method) => {
+        if (method === 'initialize') return {};
+        throw Object.assign(new Error('Native method not found'), { code: -32601 });
+      },
+    });
+    const contribution: AgentPreflightSessionControlsContributionV1 = CODEX_PREFLIGHT_SESSION_CONTROLS;
+    expect(await contribution.probeCatalogs?.(fixture.context)).toMatchObject({
+      commands: null, skills: null, diagnostic: expect.any(String),
+    });
+  });
+
+  it.each([
+    { nonblank: { OPENAI_API_KEY: true, CODEX_API_KEY: true }, methodId: 'openai-api-key' },
+    { nonblank: { OPENAI_API_KEY: false, CODEX_API_KEY: true }, methodId: 'codex-api-key' },
+    { nonblank: { OPENAI_API_KEY: false, CODEX_API_KEY: false }, methodId: undefined },
+  ])('reads Codex ACP commands through the declared managed dependency with native auth $methodId', async ({ nonblank, methodId }) => {
+    const nativeCommands = [{ name: 'review', description: 'Review code', input: { hint: 'target' } }];
+    const fixture = createPreflightContext({
+      accountSettings: { codexBackendMode: 'acp' },
+      environment: { OPENAI_API_KEY: true, CODEX_API_KEY: true },
+      nonblankEnvironment: nonblank,
+      catalogs: { commands: nativeCommands, skills: null },
+      request: async (method) => { throw new Error(`Unexpected app-server request: ${method}`); },
+    });
+    const contribution: AgentPreflightSessionControlsContributionV1 = CODEX_PREFLIGHT_SESSION_CONTROLS;
+    expect(await contribution.probeCatalogs?.(fixture.context)).toEqual({ commands: nativeCommands, skills: null });
+    expect(fixture.catalogRequests).toEqual([{
+      executable: { kind: 'managedDependency', id: 'codex-acp' }, args: [],
+      ...(methodId === undefined ? {} : { authenticationMethodId: methodId }),
+    }]);
+    expect(fixture.requests).toEqual([]);
+  });
+
   it.each([
     { runtimeMode: 'acp', accountMode: 'appServer', expectedModels: null },
     { runtimeMode: 'appServer', accountMode: 'acp', expectedModels: [] },
@@ -125,6 +198,7 @@ describe('CODEX_PREFLIGHT_SESSION_CONTROLS', () => {
           'HAPPIER_CODEX_APP_SERVER_RPC_LOG_ROTATE_COUNT',
         ],
       },
+      { executable: { kind: 'managedDependency', id: 'codex-acp' }, args: [] },
     ]);
     expect(CODEX_PREFLIGHT_SESSION_CONTROLS).not.toHaveProperty('failureCacheStrategy');
     expect(CODEX_PREFLIGHT_SESSION_CONTROLS).not.toHaveProperty('connectedServiceAuth');

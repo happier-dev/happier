@@ -3,6 +3,8 @@ import type {
   AgentPreflightSessionControlsContributionV1,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
+import { probeOpenCodePreflightCatalogs, resolveOpenCodePreflightProbeVariant } from './catalogs.js';
+import { OPENCODE_CHILD_LAUNCH_ENV_KEYS } from '../runtime/server/spawnSpec.js';
 import { isOpenCodeModelSelectable } from '../models/eligibility.js';
 import { buildOpenCodeThinkingModelOptionsFromVariants } from '../config/thinking.js';
 import { asRecord, normalizeString } from '../runtime/server/openCodeParsing.js';
@@ -186,6 +188,16 @@ export function buildOpenCodePreflightModelsFromVerboseOutput(
 }
 
 export const OPENCODE_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
+  resolveProbeVariant: resolveOpenCodePreflightProbeVariant,
+  probeCatalogs: probeOpenCodePreflightCatalogs,
+  managedServiceCommands: Object.freeze([OPEN_CODE_SYSTEM_TOOL_ID, OPEN_CODE_STABLE_SYSTEM_TOOL_ID, OPEN_CODE_V2_SYSTEM_TOOL_ID].map((toolId) => Object.freeze({
+    toolId, args: Object.freeze(['serve', '--hostname', '127.0.0.1']),
+    environmentKeys: Object.freeze([...OPENCODE_CHILD_LAUNCH_ENV_KEYS, 'OPENCODE_PERMISSION', 'OPENCODE_DISABLE_PRUNE', 'OPENCODE_SERVER_PASSWORD']), ci: 'omit' as const,
+  }))),
+  jsonRpcCommands: Object.freeze([OPEN_CODE_SYSTEM_TOOL_ID, OPEN_CODE_STABLE_SYSTEM_TOOL_ID, OPEN_CODE_V2_SYSTEM_TOOL_ID].flatMap((toolId) => [
+    Object.freeze({ toolId, args: Object.freeze(['--version']) }),
+    Object.freeze({ toolId, args: Object.freeze(['acp']) }),
+  ])),
   models: Object.freeze({
     commandToolIds: Object.freeze([
       OPEN_CODE_SYSTEM_TOOL_ID,

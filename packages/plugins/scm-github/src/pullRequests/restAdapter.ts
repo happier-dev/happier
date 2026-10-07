@@ -53,6 +53,7 @@ export type GithubRestTokenResolver = (input: Readonly<{
   host: string;
   provider: ScmHostingProviderRef;
   runtimeServices?: ScmHostingProviderRuntimeServices;
+  signal?: AbortSignal;
 }>) => Promise<GithubRestTokenResolution>;
 
 export type GithubRestPullRequestAdapter = Readonly<{
@@ -67,12 +68,7 @@ export type GithubRestPullRequestAdapter = Readonly<{
 
 const GITHUB_DOT_COM_HOST = 'github.com';
 
-async function defaultRuntimeTokenResolver(input: Readonly<{
-  providerId: string;
-  host: string;
-  provider: ScmHostingProviderRef;
-  runtimeServices?: ScmHostingProviderRuntimeServices;
-}>): Promise<GithubRestTokenResolution> {
+async function defaultRuntimeTokenResolver(input: Parameters<GithubRestTokenResolver>[0]): Promise<GithubRestTokenResolution> {
   const resolver = input.runtimeServices?.resolveScmHostingTokenMaterialization;
   if (!resolver) {
     return { kind: 'missing', reason: 'credential_unavailable' };
@@ -82,7 +78,7 @@ async function defaultRuntimeTokenResolver(input: Readonly<{
     providerId: input.providerId,
     host: input.host,
     provider: input.provider,
-  });
+  }, input.signal ? { signal: input.signal } : undefined);
   if (result.kind !== 'available') {
     return { kind: 'missing', reason: result.reason };
   }
@@ -102,6 +98,8 @@ function resolveProviderHost(provider: ScmHostingProviderRef): string {
     const parsed = new URL(provider.baseUrl);
     if (
       parsed.protocol !== 'https:'
+      || parsed.username
+      || parsed.password
       || parsed.port
       || parsed.pathname.replace(/\/+$/, '') !== ''
       || parsed.search
@@ -113,10 +111,6 @@ function resolveProviderHost(provider: ScmHostingProviderRef): string {
   } catch {
     return '';
   }
-}
-
-export function isGithubDotComProvider(provider: ScmHostingProviderRef): boolean {
-  return resolveProviderHost(provider) === GITHUB_DOT_COM_HOST;
 }
 
 function requireNameWithOwner(provider: ScmHostingProviderRef): string {
@@ -136,10 +130,11 @@ function readNameWithOwnerSegments(provider: ScmHostingProviderRef): readonly [s
 }
 
 function apiBaseUrl(provider: ScmHostingProviderRef): string {
-  if (!isGithubDotComProvider(provider)) {
-    throw createGithubAuthRequiredError('GitHub connected-account REST tokens are scoped to github.com');
+  const host = resolveProviderHost(provider);
+  if (!host) {
+    throw createGithubAuthRequiredError('GitHub requires a valid HTTPS repository origin');
   }
-  return 'https://api.github.com';
+  return host === GITHUB_DOT_COM_HOST ? 'https://api.github.com' : `https://${host}/api/v3`;
 }
 
 function pullsUrl(input: ScmHostingProviderPullRequestListInput): string {
@@ -176,16 +171,18 @@ async function resolveToken(
   provider: ScmHostingProviderRef,
   resolver: GithubRestTokenResolver,
   runtimeServices?: ScmHostingProviderRuntimeServices,
+  signal?: AbortSignal,
 ): Promise<Readonly<{ token: string; profileKey?: string }>> {
   const host = resolveProviderHost(provider);
-  if (host !== GITHUB_DOT_COM_HOST) {
-    throw createGithubAuthRequiredError('GitHub connected-account REST tokens are scoped to github.com');
+  if (!host) {
+    throw createGithubAuthRequiredError('GitHub requires a valid HTTPS repository origin');
   }
   const result = await resolver({
     providerId: provider.id,
     host,
     provider,
     ...(runtimeServices ? { runtimeServices } : {}),
+    ...(signal ? { signal } : {}),
   });
   if (result.kind !== 'available' || !result.token.trim()) {
     throw createGithubAuthRequiredError();
@@ -279,7 +276,7 @@ export function createGithubRestAdapter(params?: Readonly<{
     runtimeServices?: ScmHostingProviderRuntimeServices,
     signal?: AbortSignal,
   ): Promise<unknown> {
-    const auth = await resolveToken(provider, tokenResolver, runtimeServices);
+    const auth = await resolveToken(provider, tokenResolver, runtimeServices, signal);
     profileKeyByProvider.set(providerAuthProfileScopeKey(provider), auth.profileKey ?? null);
     return requestScmForgeJson({
       url,

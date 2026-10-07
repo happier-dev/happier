@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PluginInstallationManifestPublisherHeaderV1Schema, PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1, WorkflowActionFailureV1Schema, WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, openWorkflowAcceptedSnapshotStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, PluginInstallationManifestPublisherHeaderV1Schema, PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1, WorkflowActionFailureV1Schema, WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -37,6 +37,9 @@ afterEach(async () => {
 });
 
 const runId = '11111111-1111-4111-8111-111111111111';
+const definitionId = '22222222-2222-4222-8222-222222222222';
+const waitDefinition = { version: 1, defaults: {}, blocks: [{ kind: 'wait', id: 'continue',
+    document: { text: 'Continue when ready', references: [], attachments: [] } }] };
 const semanticInput = {
     runId,
     source: {
@@ -108,6 +111,7 @@ async function createBoundaryHarness() {
         boundaryObservations.push(`GET ${path}`);
         if (path === '/v1/account/profile') return { status: 200, data: { id: 'account-1' } };
         if (path === '/v2/account/settings') return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+        if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
         if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
             mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
             recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' },
@@ -124,6 +128,15 @@ async function createBoundaryHarness() {
             boundaryObservations.push('Artifact list returning empty array');
             return { status: 200, data: [] };
         }
+        if (path === `/v1/artifacts/${definitionId}`) return { status: 200, data: {
+            id: definitionId, ownerAccountId: 'account-1', access: 'owner', encryptionMode: 'plain',
+            header: encodePlainArtifactStoredContent({ kind: 'workflow-definition.v1', definitionId,
+                revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Saved Wait' } }),
+            body: encodePlainArtifactStoredContent({ body: JSON.stringify({ kind: 'workflow-definition.v1', definition: waitDefinition }) }),
+            dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1,
+            seq: 1, createdAt: 1, updatedAt: 1,
+        } };
+        if (path === '/v2/sessions/cli-global') return { status: 404, data: { error: 'session_not_found' } };
         throw new Error(`unexpected_get:${path}`);
     });
     http.post.mockImplementation(async (url: string, operation: Readonly<Record<string, unknown>>, config: Readonly<{ headers: Record<string, string> }>) => {
@@ -222,6 +235,27 @@ describe('UI Workflow targeted Action RPC boundary', () => {
         await runtimeRegistryLease?.release();
         runtimeRegistryLease = null;
         await pluginReloadController.shutdown();
+    });
+
+    it('admits a direct saved fieldless Wait on the selected Machine without an invented origin Session or Agent', async () => {
+        const boundary = await createBoundaryHarness();
+        const response = await boundary.handlers.get('workflow.run.start')!({
+            v: 1, kind: 'targeted_action_rpc',
+            input: { runId, source: { kind: 'saved', definitionId, revision: { headerVersion: 1, bodyVersion: 1 } }, inputs: {} },
+            target: { kind: 'machine', machineId: boundary.project.machineId, project: boundary.project },
+        });
+        expect(response, JSON.stringify(boundary.boundaryObservations)).toEqual({ run, admission: 'created' });
+        const envelope = parseWorkflowStoredContentEnvelopeV1(boundary.readCommittedEnvelope()!);
+        expect(envelope).not.toBeNull();
+        const accepted = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain', envelope: envelope!,
+            binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId } });
+        expect(accepted.kind).toBe('available');
+        if (accepted.kind !== 'available') throw new Error('accepted_snapshot_unavailable');
+        expect(accepted.content).toMatchObject({ source: { kind: 'saved', definitionId }, origin: { kind: 'direct' },
+            machineId: boundary.project.machineId, workspaceTarget: { project: { ...boundary.project, checkoutRootPath: boundary.project.directory } },
+            materializedLeaves: [{ kind: 'wait', selection: {} }] });
+        expect(accepted.content).not.toHaveProperty('origin.originSessionId');
+        expect(machineRpc).not.toHaveBeenCalled();
     });
 
     it('admits and response-loss rejoins with the selected project kept out of semantic input', async () => {

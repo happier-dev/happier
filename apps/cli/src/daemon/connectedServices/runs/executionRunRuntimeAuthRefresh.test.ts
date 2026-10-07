@@ -28,10 +28,11 @@ async function harness(refresh: (request: ConnectedServiceDaemonAuthBridgeRefres
         resolveAuthForSpawn: async () => ({ env: { CODEX_HOME: '/materialized/run/codex',
             [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{ ...selection, credentialRevision: revision }]) },
             cleanupOnFailure: null, cleanupOnExit: async () => {}, connectedServicesBindings: bindings,
-            targetMaterializedRoot: '/materialized/run/codex' }),
+            targetMaterializedRoot: '/materialized/run/codex', qualifiedPurposeBindingSnapshot: null }),
         registerRunTargets: (registration) => { registry.registerRunTarget({ ...registration, pid: registration.runnerPid }); },
         unregisterRunTargets: (runKey) => { registry.unregisterRunKey(runKey); },
         getRunRuntimeTarget: (runKey) => registry.getRunTargetByRunKey(runKey),
+        adoptRunCredentialRevision: (input) => registry.adoptExactCredentialRevisionForRun(input),
         resolveDaemonAuthBridge: async () => ({ serviceId: selection.serviceId, refresh }),
         resolveRunMaterializedRoot: () => '/materialized/run/codex',
         createAdoptedRootCleanup: () => null,
@@ -80,7 +81,7 @@ describe('execution Run runtime auth refresh HTTP authority', () => {
         } finally { await h.app.close(); }
     });
 
-    it('rejects stale activation, wrong runner, mismatched member/revision and unknown authority fields', async () => {
+    it('rejects stale activation, wrong runner, mismatched member and unknown authority fields', async () => {
         const requests: ConnectedServiceDaemonAuthBridgeRefreshRequest[] = [];
         const h = await harness(async (request) => { requests.push(request); return { status: 'refreshed', result: {} }; });
         try {
@@ -88,7 +89,7 @@ describe('execution Run runtime auth refresh HTTP authority', () => {
                 { activationId: '00000000-0000-4000-8000-000000000000' }, { runnerPid: 4243 },
                 { selection: { ...selection, activeProfileId: 'other' } },
                 { selection: { ...selection, generation: 8 } },
-                { expectedCredentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa' }, { serviceId: 'claude-subscription' },
+                { serviceId: 'claude-subscription' },
             ]) {
                 const response = await h.post({ ...h.request, ...patch });
                 expect(response.statusCode).toBe(200);
@@ -99,7 +100,7 @@ describe('execution Run runtime auth refresh HTTP authority', () => {
         } finally { await h.app.close(); }
     });
 
-    it.each(['runner', 'contribution', 'release'] as const)('refuses credentials after %s authority is retired while refresh is pending', async (retirement) => {
+    it.each(['runner', 'contribution', 'release', 'target'] as const)('refuses credentials after %s authority is retired while refresh is pending', async (retirement) => {
         let started!: () => void;
         const entered = new Promise<void>((resolve) => { started = resolve; });
         let settle!: (result: ConnectedServiceDaemonAuthBridgeRefreshResult) => void;
@@ -111,12 +112,37 @@ describe('execution Run runtime auth refresh HTTP authority', () => {
             if (retirement === 'runner') h.retireRunner();
             if (retirement === 'contribution') h.retireContribution();
             if (retirement === 'release') await h.bridge.release(h.request);
+            if (retirement === 'target') h.registry.unregisterRunKey(h.request.runId);
             settle({ status: 'refreshed', result: { proof: 'must-not-disclose' } });
             const response = await responsePromise;
             expect(response.statusCode).toBe(200);
             expect(response.json()).toMatchObject({ ok: true, result: { status: 'unavailable' } });
             expect(response.body).not.toContain('must-not-disclose');
         } finally { settle({ status: 'failed', reason: 'closed' }); await h.app.close(); }
+    });
+
+    it('settles an unexpected provider refresh error without disclosing provider text', async () => {
+        const h = await harness(async () => { throw new Error('private-provider-diagnostic'); });
+        try {
+            const response = await h.post();
+            expect(response.statusCode).toBe(200);
+            expect(response.json()).toEqual({ ok: true, result: { status: 'failed', reason: 'runtime_auth_refresh_failed' } });
+            expect(response.body).not.toContain('private-provider-diagnostic');
+        } finally { await h.app.close(); }
+    });
+
+    it('authorizes a second refresh against the credential revision settled by the first', async () => {
+        const refreshedRevision = 'csr_aaaaaaaaaaaaaaaaaaaaaa';
+        const requests: ConnectedServiceDaemonAuthBridgeRefreshRequest[] = [];
+        const h = await harness(async (request) => { requests.push(request); return {
+            status: 'refreshed', result: { credentialRevision: refreshedRevision, proof: 'fresh' },
+        }; });
+        try {
+            expect((await h.post()).json()).toMatchObject({ result: { status: 'refreshed' } });
+            const second = await h.post({ ...h.request, refreshAttemptId: 'refresh-2', expectedCredentialRevision: refreshedRevision });
+            expect(second.json()).toMatchObject({ result: { status: 'refreshed' } });
+            expect(requests.map((request) => request.expectedCredentialRevision)).toEqual([revision, refreshedRevision]);
+        } finally { await h.app.close(); }
     });
 
     it('preserves matching pending admission and rejects another refresh attempt acknowledgment', async () => {

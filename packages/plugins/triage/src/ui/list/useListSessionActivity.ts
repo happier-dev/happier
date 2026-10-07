@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSessionStates } from '@happier-dev/plugin-ui';
+import type { SessionStateV1 } from '@happier-dev/plugin-sdk/ui';
 import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
 import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
 
@@ -20,11 +21,12 @@ const INITIAL: LinkRead = Object.freeze({ links: new Map(), status: 'reading' })
  */
 export function useTriageListSessionActivityV1(input: Readonly<{
   entryRefs: readonly TriageEntryRefV1[];
-  /** The existing mounted acquisition changes after its view/manual pass. */
+  /** Moves once per list pass that read (`TriageListWindowSnapshotV1.passes`); each move re-reads the links once. */
   acquisition: unknown;
   active: boolean;
 }>): Readonly<{
-  activeEntries: ReadonlySet<string>;
+  /** The live states of each listed entry's linked Sessions that have answered, by row key. */
+  agentStates: ReadonlyMap<string, readonly SessionStateV1[]>;
   incomplete: boolean;
   unavailable: boolean;
   retry(): void;
@@ -38,16 +40,22 @@ export function useTriageListSessionActivityV1(input: Readonly<{
   useEffect(() => {
     if (!input.active) return;
     if (keys.length === 0) {
-      setRead({ links: new Map(), status: 'ready' });
+      setRead((previous) => (previous.status === 'ready' && previous.links.size === 0
+        ? previous
+        : { links: new Map(), status: 'ready' }));
       return;
     }
     if (collections === null) {
-      setRead((previous) => ({ ...previous, status: 'unavailable' }));
+      setRead((previous) => (previous.status === 'unavailable' ? previous : { ...previous, status: 'unavailable' }));
       return;
     }
     const cancellation = new AbortController();
     const wanted = new Set(keys);
-    setRead((previous) => ({ ...previous, status: 'reading' }));
+    // Links already read stay the answer while they are re-read (last known good); only a read that has not
+    // answered yet, or one that failed, says it is reading.
+    setRead((previous) => (previous.status === 'ready' || previous.status === 'reading'
+      ? previous
+      : { ...previous, status: 'reading' }));
     void (async () => {
       const links = new Map<string, string[]>();
       const cursors = new Set<string>();
@@ -71,7 +79,9 @@ export function useTriageListSessionActivityV1(input: Readonly<{
           if (cursor !== undefined && cursors.has(cursor)) throw new Error('triage:sessionLinks:nonProgress');
           if (cursor !== undefined) cursors.add(cursor);
         } while (cursor !== undefined);
-        setRead({ links, status: 'ready' });
+        setRead((previous) => (previous.status === 'ready' && sameLinks(previous.links, links)
+          ? previous
+          : { links, status: 'ready' }));
       } catch {
         if (cancellation.signal.aborted) return;
         setRead((previous) => {
@@ -98,16 +108,34 @@ export function useTriageListSessionActivityV1(input: Readonly<{
     setDemand((value) => value + 1);
     refreshSessions();
   }, [refreshSessions]);
-  const activeEntries = useMemo(() => new Set(keys.filter((key) => (
-    read.links.get(key)?.some((id) => sessions.get(id)?.state?.workStatus?.bucket === 'working') === true
-  ))), [keysIdentity, read.links, sessions]);
+  const agentStates = useMemo(() => {
+    const byEntry = new Map<string, readonly SessionStateV1[]>();
+    for (const key of keys) {
+      const states = (read.links.get(key) ?? []).flatMap((id) => {
+        const state = sessions.get(id)?.state;
+        return state == null ? [] : [state];
+      });
+      if (states.length > 0) byEntry.set(key, states);
+    }
+    return byEntry;
+  }, [keysIdentity, read.links, sessions]);
   const incomplete = read.status !== 'ready'
     || sessionIds.some((id) => sessions.get(id)?.status !== 'ready');
   return useMemo(() => ({
-    activeEntries,
+    agentStates,
     incomplete,
     unavailable: read.status === 'unavailable'
       || sessionIds.some((id) => ['unavailable', 'unsupported'].includes(sessions.get(id)?.status ?? 'loading')),
     retry,
-  }), [activeEntries, incomplete, read.status, retry, sessionIds, sessions]);
+  }), [agentStates, incomplete, read.status, retry, sessionIds, sessions]);
+}
+
+function sameLinks(left: LinksByEntry, right: LinksByEntry): boolean {
+  if (left.size !== right.size) return false;
+  for (const [key, sessions] of right) {
+    const previous = left.get(key);
+    if (previous === undefined || previous.length !== sessions.length
+      || previous.some((sessionId, index) => sessionId !== sessions[index])) return false;
+  }
+  return true;
 }

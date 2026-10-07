@@ -293,7 +293,6 @@ export type ServerStartLaunchSpec = Readonly<{
   env?: NodeJS.ProcessEnv;
 }>;
 
-let sharedDepsReady = false;
 let sharedDepsBuildPromise: Promise<void> | null = null;
 let sharedGenerateProvidersPromise: Promise<void> | null = null;
 
@@ -672,7 +671,8 @@ function supportsServerLightTemplateCache(provider: TestDbProvider): provider is
 }
 
 export function resolveServerLightTemplateCacheRoot(rootDir: string = repoRootDir()): string {
-  return resolve(rootDir, '.project', 'cache', 'e2e', 'server-light');
+  const configuredDir = process.env.HAPPIER_E2E_SERVER_LIGHT_TEMPLATE_CACHE_DIR?.trim();
+  return configuredDir ? resolve(configuredDir) : resolve(rootDir, '.project', 'cache', 'e2e', 'server-light');
 }
 
 async function runServerMigrationCommand(params: {
@@ -783,19 +783,13 @@ async function prepareServerLightDataDir(params: {
 async function ensureServerSharedDepsBuilt(params: { testDir: string; env: NodeJS.ProcessEnv }): Promise<void> {
   if (shouldSkipServerSharedDepsBuild(params.env)) return;
   const rootDir = repoRootDir();
-  if (sharedDepsReady && hasServerSharedDepsOutputs(rootDir)) return;
-  if (sharedDepsReady) sharedDepsReady = false;
   if (sharedDepsBuildPromise) {
     await sharedDepsBuildPromise;
     return;
   }
 
   sharedDepsBuildPromise = withServerSharedDepsBuildLock(async () => {
-    if (hasServerSharedDepsOutputs(rootDir)) {
-      sharedDepsReady = true;
-      return;
-    }
-
+    // The canonical builder owns freshness and its no-op decision; output presence is not freshness.
     await runLoggedCommand({
       command: yarnCommand(),
       args: resolveSharedDepsBuildArgs(),
@@ -809,7 +803,6 @@ async function ensureServerSharedDepsBuilt(params: { testDir: string; env: NodeJ
     if (!hasServerSharedDepsOutputs(rootDir)) {
       throw new Error(`Shared server workspace outputs missing after build: ${rootDir}`);
     }
-    sharedDepsReady = true;
   });
 
   try {

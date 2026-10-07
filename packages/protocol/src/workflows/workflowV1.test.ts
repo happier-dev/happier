@@ -4,6 +4,7 @@ import Ajv from 'ajv';
 import {
   WorkflowDefinitionSchema,
   WorkflowBlockSchema,
+  WorkflowInsertBlockV1Schema,
   WorkflowIngressSchema,
   WorkflowSessionAuthoringSelectionSchema,
   WorkflowInputDefinitionSchema,
@@ -24,6 +25,8 @@ import {
 import { WorkflowBlockIdProtocolSchema } from './workflowBlockIdProtocol.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { createDeepWorkflowDefinition, deepWorkflowLeafPath } from './workflowDefinition.testkit.js';
+import { WorkflowConditionSchema, type WorkflowCondition } from './workflowReferenceV1.js';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
 const CLAUDE_AGENT_TARGET = {
   kind: 'agent' as const,
@@ -76,6 +79,57 @@ describe('workflow input option sources', () => {
 });
 
 describe('workflow definition normalization', () => {
+  it('round-trips authored names on every block kind while stored readers drop unknown fields', () => {
+    const leaf = textStep('work', 'Prompt');
+    const blocks = [leaf,
+      { kind: 'action', id: 'notify', actionId: 'notifications.notify_me' },
+      { kind: 'workflow', id: 'child', workflowRef: 'builtin:keep-going' },
+      { kind: 'wait', id: 'hold', document: leaf.document },
+      { kind: 'parallel', id: 'panel', failurePolicy: 'fail_stop', branches: [{ id: 'lane', blocks: [leaf] }] },
+      { kind: 'loop', id: 'repeat', body: [leaf], repetition: { kind: 'count', count: { kind: 'literal', value: 2 } } },
+      { kind: 'if', id: 'choice', when: { kind: 'exists', value: { kind: 'literal', value: true } }, then: [leaf] },
+    ];
+    const name = 'Authored name '.repeat(12).trim();
+    for (const block of blocks) {
+      const named = WorkflowBlockSchema.parse({ ...block, name: `  ${name}  ` });
+      expect(named).toMatchObject({ name });
+      expect(WorkflowBlockSchema.parse(JSON.parse(JSON.stringify(named)))).toEqual(named);
+      expect(createStoredReadSchema(WorkflowBlockSchema).parse({ ...named, futureField: true })).toEqual(named);
+      expect(WorkflowBlockSchema.safeParse({ ...named, futureField: true }).success).toBe(false);
+      expect(createStoredReadSchema(WorkflowBlockSchema).safeParse({ ...named, name: 12 }).success).toBe(false);
+      expect(WorkflowBlockSchema.parse({ ...block, name: '  ' })).not.toHaveProperty('name');
+      const { id: _id, ...insert } = block;
+      expect(WorkflowInsertBlockV1Schema.parse({ ...insert, name: '  ' })).not.toHaveProperty('name');
+      expect(WorkflowBlockSchema.parse(block)).not.toHaveProperty('name');
+    }
+    const evaluator = WorkflowBlockSchema.parse({ kind: 'loop', id: 'evaluate', name: 'Check progress', body: [leaf],
+      repetition: { kind: 'evaluate', maxIterations: 2, history: 'none', evaluator: { ...leaf, id: 'judge', name: '  Judge  ' } } });
+    expect(evaluator).toMatchObject({ repetition: { evaluator: { name: 'Judge' } } });
+    const blankEvaluator = { kind: 'loop', id: 'evaluate', body: [leaf], repetition: {
+      kind: 'evaluate', maxIterations: 2, history: 'none', evaluator: { ...leaf, id: 'judge', name: '  ' },
+    } };
+    expect(WorkflowBlockSchema.parse(blankEvaluator)).not.toHaveProperty('repetition.evaluator.name');
+    expect(WorkflowInsertBlockV1Schema.parse(blankEvaluator)).not.toHaveProperty('repetition.evaluator.name');
+    expect(WorkflowStepSchema.parse({ ...leaf, name: '  ' })).not.toHaveProperty('name');
+  });
+
+  it('admits deeply nested conditions without imposing a nesting limit', () => {
+    let condition: WorkflowCondition = { kind: 'exists', value: { kind: 'literal', value: true } };
+    for (let depth = 0; depth < 12_000; depth += 1) {
+      condition = depth % 3 === 0 ? { kind: 'not', condition }
+        : { kind: depth % 3 === 1 ? 'all' : 'any', conditions: [condition] };
+    }
+    expect(WorkflowDefinitionSchema.safeParse({ version: 1,
+      blocks: [textStep('work', 'Work', { onlyWhen: condition })] }).success).toBe(true);
+    expect(sameStrictJsonValue(WorkflowConditionSchema.parse(condition), condition)).toBe(true);
+    expect(WorkflowConditionSchema.safeParse({ kind: 'not', condition, unknownField: true }).success).toBe(false);
+    const opened = createStoredReadSchema(WorkflowConditionSchema).parse({ kind: 'not', condition, unknownField: true });
+    expect(sameStrictJsonValue(opened, { kind: 'not', condition })).toBe(true);
+    expect(createStoredReadSchema(WorkflowConditionSchema).parse({ kind: 'not', extension: true,
+      condition: { kind: 'exists', value: { kind: 'literal', value: true }, extension: true } }))
+      .toEqual({ kind: 'not', condition: { kind: 'exists', value: { kind: 'literal', value: true } } });
+  });
+
   it('keeps item counter references path-free and reports their lexical scope', () => {
     const outOfScope = validateWorkflowDefinition({ defaults: { agentTarget: CLAUDE_AGENT_TARGET },
       blocks: [textStep('root', 'Work', { input: [{ kind: 'item', field: 'count' }] })] });
@@ -127,6 +181,13 @@ describe('workflow definition normalization', () => {
       then: [textStep('bad', 'Work', { timeoutMs: 0 })], otherwise: [] })).toBe(false);
     expect(validate({ kind: 'loop', id: 'loop', body: ['Work'], repetition: { kind: 'count', count: { kind: 'literal', value: 1 } } })).toBe(false);
     expect(validate(textStep('work', 'Work', { unknown: true }))).toBe(false);
+    const condition = { kind: 'all', conditions: [{ kind: 'not', condition: {
+      kind: 'compare', operator: 'eq', left: { kind: 'literal', value: true }, right: { kind: 'literal', value: false },
+    } }] };
+    expect(validate(textStep('work', 'Work', { onlyWhen: condition }))).toBe(true);
+    expect(validate(textStep('work', 'Work', { onlyWhen: { ...condition, conditions: [
+      { kind: 'not', condition: { kind: 'exists', value: { kind: 'literal', value: true }, extra: true } },
+    ] } }))).toBe(false);
   });
   it('parses deep canonical structure and ingress with the same defaults and overrides', () => {
     const definition = createDeepWorkflowDefinition();
@@ -357,10 +418,10 @@ describe('workflow definition normalization', () => {
     expect(withoutInventedLengthQuota.normalizedDefinition?.blocks[0]?.id).toBe(longButValidId);
   });
 
-  it('rejects display-only block names outside the canonical FLOW definition', () => {
+  it('rejects a parallel display-name field outside the canonical definition', () => {
     const result = validateWorkflowDefinition({
       defaults: { agentTarget: CLAUDE_AGENT_TARGET },
-      blocks: [textStep('named', 'x', { name: 'Display name' })],
+      blocks: [textStep('named', 'x', { displayName: 'Display name' })],
     });
     expect(result.valid).toBe(false);
     expect(codesOf(result)).toContain('unknown_field');

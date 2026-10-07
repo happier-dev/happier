@@ -4,7 +4,7 @@ import { chmod, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { getPublicServerUrlEnvOverride, getWebappUrlEnvOverride, resolveServerUrls } from './urls.mjs';
+import { getPublicServerUrlEnvOverride, getWebappUrlEnvOverride, resolveServerUrls, resolveStackServerEndpoint } from './urls.mjs';
 
 async function createIsolatedStackStorage(t) {
   const storageDir = await mkdtemp(join(tmpdir(), 'hstack-server-urls-storage-'));
@@ -22,6 +22,106 @@ async function writeStackEnvAtStorageRoot(storageDir, stackName, contents) {
   await mkdir(stackDir, { recursive: true });
   await writeFile(join(stackDir, 'env'), contents, 'utf-8');
 }
+
+test('resolveStackServerEndpoint refuses to route auth to a default port when remote listener ownership is inconclusive', async (t) => {
+  const { storageDir, stackName } = await createIsolatedStackStorage(t);
+  await writeStackEnvAtStorageRoot(storageDir, stackName, 'HAPPIER_STACK_SERVER_PORT=3005\n');
+  const input = {
+    env: { HAPPIER_STACK_STACK: stackName, HAPPIER_STACK_STORAGE_DIR: storageDir },
+    runtimeState: {
+      ownerPid: process.pid, processes: {}, ports: { server: 23456 },
+      placement: { server: 'mac-host' },
+      remoteTargets: { 'mac-host': { services: { server: true } } },
+    },
+    trustOptions: {
+      isPidAliveImpl: () => true,
+      isPidOwnedByStackImpl: async () => true,
+      listenerOwnershipOptions: {
+        listenerTotalTimeoutMs: 30,
+        listListenPidsWithStatusImpl: async () => ({ status: 'timeout', supported: true, pids: [], reason: 'listener-discovery-timeout' }),
+      },
+    },
+  };
+  await assert.rejects(resolveStackServerEndpoint(input), { code: 'ELISTENERDISCOVERYINCONCLUSIVE' });
+  const diagnostic = await resolveStackServerEndpoint({
+    ...input, defaultPort: null,
+    trustOptions: { ...input.trustOptions, throwOnInconclusive: false },
+  });
+  assert.equal(diagnostic.runtimePort, null);
+});
+
+test('resolveStackServerEndpoint completes the established Stack observation budget for a slow owned remote forward', async (t) => {
+  const { storageDir, stackName } = await createIsolatedStackStorage(t);
+  await writeStackEnvAtStorageRoot(storageDir, stackName, 'HAPPIER_STACK_SERVER_PORT=3005\n');
+  const endpoint = await resolveStackServerEndpoint({
+    env: { HAPPIER_STACK_STACK: stackName, HAPPIER_STACK_STORAGE_DIR: storageDir },
+    runtimeState: {
+      ownerPid: process.pid, processes: {}, ports: { server: 23456 },
+      placement: { server: 'mac-host' }, remoteTargets: { 'mac-host': { services: { server: true } } },
+    },
+    trustOptions: {
+      isPidAliveImpl: () => true,
+      isPidOwnedByStackImpl: async () => true,
+      listenerOwnershipOptions: {
+        // The OS probe is slower than the old 750ms fast probe, within Stack info's existing 5s budget.
+        listListenPidsWithStatusImpl: async () => {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          return { status: 'ok', supported: true, pids: [process.pid] };
+        },
+        isPidOwnedByStackImpl: async () => true,
+        getProcessGroupIdImpl: async () => process.pid,
+      },
+    },
+  });
+  assert.equal(endpoint.internalServerUrl, 'http://127.0.0.1:23456');
+});
+
+test('resolveStackServerEndpoint verifies recorded remote forward custody when broad discovery times out', async (t) => {
+  const { storageDir, stackName } = await createIsolatedStackStorage(t);
+  const forwardPid = process.pid + 100;
+  const input = {
+    env: { HAPPIER_STACK_STACK: stackName, HAPPIER_STACK_STORAGE_DIR: storageDir },
+    runtimeState: {
+      ownerPid: process.pid, processes: {}, ports: { server: 23456 },
+      placement: { server: 'mac-host' },
+      remoteTargets: { 'mac-host': { services: { server: true }, forwardPid } },
+    },
+    trustOptions: {
+      isPidAliveImpl: () => true,
+      isPidOwnedByStackImpl: async () => true,
+      listenerOwnershipOptions: {
+        listenerTotalTimeoutMs: 30,
+        // Only the OS listener/identity boundaries are substituted.
+        listListenPidsWithStatusImpl: async (_port, { candidatePids }) => candidatePids?.includes(forwardPid)
+          ? { status: 'ok', supported: true, pids: [forwardPid] }
+          : { status: 'timeout', supported: true, pids: [], reason: 'listener-discovery-timeout' },
+        isPidOwnedByStackImpl: async () => true,
+        getProcessGroupIdImpl: async () => forwardPid,
+      },
+    },
+  };
+  assert.equal((await resolveStackServerEndpoint(input)).runtimePort, 23456);
+  assert.equal((await resolveStackServerEndpoint({ ...input, trustOptions: {
+    ...input.trustOptions, isPidAliveImpl: pid => pid !== forwardPid,
+  } })).runtimePort, null);
+  assert.equal((await resolveStackServerEndpoint({ ...input, trustOptions: {
+    ...input.trustOptions, listenerOwnershipOptions: {
+      ...input.trustOptions.listenerOwnershipOptions, isPidOwnedByStackImpl: async () => false,
+    },
+  } })).runtimePort, null);
+  assert.equal((await resolveStackServerEndpoint({ ...input, trustOptions: {
+    ...input.trustOptions, listenerOwnershipOptions: {
+      ...input.trustOptions.listenerOwnershipOptions,
+      listListenPidsWithStatusImpl: async () => ({ status: 'ok', supported: true, pids: [] }),
+    },
+  } })).runtimePort, null);
+  assert.equal((await resolveStackServerEndpoint({ ...input, trustOptions: {
+    ...input.trustOptions, listenerOwnershipOptions: {
+      ...input.trustOptions.listenerOwnershipOptions,
+      listListenPidsWithStatusImpl: async () => ({ status: 'ok', supported: true, pids: [forwardPid + 1] }),
+    },
+  } })).runtimePort, null);
+});
 
 test('getPublicServerUrlEnvOverride prefers HAPPIER_PUBLIC_SERVER_URL over HAPPIER_STACK_SERVER_URL when both are stack-local', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'hstack-server-urls-'));

@@ -3,6 +3,7 @@ import type { SpawnSessionCreationOutcome, SpawnSessionErrorDetail, SpawnSession
 
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 import { logger } from '@/ui/logger';
+import { resolveSessionStartupTimeoutMs } from '@/daemon/spawn/waitForSessionWebhook';
 
 export type SpawnSessionNonceResolver = (
   spawnNonce: string,
@@ -17,13 +18,13 @@ export type AbandonSpawnedSessionResult =
   | Readonly<{ status: 'completed'; sessionId: string }>
   | Readonly<{ status: 'pending' | 'not_found' | 'unsupported' | 'failed' }>;
 
-const DEFAULT_TIMEOUT_MS = 90_000;
 const DEFAULT_ABANDON_TIMEOUT_MS = 10 * 60_000;
 
-function readBoundedInt(raw: string | undefined, fallback: number, bounds: Readonly<{ min: number; max: number }>): number {
+function readPositiveInt(raw: string | undefined, fallback: number): number {
   const parsed = typeof raw === 'string' && raw.trim().length > 0 ? Number(raw.trim()) : NaN;
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.min(bounds.max, Math.max(bounds.min, Math.trunc(parsed)));
+  return Number.isFinite(parsed) && Math.trunc(parsed) > 0
+    ? Math.trunc(parsed)
+    : fallback;
 }
 
 function readSpawnResult(result: unknown): Readonly<{
@@ -90,15 +91,24 @@ export async function awaitSpawnedSessionId(params: Readonly<{
   }
 
   const timeoutMs = params.timeoutMs
-    ?? readBoundedInt(process.env.HAPPIER_SPAWN_SESSION_ID_RESOLVE_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, { min: 100, max: 10 * 60_000 });
+    ?? readPositiveInt(process.env.HAPPIER_SPAWN_SESSION_ID_RESOLVE_TIMEOUT_MS, resolveSessionStartupTimeoutMs());
   const settled = await new Promise<SpawnSessionNonceResolution | { status: 'timeout' }>((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadlineAtMs = Date.now() + Math.max(0, timeoutMs);
     const finish = (result: SpawnSessionNonceResolution | { status: 'timeout' }) => {
       clearTimeout(timer);
       params.signal?.removeEventListener('abort', abort);
       resolve(result);
     };
     const abort = () => finish({ status: 'timeout' });
-    const timer = setTimeout(abort, Math.max(0, timeoutMs));
+    const armDeadline = () => {
+      // Chunk at Node's timer boundary without shortening the authored lifetime.
+      timer = setTimeout(() => {
+        if (Date.now() < deadlineAtMs) { armDeadline(); return; }
+        abort();
+      }, Math.min(2_147_483_647, Math.max(0, deadlineAtMs - Date.now())));
+    };
+    armDeadline();
     params.signal?.addEventListener('abort', abort, { once: true });
     if (params.signal?.aborted || timeoutMs <= 0) { abort(); return; }
     // The daemon owner parks this one observation until terminal or deadline.
@@ -165,7 +175,7 @@ export function abandonSpawnedSessionBestEffort(params: Readonly<{
   archiveSession?: (sessionId: string) => Promise<void>;
 }>): void {
   void (async () => {
-    const timeoutMs = readBoundedInt(process.env.HAPPIER_SPAWN_ABANDON_TIMEOUT_MS, DEFAULT_ABANDON_TIMEOUT_MS, { min: 1_000, max: 60 * 60_000 });
+    const timeoutMs = readPositiveInt(process.env.HAPPIER_SPAWN_ABANDON_TIMEOUT_MS, DEFAULT_ABANDON_TIMEOUT_MS);
     const settled = await awaitSpawnedSessionId({
       result: { type: 'success' },
       spawnNonce: params.spawnNonce,

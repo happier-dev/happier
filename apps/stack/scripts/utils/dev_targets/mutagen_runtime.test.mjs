@@ -92,6 +92,30 @@ test('Mutagen list parsing keeps the initial synchronization closed until one cy
   }
 });
 
+test('connected idle no-watch sessions need a dispatch flush before their first cycle', () => {
+  const session = {
+    name: 'happier-linux', paused: false, status: 'watching',
+    alpha: { connected: true, scanned: false, watch: { mode: 'no-watch' } },
+    beta: { connected: true, scanned: false, watch: { mode: 'no-watch' } },
+  };
+  const inspect = (value) => parseMutagenSyncList(JSON.stringify([value]), session.name);
+  // Mutagen 0.18.1 omits the zero successfulCycles field in its JSON model.
+  assert.equal(inspect(session).state, 'needs-flush');
+  assert.equal(inspect({ ...session, successfulCycles: 0 }).state, 'needs-flush');
+  assert.equal(inspect({ ...session, status: 'scanning' }).state, 'synchronizing');
+  assert.equal(inspect({ ...session, alpha: { ...session.alpha, watch: { mode: 'portable' } } }).state, 'synchronizing');
+  for (const unsafe of [
+    { ...session, paused: true },
+    { ...session, lastError: 'transport failed' },
+    { ...session, conflicts: [{ root: 'source' }] },
+    { ...session, alpha: { ...session.alpha, connected: false } },
+    { ...session, beta: { ...session.beta, scanProblems: [{ path: 'source', error: 'unreadable' }] } },
+    { ...session, beta: { ...session.beta, transitionProblems: [{ path: 'source' }] } },
+    { ...session, successfulCycles: '0' },
+    { ...session, successfulCycles: null },
+  ]) assert.notEqual(inspect(unsafe).state, 'needs-flush');
+});
+
 test('Mutagen list parsing allows commands against moving bytes after a completed cycle', () => {
   for (const status of [
     'watching',

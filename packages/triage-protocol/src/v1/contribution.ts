@@ -15,15 +15,19 @@ import {
     TriageListInstancesResultV1Schema,
 } from './instances.js';
 import {
+    TriageGetConnectedAccountInputV1Schema,
     TriageGetInputV1Schema,
     TriageGetResultV1Schema,
     TriageScanInputV1Schema,
+    TriageScanConnectedAccountInputV1Schema,
     TriageScanResultV1Schema,
 } from './operations.js';
 import {
+    TriagePrepareReviewWorkspaceConnectedAccountInputV1Schema,
     TriagePrepareReviewWorkspaceInputV1Schema,
     TriagePrepareReviewWorkspaceResultV1Schema,
     TriageVerifyReviewWorkspaceInputV1Schema,
+    TriageVerifyReviewWorkspaceConnectedAccountInputV1Schema,
     TriageVerifyReviewWorkspaceResultV1Schema,
 } from './workspace.js';
 
@@ -92,6 +96,16 @@ export const TriageSourcesContributionProtocolV1 = defineContributionProtocol({
         },
     },
 });
+
+/** Exact V1 Action inputs for sources that support connected Accounts only. */
+export const TriageSourceConnectedAccountInputsV1 = {
+    listInstances: TriageListInstancesInputV1Schema,
+    scan: TriageScanConnectedAccountInputV1Schema,
+    get: TriageGetConnectedAccountInputV1Schema,
+    readPullRequestStatus: TriageGetConnectedAccountInputV1Schema,
+    prepareReviewWorkspace: TriagePrepareReviewWorkspaceConnectedAccountInputV1Schema,
+    verifyReviewWorkspace: TriageVerifyReviewWorkspaceConnectedAccountInputV1Schema,
+} as const satisfies Record<keyof typeof TriageSourcesContributionProtocolV1.operations, unknown>;
 
 /** The target-owned `sources` point admits one V1 contribution per source plugin. */
 export const TriageSourcesContributionPointV1 = defineContributionPoint(

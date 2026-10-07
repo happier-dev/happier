@@ -19,4 +19,6 @@ export const SESSION_PENDING_NEXT_ACTION_SPECS = [{
   bindings: { voiceClientToolName: 'nextPendingRequest', mcpToolName: 'session_pending_next' },
   inputSchema: SessionPendingNextInputSchema,
   outputSchema: SessionPendingNextOutputSchema,
+  inputHints: { fields: [] },
+  examples: { voice: { argsExample: '{}' } },
 }] as const satisfies readonly PreNormalizedActionSpec[];

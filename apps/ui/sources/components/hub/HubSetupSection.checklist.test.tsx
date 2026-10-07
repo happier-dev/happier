@@ -31,6 +31,12 @@ const state = vi.hoisted(() => ({
     push: null as null | ((href: unknown) => void),
 }));
 installDisconnectedServerSocketBoundary();
+// Native crypto adapters are unavailable here; E2EE uses the real Account codecs.
+vi.mock('@more-tech/react-native-libsodium', () => import('libsodium-wrappers'));
+vi.mock('@/platform/cryptoRandom', () => import('@/platform/cryptoRandom.node'));
+vi.mock('@/platform/digest', () => import('@/platform/digest.node'));
+vi.mock('@/platform/hmacSha512', () => import('@/platform/hmacSha512.node'));
+vi.mock('@/platform/randomUUID', () => import('@/platform/randomUUID.node'));
 let artifact = createHomeHubArtifactHttpBoundary('account-checklist');
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 let legacyAccount: Awaited<ReturnType<typeof createSecretSettingsTestHarness>> | undefined;

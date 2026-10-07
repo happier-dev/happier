@@ -195,6 +195,17 @@ export async function resolveDaemonLaunchSpec(
     && admittedDaemonDistFingerprint
     && parseOptionalBooleanEnv(env.HAPPIER_CLI_SUBPROCESS_PREFER_TSX) !== true
   ) {
+    // This branch consumes the admitted JS closure even when its parent is a
+    // native launcher, so it needs the same managed-runtime bootstrap as the
+    // ordinary packaged fallback below before synchronous launch resolution.
+    const runtimeExecutable = await ensureJavaScriptRuntimeExecutable({
+      isBunRuntime: false,
+      processEnv: env,
+      currentExecPath: process.execPath,
+    });
+    if (!runtimeExecutable) {
+      throw new Error('Daemon launch requires a JavaScript runtime, but none could be resolved');
+    }
     const launchSpec = buildHappyCliSubprocessLaunchSpec([...cliArgs], {
       allowAdmittedDaemonStartupClosure: true,
       environment: env,
@@ -224,6 +235,7 @@ export async function resolveDaemonLaunchSpec(
 
   const runtimeExecutable = await ensureJavaScriptRuntimeExecutable({
     isBunRuntime: false,
+    processEnv: env,
     currentExecPath: process.execPath,
   });
   if (!runtimeExecutable) {

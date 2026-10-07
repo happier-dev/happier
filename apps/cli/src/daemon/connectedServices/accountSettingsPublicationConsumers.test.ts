@@ -72,7 +72,6 @@ const sharedRow = {
 function createRuntime() {
   return createDaemonConnectedAccountPurposeBindingRuntime({
     resolveQualifiedConnectedAccountV4Support: () => 'advertised',
-    resolveQualifiedConnectedAccountMaterializationTransport: () => ({ kind: 'v4' as const }),
     // A watch never materializes; these network-facing owners must stay untouched.
     establishedRuntimeOwner: {
       invokeWithReceipt: vi.fn(async () => {
@@ -82,20 +81,6 @@ function createRuntime() {
         throw new Error('a watch must not materialize');
       }),
     } as never,
-    revisionedLegacyMaterializationOwner: {
-      invokeWithReceipt: vi.fn(async () => {
-        throw new Error('legacy materialization must not be invoked');
-      }),
-      invoke: vi.fn(async () => {
-        throw new Error('legacy materialization must not be invoked');
-      }),
-    } as never,
-    api: {
-      listConnectedServiceProfiles: vi.fn(),
-      getAccountEncryptionMode: vi.fn(),
-      getConnectedServiceCredentialPlain: vi.fn(),
-      getConnectedServiceCredentialSealed: vi.fn(),
-    },
     runtimeRegistry: {
       subscribe: () => () => undefined,
       async acquire() {

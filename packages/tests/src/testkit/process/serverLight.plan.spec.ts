@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   hasServerSharedDepsOutputs,
   hasServerGeneratedProviderOutputs,
@@ -11,6 +11,7 @@ import {
   renderServerLightSqliteDatabaseUrl,
   resolveServerLightDatabaseUrlEnv,
   resolveServerStartLaunchSpec,
+  resolveServerLightTemplateCacheRoot,
   shouldRetryServerStartFromFailureContext,
   resolveSharedDepsBuildArgs,
   resolveTestDbProvider,
@@ -25,6 +26,21 @@ import { resolveServerAppWorkspaceName } from "./serverWorkspaceName";
 const normalizeForPathAssertions = (value: string): string => value.replace(/\\/g, "/");
 
 describe("startServerLight planning helpers", () => {
+  it("places the SQLite template cache beneath the configured scratch directory without changing the default", () => {
+    const rootDir = tmpdir();
+    try {
+      vi.stubEnv("HAPPIER_E2E_SERVER_LIGHT_TEMPLATE_CACHE_DIR", undefined);
+      expect(resolveServerLightTemplateCacheRoot(rootDir)).toBe(resolve(rootDir, ".project", "cache", "e2e", "server-light"));
+      vi.stubEnv("HAPPIER_E2E_SERVER_LIGHT_TEMPLATE_CACHE_DIR", "   ");
+      expect(resolveServerLightTemplateCacheRoot(rootDir)).toBe(resolve(rootDir, ".project", "cache", "e2e", "server-light"));
+      const configuredRoot = resolve(rootDir, "happier-owned-template-cache");
+      vi.stubEnv("HAPPIER_E2E_SERVER_LIGHT_TEMPLATE_CACHE_DIR", ` ${configuredRoot} `);
+      expect(resolveServerLightTemplateCacheRoot(rootDir)).toBe(configuredRoot);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("defaults to pglite when HAPPIER_E2E_DB_PROVIDER is unset", () => {
     expect(resolveTestDbProvider({})).toBe("pglite");
   });

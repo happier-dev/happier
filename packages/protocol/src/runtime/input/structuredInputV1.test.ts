@@ -10,6 +10,7 @@ import {
   sanitizeSessionStructuredInputMeta,
 } from './structuredInputV1.js';
 import { MAX_COMPOSER_ATTACHMENT_INSTANCES_V1 } from './composerAttachmentV1.js';
+import { SkillMentionV1Schema } from './skillMentionV1.js';
 
 const validComposerAttachment = {
   v: 1,
@@ -19,6 +20,17 @@ const validComposerAttachment = {
   value: { issueId: '42' },
   presentation: { label: 'Issue 42', typeLabel: 'Issue' },
 } as const;
+
+describe('native skill identity admission', () => {
+  it('preserves a supplied opaque ID in selected skill metadata and repeated admission', () => {
+    const id = ' reviewer/α+skill= ';
+    const mention = { id, name: ' reviewer ', origin: 'vendor', backendId: 'opencode' };
+    expect(SkillMentionV1Schema.parse(mention).id).toBe(id);
+    const admitted = sanitizeSessionStructuredInputMeta({ happierSkillMentions: [mention] });
+    expect(admitted).toMatchObject({ happierStructuredInputV1: { skillMentions: [{ id, name: 'reviewer' }] } });
+    expect(sanitizeSessionStructuredInputMeta(admitted)).toEqual(admitted);
+  });
+});
 
 describe('browser context Message admission', () => {
   const context = {

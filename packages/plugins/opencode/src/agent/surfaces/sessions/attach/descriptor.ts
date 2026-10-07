@@ -1,3 +1,4 @@
+import { readOpenCodeCliVersionDialect } from '../../../runtime/server/dialect.js';
 import { readOpenCodeSessionRuntimeHandleFromMetadata } from '../../../identity/runtimeDescriptor.js';
 import type {
   AgentProviderCliAttachTargetResolutionV1,
@@ -44,7 +45,7 @@ export function resolveOpenCodeAttachTarget(params: Readonly<{
 }
 
 function isReleasedOpenCodeV2(host: OpenCodeAttachHostFacts): boolean {
-  return /^v?2(?:\.|$)/iu.test(host.cliVersion?.trim() ?? '');
+  return readOpenCodeCliVersionDialect(host.cliVersion) === 'v2';
 }
 
 export function createOpenCodeAttachArgs(

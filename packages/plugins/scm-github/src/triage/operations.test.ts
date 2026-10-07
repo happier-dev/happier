@@ -28,6 +28,7 @@ import { listGithubChangedFiles } from './detailOperations.js';
 import { encodeGithubTriageConfiguration } from './configuration.js';
 import {
   getGithubTriageEntry,
+  openGithubTriageClient,
   prepareGithubTriageReviewWorkspace,
   scanGithubTriageSource,
   verifyGithubTriageReviewWorkspace,
@@ -194,6 +195,41 @@ function searchTransport() {
 }
 
 describe('GitHub Triage source operations', () => {
+  it('reports a lost machine login with its typed authentication repair without contacting GitHub', async () => {
+    const stub = createStubGithubTransport({ respond: () => undefined });
+    const instance = {
+      ...configuredInstance({ scope: 'repository' }),
+      binding: { purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE, source: 'native' as const, service: CONFIGURED_ACCOUNT.service },
+    };
+    expect(await openGithubTriageClient(instance, stub.context)).toEqual({
+      ok: false,
+      failure: { class: 'authentication', code: 'plugin_connected_account_native_unavailable' },
+    });
+    expect(stub.requests).toEqual([]);
+  });
+
+  it('uses the machine login for a native configured source without returning credential material', async () => {
+    const nativeToken = 'native-source-token-must-not-be-returned';
+    const stub = createStubGithubTransport({
+      nativeMaterialization: { kind: 'httpHeaders', headers: { Authorization: `Bearer ${nativeToken}` } },
+      respond: (request) => request.url.startsWith('https://api.github.com/search/issues')
+        ? { status: 200, body: githubSearchResponse({ items: [GITHUB_SEARCH_PULL_REQUEST_ITEM] }) }
+        : undefined,
+    });
+    const instance = {
+      ...configuredInstance({ scope: 'repository' }),
+      binding: { purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE, source: 'native' as const, service: CONFIGURED_ACCOUNT.service },
+    };
+
+    const result = await scanGithubTriageSource({ v: 1, instance, page: { kind: 'initial', limit: 64 } }, stub.context);
+
+    expect(result.kind).toBe('page');
+    expect(stub.requests[0]?.headers.Authorization).toBe(`Bearer ${nativeToken}`);
+    expect(stub.materializations).toEqual([]);
+    expect(JSON.stringify(result)).not.toContain(nativeToken);
+    expect(JSON.stringify(instance)).not.toContain(nativeToken);
+  });
+
   it('projects a GitHub scan onto the strict source ABI as one settled result with no continuation', async () => {
     const stub = searchTransport();
 

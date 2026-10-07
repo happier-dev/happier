@@ -34,7 +34,7 @@ import {
 } from '@happier-dev/plugin-sdk/protocol';
 import {
   TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
-  TriageConfiguredSourceInstanceV1Schema,
+  TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   TriageSourceEntryLocalRefV1Schema,
   TriageSourceFailureV1Schema,
 } from '@happier-dev/triage-protocol/v1';
@@ -281,7 +281,7 @@ export const SentryProjectedReleaseV1Schema = defineProtocolObject({
  */
 export const SentryReadIssueInputV1Schema = defineProtocolObject({
   v: defineProtocolLiteral(1),
-  instance: TriageConfiguredSourceInstanceV1Schema,
+  instance: TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
   projection: defineProtocolUnion([
     defineProtocolLiteral('overview'),
@@ -309,6 +309,11 @@ export const SentryIssueOverviewProjectionV1Schema = defineProtocolObject({
   lastSeenAtMs: TimestampSchema.optional(),
   firstRelease: SentryProjectedReleaseV1Schema.optional(),
   lastRelease: SentryProjectedReleaseV1Schema.optional(),
+  /** `[DOC]` `stats["24h"]`: the issue's hourly event counts, oldest first. */
+  eventTrend: defineProtocolArray(defineProtocolObject({
+    atMs: TimestampSchema,
+    count: CountSchema,
+  }, { policy: 'closed' })).optional(),
 }, { policy: 'closed' });
 
 export const SentryIssueTagsProjectionV1Schema = defineProtocolObject({
@@ -358,7 +363,7 @@ export type SentryReadIssueResultV1 = ReturnType<typeof SentryReadIssueResultV1S
 
 export const SentryIssueEventsInputV1Schema = defineProtocolObject({
   v: defineProtocolLiteral(1),
-  instance: TriageConfiguredSourceInstanceV1Schema,
+  instance: TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
   limit: PageLimitSchema,
   /**
@@ -400,7 +405,7 @@ export type SentryIssueEventsResultV1 = ReturnType<typeof SentryIssueEventsResul
 
 export const SentryTagValuesInputV1Schema = defineProtocolObject({
   v: defineProtocolLiteral(1),
-  instance: TriageConfiguredSourceInstanceV1Schema,
+  instance: TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
   /** One provider tag key, revalidated as a single path segment at the route. */
   tagKey: defineSentryDetailString({ maxUtf8Bytes: 200, minLength: 1 }),
@@ -447,7 +452,7 @@ export const SentryEventSelectorV1Schema = defineProtocolUnion([
 
 export const SentryReadEventInputV1Schema = defineProtocolObject({
   v: defineProtocolLiteral(1),
-  instance: TriageConfiguredSourceInstanceV1Schema,
+  instance: TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
   selector: SentryEventSelectorV1Schema,
 }, { policy: 'closed' });

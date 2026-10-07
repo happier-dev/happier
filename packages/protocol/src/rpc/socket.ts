@@ -20,7 +20,7 @@ import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js'
 import { AgentStartSessionCallerV1Schema } from '../account/settings/admitAgentStartV1.js';
 import { AgentPermissionIntentV1Schema } from '../runtime/permissionIntentV1.js';
 import { SessionInputCausalPermissionAuthorityV1Schema } from '../sessions/messages/sessionInputAdmission.js';
-import { RoleActionInputSchemasV1 } from '../prompts/roles/roleActionsV1.js';
+import { isRoleActionIdV1 } from '../prompts/roles/roleActionIdsV1.js';
 
 import type { ExternalActionMachineRpcExecutionV1, ExternalActionExecutionAuthorizationV1 } from '../actions/externalActionApi.js';
 
@@ -69,7 +69,7 @@ export type SocketRpcSessionActionAuthorizationContext = Readonly<z.infer<typeof
 /** The existing role Action family is the only Session-origin RPC corridor. */
 export function isSessionActionRpcMethodV1(method: string): boolean {
   const unscoped = method.slice(method.lastIndexOf(':') + 1);
-  return (unscoped.startsWith('session.') && Object.hasOwn(RoleActionInputSchemasV1, unscoped))
+  return (unscoped.startsWith('session.') && isRoleActionIdV1(unscoped))
     || unscoped === SESSION_RPC_METHODS.SESSION_ROLES_CONFIGURATION_SET;
 }
 

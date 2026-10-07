@@ -31,7 +31,7 @@ export type GitlabDetailTabIdV1 =
 export type GitlabDetailTabReadPlaneV1 =
   /** The authoritative item reread that supplies the current description and observation. */
   | 'overview'
-  /** The notes walk plus the three independently cursored resource-event walks. */
+  /** The notes walk, a merge request's discussions walk, and the three resource-event walks, each cursored independently. */
   | 'activity'
   /** The panel's own `/diffs` changed-file walk. */
   | 'changes'
@@ -80,7 +80,7 @@ export const GITLAB_DETAIL_TABS_V1: readonly GitlabDetailTabDeclarationV1[] = Ob
     title: 'Activity',
     titleKey: 'plugins.gitlab.ui.tabs.activity',
     retention: 'discard' as const,
-    retainedState: 'nothing: notes, the three event sources, their four independent cursors,'
+    retainedState: 'nothing: notes, discussions, the three event sources, their independent cursors,'
       + ' the union, scroll and expansion all remount at first page',
     readPlane: 'activity' as const,
     scrollOwner: 'list' as const,

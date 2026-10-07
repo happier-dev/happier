@@ -1,3 +1,4 @@
+import { readClaudeSettingSourcesV2 as readCanonicalClaudeSettingSourcesV2 } from '@happier-dev/protocol/agents/claude/predecessor-message-meta';
 import type { AgentModelOption } from '../../agents.js';
 import { RawJSONLinesSchema as canonicalRawJSONLinesSchema } from '@happier-dev/protocol/agents/claude/transcripts';
 import { ANTHROPIC_EFFORT_LEVELS as canonicalAnthropicEffortLevels, buildAnthropicModelOptions as buildCanonicalAnthropicModelOptions, normalizeAnthropicModelDisplayName as normalizeCanonicalAnthropicModelDisplayName, formatAnthropicEffortLevelLabel as formatCanonicalAnthropicEffortLevelLabel } from '@happier-dev/protocol/providers/anthropic-models';
@@ -109,3 +110,8 @@ export const buildAnthropicModelOptions: (input: Readonly<{
     supportedLevels: readonly AnthropicEffortLevel[];
     defaultEffort?: AnthropicEffortLevel | null;
 }>) => readonly AgentModelOption[] = buildCanonicalAnthropicModelOptions;
+
+export const readClaudeSettingSourcesV2: (
+    defaults: Readonly<{ claudeRemoteSettingSourcesV2: readonly ClaudeSettingSourceV2[] }>,
+    settings: Readonly<Record<string, unknown>>,
+) => readonly ClaudeSettingSourceV2[] = readCanonicalClaudeSettingSourcesV2;

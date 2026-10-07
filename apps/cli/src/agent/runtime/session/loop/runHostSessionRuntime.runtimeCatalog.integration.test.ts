@@ -9482,6 +9482,85 @@ describe('runHostSessionRuntime', () => {
     expect(harness.session.confirmUserMessageLocallyConsumed).not.toHaveBeenCalled();
   });
 
+  it('includes another retained execution completion when the taken wake already owns its optional allowance', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-host-worker-allowance-'));
+    const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
+    envScope.patch({ HAPPIER_HOME_DIR: directory });
+    reloadConfiguration();
+    try {
+      const [{ ExecutionRunHostBridge }, { finishExecutionRun }] = await Promise.all([
+        import('@/agent/runtime/bridges/executionRun/ExecutionRunHostBridge'),
+        import('@/agent/runtime/bridges/executionRun/finishExecutionRun'),
+      ]);
+      const harness = createHarness();
+      const firstResult = `FIRST_COMPLETION ${'x'.repeat(1_800)}`;
+      const secondResult = `SECOND_COMPLETION ${'y'.repeat(700)}`;
+      for (const [index, output] of [firstResult, secondResult].entries()) {
+        const run: import('@/agent/runtime/bridges/executionRun/executionRunTypes').ExecutionRunState = {
+          runId: `allowance-run-${index}`, callId: `allowance-call-${index}`, sidechainId: `allowance-side-${index}`,
+          sessionId: harness.session.sessionId, depth: 0, intent: 'agent',
+          backendTarget: { kind: 'builtInAgent', agentId: 'acme.actual' }, backendId: 'acme.actual',
+          instructions: 'Implement the change.', permissionMode: 'read_only', retentionPolicy: 'resumable',
+          runClass: 'bounded', ioMode: 'request_response', notifyParentOnCompletion: true,
+          status: 'running', startedAtMs: index + 1,
+        };
+        await finishExecutionRun({
+          runId: run.runId, next: { status: 'succeeded', finishedAtMs: index + 2 }, toolResult: { output },
+          runs: new Map([[run.runId, run]]), controllers: new Map(), budgetRegistry: null,
+          parentProvider: 'acme.parent', sendAcp: async () => undefined,
+          enqueueMarkerWrite: async (_runId, write) => { await write(); }, terminalMarkerWritePromises: new Map(),
+        });
+      }
+      const bridge = new ExecutionRunHostBridge({
+        parentProvider: 'acme.parent', cwd: directory, happyHomeDir: directory, sendAcp: async () => undefined,
+      });
+      harness.session.hasPendingProviderInput = vi.fn(() => false);
+      harness.session.takeExecutionRunWorkerUpdate = (signal: AbortSignal) => bridge.takeWorkerUpdate(harness.session.sessionId, signal);
+      harness.session.prepareExecutionRunWorkerUpdates = (input: Readonly<{ signal: AbortSignal }>) => bridge.prepareWorkerUpdates(harness.session.sessionId, input);
+      harness.session.waitForExecutionRunWorkerUpdateChange = (signal: AbortSignal) => bridge.waitForWorkerUpdateChange(harness.session.sessionId, signal);
+      harness.session.observePendingSessionFollow = vi.fn(async () => ({
+        ok: true as const, publisherGeneration: 1, currentSourceSessionIds: [], observations: [],
+      }));
+      const queue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>((mode) => mode.permissionMode, { batcher: combinePermissionModeQueuedPrompts });
+      harness.deps.createPermissionModeQueueStateFn = () => ({
+        messageQueue: queue, rebindSession: () => undefined,
+        getCurrentPermissionMode: () => 'default', setCurrentPermissionMode: () => undefined,
+        getCurrentPermissionModeUpdatedAt: () => 0, setCurrentPermissionModeUpdatedAt: () => undefined,
+      });
+      const events: unknown[] = [];
+      harness.session.enqueueAgentMessageCommitted = vi.fn(async (_provider: string, body: unknown) => {
+        events.push(body);
+        return { persisted: true, delivered: false };
+      });
+      const prompts: string[] = [];
+      const runtime = {
+        ...harness.runtime, readSessionIdentity: vi.fn(() => ({ sessionId: null })),
+        updateSessionRuntimeConfig: vi.fn(async () => undefined), beginTurnLifecycle: vi.fn(),
+        sendTurnPrompt: vi.fn(async (prompt: string) => { prompts.push(prompt); }),
+        waitForTurnCompletion: vi.fn(async () => undefined),
+      };
+      setSessionRuntimeFactory(harness.config, () => ({ operations: runtime, nativeRuntime: runtime }));
+      let completed = false;
+      harness.deps.runPermissionModePromptLoopFn = async (params: Parameters<typeof runPermissionModePromptLoop>[0]) => {
+        await runPermissionModePromptLoop({ ...params, shouldExit: () => completed, sendReady: () => { completed = true; } });
+      };
+      await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]).toContain(firstResult);
+      expect(prompts[0]).toContain(secondResult);
+      expect(events).toHaveLength(2);
+      expect(events).toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: 'event', data: expect.objectContaining({ type: 'worker-update', update: expect.objectContaining({ workerId: 'allowance-run-0' }) }) }),
+        expect.objectContaining({ type: 'event', data: expect.objectContaining({ type: 'worker-update', update: expect.objectContaining({ workerId: 'allowance-run-1' }) }) }),
+      ]));
+      expect(harness.session.confirmUserMessageLocallyConsumed).not.toHaveBeenCalled();
+    } finally {
+      envScope.restore();
+      reloadConfiguration();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('dispatches consecutive workflow steps as separate complete turns and never steers a busy provider', async () => {
     const harness = createHarness();
     harness.session.hasPendingProviderInput = vi.fn(() => false);

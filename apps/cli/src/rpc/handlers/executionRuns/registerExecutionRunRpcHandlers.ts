@@ -39,6 +39,7 @@ import type { EphemeralSendResult } from '@/api/session/client/transcript/epheme
 import { EXECUTION_RUN_RPC_SCOPES } from '../actionSpecRpcRegistration';
 import { registerActionSpecRpcHandlers } from '../registerActionSpecRpcHandlers';
 import {
+  admitExecutionRunCallerTurn,
   createExecutionRunRpcActionExecutor,
   type ExecutionRunRpcApprovalDeps,
   type GrantAttachedRunTeamVisibility,
@@ -402,12 +403,19 @@ export function registerExecutionRunRpcHandlers(
 
   rpc.registerHandler(
     SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START_V2,
-    async (request: unknown) => {
+    async (request: unknown, rpcContext) => {
       if (!isExecutionRunsEnabled()) {
         return { ok: false, error: 'Execution runs disabled', errorCode: 'execution_run_not_allowed' };
       }
       const parsed = ExecutionRunTurnStreamStartV2RequestSchema.safeParse(request);
       if (!parsed.success) return invalidParams();
+      await manager.recoverRetainedRuns();
+      const run = manager.get(parsed.data.runId);
+      if (!run || run.sessionId !== ctx.sessionId) {
+        return { ok: false, error: 'Execution run not found', errorCode: 'execution_run_not_found' };
+      }
+      const refusal = admitExecutionRunCallerTurn(run, rpcContext?.callerAuthority);
+      if (refusal) return refusal;
       const started = await manager.startTurnStream(parsed.data.runId, {
         message: parsed.data.message,
         ...(parsed.data.speechSegmentTargetChars !== undefined

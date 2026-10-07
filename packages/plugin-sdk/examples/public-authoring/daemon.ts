@@ -261,6 +261,8 @@ export const runExternalSessionDigest: ActionRegistrationHandler = async (value,
         },
         { signal: context.signal },
     );
+    // The digest consumes page one only; transcript reads have their own lifetime.
+    if (page.nextCursor) await external.closeList(page.nextCursor);
     const readable = page.items.filter((item) => item.capabilities.includes('transcript'));
     if (readable.length === 0) {
         return { outcome: 'no_readable_candidate', reason: null, entries: [] };

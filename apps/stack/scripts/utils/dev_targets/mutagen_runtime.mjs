@@ -6,6 +6,41 @@ import { DEV_TARGET_DISPOSABLE_REPLICA_ARTIFACT_ROOTS } from './mutagen_project.
 export const MUTAGEN_SYNC_LIST_JSON_TEMPLATE = '{{json .}}';
 export const DEV_TARGET_MUTAGEN_RUNTIME_OWNER = 'stack-dev-targets';
 
+// One readiness policy for JSON consumers and the generated native selector.
+// Endpoint/error/conflict validation belongs to each transport boundary; these
+// rules decide when clean connected evidence can enter the causal flush.
+const SYNC_READINESS_RULES = [
+  { when: { scanProblems: true, scanned: true, completed: true }, state: 'rescan' },
+  { when: { scanProblems: true }, state: 'unhealthy' },
+  { when: { cyclesValid: false }, state: 'synchronizing' },
+  { when: { watching: true, noWatch: true, completed: false }, state: 'needs-flush' },
+  { when: { scanned: false }, state: 'synchronizing' },
+  { when: { completed: false }, state: 'synchronizing' },
+  { when: {}, state: 'ready' },
+];
+
+export function classifyCleanMutagenReadiness(facts) {
+  return SYNC_READINESS_RULES.find(({ when }) => (
+    Object.entries(when).every(([fact, value]) => facts[fact] === value)
+  )).state;
+}
+
+export function renderNativeSyncReadinessPolicy() {
+  return [
+    '# Generated from mutagen_runtime.mjs; do not edit.',
+    '# Regenerate: node apps/stack/scripts/utils/dev_targets/native_execution_projection.mjs --write-sync-policy',
+    'classify_clean_mutagen_readiness() {',
+    ...SYNC_READINESS_RULES.flatMap(({ when, state }) => {
+      const conditions = Object.entries(when).map(([fact, value]) => `[ "$sync_fact_${fact}" = ${value ? '1' : '0'} ]`);
+      return conditions.length
+        ? [`  if ${conditions.join(' && ')}; then`, `    sync_readiness=${state}`, '    return', '  fi']
+        : [`  sync_readiness=${state}`];
+    }),
+    '}',
+    '',
+  ].join('\n');
+}
+
 const MUTAGEN_SYNCHRONIZING_STATUSES = new Set([
   'scanning',
   'waiting-for-rescan',
@@ -149,6 +184,7 @@ export function parseMutagenSyncList(raw, sessionName) {
   if (!alpha || !beta || alpha.connected !== true || beta.connected !== true) {
     return { state: 'unhealthy', sessionName: expectedName, lastError: 'missing connected endpoint evidence', session };
   }
+  const scanDetails = [];
   for (const [endpointName, endpoint] of [['alpha', alpha], ['beta', beta]]) {
     const scanProblems = endpoint.scanProblems == null ? [] : endpoint.scanProblems;
     const excludedScan = endpoint.excludedScanProblems == null ? 0 : endpoint.excludedScanProblems;
@@ -173,7 +209,7 @@ export function parseMutagenSyncList(raw, sessionName) {
     }
     const hasExcludedScan = excludedScan > 0;
     const hasExcludedTransition = excludedTransition > 0;
-    if (scanProblems.length > 0 || hasExcludedScan || transitionProblems.length > 0 || hasExcludedTransition) {
+    if (transitionProblems.length > 0 || hasExcludedTransition) {
       const parts = [];
       if (scanProblems.length > 0 || hasExcludedScan) parts.push(`${scanProblems.length + (hasExcludedScan ? excludedScan : 0)} scan problems`);
       if (transitionProblems.length > 0 || hasExcludedTransition) parts.push(`${transitionProblems.length + (hasExcludedTransition ? excludedTransition : 0)} transition problems`);
@@ -184,15 +220,27 @@ export function parseMutagenSyncList(raw, sessionName) {
         session,
       };
     }
+    if (scanProblems.length > 0 || hasExcludedScan) {
+      const detail = scanProblems.map(problem => `${String(problem?.path ?? '')}: ${String(problem?.error ?? '')}`).join('; ');
+      scanDetails.push(`${endpointName} has ${scanProblems.length + excludedScan} scan problems${detail ? ` (${detail})` : ''}`);
+    }
   }
-  if (alpha.scanned !== true || beta.scanned !== true) {
-    return { state: 'synchronizing', sessionName: expectedName, session };
+  const cycles = session.successfulCycles === undefined ? 0 : session.successfulCycles;
+  const readiness = classifyCleanMutagenReadiness({
+    watching: status === 'watching',
+    noWatch: alpha.watch?.mode === 'no-watch' && beta.watch?.mode === 'no-watch',
+    scanned: alpha.scanned === true && beta.scanned === true,
+    cyclesValid: Number.isSafeInteger(cycles) && cycles >= 0,
+    completed: Number.isSafeInteger(cycles) && cycles > 0,
+    scanProblems: scanDetails.length > 0,
+  });
+  if (scanDetails.length) {
+    return {
+      state: 'unhealthy', sessionName: expectedName, lastError: scanDetails.join('; '),
+      ...(readiness === 'rescan' ? { recovery: 'rescan' } : {}), session,
+    };
   }
-  const successfulCycles = session.successfulCycles;
-  if (!Number.isSafeInteger(successfulCycles) || successfulCycles <= 0) {
-    return { state: 'synchronizing', sessionName: expectedName, session };
-  }
-  return { state: 'ready', sessionName: expectedName, session };
+  return { state: readiness, sessionName: expectedName, session };
 }
 
 function isSafeRelativeConflictRoot(value) {

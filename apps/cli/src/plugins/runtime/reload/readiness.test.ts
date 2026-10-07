@@ -9,16 +9,18 @@ describe('primary Agent runtime readiness', () => {
     vi.useRealTimers();
   });
 
-  it('rejects a primary runtime factory that never settles instead of blocking readiness forever', async () => {
+  it('allows slow primary runtime readiness without a containing deadline', async () => {
     vi.useFakeTimers();
     const retirement = new AbortController();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
     const registry = {
       agentRuntimesByAgentId: new Map([['acme', {
         agentId: 'acme',
         pluginId: 'com.acme.agent',
         hasPrimaryRuntime: true,
         retirementSignal: retirement.signal,
-        createRuntime: () => new Promise<never>(() => undefined),
+        createRuntime: () => gate,
       }]]),
     } as unknown as ResolvedExecutablePluginRuntimeRegistry;
 
@@ -26,11 +28,17 @@ describe('primary Agent runtime readiness', () => {
       registry,
       pluginIds: ['com.acme.agent'],
     });
-    const rejection = expect(readiness).rejects.toThrow(
-      "Plugin 'com.acme.agent' primary Agent runtime readiness timed out after 30000ms",
-    );
-    await vi.advanceTimersByTimeAsync(30_000);
-    await rejection;
+    let settled = false;
+    void readiness.then(() => { settled = true; }, () => { settled = true; });
+    try {
+      await vi.advanceTimersByTimeAsync(30_001);
+      expect(settled).toBe(false);
+      release();
+      await expect(readiness).resolves.toBeUndefined();
+    } finally {
+      release();
+      await readiness.catch(() => undefined);
+    }
   });
 
   it('uses the remaining cold-start budget for primary runtime construction', async () => {
@@ -96,6 +104,7 @@ describe('primary Agent runtime readiness', () => {
     const readiness = bootstrapPrimaryAgentRuntimesForReadiness({
       registry,
       pluginIds: ['com.acme.alpha', 'com.acme.beta'],
+      startupDeadlineAtMs: Date.now() + 30_000,
     });
     let failure: unknown = null;
     void readiness.catch((error: unknown) => {
@@ -105,7 +114,7 @@ describe('primary Agent runtime readiness', () => {
     await vi.advanceTimersByTimeAsync(10_000);
 
     expect(failure).toEqual(new Error(
-      "Plugin 'com.acme.beta' primary Agent runtime readiness timed out after 30000ms",
+      "Plugin 'com.acme.beta' primary Agent runtime readiness timed out within the daemon startup budget",
     ));
   });
 });

@@ -1,12 +1,44 @@
 import { describe, expect, it } from 'vitest';
-import { admitActionAgentStartV1, resolveActionAgentStartRequestsV1, resolveRunStartModelAndConfig } from './agentStartAdmission.js';
+import { admitActionAgentStartV1, resolveActionAgentStartRequestsV1, resolveRunStartModelAndConfig, stampAgentStartSelectionV1 } from './agentStartAdmission.js';
 import { ProviderBoundModelRefSchema } from '../../providers/selection/v1.js';
 import { DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 } from '../../account/settings/sessionAgentSpawnPolicyV1.js';
+import { ExecutionRunStartRequestSchema } from '../../execution/runs/startRequest.js';
+import type { AgentStartContextV1 } from '../../account/settings/admitAgentStartV1.js';
 
 const nativeTarget = { kind: 'agent' as const, identity: { pluginId: 'native.agent', localId: 'agent' } };
 const roleTarget = { kind: 'agent' as const, identity: { pluginId: 'role.agent', localId: 'agent' } };
 
 describe('canonical Action agent-start adapter', () => {
+  it('binds a task role engine and Launch Profile through real execution-run admission', () => {
+    const context: AgentStartContextV1 = {
+      caller: { kind: 'session', sessionId: 'lead', starterDepth: 0, turnDepth: 0 },
+      baseline: { machineId: 'machine', directory: '/repo', configuration: { agentTarget: nativeTarget } },
+      roles: { approval_reviewer: { roleId: 'approval_reviewer', name: 'Approval reviewer', instructions: 'Role review instructions',
+        engine: { agentTargetKey: 'agent:role.agent/agent', modelId: 'review-model', effort: 'high' },
+        profileId: 'review-launch-profile', runsAs: { kind: 'background_run', intent: 'task' },
+        workspaceWrites: 'deny', secondOpinion: 'off', enabled: true } },
+      ledSubtreeSessionIds: [], workDepthLimit: 4, callerPermissionCeiling: 'default',
+    };
+    const requested = { roleId: 'approval_reviewer', backendTarget: nativeTarget, intent: 'task',
+      instructions: 'Assess this pending tool request.', permissionMode: 'no_tools',
+      retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response' };
+    const resolved = resolveActionAgentStartRequestsV1({ actionId: 'execution.run.start',
+      input: requested, context: {}, baseline: context.baseline });
+    if (!resolved.ok) throw new Error(resolved.errorCode);
+    const request = resolved.requests[0];
+    if (!request) throw new Error('expected_execution_start');
+    const admitted = admitActionAgentStartV1({}, request, context);
+    if (!admitted.ok) throw new Error(admitted.refusal.code);
+    const bound = stampAgentStartSelectionV1(resolved.effectiveInput, admitted.stamped, 'execution_run', context);
+    expect(ExecutionRunStartRequestSchema.safeParse(bound).success).toBe(true);
+    expect(bound).toMatchObject({ roleId: 'approval_reviewer', backendTarget: roleTarget,
+      modelId: 'review-model', launchProfileId: 'review-launch-profile', permissionMode: 'no_tools',
+      sessionConfigOptionOverrides: { overrides: { reasoning_effort: { value: 'high' } } },
+      instructions: requested.instructions });
+    expect(bound).not.toHaveProperty('profileId');
+    expect(admitted.stamped).toMatchObject({ workDepth: 1, workspaceWrites: 'deny' });
+  });
+
   it('normalizes shorthand scalar configuration through the shared alias contract', () => {
     expect(resolveRunStartModelAndConfig({ modelId: '  model  ', configOptions: {
       text: 'value', count: 3, enabled: false, unset: null,

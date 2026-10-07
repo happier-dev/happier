@@ -21,6 +21,7 @@ import type {
 
 import {
   createQualifiedConnectedAccountEstablishedRuntimeOwner,
+  readQualifiedConnectedAccountCredentialMaterial,
 } from './qualifiedConnectedAccountEstablishedRuntimeOwner';
 import { createQualifiedConnectedAccountDaemonPersistence } from './qualifiedConnectedAccountDaemonPersistence';
 
@@ -108,6 +109,28 @@ function plainEnvelope(kind: 'credential' | 'configuration', payload: unknown) {
 }
 
 describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
+  it('refuses credential material without an authentication mode before disclosing its payload', async () => {
+    const snapshot = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+      ref: account,
+      authenticationModeId: null,
+      revisionSemantics: 'revisioned',
+      credentialRevision: requestAuthCredentialRevision,
+      configurationRevision: null,
+      content: plainEnvelope('credential', {
+        v: 1,
+        values: { accessToken: 'unadmitted-access' },
+      }),
+      metadata: { scopes: [] },
+    });
+
+    await expect(readQualifiedConnectedAccountCredentialMaterial({
+      credentials: { token: 'token-1', encryption: null },
+      account,
+      getAccountEncryptionMode: async () => 'plain',
+      readCredential: async () => snapshot,
+    })).rejects.toBeInstanceOf(Error);
+  });
+
   it('feeds recipient-opened direct material through the installed contribution runtime without a source-row read', async () => {
     const invokeEstablished = vi.fn(async (input: ConnectedAccountRuntimeEstablishedInvocation) => {
       expect(await input.context.credentials.get('token')).toBe('recipient-direct-token');

@@ -58,6 +58,17 @@ describe('posthogStackTrace', () => {
         expect(trace.frames.map((frame) => frame.id)).toEqual(['0:0', '0:1']);
     });
 
+    it('names the top frame the way PostHog does: the last application frame, or none', () => {
+        const event = (frames: readonly Readonly<{ function: string; inApp: boolean }>[]): PosthogProjectedIssueEvent => ({
+            uuid: 'e-top', exceptions: [{ type: 'TypeError', value: 'x', frames }],
+        });
+        expect(posthogStackTrace(event([
+            { function: 'outer', inApp: true }, { function: 'inner', inApp: true }, { function: 'scheduler', inApp: false },
+        ])).topFrame?.label).toBe('inner');
+        expect(posthogStackTrace(event([{ function: 'scheduler', inApp: false }])).topFrame).toBeNull();
+        expect(posthogStackTrace(sample()[0]).topFrame?.location).toBe('app/checkout/summary.tsx:128:17');
+    });
+
     it('reports an unselected or frameless occurrence without inventing a stack', () => {
         expect(posthogStackTrace(undefined).frames).toEqual([]);
         const frameless = posthogStackTrace(sample()[1]);

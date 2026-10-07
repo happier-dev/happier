@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { admitAgentStartV1, type AgentStartContextV1, type AgentStartFactsV1, type AgentStartRequestV1, type MaterializedWorkflowLeafV1 } from './admitAgentStartV1.js';
+import { admitAgentStartV1, AgentStartSessionCallerV1Schema, type AgentStartContextV1, type AgentStartFactsV1, type AgentStartRequestV1, type MaterializedWorkflowLeafV1 } from './admitAgentStartV1.js';
 import { DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, SessionAgentSpawnPolicyV1StrictSchema } from './sessionAgentSpawnPolicyV1.js';
 import type { AgentExecutionTargetV1 } from '../../agents/executionTargetV1.js';
 import type { ResolvedRoleV1 } from '../../prompts/roles/rolesV1.js';
@@ -8,6 +8,7 @@ import { accountSettingsParse } from './accountSettings.js';
 import { SessionSpawnNewInputV2Schema } from '../../sessions/creation/sessionSpawnNewInputV2.js';
 import { ExecutionRunStartRequestBaseSchema } from '../../execution/runs/startRequest.js';
 import { z } from 'zod';
+import { SessionIndexedIdentifierMaxLengthV1 } from '../../sessions/idsV1.js';
 
 // Pinned predecessor schema: ../0.2 @17ba05df68, accountSettings.ts:94–126.
 // This is an old-reader contract vector, never a production policy decision.
@@ -42,6 +43,14 @@ const leaf = (facts: AgentStartFactsV1 = {}): MaterializedWorkflowLeafV1 => ({ b
 const spawn = (facts: AgentStartFactsV1 = {}): AgentStartRequestV1 => ({ kind: 'spawn_new', facts });
 
 describe('admitAgentStartV1', () => {
+  it('keeps host caller identity within the canonical Session storage contract without rewriting it', () => {
+    const caller = { kind: 'session', starterDepth: 0, turnDepth: 0 };
+    const sessionId = 's'.repeat(SessionIndexedIdentifierMaxLengthV1);
+    expect(AgentStartSessionCallerV1Schema.parse({ ...caller, sessionId }).sessionId).toBe(sessionId);
+    for (const invalidId of [`${sessionId}s`, ' lead', 'lead ']) {
+      expect(AgentStartSessionCallerV1Schema.safeParse({ ...caller, sessionId: invalidId }).success).toBe(false);
+    }
+  });
   it('enforces environment presence across start arms while preserving permitted and human starts', () => {
     const policy = accountSettingsParse({ sessionAgentSpawnPolicyV1: { allowEnvironmentVariables: false } }).sessionAgentSpawnPolicyV1;
     // ../0.2 @17ba05df68 normalizeSessionAgentSpawnActionRequest.ts:234

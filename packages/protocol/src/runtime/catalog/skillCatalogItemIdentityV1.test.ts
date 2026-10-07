@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { resolveSkillCatalogItemIdentityV1 } from './skills.js';
+import { SessionSkillCatalogListResponseV1Schema } from '../../sessions/work/state/sessionWorkStateRpc.js';
 
 /**
  * These expectations are a CROSS-REPOSITORY contract, not a local preference. A
@@ -40,9 +41,24 @@ const IDENTITY_CASES: ReadonlyArray<Readonly<{ label: string; item: Record<strin
     item: { id: 'skill-uuid-1', name: 'review', origin: 'codex_native' },
     id: 'skill-uuid-1',
   },
+  {
+    label: 'a blank supplied id, retaining legacy name and backend cleanup',
+    item: { id: '  ', name: ' review ', origin: 'codex_native', backendId: ' codex ' },
+    id: 'vendor:codex:review',
+  },
 ];
 
 describe('resolveSkillCatalogItemIdentityV1', () => {
+  it.each([' reviewer ', ' reviewer/α+skill= '])('preserves the native opaque ID %j through catalog parsing and identity resolution', (id) => {
+    // OpenCode v2.0.15 derives Skill.ID from an untrimmed directory basename.
+    const { skills } = SessionSkillCatalogListResponseV1Schema.parse({
+      catalog: { v: 1, updatedAt: 1, items: [{ id, name: ' reviewer ', origin: 'opencode_native' }] },
+    });
+    expect(skills[0]?.id).toBe(id);
+    expect(resolveSkillCatalogItemIdentityV1(skills[0])?.id).toBe(id);
+    expect(resolveSkillCatalogItemIdentityV1({ id, name: 'reviewer', origin: 'vendor', backendId: 'opencode' })?.id).toBe(id);
+  });
+
   it.each(IDENTITY_CASES)('derives $label', ({ item, id }) => {
     expect(resolveSkillCatalogItemIdentityV1(item)?.id).toBe(id);
   });

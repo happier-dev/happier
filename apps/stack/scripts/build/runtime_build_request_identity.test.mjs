@@ -7,6 +7,55 @@ import { join } from 'node:path';
 import { createRuntimeArtifactFingerprint, readRuntimeComponentSourceFingerprint } from './runtime_artifact_identity.mjs';
 import { resolveRuntimeBuildRequestIdentity } from './runtime_build_request_identity.mjs';
 import { createRuntimeSnapshotId } from '../runtime/shared/runtime_snapshot_identity.mjs';
+import { readWorkspaceBuildInputs } from '../utils/fs/workspaceBuildInputs.mjs';
+
+test('daemon support identity ignores unshipped tests while retaining shipped resources and runtime source', async (t) => {
+  const repoDir = await mkdtemp(join(tmpdir(), 'runtime-daemon-test-membership-'));
+  t.after(() => rm(repoDir, { recursive: true, force: true }));
+  const cliDir = join(repoDir, 'apps/cli');
+  const packageDir = join(repoDir, 'packages/fixture');
+  for (const dir of [cliDir, packageDir]) await mkdir(join(dir, 'src'), { recursive: true });
+  await writeFile(join(cliDir, 'package.json'), JSON.stringify({ name: '@happier-dev/cli',
+    dependencies: { '@happier-dev/fixture': '0.0.0' }, bundledDependencies: ['@happier-dev/fixture'] }));
+  await writeFile(join(packageDir, 'package.json'), JSON.stringify({ name: '@happier-dev/fixture',
+    files: ['dist', 'resources/tests'] }));
+  await mkdir(join(packageDir, 'resources/tests'), { recursive: true });
+  await writeFile(join(packageDir, 'resources/tests/runtime.json'), '{"value":1}');
+  await writeFile(join(cliDir, 'src/index.ts'), 'export const value = 1;');
+  await writeFile(join(packageDir, 'src/ui.ts'), 'export const view = 1;');
+  for (const app of ['ui', 'server']) {
+    const hostDir = join(repoDir, 'apps', app);
+    await mkdir(join(hostDir, 'sources'), { recursive: true });
+    await writeFile(join(hostDir, 'package.json'), JSON.stringify({ name: `@happier-dev/${app}`,
+      dependencies: { '@happier-dev/fixture': '0.0.0' } }));
+    await writeFile(join(hostDir, 'sources/index.ts'), 'export const host = 1;');
+  }
+  await mkdir(join(cliDir, 'scripts'), { recursive: true });
+  await mkdir(join(repoDir, 'scripts/workspaces'), { recursive: true });
+  const fingerprint = () => Promise.all(['daemon', 'web', 'server'].map(component =>
+    readRuntimeComponentSourceFingerprint({ component, sourceMetadata: { repoDir }, includeRuntimeSupportInputs: true })));
+  const before = await fingerprint();
+  for (const dir of [join(cliDir, 'src'), join(cliDir, 'scripts'), join(packageDir, 'src'),
+    join(repoDir, 'apps/ui/sources'), join(repoDir, 'apps/server/sources'), join(repoDir, 'scripts/workspaces')]) {
+    await mkdir(join(dir, 'testkit'), { recursive: true });
+    await writeFile(join(dir, 'owner.test.ts'), 'test only');
+    await writeFile(join(dir, 'owner.spec.tsx'), 'spec only');
+    await writeFile(join(dir, 'owner.testkit.ts'), 'test support only');
+    await writeFile(join(dir, 'owner.test-support.ts'), 'excluded compiler test support only');
+    await writeFile(join(dir, 'testkit/fixture.ts'), 'fixture only');
+  }
+  assert.deepEqual(await fingerprint(), before, 'adding tests must not change component membership');
+  await writeFile(join(cliDir, 'src/owner.test.ts'), 'changed test only');
+  await writeFile(join(packageDir, 'src/owner.spec.tsx'), 'changed spec only');
+  assert.deepEqual(await fingerprint(), before, 'test/spec-only edits must not invalidate component capture');
+  assert.equal(readWorkspaceBuildInputs(packageDir).some(path => path.includes('testkit')), false,
+    'inventory and runtime traversal share test membership');
+  await writeFile(join(packageDir, 'src/ui.ts'), 'export const view = 2;');
+  for (const [index, value] of (await fingerprint()).entries()) assert.notEqual(value, before[index], 'exported UI remains a support input');
+  const runtimeChanged = await fingerprint();
+  await writeFile(join(packageDir, 'resources/tests/runtime.json'), '{"value":2}');
+  for (const [index, value] of (await fingerprint()).entries()) assert.notEqual(value, runtimeChanged[index], 'explicit shipped resources override test naming');
+});
 
 const sourceMetadata = Object.freeze({
   repoDir: '/repo',

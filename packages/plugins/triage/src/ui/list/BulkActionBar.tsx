@@ -6,6 +6,7 @@ import {
   List,
   Row,
   Stack,
+  Progress,
   Status,
   useListMultiSelectionSnapshot,
   usePluginTranslation,
@@ -236,19 +237,9 @@ export function TriageBulkActionBar(props: TriageBulkActionBarPropsV1): React.Re
             titleKey="plugins.triage.surface.bulk.retry"
             title="Try again"
             variant="secondary"
+            size="small"
             onPress={props.onRetry}
           />
-        )}
-        {!busy ? null : (
-          <>
-            <Status
-              tone="info"
-              label={text(
-                'plugins.triage.surface.bulk.selectionRetainedWhileRunning',
-                'The selection stays visible until the running action stops.',
-              )}
-            />
-          </>
         )}
       </Row>
     </Stack>
@@ -280,15 +271,16 @@ function TriageBulkPhaseStatus(props: Readonly<{
     );
   }
   if (phase.kind === 'starting') {
+    const label = text('plugins.triage.surface.bulk.starting', 'Starting {started} of {total}…', {
+      started: String(phase.started),
+      total: String(phase.total),
+    });
+    // The run's own progress, as a bar, with the same words as its name.
     return (
-      <Status
-        tone="info"
-        pulsing
-        label={text('plugins.triage.surface.bulk.starting', 'Starting {started} of {total}…', {
-          started: String(phase.started),
-          total: String(phase.total),
-        })}
-      />
+      <Stack gap="xsmall" style={BULK_PROGRESS_STYLE_V1}>
+        <Progress value={phase.total === 0 ? undefined : phase.started / phase.total} label={label} />
+        <Status tone="info" pulsing label={label} />
+      </Stack>
     );
   }
   if (phase.kind === 'seeded') {
@@ -421,3 +413,5 @@ const UNAVAILABLE_COPY: Readonly<Record<
     fallback: 'None of the selected entries can be started right now, so nothing was started.',
   },
 });
+
+const BULK_PROGRESS_STYLE_V1 = Object.freeze({ minWidth: 160, flex: 1 });

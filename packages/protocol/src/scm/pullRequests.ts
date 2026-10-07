@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { ScmOperationOutcomeSchema } from './operationOutcome.js';
 import { ScmCommitPublicationSchema } from './commitPublication.js';
@@ -22,17 +23,17 @@ export {
   type ScmDefaultBranchPushPolicy,
 } from './defaultBranchPushPolicy.js';
 
-export const ScmHostingProviderKindSchema = z.enum([
+export const ScmHostingProviderKindSchema = lazyZodSchema(() => z.enum([
   'github',
   'gitlab',
   'bitbucket',
   'azure-devops',
   'custom',
   'unknown',
-]);
+]));
 export type ScmHostingProviderKind = z.infer<typeof ScmHostingProviderKindSchema>;
 
-const ScmHostingProviderPullRequestCapabilitiesSchema = z.object({
+const ScmHostingProviderPullRequestCapabilitiesSchema = lazyZodSchema(() => z.object({
   list: z.boolean().default(false),
   get: z.boolean().default(false),
   create: z.boolean().default(false),
@@ -46,9 +47,9 @@ const ScmHostingProviderPullRequestCapabilitiesSchema = z.object({
   checkout: false,
   prepareWorktree: false,
   runStacked: false,
-});
+}));
 
-const ScmHostingProviderRepositoryProvisioningCapabilitiesSchema = z.object({
+const ScmHostingProviderRepositoryProvisioningCapabilitiesSchema = lazyZodSchema(() => z.object({
   describeTargets: z.boolean().default(false),
   createRepository: z.boolean().default(false),
   publish: z.boolean().default(false),
@@ -56,17 +57,17 @@ const ScmHostingProviderRepositoryProvisioningCapabilitiesSchema = z.object({
   describeTargets: false,
   createRepository: false,
   publish: false,
-});
+}));
 
-const ScmHostingProviderReviewThreadCapabilitiesSchema = z.object({
+const ScmHostingProviderReviewThreadCapabilitiesSchema = lazyZodSchema(() => z.object({
   read: z.boolean().default(false),
   write: z.boolean().default(false),
 }).strict().default({
   read: false,
   write: false,
-});
+}));
 
-export const ScmHostingProviderCapabilitiesSchema = z.object({
+export const ScmHostingProviderCapabilitiesSchema = lazyZodSchema(() => z.object({
   capabilityScope: z.literal('remote-hosting-provider').default('remote-hosting-provider'),
   compareUrl: z.boolean().default(false),
   openUrl: z.boolean().default(false),
@@ -94,15 +95,15 @@ export const ScmHostingProviderCapabilitiesSchema = z.object({
     read: false,
     write: false,
   },
-});
+}));
 export type ScmHostingProviderCapabilities =
   z.infer<typeof ScmHostingProviderCapabilitiesSchema>;
 
-export const ScmHostingProviderUrlSafetySchema = z
+export const ScmHostingProviderUrlSafetySchema = lazyZodSchema(() => z
   .object({
     allowedSchemes: z.array(z.string().min(2)).default(['https:']),
   })
-  .passthrough();
+  .passthrough());
 export type ScmHostingProviderUrlSafety = z.infer<typeof ScmHostingProviderUrlSafetySchema>;
 
 const LEGACY_SCM_HOSTING_PROVIDER_IDS = Object.freeze({
@@ -131,7 +132,7 @@ function normalizeLegacyScmHostingProviderRef(value: unknown): unknown {
   }
 }
 
-export const ScmHostingProviderRefSchema = z.preprocess(
+export const ScmHostingProviderRefSchema = lazyZodSchema(() => z.preprocess(
   normalizeLegacyScmHostingProviderRef,
   z.object({
     id: z.string().min(1),
@@ -144,7 +145,7 @@ export const ScmHostingProviderRefSchema = z.preprocess(
     urlSafety: ScmHostingProviderUrlSafetySchema.default({ allowedSchemes: ['https:'] }),
   })
   .passthrough(),
-);
+));
 export type ScmHostingProviderRef = z.infer<typeof ScmHostingProviderRefSchema>;
 
 function stripTrailingSlashes(value: string): string {
@@ -218,41 +219,41 @@ export function resolveScmHostingProviderFollowupAllowedBaseUrl(input: Readonly<
   return stripTrailingSlashes(repositoryBase.toString());
 }
 
-export const ScmPullRequestStateSchema = z.enum([
+export const ScmPullRequestStateSchema = lazyZodSchema(() => z.enum([
   'open',
   'closed',
   'merged',
   'draft',
   'unknown',
-]);
+]));
 export type ScmPullRequestState = z.infer<typeof ScmPullRequestStateSchema>;
 
-export const ScmPullRequestAuthorSchema = z
+export const ScmPullRequestAuthorSchema = lazyZodSchema(() => z
   .object({
     login: z.string().min(1).optional(),
     displayName: z.string().min(1).optional(),
     url: z.string().url().optional(),
   })
-  .passthrough();
+  .passthrough());
 export type ScmPullRequestAuthor = z.infer<typeof ScmPullRequestAuthorSchema>;
 
-export const ScmPullRequestChecksStateSchema = z.enum([
+export const ScmPullRequestChecksStateSchema = lazyZodSchema(() => z.enum([
   'pending',
   'success',
   'failure',
   'unknown',
-]);
+]));
 export type ScmPullRequestChecksState = z.infer<typeof ScmPullRequestChecksStateSchema>;
 
-export const ScmPullRequestChecksSummarySchema = z
+export const ScmPullRequestChecksSummarySchema = lazyZodSchema(() => z
   .object({
     state: ScmPullRequestChecksStateSchema,
     description: z.string().min(1).optional(),
   })
-  .passthrough();
+  .passthrough());
 export type ScmPullRequestChecksSummary = z.infer<typeof ScmPullRequestChecksSummarySchema>;
 
-export const ScmPullRequestSummarySchema = z
+export const ScmPullRequestSummarySchema = lazyZodSchema(() => z
   .object({
     provider: ScmHostingProviderRefSchema,
     number: z.number().int().positive().nullable().optional(),
@@ -270,7 +271,7 @@ export const ScmPullRequestSummarySchema = z
     author: ScmPullRequestAuthorSchema.optional(),
     checks: ScmPullRequestChecksSummarySchema.optional(),
   })
-  .passthrough();
+  .passthrough());
 export type ScmPullRequestSummary = z.infer<typeof ScmPullRequestSummarySchema>;
 
 const ScmPullRequestReferenceBaseSchema = z.union([
@@ -292,15 +293,15 @@ export const ScmPullRequestReferenceSchema = ScmPullRequestReferenceBaseSchema.s
 });
 export type ScmPullRequestReference = z.infer<typeof ScmPullRequestReferenceSchema>;
 
-export const ScmPullRequestAuthStateSchema = z.enum([
+export const ScmPullRequestAuthStateSchema = lazyZodSchema(() => z.enum([
   'authenticated',
   'authentication_required',
   'unsupported',
   'unknown',
-]);
+]));
 export type ScmPullRequestAuthState = z.infer<typeof ScmPullRequestAuthStateSchema>;
 
-export const ScmPullRequestStatusProjectionSchema = z
+export const ScmPullRequestStatusProjectionSchema = lazyZodSchema(() => z
   .object({
     provider: ScmHostingProviderRefSchema.nullable(),
     headBranch: z.string().min(1).nullable(),
@@ -313,10 +314,10 @@ export const ScmPullRequestStatusProjectionSchema = z
     freshness: VcsRemoteStateFreshnessSchema.optional(),
     refreshPolicy: ProviderRefreshPolicySchema.optional(),
   })
-  .passthrough();
+  .passthrough());
 export type ScmPullRequestStatusProjection = z.infer<typeof ScmPullRequestStatusProjectionSchema>;
 
-export const ScmFollowupActionSchema = z.union([
+export const ScmFollowupActionSchema = lazyZodSchema(() => z.union([
   z
     .object({
       kind: z.literal('openUrl'),
@@ -327,10 +328,10 @@ export const ScmFollowupActionSchema = z.union([
     })
     .passthrough(),
   z.object({ kind: z.literal('none') }).passthrough(),
-]);
+]));
 export type ScmFollowupAction = z.infer<typeof ScmFollowupActionSchema>;
 
-const ScmPullRequestErrorResponseSchema = z
+const ScmPullRequestErrorResponseSchema = lazyZodSchema(() => z
   .object({
     success: z.literal(false),
     result: z.literal('opened_compose').optional(),
@@ -339,18 +340,18 @@ const ScmPullRequestErrorResponseSchema = z
     error: z.string().min(1),
     errorCode: ScmOperationErrorCodeSchema.optional(),
   })
-  .passthrough();
+  .passthrough());
 export type ScmPullRequestErrorResponse = z.infer<typeof ScmPullRequestErrorResponseSchema>;
 
-export const ScmPullRequestListRequestSchema = ScmRequestBaseSchema.extend({
+export const ScmPullRequestListRequestSchema = lazyZodSchema(() => ScmRequestBaseSchema.extend({
   providerId: z.string().min(1).optional(),
   base: ScmOptionalBranchSourceRefSchema,
   head: ScmOptionalBranchSourceRefSchema,
   state: ScmPullRequestStateSchema.optional(),
-}).passthrough();
+}).passthrough());
 export type ScmPullRequestListRequest = z.infer<typeof ScmPullRequestListRequestSchema>;
 
-export const ScmPullRequestListResponseSchema = z.union([
+export const ScmPullRequestListResponseSchema = lazyZodSchema(() => z.union([
   z
     .object({
       success: z.literal(true),
@@ -360,15 +361,15 @@ export const ScmPullRequestListResponseSchema = z.union([
     })
     .passthrough(),
   ScmPullRequestErrorResponseSchema,
-]);
+]));
 export type ScmPullRequestListResponse = z.infer<typeof ScmPullRequestListResponseSchema>;
 
-export const ScmPullRequestGetRequestSchema = ScmRequestBaseSchema.extend({
+export const ScmPullRequestGetRequestSchema = lazyZodSchema(() => ScmRequestBaseSchema.extend({
   prReference: ScmPullRequestReferenceSchema,
-}).passthrough();
+}).passthrough());
 export type ScmPullRequestGetRequest = z.infer<typeof ScmPullRequestGetRequestSchema>;
 
-export const ScmPullRequestGetResponseSchema = z.union([
+export const ScmPullRequestGetResponseSchema = lazyZodSchema(() => z.union([
   z
     .object({
       success: z.literal(true),
@@ -378,17 +379,17 @@ export const ScmPullRequestGetResponseSchema = z.union([
     })
     .passthrough(),
   ScmPullRequestErrorResponseSchema,
-]);
+]));
 export type ScmPullRequestGetResponse = z.infer<typeof ScmPullRequestGetResponseSchema>;
 
-export const ScmPullRequestOpenComposeRequestSchema = ScmRequestBaseSchema.extend({
+export const ScmPullRequestOpenComposeRequestSchema = lazyZodSchema(() => ScmRequestBaseSchema.extend({
   providerId: z.string().min(1).optional(),
   base: ScmBranchSourceRefSchema,
   head: ScmBranchSourceRefSchema,
-}).passthrough();
+}).passthrough());
 export type ScmPullRequestOpenComposeRequest = z.infer<typeof ScmPullRequestOpenComposeRequestSchema>;
 
-export const ScmPullRequestOpenComposeResponseSchema = z.union([
+export const ScmPullRequestOpenComposeResponseSchema = lazyZodSchema(() => z.union([
   z
     .object({
       success: z.literal(true),
@@ -397,10 +398,10 @@ export const ScmPullRequestOpenComposeResponseSchema = z.union([
     })
     .passthrough(),
   ScmPullRequestErrorResponseSchema,
-]);
+]));
 export type ScmPullRequestOpenComposeResponse = z.infer<typeof ScmPullRequestOpenComposeResponseSchema>;
 
-export const ScmPullRequestOpenOrReuseRequestSchema = ScmRequestBaseSchema.extend({
+export const ScmPullRequestOpenOrReuseRequestSchema = lazyZodSchema(() => ScmRequestBaseSchema.extend({
   providerId: z.string().min(1).optional(),
   base: ScmBranchSourceRefSchema,
   head: ScmOptionalBranchSourceRefSchema,
@@ -409,10 +410,10 @@ export const ScmPullRequestOpenOrReuseRequestSchema = ScmRequestBaseSchema.exten
   body: z.string().optional(),
   draft: z.boolean().optional(),
   defaultBranchPushPolicy: ScmDefaultBranchPushPolicySchema.optional(),
-}).passthrough();
+}).passthrough());
 export type ScmPullRequestOpenOrReuseRequest = z.infer<typeof ScmPullRequestOpenOrReuseRequestSchema>;
 
-export const ScmPullRequestOpenOrReuseResponseSchema = z.union([
+export const ScmPullRequestOpenOrReuseResponseSchema = lazyZodSchema(() => z.union([
   z
     .object({
       success: z.literal(true),
@@ -426,15 +427,15 @@ export const ScmPullRequestOpenOrReuseResponseSchema = z.union([
     })
     .passthrough(),
   ScmPullRequestErrorResponseSchema,
-]);
+]));
 export type ScmPullRequestOpenOrReuseResponse = z.infer<typeof ScmPullRequestOpenOrReuseResponseSchema>;
 
-export const ScmPullRequestCheckoutRequestSchema = ScmRequestBaseSchema.extend({
+export const ScmPullRequestCheckoutRequestSchema = lazyZodSchema(() => ScmRequestBaseSchema.extend({
   prReference: ScmPullRequestReferenceSchema,
-}).passthrough();
+}).passthrough());
 export type ScmPullRequestCheckoutRequest = z.infer<typeof ScmPullRequestCheckoutRequestSchema>;
 
-export const ScmPullRequestCheckoutResponseSchema = z.union([
+export const ScmPullRequestCheckoutResponseSchema = lazyZodSchema(() => z.union([
   z
     .object({
       success: z.literal(true),
@@ -446,25 +447,25 @@ export const ScmPullRequestCheckoutResponseSchema = z.union([
     })
     .passthrough(),
   ScmPullRequestErrorResponseSchema,
-]);
+]));
 export type ScmPullRequestCheckoutResponse = z.infer<typeof ScmPullRequestCheckoutResponseSchema>;
 
-export const ScmPullRequestPrepareWorktreeModeSchema = z.enum([
+export const ScmPullRequestPrepareWorktreeModeSchema = lazyZodSchema(() => z.enum([
   'local',
   'worktree',
-]);
+]));
 export type ScmPullRequestPrepareWorktreeMode =
   z.infer<typeof ScmPullRequestPrepareWorktreeModeSchema>;
 
-export const ScmPullRequestPrepareWorktreeRequestSchema = ScmRequestBaseSchema.extend({
+export const ScmPullRequestPrepareWorktreeRequestSchema = lazyZodSchema(() => ScmRequestBaseSchema.extend({
   sourcePath: z.string().min(1),
   prReference: ScmPullRequestReferenceSchema,
   mode: ScmPullRequestPrepareWorktreeModeSchema.optional(),
-}).passthrough();
+}).passthrough());
 export type ScmPullRequestPrepareWorktreeRequest =
   z.infer<typeof ScmPullRequestPrepareWorktreeRequestSchema>;
 
-export const ScmPullRequestPrepareWorktreeResponseSchema = z.union([
+export const ScmPullRequestPrepareWorktreeResponseSchema = lazyZodSchema(() => z.union([
   z
     .object({
       success: z.literal(true),
@@ -475,29 +476,29 @@ export const ScmPullRequestPrepareWorktreeResponseSchema = z.union([
     })
     .passthrough(),
   ScmPullRequestErrorResponseSchema,
-]);
+]));
 export type ScmPullRequestPrepareWorktreeResponse =
   z.infer<typeof ScmPullRequestPrepareWorktreeResponseSchema>;
 
-export const ScmPullRequestStackedActionSchema = z.enum([
+export const ScmPullRequestStackedActionSchema = lazyZodSchema(() => z.enum([
   'commit',
   'push',
   'openOrReuse',
   'commitAndPush',
   'pushAndOpenOrReuse',
   'commitPushAndOpenOrReuse',
-]);
+]));
 export type ScmPullRequestStackedAction = z.infer<typeof ScmPullRequestStackedActionSchema>;
 
-export const ScmPullRequestRunStackedPhaseSchema = z.enum([
+export const ScmPullRequestRunStackedPhaseSchema = lazyZodSchema(() => z.enum([
   'branch',
   'commit',
   'push',
   'pr',
-]);
+]));
 export type ScmPullRequestRunStackedPhase = z.infer<typeof ScmPullRequestRunStackedPhaseSchema>;
 
-export const ScmPullRequestRunStackedProgressEventSchema = z
+export const ScmPullRequestRunStackedProgressEventSchema = lazyZodSchema(() => z
   .object({
     kind: z.enum([
       'action_started',
@@ -512,11 +513,11 @@ export const ScmPullRequestRunStackedProgressEventSchema = z
     output: z.string().optional(),
     timestamp: z.number().int().nonnegative(),
   })
-  .passthrough();
+  .passthrough());
 export type ScmPullRequestRunStackedProgressEvent =
   z.infer<typeof ScmPullRequestRunStackedProgressEventSchema>;
 
-export const ScmPullRequestRunStackedRequestSchema = ScmRequestBaseSchema.extend({
+export const ScmPullRequestRunStackedRequestSchema = lazyZodSchema(() => ScmRequestBaseSchema.extend({
   action: ScmPullRequestStackedActionSchema,
   commitMessage: z.string().min(1).optional(),
   featureBranch: ScmOptionalBranchSourceRefSchema,
@@ -526,11 +527,11 @@ export const ScmPullRequestRunStackedRequestSchema = ScmRequestBaseSchema.extend
   title: z.string().min(1).optional(),
   body: z.string().optional(),
   defaultBranchPushPolicy: ScmDefaultBranchPushPolicySchema.optional(),
-}).passthrough();
+}).passthrough());
 export type ScmPullRequestRunStackedRequest =
   z.infer<typeof ScmPullRequestRunStackedRequestSchema>;
 
-export const ScmPullRequestRunStackedResponseSchema = z.union([
+export const ScmPullRequestRunStackedResponseSchema = lazyZodSchema(() => z.union([
   z
     .object({
       success: z.literal(true),
@@ -549,6 +550,6 @@ export const ScmPullRequestRunStackedResponseSchema = z.union([
     commitPublication: ScmCommitPublicationSchema.optional(),
     events: z.array(ScmPullRequestRunStackedProgressEventSchema).default([]),
   }).passthrough(),
-]);
+]));
 export type ScmPullRequestRunStackedResponse =
   z.infer<typeof ScmPullRequestRunStackedResponseSchema>;

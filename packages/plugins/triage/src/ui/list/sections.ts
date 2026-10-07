@@ -1,3 +1,4 @@
+import type { SessionStateV1 } from '@happier-dev/plugin-sdk/ui';
 import type { TriageEntryLocatorV1, TriageSourceWorkflowSubjectV1 } from '@happier-dev/triage-protocol/v1';
 
 import { CORPUS_LANE } from '../../corpus/fold/lane.js';
@@ -11,6 +12,7 @@ import {
   type TriageListRowProjectionOptionsV1,
 } from '../marks/pinnedRows.js';
 import { readTriageSelectedObservationV1 } from '../window/selectedObservation.js';
+import { readTriageEntryAgentStatusV1, type TriageAgentStatusV1 } from '../detail/agentState.js';
 
 /**
  * The PRs & Issues rows and their ONE grouping axis (PLAN.md r0.41): **Needs you / With an agent / In review /
@@ -47,6 +49,8 @@ export type TriageListItemV1 = Readonly<{
   /** The source's bounded summary, for the peek. */
   summary: string | null;
   signal: TriageListRowSignalV1 | null;
+  /** What the entry's linked agent is doing, from its linked Sessions' live states (the Agent column). */
+  agent: TriageAgentStatusV1 | null;
   /** The canonical selected connection's locator; absent for unread or unavailable entries. */
   locator?: TriageEntryLocatorV1 | null;
 }>;
@@ -71,6 +75,8 @@ export function readTriageListGroupV1(input: Readonly<{
   return 'everythingElse';
 }
 
+const NO_AGENT_STATES: readonly SessionStateV1[] = Object.freeze([]);
+
 function readSignal(row: TriageListRowV1 | null): TriageListRowSignalV1 | null {
   for (const fact of row?.content?.outcome.snapshot.facts ?? []) {
     if (fact.importance === 'primary' && fact.value.kind === 'status') {
@@ -86,14 +92,16 @@ export function planTriageListItemsV1(input: Readonly<{
   /** The admitted source contribution's workflow subject for this kind, or `null` when none was declared. */
   workflowSubjectOf: (entryRef: TriageListRowV1['entryRef']) => TriageSourceWorkflowSubjectV1 | null;
   /**
-   * Whether a linked Session's canonical host Work status is working. The shell
-   * supplies its single mounted relationship/Session-fact join, shared by every row.
+   * The live states of the Sessions linked to a row, by row key. The shell supplies its single mounted
+   * relationship/Session-fact join, shared by every row; both the "With an agent" group and the Agent
+   * column are read from it, so they cannot disagree about one entry.
    */
-  agentActive?: (key: string) => boolean;
+  agentStatesOf?: (key: string) => readonly SessionStateV1[];
   /** How the rows say the words this plugin authors, and whether the window they came from is current. */
   display?: TriageListRowProjectionOptionsV1;
 }>): readonly TriageListItemV1[] {
   const pinIndex = indexTriagePinsByEntry(input.pins);
+  const agentStatesOf = (key: string) => input.agentStatesOf?.(key) ?? NO_AGENT_STATES;
   const projectedByKey = new Map<string, TriageListRowV1>();
   for (const row of input.rows) projectedByKey.set(triageEntryRowKey(row.entryRef), row);
 
@@ -106,6 +114,7 @@ export function planTriageListItemsV1(input: Readonly<{
       group: 'pinned' as const,
       summary: projected?.content?.outcome.snapshot.summary ?? null,
       signal: readSignal(projected),
+      agent: readTriageEntryAgentStatusV1(agentStatesOf(row.key)),
       locator: projected === null ? null : readTriageSelectedObservationV1(projected)?.observation.locator ?? null,
     });
   });
@@ -118,10 +127,11 @@ export function planTriageListItemsV1(input: Readonly<{
       group: readTriageListGroupV1({
         row: windowRow,
         workflowSubject: input.workflowSubjectOf(windowRow.entryRef),
-        agentActive: input.agentActive?.(row.key) === true,
+        agentActive: agentStatesOf(row.key).some((state) => state.workStatus.bucket === 'working'),
       }),
       summary: windowRow.content?.outcome.snapshot.summary ?? null,
       signal: readSignal(windowRow),
+      agent: readTriageEntryAgentStatusV1(agentStatesOf(row.key)),
       locator: readTriageSelectedObservationV1(windowRow)?.observation.locator ?? null,
     }));
   }

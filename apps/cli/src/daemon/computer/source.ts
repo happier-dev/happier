@@ -22,7 +22,7 @@ export function createComputerCaptureSource(input: Readonly<{
 }>) {
   // A stream source is one selection lifetime; revoked approvals cannot bind a later reselection.
   const sourceId = `computer:${randomUUID()}`;
-  const control = createSurfaceInputControl({ requireObservation: true });
+  const control = createSurfaceInputControl({ requireObservation: true, onStatusChange: publishStatus });
   let driver: ReturnType<typeof createManagedComputerDriver> | null = null;
   const getDriver = () => driver ??= createManagedComputerDriver({ displayId: input.target.displayId, executablePath: input.executablePath });
   type Capture = Awaited<ReturnType<Awaited<ReturnType<typeof createManagedComputerDriver>>['capture']>>;
@@ -41,8 +41,21 @@ export function createComputerCaptureSource(input: Readonly<{
   let timer: ReturnType<typeof setTimeout> | null = null;
   let framePending: Promise<void> | null = null;
   type Viewer = { fps: number | undefined; paused: boolean; ready: boolean; nextFrameAt: number;
-    nowMs(): number; emit(png: Buffer): void; fail(reason: string): void };
+    nowMs(): number; emit(png: Buffer): void; emitStatus(status: string): void; fail(reason: string): void };
   const viewers = new Set<Viewer>();
+  let lastPublishedStatus: string | undefined;
+
+  function status(): ComputerControlStatusResponseV1 {
+    return { target: input.target, sourceId, ...control.getStatus(),
+      ...(inputActivity ? { activity: inputActivity } : agentCaptures ? { activity: { kind: 'capture' as const } } : {}),
+      ...(activeTarget ? { activeTarget } : {}) };
+  }
+  function publishStatus(): void {
+    const serialized = JSON.stringify(status());
+    if (serialized === lastPublishedStatus) return;
+    lastPublishedStatus = serialized;
+    for (const viewer of viewers) viewer.emitStatus(serialized);
+  }
 
   function publish(capture: Pick<Capture, 'png' | 'geometry'>): void {
     latest = capture;
@@ -50,7 +63,7 @@ export function createComputerCaptureSource(input: Readonly<{
   }
   async function observe(requestedBy: 'agent' | 'human' = 'agent'): Promise<Capture> {
     if (closed) throw new Error('capture_source_unavailable');
-    if (requestedBy === 'agent') agentCaptures += 1;
+    if (requestedBy === 'agent') { agentCaptures += 1; publishStatus(); }
     try {
       const epoch = control.getStatus().controlEpoch;
       const native = await getDriver();
@@ -61,7 +74,7 @@ export function createComputerCaptureSource(input: Readonly<{
       control.observe(epoch);
       publish(capture);
       return capture;
-    } finally { if (requestedBy === 'agent') agentCaptures -= 1; }
+    } finally { if (requestedBy === 'agent') { agentCaptures -= 1; publishStatus(); } }
   }
   async function observeFrame(): Promise<void> {
     if (closed) throw new Error('capture_source_unavailable');
@@ -102,13 +115,14 @@ export function createComputerCaptureSource(input: Readonly<{
           // Keyboard focus is not exposed by the pinned native accessibility contract.
           inputActivity = { kind: operation.kind, ...(targetLabel ? { targetLabel } : {}) };
           activeTarget = clicked;
+          publishStatus();
         }
         try {
           const native = await getDriver();
           if (abortSignal.aborted) return { status: 'interrupted', completion: 'known' } as const;
           // Atomic native input is drained; AbortSignal must never discard its physical settlement.
           return await native.input(input.target, captureId, operation, { signal: abortSignal });
-        } finally { if (requestedBy === 'agent') { inputActivity = undefined; activeTarget = undefined; } }
+        } finally { if (requestedBy === 'agent') { inputActivity = undefined; activeTarget = undefined; publishStatus(); } }
       },
       classifyCompletion: value => value.status === 'interrupted' ? value.completion : 'known',
     });
@@ -134,10 +148,13 @@ export function createComputerCaptureSource(input: Readonly<{
               if (this.fps === undefined) this.ready = false;
               else this.nextFrameAt = this.nowMs() + 1000 / this.fps;
               emitFrame({ codecId: 'image.frame.v1', payload: png, keyframe: true });
+            }, emitStatus(serialized) {
+              emitFrame({ codecId: 'image.frame.v1', payloadKind: 'metadata', payload: Buffer.from(serialized) });
             }, fail };
           viewer = activeViewer;
           viewers.add(activeViewer);
           try { await observeFrame(); } catch { viewers.delete(activeViewer); throw { reasonCode: 'capture_source_unavailable' }; }
+          activeViewer.emitStatus(JSON.stringify(status()));
           schedule();
           return {
             stop() { stopped = true; viewers.delete(activeViewer); if (!viewers.size && timer) { clearTimeout(timer); timer = null; } },
@@ -202,9 +219,7 @@ export function createComputerCaptureSource(input: Readonly<{
     setCaptureMedia: (media: NonNullable<typeof captureMedia>) => { captureMedia = media; },
     observe,
     input: (captureId: string, operation: ComputerInputOperationV1, requestedBy: 'agent' | 'human', signal?: AbortSignal) => execute(captureId, operation, requestedBy, signal),
-    status: (): ComputerControlStatusResponseV1 => ({ target: input.target, sourceId, ...control.getStatus(),
-      ...(inputActivity ? { activity: inputActivity } : agentCaptures ? { activity: { kind: 'capture' as const } } : {}),
-      ...(activeTarget ? { activeTarget } : {}) }),
+    status,
     interrupt: () => control.takeOver(),
     handBack: () => control.handBack(),
     async close() {

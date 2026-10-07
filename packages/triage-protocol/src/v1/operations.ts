@@ -3,6 +3,7 @@ import {
     defineProtocolNumber,
     defineProtocolObject,
     defineProtocolUnion,
+    type ProtocolComposableSchema,
 } from '@happier-dev/plugin-sdk/protocol';
 import { ScmComparisonSourceSchema } from '@happier-dev/plugin-sdk/scm';
 
@@ -11,7 +12,10 @@ import {
     TriageEntryLocatorV1Schema,
     TriageSourceEntryLocalRefV1Schema,
 } from './identity.js';
-import { TriageConfiguredSourceInstanceV1Schema } from './instances.js';
+import {
+    TriageConfiguredSourceConnectedAccountInstanceV1Schema,
+    TriageConfiguredSourceInstanceV1Schema,
+} from './instances.js';
 import {
     TriageScanContinuationV1Schema,
     TriageScanObservationsV1ProtocolSchema,
@@ -31,27 +35,33 @@ import {
  * continuation arm is deliberate: it makes a mid-scan limit change
  * unrepresentable (`CONTRACT.md` §5.1).
  */
-export const TriageScanInputV1Schema = defineProtocolUnion([
-    defineProtocolObject({
-        v: defineProtocolLiteral(1),
-        instance: TriageConfiguredSourceInstanceV1Schema,
-        page: defineProtocolObject({
-            kind: defineProtocolLiteral('initial'),
-            limit: defineProtocolNumber({
-                integer: true,
-                minimum: 1,
-            }),
+function defineTriageScanInputV1<TInput, TOutput>(instance: ProtocolComposableSchema<TInput, TOutput>) {
+    return defineProtocolUnion([
+        defineProtocolObject({
+            v: defineProtocolLiteral(1),
+            instance,
+            page: defineProtocolObject({
+                kind: defineProtocolLiteral('initial'),
+                limit: defineProtocolNumber({
+                    integer: true,
+                    minimum: 1,
+                }),
+            }, { policy: 'closed' }),
         }, { policy: 'closed' }),
-    }, { policy: 'closed' }),
-    defineProtocolObject({
-        v: defineProtocolLiteral(1),
-        instance: TriageConfiguredSourceInstanceV1Schema,
-        page: defineProtocolObject({
-            kind: defineProtocolLiteral('continuation'),
-            continuation: TriageScanContinuationV1Schema,
+        defineProtocolObject({
+            v: defineProtocolLiteral(1),
+            instance,
+            page: defineProtocolObject({
+                kind: defineProtocolLiteral('continuation'),
+                continuation: TriageScanContinuationV1Schema,
+            }, { policy: 'closed' }),
         }, { policy: 'closed' }),
-    }, { policy: 'closed' }),
-]);
+    ]);
+}
+export const TriageScanInputV1Schema = defineTriageScanInputV1(TriageConfiguredSourceInstanceV1Schema);
+export const TriageScanConnectedAccountInputV1Schema = defineTriageScanInputV1(
+    TriageConfiguredSourceConnectedAccountInstanceV1Schema,
+);
 export type TriageScanInputV1 = ReturnType<typeof TriageScanInputV1Schema.parse>;
 
 /**
@@ -97,11 +107,19 @@ export type TriageScanResultV1 = ReturnType<typeof TriageScanResultV1Schema.pars
  * requested ref before calling anything `present`. It is absent on a first read
  * and on any entry the target has never observed (`CONTRACT.md` §5, §6).
  */
+const triageGetInputFieldsV1 = {
+    localRef: TriageSourceEntryLocalRefV1Schema,
+    lastKnownLocator: TriageEntryLocatorV1Schema.optional(),
+} as const;
 export const TriageGetInputV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
     instance: TriageConfiguredSourceInstanceV1Schema,
-    localRef: TriageSourceEntryLocalRefV1Schema,
-    lastKnownLocator: TriageEntryLocatorV1Schema.optional(),
+    ...triageGetInputFieldsV1,
+}, { policy: 'closed' });
+export const TriageGetConnectedAccountInputV1Schema = defineProtocolObject({
+    v: defineProtocolLiteral(1),
+    instance: TriageConfiguredSourceConnectedAccountInstanceV1Schema,
+    ...triageGetInputFieldsV1,
 }, { policy: 'closed' });
 export type TriageGetInputV1 = ReturnType<typeof TriageGetInputV1Schema.parse>;
 

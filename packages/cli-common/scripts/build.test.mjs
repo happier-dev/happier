@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, unlinkSync, w
 import { rename as renameFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import { describe, expect, it, vi } from 'vitest';
@@ -34,6 +35,8 @@ describe('cli-common atomic build contract', () => {
       repoRoot: '/repo',
       packageDir: '/repo/packages/cli-common',
       processExecPath: '/node',
+      env: {},
+      platform: 'linux',
       requireResolve: (request) => {
         if (request === '@typescript/native/package.json') {
           return '/repo/node_modules/@typescript/native/package.json';
@@ -46,8 +49,14 @@ describe('cli-common atomic build contract', () => {
     });
 
     expect(invocation).toEqual({
-      command: '/node',
+      command: fileURLToPath(new URL('../../../apps/stack/bin/hstack-exec', import.meta.url)),
       args: [
+        '--heavyweight-admission',
+        '--class=package-dist',
+        '--machine=local',
+        '--exec-admitted',
+        '--',
+        '/node',
         '/repo/node_modules/@typescript/native/bin/tsc',
         '-p',
         'tsconfig.json',

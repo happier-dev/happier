@@ -98,6 +98,7 @@ export function withRuntimeAuthSelectionHints(
 /** Shared Session/Run daemon admission and settlement; scope is stamped by its host owner. */
 export function createDaemonRuntimeAuthRefreshService(params: Readonly<{
     refreshViaDaemon: RuntimeAuthRefreshViaDaemon;
+    signal?: AbortSignal;
     reportRecovery?: (
         request: SessionRuntimeAuthRefreshRequest,
         signal?: AbortSignal,
@@ -105,7 +106,10 @@ export function createDaemonRuntimeAuthRefreshService(params: Readonly<{
 }>): SessionAuthService['services'] {
     return Object.freeze({
         async refreshRuntimeAuth(request, options) {
-            options?.signal?.throwIfAborted();
+            const signal = params.signal && options?.signal
+                ? AbortSignal.any([params.signal, options.signal])
+                : params.signal ?? options?.signal;
+            signal?.throwIfAborted();
             const serviceId = readTrimmedString(request.serviceId);
             if (!serviceId) return Object.freeze({ status: 'unavailable', reason: 'runtime_auth_target_unavailable' });
             if (request.selection === undefined || request.selection === null) {
@@ -120,7 +124,7 @@ export function createDaemonRuntimeAuthRefreshService(params: Readonly<{
             }
             // Cancellation ends admission only. Once admitted, the daemon owns settlement;
             // this waiter observes it even when the caller detaches locally.
-            options?.signal?.throwIfAborted();
+            signal?.throwIfAborted();
             try {
                 const result = await params.refreshViaDaemon({
                     serviceId,
@@ -133,7 +137,7 @@ export function createDaemonRuntimeAuthRefreshService(params: Readonly<{
                 }, { timeoutMs: RUNTIME_AUTH_REFRESH_DAEMON_ACK_TIMEOUT_MS });
                 return normalizeRuntimeAuthRefreshResult(result, refreshAttemptId);
             } catch (error) {
-                const recovery = await params.reportRecovery?.(request, options?.signal);
+                const recovery = await params.reportRecovery?.(request, signal);
                 const unavailableReason = readUnavailableDaemonRefreshErrorReason(error);
                 return unavailableReason
                     ? Object.freeze({ status: 'unavailable', reason: unavailableReason, ...(recovery ? { recovery } : {}) })

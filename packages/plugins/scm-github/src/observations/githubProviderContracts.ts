@@ -2,6 +2,10 @@ import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-acco
 
 export const GITHUB_PLUGIN_ID = 'happier.scm.forge.github';
 export const GITHUB_CONNECTED_ACCOUNT_ID = 'github-account';
+export const GITHUB_CONNECTED_ACCOUNT_SERVICE = Object.freeze({
+  pluginId: GITHUB_PLUGIN_ID,
+  localId: GITHUB_CONNECTED_ACCOUNT_ID,
+});
 /** Declared host-access purpose for materializing the selected GitHub account. */
 export const GITHUB_CONNECTED_ACCOUNT_PURPOSE = 'github-connected-account';
 export const GITHUB_WEBHOOK_CONTRIBUTION_ID = 'github-events';

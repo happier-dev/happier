@@ -3,6 +3,7 @@ import { lstat, rm } from 'node:fs/promises';
 import { posix, win32 } from 'node:path';
 import { z } from 'zod';
 import type { StopSessionResult } from '@happier-dev/protocol';
+import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import {
@@ -34,6 +35,7 @@ const RecordSchema = z.object({
     ctx.addIssue({ code: 'custom', message: 'Invalid managed directory ownership origin' });
   }
 });
+const StoredRecordSchema = createStoredReadSchema(RecordSchema);
 export type ManagedSessionDirectoryRecord = z.infer<typeof RecordSchema>;
 export type ManagedSessionDirectoryAllocation = Readonly<{ allocationId: string; directory: string }>;
 export type ManagedSessionDirectoryEntry = ManagedSessionDirectoryAllocation & ManagedSessionDirectoryRecord;
@@ -81,7 +83,7 @@ export function createManagedSessionDirectories(input: Readonly<{
     let contents: string;
     try { contents = await readProtectedLocalStateFile(recordPath(allocationId), protection); }
     catch (error) { if (absent(error)) return null; throw error; }
-    const record = RecordSchema.parse(JSON.parse(contents) as unknown);
+    const record = StoredRecordSchema.parse(JSON.parse(contents) as unknown);
     const expected = record.origin === 'creation'
       ? prepareForCreation({ sessionCreationTag: record.sessionCreationTag! })
       : prepareForHandoff({ operationId: record.operationId! });

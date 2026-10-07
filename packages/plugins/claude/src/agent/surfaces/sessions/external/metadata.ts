@@ -6,6 +6,7 @@ import {
 import {
     readJsonlFileForward,
     readJsonlFileForwardLines,
+    type JsonlScannerFileSystem,
 } from '@happier-dev/plugin-sdk/sessions/file-stores';
 
 import {
@@ -183,6 +184,7 @@ export async function readClaudeJsonlSessionTitleWithIndex(params: Readonly<{
     filePath: string;
     remoteSessionId: string;
     previousState?: unknown;
+    fileSystem?: JsonlScannerFileSystem;
 }>): Promise<Readonly<{
     title: string | null;
     indexState: ClaudeTitleIndexState;
@@ -218,6 +220,7 @@ export async function readClaudeJsonlSessionTitleWithIndex(params: Readonly<{
                 offsetBytes,
                 maxBytes: TITLE_SCAN_CHUNK_MAX_BYTES,
                 maxItems: TITLE_SCAN_CHUNK_MAX_ITEMS,
+                fileSystem: params.fileSystem,
             });
             for (const line of page.items) {
                 if (

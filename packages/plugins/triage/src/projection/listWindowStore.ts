@@ -1,5 +1,6 @@
 import { isPluginError, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import { createCoalescedScheduler } from '@happier-dev/plugin-sdk/async';
+import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 
 import { foldConnectionAnswers } from '../corpus/fold/connectionAnswer.js';
 import type { CorpusQualifiedObservationV1 } from '../corpus/fold/qualify.js';
@@ -85,6 +86,13 @@ export type TriageListWindowSnapshotV1 = Readonly<{
     window?: TriageListWindowV1;
     freshness: 'unknown' | 'fresh' | 'stale';
     pending: 'idle' | 'initial' | 'refresh';
+    /**
+     * How many passes this mount has read: it moves once per pass the coordinator admitted, whether or not the
+     * window changed, and never for a demand the pacing refused. A reader that follows reads (the list's
+     * linked-Session join) keys on it rather than on the window, which stays the same object when a pass read
+     * nothing new.
+     */
+    passes: number;
     /**
      * The aggregate list read itself failed **and produced no window at all**.
      *
@@ -355,9 +363,11 @@ export function createTriageListWindowStore(deps: Readonly<{
     /** Whether the last append ended with a connection this mount could not read. */
     let appendFailed = false;
     let disposed = false;
+    let passes = 0;
     let snapshot: TriageListWindowSnapshotV1 = Object.freeze({
         freshness: 'unknown',
         pending: 'idle',
+        passes,
         configuredSources: Object.freeze([]),
     });
 
@@ -540,10 +550,11 @@ export function createTriageListWindowStore(deps: Readonly<{
         const unreadable = unreadableSources();
         const blocked = refreshBlock();
         const appendable = loadMore();
-        snapshot = Object.freeze({
+        const next: TriageListWindowSnapshotV1 = Object.freeze({
             ...(window === null ? {} : { window }),
             freshness: freshness(),
             pending,
+            passes,
             ...(appendable === null ? {} : { loadMore: appendable }),
             // The one gate on the store-wide slot, and the reason it is here
             // rather than at each writer: "the list could not be read" is only
@@ -557,6 +568,9 @@ export function createTriageListWindowStore(deps: Readonly<{
             ...(blocked === null ? {} : { refreshBlocked: blocked }),
             configuredSources,
         });
+        // Nothing a subscriber can read changed: notifying would only make every consumer recompute.
+        if (sameTriageListWindowSnapshot(snapshot, next)) return;
+        snapshot = next;
         for (const listener of [...listeners]) listener();
     }
 
@@ -610,7 +624,11 @@ export function createTriageListWindowStore(deps: Readonly<{
     }
 
     function rebuild(): void {
-        window = projectRetained({ ...lens, limit: foldLimit() });
+        const next = projectRetained({ ...lens, limit: foldLimit() });
+        // A cycle the pacing refused, or a lens that projects the same rows, assembles a window that differs
+        // only in when it was assembled. Every subscriber re-plans the whole list (and the list's Session join
+        // and the open detail key on it), so the window that says the same thing is kept as it is.
+        window = window !== null && sameTriageListWindowContent(window, next) ? window : next;
     }
 
     /**
@@ -1348,6 +1366,7 @@ export function createTriageListWindowStore(deps: Readonly<{
         }
         await request.settled;
         if (request.disposition !== 'blocked' && isCurrent()) {
+            passes += 1;
             rebuild();
             publish();
         }
@@ -1452,6 +1471,8 @@ export function createTriageListWindowStore(deps: Readonly<{
             scheduler.trigger();
         },
         setLens(next) {
+            // Re-applying the lens this mount already projects (every shell mount does) changes nothing.
+            if (pluginJsonValuesEqual(lens, next)) return;
             // A continuation belongs to the complete mounted lens generation
             // that produced it. Query/facet changes are projected locally, but
             // retaining their predecessor frontier would let Load More resume
@@ -1478,4 +1499,22 @@ export function createTriageListWindowStore(deps: Readonly<{
         },
         dispose,
     } satisfies TriageListWindowStoreV1);
+}
+
+/** Two windows that say the same thing: everything but the moment each was assembled. */
+function sameTriageListWindowContent(left: TriageListWindowV1, right: TriageListWindowV1): boolean {
+    return pluginJsonValuesEqual({ ...left, assembledAtMs: 0 }, { ...right, assembledAtMs: 0 });
+}
+
+/**
+ * Two snapshots a subscriber cannot tell apart: the same window object and equal plain members (the configured
+ * sources are re-enumerated each cycle into a new array). An aggregate error is compared by identity, because it
+ * is a retained value, not a projection.
+ */
+function sameTriageListWindowSnapshot(left: TriageListWindowSnapshotV1, right: TriageListWindowSnapshotV1): boolean {
+    const { window: leftWindow, error: leftError, ...leftRest } = left;
+    const { window: rightWindow, error: rightError, ...rightRest } = right;
+    return leftWindow === rightWindow
+        && leftError === rightError
+        && pluginJsonValuesEqual(leftRest, rightRest);
 }

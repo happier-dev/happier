@@ -8,6 +8,25 @@ import {
 } from './configuredSourceCurrentness.js';
 
 describe('configured source currentness', () => {
+  it('reauthorizes native metadata only for the same service and configured generation', async () => {
+    const accountInstance = createTriageSourceV1Fixture().configuredInstance;
+    const instance = { ...accountInstance, binding: {
+      purpose: accountInstance.binding.purpose, source: 'native' as const,
+      service: { pluginId: 'happier.scm.forge.github', localId: 'github-account' },
+    } };
+    const execute = vi.fn(async () => ({ kind: 'read', status: 'complete', instances: [{ v: 1, lifecycle: 'active', configured: instance }] }));
+    const context = { services: { actions: { execute } } } as unknown as PluginInvocationContext;
+    const read = () => readCurrentTriageConfiguredSourceInstanceV1({ context,
+      sourceInstanceId: instance.instance.sourceInstanceId, instanceDigest: deriveTriageConfiguredSourceInstanceDigestV1(instance),
+    });
+    await expect(read()).resolves.toEqual({ kind: 'current', instance });
+    execute.mockResolvedValueOnce({ kind: 'read', status: 'complete', instances: [{ v: 1, lifecycle: 'active', configured: {
+      ...instance, binding: { ...instance.binding, service: { ...instance.binding.service, localId: 'other' } },
+    } }] });
+    await expect(read()).resolves.toEqual({ kind: 'changed' });
+    expect(deriveTriageConfiguredSourceInstanceDigestV1(accountInstance)).not.toBe(deriveTriageConfiguredSourceInstanceDigestV1(instance));
+  });
+
   it('returns only one exact active configured generation from a complete target read', async () => {
     const instance = createTriageSourceV1Fixture().configuredInstance;
     const execute = vi.fn(async () => ({

@@ -643,7 +643,6 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
   const createFollowLeaseRegistry = (): SessionTranscriptFollowLeaseRegistry => (
     params.transcriptFollowLeaseRegistry
     ?? createSessionTranscriptFollowLeaseRegistry({
-      maxLeases: 16,
       idleTtlMs: DEFAULT_SESSION_TRANSCRIPT_FOLLOW_LEASE_IDLE_TTL_MS,
     })
   );

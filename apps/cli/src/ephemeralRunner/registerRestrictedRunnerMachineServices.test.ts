@@ -326,6 +326,7 @@ describe('restricted Runner ordinary Machine services', () => {
         diagnostics: [],
       }),
       endpointEnricher: {
+        resolve: async () => null,
         enrich: async (snapshot) => ({
           ...snapshot,
           entries: snapshot.entries.map((entry) => ({

@@ -440,10 +440,9 @@ export async function resolveRegistryConnectedAccountActionPurposeBindingSnapsho
     purposeKeys.add(purposeKey);
     purposes.push(authorization.purpose);
 
-    const rawValue = readActionInputPath(input.value, mapping.path);
-    if (rawValue === undefined || rawValue === null) continue;
-    const selected = QualifiedConnectedAccountRefSchema.safeParse(readActionInputOptionValue(rawValue));
+    const selected = readDeclaredCredentialSelection(input.value, mapping, authorization.serviceRefs);
     if (!selected.success) return actionFormUnavailable();
+    if (selected.data === null) continue;
     try {
       bindings.push(await actionFormConnectedAccounts.resolveBindingIntent({
         purpose: authorization.purpose,
@@ -507,10 +506,9 @@ export async function resolveRegistryConnectedAccountActionPurposeBindingSnapsho
       purposeKeys.add(purposeKey);
       purposes.push(authorization.purpose);
 
-      const rawValue = readActionInputPath(currentSource.sourceConfig, mapping.path);
-      if (rawValue === undefined || rawValue === null) continue;
-      const selected = QualifiedConnectedAccountRefSchema.safeParse(readActionInputOptionValue(rawValue));
+      const selected = readDeclaredCredentialSelection(currentSource.sourceConfig, mapping, authorization.serviceRefs);
       if (!selected.success) return historyGapSourceUnavailable();
+      if (selected.data === null) continue;
       try {
         bindings.push(await actionFormConnectedAccounts.resolveBindingIntent({
           purpose: authorization.purpose,
@@ -533,6 +531,30 @@ export async function resolveRegistryConnectedAccountActionPurposeBindingSnapsho
     purposes: Object.freeze(purposes),
     bindings: Object.freeze(bindings),
   });
+}
+
+/** Both direct Action input and Event recovery consume the same declared selection paths. */
+function readDeclaredCredentialSelection(
+  value: unknown,
+  mapping: PluginActionConnectedAccountPurposeBindingV2,
+  serviceRefs: readonly PluginContributionIdentityV1[],
+) {
+  const rawAccount = readActionInputPath(value, mapping.path);
+  const hasAccount = rawAccount !== undefined && rawAccount !== null;
+  if (mapping.nativeServicePath) {
+    const rawNative = readActionInputPath(value, mapping.nativeServicePath);
+    const hasNative = rawNative !== undefined && rawNative !== null;
+    if (hasAccount === hasNative) return { success: false as const };
+    if (hasNative) {
+      const native = PluginContributionIdentityV1Schema.safeParse(readActionInputOptionValue(rawNative));
+      return native.success && serviceRefs.some((ref) => identityKey(ref) === identityKey(native.data))
+        ? { success: true as const, data: null }
+        : { success: false as const };
+    }
+  }
+  return hasAccount
+    ? QualifiedConnectedAccountRefSchema.safeParse(readActionInputOptionValue(rawAccount))
+    : { success: true as const, data: null };
 }
 
 /**

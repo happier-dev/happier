@@ -135,6 +135,7 @@ export type SessionBoardActionInputById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                nativeServicePath?: string | undefined;
                             }[] | undefined;
                         };
                     };
@@ -403,6 +404,7 @@ export type SessionBoardActionResultById = {
                                         pluginId: string;
                                         localId: string;
                                     };
+                                    nativeServicePath?: string | undefined;
                                 }[] | undefined;
                             };
                         };

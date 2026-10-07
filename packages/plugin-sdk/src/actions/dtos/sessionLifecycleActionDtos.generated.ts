@@ -592,7 +592,7 @@ export type SessionLifecycleActionInputById = {
                     presentation: {
                         label: string;
                         description?: string | undefined;
-                        icon?: 'error' | 'check' | 'action' | 'file' | 'external' | 'search' | 'preview' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                        icon?: 'error' | 'check' | 'action' | 'file' | 'external' | 'search' | 'preview' | 'terminal' | 'new' | 'browser' | 'copy' | 'globe' | 'info' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'review' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'waiting' | undefined;
                         tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | undefined;
                     };
                 };
@@ -618,6 +618,7 @@ export type SessionLifecycleActionInputById = {
                     [x: string]: unknown;
                     name: string;
                     id?: string | undefined;
+                    idSource?: 'generated' | undefined;
                     origin?: 'vendor' | 'happier' | undefined;
                     path?: string | undefined;
                     label?: string | undefined;
@@ -926,7 +927,7 @@ export type SessionLifecycleActionInputById = {
                         label: string;
                         typeLabel: string;
                         description?: string | undefined;
-                        icon?: 'error' | 'check' | 'action' | 'file' | 'external' | 'search' | 'preview' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                        icon?: 'error' | 'check' | 'action' | 'file' | 'external' | 'search' | 'preview' | 'terminal' | 'new' | 'browser' | 'copy' | 'globe' | 'info' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'review' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'waiting' | undefined;
                         tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | undefined;
                     };
                     content?: {

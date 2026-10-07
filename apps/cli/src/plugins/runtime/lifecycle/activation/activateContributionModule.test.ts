@@ -429,6 +429,36 @@ describe('contribution module activation', () => {
         }
     });
 
+    it('waits for slow failed-activation cleanup without inventing a retirement deadline', async () => {
+        vi.useFakeTimers();
+        let rejectCleanup!: (error: Error) => void;
+        const cleanupGate = new Promise<void>((_resolve, reject) => { rejectCleanup = reject; });
+        const activation = activateContributionModule({
+            pluginId: 'acme.activation', occurrenceId: '7', isOccurrenceCurrent: () => true,
+            manifest: manifest({
+                actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
+            }),
+            moduleNamespace: { activate: () => () => cleanupGate },
+        });
+        let settled = false;
+        void activation.then(() => { settled = true; });
+        try {
+            await vi.advanceTimersByTimeAsync(5_001);
+            expect(settled).toBe(false);
+            rejectCleanup(new Error('slow cleanup failed'));
+            const result = await activation;
+            expect(result.status).toBe('unavailable');
+            expect(result.registrations).toEqual([]);
+            expect(result.diagnostics).toEqual(expect.arrayContaining([
+                expect.objectContaining({ message: expect.stringMatching(/slow cleanup failed/u) }),
+            ]));
+        } finally {
+            rejectCleanup(new Error('slow cleanup failed'));
+            await activation;
+            vi.useRealTimers();
+        }
+    });
+
     it('closes a timed-out activation scope and invokes late cleanup exactly once', async () => {
         vi.useFakeTimers();
         let resolveActivation: ((cleanup: () => Promise<void>) => void) | undefined;
@@ -436,6 +466,7 @@ describe('contribution module activation', () => {
         const cleanup = vi.fn(async () => undefined);
         try {
             const activation = activateContributionModule({
+                startupDeadlineAtMs: Date.now() + 30_000,
                 pluginId: 'acme.activation', occurrenceId: '7', isOccurrenceCurrent: () => true,
                 manifest: manifest({
                     actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
@@ -484,6 +515,7 @@ describe('contribution module activation', () => {
         const warning = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
         try {
             const activation = activateContributionModule({
+                startupDeadlineAtMs: Date.now() + 30_000,
                 pluginId: 'acme.activation', occurrenceId: '7', isOccurrenceCurrent: () => true,
                 manifest: manifest({
                     actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
@@ -527,6 +559,7 @@ describe('contribution module activation', () => {
         let rejectActivation: ((error: Error) => void) | undefined;
         try {
             const activation = activateContributionModule({
+                startupDeadlineAtMs: Date.now() + 30_000,
                 pluginId: 'acme.activation', occurrenceId: '7', isOccurrenceCurrent: () => true,
                 manifest: manifest({
                     actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
@@ -562,6 +595,7 @@ describe('contribution module activation', () => {
         vi.useFakeTimers();
         try {
             const hangingActivation = activateContributionModule({
+                startupDeadlineAtMs: Date.now() + 30_000,
                 pluginId: 'acme.activation', occurrenceId: '7', isOccurrenceCurrent: () => true,
                 manifest: manifest({
                     actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
@@ -790,6 +824,7 @@ describe('contribution module activation transaction deadline', () => {
         const cleanup = vi.fn(async () => undefined);
         try {
             const activation = activateContributionModule({
+                startupDeadlineAtMs: Date.now() + 30_000,
                 pluginId: 'acme.activation', occurrenceId: '7', isOccurrenceCurrent: () => true,
                 manifest: agentsManifest(),
                 moduleNamespace: {
@@ -809,7 +844,7 @@ describe('contribution module activation transaction deadline', () => {
                 validatedAgentSessionRunnerFactories: [],
                 diagnostics: [expect.objectContaining({
                     code: 'plugin_activation_failed',
-                    message: expect.stringMatching(/activation timed out after 30000ms/u),
+                    message: expect.stringMatching(/activation timed out.*daemon startup deadline/u),
                 })],
             }));
             // The candidate stays closed: the retired registration host refuses
@@ -848,6 +883,7 @@ describe('contribution module activation transaction deadline', () => {
         );
         try {
             const activation = activateContributionModule({
+                startupDeadlineAtMs: Date.now() + 30_000,
                 pluginId: 'acme.activation', occurrenceId: '7', isOccurrenceCurrent: () => true,
                 manifest: agentsManifest(),
                 moduleNamespace: {
@@ -909,6 +945,7 @@ describe('contribution module activation transaction deadline', () => {
         );
         try {
             const activation = activateContributionModule({
+                startupDeadlineAtMs: Date.now() + 30_000,
                 pluginId: 'acme.activation', occurrenceId: '7', isOccurrenceCurrent: () => true,
                 manifest: agentsManifest(),
                 moduleNamespace: {

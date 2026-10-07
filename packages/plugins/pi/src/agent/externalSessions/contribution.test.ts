@@ -125,6 +125,25 @@ afterEach(async () => {
 });
 
 describe('Pi pure External Sessions contribution leaf', () => {
+  it('resolves a linked native header without an implicit byte cutoff and respects an explicit budget', async () => {
+    const { agentDir, sessionRoot } = await createAgentDir();
+    const sessionFile = join(sessionRoot, 'wide-header.jsonl');
+    const header = JSON.stringify({ type: 'session', version: 3, id: 'wide-header', timestamp: '2026-08-16T10:00:00.000Z', cwd: '/workspace' });
+    // JSON whitespace changes neither the Pi header schema nor its identity.
+    await writeFile(sessionFile, `{${' '.repeat(1_048_577)}${header.slice(1)}\n`, 'utf8');
+    const contribution = createPiExternalSessionsContribution({ env: {} });
+    const request = {
+      signal: new AbortController().signal,
+      source: { kind: 'piAgentDir', agentDir, sessionFile },
+      remoteSessionId: 'wide-header',
+    };
+    await expect(contribution.resolveLinkedIdentity(request)).resolves.toMatchObject({
+      ok: true,
+      value: { remoteSessionId: 'wide-header', source: { sessionFile: await realpath(sessionFile) } },
+    });
+    await expect(contribution.resolveLinkedIdentity({ ...request, maxSerializedBytes: 65_536 })).resolves.toMatchObject({ ok: false, code: 'unavailable' });
+  });
+
   it.each([
     ['a duplicated entry id', [
       {

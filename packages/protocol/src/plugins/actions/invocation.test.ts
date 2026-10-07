@@ -496,10 +496,9 @@ describe('createPluginActionInvocation', () => {
         required: ['title'],
         additionalProperties: false,
       },
-    }).invoke(null, { handler: () => ({ title: 'Release' }) })).resolves.toMatchObject({
-      status: 'failed',
-      code: 'plugin_action_schema_projection_mismatch',
-      message: expect.stringContaining('resultSchema'),
+    }).invoke(null, { handler: () => ({ title: 'Release' }) })).resolves.toEqual({
+      status: 'executed',
+      value: { title: 42 },
     });
 
     await expect(createInvocation({
@@ -934,9 +933,7 @@ describe('createPluginActionInvocation', () => {
       code: 'plugin_action_execution_failed',
     });
     if (result.status !== 'failed') throw new Error('Expected a canonical Action failure');
-    expect(result.message.startsWith('ACTION_FAILURE_MARKER')).toBe(true);
-    expect(new TextEncoder().encode(result.message).byteLength).toBeLessThanOrEqual(2_048);
-    expect(result.message).not.toContain('\uFFFD');
+    expect(result.message).toBe(message);
   });
 
   it('preserves JSON-safe action failure data without an invented aggregate byte cap', async () => {

@@ -26,6 +26,12 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { probeAgentModelsBestEffort } from '@/capabilities/probes/agentModelsProbe';
 import { probeAgentModesBestEffort } from '@/capabilities/probes/agentModesProbe';
 import { probeAgentConfigOptionsBestEffort } from '@/capabilities/probes/agentConfigOptionsProbe';
+import { probeAgentCatalogs } from '@/capabilities/probes/agentCatalogsProbe';
+import { createPreflightCatalogCleanupScope, type PreflightCatalogCleanupScope } from '@/capabilities/probes/preflightCatalogCleanupScope';
+import { SecretReferenceOverlayV1Schema } from '@happier-dev/protocol';
+import { sanitizeEnvVarRecord } from '@/terminal/runtime/envVarSanitization';
+import { stripSessionControlEnvOverrides } from '@/session/runtime/control/sessionControlEnvironment';
+import { logger } from '@/ui/logger';
 import { configuration } from '@/configuration';
 import { getAgentModelConfig } from '@happier-dev/agents';
 import { CodexPassiveRealtimeSetupResultV1Schema } from '@happier-dev/protocol/capabilities/codexPassiveRealtimeSetup';
@@ -138,6 +144,13 @@ type CliProbeDependencies = Readonly<{
     activatePurposeBindings?: ConnectedAccountPurposeBindingOwner['activatePurposeBindings'];
     isAgentRegistryCurrent?: () => boolean;
     resolveNativeCatalogBearer?: (input: Parameters<typeof resolveNativeCatalogBearer>[0]) => Promise<NativeCatalogBearer | null>;
+}>;
+
+type CliProbeRequestContext = Readonly<{
+    signal?: AbortSignal;
+    deadlineSignal?: AbortSignal;
+    deadlineAtMs?: number;
+    cleanupScope?: PreflightCatalogCleanupScope;
 }>;
 
 type ConnectedServiceProbeEnvironment = Readonly<{
@@ -286,7 +299,7 @@ async function invokeCliProbeOrInstallMethod(
     method: string,
     params?: Record<string, unknown>,
     dependencies: CliProbeDependencies = {},
-    requestContext: Readonly<{ signal?: AbortSignal }> = {},
+    requestContext: CliProbeRequestContext = {},
 ): Promise<CapabilitiesInvokeResponse | null> {
     if (method === 'install') {
         return invokeAgentCliInstallCapability(
@@ -300,15 +313,26 @@ async function invokeCliProbeOrInstallMethod(
         method !== 'probeModels'
         && method !== 'probeModes'
         && method !== 'probeConfigOptions'
+        && method !== 'probeCatalogs'
         && method !== 'probePassiveRealtimeSetup'
     ) {
         return null;
     }
 
-    return await withAgentPreflightCatalog({
+    let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+    if (method === 'probeCatalogs') {
+        const { timeoutMs } = resolveCliProbeInvokeParams(params);
+        const deadline = new AbortController();
+        const signal = requestContext.signal ? AbortSignal.any([requestContext.signal, deadline.signal]) : deadline.signal;
+        requestContext = { signal, deadlineSignal: signal, deadlineAtMs: Date.now() + timeoutMs, cleanupScope: createPreflightCatalogCleanupScope() };
+        deadlineTimer = setTimeout(() => deadline.abort(new Error('Agent catalog preflight timed out')), timeoutMs);
+    }
+    try {
+      return await withAgentPreflightCatalog({
         agentId,
         signal: requestContext.signal,
         isCurrent: dependencies.isAgentRegistryCurrent,
+        cleanupScope: requestContext.cleanupScope,
     }, async (catalog) => {
         const result = await invokeCliPreflightMethod(agentId, method, params, {
             ...dependencies,
@@ -326,7 +350,15 @@ async function invokeCliProbeOrInstallMethod(
             return { ...result, result: { ...result.result, runtimeDescriptorV1Accepted: true } };
         }
         return result;
-    });
+      });
+    } catch (error) {
+        if (method !== 'probeCatalogs') throw error;
+        logger.infoFile('[capabilities] Native preflight catalog probe unavailable');
+        return { ok: false, error: { code: 'preflight-catalog-unavailable', message: 'Could not discover the selected backend catalogs.' } };
+    } finally {
+        if (deadlineTimer) clearTimeout(deadlineTimer);
+        await requestContext.cleanupScope?.dispose();
+    }
 }
 
 async function invokeCliPreflightMethod(
@@ -334,11 +366,17 @@ async function invokeCliPreflightMethod(
     method: string,
     params: Record<string, unknown> | undefined,
     dependencies: CliProbeDependencies,
-    requestContext: Readonly<{ signal?: AbortSignal }>,
+    requestContext: CliProbeRequestContext,
 ): Promise<CapabilitiesInvokeResponse> {
     const { cwd, timeoutMs } = resolveCliProbeInvokeParams(params);
     const parsedConnectedServices = ConnectedServiceBindingsV2IngressSchema.safeParse(params?.connectedServices);
     const connectedServices = parsedConnectedServices.success ? parsedConnectedServices.data : null;
+    if (method === 'probeCatalogs' && params?.connectedServices != null && !parsedConnectedServices.success) {
+        return { ok: false, error: { code: 'connected-service-preflight-failed', message: 'Could not prepare the selected connected-service account for this probe.' } };
+    }
+    const explicitEnvironment = method === 'probeCatalogs'
+        ? stripSessionControlEnvOverrides(sanitizeEnvVarRecord(params?.environmentVariables))
+        : {};
     const materializationAgentId =
         (dependencies.agentCatalogEntry === undefined
             ? resolveCatalogAgentConnectedServiceIds(agentId)
@@ -363,7 +401,7 @@ async function invokeCliPreflightMethod(
     );
     const probeContext = await resolveProbeBackendContext(
         { ...params, agentId },
-        { requireCredentials: requiresMaterializedAuth, catalogEntry: dependencies.agentCatalogEntry },
+        { requireCredentials: requiresMaterializedAuth, catalogEntry: dependencies.agentCatalogEntry, signal: requestContext.signal },
     );
     const modelConfig = method === 'probeModels' ? getAgentModelConfig(agentId) : null;
     if (method === 'probeModels' && !isDynamicModelProbeEnabled({
@@ -379,6 +417,7 @@ async function invokeCliPreflightMethod(
             backendTarget: probeContext.backendTarget,
             runtimeDescriptorV1: probeContext.runtimeDescriptorV1,
             runtimeKindOverride: probeContext.runtimeKindOverride,
+            pluginSettings: probeContext.pluginSettings,
             cwd,
             timeoutMs,
             accountSettings: probeContext.accountSettings,
@@ -388,12 +427,15 @@ async function invokeCliPreflightMethod(
     }
     let profileProbeEnvironment: Awaited<ReturnType<typeof resolveProfileProbeEnvironment>> = null;
     try {
+        const secretReferenceOverlay = params?.secretReferenceOverlay == null
+            ? undefined : SecretReferenceOverlayV1Schema.parse(params.secretReferenceOverlay);
         profileProbeEnvironment = await resolveProfileProbeEnvironment({
             agentId,
             profileId: params?.profileId,
+            secretReferenceOverlay,
             accountSettings: probeContext.accountSettings,
             credentials: probeContext.credentials,
-            processEnv: process.env,
+            processEnv: { ...process.env, ...explicitEnvironment },
         });
     } catch {
         return {
@@ -406,6 +448,7 @@ async function invokeCliPreflightMethod(
     }
     const profileProcessEnv: NodeJS.ProcessEnv = {
         ...process.env,
+        ...explicitEnvironment,
         ...(profileProbeEnvironment?.env ?? {}),
     };
     let connectedServiceProbeEnvironment: ConnectedServiceProbeEnvironment = {
@@ -435,7 +478,10 @@ async function invokeCliPreflightMethod(
             };
         }
     }
+    try {
+    requestContext.signal?.throwIfAborted();
     const materializedEnv = {
+        ...explicitEnvironment,
         ...(profileProbeEnvironment?.env ?? {}),
         ...(connectedServiceProbeEnvironment.materializedEnv ?? {}),
     };
@@ -449,11 +495,14 @@ async function invokeCliPreflightMethod(
         catalogEntry: dependencies.agentCatalogEntry,
         runtimeCacheKey: dependencies.agentRuntimeCacheKey,
         ...(requestContext.signal ? { signal: requestContext.signal } : {}),
+        ...(requestContext.deadlineSignal ? { deadlineSignal: requestContext.deadlineSignal } : {}),
+        ...(requestContext.cleanupScope ? { cleanupScope: requestContext.cleanupScope } : {}),
         backendTarget: probeContext.backendTarget,
         runtimeDescriptorV1: probeContext.runtimeDescriptorV1,
         runtimeKindOverride: probeContext.runtimeKindOverride,
+        pluginSettings: probeContext.pluginSettings,
         cwd,
-        timeoutMs,
+        timeoutMs: requestContext.deadlineAtMs === undefined ? timeoutMs : Math.max(0, requestContext.deadlineAtMs - Date.now()),
         accountSettings: probeContext.accountSettings,
         credentials: probeContext.credentials,
         env: probeProcessEnv,
@@ -463,7 +512,10 @@ async function invokeCliPreflightMethod(
             connectedServiceProbeEnvironment.connectedServiceSelectionCacheKey,
     };
 
-    try {
+      requestContext.signal?.throwIfAborted();
+      if (method === 'probeCatalogs') {
+          return { ok: true, result: await probeAgentCatalogs({ ...commonProbeArgs, bypassCache: params?.bypassCache === true }) };
+      }
       if (method === 'probePassiveRealtimeSetup') {
         const result = await withPreflightSessionControlsProbeEnvironment({
           agentId,
@@ -475,6 +527,7 @@ async function invokeCliPreflightMethod(
             backendTarget: probeContext.backendTarget,
             runtimeDescriptorV1: probeContext.runtimeDescriptorV1,
             runtimeKindOverride: probeContext.runtimeKindOverride,
+            pluginSettings: probeContext.pluginSettings,
             probeKind: 'passiveRealtimeSetup',
             cwd,
             timeoutMs,
@@ -1083,6 +1136,7 @@ async function createGenericCliCapability(
                 probeModels: { title: 'Probe models' },
                 probeModes: { title: 'Probe modes' },
                 probeConfigOptions: { title: 'Probe config options' },
+                probeCatalogs: { title: 'Probe commands and skills' },
                 ...(supportsPassiveRealtimeSetup
                     ? { probePassiveRealtimeSetup: { title: 'Probe passive realtime setup' } }
                     : {}),

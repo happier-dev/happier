@@ -701,6 +701,7 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
       ...materialized,
       cleanupOnFailure,
       cleanupOnExit,
+      targetMaterializedRoot,
       requestAuthMaterializedRoot,
       env: {
         ...materializedEnv,

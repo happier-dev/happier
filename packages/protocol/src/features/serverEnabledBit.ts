@@ -10,7 +10,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object';
 }
 
-export function readServerEnabledBit(response: FeaturesResponse, featureId: FeatureId): boolean | null {
+export function readServerEnabledBit(response: Pick<FeaturesResponse, 'features'>, featureId: FeatureId): boolean | null {
   const path = resolveServerEnabledBitPath(featureId);
   let cursor: unknown = response as unknown;
   for (const segment of path) {

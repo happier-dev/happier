@@ -1,4 +1,7 @@
+import type { ManagedExecutableRef } from '@happier-dev/protocol';
+import type { ResolvedPluginExecutable } from './invocation/services/exec';
 import { createHash, randomUUID } from 'node:crypto';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { DaemonPluginStoredImageReadRequest } from '@happier-dev/protocol';
 import { projectPluginSessionAccessIdentity } from '@happier-dev/protocol/sessions/pluginAccess';
 import type { PluginUiReadStoredImageResultV1 } from '@happier-dev/protocol/plugins/ui';
@@ -45,7 +48,7 @@ import {
 import type { PluginCompatibilityDiagnostic } from '../validation/diagnostics/types';
 import { createResolvedContributionRegistry } from '../projection/registry/createResolvedContributionRegistry';
 import { resolveMergedContributionRegistry } from '../projection/registry/createResolvedContributionRegistry';
-import { projectManifestAgentContribution } from '../projection/registry/projectManifestAgentContribution';
+import { projectManifestAgentAcpCatalogPreflight, projectManifestAgentContribution } from '../projection/registry/projectManifestAgentContribution';
 import { resolveAgentContributionQualifiedId } from '../projection/registry/agentRoutingIdentity';
 import {
     projectAgentCliAuthCatalogEntry,
@@ -146,12 +149,8 @@ import {
     createCurrentGlobalExternalSessionsAuthorBinding,
     createCurrentGlobalExternalSessionsAuthorService,
 } from '@/session/external/currentGlobalAuthorService';
-import type {
-    ConfiguredExternalSessionSourceAgentContribution,
-} from '@/session/external/configuredSourceMaterializer';
-import type {
-    ConfiguredExternalSessionSourceRefusal,
-} from '@/session/external/configuredSourceRegistry';
+import type { ConfiguredExternalSessionSourceAgentContribution } from '@/session/external/configuredSourceMaterializer';
+import type { ConfiguredExternalSessionSourceRefusal } from '@/session/external/configuredSourceRegistry';
 import {
     resolveHostApplicableExternalSessionsPublicScopes,
     type CurrentGlobalExternalSessionsRouter,
@@ -424,6 +423,7 @@ import type {
 } from '@/mcp/runtimeTypes';
 import {
     getActiveAccountSettingsSnapshot,
+    resolveActiveAccountConfiguredExternalSessionSourceRevision,
     subscribeActiveAccountSettingsSnapshot,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
@@ -1178,7 +1178,18 @@ function mergeActivatedContributes(
     resolveAgentPluginSettings?: (input: Readonly<{
         pluginId: string;
         localAgentId: string;
+        includeDefaults?: boolean;
+        signal?: AbortSignal;
     }>) => Promise<AgentCliSessionCommandPluginSettingsV1 | null>,
+    bindAgentPreflightManagedServices?: (input: Readonly<{
+        pluginId: string; localAgentId: string; occurrenceId: string;
+        exec: ExecService; signal: AbortSignal; isCurrent(): boolean;
+    }>) => PluginServices['managedServices'],
+    resolveAgentPreflightManagedExecutable?: (input: Readonly<{
+        pluginId: string; executable: Extract<ManagedExecutableRef, { kind: 'managedDependency' }>;
+        isCurrent(): boolean;
+    }>) => Promise<ResolvedPluginExecutable>,
+    resolveAgentPreflightLifecycle?: (pluginId: string) => Readonly<{ retirementSignal: AbortSignal; isCurrent(): boolean }>,
 ): ResolvedContributionRegistry {
     const activationTargets = base.activationTargets ?? Object.freeze([]);
     // Declarative role and workflow sources share the executable occurrence
@@ -1255,7 +1266,33 @@ function mergeActivatedContributes(
         systemToolsByPluginId.set(systemTool.pluginId, [...existing, systemTool.definition]);
     }
     let registeredAgentRuntimeCatalogHooksProjected = false;
-    const agents = base.agents.map((agent) => {
+    const agents = base.agents.map((baseAgent) => {
+        let agent = baseAgent;
+        const pluginId = agent.identity?.pluginId ?? agent.pluginId;
+        const nativePreflight = agent.richDefinition && pluginId
+            ? projectManifestAgentAcpCatalogPreflight(agent.richDefinition.definition, pluginId) : null;
+        if (nativePreflight && pluginId && agent.catalogEntry && resolveAgentPreflightLifecycle
+            && activated.readPluginOccurrenceId(pluginId) !== null && isPluginRuntimeCurrent(pluginId)) {
+            const lifecycle = resolveAgentPreflightLifecycle(pluginId);
+            const preflight = projectAgentPreflightSessionControlsCatalogEntry({
+                agentId: agent.id, preflightSessionControls: nativePreflight.contribution,
+                runtimeSpec: agent.runtimeSpec, systemTools: systemToolsByPluginId.get(pluginId) ?? [],
+                agentCliSystemTool: agent.catalogEntry.agentCliSystemTool,
+                retirementSignal: lifecycle.retirementSignal, isCurrent: lifecycle.isCurrent,
+                ...(nativePreflight.environment ? { nativeEnvironment: nativePreflight.environment } : {}),
+                ...(resolveAgentPluginSettings ? { resolvePluginSettings: (options) => resolveAgentPluginSettings({
+                    pluginId, localAgentId: agent.identity?.localId ?? agent.id, includeDefaults: false, signal: options?.signal,
+                }) } : {}),
+                managedExecutableRefs: [...(agent.hostAccess?.required ?? []), ...(agent.hostAccess?.optional ?? [])]
+                    .flatMap((request) => request.capability === 'process' ? request.scope.executables ?? [] : [])
+                    .filter((ref): ref is Extract<ManagedExecutableRef, { kind: 'managedDependency' }> => ref.kind === 'managedDependency'),
+                ...(resolveAgentPreflightManagedExecutable ? { resolveReadyManagedExecutable: (executable) => resolveAgentPreflightManagedExecutable({
+                    pluginId, executable, isCurrent: lifecycle.isCurrent,
+                }) } : {}),
+            });
+            registeredAgentRuntimeCatalogHooksProjected = true;
+            agent = Object.freeze({ ...agent, catalogEntry: Object.freeze({ ...agent.catalogEntry, ...preflight }) });
+        }
         const runtime = activated.agentRuntimesByAgentId.get(agent.id);
         const agentPluginId = agent.identity?.pluginId ?? agent.pluginId;
         if (
@@ -1426,6 +1463,20 @@ function mergeActivatedContributes(
                         systemTools: systemToolsByPluginId.get(runtime.pluginId) ?? [],
                         agentCliSystemTool: agent.catalogEntry.agentCliSystemTool,
                         retirementSignal: runtime.retirementSignal,
+                        ...(resolveAgentPluginSettings ? { resolvePluginSettings: (options) => resolveAgentPluginSettings({
+                            pluginId: runtime.pluginId, localAgentId: runtime.localAgentId, includeDefaults: false, signal: options?.signal,
+                        }) } : {}),
+                        managedExecutableRefs: [...(agent.hostAccess?.required ?? []), ...(agent.hostAccess?.optional ?? [])]
+                            .flatMap((request) => request.capability === 'process' ? request.scope.executables ?? [] : [])
+                            .filter((ref): ref is Extract<ManagedExecutableRef, { kind: 'managedDependency' }> => ref.kind === 'managedDependency'),
+                        ...(resolveAgentPreflightManagedExecutable ? { resolveReadyManagedExecutable: (executable) => resolveAgentPreflightManagedExecutable({
+                            pluginId: runtime.pluginId, executable, isCurrent: runtime.isCurrent,
+                        }) } : {}),
+                        ...(bindAgentPreflightManagedServices ? { bindManagedServices: (input) => bindAgentPreflightManagedServices({
+                            ...input, pluginId: runtime.pluginId, localAgentId: runtime.localAgentId,
+                            occurrenceId: activated.readPluginOccurrenceId(runtime.pluginId) ?? '',
+                            isCurrent: runtime.isCurrent,
+                        }) } : {}),
                         isCurrent: runtime.isCurrent,
                     })
                     : {}),
@@ -1956,6 +2007,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
     let resolveAgentPluginSettings: (input: Readonly<{
         pluginId: string;
         localAgentId: string;
+        includeDefaults?: boolean;
+        signal?: AbortSignal;
     }>) => Promise<AgentCliSessionCommandPluginSettingsV1 | null> = async () => null;
     let targetActionInvocations: ReturnType<typeof createTargetActionInvocationRegistry> | null = null;
     let disposeInvocationServiceOwners: () => Promise<void> = async () => {};
@@ -2089,7 +2142,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
         ),
         params?.resolveManagedServiceSessionBaseUrl,
         params?.resolveManagedServiceSessionClientAccess,
-        resolveAgentPluginSettings,
+        (input) => resolveAgentPluginSettings(input),
+        bindAgentPreflightManagedServices,
+        resolveAgentPreflightManagedExecutable,
+        consumerAssembly.resolveLifecycle,
     );
     const resolveExactActivationTarget = (pluginId: string) => {
         const targets = authoritativeContributes.activationTargets.filter((target) => (
@@ -2895,6 +2951,15 @@ export async function resolveExecutablePluginRuntimeRegistry(
     }>;
     let currentGlobalExternalSessionsPublicationBasis:
         CurrentGlobalExternalSessionsPublicationBasis | null = null;
+    // Remember an unchanged construction failure for diagnostic deduplication.
+    // Candidate-specific refusals belong to the live configured-source owner;
+    // construction failures remain retryable on demand.
+    let failedExternalSessionsPublication: Readonly<{
+        basis: CurrentGlobalExternalSessionsPublicationBasis;
+        accountRevision: string;
+        cause: string | null;
+        error: string;
+    }> | null = null;
     // A single lazy plugin activation can satisfy several public calls. Each
     // caller still reaches this publication boundary, so serialize the owner
     // replacement rather than letting stale pre-await snapshots publish.
@@ -2935,6 +3000,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             currentGlobalExternalSessions?.dispose();
             currentGlobalExternalSessions = null;
             currentGlobalExternalSessionsPublicationBasis = null;
+            failedExternalSessionsPublication = null;
             refreshExternalSessionProjectionDiagnostics(
                 Object.freeze([]),
                 Object.freeze([]),
@@ -2970,6 +3036,9 @@ export async function resolveExecutablePluginRuntimeRegistry(
         ) {
             return;
         }
+        const accountRevision = resolveActiveAccountConfiguredExternalSessionSourceRevision(
+            getActiveAccountSettingsSnapshot(),
+        );
         const previous = currentGlobalExternalSessions;
         try {
             const next = await createCurrentGlobalExternalSessionsAuthorService({
@@ -3020,14 +3089,15 @@ export async function resolveExecutablePluginRuntimeRegistry(
             });
             currentGlobalExternalSessions = next;
             currentGlobalExternalSessionsPublicationBasis = publicationBasis;
+            failedExternalSessionsPublication = null;
             refreshExternalSessionProjectionDiagnostics(agents, next.sourceRefusals);
             previous?.dispose();
         } catch (error) {
             // Only a host-integrity failure reaches here now — an unreadable
-            // Account, or a malformed/undeclared/duplicate configured source the
+            // Account, or an undeclared/duplicate configured source identity the
             // host itself owns. Those make the host's own view of which sources
             // exist untrustworthy, so the service still fails closed; a single
-            // Agent's provider refusal no longer takes this path. Never silent:
+            // candidate's admission/provider refusal no longer takes this path. Never silent:
             // this is the only record of why every caller now sees unavailable.
             previous?.dispose();
             currentGlobalExternalSessions = null;
@@ -3036,6 +3106,15 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 Object.freeze([]),
                 Object.freeze([]),
             );
+            const failure = Object.freeze({
+                basis: publicationBasis,
+                accountRevision,
+                cause: readExternalSessionsFailureCause(error),
+                error: error instanceof Error ? error.message : String(error),
+            });
+            const alreadyReported = isDeepStrictEqual(failedExternalSessionsPublication, failure);
+            failedExternalSessionsPublication = failure;
+            if (alreadyReported) return;
             logger.warn(
                 '[PLUGIN RUNTIME] Current-global External Sessions service is unavailable',
                 {
@@ -3757,6 +3836,35 @@ export async function resolveExecutablePluginRuntimeRegistry(
             });
         },
     });
+    async function resolveAgentPreflightManagedExecutable(input: Readonly<{
+        pluginId: string; executable: Extract<ManagedExecutableRef, { kind: 'managedDependency' }>;
+        isCurrent(): boolean;
+    }>): Promise<ResolvedPluginExecutable> {
+        if (!input.isCurrent() || !isPluginConsumerCurrent(input.pluginId)) {
+            throw new Error('Agent preflight managed executable belongs to a retired occurrence');
+        }
+        const resolved = await managedDependencies.resolveExecutable(input.executable, input.pluginId, { requireReady: true });
+        if (!input.isCurrent() || !isPluginConsumerCurrent(input.pluginId)) {
+            resolved.release();
+            throw new Error('Agent preflight managed executable belongs to a retired occurrence');
+        }
+        return resolved;
+    }
+    function bindAgentPreflightManagedServices(input: Readonly<{
+        pluginId: string; localAgentId: string; occurrenceId: string;
+        exec: ExecService; signal: AbortSignal; isCurrent(): boolean;
+    }>): PluginServices['managedServices'] {
+        const isCurrent = () => input.isCurrent()
+            && readCurrentPluginOccurrenceId(input.pluginId) === input.occurrenceId
+            && isPluginConsumerCurrent(input.pluginId);
+        if (!isCurrent()) throw new Error('Agent preflight managed service belongs to a retired occurrence');
+        return daemonManagedServicesOwner.bindScope({
+            pluginId: input.pluginId, occurrenceId: input.occurrenceId,
+            contributionQualifiedId: `${input.pluginId}/agents/${input.localAgentId}`,
+            operationId: randomUUID(), signal: input.signal, isOccurrenceCurrent: isCurrent,
+            ...(readCurrentPluginSourceCustody(input.pluginId) ? { sourceCustody: readCurrentPluginSourceCustody(input.pluginId)! } : {}),
+        }, input.exec);
+    }
     declaredMcpTransportConnector = createStableDeclaredMcpTransportConnector({
         resolveExecutable: executableResolver,
     });
@@ -5218,7 +5326,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
             (pluginId) => isPluginConsumerCurrent(pluginId),
             params?.resolveManagedServiceSessionBaseUrl,
             params?.resolveManagedServiceSessionClientAccess,
-            resolveAgentPluginSettings,
+            (input) => resolveAgentPluginSettings(input),
+            bindAgentPreflightManagedServices,
+            resolveAgentPreflightManagedExecutable,
+            consumerAssembly.resolveLifecycle,
         );
         return projected.agents.find((agent) => agent.id === agentId)?.catalogEntry ?? null;
     }
@@ -6391,7 +6502,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
         return invocationServiceOwners.createServices(seed, binding);
     };
 
-    resolveAgentPluginSettings = async ({ pluginId, localAgentId }) => {
+    resolveAgentPluginSettings = async ({ pluginId, localAgentId, includeDefaults = true, signal }) => {
+        signal?.throwIfAborted();
         // An Agent may consume only its own declarations. Account and daemon
         // remain distinct records; no key merge or precedence rule exists.
         const scopes = new Set<'account' | 'daemon'>();
@@ -6409,13 +6521,16 @@ export async function resolveExecutablePluginRuntimeRegistry(
         const snapshot: { -readonly [Scope in keyof AgentCliSessionCommandPluginSettingsV1]: AgentCliSessionCommandPluginSettingsV1[Scope] } = {};
         for (const scope of scopes) {
             try {
-                snapshot[scope] = await readPluginSettingsValuesWithDefaults(
-                    services.settings.forScope({ kind: scope }),
-                );
-            } catch {
+                const scoped = services.settings.forScope({ kind: scope });
+                snapshot[scope] = includeDefaults
+                    ? await readPluginSettingsValuesWithDefaults(scoped, { signal })
+                    : (await scoped.snapshot({ signal })).values;
+            } catch (error) {
+                if (!includeDefaults && (!(error instanceof PluginError) || error.code !== 'plugin_settings_scope_unavailable')) throw error;
                 // One unavailable scope cannot be substituted with or merged
                 // into the other. The exact available record remains useful.
             }
+            signal?.throwIfAborted();
         }
         return snapshot.account || snapshot.daemon ? Object.freeze(snapshot) : null;
     };

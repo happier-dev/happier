@@ -2,7 +2,17 @@ import { describe, expect, it } from 'vitest';
 import * as catalog from './catalog.js';
 import { validateWorkflowDefinition } from '../workflowValidationV1.js';
 import { parseWorkflowDefinitionRefV1 } from '../workflowDefinitionRefV1.js';
-import { WorkflowDefinitionBaseSchema } from '../workflowV1.js';
+import { WorkflowDefinitionBaseSchema, type WorkflowBlock } from '../workflowV1.js';
+
+function listBlocks(blocks: readonly WorkflowBlock[]): WorkflowBlock[] {
+  return blocks.flatMap((block) => {
+    if (block.kind === 'parallel') return [block, ...block.branches.flatMap((branch) => listBlocks(branch.blocks))];
+    if (block.kind === 'if') return [block, ...listBlocks(block.then), ...listBlocks(block.otherwise)];
+    if (block.kind === 'loop') return [block, ...listBlocks(block.body),
+      ...(block.repetition.kind === 'evaluate' ? [block.repetition.evaluator] : [])];
+    return [block];
+  });
+}
 
 describe('built-in workflow catalog', () => {
   it('makes built-ins discoverable without a saved Artifact or UI loader', () => {
@@ -53,6 +63,24 @@ describe('built-in workflow catalog', () => {
       expect(example.definition.finalOutput, example.key).toBeDefined();
       expect(parseWorkflowDefinitionRefV1(example.key)).toBeNull();
       expect(catalog.resolveBuiltinWorkflowDefinitionV1(example.key)).toBeNull();
+    }
+  });
+
+  it('preserves authored block names when built-ins and starter examples cross the definition boundary', () => {
+    const seeds = [
+      ...catalog.getBuiltinWorkflowCatalogV1().map((entry) => ({ key: entry.id, definition: entry.definition })),
+      ...catalog.getWorkflowStarterExamplesV1(),
+    ];
+    for (const seed of seeds) {
+      const authoredBlocks = listBlocks(seed.definition.blocks);
+      const parsed = WorkflowDefinitionBaseSchema.parse(JSON.parse(JSON.stringify(seed.definition)));
+      const parsedBlocks = listBlocks(parsed.blocks);
+      for (const [index, block] of authoredBlocks.entries()) {
+        const name = 'name' in block ? block.name : undefined;
+        expect(name, `${seed.key}/${block.id}`).toEqual(expect.any(String));
+        expect(name, `${seed.key}/${block.id}`).toBeTruthy();
+        expect(parsedBlocks[index], `${seed.key}/${block.id}`).toMatchObject({ id: block.id, name });
+      }
     }
   });
 });

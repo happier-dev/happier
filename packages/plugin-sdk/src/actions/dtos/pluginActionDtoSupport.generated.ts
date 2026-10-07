@@ -98,7 +98,7 @@ export type SessionUsageLimitCheckNowRequestV1Input<Input extends boolean = fals
     sessionId: string;
     agentId?: string | undefined;
     operation?: "check_now" | "switch_account_now" | undefined;
-    resumePromptMode?: "standard" | "off" | "custom" | undefined;
+    resumePromptMode?: "custom" | "standard" | "off" | undefined;
 } & Readonly<{
     provider?: string | undefined;
 }> : {
@@ -106,7 +106,7 @@ export type SessionUsageLimitCheckNowRequestV1Input<Input extends boolean = fals
     sessionId: string;
     agentId?: string | undefined;
     operation?: "check_now" | "switch_account_now" | undefined;
-    resumePromptMode?: "standard" | "off" | "custom" | undefined;
+    resumePromptMode?: "custom" | "standard" | "off" | undefined;
 } & Readonly<{
     provider?: string | undefined;
 }>;
@@ -115,7 +115,7 @@ export type SessionUsageLimitConsumeResetCreditRequestV1Input<Input extends bool
     sessionId: string;
     agentId?: string | undefined;
     issueFingerprint?: string | undefined;
-    resumePromptMode?: "standard" | "off" | "custom" | undefined;
+    resumePromptMode?: "custom" | "standard" | "off" | undefined;
 } & Readonly<{
     provider?: string | undefined;
 }> : {
@@ -123,7 +123,7 @@ export type SessionUsageLimitConsumeResetCreditRequestV1Input<Input extends bool
     sessionId: string;
     agentId?: string | undefined;
     issueFingerprint?: string | undefined;
-    resumePromptMode?: "standard" | "off" | "custom" | undefined;
+    resumePromptMode?: "custom" | "standard" | "off" | undefined;
 } & Readonly<{
     provider?: string | undefined;
 }>;
@@ -451,6 +451,7 @@ export type PluginActionContributionV2 = {
     connectedAccountPurposeBindings?: {
         path: string;
         purpose: string;
+        nativeServicePath?: string | undefined;
     }[] | undefined;
     resultSchema?: PluginJsonSchemaV2 | undefined;
     availability?: {
@@ -1098,7 +1099,7 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
                 label: string;
                 typeLabel: string;
                 description?: string | undefined;
-                icon?: "error" | "check" | "file" | "external" | "search" | "settings" | "action" | "terminal" | "browser" | "copy" | "globe" | "info" | "preview" | "refresh" | "warning" | "add" | "back" | "close" | "forward" | "more" | "change-open" | "change-complete" | "issue" | "bug" | "pin" | "conversations" | "waveform" | "desktop" | "pause" | "failure" | "unavailable" | "denied" | undefined;
+                icon?: "error" | "check" | "file" | "external" | "search" | "settings" | "action" | "terminal" | "review" | "browser" | "copy" | "globe" | "info" | "preview" | "refresh" | "warning" | "add" | "back" | "close" | "forward" | "more" | "change-open" | "change-complete" | "issue" | "bug" | "pin" | "conversations" | "waveform" | "desktop" | "pause" | "failure" | "unavailable" | "denied" | "attention" | "escalating" | "merge-ready" | "mention" | "assigned" | "new" | "waiting" | undefined;
                 tone?: "success" | "danger" | "info" | "warning" | "neutral" | undefined;
             };
         }[];
@@ -1113,6 +1114,7 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
         kind: "json";
         schema: PluginJsonSchemaV2<true>;
     };
+    name?: string | undefined;
     execution?: {
         agentTarget?: {
             kind: "agent";
@@ -1328,6 +1330,7 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
     id: string;
     timeoutMs?: number | undefined;
     pauseForReview?: boolean | undefined;
+    name?: string | undefined;
     execution?: {
         agentTarget?: {
             kind: "agent";
@@ -1532,6 +1535,7 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
     workflowRef: string;
     input: Record<string, PluginActionWorkflowValueReferenceV1<true>>;
     id: string;
+    name?: string | undefined;
     execution?: {
         agentTarget?: {
             kind: "agent";
@@ -1755,7 +1759,7 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
                 label: string;
                 typeLabel: string;
                 description?: string | undefined;
-                icon?: "error" | "check" | "file" | "external" | "search" | "settings" | "action" | "terminal" | "browser" | "copy" | "globe" | "info" | "preview" | "refresh" | "warning" | "add" | "back" | "close" | "forward" | "more" | "change-open" | "change-complete" | "issue" | "bug" | "pin" | "conversations" | "waveform" | "desktop" | "pause" | "failure" | "unavailable" | "denied" | undefined;
+                icon?: "error" | "check" | "file" | "external" | "search" | "settings" | "action" | "terminal" | "review" | "browser" | "copy" | "globe" | "info" | "preview" | "refresh" | "warning" | "add" | "back" | "close" | "forward" | "more" | "change-open" | "change-complete" | "issue" | "bug" | "pin" | "conversations" | "waveform" | "desktop" | "pause" | "failure" | "unavailable" | "denied" | "attention" | "escalating" | "merge-ready" | "mention" | "assigned" | "new" | "waiting" | undefined;
                 tone?: "success" | "danger" | "info" | "warning" | "neutral" | undefined;
             };
         }[];
@@ -1770,6 +1774,7 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
         kind: "json";
         schema: PluginJsonSchemaV2<true>;
     } | undefined;
+    name?: string | undefined;
     execution?: {
         agentTarget?: {
             kind: "agent";
@@ -1972,6 +1977,7 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
 } | Readonly<{
     kind: "parallel";
     id: string;
+    name?: string | undefined;
     branches: readonly Readonly<{
         id: string;
         blocks: readonly PluginActionWorkflowBlockV1<true>[];
@@ -1982,12 +1988,14 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
 }> | Readonly<{
     kind: "loop";
     id: string;
+    name?: string | undefined;
     body: readonly PluginActionWorkflowBlockV1<true>[];
     repetition: PluginActionWorkflowRepetitionV1<true>;
     onlyWhen?: PluginActionWorkflowConditionV1<true> | undefined;
 }> | Readonly<{
     kind: "if";
     id: string;
+    name?: string | undefined;
     when: PluginActionWorkflowConditionV1<true>;
     then: readonly PluginActionWorkflowBlockV1<true>[];
     otherwise: readonly PluginActionWorkflowBlockV1<true>[];
@@ -2016,7 +2024,7 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
                 label: string;
                 typeLabel: string;
                 description?: string | undefined;
-                icon?: "error" | "check" | "file" | "external" | "search" | "settings" | "action" | "terminal" | "browser" | "copy" | "globe" | "info" | "preview" | "refresh" | "warning" | "add" | "back" | "close" | "forward" | "more" | "change-open" | "change-complete" | "issue" | "bug" | "pin" | "conversations" | "waveform" | "desktop" | "pause" | "failure" | "unavailable" | "denied" | undefined;
+                icon?: "error" | "check" | "file" | "external" | "search" | "settings" | "action" | "terminal" | "review" | "browser" | "copy" | "globe" | "info" | "preview" | "refresh" | "warning" | "add" | "back" | "close" | "forward" | "more" | "change-open" | "change-complete" | "issue" | "bug" | "pin" | "conversations" | "waveform" | "desktop" | "pause" | "failure" | "unavailable" | "denied" | "attention" | "escalating" | "merge-ready" | "mention" | "assigned" | "new" | "waiting" | undefined;
                 tone?: "success" | "danger" | "info" | "warning" | "neutral" | undefined;
             };
         }[];
@@ -2031,6 +2039,7 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
         kind: "json";
         schema: PluginJsonSchemaV2;
     };
+    name?: string | undefined;
     execution?: {
         agentTarget?: {
             kind: "agent";
@@ -2246,6 +2255,7 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
     id: string;
     timeoutMs?: number | undefined;
     pauseForReview?: boolean | undefined;
+    name?: string | undefined;
     execution?: {
         agentTarget?: {
             kind: "agent";
@@ -2450,6 +2460,7 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
     workflowRef: string;
     input: Record<string, PluginActionWorkflowValueReferenceV1>;
     id: string;
+    name?: string | undefined;
     execution?: {
         agentTarget?: {
             kind: "agent";
@@ -2673,7 +2684,7 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
                 label: string;
                 typeLabel: string;
                 description?: string | undefined;
-                icon?: "error" | "check" | "file" | "external" | "search" | "settings" | "action" | "terminal" | "browser" | "copy" | "globe" | "info" | "preview" | "refresh" | "warning" | "add" | "back" | "close" | "forward" | "more" | "change-open" | "change-complete" | "issue" | "bug" | "pin" | "conversations" | "waveform" | "desktop" | "pause" | "failure" | "unavailable" | "denied" | undefined;
+                icon?: "error" | "check" | "file" | "external" | "search" | "settings" | "action" | "terminal" | "review" | "browser" | "copy" | "globe" | "info" | "preview" | "refresh" | "warning" | "add" | "back" | "close" | "forward" | "more" | "change-open" | "change-complete" | "issue" | "bug" | "pin" | "conversations" | "waveform" | "desktop" | "pause" | "failure" | "unavailable" | "denied" | "attention" | "escalating" | "merge-ready" | "mention" | "assigned" | "new" | "waiting" | undefined;
                 tone?: "success" | "danger" | "info" | "warning" | "neutral" | undefined;
             };
         }[];
@@ -2688,6 +2699,7 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
         kind: "json";
         schema: PluginJsonSchemaV2;
     } | undefined;
+    name?: string | undefined;
     execution?: {
         agentTarget?: {
             kind: "agent";
@@ -2890,6 +2902,7 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
 } | Readonly<{
     kind: "parallel";
     id: string;
+    name?: string | undefined;
     branches: readonly Readonly<{
         id: string;
         blocks: readonly PluginActionWorkflowBlockV1[];
@@ -2900,12 +2913,14 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
 }> | Readonly<{
     kind: "loop";
     id: string;
+    name?: string | undefined;
     body: readonly PluginActionWorkflowBlockV1[];
     repetition: PluginActionWorkflowRepetitionV1;
     onlyWhen?: PluginActionWorkflowConditionV1 | undefined;
 }> | Readonly<{
     kind: "if";
     id: string;
+    name?: string | undefined;
     when: PluginActionWorkflowConditionV1;
     then: readonly PluginActionWorkflowBlockV1[];
     otherwise: readonly PluginActionWorkflowBlockV1[];
@@ -2957,7 +2972,7 @@ export type PluginActionWorkflowRepetitionV1<Input extends boolean = false> = In
                     label: string;
                     typeLabel: string;
                     description?: string | undefined;
-                    icon?: "error" | "check" | "file" | "external" | "search" | "settings" | "action" | "terminal" | "browser" | "copy" | "globe" | "info" | "preview" | "refresh" | "warning" | "add" | "back" | "close" | "forward" | "more" | "change-open" | "change-complete" | "issue" | "bug" | "pin" | "conversations" | "waveform" | "desktop" | "pause" | "failure" | "unavailable" | "denied" | undefined;
+                    icon?: "error" | "check" | "file" | "external" | "search" | "settings" | "action" | "terminal" | "review" | "browser" | "copy" | "globe" | "info" | "preview" | "refresh" | "warning" | "add" | "back" | "close" | "forward" | "more" | "change-open" | "change-complete" | "issue" | "bug" | "pin" | "conversations" | "waveform" | "desktop" | "pause" | "failure" | "unavailable" | "denied" | "attention" | "escalating" | "merge-ready" | "mention" | "assigned" | "new" | "waiting" | undefined;
                     tone?: "success" | "danger" | "info" | "warning" | "neutral" | undefined;
                 };
             }[];
@@ -2972,6 +2987,7 @@ export type PluginActionWorkflowRepetitionV1<Input extends boolean = false> = In
             kind: "json";
             schema: PluginJsonSchemaV2<true>;
         };
+        name?: string | undefined;
         execution?: {
             agentTarget?: {
                 kind: "agent";
@@ -3187,6 +3203,7 @@ export type PluginActionWorkflowRepetitionV1<Input extends boolean = false> = In
         id: string;
         timeoutMs?: number | undefined;
         pauseForReview?: boolean | undefined;
+        name?: string | undefined;
         execution?: {
             agentTarget?: {
                 kind: "agent";
@@ -3435,7 +3452,7 @@ export type PluginActionWorkflowRepetitionV1<Input extends boolean = false> = In
                     label: string;
                     typeLabel: string;
                     description?: string | undefined;
-                    icon?: "error" | "check" | "file" | "external" | "search" | "settings" | "action" | "terminal" | "browser" | "copy" | "globe" | "info" | "preview" | "refresh" | "warning" | "add" | "back" | "close" | "forward" | "more" | "change-open" | "change-complete" | "issue" | "bug" | "pin" | "conversations" | "waveform" | "desktop" | "pause" | "failure" | "unavailable" | "denied" | undefined;
+                    icon?: "error" | "check" | "file" | "external" | "search" | "settings" | "action" | "terminal" | "review" | "browser" | "copy" | "globe" | "info" | "preview" | "refresh" | "warning" | "add" | "back" | "close" | "forward" | "more" | "change-open" | "change-complete" | "issue" | "bug" | "pin" | "conversations" | "waveform" | "desktop" | "pause" | "failure" | "unavailable" | "denied" | "attention" | "escalating" | "merge-ready" | "mention" | "assigned" | "new" | "waiting" | undefined;
                     tone?: "success" | "danger" | "info" | "warning" | "neutral" | undefined;
                 };
             }[];
@@ -3450,6 +3467,7 @@ export type PluginActionWorkflowRepetitionV1<Input extends boolean = false> = In
             kind: "json";
             schema: PluginJsonSchemaV2;
         };
+        name?: string | undefined;
         execution?: {
             agentTarget?: {
                 kind: "agent";
@@ -3665,6 +3683,7 @@ export type PluginActionWorkflowRepetitionV1<Input extends boolean = false> = In
         id: string;
         timeoutMs?: number | undefined;
         pauseForReview?: boolean | undefined;
+        name?: string | undefined;
         execution?: {
             agentTarget?: {
                 kind: "agent";
@@ -4174,7 +4193,7 @@ export type PluginActionWorkflowStepV1 = {
                 label: string;
                 typeLabel: string;
                 description?: string | undefined;
-                icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
                 tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
             };
         }[];
@@ -4189,6 +4208,7 @@ export type PluginActionWorkflowStepV1 = {
         kind: 'json';
         schema: PluginJsonSchemaV2;
     };
+    name?: string | undefined;
     execution?: {
         agentTarget?: {
             kind: 'agent';
@@ -4423,7 +4443,7 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
                 label: string;
                 typeLabel: string;
                 description?: string | undefined;
-                icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
                 tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
             };
         }[];
@@ -4438,6 +4458,7 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
         kind: 'json';
         schema: PluginJsonSchemaV2;
     };
+    name?: string | undefined;
     execution?: {
         agentTarget?: {
             kind: 'agent';
@@ -4653,6 +4674,7 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
     id: string;
     timeoutMs?: number | undefined;
     pauseForReview?: boolean | undefined;
+    name?: string | undefined;
     execution?: {
         agentTarget?: {
             kind: 'agent';
@@ -4857,6 +4879,7 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
     workflowRef: string;
     input: Record<string, PluginActionWorkflowValueReferenceV1>;
     id: string;
+    name?: string | undefined;
     execution?: {
         agentTarget?: {
             kind: 'agent';
@@ -5080,7 +5103,7 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
                 label: string;
                 typeLabel: string;
                 description?: string | undefined;
-                icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
                 tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
             };
         }[];
@@ -5095,6 +5118,7 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
         kind: 'json';
         schema: PluginJsonSchemaV2;
     } | undefined;
+    name?: string | undefined;
     execution?: {
         agentTarget?: {
             kind: 'agent';
@@ -5297,6 +5321,7 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
 } | (Omit<Readonly<{
     kind: 'parallel';
     id: string;
+    name?: string | undefined;
     branches: readonly Readonly<{
         id: string;
         blocks: readonly PluginActionWorkflowBlockV1[];
@@ -5314,6 +5339,7 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
 }>) | (Omit<Readonly<{
     kind: 'loop';
     id: string;
+    name?: string | undefined;
     body: readonly PluginActionWorkflowBlockV1[];
     repetition: PluginActionWorkflowRepetitionV1;
     onlyWhen?: PluginActionWorkflowConditionV1 | undefined;
@@ -5322,6 +5348,7 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
 }>) | (Omit<Readonly<{
     kind: 'if';
     id: string;
+    name?: string | undefined;
     when: PluginActionWorkflowConditionV1;
     then: readonly PluginActionWorkflowBlockV1[];
     otherwise: readonly PluginActionWorkflowBlockV1[];
@@ -5668,6 +5695,7 @@ export type EntityDragItemV1 = Readonly<{
                             pluginId: string;
                             localId: string;
                         };
+                        nativeServicePath?: string | undefined;
                     }[] | undefined;
                 };
             };
@@ -5899,7 +5927,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
                 presentation: {
                     label: string;
                     description?: string | undefined;
-                    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
                     tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                 };
             };
@@ -5931,7 +5959,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
                 presentation?: {
                     label: string;
                     description?: string | undefined;
-                    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
                     tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                 } | undefined;
             };
@@ -5957,7 +5985,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
         key: string;
         fallback: string;
     } | undefined;
-    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
     tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
     action?: string | {
         pluginId: string;
@@ -5975,7 +6003,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
         key: string;
         fallback: string;
     } | undefined;
-    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
 } | {
     kind: 'section';
     children: ({
@@ -5992,7 +6020,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
         tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
         action?: string | {
             pluginId: string;
@@ -6010,7 +6038,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
     })[];
     title?: string | {
         key: string;
@@ -6036,7 +6064,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
         tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
         action?: string | {
             pluginId: string;
@@ -6054,7 +6082,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
     } | {
         kind: 'section';
         children: ({
@@ -6071,7 +6099,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
                 key: string;
                 fallback: string;
             } | undefined;
-            icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+            icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
             tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
             action?: string | {
                 pluginId: string;
@@ -6089,7 +6117,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
                 key: string;
                 fallback: string;
             } | undefined;
-            icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+            icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
         })[];
         title?: string | {
             key: string;
@@ -6133,7 +6161,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
     } | undefined;
 } | {
     kind: 'metadata';
@@ -6215,7 +6243,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
                     presentation: {
                         label: string;
                         description?: string | undefined;
-                        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
                         tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                     };
                 };
@@ -6247,7 +6275,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
                     presentation?: {
                         label: string;
                         description?: string | undefined;
-                        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
                         tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                     } | undefined;
                 };
@@ -6916,6 +6944,7 @@ export type PluginUiWidgetAreaRequestV1 = {
                             pluginId: string;
                             localId: string;
                         };
+                        nativeServicePath?: string | undefined;
                     }[] | undefined;
                 };
             };
@@ -7125,6 +7154,7 @@ export type PluginUiWidgetAreaResultV1 = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            nativeServicePath?: string | undefined;
                         }[] | undefined;
                     };
                 };
@@ -7261,6 +7291,7 @@ export type PluginUiWidgetAreaResultV1 = {
                             pluginId: string;
                             localId: string;
                         };
+                        nativeServicePath?: string | undefined;
                     }[] | undefined;
                 };
             };
@@ -7388,6 +7419,7 @@ export type PluginUiWidgetAreaResultV1 = {
                             pluginId: string;
                             localId: string;
                         };
+                        nativeServicePath?: string | undefined;
                     }[] | undefined;
                 };
             };
@@ -7589,6 +7621,7 @@ export type PluginUiWidgetAreaOperationV1 = {
                         pluginId: string;
                         localId: string;
                     };
+                    nativeServicePath?: string | undefined;
                 }[] | undefined;
             };
         };
@@ -7789,7 +7822,7 @@ export type SessionAudienceSelectionV1 = Readonly<{
     groupId: string;
 }>;
 export type PluginUiToneV1 = 'success' | 'danger' | 'info' | 'warning' | 'neutral' | 'accent';
-export type PluginUiIconTokenV1 = 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied';
+export type PluginUiIconTokenV1 = 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting';
 export type PluginDeclarativeControlV2 = {
     kind: 'text';
     settingId: string;
@@ -7877,7 +7910,7 @@ export type PluginDeclarativeComposerApplyEffectV1 = {
             presentation: {
                 label: string;
                 description?: string | undefined;
-                icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
                 tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
             };
         };
@@ -7909,7 +7942,7 @@ export type PluginDeclarativeComposerApplyEffectV1 = {
             presentation?: {
                 label: string;
                 description?: string | undefined;
-                icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
                 tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
             } | undefined;
         };
@@ -7980,7 +8013,7 @@ export type PluginDeclarativeActionNodeV2 = {
                 presentation: {
                     label: string;
                     description?: string | undefined;
-                    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
                     tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                 };
             };
@@ -8012,7 +8045,7 @@ export type PluginDeclarativeActionNodeV2 = {
                 presentation?: {
                     label: string;
                     description?: string | undefined;
-                    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
                     tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                 } | undefined;
             };
@@ -8039,7 +8072,7 @@ export type PluginDeclarativeRowNodeV2 = {
         key: string;
         fallback: string;
     } | undefined;
-    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
     tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
     action?: string | {
         pluginId: string;
@@ -8057,7 +8090,7 @@ export type PluginDeclarativeRowNodeV2 = {
         key: string;
         fallback: string;
     } | undefined;
-    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
 };
 export type PluginDeclarativeTargetedSurfaceReferenceV1 = {
     point: {
@@ -8089,7 +8122,7 @@ export type PluginDeclarativeListNodeV2 = {
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
         tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
         action?: string | {
             pluginId: string;
@@ -8107,7 +8140,7 @@ export type PluginDeclarativeListNodeV2 = {
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
     } | {
         kind: 'section';
         children: ({
@@ -8124,7 +8157,7 @@ export type PluginDeclarativeListNodeV2 = {
                 key: string;
                 fallback: string;
             } | undefined;
-            icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+            icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
             tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
             action?: string | {
                 pluginId: string;
@@ -8142,7 +8175,7 @@ export type PluginDeclarativeListNodeV2 = {
                 key: string;
                 fallback: string;
             } | undefined;
-            icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+            icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
         })[];
         title?: string | {
             key: string;
@@ -8174,7 +8207,7 @@ export type PluginDeclarativeSectionNodeV2 = {
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
         tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
         action?: string | {
             pluginId: string;
@@ -8192,7 +8225,7 @@ export type PluginDeclarativeSectionNodeV2 = {
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
     })[];
     title?: string | {
         key: string;
@@ -8217,7 +8250,7 @@ export type PluginDeclarativeItemNodeV2 = {
         key: string;
         fallback: string;
     } | undefined;
-    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
     tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
     action?: string | {
         pluginId: string;
@@ -8236,7 +8269,7 @@ export type PluginDeclarativeStateNodeV2 = {
         key: string;
         fallback: string;
     } | undefined;
-    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
 };
 export type PluginDeclarativeTargetedSurfaceNodeV2 = {
     kind: 'targetedSurface';
@@ -8267,7 +8300,7 @@ export type PluginDeclarativeTargetedSurfaceNodeV2 = {
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
     } | undefined;
 };
 export type PluginDeclarativeMetadataNodeV2 = {
@@ -8351,7 +8384,7 @@ export type PluginDeclarativeActionPanelNodeV2 = {
                     presentation: {
                         label: string;
                         description?: string | undefined;
-                        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
                         tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                     };
                 };
@@ -8383,7 +8416,7 @@ export type PluginDeclarativeActionPanelNodeV2 = {
                     presentation?: {
                         label: string;
                         description?: string | undefined;
-                        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
                         tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                     } | undefined;
                 };
@@ -8483,7 +8516,7 @@ export type ComposerContentMimeTypeV1 = 'image/png' | 'image/jpeg' | 'image/webp
 export type ComposerAttachmentAuthorPresentationV1 = {
     readonly label: string;
     readonly description?: string | undefined;
-    readonly icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+    readonly icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
     readonly tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
 };
 export type PluginLocalizedStringV2 = string | {

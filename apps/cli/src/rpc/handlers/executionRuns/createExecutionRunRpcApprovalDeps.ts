@@ -1,7 +1,7 @@
 import type { StoredCredentials } from '@/persistence';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
-import { getSharedBlockingApprovalCoordinator } from '@/session/actions/approvals/blockingApprovalCoordinator';
-import { ApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
+import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import type { ReviewCommentPrincipalHeaderV1 } from '@happier-dev/protocol';
 import { createCliReviewCommentActionExecutorFromCredentials } from '@/agent/reviews/comments/executor';
@@ -132,6 +132,7 @@ export function createExecutionRunRpcApprovalDeps(params: Readonly<{
         artifactId: args.artifactId,
         request: args.request,
         decision: args.decision,
+        decisionAuthority: args.decisionAuthority,
       }),
     approvalsWaitForDecision: async (args) => {
       const credentials = await params.readCredentials();
@@ -155,7 +156,7 @@ export function createExecutionRunRpcApprovalDeps(params: Readonly<{
           }));
         },
       });
-      return { ...result, request: ApprovalRequestSchema.parse(result.request) };
+      return { ...result, request: StoredApprovalRequestSchema.parse(result.request) };
     },
   };
 }

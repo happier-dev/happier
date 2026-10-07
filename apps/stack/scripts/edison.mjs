@@ -9,7 +9,7 @@ import { readJsonIfExists } from './utils/fs/json.mjs';
 import { run, runCapture } from './utils/proc/proc.mjs';
 import { preferStackLocalhostHost, resolveLocalhostHost } from './utils/paths/localhost_host.mjs';
 import { sanitizeStackName } from './utils/stack/names.mjs';
-import { resolveTrustedStackRuntimeServerPort } from './utils/stack/runtime_state.mjs';
+import { resolveStackServerEndpoint } from './utils/server/urls.mjs';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { mkdir, lstat, rename, symlink, writeFile, readdir, chmod } from 'node:fs/promises';
@@ -164,7 +164,7 @@ async function ensureStackServerPortForWebServerValidation({ rootDir, stackName,
   const runtimePath = join(baseDir, 'stack.runtime.json');
 
   const existing = await readJsonIfExists(runtimePath);
-  const existingPort = await resolveTrustedStackRuntimeServerPort(existing, { stackName });
+  const { runtimePort: existingPort } = await resolveStackServerEndpoint({ env, stackName, runtimeState: existing, defaultPort: null });
   if (existingPort) {
     env.HAPPIER_STACK_SERVER_PORT = String(existingPort);
     return;
@@ -196,7 +196,7 @@ async function ensureStackServerPortForWebServerValidation({ rootDir, stackName,
   while (Date.now() < deadline) {
     // eslint-disable-next-line no-await-in-loop
     const st = await readJsonIfExists(runtimePath);
-    const port = await resolveTrustedStackRuntimeServerPort(st, { stackName });
+    const { runtimePort: port } = await resolveStackServerEndpoint({ env, stackName, runtimeState: st, defaultPort: null });
     if (port) {
       env.HAPPIER_STACK_SERVER_PORT = String(port);
       return;

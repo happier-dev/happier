@@ -3,13 +3,11 @@ import { join } from 'node:path';
 import { vi } from 'vitest';
 import {
   buildConnectedServiceCredentialRecord,
-  FeaturesResponseSchema,
   QualifiedConnectedAccountListResponseV4Schema,
 } from '@happier-dev/protocol';
 
 import { ApiClient } from '@/api/api';
 import { listQualifiedConnectedAccountsV4 } from '@/api/client/qualifiedConnectedAccountApi';
-import { createSessionSyncPendingInputServerContractController } from '@/api/clientCompatibility/sessionSyncPendingInputServerContract';
 import { configuration } from '@/configuration';
 import { createConnectedAccountRequestAuthSubjectRegistry } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
 import { resolveConnectedServiceAuthForSpawn } from '@/daemon/connectedServices/resolveConnectedServiceAuthForSpawn';
@@ -19,7 +17,7 @@ import type { PrepareForegroundAgentRuntimeAdmissionDependencies } from './prepa
 import { createForegroundPurposeOwnerFixture } from './prepareForegroundAdmission.connectedServices.testkit';
 
 /** Real Codex codecs, revision parsing and launch materialization over Account HTTP. */
-export async function createCodexForegroundConnectedAccountFixture(options: Readonly<{ legacy?: boolean }> = {}) {
+export async function createCodexForegroundConnectedAccountFixture() {
   const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' } as const;
   const revision = 'csr_0123456789ABCDEFGHJKMNPQRS';
   const record = buildConnectedServiceCredentialRecord({
@@ -47,8 +45,7 @@ export async function createCodexForegroundConnectedAccountFixture(options: Read
           : path === '/v3/connect/openai-codex/profiles/work/credential'
             ? {
                 content: { t: 'plain', v: record },
-                // Released server-v0.2.1 replies omit both revision fields.
-                ...(options.legacy ? {} : { revisionSemantics: 'revisioned', credentialRevision: revision }),
+                revisionSemantics: 'revisioned', credentialRevision: revision,
               }
             : (() => { throw new Error(`Unexpected Account HTTP request: ${path}`); })();
     return { status: 200, statusText: 'OK', data, headers: {}, config: { headers: new AxiosHeaders() } };
@@ -111,18 +108,11 @@ export async function createCodexForegroundConnectedAccountFixture(options: Read
     materializations,
     async dependenciesFor(applied: ResolvedExecutablePluginRuntimeRegistry, directory: string): Promise<PrepareForegroundAgentRuntimeAdmissionDependencies> {
       registry = applied;
-      const features = FeaturesResponseSchema.parse({ features: { sharing: { pendingQueueV2: { enabled: true } } }, capabilities: {} });
-      const fetchImpl: typeof fetch = async () => new Response(JSON.stringify(features), { status: 200, headers: { 'content-type': 'application/json' } });
-      const serverContract = options.legacy ? await createSessionSyncPendingInputServerContractController({
-        serverUrl: configuration.serverUrl, token: credentials.token, fetchImpl,
-      }).resolve({ sessionConnectionEpoch: 1, machineId: 'machine-1', socket: { connected: true } }) : null;
-      if (options.legacy) api.setServerFeaturesSnapshotProvider(() => ({ status: 'ready', features }));
       return {
         activateSessionPurposeBindings: account.owner.activateSessionPurposeBindings,
         resolveConnectedServiceAuthForSpawn: async (input) => {
           const materialized = await resolveConnectedServiceAuthForSpawn({
             ...input, credentials, api, activeServerDir: configuration.activeServerDir, baseDir: join(directory, 'materialized'),
-            ...(options.legacy ? { serverContract, allowLegacyUnfencedOneShotMaterialization: true } : {}),
             activateQualifiedPurposeBindings: (snapshot) => account.owner.activatePurposeBindings({
               subject: { kind: 'operation', operationId: 'foreground-materialize', consumer: account.purpose.consumer, isCurrent: () => pluginReloadController.isRuntimeRegistryCurrent(applied) },
               purposes: snapshot.purposes, bindings: snapshot.bindings,

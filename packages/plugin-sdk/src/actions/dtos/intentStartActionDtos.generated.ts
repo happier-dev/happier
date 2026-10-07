@@ -108,7 +108,6 @@ export type IntentStartActionInputById = {
             }[];
         } | undefined;
         scmPullRequestReviewScope?: {
-            kind: 'scm_pull_request_review_scope.v1';
             account: {
                 service: {
                     pluginId: string;
@@ -116,6 +115,29 @@ export type IntentStartActionInputById = {
                 };
                 accountId: string;
             };
+            kind: 'scm_pull_request_review_scope.v1';
+            pullRequest: {
+                [x: string]: unknown;
+                number: number;
+            } | {
+                [x: string]: unknown;
+                url: string;
+            } | {
+                [x: string]: unknown;
+                headBranch: string;
+            };
+            observed: {
+                baseSha: string;
+                headSha: string;
+                nativeRevision: string;
+                observedAtMs: number;
+            };
+        } | {
+            nativeService: {
+                pluginId: string;
+                localId: string;
+            };
+            kind: 'scm_pull_request_review_scope.v1';
             pullRequest: {
                 [x: string]: unknown;
                 number: number;

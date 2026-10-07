@@ -38,6 +38,17 @@ export const PLUGIN_UI_ICON_TOKENS_V1 = [
   'failure',
   'unavailable',
   'denied',
+  // Why an entry is in front of the reader (an attention chip's leading mark): a review asked of them, an
+  // agent or person waiting on them, an error escalating, a change ready to merge, a mention, an assignment,
+  // something new in a release, and waiting on someone else.
+  'review',
+  'attention',
+  'escalating',
+  'merge-ready',
+  'mention',
+  'assigned',
+  'new',
+  'waiting',
 ] as const;
 
 export const PluginUiIconTokenV1Schema = z.enum(PLUGIN_UI_ICON_TOKENS_V1);

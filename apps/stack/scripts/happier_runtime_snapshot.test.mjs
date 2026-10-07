@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { createRuntimeSnapshotFixture, runNode } from './testkit/runtime_snapshot_testkit.mjs';
 import { createTempFixture } from './testkit/core/temp_fixture.mjs';
 import { writeStubHappierCliFiles } from './testkit/core/stub_happier_cli_files.mjs';
+import { buildStubHappierServerSetSource } from './testkit/core/stub_happier_cli_server_set.mjs';
 
 function stackRootDirFromMeta(metaUrl) {
   const scriptsDir = dirname(fileURLToPath(metaUrl));
@@ -23,7 +24,11 @@ async function createSourceCliFixture(t, options = {}) {
   await writeFile(join(repoRoot, 'apps', 'server', 'package.json'), '{ "name": "@happier-dev/server" }\n', 'utf8');
   await writeStubHappierCliFiles(repoRoot, {
     packageJsonContent: '{ "name": "@happier-dev/cli" }\n',
-    distIndexScript: options.cliSource ?? 'process.stdout.write(JSON.stringify(process.argv.slice(2)) + "\\n");\n',
+    distIndexScript: `{
+const args = process.argv.slice(2);
+${buildStubHappierServerSetSource()}
+}
+${options.cliSource ?? 'process.stdout.write(JSON.stringify(process.argv.slice(2)) + "\\n");\n'}`,
     binHappierScript: `import '../${entrypointDir}/index.mjs';\n`,
   });
   return { repoRoot };

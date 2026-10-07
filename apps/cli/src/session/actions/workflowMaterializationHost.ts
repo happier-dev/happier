@@ -88,7 +88,7 @@ export function createWorkflowMaterializationHostV1(deps: WorkflowMaterializatio
           ? [buildBackendTargetKeyV2({ kind: 'agent', identity: agent.identity })] : [];
       }) : [];
     }
-    const readActionContract: NonNullable<Materialization['effects']['readActionContract']> = async (actionId) => {
+    const observeActionContract: NonNullable<Materialization['effects']['readActionContract']> = async (actionId) => {
       const machine = await readMachine();
       if (!machine) return null;
       const contributed = machine.roster.projection.actionsById[actionId];
@@ -111,6 +111,18 @@ export function createWorkflowMaterializationHostV1(deps: WorkflowMaterializatio
         target.signal?.throwIfAborted();
         return null;
       }
+    };
+    const actionContracts = new Map<string, ReturnType<typeof observeActionContract>>();
+    const readActionContract: typeof observeActionContract = async (actionId) => {
+      target.signal?.throwIfAborted();
+      let contract = actionContracts.get(actionId);
+      if (!contract) {
+        // Schema freezing, availability and repeated leaves consume the same
+        // admission observation. A replay creates a new host and rechecks it.
+        contract = observeActionContract(actionId);
+        actionContracts.set(actionId, contract);
+      }
+      return contract;
     };
     return {
       roleSelection,

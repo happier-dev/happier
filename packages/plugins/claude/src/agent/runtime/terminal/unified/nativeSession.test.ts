@@ -13,7 +13,7 @@ import { getClaudeProjectPath } from '../../../surfaces/sessions/handoff/path.js
 function createContext(): AgentSessionRuntimeContext {
   return {
     services: {
-      settings: { forScope: vi.fn(() => ({ get: vi.fn(async () => null) })) },
+      settings: { forScope: vi.fn(() => ({ get: vi.fn(async () => null), snapshot: async () => ({ values: {} }) })) },
       storage: { daemonSession: { get: vi.fn(), set: vi.fn() } },
       logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
       exec: {},

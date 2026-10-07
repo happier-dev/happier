@@ -194,6 +194,8 @@ describe('OpenAI Codex Connected Account', () => {
     const attempted = credentialStore();
     const accountId = 'chatgpt-account-1';
     const idToken = jwt({
+      name: 'Ada Example',
+      email: 'ada@example.com',
       'https://api.openai.com/auth': { chatgpt_account_id: accountId },
     });
     const request = vi.fn(async () => ({
@@ -240,8 +242,8 @@ describe('OpenAI Codex Connected Account', () => {
     }, context)).resolves.toMatchObject({
       status: 'connected',
       accountId,
-      providerIdentity: { accountId },
-      displayName: accountId,
+      providerIdentity: { accountId, email: 'ada@example.com' },
+      displayName: 'Ada Example',
       scopes: ['openid', 'profile', 'email', 'offline_access'],
     });
     expect(request).toHaveBeenCalledWith(expect.objectContaining({
@@ -255,6 +257,31 @@ describe('OpenAI Codex Connected Account', () => {
     expect(attempted.values.get('refreshToken')).toBe('codex-refresh');
     expect(attempted.values.get('idToken')).toBe(idToken);
     expect(attempted.values.get('providerAccountId')).toBe(accountId);
+  });
+
+  it('uses existing token identity on status and tolerates missing or invalid stored identity claims', async () => {
+    const runtime = activateConnectedAccountRuntime();
+    for (const [idToken, displayName] of [
+      [jwt({ name: 'Ada Example', email: 'ada@example.com' }), 'Ada Example'],
+      [jwt({ email: 'ada@example.com' }), 'ada@example.com'],
+      [jwt({ 'https://api.openai.com/profile': { email: 'nested@example.com' } }), 'nested@example.com'],
+      ['malformed-stored-token', 'ChatGPT'],
+      ['', 'ChatGPT'],
+    ]) {
+      const credentials = credentialStore(new Map([
+        ['accessToken', 'current-access'], ['idToken', idToken!], ['providerAccountId', 'provider-uuid'],
+      ]));
+      await expect(runtime.status(materializationContext(credentials.store))).resolves.toMatchObject({ status: 'connected', displayName });
+    }
+  });
+  it('keeps available human identity when stored access material has expired', async () => {
+    const runtime = activateConnectedAccountRuntime();
+    const credentials = credentialStore(new Map([
+      ['accessToken', 'stored-access'], ['expiresAtMs', '1'],
+      ['idToken', jwt({ name: 'Ada Example', email: 'ada@example.com' })],
+      ['providerAccountId', 'provider-account-42'],
+    ]));
+    await expect(runtime.status(materializationContext(credentials.store))).resolves.toMatchObject({ status: 'expired', displayName: 'Ada Example' });
   });
 
   it('materializes only the requested current Codex access token environment key', async () => {

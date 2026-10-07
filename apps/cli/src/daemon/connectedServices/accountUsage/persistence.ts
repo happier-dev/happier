@@ -231,6 +231,7 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
     maxKeys: 500,
     maxKeyAgeMs: 60 * 60_000,
     maxPendingPayloadAgeMs: 10 * 60_000,
+    maxConsecutiveFailures: 5,
     now: params.now,
     shouldRetry: (error) =>
       !(error instanceof QualifiedConnectedAccountCompatibilityError)

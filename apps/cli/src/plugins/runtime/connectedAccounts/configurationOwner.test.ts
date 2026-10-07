@@ -165,6 +165,30 @@ function createHarness(records: readonly Readonly<{
 }
 
 describe('ConnectedAccountConfigurationOwner', () => {
+    it('keeps a captured configuration current across runtime replacement until its record changes', async () => {
+        const mode = configuredMode('service');
+        const target = { kind: 'service' as const, service, modeId: mode.id };
+        const record = {
+            revision: 'revision-1',
+            values: { endpoint: 'https://api.example.test' },
+            secretRefs: { clientSecret: 'saved-secret-1' },
+        };
+        const harness = createHarness([{ target, record }]);
+        const admission = await harness.owner.admit({
+            intent: 'connect', service, mode, ...generation,
+        });
+        if (admission.status !== 'ready') throw new Error('Expected a ready configuration');
+
+        harness.setGenerationCurrent(false);
+        expect(await harness.owner.isCurrent(admission.snapshot)).toBe(true);
+        expect(await admission.snapshot.getSecret('clientSecret')).toBe('super-secret');
+
+        harness.setRecord(target, { ...record, revision: 'revision-2' });
+        expect(await harness.owner.isCurrent(admission.snapshot)).toBe(false);
+        await expect(admission.snapshot.getSecret('clientSecret')).rejects.toMatchObject({
+            code: 'connected_account_configuration_stale',
+        });
+    });
     it('accepts schema-valid nested objects without imposing a duplicate field budget', () => {
         const nested = Object.fromEntries(
             Array.from({ length: 65 }, (_value, index) => [`field-${index}`, index]),
@@ -341,7 +365,7 @@ describe('ConnectedAccountConfigurationOwner', () => {
         });
     });
 
-    it('loads one validated service snapshot, applies defaults, and fences bounded secret reads', async () => {
+    it('loads one validated service snapshot, applies defaults, and fences secret reads when its record changes', async () => {
         const target = Object.freeze({
             kind: 'service' as const,
             service,
@@ -381,6 +405,12 @@ describe('ConnectedAccountConfigurationOwner', () => {
         });
 
         harness.setGenerationCurrent(false);
+        await expect(admission.snapshot.getSecret('clientSecret')).resolves.toBe('super-secret');
+        harness.setRecord(target, {
+            revision: 'revision-8',
+            values: { endpoint: 'https://api.example.test' },
+            secretRefs: { clientSecret: 'saved-secret-1' },
+        });
         await expect(admission.snapshot.getSecret('clientSecret')).rejects.toMatchObject({
             code: 'connected_account_configuration_stale',
         });
@@ -969,5 +999,26 @@ describe('ConnectedAccountConfigurationOwner', () => {
             ...generation,
         })).rejects.toMatchObject({ code: 'connected_account_configuration_invalid' });
         expect(harness.replace).not.toHaveBeenCalled();
+        const admission = await harness.owner.admit({ intent: 'connect', service, mode, ...generation });
+        if (admission.status !== 'ready') throw new Error('Expected a mode without configuration to be ready');
+        harness.setRecord({ kind: 'service', service, modeId: mode.id }, {
+            revision: 'irrelevant-record', values: {}, secretRefs: {},
+        });
+        await expect(harness.owner.isCurrent(admission.snapshot)).resolves.toBe(true);
+    });
+
+    it('does not admit a record-absence snapshot even when every declared configuration field is optional', async () => {
+        const mode = PluginConnectedAccountAuthenticationModeV2Schema.parse({
+            id: 'manual', kind: 'manual', outcomeReconciliation: 'none',
+            fields: [{ id: 'token', title: 'Token', schema: { type: 'string' }, secret: true }],
+            configuration: {
+                scope: 'service', changeBehavior: 'reconnect',
+                fields: [{ id: 'audience', title: 'Audience', schema: { type: 'string' }, required: false }],
+            },
+        });
+        const harness = createHarness();
+        await expect(harness.owner.admit({ intent: 'connect', service, mode, ...generation })).resolves.toMatchObject({
+            status: 'configurationRequired', missingFieldIds: [],
+        });
     });
 });

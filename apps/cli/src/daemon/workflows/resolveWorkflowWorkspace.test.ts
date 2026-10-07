@@ -114,6 +114,26 @@ async function createTemporaryGitProject() {
 }
 
 describe('resolveWorkflowWorkspace', () => {
+  it('finds original-revision workspace selections through deeply nested authored blocks', async () => {
+    let block: WorkflowBlock = { kind: 'wait', id: 'original',
+      document: { text: 'Continue', references: [], attachments: [] },
+      execution: { workspace: { kind: 'new_worktree', source: { kind: 'original' } } } };
+    for (let depth = 0; depth < 12_000; depth += 1) {
+      block = { kind: 'if', id: `branch-${depth}`,
+        when: { kind: 'exists', value: { kind: 'literal', value: true } },
+        then: [block], otherwise: [] };
+    }
+    const prepare = (committedRevision?: string) => prepareWorkflowAcceptedWorkspaceTarget({
+      projectTarget: { machineId: 'machine-1', directory: '/repo' },
+      definition: { version: 1, inputs: [], defaults: {}, blocks: [block] },
+      pathIsDirectory: async () => true,
+      inspectLocation: async () => ({ inspection: { rootPath: '/repo', ...(committedRevision ? { committedRevision } : {}) } }),
+    });
+    await expect(prepare()).resolves.toEqual({ ok: false, code: 'committed_revision_unavailable' });
+    await expect(prepare('a'.repeat(40))).resolves.toMatchObject({ ok: true,
+      workspaceTarget: { originalCommittedRevision: 'a'.repeat(40) },
+    });
+  });
   it.each<Extract<WorkflowBlock, { kind: 'action' | 'wait' | 'workflow' }>>([
     { kind: 'action', id: 'action', actionId: 'session.goal.set', input: {} },
     { kind: 'wait', id: 'wait', document: { text: 'Continue', references: [], attachments: [] } },

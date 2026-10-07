@@ -3,13 +3,14 @@ import type { ApiSessionClient } from '@/api/session/sessionClient';
 import { ProviderEnforcedPermissionHandler } from './handler';
 import type { PermissionRequestPushSender } from '../BasePermissionHandler';
 import type { ToolTraceProtocol } from '@/agent/tools/trace/toolTrace';
-import type { AccountSettings } from '@happier-dev/protocol';
+import type { AccountSettings, CodingPromptBehaviorV1 } from '@happier-dev/protocol';
 
 export function createProviderEnforcedPermissionHandler(params: {
   session: ApiSessionClient;
   logPrefix: string;
   pushSender?: PermissionRequestPushSender | null;
   getAccountSettings?: (() => AccountSettings | null) | null;
+  getCodingPromptBehavior?: (() => CodingPromptBehaviorV1 | null) | null;
   getWorkspaceWrites?: (() => 'allow' | 'deny' | undefined) | null;
   getAccountSettingsSecretsReadKeys?: (() => ReadonlyArray<Uint8Array | null | undefined>) | null;
   onAbortRequested?: (() => void | Promise<void>) | null;
@@ -25,6 +26,7 @@ export function createProviderEnforcedPermissionHandler(params: {
     logPrefix: params.logPrefix,
     pushSender: params.pushSender ?? null,
     getAccountSettings: params.getAccountSettings ?? null,
+    getCodingPromptBehavior: params.getCodingPromptBehavior ?? null,
     getWorkspaceWrites: params.getWorkspaceWrites ?? null,
     getAccountSettingsSecretsReadKeys: params.getAccountSettingsSecretsReadKeys ?? null,
     onAbortRequested: params.onAbortRequested ?? null,

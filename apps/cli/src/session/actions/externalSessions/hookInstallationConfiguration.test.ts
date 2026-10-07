@@ -1,9 +1,9 @@
-import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { chmod, lstat, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as processInstanceBoundary from '@happier-dev/cli-common/processInstance';
+import { createTestTempDirectory } from '../../../../../../scripts/testing/process/temporaryDirectories.mjs';
 
 import {
     PLUGIN_SESSION_HOOK_STATUS_INVENTORY_MAX_SERIALIZED_BYTES,
@@ -81,8 +81,17 @@ import {
     type ExternalSessionHookJsonValue,
 } from './hookInstallationConfiguration';
 
+const fixtureCleanups = new Set<() => void>();
+afterEach(() => {
+    for (const cleanup of fixtureCleanups) cleanup();
+    fixtureCleanups.clear();
+});
+
 async function fixture() {
-    const root = await mkdtemp(join(tmpdir(), 'happier-external-hooks-config-'));
+    // Config fixtures exercise in-process filesystem owners, without spawning.
+    const temporary = createTestTempDirectory('happier-external-hooks-config-');
+    fixtureCleanups.add(temporary.cleanup);
+    const root = temporary.root;
     const activeServerDir = join(root, 'server');
     const configDir = join(root, 'agent-config');
     await mkdir(activeServerDir, { recursive: true });

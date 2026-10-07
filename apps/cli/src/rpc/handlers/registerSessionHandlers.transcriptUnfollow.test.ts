@@ -8,7 +8,7 @@ import { registerActionSpecRpcHandlers } from './registerActionSpecRpcHandlers';
 
 describe('session transcript unfollow RPC', () => {
     it('releases the real follow lease through the canonical session transcript RPC scope', async () => {
-        const registry = createSessionTranscriptFollowLeaseRegistry({ maxLeases: 2, idleTtlMs: 60_000 });
+        const registry = createSessionTranscriptFollowLeaseRegistry({ idleTtlMs: 60_000 });
         let released = false;
         registry.retain({
             sessionId: 'session-1', leaseId: 'lease-1', idleTtlMs: 60_000,

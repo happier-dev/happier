@@ -1,6 +1,5 @@
 import { VOICE_ACTIONS_BLOCK } from '@happier-dev/protocol/voice/actions';
-import { fitVoiceAgentOutputTextV1, ingestVoiceAgentOutputEventV1 } from '@happier-dev/protocol/voice/outputEvents';
-import { resolveVoiceSpeechSegmentLength } from '@happier-dev/protocol/voice/speechText';
+import { fitVoiceAgentOutputTextV1, ingestVoiceAgentOutputEventV1, resolveVoiceAgentOutputSpeechSegmentLength } from '@happier-dev/protocol/voice/outputEvents';
 import type { VoiceAgentOutputTurnV1 } from '@happier-dev/protocol';
 
 type VoiceOutputDeltaEvent = Readonly<{
@@ -53,7 +52,7 @@ export function flushVoiceAgentStreamingSpeech(
   force = false,
 ): void {
   while (stream.outputSpeechBuffer) {
-    const segmentLength = resolveVoiceSpeechSegmentLength(stream.outputSpeechBuffer, { force, firstSegment: stream.outputSegmentIndex === 0, targetChars: stream.targetChars });
+    const segmentLength = resolveVoiceAgentOutputSpeechSegmentLength(stream.outputSpeechBuffer, { force, firstSegment: stream.outputSegmentIndex === 0, targetChars: stream.targetChars });
     if (segmentLength === 0) return;
     const candidateText = stream.outputSpeechBuffer.slice(0, segmentLength);
     const candidate = {

@@ -189,11 +189,11 @@ export function registerDaemonLocalServicesMachineRpcHandlers(
 
             rpc.registerHandler(
                 RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_REGISTER_PREVIEW,
-                async (raw: unknown): Promise<DaemonLocalServiceLauncherRegisterPreviewResponseV1> => {
+                async (raw: unknown, context): Promise<DaemonLocalServiceLauncherRegisterPreviewResponseV1> => {
                     const request = DaemonLocalServiceLauncherLeafRequestV1Schema.parse(raw);
                     const leaves = requireLauncherLeafRoutes(options);
                     return DaemonLocalServiceLauncherRegisterPreviewResponseV1Schema.parse(
-                        await leaves.registerPreview(request),
+                        await leaves.registerPreview(request, context?.signal),
                     );
                 },
             );

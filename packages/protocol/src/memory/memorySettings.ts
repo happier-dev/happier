@@ -1,3 +1,4 @@
+import { lazyZodSchema, lazyDefinition } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { SecretStringV1Schema } from '../crypto/settingsSecretStringSchemasV1.js';
@@ -6,13 +7,13 @@ import { SecretStringV1Schema } from '../crypto/settingsSecretStringSchemasV1.js
 // contribution, so activation order cannot redefine the Memory default.
 const DEFAULT_MEMORY_SUMMARIZER_BACKEND_ID = 'claude';
 
-const MemoryDefaultScopeV1Schema = z.discriminatedUnion('type', [
+const MemoryDefaultScopeV1Schema = lazyZodSchema(() => z.discriminatedUnion('type', [
   z.object({ type: z.literal('global') }).passthrough(),
   // Session scope defaults to "current session" at call time (no sessionId persisted).
   z.object({ type: z.literal('session') }).passthrough(),
-]);
+]));
 
-export const MemoryCoveragePolicyV1Schema = z.discriminatedUnion('type', [
+export const MemoryCoveragePolicyV1Schema = lazyZodSchema(() => z.discriminatedUnion('type', [
   z.object({ type: z.literal('full') }).passthrough(),
   z.object({
     type: z.literal('latest_messages'),
@@ -23,11 +24,11 @@ export const MemoryCoveragePolicyV1Schema = z.discriminatedUnion('type', [
     days: z.number().int().min(1).max(3_650).default(30),
   }).passthrough(),
   z.object({ type: z.literal('since_enabled') }).passthrough(),
-]);
+]));
 export type MemoryCoveragePolicyV1 = z.infer<typeof MemoryCoveragePolicyV1Schema>;
-const DEFAULT_MEMORY_COVERAGE_POLICY: MemoryCoveragePolicyV1 = MemoryCoveragePolicyV1Schema.parse({ type: 'full' });
+const DEFAULT_MEMORY_COVERAGE_POLICY: MemoryCoveragePolicyV1 = lazyDefinition(() => MemoryCoveragePolicyV1Schema.parse({ type: 'full' }));
 
-export const MemoryContentPolicyV1Schema = z
+export const MemoryContentPolicyV1Schema = lazyZodSchema(() => z
   .object({
     includeUserMessages: z.boolean().default(true),
     includeAssistantMessages: z.boolean().default(true),
@@ -35,20 +36,20 @@ export const MemoryContentPolicyV1Schema = z
     includeToolSummaries: z.boolean().default(false),
     includeToolOutputs: z.boolean().default(false),
   })
-  .passthrough();
+  .passthrough());
 export type MemoryContentPolicyV1 = z.infer<typeof MemoryContentPolicyV1Schema>;
-const DEFAULT_MEMORY_CONTENT_POLICY: MemoryContentPolicyV1 = MemoryContentPolicyV1Schema.parse({});
+const DEFAULT_MEMORY_CONTENT_POLICY: MemoryContentPolicyV1 = lazyDefinition(() => MemoryContentPolicyV1Schema.parse({}));
 
 /** Policy provenance stamped onto reconstructible daemon-memory artifacts. */
-export const MemoryIndexPolicyV1Schema = z.object({
+export const MemoryIndexPolicyV1Schema = lazyZodSchema(() => z.object({
   coveragePolicy: MemoryCoveragePolicyV1Schema,
   contentPolicy: MemoryContentPolicyV1Schema,
   backfillPolicy: z.enum(['new_only', 'last_30_days', 'all_history']),
   enabledAtMs: z.number().int().min(0),
-}).passthrough();
+}).passthrough());
 export type MemoryIndexPolicyV1 = z.infer<typeof MemoryIndexPolicyV1Schema>;
 
-export const MemoryHintsSettingsV1Schema = z.preprocess((value) => {
+export const MemoryHintsSettingsV1Schema = lazyZodSchema(() => z.preprocess((value) => {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     const candidate = value as Record<string, unknown>;
     if (
@@ -84,12 +85,12 @@ export const MemoryHintsSettingsV1Schema = z.preprocess((value) => {
     maxEntities: z.number().int().min(0).max(100).default(12),
     maxDecisions: z.number().int().min(0).max(100).default(12),
   })
-  .passthrough());
+  .passthrough()));
 
 export type MemoryHintsSettingsV1 = z.infer<typeof MemoryHintsSettingsV1Schema>;
-const DEFAULT_MEMORY_HINTS_SETTINGS: MemoryHintsSettingsV1 = MemoryHintsSettingsV1Schema.parse({});
+const DEFAULT_MEMORY_HINTS_SETTINGS: MemoryHintsSettingsV1 = lazyDefinition(() => MemoryHintsSettingsV1Schema.parse({}));
 
-export const MemoryDeepSettingsV1Schema = z
+export const MemoryDeepSettingsV1Schema = lazyZodSchema(() => z
   .object({
     recentDays: z.number().int().min(1).max(3650).default(30),
     maxChunkChars: z.number().int().min(500).max(200_000).default(8_000),
@@ -103,12 +104,12 @@ export const MemoryDeepSettingsV1Schema = z
     failureBackoffBaseMs: z.number().int().min(0).max(604_800_000).default(60_000),
     failureBackoffMaxMs: z.number().int().min(0).max(604_800_000).default(3_600_000),
   })
-  .passthrough();
+  .passthrough());
 
 export type MemoryDeepSettingsV1 = z.infer<typeof MemoryDeepSettingsV1Schema>;
-const DEFAULT_MEMORY_DEEP_SETTINGS: MemoryDeepSettingsV1 = MemoryDeepSettingsV1Schema.parse({});
+const DEFAULT_MEMORY_DEEP_SETTINGS: MemoryDeepSettingsV1 = lazyDefinition(() => MemoryDeepSettingsV1Schema.parse({}));
 
-export const MemoryEmbeddingsSettingsV1Schema = z
+export const MemoryEmbeddingsSettingsV1Schema = lazyZodSchema(() => z
   .object({
     enabled: z.boolean().default(false),
     provider: z.enum(['local_transformers', 'remote']).default('local_transformers'),
@@ -116,35 +117,35 @@ export const MemoryEmbeddingsSettingsV1Schema = z
     wFts: z.number().min(0).max(10).default(0.7),
     wEmb: z.number().min(0).max(10).default(0.3),
   })
-  .passthrough();
+  .passthrough());
 
 export type MemoryEmbeddingsSettingsV1 = z.infer<typeof MemoryEmbeddingsSettingsV1Schema>;
 
-export const MemoryEmbeddingsPresetIdSchema = z.enum(['balanced', 'long_context', 'quality']);
+export const MemoryEmbeddingsPresetIdSchema = lazyZodSchema(() => z.enum(['balanced', 'long_context', 'quality']));
 export type MemoryEmbeddingsPresetId = z.infer<typeof MemoryEmbeddingsPresetIdSchema>;
 
-export const MemoryEmbeddingsModeSchema = z.enum(['disabled', 'preset', 'custom']);
+export const MemoryEmbeddingsModeSchema = lazyZodSchema(() => z.enum(['disabled', 'preset', 'custom']));
 export type MemoryEmbeddingsMode = z.infer<typeof MemoryEmbeddingsModeSchema>;
 
-export const MemoryEmbeddingsBlendSchema = z
+export const MemoryEmbeddingsBlendSchema = lazyZodSchema(() => z
   .object({
     ftsWeight: z.number().min(0).max(10).default(0.7),
     embeddingWeight: z.number().min(0).max(10).default(0.3),
   })
-  .passthrough();
+  .passthrough());
 export type MemoryEmbeddingsBlend = z.infer<typeof MemoryEmbeddingsBlendSchema>;
 
-export const MemoryEmbeddingsLocalTransformersConfigSchema = z
+export const MemoryEmbeddingsLocalTransformersConfigSchema = lazyZodSchema(() => z
   .object({
     kind: z.literal('local_transformers'),
     modelId: z.string().trim().min(1).default('Xenova/all-MiniLM-L6-v2'),
     queryPrefix: z.string().trim().min(1).nullable().default(null),
     documentPrefix: z.string().trim().min(1).nullable().default(null),
   })
-  .passthrough();
+  .passthrough());
 export type MemoryEmbeddingsLocalTransformersConfig = z.infer<typeof MemoryEmbeddingsLocalTransformersConfigSchema>;
 
-export const MemoryEmbeddingsOpenAiCompatibleConfigSchema = z
+export const MemoryEmbeddingsOpenAiCompatibleConfigSchema = lazyZodSchema(() => z
   .object({
     kind: z.literal('openai_compatible'),
     baseUrl: z.string().trim().min(1).nullable().default(null),
@@ -152,16 +153,16 @@ export const MemoryEmbeddingsOpenAiCompatibleConfigSchema = z
     model: z.string().trim().min(1).default('text-embedding-3-small'),
     dimensions: z.number().int().min(1).max(30_720).nullable().default(null),
   })
-  .passthrough();
+  .passthrough());
 export type MemoryEmbeddingsOpenAiCompatibleConfig = z.infer<typeof MemoryEmbeddingsOpenAiCompatibleConfigSchema>;
 
-export const MemoryEmbeddingsCustomConfigSchema = z.discriminatedUnion('kind', [
+export const MemoryEmbeddingsCustomConfigSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   MemoryEmbeddingsLocalTransformersConfigSchema,
   MemoryEmbeddingsOpenAiCompatibleConfigSchema,
-]);
+]));
 export type MemoryEmbeddingsCustomConfig = z.infer<typeof MemoryEmbeddingsCustomConfigSchema>;
 
-export const MemoryEmbeddingsSettingsV2Schema = z
+export const MemoryEmbeddingsSettingsV2Schema = lazyZodSchema(() => z
   .object({
     mode: MemoryEmbeddingsModeSchema.default('disabled'),
     presetId: MemoryEmbeddingsPresetIdSchema.default('balanced'),
@@ -171,10 +172,10 @@ export const MemoryEmbeddingsSettingsV2Schema = z
       embeddingWeight: 0.3,
     }),
   })
-  .passthrough();
+  .passthrough());
 export type MemoryEmbeddingsSettingsV2 = z.infer<typeof MemoryEmbeddingsSettingsV2Schema>;
 
-const DEFAULT_MEMORY_EMBEDDINGS_SETTINGS: MemoryEmbeddingsSettingsV2 = MemoryEmbeddingsSettingsV2Schema.parse({});
+const DEFAULT_MEMORY_EMBEDDINGS_SETTINGS: MemoryEmbeddingsSettingsV2 = lazyDefinition(() => MemoryEmbeddingsSettingsV2Schema.parse({}));
 
 function normalizeBlend(raw: Readonly<{ wFts?: unknown; wEmb?: unknown }>): MemoryEmbeddingsBlend {
   return MemoryEmbeddingsBlendSchema.parse({
@@ -247,29 +248,29 @@ export function normalizeMemoryEmbeddingsSettings(raw: unknown): MemoryEmbedding
   return DEFAULT_MEMORY_EMBEDDINGS_SETTINGS;
 }
 
-export const MemoryBudgetsSettingsV1Schema = z
+export const MemoryBudgetsSettingsV1Schema = lazyZodSchema(() => z
   .object({
     maxDiskMbLight: z.number().int().min(1).max(1_000_000).default(250),
     maxDiskMbDeep: z.number().int().min(1).max(1_000_000).default(1500),
   })
-  .passthrough();
+  .passthrough());
 
 export type MemoryBudgetsSettingsV1 = z.infer<typeof MemoryBudgetsSettingsV1Schema>;
-const DEFAULT_MEMORY_BUDGETS_SETTINGS: MemoryBudgetsSettingsV1 = MemoryBudgetsSettingsV1Schema.parse({});
+const DEFAULT_MEMORY_BUDGETS_SETTINGS: MemoryBudgetsSettingsV1 = lazyDefinition(() => MemoryBudgetsSettingsV1Schema.parse({}));
 
-export const MemoryWorkerSettingsV1Schema = z
+export const MemoryWorkerSettingsV1Schema = lazyZodSchema(() => z
   .object({
     tickIntervalMs: z.number().int().min(500).max(3_600_000).default(10_000),
     inventoryRefreshIntervalMs: z.number().int().min(5_000).max(3_600_000).default(60_000),
     maxSessionsPerTick: z.number().int().min(1).max(1_000).default(2),
     sessionListPageLimit: z.number().int().min(1).max(500).default(50),
   })
-  .passthrough();
+  .passthrough());
 
 export type MemoryWorkerSettingsV1 = z.infer<typeof MemoryWorkerSettingsV1Schema>;
-const DEFAULT_MEMORY_WORKER_SETTINGS: MemoryWorkerSettingsV1 = MemoryWorkerSettingsV1Schema.parse({});
+const DEFAULT_MEMORY_WORKER_SETTINGS: MemoryWorkerSettingsV1 = lazyDefinition(() => MemoryWorkerSettingsV1Schema.parse({}));
 
-export const MemorySettingsV1Schema = z
+export const MemorySettingsV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     enabled: z.boolean().default(false),
@@ -299,11 +300,11 @@ export const MemorySettingsV1Schema = z
     budgets: MemoryBudgetsSettingsV1Schema.prefault(DEFAULT_MEMORY_BUDGETS_SETTINGS),
     worker: MemoryWorkerSettingsV1Schema.prefault(DEFAULT_MEMORY_WORKER_SETTINGS),
   })
-  .passthrough();
+  .passthrough());
 
 export type MemorySettingsV1 = z.infer<typeof MemorySettingsV1Schema>;
 
-export const DEFAULT_MEMORY_SETTINGS: MemorySettingsV1 = MemorySettingsV1Schema.parse({ v: 1 });
+export const DEFAULT_MEMORY_SETTINGS: MemorySettingsV1 = lazyDefinition(() => MemorySettingsV1Schema.parse({ v: 1 }));
 
 export function normalizeMemorySettings(raw: unknown): MemorySettingsV1 {
   const parsed = MemorySettingsV1Schema.safeParse(raw);

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { isAccountScopedBlobCiphertextForKind } from '../crypto/accountScopedCipherEnvelope.js';
 
 export const AUTHORING_MEMORY_ACCOUNT_SCOPED_BLOB_KIND_V1 = 'authoring_memory' as const;
@@ -27,6 +28,7 @@ export const AuthoringMemoryEngineSelectionsV1Schema = z.object({
   selectionsByScope: z.record(z.string(), AuthoringMemoryValueV1Schema),
 }).strict();
 export type AuthoringMemoryEngineSelectionsV1 = z.infer<typeof AuthoringMemoryEngineSelectionsV1Schema>;
+export const StoredAuthoringMemoryEngineSelectionsV1Schema = createStoredReadSchema(AuthoringMemoryEngineSelectionsV1Schema);
 
 /** E2EE opens must match the requested row before disclosing this value. */
 export const AuthoringMemoryPrivatePayloadV1Schema = z.object({
@@ -34,12 +36,14 @@ export const AuthoringMemoryPrivatePayloadV1Schema = z.object({
   value: AuthoringMemoryValueV1Schema,
 }).strict();
 export type AuthoringMemoryPrivatePayloadV1 = z.infer<typeof AuthoringMemoryPrivatePayloadV1Schema>;
+export const StoredAuthoringMemoryPrivatePayloadV1Schema = createStoredReadSchema(AuthoringMemoryPrivatePayloadV1Schema);
 
 export const AuthoringMemoryContentV1Schema = z.discriminatedUnion('t', [
   z.object({ t: z.literal('plain'), v: AuthoringMemoryValueV1Schema }).strict(),
   z.object({ t: z.literal('encrypted'), c: z.string().min(1) }).strict(),
 ]);
 export type AuthoringMemoryContentV1 = z.infer<typeof AuthoringMemoryContentV1Schema>;
+export const StoredAuthoringMemoryContentV1Schema = createStoredReadSchema(AuthoringMemoryContentV1Schema);
 
 export class AuthoringMemoryContentModeMismatchError extends Error {
   constructor() {
@@ -52,7 +56,7 @@ export function assertAuthoringMemoryContentForModeV1(
   input: unknown,
   mode: 'plain' | 'e2ee',
 ): AuthoringMemoryContentV1 {
-  const content = AuthoringMemoryContentV1Schema.parse(input);
+  const content = StoredAuthoringMemoryContentV1Schema.parse(input);
   if (
     (mode === 'plain' && content.t !== 'plain')
     || (mode === 'e2ee' && (

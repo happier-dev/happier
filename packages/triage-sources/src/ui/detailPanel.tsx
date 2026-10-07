@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { Tabs, usePluginTranslation, type TabsItemProps } from '@happier-dev/plugin-ui';
 import type { TriageDetailSurfaceInputV1, TriageSourceEntryLocalRefV1 } from '@happier-dev/triage-protocol/v1';
+import { triageSourceBindingComponentsV1 } from '@happier-dev/triage-protocol/v1';
 
 /** Exact read authority, independent of freshly parsed navigation inputs. */
 export function useTriageDetailRequest(input: TriageDetailSurfaceInputV1): Readonly<{
@@ -14,9 +15,8 @@ export function useTriageDetailRequest(input: TriageDetailSurfaceInputV1): Reado
     localRef: { kindId: entryRef.kindId, collisionScope: entryRef.collisionScope, entryId: entryRef.entryId },
   }), [
     input.instance.instance.source.pluginId, input.instance.instance.source.localId,
-    input.instance.instance.sourceInstanceId, input.instance.binding.purpose,
-    input.instance.binding.account.service.pluginId, input.instance.binding.account.service.localId,
-    input.instance.binding.account.accountId, input.instance.localInstanceKey, input.instance.configuration.token,
+    input.instance.instance.sourceInstanceId, JSON.stringify(triageSourceBindingComponentsV1(input.instance.binding)),
+    input.instance.localInstanceKey, input.instance.configuration.token,
     entryRef.source.pluginId, entryRef.source.localId, entryRef.kindId, entryRef.collisionScope, entryRef.entryId,
   ]);
 }

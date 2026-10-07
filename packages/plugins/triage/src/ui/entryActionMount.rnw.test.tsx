@@ -427,7 +427,7 @@ async function mountShell(harness: Harness): Promise<PluginUiTestkit> {
                     }],
                 },
             }),
-            adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope }),
+            adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope, overlays: true }),
             handlers: {
                 publishCurrentUiContext: () => undefined,
                 executeAction: async ({ action, input }) =>
@@ -586,8 +586,12 @@ describe('the entry action controls on the mounted detail header', () => {
         // The seed contains only actions whose complete start paths are
         // reachable in current bytes. The formal `reviewStart` arm remains a
         // valid configured shape, but is not offered until its producers land.
-        await expect(shell.getByRole('button', { name: 'Ask' })).resolves.toBeDefined();
+        // Someone else's pull request would lead with Review, but this source cannot prepare a review workspace,
+        // so Fix leads, Ask sits beside it, and Review is one press behind More actions with its reason stated.
         await expect(shell.getByRole('button', { name: 'Fix' })).resolves.toBeDefined();
+        await expect(shell.getByRole('button', { name: 'Ask' })).resolves.toBeDefined();
+        await expect(shell.queryByRole('button', { name: 'Review' })).resolves.toBeUndefined();
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'More actions' })); });
         await expect(shell.getByRole('button', { name: 'Review' })).resolves.toBeDefined();
     }, 60_000);
 

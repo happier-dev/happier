@@ -540,29 +540,6 @@ describe('createExecutionRunConnectedServicesBridge', () => {
         });
     });
 
-    it('does not admit a one-shot legacy-unfenced materialization to the run registry', async () => {
-        const cleanupOnFailure = vi.fn();
-        const { bridge, registerRunTargets } = createBridge({
-            resolveAuthForSpawn: (async () => ({
-                env: {
-                    CODEX_HOME: '/materialized/run_abc/codex-home',
-                    [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: '[]',
-                },
-                cleanupOnFailure,
-                cleanupOnExit: null,
-                connectedServicesBindings: RUN_BINDINGS,
-                ongoingRuntimeRegistrationAllowed: false as const,
-            })) as never,
-        });
-
-        await expect(bridge.materialize(MATERIALIZE_INPUT)).resolves.toMatchObject({
-            ok: false,
-            errorCode: 'connected_service_run_materialization_blocked',
-        });
-        expect(cleanupOnFailure).toHaveBeenCalledOnce();
-        expect(registerRunTargets).not.toHaveBeenCalled();
-    });
-
     it('release unregisters run targets and runs the retained cleanup exactly once', async () => {
         const {
             bridge,

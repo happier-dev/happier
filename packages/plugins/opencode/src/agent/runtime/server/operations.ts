@@ -19,6 +19,7 @@ export type OpenCodePromptSendMeta = Readonly<{
   userMessageSeq?: number | null;
   userMessageSeqs?: readonly number[];
   promptParts?: readonly import('./promptParts.js').OpenCodePromptPart[];
+  delivery?: 'steer';
 }>;
 
 export type OpenCodeSessionOpenRequest =
@@ -39,14 +40,14 @@ export type OpenCodeRuntimeTurnOperations = Readonly<{
     prompt: string,
     meta?: OpenCodePromptSendMeta,
   ): Promise<Readonly<{
-    providerUserMessageId: string;
+    providerUserMessageId: string | null;
     effectiveModelId?: string | null;
   }>>;
   steerInFlightTurn(
     message: string,
     meta?: OpenCodePromptSendMeta,
   ): Promise<Readonly<{
-    providerUserMessageId: string;
+    providerUserMessageId: string | null;
     effectiveModelId?: string | null;
   }>>;
   waitForTurnCompletion(): Promise<void>;

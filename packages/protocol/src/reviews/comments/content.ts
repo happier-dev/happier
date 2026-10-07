@@ -1004,9 +1004,6 @@ export function openReviewCommentEventSensitiveEnvelopeV1(params: Readonly<{
   };
 }
 
-export const REVIEW_COMMENT_ACCOUNT_ENCRYPTION_MIGRATION_MAX_COMMENTS_V1 = 200;
-export const REVIEW_COMMENT_ACCOUNT_ENCRYPTION_MIGRATION_MAX_EVENTS_V1 = 2_000;
-
 export const ReviewCommentEventSensitiveMigrationLayoutV1Schema = z.enum([
   'canonical_v1',
   'legacy_split_v1',
@@ -1044,8 +1041,7 @@ export type ReviewCommentAccountEncryptionMigrationInventoryEventV1 = z.infer<
 export const ReviewCommentAccountEncryptionMigrationInventoryItemV1Schema = z.object({
   structural: ReviewCommentStructuralV1Schema,
   sensitiveSource: ReviewCommentSensitiveMigrationSourceV1Schema,
-  events: z.array(ReviewCommentAccountEncryptionMigrationInventoryEventV1Schema)
-    .max(REVIEW_COMMENT_ACCOUNT_ENCRYPTION_MIGRATION_MAX_EVENTS_V1),
+  events: z.array(ReviewCommentAccountEncryptionMigrationInventoryEventV1Schema),
 }).strict();
 export type ReviewCommentAccountEncryptionMigrationInventoryItemV1 = z.infer<
   typeof ReviewCommentAccountEncryptionMigrationInventoryItemV1Schema
@@ -1053,24 +1049,8 @@ export type ReviewCommentAccountEncryptionMigrationInventoryItemV1 = z.infer<
 
 export const ReviewCommentAccountEncryptionMigrationInventoryResponseV1Schema = z.object({
   v: z.literal(1),
-  items: z.array(ReviewCommentAccountEncryptionMigrationInventoryItemV1Schema)
-    .max(REVIEW_COMMENT_ACCOUNT_ENCRYPTION_MIGRATION_MAX_COMMENTS_V1),
-}).strict().superRefine((value, ctx) => {
-  const eventCount = value.items.reduce(
-    (count, item) => count + item.events.length,
-    0,
-  );
-  if (eventCount > REVIEW_COMMENT_ACCOUNT_ENCRYPTION_MIGRATION_MAX_EVENTS_V1) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.too_big,
-      maximum: REVIEW_COMMENT_ACCOUNT_ENCRYPTION_MIGRATION_MAX_EVENTS_V1,
-      origin: 'array',
-      inclusive: true,
-      path: ['items'],
-      message: 'Review Comment migration event inventory exceeds the supported bound',
-    });
-  }
-});
+  items: z.array(ReviewCommentAccountEncryptionMigrationInventoryItemV1Schema),
+}).strict();
 export type ReviewCommentAccountEncryptionMigrationInventoryResponseV1 = z.infer<
   typeof ReviewCommentAccountEncryptionMigrationInventoryResponseV1Schema
 >;

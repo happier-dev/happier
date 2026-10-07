@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionStateV1 } from '@happier-dev/plugin-sdk/ui';
 
-import { describeTriageAgentStatusV1 } from './agentState.js';
+import { describeTriageAgentStatusV1, readTriageEntryAgentStatusV1 } from './agentState.js';
 
 const state = (patch: Partial<SessionStateV1>): SessionStateV1 => ({
   sessionId: 'session-a',
@@ -51,5 +51,29 @@ describe('the live agent status on the story rail', () => {
       .toMatchObject({ labelKey: 'plugins.triage.surface.detail.agent.offline', tone: 'attention', live: false });
     expect(describeTriageAgentStatusV1(state({ operational: 'ready', runtime: 'idle', workStatus: { bucket: 'idle', tone: 'neutral', word: 'Ready' } })))
       .toMatchObject({ labelKey: 'plugins.triage.surface.detail.agent.ready', tone: 'neutral', live: false });
+  });
+});
+
+describe('the one agent state a list row shows for its linked Sessions', () => {
+  const working = state({});
+  const permission = state({ sessionId: 'session-b', operational: 'permission_required', runtime: 'waiting',
+    workStatus: { bucket: 'needs_you', tone: 'attention', word: 'Permission required' } });
+  const ready = state({ sessionId: 'session-c', operational: 'ready', runtime: 'idle',
+    workStatus: { bucket: 'finished', tone: 'neutral', word: 'Ready' } });
+  const unknown = state({ sessionId: 'session-d', operational: 'none', runtime: 'unknown', lifecycle: 'unknown',
+    workStatus: { bucket: 'idle', tone: 'neutral', word: 'Unknown' } });
+
+  it('says the Session that needs the reader before one that is merely working or done', () => {
+    expect(readTriageEntryAgentStatusV1([ready, working, permission]))
+      .toMatchObject({ labelKey: 'plugins.triage.surface.detail.agent.permission', tone: 'attention' });
+    expect(readTriageEntryAgentStatusV1([ready, working]))
+      .toMatchObject({ labelKey: 'plugins.triage.surface.detail.agent.working', live: true });
+  });
+
+  it('falls back to the first Session it can describe, and claims nothing for none', () => {
+    expect(readTriageEntryAgentStatusV1([unknown, ready]))
+      .toMatchObject({ labelKey: 'plugins.triage.surface.detail.agent.ready' });
+    expect(readTriageEntryAgentStatusV1([unknown])).toBeNull();
+    expect(readTriageEntryAgentStatusV1([])).toBeNull();
   });
 });

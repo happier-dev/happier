@@ -15,7 +15,11 @@
  */
 
 import * as React from 'react';
-import type { TriageSourceInstanceDraftV1 } from '@happier-dev/triage-protocol/v1';
+import {
+  isTriageSourceConnectedAccountInstanceV1,
+  type TriageSourceConnectedAccountBindingV1,
+  type TriageSourceInstanceDraftV1,
+} from '@happier-dev/triage-protocol/v1';
 import {
   createTriageSourceSettingsSurface,
   type TriageSourceSettingsDraftEditorPropsV1,
@@ -156,12 +160,34 @@ function mergeEnvironments(
   return [...byUuid.values()];
 }
 
-function PosthogDraftEditor({
+function PosthogDraftEditor(props: TriageSourceSettingsDraftEditorPropsV1): React.ReactElement {
+  const text = usePluginTranslation();
+  if (!isTriageSourceConnectedAccountInstanceV1(props.draft)) {
+    return (
+      <Stack gap="medium">
+        <Banner
+          tone="warning"
+          title="Configuration needs attention"
+          titleKey="plugins.posthog.ui.settings.attention"
+          description={text('plugins.posthog.ui.settings.readFailed', 'PostHog could not read this configuration page.')}
+        />
+        <Button title="Cancel" titleKey="plugins.posthog.ui.settings.cancel" variant="secondary" disabled={props.busy} onPress={props.onCancel} />
+      </Stack>
+    );
+  }
+  return <PosthogAccountDraftEditor {...props} draft={props.draft} />;
+}
+
+type PosthogAccountDraftEditorProps = TriageSourceSettingsDraftEditorPropsV1 & Readonly<{
+  draft: TriageSourceInstanceDraftV1 & Readonly<{ binding: TriageSourceConnectedAccountBindingV1 }>;
+}>;
+
+function PosthogAccountDraftEditor({
   draft,
   busy,
   onSubmit,
   onCancel,
-}: TriageSourceSettingsDraftEditorPropsV1): React.ReactElement {
+}: PosthogAccountDraftEditorProps): React.ReactElement {
   const text = usePluginTranslation();
   const action = React.useMemo(() => ({
     pluginId: POSTHOG_PLUGIN_ID,

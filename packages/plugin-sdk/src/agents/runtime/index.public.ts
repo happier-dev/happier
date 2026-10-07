@@ -150,6 +150,7 @@ export type { AgentConnectedAccountStateSharingDescriptorEntryV1 } from '../../a
 export type { AgentConnectedAccountStateSharingDescriptorTransformV1 } from '../../agentRuntime/projections.js';
 export type { AgentConnectedAccountStateSharingDynamicEntryPatternV1 } from '../../agentRuntime/projections.js';
 export type { AgentConnectedAccountStateSharingDescriptorV1 } from '../../agentRuntime/projections.js';
+export type { AgentPreflightExecutableSelectorV1 } from '../../agentRuntime/projections.js';
 export type { AgentPreflightJsonRpcRequestClientV1 } from '../../agentRuntime/projections.js';
 export type { AgentPreflightSessionControlsCommandResultV1 } from '../../agentRuntime/projections.js';
 export type { AgentPreflightSessionControlsCommandV1 } from '../../agentRuntime/projections.js';

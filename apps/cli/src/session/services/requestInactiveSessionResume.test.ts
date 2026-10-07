@@ -70,7 +70,7 @@ function metadataWithLaunchCorrespondence() {
     v: 1,
     sessionCreationTag,
     recipe: {
-      execution: { machineId: 'machine-1', directory: '/repo' },
+      execution: { machineId: 'machine-1', directory: { kind: 'path', path: '/repo' } },
       organization: { folderId: null, tagIds: [] },
       agentTarget: {
         kind: 'agent',

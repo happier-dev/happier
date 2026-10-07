@@ -85,7 +85,6 @@ async function readAccountSecurityRoute(
   signal?.throwIfAborted();
   const response = await axios.get<unknown>(`${serverApiUrl}/v1/account/security`, {
     headers: { Authorization: `Bearer ${credentials.token}`, 'Content-Type': 'application/json' },
-    timeout: 30_000,
     ...(signal ? { signal } : {}),
     validateStatus: () => true,
   });
@@ -157,7 +156,6 @@ async function resolveAccountProfile(
   signal?.throwIfAborted();
   const response = await axios.get<unknown>(`${runtime.serverApiUrl}/v1/account/profile`, {
     headers: { Authorization: `Bearer ${credentials.token}`, 'Content-Type': 'application/json' },
-    timeout: 30_000,
     ...(signal ? { signal } : {}),
     validateStatus: () => true,
   });
@@ -192,7 +190,6 @@ async function acquirePlainEnrollmentExternalAuthProof(input: Readonly<{
     AuthEntryRequestV1Schema.parse({ v: 1, scope: { kind: 'home' } }),
     {
       headers: { Authorization: `Bearer ${input.credentials.token}`, 'Content-Type': 'application/json' },
-      timeout: 30_000,
       ...(input.signal ? { signal: input.signal } : {}),
       validateStatus: () => true,
     },
@@ -227,7 +224,6 @@ async function acquirePlainEnrollmentExternalAuthProof(input: Readonly<{
       },
       {
         headers: { Authorization: `Bearer ${input.credentials.token}`, 'Content-Type': 'application/json' },
-        timeout: 30_000,
         ...(input.signal ? { signal: input.signal } : {}),
         validateStatus: () => true,
       },
@@ -265,7 +261,6 @@ async function acquirePlainEnrollmentExternalAuthProof(input: Readonly<{
         `${input.runtime.serverApiUrl}/v1/auth/external/${encodeURIComponent(provider)}/params?${query}`,
         {
           headers: { Authorization: `Bearer ${input.credentials.token}`, Origin: callbackOrigin },
-          timeout: 30_000,
           ...(input.signal ? { signal: input.signal } : {}),
           validateStatus: () => true,
         },
@@ -305,7 +300,6 @@ async function preparePasswordMutation(
     PasswordMutationPreparationRequestV1Schema.parse(body),
     {
       headers: { Authorization: `Bearer ${credentials.token}`, 'Content-Type': 'application/json' },
-      timeout: 30_000,
       ...(signal ? { signal } : {}),
       validateStatus: () => true,
     },
@@ -508,7 +502,6 @@ async function handleAuthPasswordEnrollEmailRequest(args: string[], signal?: Abo
       request,
       {
         headers: { Authorization: `Bearer ${credentials.token}`, 'Content-Type': 'application/json' },
-        timeout: 30_000,
         ...(signal ? { signal } : {}),
         validateStatus: () => true,
       },

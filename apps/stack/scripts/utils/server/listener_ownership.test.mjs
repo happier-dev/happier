@@ -8,7 +8,7 @@ import {
   resolveStackPidOwnership,
 } from './listener_ownership.mjs';
 
-test('spawned listener proof keeps the production ownership deadline at three seconds', async () => {
+test('spawned listener proof shares the Stack observation budget', async () => {
   let timeoutMs;
   const pid = await resolveSpawnedProcessGroupListenPid(
     { port: 4101, spawnedPid: 301 },
@@ -22,7 +22,7 @@ test('spawned listener proof keeps the production ownership deadline at three se
   );
 
   assert.equal(pid, 301);
-  assert.ok(timeoutMs >= 1_900 && timeoutMs <= 2_000);
+  assert.ok(timeoutMs > 3_000 && timeoutMs <= 5_000);
 });
 
 test('spawned listener proof prefers a delayed process-group result over inconclusive broad discovery', async () => {

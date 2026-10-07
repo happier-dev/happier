@@ -1,3 +1,4 @@
+import type { AgentCliSessionCommandPluginSettingsV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { RuntimeDescriptorV1 } from '@happier-dev/protocol';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import type { AcpProbeBackend } from '@/agent/acp/runtime/acpRuntimeBackendContract';
@@ -477,6 +478,7 @@ async function probeAgentModels(params: {
   cwd: string;
   timeoutMs?: number;
   accountSettings?: Readonly<Record<string, unknown>> | null;
+  pluginSettings?: AgentCliSessionCommandPluginSettingsV1;
   credentials?: StoredCredentials | null;
   env?: NodeJS.ProcessEnv;
   materializedEnv?: Readonly<Record<string, string>>;
@@ -503,6 +505,7 @@ async function probeAgentModels(params: {
     probeKind: 'models',
     backendTarget: params.backendTarget,
     accountSettings: params.accountSettings,
+    pluginSettings: params.pluginSettings,
     env: params.env,
   });
   const cacheKey = buildAgentProbeCacheKey({
@@ -575,6 +578,7 @@ async function probeAgentModels(params: {
             cwd,
             timeoutMs,
             accountSettings: params.accountSettings ?? null,
+            pluginSettings: params.pluginSettings,
             env,
           })).catch(() => null);
           const envelope = ProbeModelsObservationSchema.safeParse(modelsRaw);

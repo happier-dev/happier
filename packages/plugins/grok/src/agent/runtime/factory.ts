@@ -1,5 +1,7 @@
 import type { AgentRuntimeFactory } from '@happier-dev/plugin-sdk/agents/runtime';
 
+import { GROK_ACP_COMMAND } from '../preflight/models.js';
+
 import {
   buildGrokAcpRuntimeDefinition,
   createGrokAcpRuntimeExtensions,
@@ -11,8 +13,8 @@ export const createGrokAgentRuntime: AgentRuntimeFactory = () => ({
       return await context.protocols.acp.open(request, {
         transport: {
           kind: 'stdio',
-          executable: { kind: 'systemTool', id: 'grok-cli' },
-          args: ['--no-auto-update', 'agent', 'stdio'],
+          executable: { kind: 'systemTool', id: GROK_ACP_COMMAND.toolId },
+          args: [...GROK_ACP_COMMAND.args],
         },
         definition: buildGrokAcpRuntimeDefinition(request.launchEnvironment?.values ?? {}),
         extensions: createGrokAcpRuntimeExtensions(context),
@@ -23,8 +25,8 @@ export const createGrokAgentRuntime: AgentRuntimeFactory = () => ({
         return await context.protocols.acp.openExecutionRunV1(request, {
           transport: {
             kind: 'stdio',
-            executable: { kind: 'systemTool', id: 'grok-cli' },
-            args: ['--no-auto-update', 'agent', 'stdio'],
+            executable: { kind: 'systemTool', id: GROK_ACP_COMMAND.toolId },
+            args: [...GROK_ACP_COMMAND.args],
           },
           definition: buildGrokAcpRuntimeDefinition(request.launchEnvironment?.values ?? {}),
         });

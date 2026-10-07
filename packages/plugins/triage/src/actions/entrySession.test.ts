@@ -200,6 +200,7 @@ function reviewStartFanout(
 }
 
 function createFormalReviewContext(input: Readonly<{
+    expectedReview?: ReturnType<typeof formalReviewInput>['review'];
     verifyResult: unknown;
     events: string[];
     reviewStartResult?: unknown;
@@ -208,6 +209,7 @@ function createFormalReviewContext(input: Readonly<{
     expectedReviewInputs?: Readonly<Record<string, unknown>>;
     expectedEngineIds?: readonly string[];
 }>): PluginInvocationContext {
+    const review = input.expectedReview ?? formalReviewInput().review;
     const operation = { role: 'verifyReviewWorkspace' };
     const source = START_INPUT_BASE.entryRef.source;
     const admitted = [{
@@ -251,7 +253,6 @@ function createFormalReviewContext(input: Readonly<{
                 ) => {
                     input.events.push('source.verifyReviewWorkspace');
                     expect(selectedOperation).toBe(operation);
-                    const review = formalReviewInput().review;
                     expect(selectedInput).toEqual({
                         v: 1,
                         instance: review.instance,
@@ -264,10 +265,11 @@ function createFormalReviewContext(input: Readonly<{
                             pullRequest: review.pullRequest,
                         },
                     });
-                    expect(options).toEqual(expect.objectContaining({
-                        expectedSelectedConnectedAccountRef:
-                            testkitConfiguredInstance().binding.account,
-                    }));
+                    if ('account' in review.instance.binding) {
+                        expect(options).toEqual(expect.objectContaining({ expectedSelectedConnectedAccountRef: review.instance.binding.account }));
+                    } else {
+                        expect(options).not.toHaveProperty('expectedSelectedConnectedAccountRef');
+                    }
                     return input.verifyResult;
                 },
                 execute: async (actionId: string, actionInput: unknown) => {
@@ -292,7 +294,9 @@ function createFormalReviewContext(input: Readonly<{
                         },
                         scmPullRequestReviewScope: {
                             kind: 'scm_pull_request_review_scope.v1',
-                            account: testkitConfiguredInstance().binding.account,
+                            ...('account' in review.instance.binding
+                                ? { account: review.instance.binding.account }
+                                : { nativeService: review.instance.binding.service }),
                             pullRequest: { number: 17 },
                             observed: TESTKIT_OBSERVED_REVISION,
                         },
@@ -649,6 +653,18 @@ describe('the Session-start Action a mounted header can actually press', () => {
 });
 
 describe('the registered formal Review transition', () => {
+    it('starts a native-bound selected PR review with service metadata and no account substitute', async () => {
+        const input = formalReviewInput();
+        const review = { ...input.review, instance: { ...input.review.instance, binding: {
+            purpose: input.review.instance.binding.purpose, source: 'native' as const,
+            service: { pluginId: 'happier.scm.forge.github', localId: 'github-account' },
+        } } };
+        const handler = registeredHandler(TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1);
+        await expect(handler({ ...input, review }, createFormalReviewContext({
+            expectedReview: review, verifyResult: { kind: 'verified', pullRequest: { number: 17 } }, events: [],
+        }))).resolves.toMatchObject({ status: 'started' });
+    });
+
     it('relays a selected Saved Secret reference without letting host selection replace the PR review intent', async () => {
         const events: string[] = [];
         const secretReferenceOverlay = {

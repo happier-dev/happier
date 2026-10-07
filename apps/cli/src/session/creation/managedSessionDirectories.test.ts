@@ -31,6 +31,20 @@ async function fixture() {
 }
 
 describe('managed session directory ownership', () => {
+  it('reads known ownership fields from retained records and rewrites only canonical fields', async () => {
+    const { activeServerDir, owner } = await fixture();
+    const allocation = await owner.materializeForFreshSpawn({ sessionCreationTag: 'additive-owner' });
+    const recordPath = join(activeServerDir, 'session-directories', '.owners', `${allocation.allocationId}.json`);
+    const stored = JSON.parse(await readFile(recordPath, 'utf8')) as Record<string, unknown>;
+    await writeFile(recordPath, JSON.stringify({ ...stored, futureField: { retained: true } }), { mode: 0o600 });
+
+    expect(await owner.listRecords()).toMatchObject([{ allocationId: allocation.allocationId, sessionId: null }]);
+    expect(await owner.resolveForSession({ sessionId: 'session', sessionCreationTag: 'additive-owner', path: allocation.directory })).toMatchObject({ ok: true });
+    expect(JSON.parse(await readFile(recordPath, 'utf8'))).not.toHaveProperty('futureField');
+    await owner.removeForSession({ sessionId: 'session', stopSession: async () => ({ status: 'not_found' }) });
+    await expect(access(allocation.directory)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('repairs permission drift on proven directories without losing their files', async () => {
     if (process.platform === 'win32') return;
     const { activeServerDir, owner } = await fixture();

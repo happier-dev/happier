@@ -13,6 +13,7 @@ import {
 } from './sync_project.mjs';
 import {
   inspectDevTargetSyncService,
+  prepareDevTargetCommandSync,
   repairRecoverableDevTargetSyncConflicts,
   startDevTargetSyncService,
   stopDevTargetSyncService,
@@ -63,6 +64,23 @@ test('sync startup seeds an unscanned no-watch session once through the canonica
   env.HSTACK_TEST_SYNC_FLUSH_FAILED = '1';
   await assert.rejects(start(), /Mutagen initial flush failed/);
   assert.equal((await inspectDevTargetSyncService({ stackBaseDir: fixture.path('stack'), targets: [target], env })).preparation.state, 'failed');
+  env.HSTACK_TEST_SYNC_STATE = fixture.path('sibling-seed');
+  delete env.HSTACK_TEST_SYNC_FLUSH_FAILED;
+  const stackBaseDir = fixture.path('command-stack');
+  await mkdir(stackBaseDir);
+  const commandTarget = { name: 'worker', platform: 'posix', ssh: 'worker', repoDir: '/mirror/0.2', cliHomeDir: '/home/worker' };
+  await writeFile(join(stackBaseDir, 'dev-targets.json'), JSON.stringify({
+    version: 3, targets: [commandTarget],
+    runtimePlacement: { server: { mode: 'local' }, expo: { mode: 'local' }, daemon: { mode: 'local' } },
+    commandExecution: { mode: 'auto', targets: ['worker'], fallback: 'local' },
+  }));
+  const prepare = () => prepareDevTargetCommandSync({ stackBaseDir, sourceDir: '/source/0.2', targets: [commandTarget], env });
+  await prepare();
+  assert.equal(await readFile(env.HSTACK_TEST_SYNC_STATE, 'utf8'), '1');
+  await prepare();
+  assert.equal(await readFile(env.HSTACK_TEST_SYNC_STATE, 'utf8'), '1', 'prepared command replicas leave subsequent dispatch flushes to the launcher');
+  const project = await readFile(join(stackBaseDir, 'mutagen/mutagen.yml'), 'utf8');
+  assert.doesNotMatch(project, /portable|pollingInterval/);
 });
 
 test('detached sync start recreates requested sessions missing from its canonical project', async (t) => {

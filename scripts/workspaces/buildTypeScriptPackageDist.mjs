@@ -21,6 +21,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import ts from 'typescript';
 import { exitWithCommandResult, runCommand } from '../../apps/stack/scripts/utils/proc/proc.mjs';
+import { resolveRemoteCommandPolicy } from '../../apps/stack/scripts/utils/dev_targets/remote_commands.mjs';
 
 import { assertNoMissingLocalImports } from './distLocalImports.mjs';
 import {
@@ -32,6 +33,7 @@ import {
 import { resolveYarnCommandInvocation } from './execYarnCommand.mjs';
 import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation.mjs';
 import { resolveTypeScriptProjectPathFromArgs } from './prepareTypeScriptProjectBuild.mjs';
+import { resolveWorkspaceBuildMode } from './workspaceChildBuildEnv.mjs';
 import { withWorkspaceBundleLock } from './workspaceBundleLock.mjs';
 import { resolveWorkspacePackageBuildLockPath } from './workspacePackageBuildLock.mjs';
 import {
@@ -620,12 +622,21 @@ export async function buildTypeScriptPackageDist({
   const buildId = `${Date.now()}.${process.pid}.${rand()}`;
   const stagedDistDir = resolve(explicitOutputDir || join(resolvedPackageDir, `.dist.build.${buildId}`));
   const backupDir = join(resolvedPackageDir, `.dist.backup.${buildId}`);
+  const commandEnv = { ...process.env, ...env };
+  const buildMode = resolveWorkspaceBuildMode({ env: commandEnv });
+  // Source runtimes consume emitted JS and declarations. Their dependency
+  // refresh must not repeat the full checker owned by strict/package builds.
+  // Include these options in the existing cache identity so checked and
+  // emit-only compilations never share incremental state.
+  const effectiveCompilerArgs = [
+    ...parsedArgs.compilerArgs,
+    ...(buildMode === 'qa-runtime' ? ['--noCheck', '--incremental'] : []),
+  ];
   const persistentCompilerWorkTree = resolvePersistentCompilerWorkTree({
     packageDir: resolvedPackageDir,
-    compilerArgs: parsedArgs.compilerArgs,
+    compilerArgs: effectiveCompilerArgs,
     outputMode: explicitOutputDir ? 'staged' : 'promoted',
   });
-  const commandEnv = { ...process.env, ...env };
   const lockPath = resolveWorkspacePackageBuildLockPath(resolvedPackageDir, packageJson);
   const stagedBuildTargetsPackageLock = explicitOutputDir && workspaceLockLeaseTargetsPath(
     lockPath,
@@ -654,7 +665,7 @@ export async function buildTypeScriptPackageDist({
         HAPPIER_WORKSPACE_DIST_OUTPUT_DIR: stagedDistDir,
       };
       const compilerArgs = withOutputCompilerArgs(
-        await withDistProjectCompilerArgs(parsedArgs.compilerArgs, compilerWorkTree),
+        await withDistProjectCompilerArgs(effectiveCompilerArgs, compilerWorkTree),
         compilerWorkTree.outputDir,
         compilerWorkTree.tsBuildInfoFile,
       );
@@ -662,6 +673,11 @@ export async function buildTypeScriptPackageDist({
         repoRoot,
         workspaceDir: resolvedPackageDir,
         processExecPath: process.execPath,
+        env: stagedBuildEnv,
+        admissionClass: resolveRemoteCommandPolicy(
+          [process.execPath, fileURLToPath(import.meta.url), ...effectiveCompilerArgs],
+          { cwd: relative(repoRoot, resolvedPackageDir).replaceAll('\\', '/') },
+        ).heavyClass,
       });
       try {
         await runChecked(

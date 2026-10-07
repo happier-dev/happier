@@ -310,7 +310,7 @@ export async function listGithubChangedFiles(
   if (request.comparison !== true && frontier?.comparison !== undefined) return unavailable(CONTINUATION_UNREADABLE_FAILURE);
   const dependencies = { client: admitted.client, now: Date.now };
   const endpointInput = { route: admitted.route, entryNumber: admitted.entryNumber, repositoryId: admitted.repository.repositoryId };
-  const binding = JSON.stringify([request.instance.instance, request.instance.binding.account, admitted.localRef, admitted.route]);
+  const binding = JSON.stringify([request.instance.instance, request.instance.binding, admitted.localRef, admitted.route]);
   const previous = frontier?.comparison;
   if (request.comparison === true && request.continuation !== undefined && (previous === undefined || previous.binding !== binding)) return unavailable(CONTINUATION_UNREADABLE_FAILURE);
   const captured = request.comparison === true

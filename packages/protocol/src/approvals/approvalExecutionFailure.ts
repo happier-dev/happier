@@ -1,6 +1,7 @@
 import type { ActionExecuteFailure } from '../actions/actionExecutionResult.js';
 import {
   parseSessionBoardActionPortResultV1,
+  parseStoredSessionBoardActionFailureV1,
 } from '../sessions/board/actions.js';
 import { SessionBoardActionIdV1Schema } from '../sessions/board/actionIds.js';
 import type {
@@ -12,10 +13,10 @@ import type {
 function parseStrictApprovalFailure(input: Readonly<{
   request: ApprovalRequestV2;
   failure: ActionExecuteFailure;
-}>): ActionExecuteFailure | null {
+}>, storedRead = false): ActionExecuteFailure | null {
   const actionId = SessionBoardActionIdV1Schema.safeParse(input.request.actionId);
   if (!actionId.success) return null;
-  const parsed = parseSessionBoardActionPortResultV1(
+  const parsed = (storedRead ? parseStoredSessionBoardActionFailureV1 : parseSessionBoardActionPortResultV1)(
     actionId.data,
     input.request.actionArgs,
     input.failure,
@@ -66,5 +67,5 @@ export function readApprovalExecutionFailure(
   return parseStrictApprovalFailure({
     request,
     failure: { ...failure, details: execution.details },
-  }) ?? failure;
+  }, true) ?? failure;
 }

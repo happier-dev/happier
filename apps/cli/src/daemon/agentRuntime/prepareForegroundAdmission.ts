@@ -10,6 +10,7 @@ import {
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { registerSensitiveDiagnosticValues } from '@happier-dev/protocol/bugs/reports/redaction';
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import type { ProviderErrorV1, QualifiedConnectedAccountRef, ArtifactSharingResourceV1 } from '@happier-dev/protocol';
@@ -285,8 +286,7 @@ function hasCompleteConnectedServiceProjection(
       const service = binding.target.kind === 'account'
         ? binding.target.account.service
         : binding.target.service;
-      const serviceId = resolveFirstPartyConnectedAccountServiceId(service);
-      return serviceId ? [serviceId] : [];
+      return [buildQualifiedPluginContributionKey(service)];
     }),
   );
   return Object.entries(connectedServices.bindingsByServiceId).every(
@@ -877,10 +877,6 @@ export async function prepareForegroundAgentRuntimeAdmission(
         ...(childEnvironment.unsetEnvKeys ?? []),
       ]);
       if (
-        connectedServiceAuth?.ongoingRuntimeRegistrationAllowed === false
-      ) {
-        sessionPurposeBindingSnapshot = null;
-      } else if (
         connectedServiceAuth
         && !connectedServiceAuth.qualifiedPurposeBindingSnapshot
       ) {
@@ -890,8 +886,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
         ));
       }
       if (
-        connectedServiceAuth?.ongoingRuntimeRegistrationAllowed !== false
-        && connectedServiceAuth?.qualifiedPurposeBindingSnapshot
+        connectedServiceAuth?.qualifiedPurposeBindingSnapshot
       ) {
         sessionPurposeBindingSnapshot =
           connectedServiceAuth.qualifiedPurposeBindingSnapshot;

@@ -6,6 +6,8 @@ export type AuggiePreflightModel = Readonly<{
   description?: string;
 }>;
 
+export const AUGGIE_ACP_COMMAND = Object.freeze({ toolId: 'auggie-cli', args: Object.freeze(['--acp']) });
+
 const AUGGIE_CLI_MODELS_COMMAND_ARGS = ['model', 'list', '--json'] as const;
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -46,6 +48,7 @@ export function buildAuggiePreflightModelsFromModelListJson(outputRaw: string): 
 }
 
 export const AUGGIE_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
+  catalogs: Object.freeze({ kind: 'acp' as const, command: AUGGIE_ACP_COMMAND }),
   models: Object.freeze({
     command: Object.freeze({ toolId: 'auggie-cli', args: AUGGIE_CLI_MODELS_COMMAND_ARGS }),
     parseOutput: ({ stdout, stderr }) =>

@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
 
-import { ExecutionRunHostActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/executionRunHostActionApprovalRequestV1';
+import { ExecutionRunHostActionApprovalRequestV1Schema, StoredExecutionRunHostActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/executionRunHostActionApprovalRequestV1';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import type { ExecutionRunHostActionApprovalRequestV1, ReviewCommentProposalV1 } from '@happier-dev/protocol';
 
-import { getSharedBlockingApprovalCoordinator } from './blockingApprovalCoordinator';
+import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 import { executionRunHostActionApprovalSubjectsEqual } from './executionRunHostActionApprovalSubject';
 
 export type ExecutionRunHostActionCurrentIntentSubject = Readonly<{
@@ -105,7 +105,7 @@ export function createExecutionRunHostActionCurrentIntentAdapter(deps: Readonly<
           subscribeChanges: (onChange, onError) => subscribeChanges(created.artifactId, onChange, onError),
         } : {}),
       });
-      const decided = ExecutionRunHostActionApprovalRequestV1Schema.safeParse(result.request);
+      const decided = StoredExecutionRunHostActionApprovalRequestV1Schema.safeParse(result.request);
       if (!decided.success
         || decided.data.subjectFingerprint !== subject.subjectFingerprint
         || !executionRunHostActionApprovalSubjectsEqual(request, decided.data)) {

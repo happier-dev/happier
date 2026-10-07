@@ -15,6 +15,7 @@ import { GITHUB_PLUGIN_ID } from '../observations/githubProviderContracts.js';
 import { admitGithubEntryInvocation } from './admission.js';
 import {
   GithubIssueAssigneeAddInputV1Schema,
+  githubReviewPublicationCredential,
   GithubIssueAssigneeRemoveInputV1Schema,
   GithubIssueCloseInputV1Schema,
   GithubIssueCommentInputV1Schema,
@@ -72,7 +73,7 @@ function publicationPlanTargetsRequest(
 ): boolean {
   return reviewCommentPublicationTargetMatchesV1(plan.target, {
     providerId: 'github',
-    configuredAccountId: request.instance.binding.account.accountId,
+    ...githubReviewPublicationCredential(request.instance.binding),
     sourceId: `${GITHUB_PLUGIN_ID}/github-forge`,
     localRef: request.localRef,
     subtarget: expectedSubtarget,

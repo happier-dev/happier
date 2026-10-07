@@ -24,6 +24,9 @@ const TEST_RUNTIME_LIFETIME_SIGNAL = new AbortController().signal;
 const resolveBackendEngineAdapterResolutionMock = vi.fn();
 const requestExecutionRunConnectedServicesMaterializationMock = vi.fn();
 const releaseExecutionRunConnectedServicesMock = vi.fn(async (..._args: unknown[]) => ({ ok: true as const, released: true }));
+const requestExecutionRunConnectedServiceRuntimeAuthRefreshMock = vi.fn(async (..._args: unknown[]) => ({
+  status: 'unavailable' as const, reason: 'fixture_refresh_unavailable',
+}));
 const prepareExecutionRunProviderLaunchMock = vi.fn();
 const OPENAI_CODEX_ACCOUNT_SERVICE_ID = 'happier.agent.codex/openai-codex';
 
@@ -38,6 +41,8 @@ vi.mock('@/daemon/controlClient', () => ({
     requestExecutionRunConnectedServicesMaterializationMock(...args),
   releaseExecutionRunConnectedServices: (...args: unknown[]) =>
     releaseExecutionRunConnectedServicesMock(...args),
+  requestExecutionRunConnectedServiceRuntimeAuthRefresh: (...args: unknown[]) =>
+    requestExecutionRunConnectedServiceRuntimeAuthRefreshMock(...args),
 }));
 
 vi.mock('./providerLaunch', () => ({
@@ -141,6 +146,7 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
   beforeEach(() => {
     resolveBackendEngineAdapterResolutionMock.mockReset();
     requestExecutionRunConnectedServicesMaterializationMock.mockReset();
+    requestExecutionRunConnectedServiceRuntimeAuthRefreshMock.mockClear();
     releaseExecutionRunConnectedServicesMock
       .mockReset()
       .mockResolvedValue({ ok: true as const, released: true });

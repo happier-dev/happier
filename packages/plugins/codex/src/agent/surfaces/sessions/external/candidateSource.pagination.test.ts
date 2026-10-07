@@ -26,6 +26,7 @@ const appServerProbe = vi.hoisted(() => ({
 const rolloutFsProbe = vi.hoisted(() => ({
   statPaths: [] as string[],
   onStat: null as (() => void) | null,
+  onOpen: null as (() => void) | null,
 }));
 
 // The Codex native app-server is a spawned provider process reached over JSON-RPC:
@@ -74,6 +75,11 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
   return {
     ...actual,
+    open: async (...args: Parameters<typeof actual.open>) => {
+      const handle = await actual.open(...args);
+      rolloutFsProbe.onOpen?.();
+      return handle;
+    },
     stat: async (...args: Parameters<typeof actual.stat>) => {
       const filePath = args[0];
       if (typeof filePath === 'string' && filePath.endsWith('.jsonl')) {
@@ -90,6 +96,51 @@ import { pageCodexExternalSessionTranscript } from './transcriptSource.js';
 import { createCodexExternalSessionsContribution } from './contribution.js';
 
 describe('Codex candidate conversation search', () => {
+  it('yields during first-page discovery and resumes the unfinished source within the host budget', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-content-discovery-deadline-'));
+    try {
+      const sessions = join(root, 'sessions', '2026', '07', '23');
+      await mkdir(sessions, { recursive: true });
+      const id = 'ffffffff-1111-1111-1111-111111111111';
+      await writeFile(join(sessions, `rollout-2026-07-23T10-00-00-${id}.jsonl`), [
+        { type: 'session_meta', payload: { id, cwd: '/repo' } },
+        ...Array.from({ length: 1500 }, (_, index) => ({ type: 'event_msg', payload: {
+          type: 'agent_message', message: index === 1499 ? 'First discovery deadline needle' : `ordinary ${index} `.repeat(40),
+        } })),
+      ].map((row) => JSON.stringify(row)).join('\n') + '\n');
+      appServerProbe.threads = [];
+      let nowMs = 1000;
+      vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+      rolloutFsProbe.onOpen = () => { nowMs += 3000; };
+      const ripgrep = { run: async ({ args, paths, signal }: { args: readonly string[]; paths: readonly string[]; signal?: AbortSignal }) => {
+        const launcher = fileURLToPath(new URL('../../../../../../../../apps/cli/scripts/ripgrep_launcher.cjs', import.meta.url));
+        const result = await promisify(execFile)(process.execPath, [launcher, JSON.stringify([...args, '--', ...paths])], { signal });
+        return { ...result, exitCode: 0 };
+      } };
+      const contribution = createCodexExternalSessionsContribution({ env: { CODEX_HOME: root } });
+      const request = {
+        source: { kind: 'codexHome' as const, home: 'user' as const, homePath: root },
+        searchTarget: 'content' as const, searchTerm: 'First discovery deadline needle', maxItems: 1,
+        maxSerializedBytes: 1024 * 1024, exec: {} as ExecService, ripgrep, signal: new AbortController().signal,
+      };
+      const deadlineAtMs = nowMs + 15000;
+      const first = await contribution.listCandidates({ ...request, deadlineAtMs });
+      expect(first).toMatchObject({ ok: true });
+      if (!first.ok) throw new Error(`${first.code}: ${first.message}`);
+      expect(nowMs).toBeLessThan(deadlineAtMs);
+      expect(first.value).toMatchObject({ candidates: [], contentCoverage: 'partial', nextCursor: expect.any(String) });
+      rolloutFsProbe.onOpen = null;
+      const next = await contribution.listCandidates({ ...request, deadlineAtMs: nowMs + 15000, cursor: first.value.nextCursor! });
+      if (!next.ok) throw new Error(`${next.code}: ${next.message}`);
+      expect(next.value.candidates[0]?.match).toMatchObject({ snippet: 'First discovery deadline needle', messageIndex: 1499 });
+      expect(next.value.contentCoverage).toBe('complete');
+      expect(next.value.nextCursor).toBeNull();
+    } finally {
+      rolloutFsProbe.onOpen = null;
+      vi.restoreAllMocks();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   it('defers a native probe that cannot fit its existing budget, preserving both sources for continuation', async () => {
     const root = await mkdtemp(join(tmpdir(), 'codex-content-native-deadline-'));
     try {

@@ -168,6 +168,7 @@ export function createUnavailableExternalSessionsAuthorService(
         capabilities: async () =>
             createExternalSessionsUnavailableCapabilities(code),
         list: fail,
+        closeList: fail,
         attach: fail,
         readTranscript: fail,
         followTranscript: async () => Object.freeze({

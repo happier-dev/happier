@@ -3,7 +3,16 @@ import assert from 'node:assert/strict';
 import net from 'node:net';
 import { createServer } from 'node:http';
 
-import { pickMetroPort, selectExpoDevMetroPort } from './metro_ports.mjs';
+import { observeMetroPortAvailability, pickMetroPort, selectExpoDevMetroPort } from './metro_ports.mjs';
+
+test('Metro binding spends the same remaining observation budget as discovery', async () => {
+  const result = await observeMetroPortAvailability(45678, {}, {
+    listListenPidsWithStatusImpl: async () => ({ status: 'ok', pids: [] }),
+    probeTcpPortBindingImpl: async (_port, { timeoutMs }) => timeoutMs > 1_000
+      ? { status: 'free' } : { status: 'timeout', reason: 'port-bind-timeout' },
+  });
+  assert.equal(result.status, 'free');
+});
 
 test('selectExpoDevMetroPort retries transient inconclusive stable-pin observations', async () => {
   let observations = 0;

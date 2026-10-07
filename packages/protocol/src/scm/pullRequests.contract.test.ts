@@ -1,3 +1,6 @@
+import type { core } from 'zod';
+import { zodSchemaToJsonSchemaObject } from '../actions/actionInputJsonSchema.js';
+import { SessionRunStreamReadEnvelopeSchema } from '../sessions/control/contract.js';
 import { describe, expect, it } from 'vitest';
 
 import * as protocol from '../index.js';
@@ -317,5 +320,31 @@ describe('SCM pull-request protocol contracts', () => {
       cwd: '/repo',
       prReference: { headBranch: 'feature\n--upload-pack=evil' },
     }).success).toBe(false);
+  });
+});
+
+describe('pull-request references in the composed session control schema', () => {
+  it('retains the inline reference union in both JSON Schema dialects', () => {
+    for (const target of ['draft-7', 'draft-2020-12'] as const) {
+      const projections = [
+        zodSchemaToJsonSchemaObject(SessionRunStreamReadEnvelopeSchema, { target }),
+        SessionRunStreamReadEnvelopeSchema.toJSONSchema({ io: 'input', target, unrepresentable: 'any' }),
+      ];
+      for (const projection of projections) {
+        const schema = projection as core.JSONSchema.JSONSchema;
+        const definitions = (schema.$defs ?? schema.definitions) as Record<string, core.JSONSchema.JSONSchema>;
+        const scope = Object.values(definitions).find((node) => {
+          const kind = node.properties?.kind;
+          return typeof kind === 'object' && kind.const === 'scm_pull_request_review_scope.v1';
+        });
+        expect(scope?.properties?.pullRequest).toEqual({
+          anyOf: [
+            { $ref: expect.any(String) },
+            { $ref: expect.any(String) },
+            { $ref: expect.any(String) },
+          ],
+        });
+      }
+    }
   });
 });

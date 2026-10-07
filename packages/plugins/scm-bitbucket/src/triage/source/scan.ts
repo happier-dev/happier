@@ -1,4 +1,5 @@
 import {
+  isTriageSourceConnectedAccountInstanceV1,
   type TriageScanInputV1,
   type TriageScanResultV1,
   type TriageSourceScanEvidenceV1,
@@ -153,6 +154,9 @@ export async function scanBitbucketSource(
   runtime: BitbucketSourceRuntime,
   input: TriageScanInputV1,
 ): Promise<TriageScanResultV1> {
+  if (!isTriageSourceConnectedAccountInstanceV1(input.instance)) {
+    return failed(createBitbucketFailure('unsupportedContract', 'unsupported-credential-source'));
+  }
   if (input.instance.binding.purpose !== BITBUCKET_CONNECTED_ACCOUNT_PURPOSE) {
     return failed(createBitbucketFailure('unsupportedContract', 'binding-purpose-mismatch'));
   }

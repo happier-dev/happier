@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { DEFAULT_CODING_PROMPT_BEHAVIOR_V1 } from './codingPromptBehaviorV1.js';
 import { resolveEffectiveCodingPromptBehaviorV1 } from './effectiveCodingPromptBehaviorV1.js';
+import type { ArtifactSharingResourceV1 } from '../artifacts/artifactSharingV1.js';
 
 function launchProfile(overrides: unknown): unknown {
   return {
@@ -39,6 +40,20 @@ describe('resolveEffectiveCodingPromptBehaviorV1', () => {
       },
       profileId: 'focused',
     })).toEqual({ v: 1, sessionTitleUpdates: 'disabled', responseOptions: 'agent' });
+  });
+
+  it.each(['owner', 'view'] as const)('resolves the selected %s published profile through the authorized Artifact collection', (access) => {
+    const artifact = { artifactId: 'published', access,
+      header: { kind: 'launch-profile.v1', profileId: 'focused', name: 'Focused' },
+      body: JSON.stringify({ kind: 'launch-profile.v1', profile: launchProfile({ sessionTitleUpdates: 'disabled' }) }),
+    } satisfies ArtifactSharingResourceV1;
+    const settings = { codingPromptBehaviorV1: { v: 1, sessionTitleUpdates: 'initial', responseOptions: 'disabled' },
+      profiles: access === 'owner' ? [{ artifactId: artifact.artifactId }] : [] };
+    const input = { settings, profileId: 'focused', artifactsById: new Map([[artifact.artifactId, artifact]]) };
+    expect(resolveEffectiveCodingPromptBehaviorV1(input))
+      .toEqual({ v: 1, sessionTitleUpdates: 'disabled', responseOptions: 'disabled' });
+    expect(resolveEffectiveCodingPromptBehaviorV1({ ...input, artifactsById: new Map() }))
+      .toEqual({ v: 1, sessionTitleUpdates: 'initial', responseOptions: 'disabled' });
   });
 
   it('inherits every key the profile does not override', () => {

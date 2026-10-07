@@ -361,6 +361,7 @@ const OutputSchemas = [
   lazyZodSchema(() => z.object({
     ...TurnEventBaseShape,
     kind: z.literal('message-delta'),
+    messageId: ProviderIdSchema.optional(),
     channel: z.enum(['assistant', 'reasoning']),
     text: z.string(),
     sidechainId: HostIdSchema.optional(),

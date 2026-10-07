@@ -91,10 +91,11 @@ describe('CLI declared Account settings', () => {
       .toMatchObject({ ok: false, errorCode: 'account_settings_content_unavailable' });
   });
 
-  it('lets agents read Account defaults but keeps approval-reviewer configuration user-only', async () => {
+  it('lets agents read Account defaults but refuses an unbound configuration approval without writing', async () => {
     const agent = { surface: 'agent', authority: 'account_automation', actionsSettings } as const;
     expect(await executor().execute('settings.get', { anchor: 'delegation.workDepthLimit' }, agent)).toMatchObject({ ok: true, result: { value: 4 } });
-    expect(await executor().execute('settings.set', { anchor: 'delegation.approvalReviewerEnabled', value: true }, agent)).toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    expect(await executor().execute('settings.set', { anchor: 'delegation.approvalReviewerEnabled', value: true }, agent)).toMatchObject({ ok: false, errorCode: 'approval_origin_unavailable' });
     expect(accountSettingsParse(content.t === 'plain' ? content.v : {}).approvalReviewerEnabled).toBe(false);
+    expect(version).toBe(1);
   });
 });

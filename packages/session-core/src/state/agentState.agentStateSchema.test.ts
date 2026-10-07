@@ -17,6 +17,36 @@ describe('AgentStateSchema', () => {
         expect(parsed.data.controlledByUser).toBe(true);
     });
 
+    it('drops unknown stored fields while preserving completion evidence and opaque tool arguments', () => {
+        const parsed = AgentStateSchema.parse(JSON.stringify({
+            controlledByUser: true,
+            futureState: { enabled: true },
+            localControl: { attached: true, futureControl: true },
+            completedRequests: {
+                question: {
+                    tool: 'AskUserQuestion', status: 'approved',
+                    arguments: { futureToolArgument: { enabled: true } },
+                    answers: { Question: 'Answer' },
+                    structuredAnswersV1: { Question: ['Answer'] },
+                    allowTools: ['Read'],
+                    responseTarget: { kind: 'source_owned', futureSourceField: { enabled: true } },
+                    futureCompletion: true,
+                },
+            },
+        }));
+
+        expect(parsed).not.toHaveProperty('futureState');
+        expect(parsed.localControl).toEqual({ attached: true });
+        expect(parsed.completedRequests?.question).toEqual({
+            tool: 'AskUserQuestion', status: 'approved',
+            arguments: { futureToolArgument: { enabled: true } },
+            answers: { Question: 'Answer' }, structuredAnswersV1: { Question: ['Answer'] },
+            allowTools: ['Read'],
+            responseTarget: { kind: 'source_owned', futureSourceField: { enabled: true } },
+        });
+        expect(AgentStateSchema.safeParse({ controlledByUser: 'invalid', futureState: true }).success).toBe(false);
+    });
+
     it('accepts a completed source-owned Claude dialog choice', () => {
         const parsed = AgentStateSchema.safeParse({
             requests: {},

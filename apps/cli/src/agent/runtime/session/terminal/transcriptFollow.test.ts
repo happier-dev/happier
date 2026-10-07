@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ExternalSessionsSource, PluginAgentContributionV2 } from '@happier-dev/protocol';
 
 import { createPluginExternalSessionsAdapter } from '@/session/external/pluginExternalSessionsAdapter';
-import { EXTERNAL_SESSIONS_INVOCATION_POLICY } from '@/session/external/agentExternalSessionsInvocation';
 import { createConfiguredPluginExternalSessionsAdapter } from '@/session/external/configuredSourceMaterializer';
 import type { HostExternalTranscriptFollowEvent } from '@/session/external/privateContract';
 
@@ -21,6 +20,34 @@ const loadCompleteBaseline = async () => ({
 });
 
 describe('createHostTerminalTranscriptFollowService', () => {
+    it('admits a slow committed baseline without inventing a deadline and still follows', async () => {
+        vi.useFakeTimers();
+        let releaseBaseline!: () => void;
+        const baseline = new Promise<Awaited<ReturnType<typeof loadCompleteBaseline>>>((resolve) => {
+            releaseBaseline = () => resolve({ localIds: new Set<string>(), complete: true });
+        });
+        const lifecycle = new AbortController();
+        const service = createHostTerminalTranscriptFollowService({
+            signal: lifecycle.signal,
+            loadCommittedLocalIdBaseline: async () => await baseline,
+            followProviderSession: async (_request, listener) => {
+                await emitEmptyInitialReplay(listener);
+                return { status: 'following', startingCursor: 'current-tail', subscription: { dispose: async () => undefined } };
+            },
+            publish: async () => undefined,
+        });
+        try {
+            const binding = service.bindProviderSession({ agentId: 'claude', providerSessionId: 'slow-session' });
+            await vi.advanceTimersByTimeAsync(46_000);
+            releaseBaseline();
+            await expect(binding).resolves.toMatchObject({ status: 'following' });
+            await service.releaseActiveBindings();
+        } finally {
+            lifecycle.abort();
+            releaseBaseline();
+            vi.useRealTimers();
+        }
+    });
     it('binds the exact canonical External Session coordinate and releases once', async () => {
         const publish = vi.fn(async () => undefined);
         const dispose = vi.fn(async () => undefined);
@@ -86,7 +113,6 @@ describe('createHostTerminalTranscriptFollowService', () => {
             },
             source: { kind: 'terminal', projectId: 'project-1' },
             options: {
-                admissionDeadlineAtMs: expect.any(Number),
                 signal: expect.any(AbortSignal),
             },
             listener: expect.any(Function),
@@ -104,7 +130,6 @@ describe('createHostTerminalTranscriptFollowService', () => {
                 nextCursor: 'cursor-1',
             },
             expect.objectContaining({
-                deadlineAtMs: expect.any(Number),
                 signal: expect.any(AbortSignal),
             }),
         );
@@ -228,7 +253,7 @@ describe('createHostTerminalTranscriptFollowService', () => {
         expect(publish).not.toHaveBeenCalled();
     });
 
-    it('mints the whole admission deadline before loading the committed baseline', async () => {
+    it('preserves the caller admission deadline while loading the committed baseline', async () => {
         let nowMs = 10_000;
         const now = vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
         const followProviderSession = vi.fn(async (_request: Parameters<FollowProviderSession>[0], listener: Parameters<FollowProviderSession>[1]) => {
@@ -256,11 +281,12 @@ describe('createHostTerminalTranscriptFollowService', () => {
             await expect(service.bindProviderSession({
                 agentId: 'claude',
                 providerSessionId: 'provider-session-1',
+                admissionDeadlineAtMs: 70_000,
             })).resolves.toMatchObject({ status: 'following' });
 
             expect(followProviderSession).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    admissionDeadlineAtMs: 25_000,
+                    admissionDeadlineAtMs: 70_000,
                 }),
                 expect.any(Function),
             );
@@ -298,6 +324,7 @@ describe('createHostTerminalTranscriptFollowService', () => {
             await expect(service.bindProviderSession({
                 agentId: 'claude',
                 providerSessionId: 'provider-session-1',
+                admissionDeadlineAtMs: 25_000,
             })).resolves.toEqual({
                 status: 'unavailable',
                 code: 'plugin_external_follow_resync_required',
@@ -325,7 +352,7 @@ describe('createHostTerminalTranscriptFollowService', () => {
         });
         const baselineInputs: Array<Readonly<{
             signal: AbortSignal;
-            deadlineAtMs: number;
+            deadlineAtMs?: number;
         }>> = [];
         const followProviderSession = vi.fn(async (_request: Parameters<FollowProviderSession>[0], listener: Parameters<FollowProviderSession>[1]) => {
             await emitEmptyInitialReplay(listener);
@@ -352,11 +379,10 @@ describe('createHostTerminalTranscriptFollowService', () => {
             binding = service.bindProviderSession({
                 agentId: 'claude',
                 providerSessionId: 'provider-session-1',
+                admissionDeadlineAtMs: 25_000,
             });
             void binding.catch(() => undefined);
-            await vi.advanceTimersByTimeAsync(
-                EXTERNAL_SESSIONS_INVOCATION_POLICY.deadlineMs,
-            );
+            await vi.advanceTimersByTimeAsync(15_000);
 
             await expect(binding).resolves.toEqual({
                 status: 'unavailable',
@@ -427,11 +453,10 @@ describe('createHostTerminalTranscriptFollowService', () => {
             const binding = service.bindProviderSession({
                 agentId: 'claude',
                 providerSessionId: 'provider-session-held-projection',
+                admissionDeadlineAtMs: 25_000,
             });
             void binding.catch(() => undefined);
-            await vi.advanceTimersByTimeAsync(
-                EXTERNAL_SESSIONS_INVOCATION_POLICY.deadlineMs,
-            );
+            await vi.advanceTimersByTimeAsync(15_000);
 
             await expect(binding).resolves.toEqual({
                 status: 'unavailable',
@@ -650,6 +675,7 @@ describe('createHostTerminalTranscriptFollowService', () => {
         const binding = service.bindProviderSession({
             agentId: 'antigravity',
             providerSessionId: 'provider-session-1',
+            admissionDeadlineAtMs: 25_000,
         });
         let outcome: unknown = null;
         void binding.then((value) => {
@@ -658,9 +684,7 @@ describe('createHostTerminalTranscriptFollowService', () => {
 
         try {
             await vi.advanceTimersByTimeAsync(0);
-            await vi.advanceTimersByTimeAsync(
-                EXTERNAL_SESSIONS_INVOCATION_POLICY.deadlineMs - 1,
-            );
+            await vi.advanceTimersByTimeAsync(14_999);
             releaseBaseline();
             await resolverStarted;
             expect(Date.now()).toBe(24_999);

@@ -1,12 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { getRuntimePortExtraEnv, withStackEnv } from './stack_environment.mjs';
+import { withStackEnv } from './stack_environment.mjs';
+import { resolveStackServerEndpoint } from '../utils/server/urls.mjs';
 import { applyStackCacheEnv } from '../utils/proc/pm.mjs';
+import { resolveCommandPath } from '../utils/proc/commands.mjs';
 
 async function withTempStackEnvFixture(fn, { includeServerPort = true } = {}) {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-stack-env-sanitize-'));
@@ -291,7 +293,7 @@ test('withStackEnv ignores runtime ports backed only by an untrusted live pid', 
   );
 });
 
-test('getRuntimePortExtraEnv ignores runtime ports backed only by an untrusted live pid', async () => {
+test('stack endpoint resolver ignores runtime ports backed only by an untrusted live pid', async () => {
   await withTempStackEnvFixture(
     async ({ stackName, storageDir }) => {
       await writeFile(
@@ -306,7 +308,7 @@ test('getRuntimePortExtraEnv ignores runtime ports backed only by an untrusted l
         'utf-8',
       );
 
-      assert.equal(await getRuntimePortExtraEnv(stackName), null);
+      assert.equal((await resolveStackServerEndpoint({ stackName })).runtimePort, null);
     },
     { includeServerPort: false },
   );
@@ -373,16 +375,71 @@ test('withStackEnv applies runtime ports backed by a trusted live stack pid', as
         'utf-8',
       );
 
-      await withStackEnv({
-        stackName,
-        fn: async ({ env }) => {
-          assert.equal(env.HAPPIER_STACK_SERVER_PORT, String(childPort));
-          assert.equal(env.HAPPIER_STACK_EPHEMERAL_PORTS, '1');
-        },
-      });
-      assert.deepEqual(await getRuntimePortExtraEnv(stackName), {
-        HAPPIER_STACK_SERVER_PORT: String(childPort),
-      });
+      const originalPath = process.env.PATH;
+      const listenerReadsPath = join(storageDir, 'listener-reads');
+      if (process.platform === 'linux') {
+        const ssPath = await resolveCommandPath('ss');
+        assert.ok(ssPath, 'Linux listener fixture requires ss');
+        const binDir = join(storageDir, 'observed-listener-tools');
+        await mkdir(binDir);
+        // Genuine OS boundary: retain the real socket scan and record its cost.
+        await writeFile(join(binDir, 'ss'), `#!/bin/sh\nprintf 'scan\\n' >> '${listenerReadsPath}'\nexec '${ssPath}' "$@"\n`);
+        await chmod(join(binDir, 'ss'), 0o755);
+        process.env.PATH = `${binDir}:${originalPath ?? ''}`;
+      }
+      try {
+        await withStackEnv({
+          stackName,
+          fn: async ({ env }) => {
+            assert.equal(env.HAPPIER_STACK_SERVER_PORT, String(childPort));
+            assert.equal(env.HAPPIER_STACK_EPHEMERAL_PORTS, '1');
+          },
+        });
+        if (process.platform === 'linux') {
+          assert.equal((await readFile(listenerReadsPath, 'utf8')).trim().split('\n').length, 1,
+            'one environment projection must reuse its server listener observation');
+        }
+      } finally {
+        if (originalPath === undefined) delete process.env.PATH;
+        else process.env.PATH = originalPath;
+      }
+      assert.equal((await resolveStackServerEndpoint({ stackName })).runtimePort, childPort);
+
+      if (process.platform !== 'win32') {
+        // Genuine OS boundaries: neither a slow lsof nor ss can prove ownership.
+        // Scoped environment construction must still permit process teardown,
+        // while the real endpoint owner must refuse routing to another port.
+        const binDir = join(storageDir, 'slow-listener-tools');
+        await mkdir(binDir);
+        for (const tool of ['lsof', 'ss']) {
+          const path = join(binDir, tool);
+          await writeFile(path, '#!/bin/sh\nexec /bin/sleep 6\n', 'utf8');
+          await chmod(path, 0o755);
+        }
+        const previousPath = process.env.PATH;
+        process.env.PATH = `${binDir}:${previousPath ?? ''}`;
+        try {
+          const scoped = await withStackEnv({
+            stackName,
+            fn: async ({ env, runtimeState }) => ({
+              serverPort: env.HAPPIER_STACK_SERVER_PORT,
+              ephemeralOverlay: env.HAPPIER_STACK_EPHEMERAL_PORTS,
+              scope: env.HAPPIER_ACTIVE_SERVER_ID,
+              serverPid: runtimeState.processes.serverPid,
+            }),
+          });
+          assert.equal(scoped.serverPort, undefined);
+          assert.equal(scoped.ephemeralOverlay, undefined);
+          assert.equal(scoped.scope, 'stack_sanitize__id_default');
+          assert.equal(scoped.serverPid, child.pid);
+          await assert.rejects(resolveStackServerEndpoint({ stackName }), {
+            code: 'ELISTENERDISCOVERYINCONCLUSIVE',
+          });
+        } finally {
+          if (previousPath === undefined) delete process.env.PATH;
+          else process.env.PATH = previousPath;
+        }
+      }
     },
     { includeServerPort: false },
   );

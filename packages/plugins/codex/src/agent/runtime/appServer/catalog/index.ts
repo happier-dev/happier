@@ -1,3 +1,4 @@
+import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type {
     SkillCatalogItemV1,
     SkillCatalogV1,
@@ -9,7 +10,7 @@ type MetadataRecord = Record<string, unknown>;
 const CODEX_CATALOG_BACKEND_ID = 'codex';
 
 export type CodexAppServerCatalogClient = Readonly<{
-    request: (method: string, params: unknown) => Promise<unknown>;
+    request: (method: string, params?: JsonValue) => Promise<unknown>;
 }>;
 
 export type CodexVendorPluginCatalogEntry = VendorPluginCatalogItemV1 & Readonly<{

@@ -40,7 +40,6 @@ export type SessionTranscriptFollowLeaseRegistry = Readonly<{
 }>;
 
 type SessionTranscriptFollowLeaseRegistryParams = Readonly<{
-    maxLeases: number;
     idleTtlMs: number;
     hostPolicy?: Readonly<{ idleTtlMs?: number }>;
 }>;
@@ -138,8 +137,6 @@ export function createSessionTranscriptFollowLeaseRegistry(
             const leaseKey = getLeaseKey(identity);
             if (leases.has(leaseKey)) {
                 void release(identity);
-            } else if (leases.size >= params.maxLeases) {
-                return false;
             }
             leases.set(leaseKey, lease);
             scheduleIdleExpiry(identity, lease.idleTtlMs);
@@ -231,8 +228,8 @@ export async function followSessionTranscript<TItem>(
         unsubscribe();
         return {
             ok: false,
-            errorCode: 'follow_lease_limit_exceeded',
-            message: 'Transcript follow lease limit exceeded.',
+            errorCode: 'transcript_follow_released',
+            message: 'Transcript follow registry has been disposed.',
         };
     }
 
@@ -296,7 +293,7 @@ async function followWaitingSessionTranscript<TItem>(params: FollowSessionTransc
         };
         if (!params.registry.retain(lease)) {
             await lease.release();
-            return { ok: false as const, errorCode: 'follow_lease_limit_exceeded', message: 'Transcript follow lease limit exceeded.' };
+            return { ok: false as const, errorCode: 'transcript_follow_released', message: 'Transcript follow registry has been disposed.' };
         }
     }
     const changes = lease.changes!;

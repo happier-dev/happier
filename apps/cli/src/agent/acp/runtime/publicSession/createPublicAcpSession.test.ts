@@ -30,6 +30,7 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import { createGeminiAgentRuntime } from '../../../../../../../packages/plugins/gemini/src/agent/runtime/factory';
+import { buildGrokAcpRuntimeDefinition } from '../../../../../../../packages/plugins/grok/src/agent/acp/definition';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import { PluginAgentContributionV2Schema } from '@happier-dev/protocol';
@@ -267,15 +268,18 @@ function writePublicComposerAgent(dir: string): string {
                 : scenario === 'auth-dynamic-large'
                   ? { payload: 'x'.repeat(17_000) }
                   : undefined,
-              authMethods: scenario === 'auth-missing'
-                ? [{ id: 'different_login', name: 'Different login' }]
+              authMethods: scenario === 'grok-interject'
+                ? [{ id: 'cached_token', name: 'Grok cached token' }]
+                : scenario === 'auth-missing'
+                  ? [{ id: 'different_login', name: 'Different login' }]
                 : scenario === 'auth' || scenario === 'auth-missing' || scenario === 'auth-dynamic' || scenario === 'auth-dynamic-large'
                   ? [{ id: 'cursor_login', name: 'Cursor login' }]
                   : [],
             });
           } else if (request.method === 'authenticate') {
             lifecycleMethods.push('authenticate');
-            authenticated = request.params.methodId === 'cursor_login';
+            authenticated = request.params.methodId === 'cursor_login'
+              || (scenario === 'grok-interject' && request.params.methodId === 'cached_token');
             if (scenario === 'auth-dynamic') {
               initializeMetadata = {
                 client: initializeMetadata,
@@ -286,7 +290,7 @@ function writePublicComposerAgent(dir: string): string {
           } else if (request.method === 'session/new') {
             lifecycleMethods.push('session/new');
             newSessionMetadata = request.params._meta ?? null;
-            if (scenario === 'auth' && !authenticated) {
+            if ((scenario === 'auth' || scenario === 'grok-interject') && !authenticated) {
               send({ jsonrpc: '2.0', id: request.id, error: { code: -32000, message: 'auth required' } });
               continue;
             }
@@ -874,6 +878,7 @@ function writePublicComposerAgent(dir: string): string {
               ok(request.id, {});
             }
           } else if (request.method === 'x.ai/interject') {
+            if (request.params.content) update(request.params.sessionId, JSON.stringify(request.params.content));
             update(
               request.params.sessionId,
               'interjected=' + request.params.text + ';id=' + request.params.interjectionId,
@@ -3334,24 +3339,11 @@ describe('createPublicAcpSession', () => {
   it('uses a provider steer extension instead of a concurrent session prompt when configured', async () => {
     await withTempDir('happier-public-acp-provider-steer-', async (dir) => {
       const fixture = createFixture(dir, 'grok-interject');
-      const definition: AgentAcpRuntimeDefinition = {
-        mcp: { policy: 'drop' },
-        delivery: {
-          steer: {
-            method: 'x.ai/interject',
-            buildParams: ({ providerSessionId, inputIds, input }) => ({
-              sessionId: providerSessionId,
-              text: input.text,
-              interjectionId: inputIds[0],
-            }),
-            isAccepted: (response) => (
-              typeof response === 'object'
-              && response !== null
-              && Reflect.get(response, 'status') === 'queued'
-            ),
-          },
-        },
-      };
+      const definition = buildGrokAcpRuntimeDefinition({});
+      const structuredUploadPath = '.happier/uploads/messages/steer/image.png';
+      const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      await mkdir(path.dirname(path.join(dir, structuredUploadPath)), { recursive: true });
+      await writeFile(path.join(dir, structuredUploadPath), bytes);
       const session = await createPublicAcpSession({
         kind: 'create', sessionId: 'host-grok-steer', cwd: dir,
       }, {
@@ -3373,7 +3365,14 @@ describe('createPublicAcpSession', () => {
 
         await session.send({
           inputIds: ['input-steer'],
-          input: { text: 'change direction' },
+          input: { text: 'change direction', structuredInput: {
+            v: 1,
+            imageInputs: [{
+              id: 'steer-image', kind: 'localImage', path: structuredUploadPath,
+              mimeType: 'image/png', sha256: createHash('sha256').update(bytes).digest('hex'),
+              sizeBytes: bytes.length, provenance: { kind: 'sessionAttachmentUpload' },
+            }],
+          } },
           delivery: { kind: 'steer', turnId: 'turn-primary' },
         });
         await collectUntil(events, 'turn-complete');
@@ -3383,11 +3382,85 @@ describe('createPublicAcpSession', () => {
           channel: 'assistant',
           text: 'interjected=change direction;id=input-steer',
         }));
+        expect(events).toContainEqual(expect.objectContaining({
+          kind: 'message-delta',
+          text: JSON.stringify([
+            { type: 'text', text: 'change direction' },
+            { type: 'image', data: bytes.toString('base64'), mimeType: 'image/png' },
+          ]),
+        }));
         expect(events).not.toContainEqual(expect.objectContaining({
           kind: 'message-delta',
           text: 'wrong concurrent session prompt',
         }));
         expect(events.filter((event) => event.kind === 'turn-start')).toHaveLength(1);
+      } finally {
+        subscription.dispose();
+        await session.dispose();
+      }
+    });
+  });
+
+  it('refuses provider steer dispatch when host currentness retires during prompt projection', async () => {
+    await withTempDir('happier-public-acp-retired-extension-steer-', async (dir) => {
+      const fixture = createFixture(dir, 'grok-interject');
+      let current = true;
+      const session = await createPublicAcpSession({
+        kind: 'create', sessionId: 'host-grok-steer', cwd: dir,
+      }, { ...fixture.options, definition: buildGrokAcpRuntimeDefinition({}) }, {
+        ...fixture.dependencies, isCurrent: () => current,
+      });
+      const events: AgentSessionRuntimeEvent[] = [];
+      const subscription = session.watch((event) => { events.push(event); });
+      try {
+        await session.send({ inputIds: ['primary'], input: { text: 'primary' },
+          delivery: { kind: 'newTurn', turnId: 'turn-primary' } });
+        await waitForCondition(
+          () => events.some((event) => event.kind === 'message-delta' && event.text === 'primary active'),
+          { timeoutMs: 5_000, intervalMs: 10, label: 'primary Grok turn active' },
+        );
+        const steer = session.send({ inputIds: ['retired-steer'], input: { text: 'change direction' },
+          delivery: { kind: 'steer', turnId: 'turn-primary' } });
+        current = false;
+        await expect(steer).resolves.toMatchObject({
+          status: 'unavailable', diagnostic: { code: 'acp_runtime_unavailable' },
+        });
+      } finally {
+        current = true;
+        subscription.dispose();
+        await session.dispose();
+      }
+    });
+  });
+
+  it('rejects untrusted images before a provider steer extension can accept the input', async () => {
+    await withTempDir('happier-public-acp-untrusted-extension-steer-', async (dir) => {
+      const fixture = createFixture(dir, 'grok-interject');
+      const session = await createPublicAcpSession({
+        kind: 'create', sessionId: 'host-grok-steer', cwd: dir,
+      }, { ...fixture.options, definition: buildGrokAcpRuntimeDefinition({}) }, fixture.dependencies);
+      const events: AgentSessionRuntimeEvent[] = [];
+      const subscription = session.watch((event) => { events.push(event); });
+      try {
+        await session.send({ inputIds: ['primary'], input: { text: 'primary' },
+          delivery: { kind: 'newTurn', turnId: 'turn-primary' } });
+        await waitForCondition(
+          () => events.some((event) => event.kind === 'message-delta' && event.text === 'primary active'),
+          { timeoutMs: 5_000, intervalMs: 10, label: 'primary Grok turn active' },
+        );
+        await expect(session.send({
+          inputIds: ['untrusted'],
+          input: { text: 'unsafe image', structuredInput: { v: 1, imageInputs: [{
+            id: 'unsafe', kind: 'localImage', path: '/outside/image.png', mimeType: 'image/png',
+            provenance: { kind: 'untrusted' },
+          }] } },
+          delivery: { kind: 'steer', turnId: 'turn-primary' },
+        })).resolves.toMatchObject({ status: 'rejected', diagnostic: { code: 'acp_image_input_untrusted' } });
+        expect(events).not.toContainEqual(expect.objectContaining({ kind: 'input-accepted', inputIds: ['untrusted'] }));
+        await expect(session.send({ inputIds: ['safe-text'], input: { text: 'change direction' },
+          delivery: { kind: 'steer', turnId: 'turn-primary' } })).resolves.toMatchObject({ status: 'admitted' });
+        await collectUntil(events, 'turn-complete');
+        expect(events).toContainEqual(expect.objectContaining({ kind: 'message-delta', text: 'interjected=change direction;id=safe-text' }));
       } finally {
         subscription.dispose();
         await session.dispose();

@@ -1,3 +1,4 @@
+import { ManagedExecutableRefSchema } from '@happier-dev/protocol/plugins/contributions/agentAcpTransport';
 import { COMPOSER_ATTACHMENT_RUNTIME_REGISTRATION_FIELDS_V1 } from '@happier-dev/protocol/plugins/contributions/composer-attachments';
 import type { ComposerAttachmentRuntimeRegistrationFieldV1 } from '@happier-dev/protocol/plugins/contributions/composer-attachments';
 import type {
@@ -177,8 +178,8 @@ type PluginRegistrationScopeParams = Readonly<{
      * Host-owned bound for ONE independent registration-cleanup attempt
      * (captured MCP runtime disposal). Cleanup policy belongs to the host;
      * this value never widens or reorders the intentional reverse-order
-     * dependency between captured cleanups. When omitted, a finite default
-     * still guarantees every cleanup is attempted.
+     * dependency between captured cleanups. When omitted, retirement waits
+     * for each captured cleanup to settle.
      */
     cleanupTimeoutMs?: number;
 }>;
@@ -230,11 +231,9 @@ function registrationKey(family: string, localId: string): string {
     return `${family}\u0000${localId}`;
 }
 
-const DEFAULT_REGISTRATION_CLEANUP_TIMEOUT_MS = 5_000;
-
-function normalizeRegistrationCleanupTimeoutMs(value: number | undefined): number {
+function normalizeRegistrationCleanupTimeoutMs(value: number | undefined): number | null {
     if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
-        return DEFAULT_REGISTRATION_CLEANUP_TIMEOUT_MS;
+        return null;
     }
     return Math.trunc(value);
 }
@@ -937,9 +936,23 @@ function snapshotAgentPreflightSessionControlsCommand(
     if (receiver.ci !== undefined && receiver.ci !== 'omit') {
         throw new TypeError(`${subject}.ci must be 'omit' when present`);
     }
+    if (receiver.stdin !== undefined && typeof receiver.stdin !== 'string') {
+        throw new TypeError(`${subject}.stdin must be text`);
+    }
+    if ((receiver.toolId === undefined) === (receiver.executable === undefined)) {
+        throw new TypeError(`${subject} must select exactly one system tool or managed dependency`);
+    }
+    const executable = receiver.executable === undefined ? undefined : ManagedExecutableRefSchema.parse(receiver.executable);
+    if (executable !== undefined && executable.kind !== 'managedDependency') {
+        throw new TypeError(`${subject}.executable must be a managed dependency`);
+    }
+    const args = snapshotAgentPreflightSessionControlsArgs(receiver.args, `${subject}.args`);
+    const selected: AgentPreflightSessionControlsCommandV1 = executable === undefined
+        ? { toolId: snapshotAgentPreflightSessionControlsString(receiver.toolId, `${subject}.toolId`), args }
+        : { executable: Object.freeze({ ...executable, ...(typeof executable.id === 'string' ? {} : { id: Object.freeze({ ...executable.id }) }) }), args };
     return Object.freeze({
-        toolId: snapshotAgentPreflightSessionControlsString(receiver.toolId, `${subject}.toolId`),
-        args: snapshotAgentPreflightSessionControlsArgs(receiver.args, `${subject}.args`),
+        ...selected,
+        ...(receiver.stdin === undefined ? {} : { stdin: receiver.stdin as string }),
         ...(receiver.prepareCommand === undefined ? {} : {
             prepareCommand: bindAgentRegistrationCallback<NonNullable<AgentPreflightSessionControlsCommandV1['prepareCommand']>>(
                 receiver, receiver.prepareCommand, `${subject}.prepareCommand`,
@@ -994,6 +1007,9 @@ function snapshotAgentPreflightSessionControlsModels(
             fallback.command as AgentPreflightSessionControlsCommandV1,
             'Agent preflight models declaration.fallback.command',
         );
+    if (command.toolId === undefined || (fallbackCommand !== undefined && fallbackCommand.toolId === undefined)) {
+        throw new TypeError('Agent preflight models require a declared system tool');
+    }
     if (commandToolIds && (
         !commandToolIds.includes(command.toolId)
         || (fallbackCommand !== undefined && !commandToolIds.includes(fallbackCommand.toolId))
@@ -1055,10 +1071,16 @@ function snapshotAgentPreflightSessionControlsContribution(
     if (receiver.models !== undefined && receiver.probeModels !== undefined) {
         throw new TypeError('Agent preflight Session controls contribution cannot declare both models and probeModels');
     }
+    if (receiver.catalogs !== undefined && receiver.probeCatalogs !== undefined) {
+        throw new TypeError('Agent preflight contribution cannot declare both catalogs and probeCatalogs');
+    }
     const snapshot: {
+        catalogs?: AgentPreflightSessionControlsContributionV1['catalogs'];
+        probeCatalogs?: AgentPreflightSessionControlsContributionV1['probeCatalogs'];
         resolveProbeVariant?: AgentPreflightSessionControlsContributionV1['resolveProbeVariant'];
         models?: AgentPreflightSessionControlsModelsV1;
         jsonRpcCommands?: readonly AgentPreflightSessionControlsCommandV1[];
+        managedServiceCommands?: AgentPreflightSessionControlsContributionV1['managedServiceCommands'];
         probeModels?: AgentPreflightSessionControlsContributionV1['probeModels'];
         probeModes?: AgentPreflightSessionControlsContributionV1['probeModes'];
         probeConfigOptions?: AgentPreflightSessionControlsContributionV1['probeConfigOptions'];
@@ -1078,19 +1100,66 @@ function snapshotAgentPreflightSessionControlsContribution(
             receiver.models as AgentPreflightSessionControlsModelsV1,
         );
     }
-    if (receiver.jsonRpcCommands !== undefined) {
-        if (!Array.isArray(receiver.jsonRpcCommands) || receiver.jsonRpcCommands.length === 0) {
-            throw new TypeError('Agent preflight Session controls contribution.jsonRpcCommands must be a non-empty array');
+    if (receiver.catalogs !== undefined) {
+        const catalogs = readAgentRegistrationObject(receiver.catalogs, 'Agent preflight catalogs declaration');
+        const command = snapshotAgentPreflightSessionControlsCommand(
+            catalogs.command as AgentPreflightSessionControlsCommandV1,
+            'Agent preflight catalogs declaration.command',
+        );
+        if (catalogs.kind === 'acp') {
+            if ((catalogs.commandToolIds === undefined) !== (catalogs.resolveCommandToolId === undefined)) {
+                throw new TypeError('Agent preflight ACP catalogs must declare commandToolIds and resolveCommandToolId together');
+            }
+            const selected = catalogs.commandToolIds === undefined ? { command } : snapshotAgentPreflightSessionControlsModels({
+                command: command.toolId !== undefined ? command : (() => { throw new TypeError('Agent preflight selected ACP catalogs require a system tool'); })(),
+                commandToolIds: catalogs.commandToolIds as readonly string[],
+                resolveCommandToolId: catalogs.resolveCommandToolId as NonNullable<AgentPreflightSessionControlsModelsV1['resolveCommandToolId']>,
+            });
+            snapshot.catalogs = Object.freeze({
+                ...selected,
+                kind: 'acp' as const,
+                ...(catalogs.authenticationMethodId === undefined ? {} : {
+                    authenticationMethodId: snapshotAgentPreflightSessionControlsString(catalogs.authenticationMethodId, 'Agent preflight catalogs authenticationMethodId'),
+                }),
+                ...(catalogs.selectAuthentication === undefined ? {} : {
+                    selectAuthentication: bindAgentRegistrationCallback<NonNullable<Extract<NonNullable<AgentPreflightSessionControlsContributionV1['catalogs']>, { kind: 'acp' }>['selectAuthentication']>>(
+                        catalogs, catalogs.selectAuthentication, 'Agent preflight catalogs selectAuthentication',
+                    ),
+                }),
+            });
+        } else {
+            if (catalogs.kind !== undefined) throw new TypeError('Unknown Agent preflight catalogs kind');
+            const selected = snapshotAgentPreflightSessionControlsModels(catalogs as AgentPreflightSessionControlsModelsV1);
+            snapshot.catalogs = Object.freeze({
+                ...selected,
+                parseOutput: bindAgentRegistrationCallback<NonNullable<Extract<NonNullable<AgentPreflightSessionControlsContributionV1['catalogs']>, { parseOutput: unknown }>['parseOutput']>>(
+                    catalogs, catalogs.parseOutput, 'Agent preflight catalogs declaration.parseOutput',
+                ),
+            });
         }
-        snapshot.jsonRpcCommands = Object.freeze(receiver.jsonRpcCommands.map((command, index) => (
-            snapshotAgentPreflightSessionControlsCommand(
-                command as AgentPreflightSessionControlsCommandV1,
-                `Agent preflight Session controls contribution.jsonRpcCommands[${index}]`,
-            )
-        )));
+    }
+    for (const key of ['jsonRpcCommands', 'managedServiceCommands'] as const) {
+        const commands = receiver[key];
+        if (commands === undefined) continue;
+        if (!Array.isArray(commands) || commands.length === 0) {
+            throw new TypeError(`Agent preflight Session controls contribution.${key} must be a non-empty array`);
+        }
+        const captured = commands.map((command, index) => snapshotAgentPreflightSessionControlsCommand(
+            command as AgentPreflightSessionControlsCommandV1,
+            `Agent preflight Session controls contribution.${key}[${index}]`,
+        ));
+        if (key === 'managedServiceCommands') {
+            snapshot.managedServiceCommands = Object.freeze(captured.map((command) => {
+                if (command.toolId === undefined) throw new TypeError('Agent preflight managed service commands require a system tool');
+                return command;
+            }));
+        } else {
+            snapshot.jsonRpcCommands = Object.freeze(captured);
+        }
     }
     for (const key of [
         'probeModels',
+        'probeCatalogs',
         'probeModes',
         'probeConfigOptions',
         'probePassiveRealtimeSetup',
@@ -2264,24 +2333,29 @@ export function createPluginRegistrationScope(
             disposalPromise = (async () => {
                 const errors: unknown[] = [];
                 // Reverse order is an intentional LIFO dependency between
-                // captured cleanups. Each independent cleanup receives its own
-                // bounded attempt so one hung disposer cannot starve the
-                // remaining steps; every timeout or rejection is collected for
-                // the aggregate outcome.
+                // captured cleanups. Only an explicit host budget bounds each
+                // attempt; otherwise settlement governs retirement. Every
+                // rejection or explicit timeout stays in the aggregate outcome.
                 for (const cleanup of pending) {
                     if (!cleanup?.dispose) continue;
                     const capturedDispose = cleanup.dispose;
-                    const outcome = await raceWithTimeout(
-                        Promise.resolve().then(capturedDispose),
-                        cleanupTimeoutMs,
-                    );
-                    if (outcome.type === 'rejected') {
-                        errors.push(outcome.error);
-                    } else if (outcome.type === 'timeout') {
-                        errors.push(new Error(
-                            `Plugin '${params.pluginId}' cleanup for 'mcp.servers/${cleanup.localId}' `
-                            + `timed out after ${cleanupTimeoutMs}ms`,
-                        ));
+                    try {
+                        const cleanupPromise = Promise.resolve().then(capturedDispose);
+                        if (cleanupTimeoutMs === null) {
+                            await cleanupPromise;
+                            continue;
+                        }
+                        const outcome = await raceWithTimeout(cleanupPromise, cleanupTimeoutMs);
+                        if (outcome.type === 'rejected') {
+                            errors.push(outcome.error);
+                        } else if (outcome.type === 'timeout') {
+                            errors.push(new Error(
+                                `Plugin '${params.pluginId}' cleanup for 'mcp.servers/${cleanup.localId}' `
+                                + `timed out after ${cleanupTimeoutMs}ms`,
+                            ));
+                        }
+                    } catch (error) {
+                        errors.push(error);
                     }
                 }
                 if (errors.length === 1) throw errors[0];

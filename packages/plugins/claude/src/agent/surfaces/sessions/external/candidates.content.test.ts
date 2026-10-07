@@ -52,6 +52,41 @@ async function corpus() {
 }
 
 describe('Claude candidate conversation search', () => {
+    it('yields inside the first large conversation and retains it for a later complete scan', async () => {
+        const params = await corpus();
+        const text = Array.from({ length: 1500 }, (_, index) => JSON.stringify({
+            type: 'user', uuid: `row-${index}`, parentUuid: index === 0 ? null : `row-${index - 1}`,
+            message: { role: 'user', content: index === 1499 ? 'First file deadline needle' : 'ordinary '.repeat(40) },
+        })).join('\n') + '\n';
+        await writeFile(join(params.source.configDir, 'projects', 'project', 'session.jsonl'), text);
+        let nowMs = Date.now();
+        vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+        const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+        vi.mocked(fileSystem.open).mockImplementation(async (...args) => {
+            const handle = await actual.open(...args);
+            nowMs += 3000;
+            return handle;
+        });
+        const contribution = createClaudeExternalSessionsContribution({ env: {} });
+        const request = {
+            source: params.source, maxItems: 1, searchTarget: 'content' as const, searchTerm: 'First file deadline needle',
+            signal: new AbortController().signal, maxSerializedBytes: 1024 * 1024,
+            ripgrep: params.ripgrep, exec: {} as ExecService,
+        };
+        const deadlineAtMs = nowMs + 15_000;
+        const first = await contribution.listCandidates({ ...request, deadlineAtMs });
+        expect(first).toMatchObject({ ok: true });
+        if (!first.ok) throw new Error(`${first.code}: ${first.message}`);
+        expect(nowMs).toBeLessThan(deadlineAtMs);
+        expect(first.value).toMatchObject({ candidates: [], contentCoverage: 'partial', nextCursor: expect.any(String) });
+        // The real filesystem/codec stay intact; only the slow-IO clock charge stops.
+        vi.mocked(fileSystem.open).mockImplementation(actual.open);
+        const next = await contribution.listCandidates({ ...request, deadlineAtMs: nowMs + 15_000, cursor: first.value.nextCursor! });
+        if (!next.ok) throw new Error(`${next.code}: ${next.message}`);
+        expect(next.value.candidates[0]?.match).toMatchObject({ snippet: 'First file deadline needle', messageIndex: 1499 });
+        expect(next.value.contentCoverage).toBe('complete');
+        expect(next.value.nextCursor).toBeNull();
+    });
     it('scans a long single-file conversation within the host budget without rereading a chunk for every row', async () => {
         const params = await corpus();
         const text = Array.from({ length: 1000 }, (_, index) => JSON.stringify({

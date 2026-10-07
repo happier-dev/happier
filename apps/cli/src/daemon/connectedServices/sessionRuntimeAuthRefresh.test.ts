@@ -71,7 +71,7 @@ function buildClaudeRegistry(): ConnectedServiceRuntimeRegistry {
 
 const selection = {
   kind: 'group' as const,
-  serviceId: 'openai-codex' as const,
+  serviceId: 'happier.agent.codex/openai-codex' as const,
   groupId: 'main',
   activeProfileId: 'primary',
   fallbackProfileId: 'fallback',
@@ -115,7 +115,7 @@ describe('createSessionConnectedServiceRuntimeAuthRefreshHandler', () => {
     await expect(handler({
       sessionId: 'session-1',
       refreshAttemptId: 'codex-refresh-attempt-1',
-      selection,
+      selection: { ...selection, serviceId: 'openai-codex' },
       planType: 'plus',
       failingAccessTokenFingerprint: 'sha256:failed',
       expectedCredentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
@@ -140,7 +140,7 @@ describe('createSessionConnectedServiceRuntimeAuthRefreshHandler', () => {
       expectedCredentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
       reason: 'chatgpt_auth_tokens_refresh',
       forceRefresh: true,
-    });
+    }, expect.anything());
   });
 
   it('settles a known credential-health bridge failure as typed reconnect-required instead of rejecting the daemon route', async () => {
@@ -246,7 +246,7 @@ describe('createSessionConnectedServiceRuntimeAuthRefreshHandler', () => {
       refreshAttemptId: 'claude-auth-refresh-stable',
       expectedCredentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
       reason: 'claude_agent_sdk_oauth_token_refresh',
-    }));
+    }), expect.anything());
   });
 
   it.each([
@@ -348,7 +348,7 @@ describe('createSessionConnectedServiceRuntimeAuthRefreshHandler', () => {
     expect(refresh).toHaveBeenCalledWith(expect.objectContaining({
       selection,
       expectedCredentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
-    }));
+    }), expect.anything());
   });
 
   it('rechecks the exact runtime target after asynchronous bridge resolution', async () => {

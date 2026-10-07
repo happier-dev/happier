@@ -18,11 +18,23 @@ export function normalizeCursorApiEndpoint(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+export function buildCursorEndpointArgs(apiEndpoint: string): readonly string[] {
+  return Object.freeze(apiEndpoint ? ['-e', apiEndpoint] : []);
+}
+
 export type CursorRuntimeSettings = Readonly<{
   binaryPath: string;
   agentFallbackEnabled: boolean;
   apiEndpoint: string;
 }>;
+
+export function resolveCursorRuntimeSettingsFromValues(values: Readonly<Record<string, unknown>> = {}): CursorRuntimeSettings {
+  return Object.freeze({
+    binaryPath: normalizeCursorBinaryPath(values[CURSOR_BINARY_PATH_SETTING_ID]),
+    agentFallbackEnabled: normalizeCursorAgentFallbackEnabled(values[CURSOR_AGENT_FALLBACK_SETTING_ID]),
+    apiEndpoint: normalizeCursorApiEndpoint(values[CURSOR_API_ENDPOINT_SETTING_ID]),
+  });
+}
 
 export async function readCursorRuntimeSettings(
   settings: SettingsService,
@@ -33,10 +45,10 @@ export async function readCursorRuntimeSettings(
     daemonSettings.get(CURSOR_AGENT_FALLBACK_SETTING_ID),
     daemonSettings.get(CURSOR_API_ENDPOINT_SETTING_ID),
   ]);
-  return Object.freeze({
-    binaryPath: normalizeCursorBinaryPath(binaryPath),
-    agentFallbackEnabled: normalizeCursorAgentFallbackEnabled(agentFallbackEnabled),
-    apiEndpoint: normalizeCursorApiEndpoint(apiEndpoint),
+  return resolveCursorRuntimeSettingsFromValues({
+    [CURSOR_BINARY_PATH_SETTING_ID]: binaryPath,
+    [CURSOR_AGENT_FALLBACK_SETTING_ID]: agentFallbackEnabled,
+    [CURSOR_API_ENDPOINT_SETTING_ID]: apiEndpoint,
   });
 }
 

@@ -1,5 +1,6 @@
 import { unexpectedCaptureSourceResolution } from "@/plugins/testkit/unexpectedCaptureSourceResolution";
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
 import { isDeepStrictEqual } from 'node:util';
 import tweetnacl from 'tweetnacl';
 
@@ -319,6 +320,18 @@ function createCanonicalSessionTargetResolver(params: Readonly<{
   host?: string;
   homeDir?: string;
 }> = {}) {
+  // The real Session transport checks Account currentness before opening owner metadata.
+  vi.spyOn(axios, 'get').mockImplementation(async (url) => {
+    if (!url.endsWith('/v1/account/encryption/currentness')) {
+      throw new Error(`Unexpected external Action fixture GET: ${url}`);
+    }
+    return { status: 200, data: {
+      mode: 'e2ee', version: 1,
+      signingKeyFingerprint: 'a'.repeat(64),
+      contentKeyFingerprint: 'b'.repeat(64),
+      updatedAt: 1,
+    } };
+  });
   const machineId = params.machineId ?? 'machine-local';
   const host = params.host ?? 'host-local';
   const homeDir = params.homeDir ?? '/home/local';
@@ -377,6 +390,8 @@ function createExternalActionIngressExecutor(scope: 'global' | 'session' = 'sess
 }
 
 describe('createDaemonExternalActionContributedInvoker', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
   it('allows a source read but rejects writes under the same current read-only invocation lease', async () => {
     for (const dangerLevel of ['safe', 'writesRemote'] as const) {
       let invoked = false;
@@ -746,6 +761,32 @@ describe('createDaemonExternalActionContributedInvoker', () => {
       token: 'daemon-token',
       sessionId: 'session-verified',
     });
+  });
+
+  it('reports unavailable Account currentness before resolving an external Action Session target', async () => {
+    const executor = createExternalActionIngressExecutor('session');
+    const resolveTarget = createCanonicalSessionTargetResolver();
+    vi.mocked(axios.get).mockRejectedValue(new Error('Account currentness transport unavailable'));
+
+    await expect(executeExternalAction({
+      actionId: 'action.invoke',
+      envelope: {
+        v: 1,
+        target: { kind: 'session', sessionId: 'session-verified' },
+        input: { action: { pluginId: 'acme.external', localId: 'inspect' }, input: {} },
+      },
+      principal: {
+        accountId: 'account-1', principalId: 'principal-1', credentialId: 'credential-1',
+        authority: 'account_automation',
+      },
+      currentMachineId: 'machine-local',
+      resolveTarget,
+      executor,
+    })).resolves.toMatchObject({
+      kind: 'response',
+      response: { execution: { ok: false, errorCode: 'target_unavailable' } },
+    });
+    expect(externalActionTargetResolverMocks.fetchSessionById).not.toHaveBeenCalled();
   });
 
   it('does not let nested plugin input select a Session without a verified envelope target', async () => {

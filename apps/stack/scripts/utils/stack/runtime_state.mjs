@@ -6,7 +6,7 @@ import { resolveStackEnvPath } from '../paths/paths.mjs';
 import { readJsonIfExists, writeJsonAtomic } from '../fs/json.mjs';
 import { isPidAlive, observePidLiveness } from '../proc/pids.mjs';
 import { isPidOwnedByStack } from '../proc/ownership.mjs';
-import { resolveStackOwnedListenPid } from '../server/listener_ownership.mjs';
+import { resolveStackOwnedListenPid, STACK_LISTENER_OBSERVATION_TIMEOUT_MS } from '../server/listener_ownership.mjs';
 import { withJsonOwnerFileLock } from '../proc/jsonOwnerFileLock.mjs';
 import { normalizeStackRuntimeOwnerStartedAt } from './runtime_owner_incarnation.mjs';
 import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
@@ -448,20 +448,31 @@ export async function resolveTrustedStackRuntimeServerPort(runtimeState, context
   const port = Number(runtimeState?.ports?.server);
   if (!Number.isFinite(port) || port <= 0) return null;
   const trustContext = resolveStackRuntimeProcessTrustContext(context);
+  const listenerOwnershipOptions = {
+    listenerTotalTimeoutMs: STACK_LISTENER_OBSERVATION_TIMEOUT_MS,
+    listenerAttemptTimeoutMs: STACK_LISTENER_OBSERVATION_TIMEOUT_MS,
+    ...options.listenerOwnershipOptions,
+  };
   const serverProcessKey = runtimeState?.serverProxy?.mode === 'proxy' ? 'proxyPid' : 'serverPid';
   const serverPid = normalizeRuntimePid(runtimeState?.processes?.[serverProcessKey]);
   if (!serverPid) {
     const serverTarget = String(runtimeState?.placement?.server ?? '').trim();
     if (!serverTarget || serverTarget === 'local' || runtimeState?.remoteTargets?.[serverTarget]?.services?.server !== true) return null;
     if (!await hasTrustedStackRuntimeLifecycle(runtimeState, trustContext, options)) return null;
+    const recordedForwardPid = runtimeState.remoteTargets[serverTarget].forwardPid;
+    const forwardPid = normalizeRuntimePid(recordedForwardPid);
+    if (recordedForwardPid != null && !forwardPid) return null;
+    if (forwardPid && !await isStackRuntimeProcessTrusted(
+      forwardPid, { ...trustContext, key: 'forwardPid' }, options,
+    )) return null;
     try {
       const listenerPid = await (options.resolveStackOwnedListenPidImpl ?? resolveStackOwnedListenPid)(
         { port, stackName: trustContext.stackName, envPath: trustContext.envPath },
-        options.listenerOwnershipOptions ?? {},
+        { ...listenerOwnershipOptions, ...(forwardPid ? { candidatePids: [forwardPid] } : {}) },
       );
-      return normalizeRuntimePid(listenerPid) ? port : null;
+      return (forwardPid ? Number(listenerPid) === forwardPid : normalizeRuntimePid(listenerPid)) ? port : null;
     } catch (error) {
-      if (error?.code === 'ELISTENERDISCOVERYINCONCLUSIVE') return null;
+      if (error?.code === 'ELISTENERDISCOVERYINCONCLUSIVE' && options.throwOnInconclusive === false) return null;
       throw error;
     }
   }
@@ -482,12 +493,12 @@ export async function resolveTrustedStackRuntimeServerPort(runtimeState, context
       },
       {
         candidatePids: [serverPid],
-        ...(options.listenerOwnershipOptions ?? {}),
+        ...listenerOwnershipOptions,
       },
     );
     return Number(listenerPid) === serverPid ? port : null;
   } catch (error) {
-    if (error?.code === 'ELISTENERDISCOVERYINCONCLUSIVE') return null;
+    if (error?.code === 'ELISTENERDISCOVERYINCONCLUSIVE' && options.throwOnInconclusive === false) return null;
     throw error;
   }
 }

@@ -1,8 +1,10 @@
+import type { AgentCliSessionCommandPluginSettingsV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { RuntimeDescriptorV1 } from '@happier-dev/protocol';
+import type { PreflightCatalogCleanupScope } from './preflightCatalogCleanupScope';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
 export type PreflightSessionControlsProbeFailureCacheStrategy = 'cooldown' | 'retry';
-export type PreflightSessionControlsProbeKind = 'models' | 'modes' | 'configOptions' | 'passiveRealtimeSetup';
+export type PreflightSessionControlsProbeKind = 'models' | 'modes' | 'configOptions' | 'passiveRealtimeSetup' | 'catalogs';
 
 export type PreflightSessionControlsProbeParams = Readonly<{
   backendTarget?: BackendTargetRefV1;
@@ -13,8 +15,12 @@ export type PreflightSessionControlsProbeParams = Readonly<{
   cwd: string;
   timeoutMs: number;
   accountSettings?: Readonly<Record<string, unknown>> | null;
+  pluginSettings?: AgentCliSessionCommandPluginSettingsV1;
   env?: NodeJS.ProcessEnv;
   signal?: AbortSignal;
+  /** Existing containing catalog operation owns this deadline; direct callers retain the local budget. */
+  deadlineSignal?: AbortSignal;
+  cleanupScope?: PreflightCatalogCleanupScope;
 }>;
 
 /**
@@ -25,6 +31,7 @@ export type PreflightSessionControlsProbeParams = Readonly<{
  */
 export type PreflightSessionControlsProbeAdapter = Readonly<{
   failureCacheStrategy?: PreflightSessionControlsProbeFailureCacheStrategy;
+  probeCatalogsRaw?: (params: PreflightSessionControlsProbeParams) => Promise<unknown>;
   probeModelsRaw?: (params: PreflightSessionControlsProbeParams) => Promise<unknown | null>;
   probeModesRaw?: (params: PreflightSessionControlsProbeParams) => Promise<unknown | null>;
   probeConfigOptionsRaw?: (params: PreflightSessionControlsProbeParams) => Promise<unknown | null>;

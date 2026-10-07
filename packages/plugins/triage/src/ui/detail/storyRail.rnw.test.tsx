@@ -115,6 +115,15 @@ describe('the story rail\'s live agent', () => {
     await act(async () => { await rail.press(await rail.findByRole('button', { name: 'See all' })); });
     expect(opened).toEqual([{ sessionId: 'session-a' }]);
   });
+  it('says each finding\'s severity and where it is, beside what it says', async () => {
+    const located = { ...finding('1', 'session-a'), findingSeverity: 'high' as const,
+      anchor: { kind: 'line' as const, filePath: 'src/cart/totals.ts', line: 42 } };
+    const rail = await mountRail([located]);
+    await rail.findByRole('button', { name: 'Allow once' });
+    await expect(rail.getByText('Finding 1')).resolves.toBeDefined();
+    await expect(rail.getByText('High')).resolves.toBeDefined();
+    await expect(rail.getByText('src/cart/totals.ts:42')).resolves.toBeDefined();
+  });
   it('opens the Session that owns findings beyond the three-item preview', async () => {
     const rail = await mountRail([finding('1', 'session-a'), finding('2', 'session-a'),
       finding('3', 'session-a'), finding('4', 'session-a')]);
@@ -144,6 +153,8 @@ describe('the story rail\'s live agent', () => {
     await rail.findByRole('button', { name: 'Allow once' });
     await expect(rail.getByText('Needs your permission')).resolves.toBeDefined();
     await expect(rail.getByText('fix/2476-checks')).resolves.toBeDefined();
-    await expect(rail.getByText('Agent work')).resolves.toBeDefined();
+    // ③ is named after the linked Session doing the work, not a generic "Agent work".
+    expect(document.querySelector('[data-testid="triage-story-agent"]')?.textContent).toContain('Codex');
+    await expect(rail.queryByText('Agent work')).resolves.toBeUndefined();
   });
 });

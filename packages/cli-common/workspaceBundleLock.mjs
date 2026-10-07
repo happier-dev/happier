@@ -290,7 +290,10 @@ function readLockOwnerSnapshot(lockPath) {
   try {
     const raw = readFileSync(lockPath, 'utf8');
     return { exists: true, readable: true, mtimeMs: stats.mtimeMs, raw, owner: parseLockOwner(raw) };
-  } catch {
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return { exists: false, readable: false, mtimeMs: 0, raw: null, owner: null };
+    }
     // An existing owner that cannot be read cannot be authenticated or safely reclaimed. Keep it
     // distinct from ENOENT so callers enter the bounded wait/timeout path instead of spinning.
     return { exists: true, readable: false, mtimeMs: stats.mtimeMs, raw: null, owner: null };
@@ -602,13 +605,14 @@ function authenticatedRetainedOwnerIdentity(snapshot) {
 }
 
 function recoverRetainedLockSnapshot(lockPath, classificationOptions) {
-  const retainedPaths = classifyRetainedLockSnapshots(lockPath, classificationOptions);
-  if (retainedPaths.length === 0) return false;
-  if (retainedPaths.length > 1) {
-    const retainedSnapshots = retainedPaths.map((retainedPath) => ({
+  const retainedSnapshots = classifyRetainedLockSnapshots(lockPath, classificationOptions)
+    .map((retainedPath) => ({
       retainedPath,
       snapshot: readLockOwnerSnapshot(retainedPath),
-    }));
+    }))
+    .filter(({ snapshot }) => snapshot.exists);
+  if (retainedSnapshots.length === 0) return false;
+  if (retainedSnapshots.length > 1) {
     const ownerIdentities = new Set(
       retainedSnapshots.map(({ snapshot }) => authenticatedRetainedOwnerIdentity(snapshot)),
     );
@@ -620,24 +624,23 @@ function recoverRetainedLockSnapshot(lockPath, classificationOptions) {
         - Number(left.snapshot.owner?.updatedAtMs ?? 0);
       return updatedAtDifference || left.retainedPath.localeCompare(right.retainedPath);
     });
-    const [preferred, ...duplicates] = retainedSnapshots;
-    const restored = restoreQuarantinedLockSnapshot(lockPath, preferred.retainedPath);
-    if (!restored) {
-      throw new Error(`Workspace bundle lock recovery is pending: ${lockPath}`);
-    }
-    for (const duplicate of duplicates) {
-      if (!reclaimLockSnapshot(duplicate.retainedPath, duplicate.snapshot.raw)) {
-        throw new Error(`Workspace bundle lock recovery cleanup failed: ${lockPath}`);
-      }
-    }
-    return true;
   }
+  const [preferred, ...duplicates] = retainedSnapshots;
   const restored = restoreQuarantinedLockSnapshot(
     lockPath,
-    retainedPaths[0],
+    preferred.retainedPath,
   );
   if (!restored) {
+    // Another contender may have restored or retired the classified snapshot.
+    // Reobserve admission before retiring duplicates: they may be the last live
+    // evidence of a claimant when the preferred snapshot disappeared.
+    if (!readLockOwnerSnapshot(preferred.retainedPath).exists) return true;
     throw new Error(`Workspace bundle lock recovery is pending: ${lockPath}`);
+  }
+  for (const duplicate of duplicates) {
+    if (!reclaimLockSnapshot(duplicate.retainedPath, duplicate.snapshot.raw)) {
+      throw new Error(`Workspace bundle lock recovery cleanup failed: ${lockPath}`);
+    }
   }
   return true;
 }
@@ -1079,10 +1082,10 @@ export async function withWorkspaceBundleLock(fn, options = {}) {
   }
 
   try {
-    if (!clearPriorityClaimIfOwned(claimPath, ownClaimRaw)) {
-      throw new Error(`Failed to clear acquired workspace bundle lock priority claim: ${claimPath}`);
-    }
-    ownClaimRaw = null;
+    // The acquired lock now owns exclusion. A reaper may restore this claim during
+    // quarantine validation; retain it for the existing release cleanup instead
+    // of failing publication after admission. Filesystem errors still propagate.
+    if (clearPriorityClaimIfOwned(claimPath, ownClaimRaw)) ownClaimRaw = null;
     const heartbeatParams = {
       lockPath,
       ownerToken,
@@ -1319,10 +1322,8 @@ export function withWorkspaceBundleLockSync(fn, options = {}) {
   }
 
   try {
-    if (!clearPriorityClaimIfOwned(claimPath, ownClaimRaw)) {
-      throw new Error(`Failed to clear acquired workspace bundle lock priority claim: ${claimPath}`);
-    }
-    ownClaimRaw = null;
+    // Keep an inconclusive cleanup for release; admission already holds the lock.
+    if (clearPriorityClaimIfOwned(claimPath, ownClaimRaw)) ownClaimRaw = null;
     heartbeatWorker = (options.startWorkspaceLockHeartbeatImpl ?? startWorkspaceLockHeartbeat)({
       lockPath,
       ownerToken,

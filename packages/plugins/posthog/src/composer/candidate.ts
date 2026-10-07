@@ -13,6 +13,7 @@ import type {
     TriageConfiguredSourceInstanceV1,
     TriageSourceEntryLocalRefV1,
 } from '@happier-dev/triage-protocol/v1';
+import { isTriageSourceConnectedAccountInstanceV1 } from '@happier-dev/triage-protocol/v1';
 import type { TriageEvidenceCandidateV1 } from '@happier-dev/triage-sources/ui';
 
 import {
@@ -206,7 +207,8 @@ export function createPosthogEvidenceCandidate(
     input: PosthogEvidenceCandidateInput,
 ): TriageEvidenceCandidateV1 | null {
     const scope = resolvePosthogInvocationScope(input.instance);
-    if (!scope.ok
+    if (!isTriageSourceConnectedAccountInstanceV1(input.instance)
+        || !scope.ok
         || input.instance.binding.purpose !== POSTHOG_CONNECTED_ACCOUNT_PURPOSE
         || input.instance.binding.account.service.pluginId !== POSTHOG_PLUGIN_ID
         || input.instance.binding.account.service.localId !== POSTHOG_CONNECTED_ACCOUNT_PURPOSE

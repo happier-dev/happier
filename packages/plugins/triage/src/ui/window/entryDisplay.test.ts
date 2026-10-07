@@ -257,6 +257,18 @@ describe('what a reader who cannot see a row is told about it', () => {
     expect(announcement).not.toContain(display.title);
   });
 
+  it('says the row\'s signal and linked agent state, which the table shows in their own cells', () => {
+    const display = projectTriageEntryDisplay(row());
+    const announcement = readTriageEntryRowAnnouncementV1({
+      ...display,
+      stale: false,
+      signalLabel: '2 failing',
+      agentLabel: 'Needs your permission',
+    }, { nowMs: NOW_MS, locale: 'en' });
+
+    expect(announcement).toBe('pull-request, example/repository, Open, 2 failing, Needs your permission');
+  });
+
   it('says a retained row is stale and when it was last observed', () => {
     // The rows of a window whose refresh failed are still on screen, and the
     // page says so once. A reader walking rows never reaches that sentence, so

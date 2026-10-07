@@ -101,6 +101,24 @@ describe('registered session-state durable mutation persistence', () => {
         await expect(loadSessionClientDurableMutationDeadLetters(sessionId)).resolves.toEqual([]);
     });
 
+    it('loads stored role configuration with additive fields without dead-lettering the edit', async () => {
+        const sessionId = 'sess-role-configuration';
+        const configuration = { overrides: { builder: { roleId: 'builder', instructionsOverride: 'Keep this' } },
+            sessionRoles: {}, notes: 'Stored notes', memoryDocRef: { kind: 'doc', artifactId: 'memory' } };
+        const mutation = createRegisteredSessionStateFieldMutation({ sessionId, fieldId: 'intent.sessionRoles',
+            deliveryClass: 'durable_required', source: 'ui', observedAt: 100, op: { kind: 'set', value: {
+                ...configuration, future: true,
+                overrides: { builder: { ...configuration.overrides.builder, future: true } },
+                memoryDocRef: { ...configuration.memoryDocRef, future: true },
+            } } });
+        await saveSessionClientDurableMutationOutbox(sessionId, [{ kind: 'registered_session_state_field',
+            mutationId: mutation.mutationId, payload: mutation, createdAt: 100, attempts: 0, nextAttemptAt: 0 }]);
+        const loaded = await loadSessionClientDurableMutationOutbox(sessionId);
+        expect(loaded).toHaveLength(1);
+        expect(loaded[0]).toMatchObject({ payload: { fieldId: 'intent.sessionRoles', op: { kind: 'set', value: configuration } } });
+        await expect(loadSessionClientDurableMutationDeadLetters(sessionId)).resolves.toEqual([]);
+    });
+
     it('loads queued runtime.activity set mutations instead of dead-lettering them', async () => {
         const sessionId = 'sess-runtime-activity';
         const mutation = createRegisteredSessionStateFieldMutation({

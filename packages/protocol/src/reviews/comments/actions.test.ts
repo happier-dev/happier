@@ -12,6 +12,8 @@ import {
   ReviewCommentListRequestV1Schema,
   ReviewCommentOperationErrorCodeV1Schema,
   ReviewCommentPrincipalHeaderV1Schema,
+  ReviewCommentPublicationTargetV1Schema,
+  reviewCommentPublicationTargetMatchesV1,
   stringifyReviewCommentPrincipalCanonicalJsonV1,
 } from './actions.js';
 import { getActionSpec } from '../../actions/actionSpecs.js';
@@ -19,6 +21,20 @@ import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema
 import Ajv from 'ajv';
 
 describe('review comment operation contracts', () => {
+  it('matches native publication targets by the exact service without accepting account or credential drift', () => {
+    const nativeService = { pluginId: 'happier.scm.forge.github', localId: 'github-account' };
+    const entryRef = { sourceId: 'happier.scm.forge.github/triage', kindId: 'pull-request', collisionScope: 'github:17', entryId: '42' };
+    const target = { providerId: 'github', nativeService, entryRef, subtarget: null };
+    expect(ReviewCommentPublicationTargetV1Schema.parse(target)).toEqual(target);
+    const expected = { providerId: 'github', nativeService, sourceId: entryRef.sourceId, localRef: entryRef, subtarget: null };
+    expect(reviewCommentPublicationTargetMatchesV1(target, expected)).toBe(true);
+    expect(reviewCommentPublicationTargetMatchesV1(target, { ...expected, nativeService: { ...nativeService, localId: 'other' } })).toBe(false);
+    expect(reviewCommentPublicationTargetMatchesV1(target, { providerId: 'github', configuredAccountId: 'native', sourceId: entryRef.sourceId, localRef: entryRef, subtarget: null })).toBe(false);
+    for (const extra of [{ configuredAccountId: 'native' }, { token: 'secret' }, { nativeService: { ...nativeService, token: 'secret' } }]) {
+      expect(ReviewCommentPublicationTargetV1Schema.safeParse({ ...target, ...extra }).success).toBe(false);
+    }
+  });
+
   it('advertises the optional taxonomy filter without refusing a session-only list', () => {
     const schema = zodSchemaToJsonSchemaObject(ReviewCommentListRequestV1Schema, { target: 'draft-7' });
     const validate = new Ajv({ strict: false }).compile(schema);

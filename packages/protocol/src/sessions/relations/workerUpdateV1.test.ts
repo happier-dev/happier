@@ -38,9 +38,14 @@ describe('WorkerUpdateV1', () => {
     ]) {
       expect(SessionWorkerPublishInputV1Schema.safeParse({ ...report, deliverables: [reference] }).success).toBe(false);
     }
-    expect(SessionWorkerPublishInputV1Schema.safeParse({ ...report, deliverables: Array(32).fill(deliverables[1]) }).success).toBe(true);
-    expect(SessionWorkerPublishInputV1Schema.safeParse({ ...report, deliverables: Array(33).fill(deliverables[1]) }).success).toBe(false);
-    expect(WorkerUpdateV1Schema.safeParse({ ...sessionUpdate, deliverables: Array(33).fill(deliverables[1]) }).success).toBe(false);
+    const compactDeliverables = Array.from({ length: 40 }, (_, index) => ({ kind: 'artifact', artifactId: `document-${index}` }));
+    const compactReport = { ...report, deliverables: compactDeliverables };
+    const compactUpdate = { ...sessionUpdate, deliverables: compactDeliverables };
+    expect(SessionWorkerPublishInputV1Schema.parse(compactReport)).toEqual(compactReport);
+    expect(TranscriptRawAgentEventV1Schema.parse({ type: 'worker-report', ...compactReport })).toEqual({ type: 'worker-report', ...compactReport });
+    expect(WorkerUpdateV1Schema.parse(compactUpdate)).toEqual(compactUpdate);
+    const compactRendered = renderWorkerUpdatePromptBlockV1(WorkerUpdateV1Schema.parse(compactUpdate));
+    for (const reference of compactDeliverables) expect(compactRendered).toContain(reference.artifactId);
     expect(WorkerUpdateV1Schema.safeParse({ ...sessionUpdate, deliverables: [{ ...deliverables[0], sessionId: 'another-session' }] }).success).toBe(false);
     expect(WorkerUpdateV1Schema.safeParse({ ...sessionUpdate, deliverables: [{ kind: 'artifact', artifactId: 'x'.repeat(8_001) }] }).success).toBe(false);
     const referenceBytes = JSON.stringify(deliverables).length;

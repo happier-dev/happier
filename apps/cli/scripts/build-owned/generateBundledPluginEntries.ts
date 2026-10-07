@@ -2035,7 +2035,7 @@ function normalizePluginManifest(
 async function loadPluginManifest(
   repoRoot: string,
   pluginPackageId: string,
-  dependencies: GeneratorWorkspaceDependencies,
+  dependencies: Readonly<{ protocol: BundledPluginManifestParser }>,
 ): Promise<PluginManifestJson> {
   const manifestPath = resolve(repoRoot, 'packages/plugins', pluginPackageId, 'src/manifest.ts');
   if (!existsSync(manifestPath)) {
@@ -2849,7 +2849,6 @@ async function readSourceProjectionFacts(params: Readonly<{
   packageName: string;
   manifest: PluginManifestJson;
   dependencies: GeneratorWorkspaceDependencies;
-  readAgentRuntimeFacts?: boolean;
 }>): Promise<BundledPluginSourceProjectionFacts> {
   const definitionPath = resolve(
     params.repoRoot,
@@ -2867,7 +2866,7 @@ async function readSourceProjectionFacts(params: Readonly<{
       params.pluginPackageId,
     )
     : undefined;
-  const runtimeFacts = agentDefinition && params.readAgentRuntimeFacts !== false
+  const runtimeFacts = agentDefinition
     ? await readBundledAgentRuntimeFacts({
       packageRoot: resolve(params.repoRoot, 'packages/plugins', params.pluginPackageId),
       manifest: params.manifest,
@@ -3043,54 +3042,28 @@ function collectBundledAgentDefinitionProjection(
   });
 }
 
-async function runRuntimeConsumedAgentFactsPrivatePhase(
+export async function runRuntimeConsumedAgentFactsPrivatePhase(
   repoRoot: string,
   publicationContext: WorkspaceBundleLockContext,
 ): Promise<void> {
-  const dependencies = await loadGeneratorWorkspaceDependencies();
-  await loadPluginAuthorRuntimeForScope('full');
-  const sourceResult = await collectBundledPluginSourcePackages({
-    repoRoot,
-    bundledPluginPackageNames: readBundledPluginPackageNames(repoRoot),
-    mode: 'check',
-    dependencies,
-    // This phase may publish only the runtime-consumed Agent facts. Source
-    // manifests are validated in memory and remain owned by the final phase.
-    synchronizeSerializedManifest: false,
-    readAgentRuntimeFacts: false,
-  });
-  // Duplicate Agent identities are validated before the first early write.
-  const projection = collectBundledAgentDefinitionProjection(
-    sourceResult.sourcePluginPackages,
-  );
-  const outPath = resolve(
-    repoRoot,
-    'packages/agents/src/generated/bundledAgentDefinitions.ts',
-  );
-  const out = renderBundledAgentDefinitionsTs({
-    agentIds: projection.agentIds,
-    agentDefinitionsById: projection.agentDefinitionsById,
-    nativeHomeEnvironmentKeys: projection.nativeHomeEnvironmentKeys,
-  });
-  publishCoherentProjectionOutputs(
-    repoRoot,
-    [{ outPath, out }],
-    publicationContext,
-  );
+  // Early facts consume Agent definitions and their manifest CLI metadata only.
+  // UI, prompt, account and runtime validation belongs to the full publication.
+  await publishSourceAgentDefinitions({ rootDir: repoRoot, mode: 'write' }, publicationContext, 'authored');
 }
 
 /** Refresh data-only Agent facts with the canonical loader, projection and writer. */
 async function publishSourceAgentDefinitions(
-  options: GeneratorOptions,
+  options: Pick<GeneratorOptions, 'rootDir' | 'mode'>,
   publicationContext: WorkspaceBundleLockContext,
+  manifestSource: 'tracked' | 'authored' = 'tracked',
 ): Promise<void> {
   const parser = await importCanonicalWorkspaceModule('@happier-dev/protocol', 'plugins/manifest') as ProtocolManifestWorkspaceModule;
   // The tracked projection is the clean-checkout declaration authority. Packed
   // plugin.json files are publication outputs and need not exist before builds.
-  const manifestProjection = await import(pathToFileURL(resolve(options.rootDir,
+  const manifestProjection = manifestSource === 'tracked' ? await import(pathToFileURL(resolve(options.rootDir,
     'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts')).href) as Readonly<{
       BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS: readonly Readonly<{ pluginId: string; manifest: unknown; sourceSpec: { locator: string } }>[];
-  }>;
+  }> : undefined;
   const definitions = await withTypescriptModuleInspectionSession(async () => {
     const entries: Pick<BundledPluginPackage, 'agentId' | 'agentDefinition' | 'agentNativeHomeEnvironmentKeys'>[] = [];
     for (const packageName of readBundledPluginPackageNames(options.rootDir)) {
@@ -3098,21 +3071,31 @@ async function publishSourceAgentDefinitions(
       const packageRoot = resolve(options.rootDir, 'packages/plugins', pluginPackageId);
       const definitionPath = resolve(packageRoot, 'src/agent/definition.ts');
       if (!existsSync(definitionPath)) continue;
-      const locator = manifestProjection.BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.find((entry) => entry.sourceSpec.locator === packageName);
-      if (!locator) throw new Error(`Missing tracked bundled plugin declaration: ${packageName}`);
-      const manifest = normalizePluginManifest(locator.manifest, `bundled:${locator.pluginId}`, parser);
-      const sourceFacts = await loadPluginAgentDefinitionFacts(options.rootDir, pluginPackageId);
-      const definition = projectNativeAgentCliDefinitionFacts(
-        sourceFacts.agentDefinition,
-        manifest,
-        pluginPackageId,
-      );
-      rejectRetiredAgentRuntimeContributionsAggregate(definition, definitionPath);
-      if (!isRecord(definition) || typeof definition.id !== 'string') {
-        throw new Error(`Invalid Agent definition at ${definitionPath}`);
+      try {
+        const locator = manifestProjection?.BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.find((entry) => entry.sourceSpec.locator === packageName);
+        const manifest = manifestSource === 'authored'
+          ? await loadPluginManifest(options.rootDir, pluginPackageId, { protocol: parser })
+          : locator ? normalizePluginManifest(locator.manifest, `bundled:${locator.pluginId}`, parser) : undefined;
+        if (!manifest) throw new Error(`Missing tracked bundled plugin declaration: ${packageName}`);
+        const sourceFacts = await loadPluginAgentDefinitionFacts(options.rootDir, pluginPackageId);
+        const definition = projectNativeAgentCliDefinitionFacts(
+          sourceFacts.agentDefinition,
+          manifest,
+          pluginPackageId,
+        );
+        rejectRetiredAgentRuntimeContributionsAggregate(definition, definitionPath);
+        if (!isRecord(definition) || typeof definition.id !== 'string') {
+          throw new Error(`Invalid Agent definition at ${definitionPath}`);
+        }
+        entries.push({ agentId: definition.id, agentDefinition: definition,
+          agentNativeHomeEnvironmentKeys: sourceFacts.agentNativeHomeEnvironmentKeys });
+      } catch (error) {
+        if (manifestSource === 'tracked') throw error;
+        // Retain the existing early-phase optional-plugin policy. The full
+        // publisher retries and records these failures; required owners throw.
+        createBundledPluginPublicationFailure({ repoRoot: options.rootDir, packageName,
+          code: 'plugin_manifest_invalid', error });
       }
-      entries.push({ agentId: definition.id, agentDefinition: definition,
-        agentNativeHomeEnvironmentKeys: sourceFacts.agentNativeHomeEnvironmentKeys });
     }
     return collectBundledAgentDefinitionProjection(entries);
   });
@@ -3129,9 +3112,14 @@ async function publishSourceAgentDefinitions(
 async function runRuntimeConsumedAgentFactsPrivateChild(
   argv: readonly string[],
   inheritedLockValue: string | undefined,
+  dependencyCurrentness: string,
 ): Promise<void> {
   await runGeneratorPrivateChild(argv, inheritedLockValue,
-    activeGeneratorPreparationLease ? `facts:${activeGeneratorPreparationLease.heldLockValue}` : '1');
+    activeGeneratorPreparationLease ? `facts:${activeGeneratorPreparationLease.heldLockValue}` : '1',
+    undefined, {
+      pluginFailures: [],
+      dependencyCurrentness,
+    });
 }
 
 async function runGeneratorPrivateChild(
@@ -3206,7 +3194,6 @@ async function collectBundledPluginSourcePackages(
     mode: Mode;
     dependencies: GeneratorWorkspaceDependencies;
     synchronizeSerializedManifest: boolean;
-    readAgentRuntimeFacts?: boolean;
   }>,
 ): Promise<Readonly<{
   sourcePluginPackages: readonly BundledPluginSourcePackage[];
@@ -3263,7 +3250,6 @@ async function collectBundledPluginSourcePackages(
         packageName,
         manifest,
         dependencies: params.dependencies,
-        readAgentRuntimeFacts: params.readAgentRuntimeFacts,
       });
 
       return Object.freeze({ sourcePluginPackage: Object.freeze({
@@ -5144,11 +5130,15 @@ async function runGenerator(
     && !options.aggregateOnly
     && !options.compilerInputsOnly;
   if (publishesFullRuntime) {
-    await withGeneratorPublicationLock(
+    const dependencyCurrentness = await withGeneratorPublicationLock(
       async (publicationLease) => {
         timing.phase('compiler-input-publication-lock-wait');
+        // Carry the admitted preparation to the fresh facts process. A later
+        // recapture could silently adopt another publisher's dependency graph.
+        const dependencyCurrentness = readGeneratorDependencyCurrentness(generatorPublicationDependencyNames());
         await publishGeneratedCompilerInputs(options, publicationLease);
         timing.phase('generated-compiler-inputs');
+        return dependencyCurrentness;
       },
       inheritedLockValue,
       async () => {
@@ -5163,10 +5153,9 @@ async function runGenerator(
         return assertCurrent;
       },
     );
-    // The child owns preparation and its short publication transaction. Do not
-    // give it a lease acquired by this parent around its dependency compilation.
-    // Its exit remains the ESM cache boundary before parent runtime imports.
-    await runRuntimeConsumedAgentFactsPrivateChild(argv, inheritedLockValue);
+    // The child verifies this prepared closure and owns its short publication
+    // transaction. Its exit remains the ESM cache boundary before parent imports.
+    await runRuntimeConsumedAgentFactsPrivateChild(argv, inheritedLockValue, dependencyCurrentness);
     timing.phase('runtime-consumed-agent-facts');
   }
   let assertRuntimeCurrent: () => void = () => {};
@@ -5366,17 +5355,19 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
       // must enter their normal compiler-input modes rather than recursively
       // re-entering the private phase.
       delete process.env[PRIVATE_RUNTIME_CONSUMED_AGENT_FACTS_PHASE_ENV];
+      const prepared = parsePreparedGeneratorPublication(JSON.parse(readFileSync(0, 'utf8')));
+      const factsTiming = createBundledPluginTimingReporter();
       const publishFacts = async () => await withGeneratorPublicationLock(
-        async (context) => await runRuntimeConsumedAgentFactsPrivatePhase(
-          privateOptions.rootDir,
-          context,
-        ),
+        async (context) => {
+          factsTiming.phase('agent-facts-publication-admission');
+          await runRuntimeConsumedAgentFactsPrivatePhase(
+            privateOptions.rootDir,
+            context,
+          );
+          factsTiming.phase('agent-facts-source-projection');
+        },
         heldLockValue,
-        async () => await synchronizeGeneratorAuthoringRuntimeClosure(
-          resolveGeneratorAuthoringPreparationPolicy({ mode: 'check', targetsCanonicalRoot: true }),
-          heldLockValue,
-          { prepareGeneratedCompilerInputs: false },
-        ),
+        async () => assertGeneratorDependencyCurrentness(generatorPublicationDependencyNames(), prepared.dependencyCurrentness),
       );
       if (privatePhase.startsWith('facts:')) {
         await withParentGeneratorPreparationLease(privatePhase.slice('facts:'.length), publishFacts);

@@ -665,7 +665,6 @@ export function createPluginSessionsInventory(
                     includeEvents: true,
                     includeRaw: false,
                     includeStructuredPayload: false,
-                    maxCharsPerMessage: 50_000,
                     signal,
                     serverFeaturesSnapshot: params.resolveServerFeaturesSnapshot?.(),
                   });

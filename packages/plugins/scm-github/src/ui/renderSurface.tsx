@@ -90,9 +90,13 @@ import {
   TriageDetailInstance,
   TriageDetailPanel,
   TriageDetailStory,
-  TriageDetailChanges,
-  TriageDetailActivity,
+  TriageDetailChangeSummary,
+  TriageDetailChecks,
+  TriageActivityTimeline,
   useTriagePostMutationCompletion,
+  type TriageActivityContinuationV1,
+  type TriageActivityEventV1,
+  type TriageActivityKindV1,
 } from '@happier-dev/triage-sources/ui';
 // The presentation rules used below are projections of the Triage contract's own
 // closed fact and failure vocabularies, so they are consumed from the one published
@@ -124,6 +128,7 @@ import {
 } from '../triage/contribution.js';
 import { GITHUB_PLUGIN_ID } from '../observations/githubProviderContracts.js';
 import {
+  githubReviewPublicationCredential,
   GithubIssueDeltaResultV1Schema,
   GithubPullRequestMarkReadyResultV1Schema,
   GithubPullRequestMergeResultV1Schema,
@@ -166,7 +171,8 @@ import {
   type GithubOverviewControllerV1,
   type GithubPagedControllerV1,
 } from './detail/panelReaders.js';
-import { githubChangeSummaryV1, githubCheckToneV1 as checkTone, githubChecksStepV1 } from './detail/story.js';
+import { githubCheckToneV1 as checkTone } from './detail/story.js';
+import { readGithubCheckOutcomeV1 } from '../triage/checkOutcome.js';
 import type { GithubPagedStateV1, GithubReadStateV1 } from './detail/panelState.js';
 import {
   GITHUB_ISSUE_CLOSE_REASONS_V1,
@@ -1095,7 +1101,7 @@ function SingleProposalPublicationWrite({
     return parseReviewCommentPublicationPlanV1({
       target: Object.freeze({
         providerId: 'github',
-        configuredAccountId: input.instance.binding.account.accountId,
+        ...githubReviewPublicationCredential(input.instance.binding),
         subtarget: kind === 'thread-reply' && threadId !== undefined
           ? Object.freeze({ kindId: 'review-thread' as const, targetId: threadId })
           : null,
@@ -1221,7 +1227,7 @@ function PullRequestReviewPublicationWrite({
     return parseReviewCommentPublicationPlanV1({
       target: Object.freeze({
         providerId: 'github',
-        configuredAccountId: input.instance.binding.account.accountId,
+        ...githubReviewPublicationCredential(input.instance.binding),
         subtarget: null,
         entryRef: Object.freeze({
           sourceId: `${GITHUB_PLUGIN_ID}/github-forge`,
@@ -1252,7 +1258,7 @@ function PullRequestReviewPublicationWrite({
     return parseReviewCommentPublicationPlanV1({
       target: Object.freeze({
         providerId: 'github',
-        configuredAccountId: input.instance.binding.account.accountId,
+        ...githubReviewPublicationCredential(input.instance.binding),
         subtarget: null,
         entryRef: Object.freeze({
           sourceId: `${GITHUB_PLUGIN_ID}/github-forge`,
@@ -2121,7 +2127,8 @@ function OverviewPanel({
 /* --------------------------------------------------------------------- Timeline */
 
 /**
- * The reader-facing sentence for one timeline arm.
+ * The reader-facing words for one timeline arm; the shared Activity owner puts
+ * the actor in front of them.
  *
  * `forcePushed` and `baseChanged` read differently from an ordinary push on
  * purpose: both silently invalidate work computed against the previous head or
@@ -2133,10 +2140,221 @@ function timelineHeadline(text: PluginTranslate, row: GithubProjectedTimelineRow
   // is not translated, because it is a provider fact and not this product's
   // sentence about one.
   const modelled = GITHUB_TIMELINE_HEADLINES_V1[row.kind];
-  const headline = modelled === undefined
+  return modelled === undefined
     ? row.rawKind
     : text(githubTimelineHeadlineKey(row.kind), modelled);
-  return row.actor === undefined ? headline : `${headline} · ${row.actor}`;
+}
+
+/** Which Activity marker each timeline arm takes; an unmodelled arm is just an event. */
+const GITHUB_TIMELINE_ACTIVITY_KINDS: Readonly<Record<string, TriageActivityKindV1 | undefined>> =
+  Object.freeze({
+    commented: 'comment',
+    committed: 'change',
+    forcePushed: 'change',
+    baseChanged: 'change',
+    reviewed: 'review',
+    reviewRequested: 'assignment',
+    reviewRequestRemoved: 'assignment',
+    merged: 'state',
+    closed: 'state',
+    reopened: 'state',
+    renamed: 'state',
+    labeled: 'label',
+    unlabeled: 'label',
+    milestoned: 'label',
+    demilestoned: 'label',
+    assigned: 'assignment',
+    unassigned: 'assignment',
+  });
+
+/**
+ * One GitHub read projected for the shared Activity stream.
+ *
+ * Each read keeps its own lifecycle, cursor and failure; the view below only
+ * decides how the reads that answered are shown together.
+ */
+type GithubActivityStreamV1 = Readonly<{
+  /** The read has not answered yet. */
+  settling: boolean;
+  /** The read answered with nothing usable at all: a cold failure. */
+  unavailable: Readonly<{ title: string; titleKey: string; failure: TriageSourceFailureV1 | null }> | null;
+  header: React.ReactNode;
+  events: readonly TriageActivityEventV1[];
+  /**
+   * GitHub records a remark twice — as the comment or review itself and as a
+   * `commented`/`reviewed` timeline event with the same permalink. A stream
+   * that mirrors remarks drops its copy when the remark itself is on screen.
+   */
+  mirrorsRemarks?: true;
+  continuations: readonly TriageActivityContinuationV1[];
+  summary: React.ReactNode;
+  refresh: () => void;
+  pending: boolean;
+  empty: React.ReactNode;
+}>;
+
+function useGithubTimelineStream(input: TriageDetailSurfaceInputV1): GithubActivityStreamV1 {
+  const text = usePluginTranslation();
+  const controller = useGithubTimeline(input);
+  const { state } = controller;
+  const incomplete = incompleteDescription(text, state.incomplete, null);
+  return {
+    settling: state.kind === 'idle' || state.kind === 'loading',
+    unavailable: state.kind === 'unavailable'
+      ? { title: 'The timeline is unavailable', titleKey: 'plugins.github.ui.timelineUnavailable', failure: state.failure }
+      : null,
+    header: <PageFailureBanner state={state} />,
+    events: state.rows.map((row) => {
+      const headline = timelineHeadline(text, row);
+      return {
+        id: row.id,
+        atMs: row.atMs ?? null,
+        kind: GITHUB_TIMELINE_ACTIVITY_KINDS[row.kind] ?? 'other',
+        actor: row.actor ?? null,
+        summary: headline,
+        detail: row.summary ?? null,
+        href: row.webUrl ?? null,
+        hrefLabel: text('plugins.github.ui.openOnGithub', 'Open {item} on GitHub', { item: headline }),
+      };
+    }),
+    mirrorsRemarks: true,
+    continuations: state.canLoadMore
+      ? [{
+        key: 'timeline',
+        // GitHub pages this timeline oldest first, so the next page is LATER
+        // events, not earlier ones. The control says what it does.
+        title: 'Load more events',
+        titleKey: 'plugins.github.ui.loadMoreEvents',
+        pending: state.pending,
+        onLoadMore: controller.loadMore,
+      }]
+      : [],
+    summary: (
+      <Stack gap="small">
+        <Text
+          variant="caption"
+          tone="neutral"
+          valueKey={state.omittedRowCount === 0
+            ? 'plugins.github.ui.eventsRead'
+            : 'plugins.github.ui.eventsReadWithUnreadable'}
+          fallback={state.omittedRowCount === 0
+            ? '{count} event(s) read.'
+            : '{count} event(s) read. {unreadable} row(s) on the pages read could not be understood.'}
+          values={{ count: state.rows.length, unreadable: state.omittedRowCount }}
+        />
+        {incomplete === null ? null : <Text variant="caption" tone="neutral">{incomplete}</Text>}
+      </Stack>
+    ),
+    refresh: controller.refresh,
+    pending: state.pending,
+    empty: (
+      <EmptyState
+        title="No recorded events"
+        titleKey="plugins.github.ui.noEvents"
+        description="GitHub has recorded no timeline events for this entry yet."
+        descriptionKey="plugins.github.ui.noEvents.description"
+      />
+    ),
+  };
+}
+
+/**
+ * Every Activity-shaped GitHub plane — the timeline, an issue's comments, a pull
+ * request's feedback, and Triage's Activity panel that merges them — rendered
+ * through the one shared Activity owner.
+ *
+ * It is a loading state only while every read is still settling, and a failure
+ * only when every read failed; otherwise it shows what answered, beside a banner
+ * naming each read that did not.
+ */
+function GithubActivityView({
+  streams,
+  locale,
+  nowMs,
+  accessibilityLabel,
+  accessibilityLabelKey,
+  loadingTitle,
+  loadingTitleKey,
+  refreshLabel,
+  refreshLabelKey,
+}: Readonly<{
+  streams: readonly GithubActivityStreamV1[];
+  locale: string;
+  nowMs: number;
+  accessibilityLabel: string;
+  accessibilityLabelKey: string;
+  loadingTitle: string;
+  loadingTitleKey: string;
+  refreshLabel: string;
+  refreshLabelKey: string;
+}>): React.ReactElement {
+  const text = usePluginTranslation();
+  const readFailed = text('plugins.github.ui.readFailed', 'GitHub could not complete this read.');
+  if (streams.every((stream) => stream.settling)) {
+    return <LoadingState title={loadingTitle} titleKey={loadingTitleKey} />;
+  }
+  const cold = streams.every((stream) => stream.unavailable !== null) ? streams[0]?.unavailable ?? null : null;
+  if (cold !== null) {
+    return (
+      <ErrorState
+        title={cold.title}
+        titleKey={cold.titleKey}
+        description={failureDescription(cold.failure, readFailed)}
+      />
+    );
+  }
+
+  const answered = streams.filter((stream) => stream.unavailable === null);
+  const remarkHrefs = new Set(answered
+    .filter((stream) => stream.mirrorsRemarks === undefined)
+    .flatMap((stream) => stream.events)
+    .filter((event) => event.kind === 'comment' || event.kind === 'review')
+    .flatMap((event) => (event.href === undefined || event.href === null ? [] : [event.href])));
+  const events = answered.flatMap((stream) => (stream.mirrorsRemarks === undefined
+    ? stream.events
+    : stream.events.filter((event) => !((event.kind === 'comment' || event.kind === 'review')
+      && event.href !== undefined && event.href !== null && remarkHrefs.has(event.href)))));
+
+  return (
+    <TriageActivityTimeline
+      events={events}
+      locale={locale}
+      nowMs={nowMs}
+      accessibilityLabel={accessibilityLabel}
+      accessibilityLabelKey={accessibilityLabelKey}
+      header={(
+        <Stack gap="medium">
+          {streams.map((stream, index) => (
+            <React.Fragment key={index}>
+              {stream.unavailable === null
+                ? stream.header
+                : (
+                  <Banner
+                    tone="warning"
+                    title={stream.unavailable.title}
+                    titleKey={stream.unavailable.titleKey}
+                    description={failureDescription(stream.unavailable.failure, readFailed)}
+                  />
+                )}
+            </React.Fragment>
+          ))}
+        </Stack>
+      )}
+      empty={answered[0]?.empty ?? null}
+      continuations={answered.flatMap((stream) => stream.continuations)}
+      footer={(
+        <Stack gap="small">
+          {answered.map((stream, index) => <React.Fragment key={index}>{stream.summary}</React.Fragment>)}
+          <RefreshRow
+            onRefresh={() => { for (const stream of streams) stream.refresh(); }}
+            pending={streams.some((stream) => stream.pending)}
+            accessibilityLabel={refreshLabel}
+            accessibilityLabelKey={refreshLabelKey}
+          />
+        </Stack>
+      )}
+    />
+  );
 }
 
 function TimelinePanel({
@@ -2148,103 +2366,18 @@ function TimelinePanel({
   locale: string;
   nowMs: number;
 }>): React.ReactElement {
-  const text = usePluginTranslation();
-  const controller = useGithubTimeline(input);
-  const { state } = controller;
-
-  if (state.kind === 'idle' || state.kind === 'loading') {
-    return <LoadingState title="Reading this timeline from GitHub" titleKey="plugins.github.ui.readingTimeline" />;
-  }
-  if (state.kind === 'unavailable') {
-    return (
-      <ErrorState
-        title="The timeline is unavailable"
-        titleKey="plugins.github.ui.timelineUnavailable"
-        description={failureDescription(
-          state.failure,
-          text('plugins.github.ui.readFailed', 'GitHub could not complete this read.'),
-        )}
-      />
-    );
-  }
-
-  const incomplete = incompleteDescription(text, state.incomplete, null);
+  const timeline = useGithubTimelineStream(input);
   return (
-    <List
+    <GithubActivityView
+      streams={[timeline]}
+      locale={locale}
+      nowMs={nowMs}
       accessibilityLabel="Events GitHub recorded for this entry"
       accessibilityLabelKey="plugins.github.ui.timelineLabel"
-      items={state.rows}
-      keyForItem={(row) => row.id}
-      header={<PageFailureBanner state={state} />}
-      empty={(
-        <EmptyState
-          title="No recorded events"
-          titleKey="plugins.github.ui.noEvents"
-          description="GitHub has recorded no timeline events for this entry yet."
-          descriptionKey="plugins.github.ui.noEvents.description"
-        />
-      )}
-      footer={(
-        <Stack gap="small">
-          <Text
-            variant="caption"
-            tone="neutral"
-            valueKey={state.omittedRowCount === 0
-              ? 'plugins.github.ui.eventsRead'
-              : 'plugins.github.ui.eventsReadWithUnreadable'}
-            fallback={state.omittedRowCount === 0
-              ? '{count} event(s) read.'
-              : '{count} event(s) read. {unreadable} row(s) on the pages read could not be understood.'}
-            values={{ count: state.rows.length, unreadable: state.omittedRowCount }}
-          />
-          {incomplete === null
-            ? null
-            : <Text variant="caption" tone="neutral">{incomplete}</Text>}
-          {state.canLoadMore
-            ? (
-              <Button
-                // GitHub pages this timeline oldest first, so the next page is
-                // LATER events, not earlier ones. The control says what it does.
-                title="Load more events"
-                titleKey="plugins.github.ui.loadMoreEvents"
-                variant="secondary"
-                busy={state.pending}
-                onPress={controller.loadMore}
-              />
-            )
-            : null}
-          <RefreshRow
-            onRefresh={controller.refresh}
-            pending={state.pending}
-            accessibilityLabel="Re-read this timeline from GitHub"
-            accessibilityLabelKey="plugins.github.ui.rereadTimeline"
-          />
-        </Stack>
-      )}
-      renderItem={(row) => (
-        <Item
-          title={timelineHeadline(text, row)}
-          {...(row.summary === undefined ? {} : { subtitle: row.summary })}
-          {...(row.atMs === undefined
-            ? {}
-            : { detail: formatTimestamp(locale, row.atMs, 'relative', nowMs) })}
-          {...(row.webUrl === undefined
-            ? {}
-            : {
-              accessory: (
-                <Action.OpenExternal
-                  url={row.webUrl}
-                  variant="plain"
-                  accessibilityLabel={text(
-                    'plugins.github.ui.openOnGithub',
-                    'Open {item} on GitHub',
-                    { item: timelineHeadline(text, row) },
-                  )}
-                />
-              ),
-            })}
-        />
-      )}
+      loadingTitle="Reading this timeline from GitHub"
+      loadingTitleKey="plugins.github.ui.readingTimeline"
+      refreshLabel="Re-read this timeline from GitHub"
+      refreshLabelKey="plugins.github.ui.rereadTimeline"
     />
   );
 }
@@ -2674,67 +2807,73 @@ function commentScopeDisclosure(text: PluginTranslate): string {
   );
 }
 
-/**
- * One remark, rendered the same way wherever it is read.
- *
- * The `Comments` panel and the `Feedback` plane show the same GitHub comment,
- * and two markups for one body is how a comment starts announcing its author
- * differently in one product. The two callers differ only in the shape their
- * read hands over, so this row takes the resolved facts rather than either
- * caller's row type.
- */
-type GithubCommentRowFactsV1 = Readonly<{
-  author: string | null;
+/** A remark as one Activity event: its author's mark, the verb, and its own words quoted. */
+function remarkEvent(text: PluginTranslate, remark: Readonly<{
+  id: string;
   atMs: number | null;
+  author: string | null;
   body: string;
   webUrl: string | null;
-  edited: boolean;
-}>;
-
-function commentHeadline(text: PluginTranslate, row: GithubCommentRowFactsV1): string {
-  const author = row.author ?? text('plugins.github.ui.someone', 'Someone');
-  return row.edited
-    ? text('plugins.github.ui.commentEdited', '{author} · edited', { author })
-    : author;
+  kind: 'comment' | 'review';
+  summary: string;
+}>): TriageActivityEventV1 {
+  const actor = remark.author ?? text('plugins.github.ui.someone', 'Someone');
+  return {
+    id: remark.id,
+    atMs: remark.atMs,
+    kind: remark.kind,
+    actor,
+    summary: remark.summary,
+    ...(remark.body === ''
+      ? remark.kind === 'comment'
+        ? { detail: text('plugins.github.ui.commentNoText', 'This comment carries no text.') }
+        : {}
+      : { quote: remark.body }),
+    href: remark.webUrl,
+    hrefLabel: text('plugins.github.ui.openOnGithub', 'Open {item} on GitHub', {
+      item: `${actor} · ${remark.summary}`,
+    }),
+  };
 }
 
-function CommentRow({
-  row,
+/** One reply inside a line review conversation, under that conversation's Activity event. */
+function ThreadReplyRow({
+  reply,
   locale,
   nowMs,
 }: Readonly<{
-  row: GithubCommentRowFactsV1;
+  reply: import('../triage/feedback.js').GithubFeedbackCommentV1;
   locale: string;
   nowMs: number;
 }>): React.ReactElement {
   const text = usePluginTranslation();
-  const headline = commentHeadline(text, row);
+  const author = reply.author ?? text('plugins.github.ui.someone', 'Someone');
   return (
     <Stack gap="small">
       <Row gap="small">
-        <Text variant="caption">{headline}</Text>
-        {row.atMs === null
+        <Text variant="caption">{author}</Text>
+        {reply.createdAtMs === null
           ? null
           : (
             <Text variant="caption" tone="neutral">
-              {formatTimestamp(locale, row.atMs, 'relative', nowMs)}
+              {formatTimestamp(locale, reply.createdAtMs, 'relative', nowMs)}
             </Text>
           )}
-        {row.webUrl === null
+        {reply.url === null
           ? null
           : (
             <Action.OpenExternal
-              url={row.webUrl}
+              url={reply.url}
               variant="plain"
               accessibilityLabel={text(
                 'plugins.github.ui.openOnGithub',
                 'Open {item} on GitHub',
-                { item: headline },
+                { item: author },
               )}
             />
           )}
       </Row>
-      {row.body === ''
+      {reply.body === ''
         ? (
           <Text
             variant="caption"
@@ -2743,21 +2882,82 @@ function CommentRow({
             fallback="This comment carries no text."
           />
         )
-        : <Markdown value={row.body} />}
-      <Divider />
+        : <Markdown value={reply.body} />}
     </Stack>
   );
 }
 
-function feedbackCommentRowFacts(
-  row: import('../triage/feedback.js').GithubFeedbackCommentV1,
-): GithubCommentRowFactsV1 {
+function useGithubCommentsStream(input: TriageDetailSurfaceInputV1): GithubActivityStreamV1 {
+  const text = usePluginTranslation();
+  const controller = useGithubFeedbackComments(input);
+  const { state } = controller;
+  const incomplete = incompleteDescription(text, state.incomplete, null);
+  const commented = text(githubTimelineHeadlineKey('commented'), GITHUB_TIMELINE_HEADLINES_V1['commented'] ?? 'Commented');
   return {
-    author: row.author,
-    atMs: row.createdAtMs,
-    body: row.body,
-    webUrl: row.url,
-    edited: false,
+    settling: state.kind === 'idle' || state.kind === 'loading',
+    unavailable: state.kind === 'unavailable'
+      ? { title: 'The conversation is unavailable', titleKey: 'plugins.github.ui.conversationUnavailable', failure: state.failure }
+      : null,
+    header: (
+      <Stack gap="small">
+        <Text variant="caption" tone="neutral">{commentScopeDisclosure(text)}</Text>
+        <PageFailureBanner state={state} />
+      </Stack>
+    ),
+    events: state.rows.map((row) => remarkEvent(text, {
+      id: row.id,
+      atMs: row.createdAtMs,
+      author: row.author,
+      body: row.body,
+      webUrl: row.url,
+      kind: 'comment',
+      summary: commented,
+    })),
+    continuations: state.canLoadMore
+      ? [{
+        key: 'comments',
+        title: 'Show 40 earlier comments',
+        titleKey: 'plugins.github.ui.showEarlierIssueComments',
+        pending: state.pending,
+        onLoadMore: controller.loadMore,
+        reads: 'earlier',
+      }]
+      : [],
+    summary: (
+      <Stack gap="small">
+        <Text
+          variant="caption"
+          tone="neutral"
+          valueKey={state.omittedRowCount === 0
+            ? 'plugins.github.ui.commentsRead'
+            : 'plugins.github.ui.commentsReadWithUnreadable'}
+          fallback={state.omittedRowCount === 0
+            ? '{count} comment(s) read.'
+            : '{count} comment(s) read. {unreadable} row(s) on the pages read could not be understood.'}
+          values={{ count: state.rows.length, unreadable: state.omittedRowCount }}
+        />
+        {state.projectionTruncated
+          ? (
+            <Text
+              variant="caption"
+              tone="neutral"
+              valueKey="plugins.github.ui.commentsShortened.description"
+              fallback="Some comments were shortened. Open the entry on GitHub to read them in full."
+            />
+          )
+          : null}
+        {incomplete === null ? null : <Text variant="caption" tone="neutral">{incomplete}</Text>}
+      </Stack>
+    ),
+    refresh: controller.refresh,
+    pending: state.pending,
+    empty: (
+      <EmptyState
+        title="No comments yet"
+        titleKey="plugins.github.ui.noComments"
+        description={commentScopeDisclosure(text)}
+      />
+    ),
   };
 }
 
@@ -2770,107 +2970,18 @@ function CommentsPanel({
   locale: string;
   nowMs: number;
 }>): React.ReactElement {
-  const text = usePluginTranslation();
-  const controller = useGithubFeedbackComments(input);
-  const { state } = controller;
-  const rows = React.useMemo(
-    () => Object.freeze([...state.rows].sort((left, right) => {
-      if (left.createdAtMs !== null && right.createdAtMs !== null
-        && left.createdAtMs !== right.createdAtMs) {
-        return left.createdAtMs - right.createdAtMs;
-      }
-      if (left.createdAtMs === null && right.createdAtMs !== null) return 1;
-      if (left.createdAtMs !== null && right.createdAtMs === null) return -1;
-      return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
-    })),
-    [state.rows],
-  );
-
-  if (state.kind === 'idle' || state.kind === 'loading') {
-    return <LoadingState title="Reading this conversation from GitHub" titleKey="plugins.github.ui.readingConversation" />;
-  }
-  if (state.kind === 'unavailable') {
-    return (
-      <ErrorState
-        title="The conversation is unavailable"
-        titleKey="plugins.github.ui.conversationUnavailable"
-        description={failureDescription(
-          state.failure,
-          text('plugins.github.ui.readFailed', 'GitHub could not complete this read.'),
-        )}
-      />
-    );
-  }
-
-  const incomplete = incompleteDescription(text, state.incomplete, null);
+  const comments = useGithubCommentsStream(input);
   return (
-    <List
+    <GithubActivityView
+      streams={[comments]}
+      locale={locale}
+      nowMs={nowMs}
       accessibilityLabel="Comments on this GitHub entry"
       accessibilityLabelKey="plugins.github.ui.commentsLabel"
-      preserveVisibleContentPositionOnPrepend
-      items={rows}
-      keyForItem={(row) => row.id}
-      header={(
-        <Stack gap="small">
-          <Text variant="caption" tone="neutral">{commentScopeDisclosure(text)}</Text>
-          <PageFailureBanner state={state} />
-        </Stack>
-      )}
-      empty={(
-        <EmptyState
-          title="No comments yet"
-          titleKey="plugins.github.ui.noComments"
-          description={commentScopeDisclosure(text)}
-        />
-      )}
-      footer={(
-        <Stack gap="small">
-          <Text
-            variant="caption"
-            tone="neutral"
-            valueKey={state.omittedRowCount === 0
-              ? 'plugins.github.ui.commentsRead'
-              : 'plugins.github.ui.commentsReadWithUnreadable'}
-            fallback={state.omittedRowCount === 0
-              ? '{count} comment(s) read.'
-              : '{count} comment(s) read. {unreadable} row(s) on the pages read could not be understood.'}
-            values={{ count: rows.length, unreadable: state.omittedRowCount }}
-          />
-          {state.projectionTruncated
-            ? (
-              <Text
-                variant="caption"
-                tone="neutral"
-                valueKey="plugins.github.ui.commentsShortened.description"
-                fallback="Some comments were shortened. Open the entry on GitHub to read them in full."
-              />
-            )
-            : null}
-          {incomplete === null
-            ? null
-            : <Text variant="caption" tone="neutral">{incomplete}</Text>}
-          {state.canLoadMore
-            ? (
-              <Button
-                title="Show 40 earlier comments"
-                titleKey="plugins.github.ui.showEarlierIssueComments"
-                variant="secondary"
-                busy={state.pending}
-                onPress={controller.loadMore}
-              />
-            )
-            : null}
-          <RefreshRow
-            onRefresh={controller.refresh}
-            pending={state.pending}
-            accessibilityLabel="Re-read this conversation from GitHub"
-            accessibilityLabelKey="plugins.github.ui.rereadConversation"
-          />
-        </Stack>
-      )}
-      renderItem={(row) => (
-        <CommentRow row={feedbackCommentRowFacts(row)} locale={locale} nowMs={nowMs} />
-      )}
+      loadingTitle="Reading this conversation from GitHub"
+      loadingTitleKey="plugins.github.ui.readingConversation"
+      refreshLabel="Re-read this conversation from GitHub"
+      refreshLabelKey="plugins.github.ui.rereadConversation"
     />
   );
 }
@@ -2951,110 +3062,89 @@ const FINDING_STATE_COPY: Readonly<Record<'check' | 'conflict', Readonly<{
   }),
 });
 
-function FeedbackFindingRow({
-  finding,
-  input,
-  locale,
-  nowMs,
-  onObserved,
-  publicationProposals,
-  capabilities,
-}: Readonly<{
-  finding: GithubFeedbackFindingV1;
+type GithubFeedbackWriteContextV1 = Readonly<{
   input: TriageDetailSurfaceInputV1;
   locale: string;
   nowMs: number;
   onObserved: GithubObservedEntryHandlerV1;
   publicationProposals: ReviewCommentProposalReadV1;
   capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
-}>): React.ReactElement {
-  const text = usePluginTranslation();
-  const { platform } = useSurfaceContext();
-  const mobile = platform === 'ios' || platform === 'android';
+}>;
+
+/** One feedback finding as one Activity event; a line conversation keeps its replies and controls under it. */
+function feedbackFindingEvent(
+  text: PluginTranslate,
+  finding: GithubFeedbackFindingV1,
+  context: GithubFeedbackWriteContextV1,
+): TriageActivityEventV1 {
   if (finding.resource === 'comment') {
-    return (
-      <CommentRow
-        row={{
-          author: finding.author,
-          atMs: finding.atMs,
-          body: finding.body,
-          webUrl: finding.webUrl,
-          // The finding arm carries no edit instant, and inventing one would
-          // label an unedited comment as edited.
-          edited: false,
-        }}
-        locale={locale}
-        nowMs={nowMs}
-      />
-    );
+    return remarkEvent(text, {
+      id: finding.id,
+      atMs: finding.atMs,
+      author: finding.author,
+      body: finding.body,
+      webUrl: finding.webUrl,
+      kind: 'comment',
+      summary: text(githubTimelineHeadlineKey('commented'), GITHUB_TIMELINE_HEADLINES_V1['commented'] ?? 'Commented'),
+    });
   }
   if (finding.resource === 'review') {
-    return (
-      <Stack gap="small">
-        <Item
-          title={reviewStateText(text, finding.state)}
-          subtitle={finding.author ?? text('plugins.github.ui.unknownAuthor', 'Unknown author')}
-        />
-        {finding.body === ''
-          ? null
-          : (
-            <CommentRow
-              row={{
-                author: finding.author,
-                atMs: finding.atMs,
-                body: finding.body,
-                webUrl: finding.webUrl,
-                edited: false,
-              }}
-              locale={locale}
-              nowMs={nowMs}
-            />
-          )}
-      </Stack>
-    );
+    return remarkEvent(text, {
+      id: finding.id,
+      atMs: finding.atMs,
+      author: finding.author ?? text('plugins.github.ui.unknownAuthor', 'Unknown author'),
+      body: finding.body,
+      webUrl: finding.webUrl,
+      kind: 'review',
+      summary: reviewStateText(text, finding.state),
+    });
   }
   if (finding.resource === 'thread') {
-    return finding.previousRepliesCursor === null || mobile
-      ? (
-        <ThreadFeedbackFinding
-          input={input}
-          finding={finding}
-          mobile={mobile}
-          locale={locale}
-          nowMs={nowMs}
-          onObserved={onObserved}
-          publicationProposals={publicationProposals}
-          capabilities={capabilities}
-        />
-      )
-      : (
-        <PagedThreadFeedbackFinding
-          input={input}
-          finding={finding}
-          firstCursor={finding.previousRepliesCursor}
-          locale={locale}
-          nowMs={nowMs}
-          onObserved={onObserved}
-          publicationProposals={publicationProposals}
-          capabilities={capabilities}
-        />
-      );
+    const location = threadLocation(text, finding);
+    return {
+      id: finding.id,
+      atMs: finding.atMs,
+      kind: 'review',
+      actor: finding.firstReply?.author ?? null,
+      summary: location,
+      detail: finding.isResolved
+        ? text('plugins.github.ui.threadResolved', 'Resolved')
+        : text('plugins.github.ui.threadUnresolved', 'Unresolved'),
+      tone: finding.isResolved ? 'neutral' : 'warning',
+      inset: <ThreadFindingInset finding={finding} context={context} />,
+    };
   }
   const copy = FINDING_STATE_COPY[finding.kind];
-  return (
-    <Item
-      // GitHub's own words for the state, kept as the provider fact they are.
-      title={finding.label}
-      subtitle={text(copy.key, copy.fallback)}
-      tone={finding.tone}
-      {...(finding.atMs === null
-        ? {}
-        : { detail: formatTimestamp(locale, finding.atMs, 'relative', nowMs) })}
-    />
-  );
+  return {
+    id: `${finding.resource}:${finding.id}`,
+    atMs: finding.atMs,
+    kind: 'check',
+    // GitHub's own words for the state, kept as the provider fact they are.
+    summary: finding.label,
+    detail: text(copy.key, copy.fallback),
+    tone: finding.tone,
+  };
 }
 
 type GithubThreadFindingV1 = Extract<GithubFeedbackFindingV1, { resource: 'thread' }>;
+
+function threadLocation(text: PluginTranslate, finding: GithubThreadFindingV1): string {
+  return finding.path === null
+    ? text('plugins.github.ui.reviewThread', 'Review conversation')
+    : finding.line === null ? finding.path : `${finding.path}:${finding.line}`;
+}
+
+/** A line conversation's own content under its event: replies, earlier replies, and its two writes. */
+function ThreadFindingInset({
+  finding,
+  context,
+}: Readonly<{ finding: GithubThreadFindingV1; context: GithubFeedbackWriteContextV1 }>): React.ReactElement {
+  const { platform } = useSurfaceContext();
+  const mobile = platform === 'ios' || platform === 'android';
+  return finding.previousRepliesCursor === null || mobile
+    ? <ThreadFeedbackFinding finding={finding} mobile={mobile} {...context} />
+    : <PagedThreadFeedbackFinding finding={finding} firstCursor={finding.previousRepliesCursor} {...context} />;
+}
 
 function ThreadFeedbackFinding({
   input,
@@ -3068,23 +3158,15 @@ function ThreadFeedbackFinding({
   onObserved,
   publicationProposals,
   capabilities,
-}: Readonly<{
-  input: TriageDetailSurfaceInputV1;
+}: GithubFeedbackWriteContextV1 & Readonly<{
   finding: GithubThreadFindingV1;
   earlierReplies?: GithubThreadFindingV1['replies'];
   mobile?: boolean;
   loadMore?: () => void;
   pending?: boolean;
-  locale: string;
-  nowMs: number;
-  onObserved: GithubObservedEntryHandlerV1;
-  publicationProposals: ReviewCommentProposalReadV1;
-  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
 }>): React.ReactElement {
   const text = usePluginTranslation();
-  const location = finding.path === null
-    ? text('plugins.github.ui.reviewThread', 'Review conversation')
-    : finding.line === null ? finding.path : `${finding.path}:${finding.line}`;
+  const location = threadLocation(text, finding);
   const nextResolved = !finding.isResolved;
   const payload = buildGithubPullRequestThreadResolutionInputV1(
     input,
@@ -3099,26 +3181,8 @@ function ThreadFeedbackFinding({
     : orderGithubFeedbackReplies([...earlierReplies, ...finding.replies]);
   return (
       <Stack gap="small">
-        <Item
-          title={location}
-          subtitle={finding.isResolved
-            ? text('plugins.github.ui.threadResolved', 'Resolved')
-            : text('plugins.github.ui.threadUnresolved', 'Unresolved')}
-          tone={finding.isResolved ? 'neutral' : 'warning'}
-        />
         {visibleReplies.map((reply) => (
-          <CommentRow
-            key={reply.id}
-            row={{
-              author: reply.author,
-              atMs: reply.createdAtMs,
-              body: reply.body,
-              webUrl: reply.url,
-              edited: false,
-            }}
-            locale={locale}
-            nowMs={nowMs}
-          />
+          <ThreadReplyRow key={reply.id} reply={reply} locale={locale} nowMs={nowMs} />
         ))}
         {mobile
           ? (
@@ -3159,64 +3223,35 @@ function ThreadFeedbackFinding({
 }
 
 function PagedThreadFeedbackFinding({
-  input,
   finding,
   firstCursor,
-  locale,
-  nowMs,
-  onObserved,
-  publicationProposals,
-  capabilities,
-}: Readonly<{
-  input: TriageDetailSurfaceInputV1;
+  ...context
+}: GithubFeedbackWriteContextV1 & Readonly<{
   finding: GithubThreadFindingV1;
   firstCursor: string;
-  locale: string;
-  nowMs: number;
-  onObserved: GithubObservedEntryHandlerV1;
-  publicationProposals: ReviewCommentProposalReadV1;
-  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
 }>): React.ReactElement {
-  const replies = useGithubFeedbackThreadReplies(input, finding.id, firstCursor);
+  const replies = useGithubFeedbackThreadReplies(context.input, finding.id, firstCursor);
   return (
     <ThreadFeedbackFinding
-      input={input}
       finding={finding}
       earlierReplies={replies.state.rows}
       {...(replies.state.canLoadMore ? { loadMore: replies.loadMore } : {})}
       pending={replies.state.pending}
-      locale={locale}
-      nowMs={nowMs}
-      onObserved={onObserved}
-      publicationProposals={publicationProposals}
-      capabilities={capabilities}
+      {...context}
     />
   );
 }
 
 /**
- * The `Feedback` plane: what is being said about this pull request, who has
+ * The `Feedback` read: what is being said about this pull request, who has
  * signed off, who is still being waited on, and what GitHub reports as wrong.
  *
  * It composes the conversation walk with the canonical reviews and checks
  * reads. They settle independently: one failing leaves the other answers on
  * screen beside a banner naming exactly what could not be read.
  */
-function FeedbackPanel({
-  input,
-  locale,
-  nowMs,
-  onObserved,
-  publicationProposals,
-  capabilities,
-}: Readonly<{
-  input: TriageDetailSurfaceInputV1;
-  locale: string;
-  nowMs: number;
-  onObserved: GithubObservedEntryHandlerV1;
-  publicationProposals: ReviewCommentProposalReadV1;
-  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
-}>): React.ReactElement {
+function useGithubFeedbackStream(context: GithubFeedbackWriteContextV1): GithubActivityStreamV1 {
+  const { input, locale, nowMs } = context;
   const text = usePluginTranslation();
   const conversation = useGithubFeedbackComments(input);
   const threads = useGithubFeedbackThreads(input);
@@ -3252,44 +3287,23 @@ function FeedbackPanel({
       reviews.reviewDecision, reviews.state.rows, threads.state.rows],
   );
 
-  const conversationSettling = conversation.state.kind === 'idle'
-    || conversation.state.kind === 'loading';
-  const reviewsSettling = reviews.state.kind === 'loading';
-  const threadsSettling = threads.state.kind === 'loading';
-  const requestsSettling = requests.state.kind === 'loading';
-  const checksSettling = checks.state.kind === 'loading';
-  if (conversationSettling && threadsSettling && reviewsSettling
-    && requestsSettling && checksSettling) {
-    return (
-      <LoadingState
-        title="Reading the feedback on this pull request from GitHub"
-        titleKey="plugins.github.ui.readingFeedback"
-      />
-    );
-  }
+  const settling = (conversation.state.kind === 'idle' || conversation.state.kind === 'loading')
+    && reviews.state.kind === 'loading'
+    && threads.state.kind === 'loading'
+    && requests.state.kind === 'loading'
+    && checks.state.kind === 'loading';
+  // Cold: no read answered, so there is no content to keep and nothing
+  // honest to say beyond that we could not look.
+  const cold = conversation.state.kind === 'unavailable'
+    && threads.state.kind === 'unavailable'
+    && reviews.state.kind === 'unavailable'
+    && requests.state.kind === 'unavailable'
+    && checks.state.kind === 'unavailable';
 
   const readFailed = text(
     'plugins.github.ui.readFailed',
     'GitHub could not complete this read.',
   );
-  if (
-    conversation.state.kind === 'unavailable'
-    && threads.state.kind === 'unavailable'
-    && reviews.state.kind === 'unavailable'
-    && requests.state.kind === 'unavailable'
-    && checks.state.kind === 'unavailable'
-  ) {
-    // Cold: no read answered, so there is no content to keep and nothing
-    // honest to say beyond that we could not look.
-    return (
-      <ErrorState
-        title="The feedback is unavailable"
-        titleKey="plugins.github.ui.feedbackUnavailable"
-        description={failureDescription(conversation.state.failure, readFailed)}
-      />
-    );
-  }
-
   // Each connection names ITSELF. "Something failed" over a partial plane leaves
   // the reader unable to tell which half of the picture they are missing.
   const reviewsFailure = reviews.state.failure;
@@ -3326,173 +3340,205 @@ function FeedbackPanel({
       + ' are clean.',
   );
 
+  return {
+    settling,
+    unavailable: cold
+      ? { title: 'The feedback is unavailable', titleKey: 'plugins.github.ui.feedbackUnavailable', failure: conversation.state.failure }
+      : null,
+    header: (
+      <Stack gap="medium">
+        {view.review.kind === 'decided'
+          ? (
+            <Row gap="small">
+              <Status
+                tone={view.review.tone}
+                label={text('plugins.github.ui.reviewDecision', 'Review: {value}', {
+                  value: view.review.label,
+                })}
+              />
+            </Row>
+          )
+          : (
+            <Text
+              variant="caption"
+              tone="neutral"
+              valueKey="plugins.github.ui.reviewUnresolved"
+              fallback={'GitHub\'s current reviews read did not report a review decision, so'
+                + ' nothing here says whether it is approved.'}
+            />
+          )}
+        <ReviewPeople people={view.people} locale={locale} nowMs={nowMs} />
+        <Text
+          variant="caption"
+          tone="neutral"
+          valueKey="plugins.github.ui.feedbackScope"
+          fallback={'This keeps issue comments, review bodies, outstanding requests, line'
+            + ' conversations, check state, and timeline history as distinct GitHub facts.'}
+        />
+        {checksKnownIncomplete
+          ? (
+            // The same fact the Checks plane states, in the plane that would
+            // otherwise imply a clean suite. It is deliberately separate from
+            // the failure banner below: an incomplete read is not a failed one.
+            <Banner
+              tone="warning"
+              title="This check suite is larger than GitHub will list"
+              titleKey="plugins.github.ui.checkSuiteIncomplete"
+              description={checksIncompleteDescription}
+              descriptionKey="plugins.github.ui.feedbackChecksIncomplete"
+            />
+          )
+          : null}
+        {failedConnections.length === 0 || connectionFailure === null
+          ? null
+          : (
+            <Banner
+              tone="warning"
+              title="Part of this feedback could not be read"
+              titleKey="plugins.github.ui.feedbackPartial"
+              description={failureDescription(
+                connectionFailure,
+                text(
+                  'plugins.github.ui.feedbackPartial.description',
+                  'GitHub could not complete {connections}, so it is missing from what is'
+                    + ' shown here.',
+                  { connections: failedConnections.join(', ') },
+                ),
+              )}
+            />
+          )}
+      </Stack>
+    ),
+    events: view.findings.map((finding) => feedbackFindingEvent(text, finding, context)),
+    continuations: [
+      ...(conversation.state.canLoadMore
+        ? [{ key: 'comments', title: 'Load more comments', titleKey: 'plugins.github.ui.loadMoreComments', pending: conversation.state.pending, onLoadMore: conversation.loadMore, reads: 'earlier' as const }]
+        : []),
+      ...(threads.state.canLoadMore
+        ? [{ key: 'threads', title: 'Load earlier review conversations', titleKey: 'plugins.github.ui.loadEarlierReviewThreads', pending: threads.state.pending, onLoadMore: threads.loadMore, reads: 'earlier' as const }]
+        : []),
+      ...(reviews.state.canLoadMore
+        ? [{ key: 'reviews', title: 'Load earlier reviews', titleKey: 'plugins.github.ui.loadEarlierReviews', pending: reviews.state.pending, onLoadMore: reviews.loadMore, reads: 'earlier' as const }]
+        : []),
+      ...(requests.state.canLoadMore
+        ? [{ key: 'requests', title: 'Load more review requests', titleKey: 'plugins.github.ui.loadMoreReviewRequests', pending: requests.state.pending, onLoadMore: requests.loadMore }]
+        : []),
+    ],
+    summary: (
+      <Stack gap="small">
+        <Text
+          variant="caption"
+          tone="neutral"
+          valueKey={conversation.state.omittedRowCount === 0
+            ? 'plugins.github.ui.feedbackRead'
+            : 'plugins.github.ui.commentsReadWithUnreadable'}
+          fallback={conversation.state.omittedRowCount === 0
+            ? '{comments} comment(s) read.'
+            : '{count} comment(s) read. {unreadable} row(s) on the pages read could not be understood.'}
+          values={{
+            comments: conversation.state.rows.length,
+            count: conversation.state.rows.length,
+            unreadable: conversation.state.omittedRowCount,
+          }}
+        />
+        {conversation.state.projectionTruncated
+          ? (
+            <Text
+              variant="caption"
+              tone="neutral"
+              valueKey="plugins.github.ui.commentsShortened.description"
+              fallback="Some comments were shortened. Open the entry on GitHub to read them in full."
+            />
+          )
+          : null}
+        {commentsIncomplete === null
+          ? null
+          : <Text variant="caption" tone="neutral">{commentsIncomplete}</Text>}
+      </Stack>
+    ),
+    refresh: () => {
+      conversation.refresh();
+      threads.refresh();
+      reviews.refresh();
+      requests.refresh();
+      checks.refresh();
+    },
+    pending: conversation.state.pending || threads.state.pending || reviews.state.pending
+      || requests.state.pending || checks.pending,
+    empty: (
+      <EmptyState
+        title="Nothing has been said yet"
+        titleKey="plugins.github.ui.noFeedback"
+        description={checksKnownIncomplete
+          // "GitHub reports nothing wrong with it" is a claim about the whole
+          // suite. Over a suite GitHub would not list, it is a claim nobody
+          // could compute, and it is the reassuring half of this plane.
+          ? text(
+            'plugins.github.ui.noFeedback.checksIncomplete',
+            'No comment has been left on this pull request, and GitHub did not list its whole'
+              + ' check suite.',
+          )
+          : text(
+            'plugins.github.ui.noFeedback.description',
+            'No comment has been left on this pull request, and GitHub reports nothing wrong'
+              + ' with it.',
+          )}
+      />
+    ),
+  };
+}
+
+function FeedbackPanel(props: GithubFeedbackWriteContextV1): React.ReactElement {
+  const feedback = useGithubFeedbackStream(props);
   return (
-    <List
+    <GithubActivityView
+      streams={[feedback]}
+      locale={props.locale}
+      nowMs={props.nowMs}
       accessibilityLabel="Feedback on this pull request"
       accessibilityLabelKey="plugins.github.ui.feedbackLabel"
-      preserveVisibleContentPositionOnPrepend
-      items={view.findings}
-      keyForItem={(finding) => `${finding.resource}:${finding.id}`}
-      header={(
-        <Stack gap="medium">
-          {view.review.kind === 'decided'
-            ? (
-              <Row gap="small">
-                <Status
-                  tone={view.review.tone}
-                  label={text('plugins.github.ui.reviewDecision', 'Review: {value}', {
-                    value: view.review.label,
-                  })}
-                />
-              </Row>
-            )
-            : (
-              <Text
-                variant="caption"
-                tone="neutral"
-                valueKey="plugins.github.ui.reviewUnresolved"
-                fallback={'GitHub\'s current reviews read did not report a review decision, so'
-                  + ' nothing here says whether it is approved.'}
-              />
-            )}
-          <ReviewPeople people={view.people} locale={locale} nowMs={nowMs} />
-          <Text
-            variant="caption"
-            tone="neutral"
-            valueKey="plugins.github.ui.feedbackScope"
-            fallback={'This keeps issue comments, review bodies, outstanding requests, line'
-              + ' conversations, check state, and timeline history as distinct GitHub facts.'}
-          />
-          {checksKnownIncomplete
-            ? (
-              // The same fact the Checks plane states, in the plane that would
-              // otherwise imply a clean suite. It is deliberately separate from
-              // the failure banner below: an incomplete read is not a failed one.
-              <Banner
-                tone="warning"
-                title="This check suite is larger than GitHub will list"
-                titleKey="plugins.github.ui.checkSuiteIncomplete"
-                description={checksIncompleteDescription}
-                descriptionKey="plugins.github.ui.feedbackChecksIncomplete"
-              />
-            )
-            : null}
-          {failedConnections.length === 0 || connectionFailure === null
-            ? null
-            : (
-              <Banner
-                tone="warning"
-                title="Part of this feedback could not be read"
-                titleKey="plugins.github.ui.feedbackPartial"
-                description={failureDescription(
-                  connectionFailure,
-                  text(
-                    'plugins.github.ui.feedbackPartial.description',
-                    'GitHub could not complete {connections}, so it is missing from what is'
-                      + ' shown here.',
-                    { connections: failedConnections.join(', ') },
-                  ),
-                )}
-              />
-            )}
-        </Stack>
-      )}
-      empty={(
-        <EmptyState
-          title="Nothing has been said yet"
-          titleKey="plugins.github.ui.noFeedback"
-          description={checksKnownIncomplete
-            // "GitHub reports nothing wrong with it" is a claim about the whole
-            // suite. Over a suite GitHub would not list, it is a claim nobody
-            // could compute, and it is the reassuring half of this plane.
-            ? text(
-              'plugins.github.ui.noFeedback.checksIncomplete',
-              'No comment has been left on this pull request, and GitHub did not list its whole'
-                + ' check suite.',
-            )
-            : text(
-              'plugins.github.ui.noFeedback.description',
-              'No comment has been left on this pull request, and GitHub reports nothing wrong'
-                + ' with it.',
-            )}
-        />
-      )}
-      footer={(
-        <Stack gap="small">
-          <Text
-            variant="caption"
-            tone="neutral"
-            valueKey={conversation.state.omittedRowCount === 0
-              ? 'plugins.github.ui.feedbackRead'
-              : 'plugins.github.ui.commentsReadWithUnreadable'}
-            fallback={conversation.state.omittedRowCount === 0
-              ? '{comments} comment(s) read.'
-              : '{count} comment(s) read. {unreadable} row(s) on the pages read could not be understood.'}
-            values={{
-              comments: conversation.state.rows.length,
-              count: conversation.state.rows.length,
-              unreadable: conversation.state.omittedRowCount,
-            }}
-          />
-          {conversation.state.projectionTruncated
-            ? (
-              <Text
-                variant="caption"
-                tone="neutral"
-                valueKey="plugins.github.ui.commentsShortened.description"
-                fallback="Some comments were shortened. Open the entry on GitHub to read them in full."
-              />
-            )
-            : null}
-          {commentsIncomplete === null
-            ? null
-            : <Text variant="caption" tone="neutral">{commentsIncomplete}</Text>}
-          {conversation.state.canLoadMore
-            ? (
-              <Button
-                title="Load more comments"
-                titleKey="plugins.github.ui.loadMoreComments"
-                variant="secondary"
-                busy={conversation.state.pending}
-                onPress={conversation.loadMore}
-              />
-            )
-            : null}
-          {threads.state.canLoadMore
-            ? <Button title="Load earlier review conversations" titleKey="plugins.github.ui.loadEarlierReviewThreads" variant="secondary" busy={threads.state.pending} onPress={threads.loadMore} />
-            : null}
-          {reviews.state.canLoadMore
-            ? <Button title="Load earlier reviews" titleKey="plugins.github.ui.loadEarlierReviews" variant="secondary" busy={reviews.state.pending} onPress={reviews.loadMore} />
-            : null}
-          {requests.state.canLoadMore
-            ? <Button title="Load more review requests" titleKey="plugins.github.ui.loadMoreReviewRequests" variant="secondary" busy={requests.state.pending} onPress={requests.loadMore} />
-            : null}
-          <RefreshRow
-            onRefresh={() => {
-              conversation.refresh();
-              threads.refresh();
-              reviews.refresh();
-              requests.refresh();
-              checks.refresh();
-            }}
-            pending={conversation.state.pending || threads.state.pending || reviews.state.pending
-              || requests.state.pending || checks.pending}
-            accessibilityLabel="Re-read this feedback from GitHub"
-            accessibilityLabelKey="plugins.github.ui.rereadFeedback"
-          />
-        </Stack>
-      )}
-      renderItem={(finding) => (
-        <FeedbackFindingRow
-          finding={finding}
-          input={input}
-          locale={locale}
-          nowMs={nowMs}
-          onObserved={onObserved}
-          publicationProposals={publicationProposals}
-          capabilities={capabilities}
-        />
-      )}
+      loadingTitle="Reading the feedback on this pull request from GitHub"
+      loadingTitleKey="plugins.github.ui.readingFeedback"
+      refreshLabel="Re-read this feedback from GitHub"
+      refreshLabelKey="plugins.github.ui.rereadFeedback"
+    />
+  );
+}
+
+/**
+ * Activity (r0.42): the entry's whole story as one stream — a pull request's
+ * feedback or an issue's comments interleaved by time with GitHub's timeline.
+ */
+function PullRequestActivityPanel(props: GithubFeedbackWriteContextV1): React.ReactElement {
+  const feedback = useGithubFeedbackStream(props);
+  const timeline = useGithubTimelineStream(props.input);
+  return <GithubActivityPanelView streams={[feedback, timeline]} locale={props.locale} nowMs={props.nowMs} />;
+}
+
+function IssueActivityPanel(props: Readonly<{
+  input: TriageDetailSurfaceInputV1;
+  locale: string;
+  nowMs: number;
+}>): React.ReactElement {
+  const comments = useGithubCommentsStream(props.input);
+  const timeline = useGithubTimelineStream(props.input);
+  return <GithubActivityPanelView streams={[comments, timeline]} locale={props.locale} nowMs={props.nowMs} />;
+}
+
+function GithubActivityPanelView(props: Readonly<{
+  streams: readonly GithubActivityStreamV1[];
+  locale: string;
+  nowMs: number;
+}>): React.ReactElement {
+  return (
+    <GithubActivityView
+      {...props}
+      accessibilityLabel="Events GitHub recorded for this entry"
+      accessibilityLabelKey="plugins.github.ui.timelineLabel"
+      loadingTitle="Reading this timeline from GitHub"
+      loadingTitleKey="plugins.github.ui.readingTimeline"
+      refreshLabel="Re-read this timeline from GitHub"
+      refreshLabelKey="plugins.github.ui.rereadTimeline"
     />
   );
 }
@@ -3571,31 +3617,30 @@ function WorkSessionsPanel({
 
 /* ------------------------------------------------------------ Story rail (r0.42) */
 
-/** How many of the largest changed files the story draws before "N smaller files". */
-const GITHUB_STORY_SHOWN_FILES_V1 = 4;
-
 /**
- * ② What changed: the largest files by lines changed and the running totals of
- * the changed-file pages read, through the same reader the Files panel owns.
+ * ② What changed: the shared summary over the changed-file pages the Files panel's
+ * reader reads, with GitHub's own whole-change totals once the overview states them.
  */
-function GithubChangeStep({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement {
+function GithubChangeStep({ input, overview }: Readonly<{
+  input: TriageDetailSurfaceInputV1;
+  overview: GithubOverviewValueV1 | null;
+}>): React.ReactElement {
   const text = usePluginTranslation();
   const files = useGithubChangedFiles(input);
-  const summary = githubChangeSummaryV1({
-    rows: files.state.rows,
-    more: files.state.canLoadMore,
-    shown: GITHUB_STORY_SHOWN_FILES_V1,
-  });
-  const totals = text(
-    summary.more ? 'plugins.github.ui.story.totalsPartial' : 'plugins.github.ui.story.totals',
-    summary.more ? '+{additions} −{deletions} in {files}+ files' : '+{additions} −{deletions} in {files} files',
-    { additions: String(summary.additions), deletions: String(summary.deletions), files: String(summary.fileCount) },
-  );
+  const rows = React.useMemo(() => files.state.rows.map((row) => ({
+    path: row.path, lines: { additions: row.additions, deletions: row.deletions },
+  })), [files.state.rows]);
+  const pullRequest = overview?.kindId === 'pull-request' ? overview : null;
+  const totals = pullRequest?.changedFiles === undefined ? undefined : {
+    files: pullRequest.changedFiles,
+    ...(pullRequest.additions === undefined ? {} : { additions: pullRequest.additions }),
+    ...(pullRequest.deletions === undefined ? {} : { deletions: pullRequest.deletions }),
+  };
   return (
-    <TriageDetailChanges
-      titleKey="plugins.github.ui.story.changed"
-      trailing={files.state.rows.length === 0 ? undefined : <Text variant="caption" tone="secondary" value={totals} />}
-    >
+    <TriageDetailChangeSummary titleKey="plugins.github.ui.story.changed" rows={rows} totals={totals}
+      more={files.state.canLoadMore || files.state.incomplete !== null}>
+      {pullRequest?.headBranch === undefined || pullRequest.baseBranch === undefined ? null
+        : <Text variant="code" tone="secondary" value={`${pullRequest.headBranch} → ${pullRequest.baseBranch}`} />}
       {files.state.kind === 'loading' || files.state.kind === 'idle'
         ? <Text variant="caption" tone="secondary" valueKey="plugins.github.ui.readingFiles" fallback="Reading the changed files from GitHub" />
         : null}
@@ -3606,52 +3651,64 @@ function GithubChangeStep({ input }: Readonly<{ input: TriageDetailSurfaceInputV
           value={failureDescription(files.state.failure, text('plugins.github.ui.readFailed', 'GitHub could not complete this read.'))}
         />
       )}
-      {summary.files.map((file) => (
-        <Row key={file.path} gap="small" align="center">
-          <Stack style={{ flex: 1, minWidth: 0 }}>
-            <Text variant="code" value={file.path} />
-          </Stack>
-          <Text variant="caption" tone="success" value={`+${file.additions}`} />
-          <Text variant="caption" tone="danger" value={`−${file.deletions}`} />
-        </Row>
-      ))}
-      {summary.smallerCount === 0 ? null : (
-        <Text
-          variant="caption"
-          tone="secondary"
-          value={text('plugins.github.ui.story.smallerFiles', '{count} smaller files', { count: String(summary.smallerCount) })}
-        />
-      )}
-    </TriageDetailChanges>
+    </TriageDetailChangeSummary>
   );
 }
 
-/** The checks state marker: ✕ failing, the spinner while running, ✓ all passing. */
+/**
+ * The checks step: GitHub's rollup of the head commit's checks, and the ones that failed.
+ * When GitHub had more check pages than were read (`knownIncomplete`) it states no counts,
+ * so the step carries what was read so far: the failing count `checks.ts` observed and the
+ * in-flight checks among the rows, marked incomplete.
+ */
 function GithubChecksStep({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement | null {
-  const text = usePluginTranslation();
   const checks = useGithubChecks(input);
   if (checks.state.kind !== 'ready') return null;
-  const step = githubChecksStepV1(checks.state.value);
-  if (step === null) return null;
-  const label = step.state === 'failed'
-    ? text('plugins.github.ui.story.checksFailing', '{count} failing', { count: String(step.count) })
-    : step.state === 'running'
-      ? text('plugins.github.ui.story.checksRunning', 'Running')
-      : text('plugins.github.ui.story.checksPassing', 'All passing');
+  const view = checks.state.value;
+  const failed = view.rows.filter((row) => readGithubCheckOutcomeV1(row) === 'failed');
+  const rollup = view.state !== 'knownIncomplete' ? view : {
+    incomplete: true as const,
+    failingCount: view.rowState?.kind === 'failing' ? view.rowState.failingCount : failed.length,
+    runningCount: view.rows.filter((row) => readGithubCheckOutcomeV1(row) === 'pending').length,
+  };
   return (
-    <Step
-      marker={{ kind: 'state', state: step.state, label }}
-      title="Checks"
-      titleKey="plugins.github.ui.story.checks"
-      trailing={<Text variant="caption" tone={step.state === 'failed' ? 'danger' : 'secondary'} value={label} />}
-    />
+    <TriageDetailChecks title="Checks" titleKey="plugins.github.ui.story.checks" latestCommit rollup={rollup}
+      failing={failed.map((row) => ({ id: row.key, name: row.name }))} />
+  );
+}
+
+/**
+ * The GitHub facts the key/value block used to hold, said once each in the story: who
+ * asked, its labels, and who it is assigned to and waiting on. A fact GitHub did not
+ * state is left out rather than drawn as "Unavailable".
+ */
+function GithubStoryFacts({ overview }: Readonly<{ overview: GithubOverviewValueV1 }>): React.ReactElement | null {
+  const text = usePluginTranslation();
+  const labels = overview.labels ?? [];
+  const reviewers = overview.kindId === 'pull-request' ? overview.requestedReviewers ?? [] : [];
+  const parts = [
+    ...(overview.assignees === undefined || overview.assignees.length === 0 ? []
+      : [text('plugins.github.ui.story.assignees', 'Assigned to {names}', { names: overview.assignees.join(', ') })]),
+    ...(reviewers.length === 0 ? [] : [`${text('plugins.github.ui.reviewRequestedFrom', 'Review requested from')} ${reviewers
+      .map((reviewer) => reviewer.kind === 'team' ? `${reviewer.subject} (team)` : reviewer.subject).join(', ')}`]),
+    ...(overview.milestone === undefined || overview.milestone === null ? []
+      : [text('plugins.github.ui.story.milestone', 'Milestone: {name}', { name: overview.milestone })]),
+  ];
+  if (labels.length === 0 && parts.length === 0) return null;
+  return (
+    <Stack gap="small">
+      {labels.length === 0 ? null : <Row gap="small" wrap>{labels.map((label) => <Badge key={label} value={label} />)}</Row>}
+      {parts.length === 0 ? null : <Text variant="caption" tone="secondary" value={parts.join(' · ')} />}
+    </Stack>
   );
 }
 
 /**
  * The Overview panel as the story rail's source half (r0.42): ① the ask (a
- * pull request) or the report (an issue), with GitHub's current details, then
- * ② what changed and the checks state for a pull request. Triage draws ③.
+ * pull request) or the report (an issue) with who opened it, then ② what
+ * changed and the checks state for a pull request. Triage draws ③. The exact
+ * overview is read when the story opens; a Re-read control appears only beside
+ * a read that failed.
  */
 function GithubStoryOverview({
   input,
@@ -3665,55 +3722,32 @@ function GithubStoryOverview({
   nowMs: number;
 }>): React.ReactElement {
   const text = usePluginTranslation();
-  const overview = useGithubOverview(input);
+  const overview = useGithubOverview(input, { readWhenActive: true });
   const exact = overview.value;
-  const currentEntries = React.useMemo(
-    () => githubOverviewEntries(input, exact, locale, nowMs),
-    [exact, input, locale, nowMs],
-  );
   // The observation's own summary is the ask until the reader re-reads the
   // current description; neither is invented when both are absent.
   const ask = exact?.body ?? input.observation.snapshot.summary;
+  const opened = exact?.createdAtMs === undefined ? null : formatTimestamp(locale, exact.createdAtMs, 'relative', nowMs);
+  const byline = [exact?.author, opened].filter((part): part is string => typeof part === 'string' && part.length > 0);
   return (
     <TriageDetailStory kind={kindId === 'issue' ? 'report' : 'ask'}
-        changes={kindId === 'pull-request' ? <GithubChangeStep input={input} /> : null}
+        changes={kindId === 'pull-request' ? <GithubChangeStep input={input} overview={exact} /> : null}
         checks={kindId === 'pull-request' ? <GithubChecksStep input={input} /> : null}
-        trailing={(
+        trailing={byline.length === 0 ? undefined : <Text variant="caption" tone="secondary" value={byline.join(' · ')} />}
+      >
+        <GithubOverviewReadFailure controller={overview} />
+        {overview.failure === null ? null : (
           <RefreshRow
             onRefresh={overview.refresh}
             pending={overview.refreshing}
             accessibilityLabel={text('plugins.github.ui.overview.reread', 'Re-read this overview from GitHub')}
           />
         )}
-      >
-        <GithubOverviewReadFailure controller={overview} />
         {ask === undefined || ask === null || ask.length === 0
           ? <Text variant="caption" tone="secondary" valueKey="plugins.github.ui.story.noDescription" fallback="No description." />
           : <GithubOverviewMarkdown body={ask} />}
-        {currentEntries.length === 0 ? null : <Metadata entries={currentEntries} />}
+        {exact === null ? null : <GithubStoryFacts overview={exact} />}
     </TriageDetailStory>
-  );
-}
-
-/**
- * Activity (r0.42): the entry's timeline with its conversation folded in —
- * a pull request's feedback (reviews, threads, requests) or an issue's
- * comments, above the event timeline.
- */
-function GithubActivityPanel(props: Readonly<{
-  input: TriageDetailSurfaceInputV1;
-  kindId: GithubTriageKindIdV1;
-  locale: string;
-  nowMs: number;
-  conversation: React.ReactNode;
-}>): React.ReactElement {
-  return (
-    <TriageDetailActivity>
-      <Stack style={{ flex: 1, minHeight: 0 }}>{props.conversation}</Stack>
-      <Stack style={{ flex: 1, minHeight: 0 }}>
-        <TimelinePanel input={props.input} locale={props.locale} nowMs={props.nowMs} />
-      </Stack>
-    </TriageDetailActivity>
   );
 }
 
@@ -3840,15 +3874,18 @@ function GithubDetailBody({
             .map((declaration) => [declaration.id === 'timeline' ? 'activity' : declaration.id, declaration.retention]))}
           panels={{
             overview: <GithubStoryOverview input={input} kindId={kindId} locale={locale} nowMs={nowMs} />,
-            activity: (
-              <GithubActivityPanel
-                input={input}
-                kindId={kindId}
-                locale={locale}
-                nowMs={nowMs}
-                conversation={kindId === 'pull-request' ? panels.feedback : panels.comments}
-              />
-            ),
+            activity: kindId === 'pull-request'
+              ? (
+                <PullRequestActivityPanel
+                  input={input}
+                  locale={locale}
+                  nowMs={nowMs}
+                  onObserved={onObserved}
+                  publicationProposals={publicationProposals}
+                  capabilities={capabilities}
+                />
+              )
+              : <IssueActivityPanel input={input} locale={locale} nowMs={nowMs} />,
             ...(kindId === 'pull-request' ? { files: panels.files, checks: panels.checks } : {}),
             actions: (
               <GithubActionsPanel

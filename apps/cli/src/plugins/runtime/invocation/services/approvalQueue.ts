@@ -20,7 +20,7 @@ import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonV
 import {
     getSharedBlockingApprovalCoordinator,
     type BlockingApprovalCoordinator,
-} from '../../../../session/actions/approvals/blockingApprovalCoordinator';
+} from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 
 import type { PluginInvocationServicesSeed } from './types';
 import { resolvePluginActionCaller } from './actionCaller';

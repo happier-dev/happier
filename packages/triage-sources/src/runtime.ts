@@ -6,6 +6,7 @@
  * in a Node-only child process, so it must import these runtime helpers through
  * this subpath rather than eagerly traversing that UI surface.
  */
+export * from './ui/sourcePanelProtocol.js';
 export {
   readTriageSourceAccountListingV1,
   type TriageSourceAccountListerV1,

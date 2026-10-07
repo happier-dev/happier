@@ -3,6 +3,7 @@ import { chmod, copyFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { resolveStackCredentialPaths } from './credentials_paths.mjs';
 import { decodeJwtPayloadUnsafe } from './decode_jwt_payload_unsafe.mjs';
+import { STACK_LISTENER_OBSERVATION_TIMEOUT_MS } from '../server/listener_ownership.mjs';
 
 function readAuthTokenFromCredentialPath(path) {
   const p = String(path ?? '').trim();
@@ -31,7 +32,7 @@ async function validateTokenAgainstServer({ token, serverUrl, timeoutMs }) {
   if (!base) return { ok: false, status: null };
 
   const ctl = new AbortController();
-  const timeout = setTimeout(() => ctl.abort(), Math.max(100, timeoutMs ?? 2_500));
+  const timeout = setTimeout(() => ctl.abort(), Math.max(1, timeoutMs ?? STACK_LISTENER_OBSERVATION_TIMEOUT_MS));
   try {
     const res = await fetch(`${base}/v1/account/profile`, {
       method: 'GET',
@@ -58,7 +59,7 @@ async function validateTokenAgainstServer({ token, serverUrl, timeoutMs }) {
  * it tries fallback credentials (url-hash scoped, then legacy) and copies the first valid candidate
  * into the active server-scoped path.
  */
-export async function ensureActiveAccessKeyValid({ cliHomeDir, serverUrl, env = process.env, timeoutMs = 2_500 }) {
+export async function ensureActiveAccessKeyValid({ cliHomeDir, serverUrl, env = process.env, timeoutMs = STACK_LISTENER_OBSERVATION_TIMEOUT_MS }) {
   const resolved = resolveStackCredentialPaths({ cliHomeDir, serverUrl, env });
 
   const activePath = resolved.serverScopedPath;

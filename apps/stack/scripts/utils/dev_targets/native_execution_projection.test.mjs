@@ -1,11 +1,97 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-import { renderNativeExecutionProjection } from './native_execution_projection.mjs';
+import { prepareCommandRepository, renderNativeExecutionProjection } from './native_execution_projection.mjs';
+import { DEV_TARGET_MUTAGEN_IGNORE_PATHS, renderMutagenProject } from './mutagen_project.mjs';
 import { renderNativeCommandPolicy, resolveRemoteCommandPolicy } from './remote_commands.mjs';
+import { classifyCleanMutagenReadiness, renderNativeSyncReadinessPolicy } from './mutagen_runtime.mjs';
+
+test('native sync readiness artifact executes the same canonical first-cycle and recovery policy', {
+  skip: process.platform === 'win32',
+}, () => {
+  const artifact = new URL('./native_sync_readiness.sh', import.meta.url);
+  assert.equal(readFileSync(artifact, 'utf8'), renderNativeSyncReadinessPolicy());
+  const clean = { watching: true, noWatch: true, scanned: false, cyclesValid: true, completed: false, scanProblems: false };
+  const cases = [
+    clean,
+    { ...clean, noWatch: false },
+    { ...clean, watching: false },
+    { ...clean, cyclesValid: false },
+    { ...clean, scanProblems: true },
+    { ...clean, scanned: true, completed: true, scanProblems: true },
+    { ...clean, scanned: true, completed: true },
+    { ...clean, scanned: true, completed: true, watching: false },
+  ];
+  for (const facts of cases) {
+    const result = spawnSync('/bin/sh', ['-c', [
+      ...Object.entries(facts).map(([fact, value]) => `sync_fact_${fact}=${value ? 1 : 0}`),
+      renderNativeSyncReadinessPolicy(),
+      'classify_clean_mutagen_readiness',
+      'printf "%s" "$sync_readiness"',
+    ].join('\n')], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, classifyCleanMutagenReadiness(facts), JSON.stringify(facts));
+  }
+});
+
+test('sibling checkout projection isolates mirror roots and defaults to the small command pool', () => {
+  const config = {
+    version: 3,
+    targets: ['mac2-linux', 'windows2-linux', 'other'].map(name => ({
+      name, platform: 'posix', ssh: name, repoDir: '/workspace-mirror/0.3', cliHomeDir: '/home/worker',
+    })),
+    runtimePlacement: { server: { mode: 'local' }, expo: { mode: 'local' }, daemon: { mode: 'local' } },
+    commandExecution: { mode: 'auto', targets: ['mac2-linux', 'windows2-linux', 'other'], fallback: 'local' },
+  };
+  const before = JSON.stringify(config);
+  const output = renderNativeExecutionProjection(config, { repoRoot: '/workspace/0.2', executorRepoRoot: '/workspace/0.3' });
+  assert.match(output, /^target_1_repo_dir='\/workspace-mirror\/0.2'$/m);
+  assert.match(output, /^target_1_executor_repo_dir='\/workspace-mirror\/0.3'$/m);
+  assert.match(output, /^target_1_automatic='1'$/m);
+  assert.match(output, /^target_2_automatic='1'$/m);
+  assert.match(output, /^target_3_automatic='0'$/m);
+  assert.equal(JSON.stringify(config), before);
+});
+
+test('sibling command configuration preserves placement overrides and excludes service watches', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-command-repository-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const repoRoot = join(root, '0.2');
+  const executorRepoRoot = join(root, '0.3');
+  const configPath = join(root, 'stack/dev-targets.json');
+  await mkdir(repoRoot);
+  await mkdir(join(root, 'stack'));
+  await writeFile(join(repoRoot, 'package.json'), '{}');
+  await writeFile(join(repoRoot, 'yarn.lock'), '# sibling lock');
+  const config = {
+    version: 3,
+    targets: ['mac2-linux', 'windows2-linux', 'other'].map(name => ({
+      name, platform: 'posix', ssh: name, repoDir: '/mirror/0.3', cliHomeDir: '/home/worker',
+    })),
+    runtimePlacement: { server: { mode: 'prefer-target', target: 'mac2-linux' }, expo: { mode: 'local' }, daemon: { mode: 'local' } },
+    commandExecution: { mode: 'auto', targets: ['other'], fallback: 'error' },
+  };
+  await writeFile(configPath, JSON.stringify(config));
+  const prepared = await prepareCommandRepository({ configPath, executorRepoRoot, repoRoot, synchronize: false });
+  assert.deepEqual(prepared.config.commandExecution.targets, ['mac2-linux', 'windows2-linux']);
+  const targets = prepared.config.targets.filter(target => prepared.config.commandExecution.targets.includes(target.name));
+  const project = renderMutagenProject({ sourceDir: repoRoot, targets, config: prepared.config });
+  assert.doesNotMatch(project, /portable|pollingInterval|happier-other/);
+  assert.equal((project.match(/mode: "no-watch"/g) ?? []).length, 4);
+  for (const ignore of DEV_TARGET_MUTAGEN_IGNORE_PATHS) assert.ok(project.includes(JSON.stringify(ignore)));
+  await writeFile(prepared.path, JSON.stringify({ ...prepared.config, commandExecution: { mode: 'auto', targets: ['other'], fallback: 'error' } }));
+  const next = await prepareCommandRepository({ configPath, executorRepoRoot, repoRoot, synchronize: false });
+  assert.deepEqual(next.config.commandExecution.targets, ['other']);
+  assert.equal(next.config.commandExecution.fallback, 'error');
+  assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), config);
+  await assert.rejects(prepareCommandRepository({ configPath, executorRepoRoot, repoRoot: join(repoRoot, 'nested'), synchronize: false }));
+});
 
 test('native execution projection contains all POSIX targets and marks automatic command eligibility', () => {
   const output = renderNativeExecutionProjection({
@@ -54,6 +140,12 @@ test('native command decision artifact is current and executes the canonical cla
     { args: ['node', '--test', 'apps/stack/scripts/config.test.mjs'] },
     { args: ['nodejs', '--test', 'owner.test.mjs'], cwd: 'apps/stack2' },
     { args: ['node', '-e', 'console.log("control")'] },
+    { args: ['apps/stack/bin/hstack-exec', '--heavyweight-admission', '--class=compilation', '--', 'node', '-e', 'console.log("native-build")'], expectedHeavyClass: 'compilation' },
+    { args: ['apps/stack/bin/hstack-exec', '--heavyweight-admission', '--class=runtime-build', '--', 'node', '-e', 'console.log("runtime-build")'], expectedHeavyClass: 'runtime-build' },
+    { args: ['apps/stack/bin/hstack-exec', '--heavyweight-admission', '--class=compilation', '--class=dependency-install', '--', 'node', '-e', 'console.log("install")'], expectedHeavyClass: 'dependency-install' },
+    { args: ['apps/stack/bin/hstack-exec', '--heavyweight-admission', '--', 'node', '-e', 'console.log("validation")', '--class=compilation'], expectedHeavyClass: 'validation' },
+    { args: ['apps/stack/bin/hstack-exec', '--heavyweight-admission', '--class=targeted-validation', '--', 'node', '-e', 'console.log("focused")'], expectedHeavyClass: 'validation' },
+    { args: ['apps/stack/bin/hstack-exec', '--heavyweight-admission', '--class=unclassified-build', '--', 'node', '-e', 'console.log("build")'], expectedHeavyClass: 'compilation' },
     { args: ['node', '--experimental-strip-types', 'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts', '--mode', 'check'] },
     { args: ['node', '--experimental-strip-types', 'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts', '--mode=write'] },
     { args: ['node', '--experimental-strip-types', 'other/generateBundledPluginEntries.ts', '--mode=check'] },
@@ -63,6 +155,10 @@ test('native command decision artifact is current and executes the canonical cla
     { args: ['corepack', 'yarn', '--cwd', 'apps/ui', '-s', 'typecheck'], expectedHeavyClass: 'compilation' },
     { args: ['--script=build:local'], expectedHeavyClass: 'compilation' },
     { args: ['node', 'apps/stack/scripts/build/remote_runtime_build.mjs', '--worker-request=/request.json'], expectedHeavyClass: 'runtime-build' },
+    { args: ['node', '--import=data:text/javascript;base64,ZXhwb3J0IHt9Ow==', 'apps/stack/scripts/build/remote_runtime_build.mjs', '--worker-request=stdin'], expectedHeavyClass: 'runtime-build' },
+    { args: ['nodejs', '--import', '/tmp/runtime-sampler.mjs', 'apps/stack/scripts/build/remote_runtime_build.mjs', '--worker-request=stdin'], expectedHeavyClass: 'runtime-build' },
+    { args: ['node', '--import=/tmp/runtime-sampler.mjs', '--experimental-strip-types', 'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts', '--mode=write'], expectedPlacement: 'primary-only' },
+    { args: ['node', '--import=/tmp/runtime-sampler.mjs', '-e', 'console.log("apps/stack/scripts/build/remote_runtime_build.mjs")', '--worker-request=stdin'], expectedHeavyClass: '' },
     { args: ['nodejs', `${root}/apps/stack/scripts/build/remote_runtime_build.mjs`, '--worker-request=/request.json'], expectedHeavyClass: 'runtime-build' },
     { args: ['node', 'scripts\\build\\remote_runtime_build.mjs', '--worker-request=/request.json'], cwd: 'apps/stack', expectedHeavyClass: 'runtime-build' },
     { args: ['node', 'apps/stack/scripts/build/remote_runtime_build.mjs', '--build-captured=/request.json'], expectedHeavyClass: 'compilation' },
@@ -77,6 +173,10 @@ test('native command decision artifact is current and executes the canonical cla
     { args: ['corepack', 'yarn', '--cwd', 'packages/cli-common', '-s', 'build:unmeasured'], expectedHeavyClass: 'compilation' },
     { args: ['node', '../../scripts/workspaces/buildTypeScriptPackageDist.mjs', '-p', '../../apps/ui/tsconfig.json'], cwd: 'packages/protocol', expectedHeavyClass: 'compilation' },
     { args: ['node', 'custom/build.mjs'], cwd: 'packages/cli-common', expectedHeavyClass: 'compilation' },
+    { args: ['node', 'scripts/workspaces/buildTypeScriptPackageDist.mjs', '--noCheck', '--incremental'], cwd: '.', expectedHeavyClass: 'package-dist' },
+    { args: ['node', 'scripts/workspaces/buildTypeScriptPackageDist.mjs', '--noCheck=true'], cwd: 'apps/ui', expectedHeavyClass: 'package-dist' },
+    { args: ['node', 'scripts/workspaces/buildTypeScriptPackageDist.mjs', '--noCheck=false'], cwd: '.', expectedHeavyClass: 'compilation' },
+    { args: ['node', 'scripts/workspaces/runTypeScriptCli.mjs', '--noCheck'], cwd: '.', expectedHeavyClass: 'compilation' },
     { args: ['yarn', '-s', 'lint'] },
     { args: ['--script=lint:local'] },
     { args: ['git', 'status'] },
@@ -96,9 +196,10 @@ test('native command decision artifact is current and executes the canonical cla
     { args: ['yarn', 'install'] },
     { args: ['nodejs', 'node_modules\\vitest\\vitest.mjs', 'run'], cwd: 'apps/cli' },
   ];
-  for (const { args, cwd = '.', expectedHeavyClass } of cases) {
+  for (const { args, cwd = '.', expectedHeavyClass, expectedPlacement } of cases) {
     const policy = resolveRemoteCommandPolicy(args, { cwd });
-    if (expectedHeavyClass) assert.equal(policy.heavyClass, expectedHeavyClass, args.join(' '));
+    if (expectedHeavyClass !== undefined) assert.equal(policy.heavyClass, expectedHeavyClass, args.join(' '));
+    if (expectedPlacement) assert.equal(policy.placement, expectedPlacement, args.join(' '));
     const keys = Object.keys(policy);
     const artifactWord = "'" + fileURLToPath(artifact).replaceAll("'", "'\"'\"'") + "'";
     const body = 'repo_root=$1; invoked_cwd="$1/$2"; shift 2; . ' + artifactWord

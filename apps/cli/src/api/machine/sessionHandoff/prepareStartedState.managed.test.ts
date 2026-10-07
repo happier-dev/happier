@@ -2,6 +2,8 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { configuration } from '@/configuration';
+import { createDaemonPluginDevelopmentRootsOwner, type DaemonPluginDevelopmentRootsOwner } from '@/plugins/daemon/developmentRoots';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
@@ -16,12 +18,31 @@ import { createSessionHandoffStartActionHandler } from './start';
 
 describe('managed handoff source ownership', () => {
   let runtimeLease: PluginRuntimeRegistryLease | null = null;
+  let developmentRootsOwner: DaemonPluginDevelopmentRootsOwner | null = null;
   beforeAll(async () => {
+    // Use the daemon's real checkout-source custody owner for lazy SCM activation.
+    const rootsOwner = createDaemonPluginDevelopmentRootsOwner({
+      happyHomeDir: configuration.happyHomeDir,
+      submitObservation: async () => {
+        throw new Error('The managed handoff fixture does not observe development source changes');
+      },
+    });
+    developmentRootsOwner = rootsOwner;
     runtimeLease = await pluginReloadController.acquireRuntimeRegistry({
-      resolveRuntimeRegistry: () => resolveExecutablePluginRuntimeRegistry({ pluginIds: [] }),
+      resolveRuntimeRegistry: () => resolveExecutablePluginRuntimeRegistry({
+        pluginIds: [],
+        resolveDevelopmentSourceAuthority: rootsOwner.resolveDevelopmentSourceAuthority,
+      }),
     });
   });
-  afterAll(async () => { await runtimeLease?.release(); await pluginReloadController.shutdown(); });
+  afterAll(async () => {
+    try {
+      await runtimeLease?.release();
+      await pluginReloadController.shutdown();
+    } finally {
+      await developmentRootsOwner?.stop();
+    }
+  });
   it('recovers an unbound source from its validated persisted creation correspondence', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-managed-source-unbound-'));
     try {
@@ -41,7 +62,8 @@ describe('managed handoff source ownership', () => {
           request: { sessionId: 'session', operationId: 'operation', targetDirectory: { kind: 'managed' },
             sourceMachineId: 'a', targetMachineId: 'b', sessionStorageMode: 'persisted',
             preferredTransportStrategies: ['server_routed_stream'], negotiatedTransportStrategy: 'server_routed_stream' },
-          metadata: { path: source.directory, sessionDirectoryV1: { v: 1, kind: 'managed' }, sessionCreationCorrespondenceV1: correspondence },
+          metadata: { path: source.directory, sessionDirectoryV1: { v: 1, kind: 'managed', futureField: 'ignored' },
+            sessionCreationCorrespondenceV1: { ...correspondence, futureField: 'ignored' } },
         }, sourceExportStore: createSessionHandoffSourceExportStore({ activeServerDir }),
         exportSessionBundle: async () => ({ targetPath: source.directory,
           agentBundle: { agentId: 'claude', remoteSessionId: 'native-source', transcriptBase64: 'e30K' } }), buildStartPendingStatus,

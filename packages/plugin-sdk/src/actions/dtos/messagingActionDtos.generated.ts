@@ -38,7 +38,7 @@ export type MessagingActionInputById = {
                 presentation: {
                     label: string;
                     description?: string | undefined;
-                    icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'terminal' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                    icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'terminal' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'review' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
                     tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | undefined;
                 };
             };

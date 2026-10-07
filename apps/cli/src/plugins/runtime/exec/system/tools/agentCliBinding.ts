@@ -1,3 +1,4 @@
+import { resolveAgentCliOverrideEnvKey } from '@happier-dev/cli-common/agents/resolution';
 import { isAbsolute } from 'node:path';
 
 import type {
@@ -47,7 +48,7 @@ function createBoundAgentCliSystemToolService(params: Readonly<{
     agentId: string;
     binding: AgentCliSystemToolBinding;
     definition: PluginExecSystemToolDefinition;
-    resolveLaunch(): AgentCliLaunchSpec | null;
+    resolveLaunch(request: SystemToolResolveRequestV1): AgentCliLaunchSpec | null;
     resolutionEnvironment(launch: AgentCliLaunchSpec): NodeJS.ProcessEnv;
     delegate: ExecSystemToolServiceV1;
 }>): ExecSystemToolServiceV1 {
@@ -63,7 +64,7 @@ function createBoundAgentCliSystemToolService(params: Readonly<{
                 return await params.delegate.resolve(request);
             }
 
-            const launch = params.resolveLaunch();
+            const launch = params.resolveLaunch(request);
             if (!launch) {
                 throw new PluginError({
                     code: SPAWN_SESSION_ERROR_CODES.AGENT_CLI_MISSING,
@@ -128,9 +129,12 @@ export function createAgentCliSystemToolService(params: Readonly<{
         agentId: params.agentId,
         binding: params.binding,
         definition: params.definition,
-        resolveLaunch: () => resolveAgentCliLaunchSpecForRuntime(
+        resolveLaunch: (request) => resolveAgentCliLaunchSpecForRuntime(
             params.runtimeSpec,
-            { processEnv: params.processEnv },
+            { processEnv: request.preferredPath ? {
+                ...params.processEnv,
+                [resolveAgentCliOverrideEnvKey(params.runtimeSpec.id)]: request.preferredPath,
+            } : params.processEnv },
         ),
         resolutionEnvironment: () => params.processEnv,
         delegate: params.delegate,

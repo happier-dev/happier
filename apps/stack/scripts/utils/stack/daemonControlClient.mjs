@@ -6,6 +6,7 @@ import { resolvePreferredStackDaemonStatePaths } from '../auth/credentials_paths
 import { applyStackDaemonLifecycleScopeEnv } from '../auth/stable_scope_id.mjs';
 import { resolvePidStackOwnership } from '../proc/ownership.mjs';
 import { readStackRuntimeStateFile } from './runtime_state.mjs';
+import { STACK_LISTENER_OBSERVATION_TIMEOUT_MS } from '../server/listener_ownership.mjs';
 import {
   processInstanceFingerprintMatches,
   readProcessInstanceFingerprintSync,
@@ -265,7 +266,7 @@ export async function pingDaemon({
   internalServerUrl,
   env = process.env,
   stackName = null,
-  timeoutMs = 1500,
+  timeoutMs = STACK_LISTENER_OBSERVATION_TIMEOUT_MS,
   excludePid = null,
 }, {
   platform = process.platform,

@@ -74,6 +74,32 @@ const UNAVAILABLE: TriageEntryDetailStateV1 = Object.freeze({ kind: 'unavailable
 const UNREACHABLE: TriageEntryDetailStateV1 = Object.freeze({ kind: 'unreachable' });
 
 /** Settle any cursor this mounted walk already spent, including A→B→A. */
+/**
+ * A re-read of the entry the reader already has open answers its FIRST linked-Session page again. The pages the
+ * reader loaded after it are still theirs: they stay, after the fresh first page and without repeats, and the
+ * walk continues from where the reader left it. A different entry or connection starts over.
+ */
+export function keepLoadedLinkedSessionPagesV1<State extends TriageEntryDetailStateV1>(
+  retained: TriageEntryDetailStateV1 | null,
+  next: State,
+): State {
+  if (retained?.kind !== 'ready' || next.kind !== 'ready') return next;
+  if (!sameTriageEntryRefV1(retained.input.observation.entryRef, next.input.observation.entryRef)
+    || retained.input.instance.instance.sourceInstanceId !== next.input.instance.instance.sourceInstanceId) return next;
+  if (retained.linkedSessions.length <= next.linkedSessions.length) return next;
+  const fresh = new Set(next.linkedSessions.map((session) => session.sessionId));
+  const linkedSessions = Object.freeze([
+    ...next.linkedSessions,
+    ...retained.linkedSessions.filter((session) => !fresh.has(session.sessionId)),
+  ]);
+  const { linkedSessionsNextCursor: _firstPageCursor, ...rest } = next;
+  return Object.freeze({
+    ...rest,
+    linkedSessions,
+    ...(retained.linkedSessionsNextCursor === undefined ? {} : { linkedSessionsNextCursor: retained.linkedSessionsNextCursor }),
+  }) as State;
+}
+
 export function isSpentTriageLinkedSessionCursorV1(
   spent: ReadonlySet<string>,
   nextCursor: string | undefined,
@@ -356,7 +382,7 @@ export function useTriageEntryDetail(
         { signal: controller.signal },
       );
       if (controller.signal.aborted || current !== generation.current) return;
-      publish(next);
+      publish(keepLoadedLinkedSessionPagesV1(stateRef.current, next));
     })();
     return () => {
       controller.abort();

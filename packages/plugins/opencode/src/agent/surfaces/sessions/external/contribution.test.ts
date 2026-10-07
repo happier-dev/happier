@@ -865,6 +865,39 @@ describe('OpenCode public External Sessions contribution', () => {
     });
   });
 
+  it('verifies a default directory without an invented byte ceiling and preserves an explicit budget', async () => {
+    stubV1ServerFetch(async (input) => {
+      const url = new URL(input);
+      expect(url.pathname).toBe('/session/session-persisted');
+      expect(url.searchParams.has('directory')).toBe(false);
+      return new Response(' '.repeat(1_048_577) + JSON.stringify({
+        id: 'session-persisted',
+        directory: '/tmp/persisted-project',
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+    const { managedEndpointRead } = invocation();
+    const contribution = createOpenCodeExternalSessionsContribution({ env });
+    const request = {
+      source: { kind: 'opencodeServer', baseUrl },
+      remoteSessionId: 'session-persisted',
+      linkData: {},
+      signal: new AbortController().signal,
+      managedEndpointRead,
+    };
+    const verified = await contribution.resolveLinkedIdentity(request);
+    expect(verified).toMatchObject({
+      ok: true,
+      value: {
+        source: { kind: 'opencodeServer', baseUrl, directory: '/tmp/persisted-project' },
+        remoteSessionId: 'session-persisted',
+      },
+    });
+    await expect(contribution.resolveLinkedIdentity({
+      ...request,
+      maxSerializedBytes: 65_536,
+    })).resolves.toMatchObject({ ok: false, code: 'agent_unavailable', retryable: true });
+  });
+
   it('canonicalizes persisted default links from the vendor-owned session directory', async () => {
     stubV1ServerFetch(async (input) => {
       const url = new URL(input);

@@ -174,6 +174,7 @@ export interface PluginExternalSessionsDomainAuthorService {
     nextCursor?: string | null;
     diagnostics?: readonly PluginDiagnosticData[];
   }>;
+  closeList(cursor: string, options?: { signal?: AbortSignal }): Promise<void>;
   attach(
     ref: HostExternalSessionRef,
     options?: { signal?: AbortSignal },

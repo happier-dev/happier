@@ -6,15 +6,16 @@ import type {
 
 import { buildAuggieAcpArgvFromSessionConfiguration } from '../acp/callbacks.js';
 import { AUGGIE_ACP_RUNTIME_DEFINITION } from '../acp/definition.js';
+import { AUGGIE_ACP_COMMAND } from '../preflight/models.js';
 
 function createAuggieAcpOptions(configuration: AgentSessionConfigurationSnapshot | undefined): AgentAcpRuntimeOptions {
   if (!configuration) throw new Error('Auggie requires the host-projected Agent session configuration');
   return {
     transport: {
       kind: 'stdio',
-      executable: { kind: 'systemTool', id: 'auggie-cli' },
+      executable: { kind: 'systemTool', id: AUGGIE_ACP_COMMAND.toolId },
       args: buildAuggieAcpArgvFromSessionConfiguration({
-        baseArgs: ['--acp'],
+        baseArgs: [...AUGGIE_ACP_COMMAND.args],
         configuration,
       }),
     },

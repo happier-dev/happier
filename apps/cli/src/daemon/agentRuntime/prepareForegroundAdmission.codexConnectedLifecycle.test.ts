@@ -78,34 +78,4 @@ describe('foreground Codex Connected Account lifecycle through real materializat
     }
   });
 
-  it('carries released-server one-shot native auth without granting ongoing purpose or request-auth authority', async () => {
-    const account = await createCodexForegroundConnectedAccountFixture({ legacy: true });
-    try {
-      await withRealForegroundAdmissionFixture({ runtimeOptions: account.runtimeOptions }, async (fixture) => {
-        const admitted = await fixture.prepare({ connectedServices: account.connectedServices }, await account.dependenciesFor(fixture.runtime.registry, fixture.directory));
-        expect(admitted.ok).toBe(true);
-        if (!admitted.ok) throw new Error(admitted.error.code);
-        const materialized = account.materializations[0];
-        if (!materialized) throw new Error('Released-server one-shot materialization is unavailable');
-        expect(materialized.ongoingRuntimeRegistrationAllowed).toBe(false);
-        expect(materialized.materializationPurposeLease).toBeUndefined();
-        expect(materialized.requestAuthPurposeBindings).toEqual([]);
-        const claimed = await admitted.prepared.claim(claimInput);
-        expect(claimed.ok).toBe(true);
-        if (!claimed.ok) throw new Error(claimed.error.code);
-        expect(claimed.environment).not.toHaveProperty('HAPPIER_CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH');
-        const nativeHome = claimed.environment.CODEX_HOME;
-        if (!nativeHome) throw new Error('One-shot Codex native-home environment is unavailable');
-        expect(JSON.parse(await readFile(join(nativeHome, 'auth.json'), 'utf8'))).toMatchObject({ tokens: { access_token: 'work-access' } });
-        await expect(account.owner.resolveCurrentRequestAuthBinding({
-          subjectId: `agent-session:${claimInput.canonicalSessionId}`, binding: account.binding,
-          signal: new AbortController().signal,
-        })).resolves.toBeNull();
-        await admitted.prepared.cleanup();
-        await expect(stat(nativeHome)).rejects.toMatchObject({ code: 'ENOENT' });
-      });
-    } finally {
-      await account.cleanup();
-    }
-  });
 });

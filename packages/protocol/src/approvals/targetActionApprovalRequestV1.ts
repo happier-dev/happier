@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import {
   ApprovalDecisionV1Schema,
   ApprovalExecutionOriginV1Schema,
@@ -85,3 +86,4 @@ export const TargetActionApprovalRequestV1Schema = z.object({
   }
 });
 export type TargetActionApprovalRequestV1 = z.infer<typeof TargetActionApprovalRequestV1Schema>;
+export const StoredTargetActionApprovalRequestV1Schema = createStoredReadSchema(TargetActionApprovalRequestV1Schema);

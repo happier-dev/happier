@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { SpawnConfigOptionValueSchema } from '../../actions/sessionSpawnConfigOptions.js';
@@ -36,7 +37,7 @@ import { SpawnConfigOptionValueSchema } from '../../actions/sessionSpawnConfigOp
 
 const AgentUiIdSchema = z.string().trim().min(1);
 const AgentUiIdArraySchema = z.array(AgentUiIdSchema);
-const AgentUiStringRecordSchema = z.record(z.string(), z.string());
+const AgentUiStringRecordSchema = lazyZodSchema(() => z.record(z.string(), z.string()));
 
 /**
  * A setting reference is always qualified by its owner scope. `host` is the
@@ -49,10 +50,10 @@ const AgentUiSettingReferenceSchema = z.object({
   localId: AgentUiIdSchema,
 }).strict();
 export type AgentUiSettingReferenceV1 = z.infer<typeof AgentUiSettingReferenceSchema>;
-const AgentUiMutablePluginSettingReferenceSchema = z.object({
+const AgentUiMutablePluginSettingReferenceSchema = lazyZodSchema(() => z.object({
   scope: z.enum(['account', 'daemon']),
   localId: AgentUiIdSchema,
-}).strict();
+}).strict());
 /** A translation key resolved by the host's own catalogue. */
 const AgentUiTranslationKeySchema = AgentUiIdSchema;
 
@@ -77,21 +78,21 @@ export const AgentUiConditionV1Schema: z.ZodType<AgentUiConditionV1, AgentUiCond
   z.object({ any: z.array(AgentUiConditionV1Schema) }).strict(),
 ]));
 
-const AgentUiTranscriptStorageModeSchema = z.enum(['persisted', 'direct']);
+const AgentUiTranscriptStorageModeSchema = lazyZodSchema(() => z.enum(['persisted', 'direct']));
 
-const AgentUiExternalSessionsSourceSchema = z.object({ kind: AgentUiIdSchema })
-  .catchall(z.unknown());
+const AgentUiExternalSessionsSourceSchema = lazyZodSchema(() => z.object({ kind: AgentUiIdSchema })
+  .catchall(z.unknown()));
 
 /* -------------------------------------------------------------------------- */
 /* behavior                                                                    */
 /* -------------------------------------------------------------------------- */
 
-const AgentUiPermissionFooterSchema = z.object({
+const AgentUiPermissionFooterSchema = lazyZodSchema(() => z.object({
   usePermissionUpdates: z.boolean().optional(),
   forceReadOnlyAfterStop: z.boolean().optional(),
   supportsExecPolicyAmendment: z.boolean().optional(),
   stopHandling: z.enum(['denyOnly', 'denyAndAbortRun']).optional(),
-}).strict();
+}).strict());
 
 /**
  * Which permission-prompt conversation this Agent speaks.
@@ -102,9 +103,9 @@ const AgentUiPermissionFooterSchema = z.object({
  * declaring it. Absent means the neutral Claude-shaped default, which is what
  * an Agent that declares nothing has always received.
  */
-const AgentUiPermissionPromptProtocolSchema = z.enum(['claude', 'codexDecision']);
+const AgentUiPermissionPromptProtocolSchema = lazyZodSchema(() => z.enum(['claude', 'codexDecision']));
 
-const AgentUiEditableGoalsSchema = z.object({
+const AgentUiEditableGoalsSchema = lazyZodSchema(() => z.object({
   capabilityDriven: z.boolean().optional(),
   activeWhenNoPersistedMode: z.boolean().optional(),
   persistedGoalSnapshot: z.object({
@@ -112,9 +113,9 @@ const AgentUiEditableGoalsSchema = z.object({
     itemKind: AgentUiIdSchema.optional(),
     providerFields: AgentUiIdArraySchema.optional(),
   }).strict().optional(),
-}).strict();
+}).strict());
 
-const AgentUiContextWindowSchema = z.object({
+const AgentUiContextWindowSchema = lazyZodSchema(() => z.object({
   defaultTokens: z.number().int().positive().optional(),
   modelRules: z.array(z.object({
     idSuffix: AgentUiIdSchema.optional(),
@@ -123,7 +124,7 @@ const AgentUiContextWindowSchema = z.object({
   }).strict()).optional(),
   observedUsageBumpTokens: z.array(z.number().int().positive()).optional(),
   trustObservedUsageBeyondKnown: z.boolean().optional(),
-}).strict();
+}).strict());
 
 /**
  * Composer-owned new-session option state an Agent understands. The host owns
@@ -131,13 +132,13 @@ const AgentUiContextWindowSchema = z.object({
  * Agent declares which keys exist and which travel to the daemon as session
  * config options.
  */
-const AgentUiNewSessionOptionSchema = z.object({
+const AgentUiNewSessionOptionSchema = lazyZodSchema(() => z.object({
   key: AgentUiIdSchema,
   kind: z.literal('boolean'),
   spawnConfigOption: z.boolean().optional(),
-}).strict();
+}).strict());
 
-const AgentUiNewSessionSchema = z.object({
+const AgentUiNewSessionSchema = lazyZodSchema(() => z.object({
   relevantInstallableDepKeys: AgentUiIdArraySchema.optional(),
   relevantInstallableDeps: z.array(z.object({
     keys: AgentUiIdArraySchema.optional(),
@@ -150,9 +151,9 @@ const AgentUiNewSessionSchema = z.object({
   ).optional(),
   canSelectWithoutDetectedCli: z.boolean().optional(),
   agentOptions: z.array(AgentUiNewSessionOptionSchema).optional(),
-}).strict();
+}).strict());
 
-const AgentUiEnvironmentVariablesSchema = z.object({
+const AgentUiEnvironmentVariablesSchema = lazyZodSchema(() => z.object({
   backendMode: z.object({
     envKey: AgentUiIdSchema,
     settingKey: AgentUiSettingReferenceSchema,
@@ -168,9 +169,9 @@ const AgentUiEnvironmentVariablesSchema = z.object({
     rejectCredentials: z.boolean().optional(),
     originOnly: z.boolean().optional(),
   }).strict().optional(),
-}).strict();
+}).strict());
 
-const AgentUiPayloadSchema = z.object({
+const AgentUiPayloadSchema = lazyZodSchema(() => z.object({
   /**
    * A fixed spawn envelope contribution. The compiled-adapter form
    * (`{ kind: 'adapter' }`) is deliberately not part of the public grammar.
@@ -188,9 +189,9 @@ const AgentUiPayloadSchema = z.object({
     defaultValue: AgentUiIdSchema.optional(),
   }).strict().optional(),
   environmentVariables: AgentUiEnvironmentVariablesSchema.optional(),
-}).strict();
+}).strict());
 
-const AgentUiExternalSessionsBrowseSchema = z.object({
+const AgentUiExternalSessionsBrowseSchema = lazyZodSchema(() => z.object({
   order: z.number().int().optional(),
   sourceOptions: z.array(z.object({
     key: AgentUiIdSchema,
@@ -227,14 +228,14 @@ const AgentUiExternalSessionsBrowseSchema = z.object({
       optionalFields: AgentUiIdArraySchema,
     }).strict().optional(),
   }).strict().optional(),
-}).strict();
+}).strict());
 
-const AgentUiExternalSessionsSchema = z.object({
+const AgentUiExternalSessionsSchema = lazyZodSchema(() => z.object({
   browse: AgentUiExternalSessionsBrowseSchema.optional(),
   sessionHandoff: z.object({
     clearMetadataKeys: AgentUiIdArraySchema.optional(),
   }).strict().optional(),
-}).strict();
+}).strict());
 
 /**
  * One declared AskUserQuestion dialog can opt into a narrowly host-owned
@@ -263,14 +264,14 @@ const AgentUiAskUserQuestionDialogSchema = z.object({
   { message: 'AskUserQuestion dialogs require a declared host-owned behavior.' },
 );
 
-const AgentUiAskUserQuestionSchema = z.object({
+const AgentUiAskUserQuestionSchema = lazyZodSchema(() => z.object({
   dialogs: z.array(AgentUiAskUserQuestionDialogSchema).min(1),
 }).strict().refine(
   (declaration) => new Set(declaration.dialogs.map((dialog) => dialog.dialogId)).size === declaration.dialogs.length,
   { message: 'AskUserQuestion dialog ids must be unique.' },
-);
+));
 
-export const AgentUiBehaviorDeclarationV1Schema = z.object({
+export const AgentUiBehaviorDeclarationV1Schema = lazyZodSchema(() => z.object({
   /** Author-owned identity for this declaration, surfaced in diagnostics. */
   descriptorId: AgentUiIdSchema.optional(),
   attachedSessionTerminal: z.object({ supported: z.boolean().optional() }).strict().optional(),
@@ -306,14 +307,14 @@ export const AgentUiBehaviorDeclarationV1Schema = z.object({
   payload: AgentUiPayloadSchema.optional(),
   askUserQuestion: AgentUiAskUserQuestionSchema.optional(),
   externalSessions: AgentUiExternalSessionsSchema.optional(),
-}).strict();
+}).strict());
 export type AgentUiBehaviorDeclarationV1 = z.infer<typeof AgentUiBehaviorDeclarationV1Schema>;
 
 /* -------------------------------------------------------------------------- */
 /* message                                                                     */
 /* -------------------------------------------------------------------------- */
 
-export const AgentUiMessageDeclarationV1Schema = z.object({
+export const AgentUiMessageDeclarationV1Schema = lazyZodSchema(() => z.object({
   /**
    * Outbound message metadata this Agent derives from a session config option
    * the user chose. `metaDescriptorIds` — the compiled-adapter form — is not
@@ -329,14 +330,14 @@ export const AgentUiMessageDeclarationV1Schema = z.object({
     }).strict(),
     normalize: z.literal('trimLowercase').optional(),
   }).strict()).optional(),
-}).strict();
+}).strict());
 export type AgentUiMessageDeclarationV1 = z.infer<typeof AgentUiMessageDeclarationV1Schema>;
 
 /* -------------------------------------------------------------------------- */
 /* session                                                                     */
 /* -------------------------------------------------------------------------- */
 
-const AgentUiAgentTeamBehaviorSchema = z.object({
+const AgentUiAgentTeamBehaviorSchema = lazyZodSchema(() => z.object({
   kind: z.literal('session.agentTeamBehavior.v1'),
   snapshotKey: AgentUiIdSchema,
   providerLabel: AgentUiIdSchema,
@@ -358,9 +359,9 @@ const AgentUiAgentTeamBehaviorSchema = z.object({
     ignoreActivityPreview: AgentUiIdArraySchema.optional(),
     shutdownApproved: AgentUiIdSchema.optional(),
   }).strict().optional(),
-}).strict();
+}).strict());
 
-const AgentUiSessionProviderBehaviorSchema = z.object({
+const AgentUiSessionProviderBehaviorSchema = lazyZodSchema(() => z.object({
   kind: z.literal('session.providerBehavior.v1'),
   agentTeam: AgentUiAgentTeamBehaviorSchema.optional(),
   participants: z.object({
@@ -377,23 +378,23 @@ const AgentUiSessionProviderBehaviorSchema = z.object({
       eventTypes: AgentUiIdArraySchema.min(1),
     }).strict().optional(),
   }).strict().optional(),
-}).strict();
+}).strict());
 
-const AgentUiSessionVisibleMessagesSchema = z.object({
+const AgentUiSessionVisibleMessagesSchema = lazyZodSchema(() => z.object({
   kind: z.literal('session.visibleMessages.v1'),
   subagentKinds: AgentUiIdArraySchema.min(1),
   fallbackToolNames: AgentUiIdArraySchema.optional(),
   excludeJsonEventTypes: AgentUiIdArraySchema.min(1),
-}).strict();
+}).strict());
 
 /** Data-only Session behavior interpreted by the same host owner for every Agent. */
-export const AgentUiSessionDeclarationV1Schema = z.object({
+export const AgentUiSessionDeclarationV1Schema = lazyZodSchema(() => z.object({
   providerBehavior: AgentUiSessionProviderBehaviorSchema.optional(),
   visibleMessages: AgentUiSessionVisibleMessagesSchema.optional(),
 }).strict().refine(
   (value) => value.providerBehavior !== undefined || value.visibleMessages !== undefined,
   'At least one Agent Session UI declaration is required.',
-);
+));
 export type AgentUiSessionDeclarationV1 = z.infer<typeof AgentUiSessionDeclarationV1Schema>;
 
 /* -------------------------------------------------------------------------- */
@@ -414,7 +415,7 @@ export type AgentUiSessionDeclarationV1 = z.infer<typeof AgentUiSessionDeclarati
  * UI view. `componentId` remains absent because it names code compiled into the
  * app rather than a public plugin contribution.
  */
-const AgentUiBooleanOptionComponentSlotSchema = z.object({
+const AgentUiBooleanOptionComponentSlotSchema = lazyZodSchema(() => z.object({
   id: AgentUiIdSchema,
   slot: AgentUiIdSchema,
   chip: z.object({
@@ -424,9 +425,9 @@ const AgentUiBooleanOptionComponentSlotSchema = z.object({
     onLabelKey: AgentUiTranslationKeySchema,
     offLabelKey: AgentUiTranslationKeySchema,
   }).strict(),
-}).strict();
+}).strict());
 
-const AgentUiSubagentLaunchComponentSlotSchema = z.object({
+const AgentUiSubagentLaunchComponentSlotSchema = lazyZodSchema(() => z.object({
   id: AgentUiIdSchema,
   slot: z.literal('sessionSubagents.launchCards'),
   surfaceId: AgentUiIdSchema,
@@ -436,9 +437,9 @@ const AgentUiSubagentLaunchComponentSlotSchema = z.object({
       subagentKinds: AgentUiIdArraySchema.optional(),
     }).strict().optional(),
   }).strict().optional(),
-}).strict();
+}).strict());
 
-const AgentUiSubagentDetailsComponentSlotSchema = z.object({
+const AgentUiSubagentDetailsComponentSlotSchema = lazyZodSchema(() => z.object({
   id: AgentUiIdSchema,
   slot: z.literal('sessionSubagents.teammateDetailsTab'),
   surfaceId: AgentUiIdSchema,
@@ -449,17 +450,17 @@ const AgentUiSubagentDetailsComponentSlotSchema = z.object({
     titleKey: AgentUiTranslationKeySchema,
     subtitleKey: AgentUiTranslationKeySchema.optional(),
   }).strict(),
-}).strict();
+}).strict());
 
-const AgentUiComponentSlotSchema = z.union([
+const AgentUiComponentSlotSchema = lazyZodSchema(() => z.union([
   AgentUiBooleanOptionComponentSlotSchema,
   AgentUiSubagentLaunchComponentSlotSchema,
   AgentUiSubagentDetailsComponentSlotSchema,
-]);
+]));
 
-export const AgentUiComponentsDeclarationV1Schema = z.object({
+export const AgentUiComponentsDeclarationV1Schema = lazyZodSchema(() => z.object({
   slots: z.array(AgentUiComponentSlotSchema).optional(),
-}).strict();
+}).strict());
 export type AgentUiComponentsDeclarationV1 = z.infer<typeof AgentUiComponentsDeclarationV1Schema>;
 
 /* -------------------------------------------------------------------------- */
@@ -479,10 +480,10 @@ export type AgentUiComponentsDeclarationV1 = z.infer<typeof AgentUiComponentsDec
  * unreadable field with a per-field diagnostic and the neutral default, which
  * is the correct blast radius. This is transport, not a second grammar owner.
  */
-export const AgentUiProjectedDeclarationV1Schema = z.object({
+export const AgentUiProjectedDeclarationV1Schema = lazyZodSchema(() => z.object({
   behavior: z.record(z.string(), z.unknown()).optional(),
   session: z.record(z.string(), z.unknown()).optional(),
   message: z.record(z.string(), z.unknown()).optional(),
   components: z.record(z.string(), z.unknown()).optional(),
-}).strict();
+}).strict());
 export type AgentUiProjectedDeclarationV1 = z.infer<typeof AgentUiProjectedDeclarationV1Schema>;

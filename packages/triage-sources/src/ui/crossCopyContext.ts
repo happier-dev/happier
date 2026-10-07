@@ -1,8 +1,9 @@
 import * as React from 'react';
 
 /**
- * Cross-copy identity for the two Triage seams a source detail reads from its
- * mounted Triage parent.
+ * Cross-copy identity for the Triage seams a source detail reads from its
+ * mounted Triage parent (evidence disclosure, post-mutation completion, panel
+ * navigation).
  *
  * Both halves of those seams are ordinary React contexts, and both sides sit in
  * ONE React tree: the aggregate renders `TargetedSurface`, whose host bridge

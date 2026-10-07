@@ -6,7 +6,7 @@ import { parseSessionMcpSelectionV1Json } from '@happier-dev/protocol/mcp/server
 import { SessionCreationTagV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { SessionRolesV1Schema } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
 import type { ConnectedServiceMaterializationIdentityV1, SessionMetadata } from '@happier-dev/protocol';
-import { applyAcpSessionModeIntentSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
+import { applyAcpSessionModeIntentSessionMetadata, applyDisplayTitleSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 
 import type { ApiClient } from '@/api/api';
 import { readSessionCreationTerminalSpawnErrorDetail } from '@/api/session/sessionCreationTerminalSpawnErrorDetail';
@@ -66,7 +66,7 @@ export type CommittedDaemonLaunchSession = Readonly<{
 /**
  * Seeds the launch intents an attaching runner never takes from its own
  * process (`mergeSessionMetadataForStartup` attach safety): the requested
- * session mode, configuration overrides and MCP selection. Permission mode and
+ * session mode, display title, configuration overrides and MCP selection. Permission mode and
  * model arrive as runner startup overrides; every other runtime field is the
  * runner's own, applied on attach with `replace_with_runtime_identity`.
  */
@@ -93,6 +93,12 @@ function buildCommittedLaunchMetadata(input: Readonly<{
     connectedServiceMaterializationIdentityV1: input.materializationIdentity,
     ...(options.initialSessionRolesV1 ? { work: { sessionRolesV1: SessionRolesV1Schema.parse(options.initialSessionRolesV1) } } : {}),
   };
+  if (options.initialTitle) {
+    metadata = applyDisplayTitleSessionMetadata(metadata, {
+      title: options.initialTitle,
+      staleBehavior: 'bump-if-value-changed',
+    });
+  }
   const agentModeId = input.agentModeId?.trim();
   if (agentModeId) {
     metadata = applyAcpSessionModeIntentSessionMetadata(metadata, {
@@ -221,6 +227,7 @@ export function withoutFreshSessionCreationFields(options: SpawnSessionOptions):
   const {
     initialAccess: _initialAccess,
     initialTriggers: _initialTriggers,
+    initialTitle: _initialTitle,
     reportsTo: _reportsTo,
     initialSessionRolesV1: _initialSessionRolesV1,
     originKind: _originKind,

@@ -28,9 +28,7 @@ export type WorkerDeliverableReferenceV1 = z.infer<typeof WorkerDeliverableRefer
 export function workerDeliverablesBelongToSessionV1(deliverables: readonly WorkerDeliverableReferenceV1[] | undefined, sessionId: string | null | undefined): boolean {
   return !deliverables?.some(ref => ref.kind === 'workspace_file' && ref.sessionId !== sessionId);
 }
-export const WORKER_DELIVERABLE_REFERENCE_MAX_COUNT_V1 = 32;
 const WorkerDeliverablesV1Schema = z.array(WorkerDeliverableReferenceV1Schema)
-  .max(WORKER_DELIVERABLE_REFERENCE_MAX_COUNT_V1)
   .refine(refs => JSON.stringify(refs).length <= EXECUTION_RUN_COMPLETION_SUMMARY_MAX_LENGTH);
 
 /** References share the existing result budget; no second retained payload. */

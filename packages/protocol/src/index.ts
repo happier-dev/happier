@@ -52,7 +52,6 @@ export {
   SessionWorkerPublishOutputV1Schema,
   WorkerUpdateTranscriptPointerV1Schema,
   WorkerDeliverableReferenceV1Schema,
-  WORKER_DELIVERABLE_REFERENCE_MAX_COUNT_V1,
   workerDeliverableResultMaxLengthV1,
   workerDeliverablesBelongToSessionV1,
   type WorkerDeliverableReferenceV1,
@@ -230,6 +229,7 @@ export {
   AuthTokenProvenanceAnySchema,
   AuthTokenAuthenticationEvidenceV1Schema,
   AuthTokenAuthenticationEvidenceSnapshotV1Schema,
+  StoredAuthTokenAuthenticationEvidenceSnapshotV1Schema,
   authTokenAuthenticationEvidenceIdentityV1,
   AUTH_TOKEN_AUTHENTICATION_EVIDENCE_MAX_ITEMS,
   type AuthTokenAuthority,
@@ -411,7 +411,6 @@ export {
   createPluginActionPresentUserGate,
   fingerprintPluginActionCurrentIntent,
   pluginActionRequiresPresentUserIntent,
-  PLUGIN_ACTION_FAILURE_MESSAGE_MAX_UTF8_BYTES,
   projectPluginActionFailureCode,
   projectPluginActionFailureMessage,
   projectPluginActionUnavailableOutcomeCode,
@@ -432,7 +431,6 @@ export {
   readPluginActionFailureAuthorPayload,
 } from './plugins/actions/invocation.js';
 export {
-  PLUGIN_FAILURE_TEXT_MAX_UTF8_BYTES,
   projectPluginFailureMessage,
   projectPluginFailureText,
 } from './plugins/failureProjection.js';
@@ -3397,11 +3395,6 @@ export {
   type SessionContinueWithReplayRpcResult,
 } from './sessions/continueWithReplay.js';
 export {
-  HAPPIER_REPLAY_RECENT_MESSAGES_MAX_COUNT,
-  HAPPIER_REPLAY_RECENT_MESSAGES_MIN_COUNT,
-  HAPPIER_REPLAY_SEED_ACCEPTED_MIN_CHARS,
-  HAPPIER_REPLAY_SEED_MAX_CHARS,
-  HAPPIER_REPLAY_SEED_MIN_CHARS,
   HappierReplayRecentMessagesCountSchema,
   HappierReplayWireMaxSeedCharsSchema,
   HappierReplayWritableMaxSeedCharsSchema,
@@ -3904,6 +3897,7 @@ export {
   createVoiceAgentOutputTurnV1,
   canAppendVoiceAgentOutputEventsV1,
   fitVoiceAgentOutputTextV1,
+  resolveVoiceAgentOutputSpeechSegmentLength,
   VOICE_OUTPUT_INCOMPLETE_TEXT,
   ingestVoiceAgentOutputEventV1,
   type VoiceAgentOutputEffectV1,
@@ -4766,6 +4760,7 @@ export {
   SessionGoalGetRequestV1Schema,
   SessionGoalSetRequestV1Schema,
   SessionInitialGoalRequestV1Schema,
+  PreflightSessionCatalogsV1Schema,
   SessionSkillCatalogItemV1Schema,
   SessionSkillCatalogListRequestV1Schema,
   SessionSkillCatalogListResponseV1Schema,
@@ -4811,6 +4806,7 @@ export {
   type SessionGoalGetRequestV1,
   type SessionGoalSetRequestV1,
   type SessionInitialGoalRequestV1,
+  type PreflightSessionCatalogsV1,
   type SessionSkillCatalogItemV1,
   type SessionSkillCatalogListRequestV1,
   type SessionSkillCatalogListResponseV1,
@@ -6032,7 +6028,6 @@ export {
   type DaemonVoiceClientRawCredentialAuthorizationRequestResponseV1,
 } from './daemon/voiceCredentials.js';
 export {
-  PLUGIN_DIAGNOSTIC_TEXT_MAX_UTF8_BYTES_V1,
   PluginDiagnosticRemediationV1Schema,
   PluginDiagnosticDataV1Schema,
   PluginDiagnosticTextV1Schema,
@@ -6952,11 +6947,8 @@ export {
 
 export {
   buildReviewCommentTextSnapshotHashes,
-  REVIEW_COMMENT_TEXT_SNAPSHOT_MAX_BYTES_V1,
-  REVIEW_COMMENT_TEXT_SNAPSHOT_MAX_LINE_BYTES_V1,
   reviewCommentTextSnapshotHasBidiControlsV1,
   reviewCommentTextSnapshotIsLikelyMinifiedV1,
-  reviewCommentTextSnapshotUtf8BytesV1,
   type ReviewCommentTextSnapshotLinesV1,
 } from './reviews/comments/snapshots.js';
 
@@ -6992,8 +6984,6 @@ export {
   sealReviewCommentEventSensitiveEnvelopeV1,
   sealReviewCommentSensitiveEnvelopeV1,
   splitReviewCommentV1,
-  REVIEW_COMMENT_ACCOUNT_ENCRYPTION_MIGRATION_MAX_COMMENTS_V1,
-  REVIEW_COMMENT_ACCOUNT_ENCRYPTION_MIGRATION_MAX_EVENTS_V1,
   type BoundReviewCommentEventSensitiveEnvelopeV1,
   type ReviewCommentAccountEncryptionMigrationInventoryEventV1,
   type ReviewCommentAccountEncryptionMigrationInventoryItemV1,
@@ -7353,6 +7343,7 @@ export {
   ApprovalExecutionOriginV1Schema,
   ApprovalRequestOriginV1Schema,
   ApprovalRequestSchema,
+  StoredApprovalRequestSchema,
   ApprovalRequestV2StatusSchema,
   ApprovalRequestV1Schema,
   ApprovalRequestV2Schema,
@@ -8045,8 +8036,6 @@ export {
   AccountEncryptionMigrateSessionItemSchema,
   AccountEncryptionMigrateSessionsDirectiveSchema,
   AccountEncryptionMigrateReviewCommentsDirectiveSchema,
-  ACCOUNT_ENCRYPTION_MIGRATE_REVIEW_COMMENTS_MAX_ITEMS,
-  ACCOUNT_ENCRYPTION_MIGRATE_REVIEW_COMMENT_EVENTS_MAX_ITEMS,
   AccountEncryptionMigrateSessionOrganizationDirectiveSchema,
   AccountEncryptionMigratePetsDirectiveSchema,
   ACCOUNT_ENCRYPTION_MIGRATE_REQUEST_MAX_UTF8_BYTES,

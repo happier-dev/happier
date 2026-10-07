@@ -5,6 +5,7 @@ import {
     releaseExecutionRunConnectedServices,
     requestExecutionRunConnectedServicesMaterialization,
     recoverExecutionRunConnectedServicesRejectedStart,
+    requestExecutionRunConnectedServiceRuntimeAuthRefresh,
 } from '@/daemon/controlClient';
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';
 import {
@@ -17,6 +18,7 @@ import type { ExecutionRunConnectedServicesRegistrationV1 } from '@/daemon/conne
 import { readConnectedServiceChildMemberLogContextFromEnv } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import type { ConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/types';
 import { createExecutionRunCodedError } from '../errors';
+import type { RuntimeAuthRefreshViaDaemon } from '@/plugins/runtime/context/runtimeAuthRefresh';
 
 /**
  * Generic (provider-agnostic) connected-services env resolution for execution-run backends.
@@ -67,6 +69,7 @@ type MaterializationDeps = Readonly<{
     resolveSessionSpawnDefaults: ResolveSessionSpawnDefaults;
     runnerPid: number;
     recoverRejectedStart?: typeof recoverExecutionRunConnectedServicesRejectedStart;
+    refreshRuntimeAuth?: typeof requestExecutionRunConnectedServiceRuntimeAuthRefresh;
 }>;
 
 export type ResolvedExecutionRunConnectedServicesEnv = Readonly<{
@@ -75,6 +78,7 @@ export type ResolvedExecutionRunConnectedServicesEnv = Readonly<{
     registration: ExecutionRunConnectedServicesRegistrationV1;
     cleanup: () => Promise<void>;
     recoverRejectedStart: (classification: ConnectedServiceRuntimeFailureClassification) => Promise<boolean>;
+    refreshRuntimeAuth: RuntimeAuthRefreshViaDaemon;
 }>;
 
 export type ResolvedExecutionRunConnectedServicesSelection = Readonly<{
@@ -122,6 +126,7 @@ function defaultDeps(): MaterializationDeps {
         },
         runnerPid: process.pid,
         recoverRejectedStart: async (request) => await recoverExecutionRunConnectedServicesRejectedStart(request),
+        refreshRuntimeAuth: requestExecutionRunConnectedServiceRuntimeAuthRefresh,
     };
 }
 
@@ -356,6 +361,17 @@ export async function resolveExecutionRunConnectedServicesEnv(params: Readonly<{
         connectedServicesBindings: response.result.connectedServicesBindings,
         registration: response.result.registration,
         cleanup,
+        async refreshRuntimeAuth(request, options) {
+            if (cleanupPromise || !deps.refreshRuntimeAuth) {
+                return { status: 'unavailable', reason: 'connected_service_run_materialization_unavailable' };
+            }
+            return await deps.refreshRuntimeAuth({
+                ...request,
+                runId: params.runId,
+                runnerPid: deps.runnerPid,
+                activationId: response.result.activationId,
+            }, options);
+        },
         async recoverRejectedStart(classification) {
             const modelId = params.modelId ?? classification.providerLimitId;
             if (!modelId || !deps.recoverRejectedStart) return false;

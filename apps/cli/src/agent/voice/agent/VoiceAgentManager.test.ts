@@ -5,6 +5,8 @@ import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionR
 import { createTestExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/testkit';
 import type { BackendFactory, ResolveVoiceSystemAppendBlocksArgs, VoiceAgentTurnStreamEvent } from './voiceAgentTypes';
 import { VoiceAgentError, VoiceAgentManager } from './VoiceAgentManager';
+import { createVoiceSessionRuntimeThroughNativeFactory } from '@/agent/runtime/bridges/executionRun/testkit/nativeSessionContext';
+import type { AgentRuntime, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 
 // One runtime, one lifetime: the signal must stay stable across calls so
 // subscribers do not accumulate against a fresh controller each read.
@@ -2344,21 +2346,22 @@ describe('VoiceAgentManager', () => {
     }
   });
 
-  it('caps idleTtlSeconds at the extended maximum so persistent voice agents can stay warm', async () => {
+  it('honors the configured idle lifetime beyond six hours through the native host runtime', async () => {
 
     let nowMs = 0;
     let disposedCount = 0;
-    const createBackend: BackendFactory = ({ modelId }) => createTestExecutionRunHostRuntime({
-      runtimeId: `s-${modelId}`,
-      onDispose() {
-        disposedCount += 1;
-      },
-    });
+    // Agent/native boundary only; the host adapter and manager lifecycle are real.
+    const runtime: AgentRuntime = { sessions: { async open() { return {
+      watch() { return { dispose() {} }; },
+      async send() { return { status: 'admitted' as const }; },
+      async dispose() { disposedCount += 1; },
+    }; } } };
 
     vi.useFakeTimers();
     try {
       const manager = new VoiceAgentManager({
-        createBackend,
+        createRuntime: ({ modelId }) => createVoiceSessionRuntimeThroughNativeFactory({ runtime, modelId,
+          capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false } }),
         getNowMs: () => nowMs,
         reaperIntervalMs: 5_000,
       });
@@ -2368,16 +2371,20 @@ describe('VoiceAgentManager', () => {
         chatModelId: 'chat-model',
         commitModelId: 'commit-model',
         permissionIntent: 'read-only',
-        // Request an absurd TTL; the manager should cap it to the extended maximum (6h).
-        idleTtlSeconds: 999_999,
-        initialContext: 'CTX',
+        idleTtlSeconds: 8 * 60 * 60,
+        initialContext: '',
       });
 
       nowMs = 2 * 60 * 60 * 1000; // 2h
       await vi.advanceTimersByTimeAsync(5_000);
       expect(disposedCount).toBe(0);
 
-      nowMs = 7 * 60 * 60 * 1000; // 7h
+      nowMs = 7 * 60 * 60 * 1000;
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(disposedCount).toBe(0);
+      expect(manager.readCurrentRuntimeAuthority(started.voiceAgentId)).toMatchObject({ runtimeState: 'idle' });
+
+      nowMs = 8 * 60 * 60 * 1000 + 1;
       await vi.advanceTimersByTimeAsync(5_000);
       expect(disposedCount).toBe(1);
 
@@ -2502,15 +2509,36 @@ describe('VoiceAgentManager', () => {
     { label: 'multilingual bytes', text: '你好🙂'.repeat(15_000), actionCount: 1, incomplete: true },
     { label: 'multilingual text with normalized action preamble', text: '你好🙂'.repeat(15_000), actionCount: 1, incomplete: true, sendMessage: true },
     { label: 'serialized JSON escaping', text: '\u0001'.repeat(60_000), actionCount: 1, incomplete: true },
-    { label: 'action event overhead', text: 'word '.repeat(9_000), actionCount: 230, incomplete: true },
+    { label: 'valid action event overhead', text: 'word '.repeat(9_000), actionCount: 230, incomplete: false },
+    { label: 'action event overflow', text: 'word '.repeat(9_000), actionCount: 300, incomplete: true },
     { label: 'valid near-boundary ASCII', text: 'word '.repeat(12_800), actionCount: 1, incomplete: false },
   ])('keeps $label inside the Protocol budget including actions and the repeated terminal final', async ({ text, actionCount, incomplete, sendMessage }) => {
     const action = sendMessage
       ? { t: 'sendSessionMessage', args: { message: 'Do X.' } }
       : { t: 'teleportVoiceAgentToSessionRoot', args: { sessionId: 's1' } };
     const block = `<voice_actions>${JSON.stringify({ actions: Array.from({ length: actionCount }, () => action) })}</voice_actions>`;
-    const chatBackend = createMultiDeltaBackend('budget', [text, block]);
-    const manager = new VoiceAgentManager({ createBackend: () => chatBackend });
+    const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
+    let sequence = 0;
+    const publish = (event: AgentSessionRuntimeEvent) => { for (const listener of listeners) listener(event); };
+    // Only the external Agent SDK is a fixture; factory, host runtime, Voice and Protocol owners are real.
+    const runtime: AgentRuntime = { sessions: { async open() { return {
+      watch(listener) { listeners.add(listener); return { dispose() { listeners.delete(listener); } }; },
+      async send(request) {
+        const base = { sessionId: 'session-parent', emittedAtMs: 1 };
+        const turnId = request.delivery.turnId;
+        publish({ ...base, sequence: sequence++, kind: 'input-accepted', inputIds: request.inputIds, delivery: request.delivery });
+        publish({ ...base, sequence: sequence++, kind: 'turn-start', turnId, startedBy: 'host' });
+        for (const delta of [text, block]) {
+          publish({ ...base, sequence: sequence++, kind: 'message-delta', turnId, channel: 'assistant', text: delta });
+        }
+        publish({ ...base, sequence: sequence++, kind: 'turn-complete', turnId });
+        return { status: 'admitted' as const };
+      },
+      async dispose() { listeners.clear(); },
+    }; } } };
+    const manager = new VoiceAgentManager({ createRuntime: ({ modelId }) => createVoiceSessionRuntimeThroughNativeFactory({
+      runtime, modelId, capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
+    }) });
     const started = await manager.start({
       backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model', commitModelId: 'chat-model', permissionIntent: 'read-only',

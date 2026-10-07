@@ -46,7 +46,7 @@ function createTestJwt({ sub, jti }) {
   return `${toB64Url(headerJson)}.${toB64Url(payloadJson)}.`;
 }
 
-async function withAuthServer({ goodToken }, fn) {
+async function withAuthServer({ goodToken, responseDelayMs = 0 }, fn) {
   const server = http.createServer((req, res) => {
     if (!req.url || !req.method) {
       res.statusCode = 400;
@@ -62,7 +62,7 @@ async function withAuthServer({ goodToken }, fn) {
     if (auth === `Bearer ${goodToken}`) {
       res.statusCode = 200;
       res.setHeader('content-type', 'application/json');
-      res.end(JSON.stringify({ ok: true }));
+      setTimeout(() => res.end(JSON.stringify({ ok: true })), responseDelayMs);
       return;
     }
     res.statusCode = 401;
@@ -79,6 +79,20 @@ async function withAuthServer({ goodToken }, fn) {
     await new Promise((resolve) => server.close(resolve));
   }
 }
+
+test('credential readiness preserves a valid loaded response beyond its private cutoff', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'happier-stack-cred-loaded-'));
+  try {
+    await withAuthServer({ goodToken: 'good-token', responseDelayMs: 2_700 }, async ({ serverUrl }) => {
+      const env = { HAPPIER_ACTIVE_SERVER_ID: 'loaded-qa' };
+      const resolved = resolveStackCredentialPaths({ cliHomeDir: home, serverUrl, env });
+      writeAccessKeyFile(resolved.serverScopedPath, 'good-token');
+      assert.equal((await ensureActiveAccessKeyValid({ cliHomeDir: home, serverUrl, env })).kind, 'ok');
+    });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
 
 test('ensureActiveAccessKeyValid repairs server-scoped access key from url-hash key when active key is unauthorized', async () => {
   const home = mkdtempSync(join(tmpdir(), 'happier-stack-cred-repair-'));

@@ -3,7 +3,7 @@ import { parseArgs } from './utils/cli/args.mjs';
 import { run } from './utils/proc/proc.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { isSandboxed, sandboxAllowsGlobalSideEffects } from './utils/env/sandbox.mjs';
-import { getInternalServerUrl } from './utils/server/urls.mjs';
+import { resolveStackServerEndpoint } from './utils/server/urls.mjs';
 import { getStackName, resolveStackEnvPath } from './utils/paths/paths.mjs';
 import { banner, bullets, cmd as cmdFmt, kv, ok, sectionTitle } from './utils/ui/layout.mjs';
 import { cyan, dim, green } from './utils/ui/ansi.mjs';
@@ -89,7 +89,7 @@ export async function tailscaleServeHttpsUrl({ internalServerUrl } = {}) {
     const status = await tailscaleServeStatus();
     const comparableInternalServerUrl =
       String(internalServerUrl ?? '').trim() ||
-      getInternalServerUrl({ env: process.env, defaultPort: 3005 }).internalServerUrl;
+      (await resolveStackServerEndpoint()).internalServerUrl;
     return tailscaleServeHttpsUrlForInternalServerUrlFromStatus(status, comparableInternalServerUrl);
   } catch {
     return null;
@@ -343,7 +343,7 @@ async function main() {
     return;
   }
 
-  const internalServerUrl = getInternalServerUrl({ env: process.env, defaultPort: 3005 }).internalServerUrl;
+  const { internalServerUrl } = await resolveStackServerEndpoint();
   if (flags.has('--upstream') || kv.get('--upstream')) {
     process.env.HAPPIER_STACK_TAILSCALE_UPSTREAM = kv.get('--upstream') ?? internalServerUrl;
   }

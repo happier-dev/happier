@@ -25,6 +25,10 @@ const ProviderTurnEventBaseSchema = ProviderEventBaseSchema.extend({
 
 export const ClaudeProviderEventSchema = z.discriminatedUnion('kind', [
   ProviderEventBaseSchema.extend({
+    kind: z.literal('available-commands'),
+    commands: z.array(z.object({ name: z.string(), description: z.string().optional() })),
+  }),
+  ProviderEventBaseSchema.extend({
     kind: z.literal('context-compaction'),
     compactionId: z.string().trim().min(1),
     phase: z.literal('completed'),

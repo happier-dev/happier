@@ -83,7 +83,7 @@ describe('spawn nonce terminal wait', () => {
       await vi.waitFor(() => expect(spawnSession).toHaveBeenCalledOnce());
       const interval = vi.spyOn(globalThis, 'setInterval');
       let settled = false;
-      const wait = app.inject({ method: 'POST', url: '/spawn-session/resolve', headers, payload: { spawnNonce: 'waiting', timeoutMs: 10_000 } })
+      const wait = app.inject({ method: 'POST', url: '/spawn-session/resolve', headers, payload: { spawnNonce: 'waiting', timeoutMs: 30 * 24 * 60 * 60_000 } })
         .then((response) => { settled = true; return response; });
       await new Promise((resolve) => setTimeout(resolve, 30));
       expect(settled).toBe(false);

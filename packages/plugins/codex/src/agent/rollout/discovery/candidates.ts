@@ -343,6 +343,7 @@ export async function collectCodexRolloutCandidateEntries(params: Readonly<{
     env: params.env,
     signal: params.signal,
     deadlineAtMs: params.deadlineAtMs,
+    onProgress: params.onProgress,
   });
   throwIfCodexExternalSessionInvocationStopped(params);
   const grouped: GroupedRolloutCandidates = new Map();
@@ -357,6 +358,7 @@ export async function collectCodexRolloutCandidateEntries(params: Readonly<{
         filenameIncludes: params.filenameIncludes,
         signal: params.signal,
         deadlineAtMs: params.deadlineAtMs,
+        onProgress: params.onProgress,
       })),
       ...(await collectRolloutFiles({
         rootDir: join(homeEntry.codexHome, 'archived_sessions'),
@@ -365,6 +367,7 @@ export async function collectCodexRolloutCandidateEntries(params: Readonly<{
         filenameIncludes: params.filenameIncludes,
         signal: params.signal,
         deadlineAtMs: params.deadlineAtMs,
+        onProgress: params.onProgress,
       })),
     ];
     for (const entry of files) {
@@ -413,6 +416,7 @@ export async function selectCodexRolloutCandidateEntries(params: Readonly<{
       filenameIncludes: searchTerm,
       signal: params.signal,
       deadlineAtMs: params.deadlineAtMs,
+      onProgress: params.onProgress,
     });
     if (filenameMatches.length > 0) {
       const exactIdMatch = filenameMatches.some(({ remoteSessionId }) => remoteSessionId.toLowerCase() === searchTerm);
@@ -451,6 +455,7 @@ export async function selectCodexRolloutCandidateEntries(params: Readonly<{
     env: params.env,
     signal: params.signal,
     deadlineAtMs: params.deadlineAtMs,
+    onProgress: params.onProgress,
   });
 
   if (!searchTerm) {
@@ -622,6 +627,7 @@ async function listCandidateCorpusContainers(params: Readonly<{
       homeIndex,
       signal: params.signal,
       deadlineAtMs: params.deadlineAtMs,
+      onProgress: params.onProgress,
     }),
   ));
   throwIfCodexExternalSessionInvocationStopped(params);
@@ -707,6 +713,7 @@ export async function scanCodexRolloutCandidateChunk(params: Readonly<{
     containerKey: after?.containerKey ?? null,
     signal: params.signal,
     deadlineAtMs: params.deadlineAtMs,
+    onProgress: params.onProgress,
   });
   if (after && after.sourceGeneration !== resumeGeneration) {
     return {
@@ -746,6 +753,7 @@ export async function scanCodexRolloutCandidateChunk(params: Readonly<{
         containerKey: container.key,
         signal: params.signal,
         deadlineAtMs: params.deadlineAtMs,
+        onProgress: params.onProgress,
       });
     const fileNames = rolloutCandidateFileNames(
       await readDirectoryEntries(container.dir, params),
@@ -801,6 +809,7 @@ export async function scanCodexRolloutCandidateChunk(params: Readonly<{
       env: params.env,
       signal: params.signal,
       deadlineAtMs: params.deadlineAtMs,
+      onProgress: params.onProgress,
     }),
     sourceGeneration: resumeGeneration,
     scanned,

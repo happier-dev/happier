@@ -138,8 +138,8 @@ function boundaries(options: Readonly<{
     }
     return { engineVersion: '0.18.1', protocolEpoch: 'external-stream-v1' };
   });
-  const ensureInstalledComponent = vi.fn(async (input: Readonly<{ validatePayload(payloadRoot: string): void }>) => {
-    input.validatePayload('/installed/version');
+  const ensureInstalledComponent = vi.fn(async (input: Readonly<{ validatePayload(payloadRoot: string): unknown }>) => {
+    await input.validatePayload('/installed/version');
     return { currentPath: '/installed/current', resolvedCurrentPath: '/installed/version' } as any;
   });
   const resolveDataLayout = vi.fn(() => ({ rootDir: '/daemon/workspace-sync/mutagen', dataDir: '/daemon/workspace-sync/mutagen/data', brokerDir: '/daemon/workspace-sync/mutagen/broker' }));

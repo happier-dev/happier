@@ -78,6 +78,9 @@ import {
   CONNECTED_SERVICE_RUN_GENERATION_CURRENT_PATH,
   CONNECTED_SERVICE_RUN_RELEASE_PATH,
   CONNECTED_SERVICE_RUN_REJECTED_START_PATH,
+  CONNECTED_SERVICE_RUN_REFRESH_RUNTIME_AUTH_PATH,
+  ConnectedServiceRunRuntimeAuthRefreshRequestSchema,
+  type ConnectedServiceRunRuntimeAuthRefreshRequest,
   type ConnectedServiceRunRejectedStartRequest,
   type ConnectedServiceRunRejectedStartResult,
   type ConnectedServiceRunMaterializeRequest,
@@ -86,6 +89,7 @@ import {
   type ExecutionRunConnectedServicesRegistrationV1,
 } from './connectedServices/runs/materializeContract';
 import { resolveComparableCliVersion } from './resolveComparableCliVersion';
+import { ConnectedServiceDaemonAuthBridgeRefreshResultSchema } from './connectedServices/sessionRuntimeAuthRefresh';
 import type {
   PersistedTakeoverAdmissionPhase,
   TakeoverAdmissionMode,
@@ -725,16 +729,29 @@ export async function requestDaemonSessionConnectedServiceRuntimeAuthRefresh(
     expectedCredentialRevision: body.expectedCredentialRevision,
     ...(body.reason === undefined ? {} : { reason: body.reason }),
   }, options);
+  return normalizeDaemonRuntimeAuthRefreshResponse(result, body.refreshAttemptId);
+}
+
+function normalizeDaemonRuntimeAuthRefreshResponse(
+  value: unknown,
+  refreshAttemptId: string,
+): ConnectedServiceDaemonAuthBridgeRefreshResult {
+  const result = value && typeof value === 'object' ? value as Record<string, unknown> : null;
   if (result?.error || result?.errorCode) {
-    if (!result?.errorCode && typeof result?.error === 'string' && /abort|timed?\s*out|timeout/iu.test(result.error)) {
+    if (result.errorCode === 'timeout' || (!result.errorCode && typeof result.error === 'string' && /abort|timed?\s*out|timeout/iu.test(result.error))) {
       return {
         status: 'pending',
-        refreshAttemptId: body.refreshAttemptId,
+        refreshAttemptId,
       };
     }
     throw new Error(String(result.errorCode ?? result.error));
   }
-  return (result as { result: ConnectedServiceDaemonAuthBridgeRefreshResult }).result;
+  const parsed = ConnectedServiceDaemonAuthBridgeRefreshResultSchema.safeParse(result?.result);
+  if (!parsed.success) return { status: 'failed', reason: 'runtime_auth_refresh_invalid_bridge_result' };
+  if (parsed.data.status === 'pending' && parsed.data.refreshAttemptId !== refreshAttemptId) {
+    return { status: 'failed', reason: 'runtime_auth_refresh_attempt_mismatch' };
+  }
+  return parsed.data;
 }
 
 export async function notifyDaemonConnectedServiceRuntimeAuthFailure(
@@ -1133,6 +1150,36 @@ export async function recoverExecutionRunConnectedServicesRejectedStart(
     authScope: 'connected-service-run-materialize',
     timeoutMs: resolveExecutionRunConnectedServiceMaterializeTimeoutMs(),
   });
+}
+
+export async function requestExecutionRunConnectedServiceRuntimeAuthRefresh(
+  request: Omit<ConnectedServiceRunRuntimeAuthRefreshRequest, 'selection' | 'serviceId' | 'expectedCredentialRevision'> & Readonly<{
+    serviceId: string;
+    selection: unknown;
+    expectedCredentialRevision: string;
+  }>,
+  options: DaemonControlRequestOptions = {},
+): Promise<ConnectedServiceDaemonAuthBridgeRefreshResult> {
+  const selection = request.selection && typeof request.selection === 'object'
+    ? request.selection as Record<string, unknown> : null;
+  // Plugin-owned selection hints include policy/revision. Only identity crosses this closed
+  // authority envelope; revision has its own explicit, daemon-validated request field.
+  const parsed = ConnectedServiceRunRuntimeAuthRefreshRequestSchema.safeParse({ ...request,
+    selection: selection?.kind === 'profile'
+      ? { kind: selection.kind, serviceId: selection.serviceId, profileId: selection.profileId }
+      : selection?.kind === 'group' ? { kind: selection.kind, serviceId: selection.serviceId,
+        groupId: selection.groupId, activeProfileId: selection.activeProfileId,
+        fallbackProfileId: selection.fallbackProfileId, generation: selection.generation } : null,
+  });
+  if (!parsed.success) return { status: 'unavailable', reason: 'connected_service_run_refresh_forbidden' };
+  const result = await daemonPost(CONNECTED_SERVICE_RUN_REFRESH_RUNTIME_AUTH_PATH, parsed.data, {
+    ...options, authScope: 'connected-service-run-materialize',
+  });
+  try {
+    return normalizeDaemonRuntimeAuthRefreshResponse(result, parsed.data.refreshAttemptId);
+  } catch {
+    return { status: 'unavailable', reason: 'connected_service_run_refresh_unavailable' };
+  }
 }
 
 export async function checkExecutionRunConnectedServicesGenerationCurrent(

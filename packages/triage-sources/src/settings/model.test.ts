@@ -58,6 +58,30 @@ function draft(localInstanceKey: string, overrides: Readonly<{
 }
 
 describe('the source settings discovery model', () => {
+  it('projects native candidates without inventing an account id and keeps the configured row aligned', () => {
+    const native = {
+      ...draft('acme/api'),
+      binding: { purpose: BINDING.purpose, source: 'native' as const, service: BINDING.account.service },
+      locator: { v: 1 as const, displayLabel: 'Use this machine’s GitHub CLI login' },
+    };
+    const state = readTriageSourceDiscovery({
+      status: 'success', result: { kind: 'complete', candidates: [native], failures: [] },
+    });
+    expect(state.kind).toBe('listed');
+    if (state.kind !== 'listed') throw new Error('expected a listed discovery state');
+    expect(state.candidates[0]).toMatchObject({ label: native.locator.displayLabel, accountId: null });
+    const configured = readTriageSourceConfiguredInstances({ status: 'success', result: {
+      kind: 'read', status: 'complete', instances: [{ v: 1, lifecycle: 'active', configured: {
+        v: native.v, binding: native.binding, localInstanceKey: native.localInstanceKey, configuration: native.configuration, locator: native.locator,
+        instance: { source: { pluginId: 'example.tracker', localId: 'triage' }, sourceInstanceId: '11111111-1111-4111-8111-111111111111' },
+      } }],
+    } });
+    expect(configured.kind).toBe('read');
+    if (configured.kind !== 'read') throw new Error('expected configured state');
+    expect(configured.instances[0]?.key).toBe(state.candidates[0]?.key);
+    expect(configured.instances[0]?.locator).toBe(native.locator.displayLabel);
+  });
+
   it('renders rows for a complete listing and reports it as complete', () => {
     const state = readTriageSourceDiscovery({
       status: 'success',

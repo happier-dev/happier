@@ -90,6 +90,10 @@ import {
 import {
     loadRetainedAgentRuntimeLeaf,
 } from '@/plugins/runtime/runner/loadRetainedAgentRuntimeLeaf';
+import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
+import { createBoundedAgentExternalSessionsContribution } from '@/session/external/agentExternalSessionsInvocation';
+import { createAgentExternalSessionsExecutionSurface } from '@/agent/runtime/registry/agentExternalSessionsExecutionSurface';
+import { resolveAgentContributionQualifiedId } from '@/plugins/projection/registry/agentRoutingIdentity';
 import type {
     StablePluginConnectedAccountsOwner,
 } from '@/plugins/runtime/invocation/services/connectedAccounts';
@@ -518,7 +522,7 @@ async function writePluginSource(input: Readonly<{
             },
             async pageTranscript() {
                 return { ok: true, value: {
-                    items: [], nextCursor: null, tailCursor: null,
+                    items: [], nextCursor: null, tailCursor: 'native-' + version,
                     hasMore: false, truncated: false
                 } };
             },
@@ -1455,6 +1459,12 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
                                         await service.list(query, options),
                                 );
                             },
+                            async closeList(cursor, options) {
+                                await withCurrentExternalSessions(
+                                    async (service) =>
+                                        await service.closeList(cursor, options),
+                                );
+                            },
                             async attach(ref, options) {
                                 return await withCurrentExternalSessions(
                                     async (service) =>
@@ -1747,13 +1757,10 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
             const firstCurrentRef = firstCurrentPage.items[0]?.ref;
             const firstCurrentCursor = firstCurrentPage.nextCursor;
             if (!firstCurrentRef || !firstCurrentCursor) {
-                throw new Error('Expected the published current-G first page and cursor');
+                throw new Error('Expected the published current-G first page and continuation');
             }
             expect(firstCurrentRef.remoteSessionId).toBe('current-G');
-            await expect(actualHCurrentExternalSessions.list({
-                agentId: QUALIFIED_AGENT_ID,
-                cursor: firstCurrentCursor,
-            })).resolves.toMatchObject({
+            await expect(actualHCurrentExternalSessions.list({ agentId: QUALIFIED_AGENT_ID, cursor: firstCurrentCursor })).resolves.toMatchObject({
                 items: [{
                     ref: {
                         agentId: QUALIFIED_AGENT_ID,
@@ -1815,6 +1822,7 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
                             nextCursor: null,
                         });
                     },
+                    async closeList() {},
                     async attach() {
                         throw new PluginError({
                             code: 'plugin_external_attach_unavailable',
@@ -2260,13 +2268,28 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
                 NonNullable<
                     ExternalSessionHostOperationSet['followOperation']
                 >['execute']
-            >(async (request) => Object.freeze({
-                status: 'following' as const,
-                startingCursor: request.options.cursor ?? null,
-                subscription: Object.freeze({
-                    dispose: exactGSubscriptionDispose,
-                }),
-            }));
+            >(async (request) => {
+                expect(request.isCurrent()).toBe(true);
+                expect(request.occurrenceId.length).toBeGreaterThan(0);
+                if (!request.providerOps) {
+                    throw new Error('Expected exact retained-provider transcript callbacks');
+                }
+                await expect(request.providerOps.pageTranscript({
+                    source: request.source,
+                    remoteSessionId: request.ref.remoteSessionId,
+                    direction: 'newer',
+                    maxBytes: 1024,
+                    maxItems: 10,
+                    signal: request.options.signal,
+                })).resolves.toMatchObject({ tailCursor: 'native-G' });
+                return Object.freeze({
+                    status: 'following' as const,
+                    startingCursor: request.options.cursor ?? null,
+                    subscription: Object.freeze({
+                        dispose: exactGSubscriptionDispose,
+                    }),
+                });
+            });
             await positiveOwner.install({
                 followOperation: { execute: exactGFollow },
                 followTargetOperation: null,
@@ -2336,6 +2359,30 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
                 runner,
                 retainedAgent: binding,
             };
+            const retainedLeaf = await loadRetainedAgentRuntimeLeaf({
+                paths: resolvePluginStorePaths({ happyHomeDir }),
+                binding,
+            });
+            const retainedCompanion = retainedLeaf.externalSessions;
+            if (!retainedCompanion) throw new Error('Expected the attested retained-G External Sessions companion');
+            const retainedExternalSurface = createAgentExternalSessionsExecutionSurface(
+                createBoundedAgentExternalSessionsContribution({
+                    contribution: retainedCompanion,
+                    identity: {
+                        pluginId: binding.pluginId,
+                        agentId: binding.agentId,
+                        occurrenceId: createPluginRuntimeOccurrenceId(binding.pluginId),
+                        contributionQualifiedId: resolveAgentContributionQualifiedId({
+                            pluginId: binding.pluginId,
+                            localId: binding.localAgentId,
+                        }),
+                        sourceCustody: binding.sourceCustody,
+                    },
+                    isCurrent: () => !pluginServicesLifetime.signal.aborted,
+                    retirementSignal: pluginServicesLifetime.signal,
+                    createInvocationExec: async () => createUnavailablePluginServices().exec,
+                }),
+            );
             const positiveFacets = await createRunnerAgentDaemonFacets({
                 authority,
                 dispatch: facetLoopback(
@@ -2344,6 +2391,13 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
                 ),
                 readActiveTurnAdmissionWitness: () =>
                     activeWitness,
+                resolveRetainedExternalSessionProviderOps: async () => {
+                    const { validateSource, resolveLinkIdentity, pageTranscript, readAfterTranscript } = retainedExternalSurface;
+                    if (!validateSource || !resolveLinkIdentity || !pageTranscript || !readAfterTranscript) {
+                        throw new Error('Expected the retained-G private follow callbacks');
+                    }
+                    return { validateSource, resolveLinkIdentity, pageTranscript, readAfterTranscript };
+                },
             });
             const retainedVoiceAuthority =
                 positiveFacets.agentSessionRealtimeVoiceAuthority;
@@ -2384,10 +2438,6 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
                     providerGeneration:
                         hVoiceProviderOccurrenceId,
                 })));
-            const retainedLeaf = await loadRetainedAgentRuntimeLeaf({
-                paths: resolvePluginStorePaths({ happyHomeDir }),
-                binding,
-            });
             const retainedRuntime = await retainedLeaf.factory({
                 plugin: {
                     id: binding.pluginId,
@@ -2446,8 +2496,7 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
                 expect.objectContaining({
                     pluginId: PLUGIN_ID,
                     contributionId: AGENT_ID,
-                    generationId:
-                        bindingImmutableGenerationId,
+                    occurrenceId: expect.any(String),
                     sessionId: SESSION_ID,
                 }),
             );
@@ -2581,6 +2630,9 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
                 missingFacets.dispose(),
             ]);
             expect(exactGSubscriptionDispose).toHaveBeenCalledOnce();
+            const exactGFollowRequest = exactGFollow.mock.calls[0]?.[0];
+            if (!exactGFollowRequest) throw new Error('Expected the admitted retained follow binding');
+            expect(exactGFollowRequest.isCurrent()).toBe(false);
             await positiveFacets.dispose();
             expect(exactGSubscriptionDispose).toHaveBeenCalledOnce();
 

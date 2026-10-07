@@ -128,8 +128,8 @@ function serializedByteLength(value: unknown): number {
   return Buffer.byteLength(JSON.stringify(value), 'utf8');
 }
 
-function fitsResult(result: AgentExternalSessionsResult<unknown>, maxSerializedBytes: number): boolean {
-  return serializedByteLength(result) <= maxSerializedBytes;
+function fitsResult(result: AgentExternalSessionsResult<unknown>, maxSerializedBytes: number | undefined): boolean {
+  return maxSerializedBytes === undefined || serializedByteLength(result) <= maxSerializedBytes;
 }
 
 /**
@@ -140,7 +140,7 @@ function fitsResult(result: AgentExternalSessionsResult<unknown>, maxSerializedB
  */
 function bounded<T>(
   value: T,
-  maxSerializedBytes: number,
+  maxSerializedBytes: number | undefined,
   message: string,
 ): AgentExternalSessionsResult<T> {
   const result = ok(value);

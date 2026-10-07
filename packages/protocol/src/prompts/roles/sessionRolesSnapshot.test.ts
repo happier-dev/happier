@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { snapshotSessionRolesAtSpawnV1, readSessionRolesV1, readSessionRoleIdV1, writeSessionRoleIdV1ToMetadata } from './sessionRolesSnapshot.js';
+import { SessionRolesV1Schema, SessionRolesConfigurationSetRpcV1Schema, snapshotSessionRolesAtSpawnV1, readSessionRolesV1, readSessionRoleIdV1, writeSessionRoleIdV1ToMetadata, writeSessionRoleConfigurationV1ToMetadata } from './sessionRolesSnapshot.js';
 import { resolveRoleSelectionV1 } from './resolveRoleSelectionV1.js';
 import type { ResolvedRolesSnapshotV1 } from './rolesV1.js';
 import { RoleActionOutputSchemasV1 } from './roleActionsV1.js';
@@ -66,7 +66,38 @@ describe('session role spawn snapshot', () => {
     const snapshot = snapshotSessionRolesAtSpawnV1({ leadSessionId: 'lead', roles, memoryDocRef: { kind: 'doc', artifactId: 'memory' }, sameAccount: true });
     expect(snapshot.memoryDocRef).toEqual({ kind: 'doc', artifactId: 'memory' });
     expect(readSessionRolesV1({ work: { sessionRolesV1: snapshot } })).toEqual(snapshot);
-    expect(readSessionRolesV1({ work: { sessionRolesV1: { ...snapshot, projectOverrides: {} } } })).toBeNull();
+    expect(readSessionRolesV1({ work: { sessionRolesV1: { ...snapshot, projectOverrides: {} } } })).toEqual(snapshot);
+  });
+
+  it('keeps stored role context while dropping additive fields recursively', () => {
+    const snapshot = { ...snapshotSessionRolesAtSpawnV1({ leadSessionId: 'lead', roles, notes: 'Keep notes',
+      memoryDocRef: { kind: 'doc', artifactId: 'memory' }, sameAccount: true }), roleId: 'builder',
+      overrides: { builder: { roleId: 'builder', instructionsOverride: 'Session instructions' } } };
+    const stored = { ...snapshot, future: true,
+      memoryDocRef: { ...snapshot.memoryDocRef, future: true },
+      overrides: { builder: { ...snapshot.overrides.builder, future: true } },
+      sessionRoles: { builder: { ...roles.builder, future: true,
+        engine: { ...roles.builder.engine, future: true }, runsAs: { kind: 'session', future: true } } },
+    };
+    const metadata = { work: { sessionRolesV1: stored } };
+    expect(readSessionRolesV1(metadata)).toEqual(snapshot);
+    expect(readSessionRoleIdV1(metadata)).toBe('builder');
+    expect(writeSessionRoleIdV1ToMetadata(metadata, 'reviewer').work.sessionRolesV1).toEqual({ ...snapshot, roleId: 'reviewer' });
+    const { roleId: _roleId, ...configuration } = snapshot;
+    expect(writeSessionRoleConfigurationV1ToMetadata(metadata, configuration).work.sessionRolesV1).toEqual(snapshot);
+    expect(SessionRolesV1Schema.safeParse(stored).success).toBe(false);
+    expect(SessionRolesConfigurationSetRpcV1Schema.safeParse({ sessionId: 'session', configuration: stored }).success).toBe(false);
+    const invalidConfiguration = { ...configuration, future: true };
+    expect(() => writeSessionRoleConfigurationV1ToMetadata(metadata, invalidConfiguration)).toThrow();
+  });
+
+  it('still refuses missing or invalid known fields in stored snapshots', () => {
+    const snapshot = snapshotSessionRolesAtSpawnV1({ leadSessionId: 'lead', roles, sameAccount: true });
+    for (const stored of [
+      { ...snapshot, notes: undefined, future: true },
+      { ...snapshot, memoryDocRef: { kind: 'doc', future: true } },
+      { ...snapshot, sessionRoles: { builder: { ...roles.builder, enabled: 'yes', future: true } } },
+    ]) expect(readSessionRolesV1({ work: { sessionRolesV1: stored } })).toBeNull();
   });
 
   it('renders only the memory reference admitted into the worker snapshot', () => {

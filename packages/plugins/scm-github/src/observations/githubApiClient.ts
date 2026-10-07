@@ -1,4 +1,4 @@
-import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { PluginError, type PluginContributionRef, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type {
   ConnectedAccountMaterialization,
   ConnectedAccountRef,
@@ -16,6 +16,7 @@ import {
   GITHUB_API_VERSION,
   GITHUB_CONNECTED_ACCOUNT_ID,
   GITHUB_CONNECTED_ACCOUNT_PURPOSE,
+  GITHUB_CONNECTED_ACCOUNT_SERVICE,
   isGithubConnectedAccountRef,
 } from './githubProviderContracts.js';
 
@@ -284,6 +285,25 @@ async function createGithubApiClientFromMaterialization(
     throw new PluginError(LISTED_ACCOUNT_AUTHORIZATION_REFUSALS[authorization.reason]);
   }
   return createGithubApiClientWithAuthorization(context, authorization.authorization);
+}
+
+/** The host selects an explicit account first, otherwise this machine's declared native login. */
+export async function createGithubNativeApiClient(
+  context: PluginInvocationContext,
+  service: PluginContributionRef = GITHUB_CONNECTED_ACCOUNT_SERVICE,
+): Promise<GithubApiClientV1> {
+  if (service.pluginId !== context.plugin.id || service.localId !== GITHUB_CONNECTED_ACCOUNT_ID) {
+    throw new PluginError({
+      code: 'github_credential_mismatch',
+      message: 'The GitHub request did not carry this plugin’s native Connected Service.',
+    });
+  }
+  const materialized = await context.services.connectedAccounts.materialize(
+    GITHUB_CONNECTED_ACCOUNT_PURPOSE,
+    { kind: 'httpHeaders', origin: GITHUB_API_ORIGIN, headerNames: ['authorization'] },
+    { nativeService: service, signal: context.signal },
+  );
+  return createGithubApiClientFromMaterialization(context, materialized);
 }
 
 /**

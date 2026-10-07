@@ -230,6 +230,7 @@ export type PluginConnectedAccountAuthenticationModeV2 =
 export const PluginConnectedAccountAuthenticationV2Schema = z.object({
   defaultModeId: asProtocolZod(PluginContributionLocalIdSchema),
   modes: z.array(PluginConnectedAccountAuthenticationModeV2Schema).min(1),
+  native: z.object({ systemTool: z.literal('gh') }).strict().optional(),
 }).strict().superRefine((authentication, context) => {
   const modeIds = new Set<string>();
   authentication.modes.forEach((mode, modeIndex) => {

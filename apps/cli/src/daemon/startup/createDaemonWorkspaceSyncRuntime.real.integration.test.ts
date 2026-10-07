@@ -229,7 +229,7 @@ async function acquireInstalledArtifactBinaries(homeDir: string): Promise<Readon
     validatePayload,
   });
   const payloadRoot = installed.resolvedCurrentPath ?? installed.currentPath;
-  validatePayload(payloadRoot);
+  await validatePayload(payloadRoot);
   const artifactPaths = resolveMutagenEngineArtifactPaths(payloadRoot, targetTriple);
   await Promise.all([access(artifactPaths.managerPath), access(artifactPaths.agentPath)]);
   return {

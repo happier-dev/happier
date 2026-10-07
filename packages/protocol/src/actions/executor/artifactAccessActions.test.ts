@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createArtifactAccessActionsV1 } from './artifactAccessActions.js';
 import type { ArtifactSharingResourceV1 } from '../../artifacts/artifactSharingV1.js';
+import type { ArtifactAccessGrantRowV1 } from '../../artifacts/artifactAccessV1.js';
 import { createWorkBoardV1 } from '../../boards/workBoardV1.js';
 import { buildWorkBoardArtifactHeaderV1 } from '../../boards/workBoardArtifactV1.js';
 
@@ -11,6 +12,36 @@ const resource = { artifactId: 'workflow', access: 'owner' as const,
 const response = { artifactId: 'workflow', ownerAccountId: 'owner', access: 'owner' as const, grants: [], changed: true };
 
 describe('Artifact grant host owner', () => {
+  it('lets owners inspect and revoke existing Home-layout grants without admitting new sharing', async () => {
+    const principal = { kind: 'account' as const, accountId: 'recipient' };
+    let grants: ArtifactAccessGrantRowV1[] = [{ principal, accessLevel: 'view', createdByAccountId: 'owner', createdAt: 1,
+      display: { name: 'Recipient' } }];
+    const { changed: _changed, ...listed } = response;
+    const owner = createArtifactAccessActionsV1({ read: async () => ({ ...resource, header: { kind: 'home-hub-layout.v1' } }),
+      transport: { list: async () => ({ ...listed, grants }), set: async () => response,
+        remove: async () => { grants = []; return response; } } });
+    await expect(owner({ actionId: 'artifact.access.grants.list', input: { artifactId: 'workflow' } }))
+      .resolves.toMatchObject({ grants });
+    await expect(owner({ actionId: 'artifact.access.grants.remove', input: { artifactId: 'workflow', principal } }))
+      .resolves.toEqual(response);
+    expect(grants).toEqual([]);
+    await expect(owner({ actionId: 'artifact.access.grants.set', input: { ...input, principal } }))
+      .rejects.toMatchObject({ code: 'artifact_kind_not_shareable' });
+  });
+  it('shares widget layouts with people, Teams and groups but refuses Home-layout grants', async () => {
+    let kind = 'widget-area-layout.v1';
+    const write = vi.fn(async () => response);
+    const owner = createArtifactAccessActionsV1({ read: async () => ({ ...resource, header: { kind } }),
+      transport: { list: async () => response, set: write, remove: write } });
+    for (const principal of [{ kind: 'account', accountId: 'recipient' }, { kind: 'team', teamId: 'team' },
+      { kind: 'group', teamId: 'team', groupId: 'group' }] as const) {
+      await expect(owner({ actionId: 'artifact.access.grants.set', input: { ...input, principal } })).resolves.toEqual(response);
+    }
+    write.mockClear();
+    kind = 'home-hub-layout.v1';
+    await expect(owner({ actionId: 'artifact.access.grants.set', input })).rejects.toMatchObject({ code: 'artifact_kind_not_shareable' });
+    expect(write).not.toHaveBeenCalled();
+  });
   it('returns a committed self-revocation after checking pre-mutation admin authority', async () => {
     const revoked = { ...response, access: null };
     let opened: ArtifactSharingResourceV1 | null = { ...resource, access: 'admin' };

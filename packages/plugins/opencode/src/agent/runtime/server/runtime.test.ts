@@ -5,6 +5,7 @@ import {
   type AgentSessionRuntimeHarness,
 } from '@happier-dev/plugin-sdk/testing';
 import type { AgentSessionModelsSource } from '@happier-dev/plugin-sdk/agents/runtime';
+import { AgentSessionRuntimeEventSchema, type AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ManagedServiceSnapshot } from '@happier-dev/plugin-sdk/managed-services';
 
 import type { OpenCodeRuntimeTurnOperations } from './operations.js';
@@ -13,6 +14,7 @@ import { createOpenCodeSessionRuntime } from './sessionRuntime.js';
 import { createOpenCodeServerRuntime } from './runtime.js';
 import type { OpenCodeServerClient } from './openCodeServerClient.js';
 import { OpenCodeSseHttpError } from './openCodeSse.js';
+import { OpenCodeServerUnsupportedOperationError } from './openCodeServerClient.js';
 import type { OpenCodeRuntimeContext } from './runtimeContext.js';
 
 const readyMcpRegistration = Promise.resolve({
@@ -194,6 +196,8 @@ function createClientFixture(): TestOpenCodeClient {
   );
   return {
     sessionPromptImplementation,
+    sessionCommand: vi.fn<OpenCodeServerClient['sessionCommand']>(async () => undefined),
+    appCommands: vi.fn<OpenCodeServerClient['appCommands']>(async () => []),
     suppressNextNativePromptPersistence() {
       suppressNextNativePromptPersistence = true;
     },
@@ -389,6 +393,133 @@ describe('OpenCode catalog observation', () => {
 });
 
 describe('createOpenCodeServerRuntime', () => {
+  it('publishes commands activated by a real V2 prompt after the cold inventory was empty', async () => {
+    const client = createClientFixture();
+    const operations = await createStartedRuntime({ client });
+    const runtime = createNativeSessionRuntimeForTest(operations);
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.watch((event) => events.push(AgentSessionRuntimeEventSchema.parse(event)));
+    expect(events).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'available-commands', commands: [] })]));
+    client.sessionPromptImplementation.mockImplementationOnce(async () => {
+      vi.mocked(client.appCommands).mockResolvedValue([{ name: 'review' }]);
+    });
+    try {
+      await expect(runtime.send({ inputIds: ['warm'], input: { text: 'hello' },
+        delivery: { kind: 'newTurn', turnId: 'warm-turn' } })).resolves.toMatchObject({ status: 'admitted' });
+      await vi.waitFor(() => expect(events).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'available-commands', commands: [{ name: 'review' }] })])));
+      await operations.cancelTurn();
+    } finally { await runtime.dispose(); }
+  });
+
+  it('dispatches advertised native commands and completes callbacks without inventing a provider prompt identity', async () => {
+    const { ctx, harness, runtimeEvents } = createContextFixture();
+    const client = createClientFixture();
+    vi.mocked(client.appCommands).mockResolvedValue([{ name: 'review', description: 'Review changes' }]);
+    const runtime = await createStartedRuntime({ ctx, harness, client });
+    const sessionRuntime = createNativeSessionRuntimeForTest(runtime);
+    const publicEvents: AgentSessionRuntimeEvent[] = [];
+    sessionRuntime.watch((event) => publicEvents.push(AgentSessionRuntimeEventSchema.parse(event)));
+    expect(publicEvents).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'available-commands', commands: [{ name: 'review', description: 'Review changes' }] })]));
+    beginTestHostTurn(runtime);
+    await expect(runtime.sendTurnPrompt('/review  src/a.ts\nkeep spacing  ')).resolves.toEqual({ providerUserMessageId: null });
+    expect(client.sessionCommand).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'ses-1', command: 'review', arguments: ' src/a.ts\nkeep spacing  ', parts: [],
+    }));
+    expect(client.sessionPromptAsync).not.toHaveBeenCalled();
+    expect(runtimeEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'available-commands', commands: [{ name: 'review', description: 'Review changes' }] }),
+      expect.objectContaining({ kind: 'turn-complete' }),
+    ]));
+    await expect(runtime.waitForTurnCompletion()).resolves.toBeUndefined();
+    beginTestHostTurn(runtime);
+    await runtime.sendTurnPrompt('/unknown remains literal');
+    expect(client.sessionPromptAsync).toHaveBeenCalledWith(expect.objectContaining({ text: '/unknown remains literal' }));
+    await runtime.cancelTurn();
+    await runtime.resetOrDisposeRuntime();
+  });
+
+  it('streams parent inference witnessed after a native callback and keeps provider controls active', async () => {
+    const { ctx, harness } = createContextFixture();
+    const client = createClientFixture();
+    vi.mocked(client.appCommands).mockResolvedValue([{ name: 'review' }]);
+    const operations = await createStartedRuntime({ ctx, harness, client });
+    const runtime = createNativeSessionRuntimeForTest(operations);
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.watch((event) => events.push(AgentSessionRuntimeEventSchema.parse(event)));
+    beginTestHostTurn(operations);
+    await operations.sendTurnPrompt('/review');
+    expect(runtime.isTurnInFlight()).toBe(false);
+    await operations.handleProviderEvent({ type: 'session.status', properties: { sessionID: 'ses-1', status: { type: 'busy' } } });
+    await operations.handleProviderEvent({ type: 'session.next.text.started', properties: { sessionID: 'ses-1', assistantMessageID: 'native-answer', partID: 'native-text' } });
+    await operations.handleProviderEvent({ type: 'message.part.delta', properties: { sessionID: 'ses-1', messageID: 'native-answer', partID: 'native-text', partType: 'text', field: 'text', delta: 'Review in progress' } });
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'turn-start', startedBy: 'provider' }),
+      expect.objectContaining({ kind: 'message-delta', messageId: 'opencode:ses-1:native-answer', text: 'Review in progress' }),
+    ]));
+    expect(runtime.isTurnInFlight()).toBe(true);
+    await operations.handleProviderEvent({ type: 'message.updated', properties: { info: {
+      id: 'v1-native-answer', sessionID: 'ses-1', role: 'assistant', time: { created: Date.now() },
+    } } });
+    await operations.handleProviderEvent({ type: 'message.part.updated', properties: { part: {
+      id: 'v1-native-text', sessionID: 'ses-1', messageID: 'v1-native-answer', type: 'text', text: 'V1 streamed output',
+    } } });
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'message-delta', messageId: 'opencode:ses-1:v1-native-answer', text: 'V1 streamed output' }),
+    ]));
+    await operations.handleProviderEvent({ type: 'message.updated', properties: { info: {
+      id: 'native-internal', sessionID: 'ses-1', role: 'assistant', summary: true,
+    } } });
+    await operations.handleProviderEvent({ type: 'session.next.text.started', properties: { sessionID: 'ses-1', assistantMessageID: 'native-internal' } });
+    await operations.handleProviderEvent({ type: 'message.part.delta', properties: { sessionID: 'ses-1', messageID: 'native-internal', partID: 'internal-text', partType: 'text', delta: 'INTERNAL_SUMMARY' } });
+    expect(events.some((event) => event.kind === 'message-delta' && event.text.includes('INTERNAL_SUMMARY'))).toBe(false);
+    await operations.steerInFlightTurn('/review follow up');
+    expect(client.sessionCommand).toHaveBeenLastCalledWith(expect.objectContaining({ delivery: 'steer', arguments: 'follow up' }));
+    await operations.cancelTurn();
+    expect(client.sessionAbort).toHaveBeenCalled();
+    expect(runtime.isTurnInFlight()).toBe(false);
+    await operations.resetOrDisposeRuntime();
+  });
+
+  it('retires a pending native callback on cancellation before its HTTP response arrives', async () => {
+    const client = createClientFixture();
+    vi.mocked(client.appCommands).mockResolvedValue([{ name: 'review' }]);
+    let resolveCallback!: () => void;
+    vi.mocked(client.sessionCommand).mockImplementationOnce(() => new Promise<void>((resolve) => { resolveCallback = resolve; }));
+    const operations = await createStartedRuntime({ client });
+    beginTestHostTurn(operations);
+    let result: 'pending' | 'resolved' | 'rejected' = 'pending';
+    const submitted = operations.sendTurnPrompt('/review').then(() => { result = 'resolved'; }, () => { result = 'rejected'; });
+    await vi.waitFor(() => expect(client.sessionCommand).toHaveBeenCalled());
+    await operations.cancelTurn();
+    try {
+      await vi.waitFor(() => expect(result).toBe('rejected'));
+    } finally {
+      resolveCallback();
+      await submitted;
+      await operations.resetOrDisposeRuntime();
+    }
+  });
+
+  it.each(['newTurn', 'steer'] as const)('rejects a native attachment contract failure before provider input custody (%s)', async (delivery) => {
+    const client = createClientFixture();
+    vi.mocked(client.appCommands).mockResolvedValue([{ name: 'review' }]);
+    vi.mocked(client.sessionCommand).mockRejectedValueOnce(new OpenCodeServerUnsupportedOperationError({
+      operation: 'session_command_attachments', dialect: 'v1', message: 'Native commands accept only file attachments',
+    }));
+    const operations = await createStartedRuntime({ client });
+    const runtime = createNativeSessionRuntimeForTest(operations);
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.watch((event) => events.push(AgentSessionRuntimeEventSchema.parse(event)));
+    try {
+      if (delivery === 'steer') await operations.handleProviderEvent({ type: 'session.status', properties: { sessionID: 'ses-1', status: { type: 'busy' } } });
+      await expect(runtime.send({ inputIds: ['native-invalid'], input: { text: '/review' },
+        delivery: { kind: delivery, turnId: 'native-invalid-turn' } })).resolves.toMatchObject({ status: 'rejected' });
+      expect(events).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'input-rejected' })]));
+      expect(events.some((event) => event.kind === 'input-custody-unknown')).toBe(false);
+      expect(runtime.isTurnInFlight()).toBe(delivery === 'steer');
+    } finally { await runtime.dispose(); }
+  });
+
   it('exposes the final runtime event subscription operation name', async () => {
     const runtime = await createStartedRuntime();
 
@@ -4334,7 +4465,7 @@ describe('createOpenCodeServerRuntime', () => {
     expect(client.sessionMessages).toHaveBeenCalledTimes(2);
   });
 
-  it('does not infer an autonomous turn from native background-task prose', async () => {
+  it('requires actual provider activity before starting a provider-origin turn', async () => {
     const { ctx, harness, runtimeEvents } = createContextFixture();
     const client = createClientFixture();
     const runtime = await createStartedRuntime({ ctx, client, harness });
@@ -4363,6 +4494,9 @@ describe('createOpenCodeServerRuntime', () => {
         },
       },
     });
+    expect(runtimeEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'turn-start', startedBy: 'provider' }),
+    ]));
     await runtime.handleProviderEvent({
       payload: {
         type: 'session.status',
@@ -4373,8 +4507,7 @@ describe('createOpenCodeServerRuntime', () => {
       },
     });
 
-    expect(runtimeEvents).not.toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: 'turn-start' }),
+    expect(runtimeEvents).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'turn-complete' }),
     ]));
   });
@@ -4430,7 +4563,7 @@ describe('createOpenCodeServerRuntime', () => {
     }, { provenance: 'untrusted-observation', connectionGeneration: 1 });
 
     await flushMicrotasks();
-    expect(runtimeEvents.filter((event) => event.kind !== 'model-catalog-observed' && event.kind !== 'mode-catalog-observed')).toEqual([]);
+    expect(runtimeEvents.filter((event) => event.kind !== 'model-catalog-observed' && event.kind !== 'mode-catalog-observed' && event.kind !== 'available-commands')).toEqual([]);
 
     await runtime.resetOrDisposeRuntime();
   });
@@ -4851,7 +4984,7 @@ describe('createOpenCodeServerRuntime', () => {
       payload: {
         type: 'session.status',
         properties: {
-          sessionID: 'ses-1',
+          sessionID: 'ses-other',
           status: { type: 'busy' },
         },
       },
@@ -4859,7 +4992,7 @@ describe('createOpenCodeServerRuntime', () => {
     await runtime.handleProviderEvent({
       payload: {
         type: 'session.idle',
-        properties: { sessionID: 'ses-1' },
+        properties: { sessionID: 'ses-other' },
       },
     });
 

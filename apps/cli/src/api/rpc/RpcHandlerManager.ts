@@ -254,9 +254,16 @@ export class RpcHandlerManager {
             && request.timeoutMs > 0
             ? request.timeoutMs
             : null;
-        const timeout = timeoutMs === null
-            ? null
-            : setTimeout(() => controller.abort(new Error('RPC request timed out')), timeoutMs);
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        const deadlineAtMs = timeoutMs === null ? null : Date.now() + timeoutMs;
+        const armDeadline = () => {
+            if (deadlineAtMs === null) return;
+            timeout = setTimeout(() => {
+                if (Date.now() < deadlineAtMs) { armDeadline(); return; }
+                controller.abort(new Error('RPC request timed out'));
+            }, Math.min(2_147_483_647, Math.max(0, deadlineAtMs - Date.now())));
+        };
+        armDeadline();
         let handlerExecutionId: number | null = null;
         try {
             const isReservedAutomationReplyHandoff = this.isReservedAutomationReplyHandoffRequest(request);

@@ -122,11 +122,11 @@ describe('createAgentExternalSessionsExecutionSurface', () => {
             direction: 'newer',
             maxBytes: 524_288,
             maxItems: 200,
-            deadlineAtMs: 2_000,
+            deadlineAtMs: 61_000,
         });
 
         expect(contribution.pageTranscript).toHaveBeenCalledWith(
-            expect.objectContaining({ deadlineAtMs: 2_000 }),
+            expect.objectContaining({ deadlineAtMs: 61_000 }),
         );
         vi.useRealTimers();
     });

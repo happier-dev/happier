@@ -6,7 +6,7 @@ import type {
 import type { ExternalSessionExecutionSurface } from '@/session/external/providerOps';
 import type { HostProviderCliAttachSurface } from '@/session/attach/providerCliAttach';
 import type { AttachSurfaceV1, CheckpointSurfaceV1, ForkSurfaceV1, HandoffSurfaceV1 } from '@happier-dev/agents';
-import type { AccountSettings, AcpConfigOptionOverridesV1, BackendTargetRefV2Input, HostSemanticEventV1, PortableRuntimeDescriptorV1, ProviderBoundModelRef, ProviderErrorV1, SessionEnvOverlayV1, SessionInputCausalPermissionAuthorityV1, SessionRunPromptReadActionIdV1, TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol';
+import type { AccountSettings, AcpConfigOptionOverridesV1, BackendTargetRefV2Input, CodingPromptBehaviorV1, HostSemanticEventV1, PortableRuntimeDescriptorV1, ProviderBoundModelRef, ProviderErrorV1, SessionEnvOverlayV1, SessionInputCausalPermissionAuthorityV1, SessionRunPromptReadActionIdV1, TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol';
 import type {
     AgentSessionConfigurationSnapshot,
     AgentSessionOpenRequest,
@@ -115,6 +115,8 @@ export type NativeAgentSessionInteractionHostBinding = Readonly<{
     >>;
     machineId: string;
     permissionHandler: Pick<ProviderEnforcedPermissionHandler, 'handleToolCall'>;
+    /** The parent's prepared title policy, shared by tool advertisement and admission. */
+    readCodingPromptBehavior?: () => CodingPromptBehaviorV1 | null;
     /** Exact owning Session's current structured-input catalogs. */
     listSkills?: () => Promise<unknown>;
     listVendorPlugins?: () => Promise<unknown>;

@@ -1,4 +1,5 @@
 import { readClaudeProviderIdentityValue } from '../../protocol/providerIdentity.js';
+import { readClaudeNativeSlashCommands } from './nativeCommands.js';
 import { isSlashCommandSupported } from '@happier-dev/plugin-sdk/sessions';
 import type { SessionWorkStateV1 } from '@happier-dev/plugin-sdk/sessions/work-state';
 
@@ -75,12 +76,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
-}
-
-function readSlashCommandsFromSystemMessage(message: unknown): unknown {
-  const record = asRecord(message);
-  if (!record || record.type !== 'system') return undefined;
-  return record.slash_commands;
 }
 
 /**
@@ -321,7 +316,7 @@ export function createClaudeGoalWorkStateSource(params: Readonly<{
       }
       // The system/init record carries the `slash_commands` list on the same
       // transcript stream; gate `/goal` capability (fail-closed) from it.
-      const slashCommands = readSlashCommandsFromSystemMessage(message);
+      const slashCommands = readClaudeNativeSlashCommands(message);
       if (slashCommands !== undefined) applySlashCommands(slashCommands);
       // G-3/E: accrue this turn's token usage and, on a turn boundary, fold live usage into the
       // active goal. Rides the SAME raw transcript channel (assistant rows carry `message.usage`).

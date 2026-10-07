@@ -22,16 +22,7 @@ function normalizeGeneration(value: number | null | undefined): number | null {
 }
 
 export class RuntimeAccountIdentityIndex {
-  private readonly nowMs: () => number;
-  private readonly ttlMs: number;
   private readonly bySessionId = new Map<string, RuntimeAccountIdentityEntry>();
-
-  public constructor(params: Readonly<{ nowMs: () => number; ttlMs?: number }>) {
-    this.nowMs = params.nowMs;
-    this.ttlMs = typeof params.ttlMs === 'number' && Number.isFinite(params.ttlMs)
-      ? Math.max(1, Math.trunc(params.ttlMs))
-      : 5 * 60_000;
-  }
 
   public record(input: RuntimeAccountIdentityRecordInput): RuntimeAccountIdentityRecordResult {
     if (input.proofStrength !== 'exact') {
@@ -69,13 +60,7 @@ export class RuntimeAccountIdentityIndex {
   public readSessionIdentity(sessionIdRaw: string): RuntimeAccountIdentityEntry | null {
     const sessionId = trimOrNull(sessionIdRaw);
     if (!sessionId) return null;
-    const entry = this.bySessionId.get(sessionId) ?? null;
-    if (!entry) return null;
-    if (this.isExpired(entry)) {
-      this.bySessionId.delete(sessionId);
-      return null;
-    }
-    return entry;
+    return this.bySessionId.get(sessionId) ?? null;
   }
 
   public listByProviderAccount(input: Readonly<{
@@ -91,10 +76,6 @@ export class RuntimeAccountIdentityIndex {
     const excludeSessionId = trimOrNull(input.excludeSessionId);
     const entries: RuntimeAccountIdentityEntry[] = [];
     for (const entry of this.bySessionId.values()) {
-      if (this.isExpired(entry)) {
-        this.bySessionId.delete(entry.sessionId);
-        continue;
-      }
       if (entry.serviceId !== input.serviceId) continue;
       if (entry.providerAccountId !== providerAccountId) continue;
       if (excludeSessionId && entry.sessionId === excludeSessionId) continue;
@@ -121,9 +102,5 @@ export class RuntimeAccountIdentityIndex {
 
   public clear(): void {
     this.bySessionId.clear();
-  }
-
-  private isExpired(entry: RuntimeAccountIdentityEntry): boolean {
-    return this.nowMs() - entry.observedAtMs > this.ttlMs;
   }
 }

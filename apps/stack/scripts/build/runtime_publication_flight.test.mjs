@@ -9,7 +9,96 @@ import { writeManagedRuntimeSnapshotLayout } from '../testkit/core/runtime_snaps
 import { withWorkspaceBundleLock } from '@happier-dev/cli-common/workspaceBundleLock';
 import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 import { dirname, join } from 'node:path';
-import { withRuntimePublicationFlight } from './build_stack_artifacts.mjs';
+import { retainBuiltRuntimeArtifacts, withRuntimePublicationAdmission, withRuntimePublicationFlight } from './build_stack_artifacts.mjs';
+
+test('a preparation that loses its target flight cannot publish completed success', async (t) => {
+  const fixture = await createTempFixture(t, { prefix: 'runtime-flight-lost-owner-' });
+  const authority = { producerStackName: 'producer', producerStackBaseDir: fixture.root };
+  const target = { platform: process.platform, arch: process.arch };
+  await assert.rejects(withRuntimePublicationFlight({ authority, target,
+    selection: { components: { web: true }, activateRuntime: false },
+    publish: async ({ withPublication }) => {
+      unlinkSync(fixture.path('runtime', `publication.${target.platform}-${target.arch}.lock`));
+      return await withPublication(async () => ({
+        artifacts: { web: { manifest: { artifactFingerprint: 'lost-owner' } } }, snapshotId: null,
+      }));
+    },
+  }), error => error.code === 'EWORKSPACEBUNDLELOCKOWNERSHIPLOST');
+  assert.equal(existsSync(fixture.path('runtime', 'publication-success.json')), false);
+});
+
+test('publication retention preserves another target still constructing its artifact', async (t) => {
+  const fixture = await createTempFixture(t, { prefix: 'runtime-flight-retention-' });
+  const native = { platform: process.platform, arch: process.arch };
+  const foreign = { platform: process.platform, arch: process.arch === 'x64' ? 'arm64' : 'x64' };
+  const staging = fixture.path('artifacts', 'web', `.tmp.1.${process.pid}.foreign`);
+  mkdirSync(staging, { recursive: true });
+  writeFileSync(join(staging, 'compiler-output'), 'unfinished');
+  const artifactDir = fixture.path('artifacts', 'web', 'native');
+  mkdirSync(join(artifactDir, 'payload'), { recursive: true });
+  writeFileSync(join(artifactDir, 'payload', 'index.html'), '<html>web</html>');
+  const manifest = { version: 1, component: 'web', artifactFingerprint: 'native',
+    sourceFingerprint: 'native', payloadDir: 'payload', entrypoint: 'index.html', target: native };
+  writeFileSync(join(artifactDir, 'manifest.json'), JSON.stringify(manifest));
+  const demandDir = fixture.path('runtime', 'publication-demands');
+  mkdirSync(demandDir, { recursive: true });
+  const demandPath = join(demandDir, 'foreign.json');
+  writeFileSync(demandPath, JSON.stringify({ pid: process.pid,
+    processInstanceFingerprint: readProcessInstanceFingerprintSync(process.pid), target: foreign, components: ['web'] }));
+  const retain = () => retainBuiltRuntimeArtifacts({ stackBaseDir: fixture.root,
+    artifacts: { web: { artifactDir, manifest } }, target: native,
+    env: {}, retentionPolicy: { artifactKeepCount: 1, runtimeSnapshotKeepCount: 1 } });
+  await retain();
+  assert.equal(existsSync(join(staging, 'compiler-output')), true,
+    'publication on one target must not delete an active target staging tree');
+  unlinkSync(demandPath);
+  await retain();
+  assert.equal(existsSync(staging), false, 'ordinary retention resumes after competing demand finishes');
+});
+
+test('preparation leaves shared publication available and different targets build concurrently without losing success', async (t) => {
+  const fixture = await createTempFixture(t, { prefix: 'runtime-flight-scope-' });
+  const authority = { producerStackName: 'producer', producerStackBaseDir: fixture.root };
+  const native = { platform: process.platform, arch: process.arch };
+  const foreign = { platform: process.platform, arch: process.arch === 'x64' ? 'arm64' : 'x64' };
+  let release;
+  let preparing;
+  const gate = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { preparing = resolve; });
+  const makeArtifact = (fingerprint, target) => {
+    const artifactDir = fixture.path('artifacts', 'web', fingerprint);
+    mkdirSync(join(artifactDir, 'payload'), { recursive: true });
+    writeFileSync(join(artifactDir, 'payload', 'index.html'), '<html>web</html>');
+    const manifest = { version: 1, component: 'web', artifactFingerprint: fingerprint,
+      sourceFingerprint: fingerprint, payloadDir: 'payload', entrypoint: 'index.html', target };
+    writeFileSync(join(artifactDir, 'manifest.json'), JSON.stringify(manifest));
+    return { artifactDir, manifest };
+  };
+  const selection = { components: { web: true }, activateRuntime: false };
+  const first = withRuntimePublicationFlight({ authority, target: native, selection, observedStartedSeq: 0,
+    publish: async () => {
+      preparing();
+      await gate;
+      return { artifacts: { web: makeArtifact('native', native) }, snapshotId: null };
+    } });
+  t.after(async () => { release(); await first; });
+  await started;
+  assert.equal(existsSync(fixture.path('runtime', 'publication.lock')), false,
+    'dependency preparation and compilation must not own the shared publication lock');
+  await withRuntimePublicationAdmission({ authority, publish: async () => {
+    writeFileSync(fixture.path('independent-activation'), 'selected');
+  } });
+  const second = await withRuntimePublicationFlight({ authority, target: foreign, selection, observedStartedSeq: 0,
+    publish: async () => ({ artifacts: { web: makeArtifact('foreign', foreign) }, snapshotId: null }) });
+  assert.equal(second.publicationFlight, 'built');
+  release();
+  await first;
+  for (const target of [native, foreign]) {
+    const joined = await withRuntimePublicationFlight({ authority, target, selection, observedStartedSeq: 0,
+      publish: async () => { throw new Error('concurrent success must be retained'); } });
+    assert.equal(joined.publicationFlight, 'joined');
+  }
+});
 
 test('publication demand cannot join a completed flight for a different target', async (t) => {
   const fixture = await createTempFixture(t, { prefix: 'target-flight-' });
@@ -176,6 +265,56 @@ function waitForAny(paths, completion) {
 
 const waitFor = (path, completion) => waitForAny([path], completion);
 
+test('worker placement wait retains one merged demand without holding the target flight lock', async (t) => {
+  const fixture = await createTempFixture(t, { prefix: 'runtime-placement-wait-' });
+  const authority = { producerStackName: 'producer', producerStackBaseDir: fixture.root };
+  const target = { platform: process.platform, arch: process.arch };
+  const lockPath = fixture.path('runtime', `publication.${target.platform}-${target.arch}.lock`);
+  const artifactDir = fixture.path('artifacts', 'web', 'admitted');
+  mkdirSync(join(artifactDir, 'payload'), { recursive: true });
+  writeFileSync(join(artifactDir, 'payload', 'index.html'), '<html>admitted</html>');
+  const manifest = { version: 1, component: 'web', artifactFingerprint: 'admitted',
+    sourceFingerprint: 'admitted', payloadDir: 'payload', entrypoint: 'index.html', target };
+  writeFileSync(join(artifactDir, 'manifest.json'), JSON.stringify(manifest));
+  let release;
+  let waiting;
+  let admitted = false;
+  let placements = 0;
+  const permit = new Promise(resolve => { release = resolve; });
+  const entering = new Promise(resolve => { waiting = resolve; });
+  const options = { authority, target, observedStartedSeq: 0,
+    selection: { components: { web: true }, activateRuntime: false },
+    // Worker admission is the OS boundary. Demand merging, locks, integrity and
+    // successful publication reuse beneath it remain real.
+    admitExecution: async ({ run }) => {
+      placements += 1;
+      waiting();
+      await permit;
+      admitted = true;
+      return await run({});
+    },
+    publish: async () => {
+      assert.equal(admitted, true, 'compilation must wait for actual worker admission');
+      assert.equal(existsSync(lockPath), true, 'execution owns the target lease');
+      return { artifacts: { web: { artifactDir, manifest } }, snapshotId: null };
+    },
+  };
+  const first = withRuntimePublicationFlight(options);
+  first.catch(() => {});
+  t.after(async () => { release(); await first.catch(() => {}); });
+  await Promise.race([entering, first]);
+  assert.equal(existsSync(lockPath), false, 'worker pressure is not target execution');
+  assert.equal(existsSync(fixture.path('runtime', 'publication.lock')), false);
+  const second = withRuntimePublicationFlight(options);
+  second.catch(() => {});
+  t.after(async () => { release(); await second.catch(() => {}); });
+  await waitForPendingDemands(fixture, 2, Promise.all([first, second]));
+  assert.equal(placements, 1, 'same-target demand must not register a second worker job');
+  release();
+  assert.deepEqual((await Promise.all([first, second])).map(result => result.publicationFlight).sort(), ['built', 'joined']);
+  assert.equal(placements, 1, 'a covered follower joins without worker admission');
+});
+
 function waitForPendingDemands(fixture, count, completion) {
   const directory = fixture.path('runtime', 'publication-demands');
   return new Promise((resolve, reject) => {
@@ -253,7 +392,7 @@ test('five concurrent requests serialize preparation and join one trailing publi
   assert.deepEqual(results.map(r => r.publicationFlight).sort(), ['built', 'joined', 'joined', 'joined']);
   assert.equal(waiters.filter(({ id }) => existsSync(fixture.path(id + '.started'))).length, 1);
   assert.ok(results.every(r => r.artifacts.server.manifest.artifactFingerprint === 'latest'));
-  assert.ok(completions.some(r => /publication\.lock.*pid=/.test(r.stderr)), 'waiters report the actual producer holder');
+  assert.ok(completions.some(r => /publication\.[^.]+\.lock.*pid=/.test(r.stderr)), 'waiters report the actual target flight holder');
   assert.equal((await late.completion).code, 0);
   assert.equal(JSON.parse(readFileSync(fixture.path('late.result'), 'utf8')).publicationFlight, 'joined');
   assert.equal(existsSync(fixture.path('late.started')), false);
@@ -460,7 +599,7 @@ test('real explicit and background entrypoints cannot enter preparation before p
   assert.ok(completions.every(({ code }) => code === 0));
   assert.ok(children.every(({ id }) => existsSync(fixture.path(id + '.error'))),
     'after admission each real missing-source preparation must fail');
-  assert.ok(completions.every(({ stderr }) => stderr.includes('publication.lock')));
+  assert.ok(completions.every(({ stderr }) => /publication(?:\.[^.]+)?\.lock/.test(stderr)));
 });
 
 test('a joined explicit request commits completed artifacts and selects its own consumer; background joins preserve selection', async (t) => {
@@ -514,8 +653,8 @@ test('a joined explicit request commits completed artifacts and selects its own 
   assert.ok(published.snapshotId);
   assert.equal(published.selected, false);
   assert.equal(existsSync(join(authority.consumerStackBaseDir, 'runtime', 'current.json')), false);
-  assert.equal(JSON.parse(readFileSync(join(authority.producerStackBaseDir, 'runtime', 'current.json'), 'utf8')).snapshotId,
-    published.snapshotId);
+  assert.equal(existsSync(join(authority.producerStackBaseDir, 'runtime', 'current.json')), false,
+    'a joined publication without activation must not select the producer');
   const joined = await owner.buildStackArtifacts({
     rootDir: fixture.path('absent-source'), argv: ['--all', '--activate-runtime'],
     authority, env, observedStartedSeq,

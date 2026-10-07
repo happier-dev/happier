@@ -6,5 +6,7 @@ import { ConnectedAccountPurposeIdSchema } from '../../connect/connectedAccountP
 export const PluginActionConnectedAccountPurposeBindingV2Schema = z.object({
   path: InputPathSchema,
   purpose: ConnectedAccountPurposeIdSchema,
+  /** Companion path for a machine-native service selection instead of an account ref. */
+  nativeServicePath: InputPathSchema.optional(),
 }).strict();
 export type PluginActionConnectedAccountPurposeBindingV2 = z.infer<typeof PluginActionConnectedAccountPurposeBindingV2Schema>;

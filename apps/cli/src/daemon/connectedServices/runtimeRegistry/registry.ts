@@ -294,11 +294,112 @@ export class ConnectedServiceRuntimeRegistry {
     return runKey ? this.runTargetsByRunKey.get(runKey)?.target ?? null : null;
   }
 
+  public adoptExactCredentialRevisionForRun(input: Readonly<{
+    runKey: string;
+    target: ConnectedServiceRuntimeTarget;
+    serviceId: ConnectedAccountServiceKey;
+    expectedCredentialRevision: ConnectedServiceCredentialRevisionV1;
+    credentialRevision: ConnectedServiceCredentialRevisionV1;
+  }>): ConnectedServiceRuntimeTarget | null {
+    const runKey = normalizeString(input.runKey);
+    const indexed = runKey ? this.runTargetsByRunKey.get(runKey) : null;
+    if (!runKey || !indexed || indexed.target !== input.target) return null;
+    return this.adoptExactCredentialRevisionForTarget(input);
+  }
+
+  public adoptExactCredentialRevisionForTarget(input: Readonly<{
+    target: ConnectedServiceRuntimeTarget;
+    serviceId: ConnectedAccountServiceKey;
+    expectedCredentialRevision: ConnectedServiceCredentialRevisionV1;
+    credentialRevision: ConnectedServiceCredentialRevisionV1;
+  }>): ConnectedServiceRuntimeTarget | null {
+    const runEntry = [...this.runTargetsByRunKey.entries()].find(([, entry]) => entry.target === input.target);
+    const indexed = runEntry?.[1] ?? this.getIndexedByPid(input.target.pid);
+    if (!indexed || indexed.target !== input.target) return null;
+    const next = this.buildExactCredentialRevisionTarget(input);
+    if (!next) return null;
+    if (next.target === input.target) return input.target;
+    if (runEntry) this.runTargetsByRunKey.set(runEntry[0], next);
+    else this.targetsByPid.set(input.target.pid, next);
+    this.notifyTargetRegistration(next.target);
+    return next.target;
+  }
+
+  public resolveExactSessionCredentialRevisionTarget(input: Readonly<{
+    target: ConnectedServiceRuntimeTarget;
+    serviceId: ConnectedAccountServiceKey;
+    expectedCredentialRevision: ConnectedServiceCredentialRevisionV1;
+    credentialRevision: ConnectedServiceCredentialRevisionV1;
+  }>): ConnectedServiceRuntimeTarget | null {
+    const current = input.target.sessionId ? this.getBySessionId(input.target.sessionId) : null;
+    if (!current || current.pid !== input.target.pid) return null;
+    return this.matchExactCredentialRevisionTarget(current, input);
+  }
+
+  public resolveExactRunCredentialRevisionTarget(input: Readonly<{
+    runKey: string;
+    target: ConnectedServiceRuntimeTarget;
+    serviceId: ConnectedAccountServiceKey;
+    expectedCredentialRevision: ConnectedServiceCredentialRevisionV1;
+    credentialRevision: ConnectedServiceCredentialRevisionV1;
+  }>): ConnectedServiceRuntimeTarget | null {
+    const current = this.getRunTargetByRunKey(input.runKey);
+    return current ? this.matchExactCredentialRevisionTarget(current, input) : null;
+  }
+
+  private matchExactCredentialRevisionTarget(current: ConnectedServiceRuntimeTarget, input: Readonly<{
+    target: ConnectedServiceRuntimeTarget;
+    serviceId: ConnectedAccountServiceKey;
+    expectedCredentialRevision: ConnectedServiceCredentialRevisionV1;
+    credentialRevision: ConnectedServiceCredentialRevisionV1;
+  }>): ConnectedServiceRuntimeTarget | null {
+    const expected = this.buildExactCredentialRevisionTarget(input);
+    if (!expected || current.revision !== expected.target.revision
+      || buildTargetFingerprint(omitRevision(current)) !== expected.fingerprint) return null;
+    return current;
+  }
+
+  private buildExactCredentialRevisionTarget(input: Readonly<{
+    target: ConnectedServiceRuntimeTarget;
+    serviceId: ConnectedAccountServiceKey;
+    expectedCredentialRevision: ConnectedServiceCredentialRevisionV1;
+    credentialRevision: ConnectedServiceCredentialRevisionV1;
+  }>): IndexedTarget | null {
+    const indexed = { target: input.target, fingerprint: buildTargetFingerprint(omitRevision(input.target)) };
+    const selection = indexed.target.connectedServiceSelections.find((candidate) => candidate.serviceId === input.serviceId);
+    if (!selection || selection.credentialRevision !== input.expectedCredentialRevision) return null;
+    if (selection.credentialRevision === input.credentialRevision) return indexed;
+    const serialized = serializeConnectedServiceChildSelectionValues(indexed.target.connectedServiceSelections.map((candidate) =>
+      candidate === selection ? { ...candidate, credentialRevision: input.credentialRevision } : candidate));
+    if (!serialized) return null;
+    // The daemon's settled refresh proof advances only this exact live binding. Scope
+    // identity, pool member/generation and all other service revisions stay intact.
+    return this.buildStandaloneTarget({
+      ...indexed.target,
+      connectedServiceSelectionsEnv: { ...indexed.target.connectedServiceSelectionsEnv,
+        [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: serialized },
+    }, indexed.target);
+  }
+
   public isRunTarget(target: ConnectedServiceRuntimeTarget): boolean {
     for (const entry of this.runTargetsByRunKey.values()) {
-      if (entry.target === target) return true;
+      if (this.matchesCurrentTargetProjection(entry.target, target)) return true;
     }
     return false;
+  }
+
+  public isSessionTarget(target: ConnectedServiceRuntimeTarget): boolean {
+    const current = this.getIndexedByPid(target.pid)?.target;
+    return Boolean(current && this.matchesCurrentTargetProjection(current, target));
+  }
+
+  private matchesCurrentTargetProjection(current: ConnectedServiceRuntimeTarget, target: ConnectedServiceRuntimeTarget): boolean {
+    // Canonical refresh/quota views retain this owner's environment reference. Checking
+    // it admits those views without mistaking another same-pid scope or a stale view for
+    // current Session/Run authority, even when their structural selections are identical.
+    return current.pid === target.pid && current.agentId === target.agentId
+      && current.materializationKey === target.materializationKey && current.revision === target.revision
+      && current.connectedServiceSelectionsEnv === target.connectedServiceSelectionsEnv;
   }
 
   public listTargets(): ReadonlyArray<ConnectedServiceRuntimeTarget> {
@@ -407,6 +508,9 @@ export class ConnectedServiceRuntimeRegistry {
       materializationKey,
       connectedServiceMaterializationIdentityV1,
       sessionDirectory,
+      ...(patch.exactPurposeBindingSubjectId ?? previous?.exactPurposeBindingSubjectId
+        ? { exactPurposeBindingSubjectId: patch.exactPurposeBindingSubjectId ?? previous?.exactPurposeBindingSubjectId }
+        : {}),
       boundProfiles,
       activeBindings,
       runtimeIdentityKey: buildConnectedServiceRuntimeIdentityKey(identity),

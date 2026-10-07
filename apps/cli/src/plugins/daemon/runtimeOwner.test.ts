@@ -911,6 +911,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
 
   it('isolates failing activation and primary-Agent-runtime participants at cold start', async () => {
     vi.useFakeTimers();
+    const startupDeadlineAtMs = Date.now() + 30_000;
     const events: string[] = [];
     const dispose = vi.fn(async () => undefined);
     const activatedPluginIds = new Set([
@@ -966,15 +967,20 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
       staleCandidateCleanup: 'disabled',
       reloadController: createColdStartReloadController(events),
       connectedAccounts: createUnusedConnectedAccountsOwner(),
+      startupDeadlineAtMs,
     });
 
-    const initialization = owner.initialize();
+    let initializationSettled = false;
+    const initialization = owner.initialize().then(() => { initializationSettled = true; });
     await vi.advanceTimersByTimeAsync(0);
 
-    // Per-plugin isolation shares the cold-start phase instead of serializing
-    // timeout windows: the healthy peer constructs while the broken peer hangs.
+    // Participants share the containing startup deadline: the healthy peer
+    // constructs while the broken peer consumes the remaining owner budget.
     expect(healthyCreateRuntime).toHaveBeenCalledOnce();
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(startupDeadlineAtMs - Date.now() - 1);
+    expect(initializationSettled).toBe(false);
+    expect(events).not.toContain('published');
+    await vi.advanceTimersByTimeAsync(1);
     await initialization;
 
     // A rejected activation and a rejected Agent-runtime factory are both isolated:
@@ -997,7 +1003,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
     expect(fencing.fenced[0]?.message).toContain('cold-start activation failed');
     expect(fencing.fenced[0]?.message).toContain('plugin activation rejected');
     expect(fencing.fenced[1]?.message).toContain('cold-start primary Agent runtime construction failed');
-    expect(fencing.fenced[1]?.message).toContain('primary Agent runtime readiness timed out after 30000ms');
+    expect(fencing.fenced[1]?.message).toContain('primary Agent runtime readiness timed out within the daemon startup budget');
     expect(dispose).not.toHaveBeenCalled();
   });
 

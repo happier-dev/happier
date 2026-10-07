@@ -12,6 +12,9 @@ import type {
 } from '@/agent/runtime/permissions/queuedPrompt';
 import { combinePermissionModeQueuedPrompts } from '@/agent/runtime/permissions/queuedPrompt';
 import {
+  MENTION_KIND_V1,
+  buildMentionRefForKindV1,
+  buildComposerReferenceMentionPayloadV1,
   renderSessionInputContextBlockV1,
   renderSessionInputContextPromptV1,
   resolveSessionInputPromptProvenanceV1,
@@ -65,6 +68,104 @@ function createQueue() {
 }
 
 describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
+  it.each([false, true])('resolves a selected skill at dispatch and steers its structured evidence (native command: %s)', async (nativeCommand) => {
+    const text = nativeCommand ? '/goal $review' : 'run $review';
+    const { session, emitUserMessage } = createSessionHarness();
+    const { queue } = createQueue();
+    const steerText = vi.fn(async (_text: string, _meta?: unknown) => {});
+    registerPermissionModeMessageQueueBinding({
+      session, queue, getCurrentPermissionMode: () => 'default', setCurrentPermissionMode: () => {},
+      inFlightSteer: {
+        isTurnInFlight: () => true, supportsInFlightSteer: () => true, steerText,
+        registerProviderAcceptedEffect: () => undefined,
+        isProviderNativeCommand: () => nativeCommand,
+        prepareHostContext: async ({ requiredPrompt }) => {
+          expect(requiredPrompt).toContain('/w/review/SKILL.md');
+          return null;
+        },
+        readStructuredInputDispatchServices: () => ({
+          sessionId: 'session-1',
+          catalogs: { listSkills: async () => ({ skills: [{ name: 'review', path: '/w/review/SKILL.md', enabled: true, origin: 'codex_native' }] }) },
+        }),
+      },
+    });
+    emitUserMessage({ content: { text }, localId: 'structured-steer', meta: {
+      happierStructuredInputV1: { v: 1, mentions: [{ kind: MENTION_KIND_V1.skill,
+        ref: buildMentionRefForKindV1(MENTION_KIND_V1.skill, 'vendor:codex:review'), token: '$review', start: text.indexOf('$review'), end: text.length }] },
+    } });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(queue.size()).toBe(0);
+    expect(steerText.mock.calls[0]?.[0]).toContain(text);
+    if (nativeCommand) expect(steerText.mock.calls[0]?.[0].startsWith(text)).toBe(true);
+    expect(steerText.mock.calls[0]?.[1]).toMatchObject({ localId: 'structured-steer', structuredInput: {
+      v: 1, skillMentions: [{ name: 'review', path: '/w/review/SKILL.md' }],
+    } });
+  });
+
+  it.each(['missing_skill', 'private_reference', 'attachment'] as const)('rejects unresolved %s before steer and releases the replay seed association', async (kind) => {
+    const { session, emitUserMessage, setMetadataSnapshot } = createSessionHarness();
+    const { queue } = createQueue();
+    setMetadataSnapshot({ replaySeedV1: { v: 1, seedId: 'seed-1', seedText: 'SEED', createdAtMs: 1 } });
+    const steerText = vi.fn(async () => {});
+    const rejectPromptBeforeProvider = vi.fn();
+    const reportPromptEffectMayHaveOccurred = vi.fn();
+    registerPermissionModeMessageQueueBinding({
+      session, queue, getCurrentPermissionMode: () => 'default', setCurrentPermissionMode: () => {},
+      inFlightSteer: {
+        isTurnInFlight: () => true, supportsInFlightSteer: () => true, steerText,
+        registerProviderAcceptedEffect: () => undefined, rejectPromptBeforeProvider, reportPromptEffectMayHaveOccurred,
+        readStructuredInputDispatchServices: () => ({ sessionId: 'session-1', catalogs: { listSkills: async () => ({ skills: [] }) } }),
+      },
+    });
+    const structuredInput = kind === 'attachment' ? { v: 1, composerAttachments: [{
+      v: 1, instanceId: 'attachment-1', attachment: { pluginId: 'acme.review', localId: 'comment' },
+      key: 'comment-1', value: { reviewId: 'review-1' }, presentation: { label: 'Review', typeLabel: 'Review' },
+    }] } : { v: 1, mentions: [{
+      ...(kind === 'missing_skill' ? { kind: MENTION_KIND_V1.skill, ref: buildMentionRefForKindV1(MENTION_KIND_V1.skill, 'vendor:codex:removed') }
+        : buildComposerReferenceMentionPayloadV1({ reference: { pluginId: 'acme.review', localId: 'comment' }, candidate: { id: 'comment-1', label: 'Review' } })),
+      token: '@review', start: 0, end: 7,
+    }] };
+    emitUserMessage({ content: { text: '@review' }, localId: 'invalid-steer', meta: { happierStructuredInputV1: structuredInput },
+      pendingProviderAction: 'steer', pendingRequestedAction: { v: 1, kind: 'steer_if_active' } });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(steerText).not.toHaveBeenCalled();
+    expect(reportPromptEffectMayHaveOccurred).not.toHaveBeenCalled();
+    expect(queue.size()).toBe(0);
+    expect(rejectPromptBeforeProvider).toHaveBeenCalledWith(expect.objectContaining({
+      localIds: ['invalid-steer'], preparationFailure: { code: expect.any(String), retryable: kind !== 'missing_skill' },
+    }));
+    expect(session.getMetadataSnapshot().replaySeedV1.seedText).toBe('SEED');
+    expect(session.getMetadataSnapshot().replaySeedV1.dispatchedToLocalId).toBeUndefined();
+  });
+
+  it('requeues structured input when its live catalog read outlives the active turn', async () => {
+    const { session, emitUserMessage } = createSessionHarness();
+    const { queue } = createQueue();
+    let inFlight = true;
+    let finishCatalog!: (value: unknown) => void;
+    const catalog = new Promise<unknown>((resolve) => { finishCatalog = resolve; });
+    const steerText = vi.fn(async () => {});
+    registerPermissionModeMessageQueueBinding({
+      session, queue, getCurrentPermissionMode: () => 'default', setCurrentPermissionMode: () => {},
+      inFlightSteer: {
+        isTurnInFlight: () => inFlight, supportsInFlightSteer: () => true, steerText,
+        registerProviderAcceptedEffect: () => undefined,
+        readStructuredInputDispatchServices: () => ({ catalogs: { listSkills: () => catalog } }),
+      },
+    });
+    emitUserMessage({ content: { text: '$review' }, localId: 'retired-steer', meta: { happierStructuredInputV1: { v: 1, mentions: [{
+      kind: MENTION_KIND_V1.skill, ref: buildMentionRefForKindV1(MENTION_KIND_V1.skill, 'vendor:codex:review'), token: '$review', start: 0, end: 7,
+    }] } } });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    inFlight = false;
+    finishCatalog({ skills: [{ name: 'review', path: '/w/review/SKILL.md', enabled: true, origin: 'codex_native' }] });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(steerText).not.toHaveBeenCalled();
+    expect(queue.size()).toBe(1);
+    const next = await queue.waitForMessagesAndGetAsString();
+    expect(next?.message.structuredInput?.mentions).toHaveLength(1);
+  });
+
   it('keeps session role instructions out of the steer context slot', async () => {
     const { session, emitUserMessage } = createSessionHarness();
     const { queue } = createQueue();
@@ -599,7 +700,7 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
   it('does not drop additional structured semantics while steering a completion message', async () => {
     const { session, emitUserMessage } = createSessionHarness();
     const { queue, spyPush, spyIsolate } = createQueue();
-    const steerText = vi.fn(async () => {});
+    const steerText = vi.fn(async (_text: string, _meta?: unknown) => {});
     const rejectPromptBeforeProvider = vi.fn();
 
     registerPermissionModeMessageQueueBinding({
@@ -645,14 +746,13 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
     });
     await new Promise<void>((resolve) => setImmediate(resolve));
 
-    expect(steerText).not.toHaveBeenCalled();
+    expect(steerText.mock.calls[0]?.[1]).toMatchObject({
+      localId: 'completion-with-extra-semantics',
+      structuredInput: { futureStructuredContract: { value: 'must not be discarded' } },
+    });
     expect(spyPush).not.toHaveBeenCalled();
     expect(spyIsolate).not.toHaveBeenCalled();
-    expect(rejectPromptBeforeProvider).toHaveBeenCalledExactlyOnceWith({
-      localIds: ['completion-with-extra-semantics'],
-      userMessageSeq: null,
-      reason: 'conditional_steer_unavailable',
-    });
+    expect(rejectPromptBeforeProvider).not.toHaveBeenCalled();
   });
 
   it('queues model-carrying messages instead of steering them into an active turn', async () => {
@@ -1584,6 +1684,30 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
         inputContextBlock: LEGACY_UNKNOWN_INPUT_CONTEXT,
       }),
     );
+  });
+
+  it('keeps native slash first, preserves provenance, and leaves replay seed for ordinary input', async () => {
+    const { session, emitUserMessage, setMetadataSnapshot } = createSessionHarness();
+    const { queue, spyPush } = createQueue();
+    setMetadataSnapshot({ replaySeedV1: {
+      v: 1, seedText: 'SEED', sourceSessionId: 'parent', sourceCutoffSeqInclusive: 3, createdAtMs: 123,
+    } });
+    const steerText = vi.fn(async (_text: string) => {});
+    registerPermissionModeMessageQueueBinding({
+      session, queue, getCurrentPermissionMode: () => 'default', setCurrentPermissionMode: () => {},
+      inFlightSteer: {
+        isTurnInFlight: () => true, supportsInFlightSteer: () => true,
+        isProviderNativeCommand: (text: string) => text.startsWith('/project'),
+        steerText, registerProviderAcceptedEffect: () => undefined,
+      },
+    });
+    emitUserMessage({ content: { text: '/project check' }, localId: 'native-steer', meta: {} });
+    await vi.waitFor(() => expect(steerText).toHaveBeenCalled());
+    const text = steerText.mock.calls[0]?.[0];
+    expect(text).toBe(['/project check', LEGACY_UNKNOWN_INPUT_CONTEXT].join('\n\n'));
+    expect(session.getMetadataSnapshot()?.replaySeedV1?.seedText).toBe('SEED');
+    expect(session.getMetadataSnapshot()?.replaySeedV1?.dispatchedToLocalId).toBeUndefined();
+    expect(spyPush).not.toHaveBeenCalled();
   });
 
   it('steers native provider slash commands that are not Happier context-mutating commands', async () => {

@@ -176,6 +176,25 @@ describe('buildHappierReplayPromptFromDialog', () => {
   describe('total budget enforcement', () => {
     const budget = 4_000;
 
+    it('preserves dialog that fits an explicit total above the old safety ceiling', () => {
+      const dialog = [
+        { role: 'User' as const, createdAt: 1, text: 'oldest-selected-context ' + 'A'.repeat(80_000) },
+        { role: 'Assistant' as const, createdAt: 2, text: 'B'.repeat(80_000) },
+        { role: 'User' as const, createdAt: 3, text: 'newest-selected-context ' + 'C'.repeat(80_000) },
+      ];
+      const prompt = buildHappierReplayPromptFromDialog({
+        previousSessionId: 'sess_large_selected_budget',
+        strategy: 'recent_messages',
+        recentMessagesCount: null,
+        dialog,
+        maxPromptChars: 300_000,
+      });
+
+      expect(prompt.length).toBeLessThanOrEqual(300_000);
+      for (const item of dialog) expect(prompt.includes(item.text)).toBe(true);
+      expect(prompt).not.toContain('omitted to fit the context budget');
+    });
+
     it('keeps an enormous summary inside the total budget', () => {
       const prompt = buildHappierReplayPromptFromDialog({
         previousSessionId: 'sess_prev',
@@ -250,30 +269,15 @@ describe('buildHappierReplayPromptFromDialog', () => {
       expect(prompt).toMatch(/\[\d+ earlier message\(s\) omitted to fit the context budget\]/);
     });
 
-    /**
-     * The frame floor, re-derived after the container restructure.
-     *
-     * MEASURED, not chosen: the widest UNDROPPABLE frame — same-Session native
-     * return, every conditional situation bullet on, and the title the header
-     * cannot drop — first seals a seed at 814 characters, against 561 before
-     * this change. Every WRITER now clamps to at least 1024 — the settings
-     * screen, the account settings catalog, the UI clamp, and the
-     * `HAPPIER_REPLAY_MAX_SEED_CHARS` env clamp all derive that floor from
-     * `HAPPIER_REPLAY_SEED_MIN_CHARS` in packages/protocol — and this constant
-     * is what that floor has to clear. If the frame text grows past it, this
-     * assertion fails first and names the owner.
-     *
-     * Below the floor the builder returns nothing, which is the contract: a
-     * frame announcing replayed context it did not carry is the one output that
-     * loses the reader's trust in every other line it does carry.
-     */
-    const REDERIVED_FRAME_FLOOR_CHARS = 1_024;
+    // A small useful total is a rendering case, not a minimum writers must
+    // impose. Whether a seed fits depends on its actual frame and reservation.
+    const SMALL_TOTAL_CHARS = 1_024;
 
     it.each([
       { label: 'recent_messages', strategy: 'recent_messages' as const, summaryText: null },
       { label: 'summary_plus_recent', strategy: 'summary_plus_recent' as const, summaryText: 'S'.repeat(50_000) },
-    ])('holds the total at the smallest configurable budget (%s)', ({ strategy, summaryText }) => {
-      const smallestConfigurableBudget = REDERIVED_FRAME_FLOOR_CHARS;
+    ])('holds a small selected total while preserving paired framing (%s)', ({ strategy, summaryText }) => {
+      const smallestConfigurableBudget = SMALL_TOTAL_CHARS;
       const prompt = buildHappierReplayPromptFromDialog({
         previousSessionId: '0123456789abcdef0123456789abcdef',
         strategy,
@@ -306,7 +310,7 @@ describe('buildHappierReplayPromptFromDialog', () => {
     // what shipped then was a frame, an omission notice, and no conversation.
     it('returns no seed at all rather than a frame with no conversation under it', () => {
       const belowFloor: number[] = [];
-      for (let budget = 200; budget < REDERIVED_FRAME_FLOOR_CHARS; budget += 1) {
+      for (let budget = 1; budget < SMALL_TOTAL_CHARS; budget += 1) {
         const prompt = buildHappierReplayPromptFromDialog({
           previousSessionId: '0123456789abcdef0123456789abcdef',
           strategy: 'recent_messages',
@@ -322,13 +326,8 @@ describe('buildHappierReplayPromptFromDialog', () => {
       expect(belowFloor).toEqual([]);
     });
 
-    // The true minimum is NOT the writer floor. `maxSeedChars` is caller-supplied on the wire and
-    // bounded by `HAPPIER_REPLAY_SEED_ACCEPTED_MIN_CHARS` (200), deliberately below the writer
-    // floor so a released client that clamped against its own older floor is not rejected outright.
-    // continueWithReplay/fork/execution-run callers pass it straight through in place of
-    // `configuration.replaySeedMaxChars`, so 200..1023 stays reachable from an older client and the
-    // builder owns its contract at every one of those budgets.
-    describe('caller-supplied budgets below the configured floor', () => {
+    // The actual frame determines when a selected positive total cannot fit.
+    describe('caller-supplied small positive budgets', () => {
       const transcriptLinesOf = (prompt: string): string[] => {
         const marker = '<recent_transcript>\n';
         const start = prompt.indexOf(marker);
@@ -349,7 +348,7 @@ describe('buildHappierReplayPromptFromDialog', () => {
         const overBudget: number[] = [];
         const slicedPrefix: Array<{ budget: number; line: string }> = [];
 
-        for (let budget = 200; budget <= 900; budget += 1) {
+        for (let budget = 1; budget <= 900; budget += 1) {
           for (const strategy of ['recent_messages', 'summary_plus_recent'] as const) {
             const prompt = buildHappierReplayPromptFromDialog({
               previousSessionId: 'sess_prev',
@@ -2102,8 +2101,18 @@ describe('happierReplayPrompt — retrieval planning surface', () => {
     });
     expect(unbounded).toContain('turn-0');
 
+    const selected = buildHappierReplayPromptFromDialog({
+      previousSessionId: 'sess_uncapped',
+      strategy: 'recent_messages',
+      recentMessagesCount: 620,
+      dialog,
+      maxPromptChars: 200_000,
+    });
+    expect(selected.includes('turn-0\n')).toBe(true);
+    expect(selected).not.toContain('earlier message(s) omitted');
+
     // Discriminating control: the released count contract still binds when a
-    // caller supplies one, and its clamp still caps at 500.
+    // caller supplies one; a selected 500 still means exactly 500.
     const capped = buildHappierReplayPromptFromDialog({
       previousSessionId: 'sess_uncapped',
       strategy: 'recent_messages',

@@ -1,16 +1,32 @@
-const headings: Readonly<Record<string, readonly [string, string, string, string, string, string, string]>> = {
-  en: ['The ask', 'The report', 'What changed', '{count} failed', 'Running', 'Passed', 'Activity'],
-  ru: ['Запрос', 'Отчёт', 'Что изменилось', 'Ошибок: {count}', 'Выполняется', 'Успешно', 'Активность'],
-  pl: ['Prośba', 'Zgłoszenie', 'Co się zmieniło', 'Niepowodzenia: {count}', 'W toku', 'Powodzenie', 'Aktywność'],
-  es: ['La solicitud', 'El informe', 'Qué cambió', '{count} fallidos', 'En curso', 'Correcto', 'Actividad'],
-  fr: ['La demande', 'Le signalement', 'Ce qui a changé', '{count} en échec', 'En cours', 'Réussi', 'Activité'],
-  it: ['La richiesta', 'La segnalazione', 'Cosa è cambiato', '{count} non riusciti', 'In corso', 'Riuscito', 'Attività'],
-  pt: ['O pedido', 'O relatório', 'O que mudou', '{count} falharam', 'Em andamento', 'Concluído', 'Atividade'],
-  de: ['Die Anfrage', 'Der Bericht', 'Was sich geändert hat', '{count} fehlgeschlagen', 'Läuft', 'Bestanden', 'Aktivität'],
-  ca: ['La petició', 'L’informe', 'Què ha canviat', '{count} han fallat', 'En curs', 'Correcte', 'Activitat'],
-  'zh-Hans': ['请求', '报告', '变更内容', '{count} 项失败', '进行中', '通过', '活动'],
-  'zh-Hant': ['請求', '報告', '變更內容', '{count} 項失敗', '進行中', '通過', '活動'],
-  ja: ['依頼', '報告', '変更内容', '{count} 件失敗', '実行中', '成功', 'アクティビティ'],
+const headings: Readonly<Record<string, readonly [string, string, string, string, string, string]>> = {
+  en: ['The ask', 'The report', 'What changed', '{count} failed', 'Running', 'Passed'],
+  ru: ['Запрос', 'Отчёт', 'Что изменилось', 'Ошибок: {count}', 'Выполняется', 'Успешно'],
+  pl: ['Prośba', 'Zgłoszenie', 'Co się zmieniło', 'Niepowodzenia: {count}', 'W toku', 'Powodzenie'],
+  es: ['La solicitud', 'El informe', 'Qué cambió', '{count} fallidos', 'En curso', 'Correcto'],
+  fr: ['La demande', 'Le signalement', 'Ce qui a changé', '{count} en échec', 'En cours', 'Réussi'],
+  it: ['La richiesta', 'La segnalazione', 'Cosa è cambiato', '{count} non riusciti', 'In corso', 'Riuscito'],
+  pt: ['O pedido', 'O relatório', 'O que mudou', '{count} falharam', 'Em andamento', 'Concluído'],
+  de: ['Die Anfrage', 'Der Bericht', 'Was sich geändert hat', '{count} fehlgeschlagen', 'Läuft', 'Bestanden'],
+  ca: ['La petició', 'L’informe', 'Què ha canviat', '{count} han fallat', 'En curs', 'Correcte'],
+  'zh-Hans': ['请求', '报告', '变更内容', '{count} 项失败', '进行中', '通过'],
+  'zh-Hant': ['請求', '報告', '變更內容', '{count} 項失敗', '進行中', '通過'],
+  ja: ['依頼', '報告', '変更内容', '{count} 件失敗', '実行中', '成功'],
+};
+
+/** The error group's story: ① what happened, ② its spread. */
+const errorHeadings: Readonly<Record<string, readonly [string, string]>> = {
+  en: ['What happened', 'Spread'],
+  ru: ['Что произошло', 'Распространение'],
+  pl: ['Co się stało', 'Zasięg'],
+  es: ['Qué pasó', 'Alcance'],
+  fr: ['Ce qui s’est passé', 'Étendue'],
+  it: ['Cosa è successo', 'Diffusione'],
+  pt: ['O que aconteceu', 'Alcance'],
+  de: ['Was passiert ist', 'Ausmaß'],
+  ca: ['Què ha passat', 'Abast'],
+  'zh-Hans': ['发生了什么', '影响范围'],
+  'zh-Hant': ['發生了什麼', '影響範圍'],
+  ja: ['何が起きたか', '影響範囲'],
 };
 
 const detailLabels: Readonly<Record<string, string>> = {
@@ -20,11 +36,201 @@ const detailLabels: Readonly<Record<string, string>> = {
   'zh-Hans': '来源详情', 'zh-Hant': '來源詳細資料', ja: 'ソースの詳細',
 };
 
+/** ② what changed and the checks summary of a change request: the plain sentences. */
+const CHANGE_KEYS = ['inFilesPartial', 'filesPartial', 'noLineCounts', 'fileLines', 'notAllRead'] as const;
+const changeSummary: Readonly<Record<string, readonly string[]>> = {
+  en: ["in {count}+ files", "{count}+ files", "Line counts not reported", "{path}: {additions} added, {deletions} removed", "more checks not read"],
+  ru: ["в {count}+ файлах", "Файлов: {count}+", "Число строк не сообщается", "{path}: добавлено {additions}, удалено {deletions}", "не все проверки прочитаны"],
+  pl: ["w {count}+ plikach", "Pliki: {count}+", "Liczba wierszy nie jest podawana", "{path}: dodano {additions}, usunięto {deletions}", "nie odczytano wszystkich kontroli"],
+  es: ["en {count}+ archivos", "{count}+ archivos", "No se informa el número de líneas", "{path}: {additions} añadidas, {deletions} eliminadas", "quedan comprobaciones sin leer"],
+  fr: ["dans {count}+ fichiers", "{count}+ fichiers", "Nombre de lignes non communiqué", "{path} : {additions} ajoutées, {deletions} supprimées", "certaines vérifications non lues"],
+  it: ["in {count}+ file", "{count}+ file", "Numero di righe non indicato", "{path}: {additions} aggiunte, {deletions} rimosse", "alcuni controlli non letti"],
+  pt: ["em {count}+ arquivos", "{count}+ arquivos", "Contagem de linhas não informada", "{path}: {additions} adicionadas, {deletions} removidas", "há verificações não lidas"],
+  ca: ["en {count}+ fitxers", "{count}+ fitxers", "No s'informa del nombre de línies", "{path}: {additions} afegides, {deletions} eliminades", "queden comprovacions sense llegir"],
+  "zh-Hans": ["涉及 {count}+ 个文件", "{count}+ 个文件", "未提供行数", "{path}：新增 {additions} 行，删除 {deletions} 行", "还有检查未读取"],
+  "zh-Hant": ["涉及 {count}+ 個檔案", "{count}+ 個檔案", "未提供行數", "{path}：新增 {additions} 行，刪除 {deletions} 行", "還有檢查未讀取"],
+  ja: ["{count}+ 個のファイル", "{count}+ 個のファイル", "行数は報告されていません", "{path}: {additions} 行追加、{deletions} 行削除", "未読のチェックがあります"],
+  de: ["in {count}+ Dateien", "{count}+ Dateien", "Keine Zeilenzahlen gemeldet", "{path}: {additions} hinzugefügt, {deletions} entfernt", "nicht alle Prüfungen gelesen"],
+};
+
+/**
+ * The count sentences, one message per plural form a locale selects (`Intl.PluralRules`):
+ * `<key>.one`, `.few`, `.many`, `.other`; a form a locale does not use falls back to `other`.
+ */
+export const TRIAGE_STORY_PLURAL_KEYS_V1 = ['inFiles', 'files', 'smallerFiles', 'moreFiles', 'failing', 'passedCount', 'runningCount', 'allPassed', 'allPassedLatest', 'failingSoFar', 'runningSoFar'] as const;
+type PluralFormsV1 = Readonly<Partial<Record<'one' | 'few' | 'many', string>> & { other: string }>;
+const PLURAL_FORMS = ['one', 'few', 'many', 'other'] as const;
+const changeCounts: Readonly<Record<string, Readonly<Record<(typeof TRIAGE_STORY_PLURAL_KEYS_V1)[number], PluralFormsV1>>>> = {
+  en: {
+    inFiles: { one: "in {count} file", other: "in {count} files" },
+    files: { one: "{count} file", other: "{count} files" },
+    smallerFiles: { one: "{count} smaller file", other: "{count} smaller files" },
+    moreFiles: { one: "{count} more file", other: "{count} more files" },
+    failing: { one: "{count} failing", other: "{count} failing" },
+    passedCount: { one: "{count} passed", other: "{count} passed" },
+    runningCount: { one: "{count} running", other: "{count} running" },
+    allPassed: { one: "{count} passed", other: "All {count} passed" },
+    allPassedLatest: { one: "{count} passed on the latest commit", other: "All {count} passed on the latest commit" },
+    failingSoFar: { one: "{count} failing so far", other: "{count} failing so far" },
+    runningSoFar: { one: "{count} running so far", other: "{count} running so far" },
+  },
+  ru: {
+    inFiles: { one: "в {count} файле", few: "в {count} файлах", many: "в {count} файлах", other: "в {count} файла" },
+    files: { one: "{count} файл", few: "{count} файла", many: "{count} файлов", other: "{count} файла" },
+    smallerFiles: { one: "ещё {count} файл поменьше", few: "ещё {count} файла поменьше", many: "ещё {count} файлов поменьше", other: "ещё {count} файла поменьше" },
+    moreFiles: { one: "ещё {count} файл", few: "ещё {count} файла", many: "ещё {count} файлов", other: "ещё {count} файла" },
+    failing: { one: "С ошибкой: {count}", few: "С ошибкой: {count}", many: "С ошибкой: {count}", other: "С ошибкой: {count}" },
+    passedCount: { one: "Успешно: {count}", few: "Успешно: {count}", many: "Успешно: {count}", other: "Успешно: {count}" },
+    runningCount: { one: "Выполняется: {count}", few: "Выполняется: {count}", many: "Выполняется: {count}", other: "Выполняется: {count}" },
+    allPassed: { one: "{count} проверка пройдена", few: "Все {count} проверки пройдены", many: "Все {count} проверок пройдены", other: "Все {count} проверки пройдены" },
+    allPassedLatest: { one: "{count} проверка пройдена на последнем коммите", few: "Все {count} проверки пройдены на последнем коммите", many: "Все {count} проверок пройдены на последнем коммите", other: "Все {count} проверки пройдены на последнем коммите" },
+    failingSoFar: { one: "Пока с ошибкой: {count}", few: "Пока с ошибкой: {count}", many: "Пока с ошибкой: {count}", other: "Пока с ошибкой: {count}" },
+    runningSoFar: { one: "Пока выполняется: {count}", few: "Пока выполняется: {count}", many: "Пока выполняется: {count}", other: "Пока выполняется: {count}" },
+  },
+  pl: {
+    inFiles: { one: "w {count} pliku", few: "w {count} plikach", many: "w {count} plikach", other: "w {count} pliku" },
+    files: { one: "{count} plik", few: "{count} pliki", many: "{count} plików", other: "{count} pliku" },
+    smallerFiles: { one: "{count} mniejszy plik", few: "{count} mniejsze pliki", many: "{count} mniejszych plików", other: "{count} mniejszego pliku" },
+    moreFiles: { one: "jeszcze {count} plik", few: "jeszcze {count} pliki", many: "jeszcze {count} plików", other: "jeszcze {count} pliku" },
+    failing: { one: "Niepowodzenia: {count}", few: "Niepowodzenia: {count}", many: "Niepowodzenia: {count}", other: "Niepowodzenia: {count}" },
+    passedCount: { one: "Powodzenia: {count}", few: "Powodzenia: {count}", many: "Powodzenia: {count}", other: "Powodzenia: {count}" },
+    runningCount: { one: "W toku: {count}", few: "W toku: {count}", many: "W toku: {count}", other: "W toku: {count}" },
+    allPassed: { one: "{count} zakończona powodzeniem", few: "Wszystkie {count} zakończone powodzeniem", many: "Wszystkie {count} zakończone powodzeniem", other: "Wszystkie {count} zakończone powodzeniem" },
+    allPassedLatest: { one: "{count} zakończona powodzeniem w ostatnim commicie", few: "Wszystkie {count} zakończone powodzeniem w ostatnim commicie", many: "Wszystkie {count} zakończone powodzeniem w ostatnim commicie", other: "Wszystkie {count} zakończone powodzeniem w ostatnim commicie" },
+    failingSoFar: { one: "Dotąd niepowodzeń: {count}", few: "Dotąd niepowodzeń: {count}", many: "Dotąd niepowodzeń: {count}", other: "Dotąd niepowodzeń: {count}" },
+    runningSoFar: { one: "Dotąd w toku: {count}", few: "Dotąd w toku: {count}", many: "Dotąd w toku: {count}", other: "Dotąd w toku: {count}" },
+  },
+  es: {
+    inFiles: { one: "en {count} archivo", other: "en {count} archivos" },
+    files: { one: "{count} archivo", other: "{count} archivos" },
+    smallerFiles: { one: "{count} archivo más pequeño", other: "{count} archivos más pequeños" },
+    moreFiles: { one: "{count} archivo más", other: "{count} archivos más" },
+    failing: { one: "{count} fallando", other: "{count} fallando" },
+    passedCount: { one: "{count} correcto", other: "{count} correctos" },
+    runningCount: { one: "{count} en curso", other: "{count} en curso" },
+    allPassed: { one: "{count} correcto", other: "Los {count} correctos" },
+    allPassedLatest: { one: "{count} correcto en el último commit", other: "Los {count} correctos en el último commit" },
+    failingSoFar: { one: "{count} fallando por ahora", other: "{count} fallando por ahora" },
+    runningSoFar: { one: "{count} en curso por ahora", other: "{count} en curso por ahora" },
+  },
+  fr: {
+    inFiles: { one: "dans {count} fichier", other: "dans {count} fichiers" },
+    files: { one: "{count} fichier", other: "{count} fichiers" },
+    smallerFiles: { one: "{count} fichier plus petit", other: "{count} fichiers plus petits" },
+    moreFiles: { one: "{count} autre fichier", other: "{count} autres fichiers" },
+    failing: { one: "{count} en échec", other: "{count} en échec" },
+    passedCount: { one: "{count} réussi", other: "{count} réussis" },
+    runningCount: { one: "{count} en cours", other: "{count} en cours" },
+    allPassed: { one: "{count} réussi", other: "Les {count} réussis" },
+    allPassedLatest: { one: "{count} réussi sur le dernier commit", other: "Les {count} réussis sur le dernier commit" },
+    failingSoFar: { one: "{count} en échec pour l’instant", other: "{count} en échec pour l’instant" },
+    runningSoFar: { one: "{count} en cours pour l’instant", other: "{count} en cours pour l’instant" },
+  },
+  it: {
+    inFiles: { one: "in {count} file", other: "in {count} file" },
+    files: { one: "{count} file", other: "{count} file" },
+    smallerFiles: { one: "{count} file più piccolo", other: "{count} file più piccoli" },
+    moreFiles: { one: "Altro {count} file", other: "Altri {count} file" },
+    failing: { one: "{count} non riuscito", other: "{count} non riusciti" },
+    passedCount: { one: "{count} riuscito", other: "{count} riusciti" },
+    runningCount: { one: "{count} in corso", other: "{count} in corso" },
+    allPassed: { one: "{count} riuscito", other: "Tutti i {count} riusciti" },
+    allPassedLatest: { one: "{count} riuscito sull'ultimo commit", other: "Tutti i {count} riusciti sull'ultimo commit" },
+    failingSoFar: { one: "{count} non riuscito finora", other: "{count} non riusciti finora" },
+    runningSoFar: { one: "{count} in corso finora", other: "{count} in corso finora" },
+  },
+  pt: {
+    inFiles: { one: "em {count} arquivo", other: "em {count} arquivos" },
+    files: { one: "{count} arquivo", other: "{count} arquivos" },
+    smallerFiles: { one: "{count} arquivo menor", other: "{count} arquivos menores" },
+    moreFiles: { one: "Mais {count} arquivo", other: "Mais {count} arquivos" },
+    failing: { one: "{count} falhando", other: "{count} falhando" },
+    passedCount: { one: "{count} aprovado", other: "{count} aprovados" },
+    runningCount: { one: "{count} em andamento", other: "{count} em andamento" },
+    allPassed: { one: "{count} aprovado", other: "Todos os {count} aprovados" },
+    allPassedLatest: { one: "{count} aprovado no último commit", other: "Todos os {count} aprovados no último commit" },
+    failingSoFar: { one: "{count} falhando até agora", other: "{count} falhando até agora" },
+    runningSoFar: { one: "{count} em andamento até agora", other: "{count} em andamento até agora" },
+  },
+  ca: {
+    inFiles: { one: "en {count} fitxer", other: "en {count} fitxers" },
+    files: { one: "{count} fitxer", other: "{count} fitxers" },
+    smallerFiles: { one: "{count} fitxer més petit", other: "{count} fitxers més petits" },
+    moreFiles: { one: "{count} fitxer més", other: "{count} fitxers més" },
+    failing: { one: "{count} fallant", other: "{count} fallant" },
+    passedCount: { one: "{count} correcte", other: "{count} correctes" },
+    runningCount: { one: "{count} en curs", other: "{count} en curs" },
+    allPassed: { one: "{count} correcte", other: "Tots {count} correctes" },
+    allPassedLatest: { one: "{count} correcte a l'últim commit", other: "Tots {count} correctes a l'últim commit" },
+    failingSoFar: { one: "{count} fallant de moment", other: "{count} fallant de moment" },
+    runningSoFar: { one: "{count} en curs de moment", other: "{count} en curs de moment" },
+  },
+  "zh-Hans": {
+    inFiles: { other: "涉及 {count} 个文件" },
+    files: { other: "{count} 个文件" },
+    smallerFiles: { other: "另有 {count} 个较小的文件" },
+    moreFiles: { other: "另有 {count} 个文件" },
+    failing: { other: "{count} 项失败" },
+    passedCount: { other: "{count} 项通过" },
+    runningCount: { other: "{count} 项进行中" },
+    allPassed: { other: "全部 {count} 项通过" },
+    allPassedLatest: { other: "最新提交的全部 {count} 项通过" },
+    failingSoFar: { other: "目前 {count} 项失败" },
+    runningSoFar: { other: "目前 {count} 项进行中" },
+  },
+  "zh-Hant": {
+    inFiles: { other: "涉及 {count} 個檔案" },
+    files: { other: "{count} 個檔案" },
+    smallerFiles: { other: "另有 {count} 個較小的檔案" },
+    moreFiles: { other: "另有 {count} 個檔案" },
+    failing: { other: "{count} 項失敗" },
+    passedCount: { other: "{count} 項通過" },
+    runningCount: { other: "{count} 項進行中" },
+    allPassed: { other: "全部 {count} 項通過" },
+    allPassedLatest: { other: "最新提交的全部 {count} 項通過" },
+    failingSoFar: { other: "目前 {count} 項失敗" },
+    runningSoFar: { other: "目前 {count} 項進行中" },
+  },
+  ja: {
+    inFiles: { other: "{count} 個のファイル" },
+    files: { other: "{count} 個のファイル" },
+    smallerFiles: { other: "ほか {count} 個の小さなファイル" },
+    moreFiles: { other: "ほか {count} 個のファイル" },
+    failing: { other: "{count} 件失敗" },
+    passedCount: { other: "{count} 件成功" },
+    runningCount: { other: "{count} 件実行中" },
+    allPassed: { other: "{count} 件すべて成功" },
+    allPassedLatest: { other: "最新のコミットで {count} 件すべて成功" },
+    failingSoFar: { other: "現時点で {count} 件失敗" },
+    runningSoFar: { other: "現時点で {count} 件実行中" },
+  },
+  de: {
+    inFiles: { one: "in {count} Datei", other: "in {count} Dateien" },
+    files: { one: "{count} Datei", other: "{count} Dateien" },
+    smallerFiles: { one: "{count} kleinere Datei", other: "{count} kleinere Dateien" },
+    moreFiles: { one: "{count} weitere Datei", other: "{count} weitere Dateien" },
+    failing: { one: "{count} fehlgeschlagen", other: "{count} fehlgeschlagen" },
+    passedCount: { one: "{count} bestanden", other: "{count} bestanden" },
+    runningCount: { one: "{count} läuft", other: "{count} laufen" },
+    allPassed: { one: "{count} bestanden", other: "Alle {count} bestanden" },
+    allPassedLatest: { one: "{count} beim neuesten Commit bestanden", other: "Alle {count} beim neuesten Commit bestanden" },
+    failingSoFar: { one: "bisher {count} fehlgeschlagen", other: "bisher {count} fehlgeschlagen" },
+    runningSoFar: { one: "bisher {count} läuft", other: "bisher {count} laufen" },
+  },
+};
+
 export function triageDetailStoryTranslations(locale: string): Readonly<Record<string, string>> {
   const values = headings[locale] ?? headings.en!;
   return {
-    ...Object.fromEntries(['ask', 'report', 'changed', 'failed', 'running', 'passed', 'activity']
+    ...Object.fromEntries(['ask', 'report', 'changed', 'failed', 'running', 'passed']
       .map((key, index) => [`plugins.triage.detailStory.${key}`, values[index]!])),
     'plugins.triage.detailStory.detail': detailLabels[locale] ?? detailLabels.en!,
+    'plugins.triage.detailStory.happened': (errorHeadings[locale] ?? errorHeadings.en!)[0],
+    'plugins.triage.detailStory.spread': (errorHeadings[locale] ?? errorHeadings.en!)[1],
+    ...Object.fromEntries(CHANGE_KEYS.map((key, index) => [`plugins.triage.detailStory.${key}`,
+      (changeSummary[locale] ?? changeSummary.en!)[index]!])),
+    // Every locale ships the same keys: a form the locale never selects repeats its `other`.
+    ...Object.fromEntries(Object.entries(changeCounts[locale] ?? changeCounts.en!).flatMap(([key, forms]) => PLURAL_FORMS
+      .map((form) => [`plugins.triage.detailStory.${key}.${form}`, forms[form] ?? forms.other]))),
   };
 }

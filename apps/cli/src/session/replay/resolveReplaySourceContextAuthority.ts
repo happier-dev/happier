@@ -2,7 +2,7 @@ import type { StoredCredentials } from '@/persistence';
 import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
-import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 
@@ -56,7 +56,7 @@ export async function resolveReplaySourceContextAuthority(params: Readonly<{
     : rawMachineId ?? metadataMachineId;
 
   const sourcePath = readNonBlankString(metadata?.path);
-  const correspondence = SessionCreationCorrespondenceV1Schema.safeParse(metadata?.sessionCreationCorrespondenceV1);
+  const correspondence = SessionCreationCorrespondenceV1ReadSchema.safeParse(metadata?.sessionCreationCorrespondenceV1);
   const sourceSessionCreationTag = correspondence.success ? correspondence.data.sessionCreationTag : undefined;
   const managedSource = readSessionDirectoryKind(metadata) === 'managed';
   return {

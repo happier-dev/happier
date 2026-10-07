@@ -1,5 +1,6 @@
 import type { CapabilityDetectRequest } from '../types';
 import type { DetectCliEntry } from '../snapshots/cliSnapshot';
+import { CapabilityError } from '../errors';
 
 export function buildCliCapabilityData(opts: {
     request: CapabilityDetectRequest;
@@ -7,6 +8,9 @@ export function buildCliCapabilityData(opts: {
 }): DetectCliEntry {
     const includeLoginStatus = Boolean((opts.request.params ?? {}).includeLoginStatus);
     const entry = opts.entry ?? { available: false };
+    if (entry.detectionError) {
+        throw new CapabilityError(entry.detectionError.message, entry.detectionError.code);
+    }
 
     const out: DetectCliEntry = {
         available: entry.available,

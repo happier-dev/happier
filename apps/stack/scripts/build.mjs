@@ -45,7 +45,7 @@ async function main() {
   if (wantsHelp(argv, { flags })) {
     printResult({
       json,
-      data: { flags: ['--web', '--server', '--daemon', '--all', '--activate-runtime', '--force-rebuild', '--tauri', '--no-tauri', '--no-ui'], json: true },
+      data: { flags: ['--web', '--server', '--daemon', '--all', '--target', '--activate-runtime', '--force-rebuild', '--tauri', '--no-tauri', '--no-ui'], json: true },
       text: [
         '[build] usage:',
         '  hstack build [--tauri] [--json]',
@@ -55,7 +55,9 @@ async function main() {
         'note:',
         '  If run from inside the Happier UI checkout/worktree, the build uses that checkout.',
         '  Explicit component flags publish or reuse repository-authority artifacts for named stacks.',
-        '  Every component build publishes a complete producer snapshot; use `hstack stack runtime <name> select` to adopt it without rebuilding.',
+        '  Components build for their service placement hosts; different platforms publish separate snapshots.',
+        '  --target=<linux|darwin|windows>-<x64|arm64> constrains matching placed components; it does not retarget other services.',
+        '  Use `hstack stack runtime <name> select` to adopt published artifacts without rebuilding.',
         '  Initialize a target with --all when no complete snapshot exists. --activate-runtime also selects the requesting consumer.',
         '  --tauri remains a legacy local UI/Tauri build flag and cannot be mixed with named-stack artifact/runtime flags.',
       ].join('\n'),
@@ -95,7 +97,11 @@ async function main() {
       for (const [component, artifact] of Object.entries(result.artifacts ?? {})) {
         console.log(`[build] ${component}: ${artifact.artifactDir}`);
       }
-      if (result.snapshotPath) console.log(`[build] runtime snapshot published: ${result.snapshotPath}`);
+      if (result.targetResults?.length) {
+        for (const targetResult of result.targetResults) {
+          if (targetResult.snapshotPath) console.log(`[build] runtime snapshot published (${targetResult.target.platform}/${targetResult.target.arch}): ${targetResult.snapshotPath}`);
+        }
+      } else if (result.snapshotPath) console.log(`[build] runtime snapshot published: ${result.snapshotPath}`);
       if (result.runtime?.snapshotPath) {
         console.log(`[build] runtime snapshot selected: ${result.runtime.snapshotPath}`);
       }

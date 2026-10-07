@@ -33,6 +33,8 @@ export type ConnectedServiceRuntimeTargetInput = Readonly<{
   materializationKey?: string | null;
   connectedServiceMaterializationIdentityV1?: unknown;
   sessionDirectory?: string | null;
+  /** Exact active purpose lease; Run refresh never borrows its runner's Session binding. */
+  exactPurposeBindingSubjectId?: string;
 }>;
 
 export type ConnectedServiceRuntimeTargetUpdate = ConnectedServiceRuntimeTargetInput;
@@ -47,6 +49,7 @@ export type ConnectedServiceRuntimeTarget = Readonly<{
   materializationKey: string | null;
   connectedServiceMaterializationIdentityV1: ConnectedServiceMaterializationIdentityV1 | null;
   sessionDirectory: string | null;
+  exactPurposeBindingSubjectId?: string;
   boundProfiles: ReadonlyArray<ConnectedServiceRuntimeBoundProfile>;
   activeBindings: ReadonlyArray<ConnectedServiceRuntimeBindingIdentity>;
   runtimeIdentityKey: string;

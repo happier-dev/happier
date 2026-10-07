@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { dirname, join } from 'node:path';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 
 import cliDistBuildManifest from '@happier-dev/cli-common/cliDistBuildManifest';
 import { BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH } from '@happier-dev/cli-common/bundledPluginPublicationPolicy';
@@ -15,7 +16,7 @@ const {
   resolveTsxImportHookSpecifierMock,
   resolveCliTsxTsconfigPathMock,
 } = vi.hoisted(() => ({
-  ensureJavaScriptRuntimeExecutableMock: vi.fn<() => Promise<string | null>>(async () => '/usr/bin/node'),
+  ensureJavaScriptRuntimeExecutableMock: vi.fn<typeof import('@/packagedRuntime/js/ensureJavaScriptRuntimeExecutable').ensureJavaScriptRuntimeExecutable>(async () => '/usr/bin/node'),
   resolvePackagedRuntimeEntrypointMock: vi.fn(() => '/opt/happier/package-dist/index.mjs'),
   resolveTsxImportHookSpecifierMock: vi.fn(() => '/opt/happier/node_modules/tsx/dist/esm/index.mjs'),
   resolveCliTsxTsconfigPathMock: vi.fn(() => '/opt/happier/apps/cli/tsconfig.json'),
@@ -98,8 +99,11 @@ function writeAdmittedDaemonStartupClosure(root: string, marker = 'admitted'): R
 }
 
 describe('resolveDaemonLaunchSpec', () => {
+  const originalExecPathDescriptor = Object.getOwnPropertyDescriptor(process, 'execPath');
   afterEach(() => {
     vi.restoreAllMocks();
+    if (originalExecPathDescriptor) Object.defineProperty(process, 'execPath', originalExecPathDescriptor);
+    vi.unstubAllEnvs();
     vi.resetModules();
     delete process.env.HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK;
     delete process.env.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT;
@@ -338,10 +342,6 @@ describe('resolveDaemonLaunchSpec', () => {
 
     const result = await mod.resolveDaemonLaunchSpec(['daemon', 'start-sync']);
 
-    expect(ensureJavaScriptRuntimeExecutableMock).toHaveBeenCalledWith({
-      isBunRuntime: false,
-      currentExecPath: process.execPath,
-    });
     expect(result).toEqual({
       filePath: '/usr/bin/node',
       args: ['--no-warnings', '--no-deprecation', '/opt/happier/package-dist/index.mjs', 'daemon', 'start-sync'],
@@ -403,6 +403,96 @@ describe('resolveDaemonLaunchSpec', () => {
         'start-sync',
       ]));
       expect(result.args).not.toContain('--import');
+    });
+  });
+
+  it('bootstraps a cold admitted closure before native daemon launch and preserves acquisition failure', async () => {
+    await withTempDir('happier-daemon-launch-cold-runtime-', async (root) => {
+      const closure = writeAdmittedDaemonStartupClosure(join(root, 'closure'));
+      const environment: NodeJS.ProcessEnv = {
+        ...process.env,
+        HAPPIER_HOME_DIR: join(root, 'home'),
+        HAPPIER_JS_RUNTIME_PATH: '',
+        HAPPIER_MANAGED_NODE_BIN: '',
+        HAPPIER_NODE_PATH: '',
+        PATH: '',
+        HAPPIER_CLI_SUBPROCESS_RUNTIME: 'node',
+        HAPPIER_CLI_SUBPROCESS_PREFER_TSX: '0',
+        HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT: closure.entrypoint,
+        HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT: closure.fingerprint,
+        HAPPIER_CLI_SUBPROCESS_STACK_RUNTIME_STATE_PATH: closure.runtimeStatePath,
+        HAPPIER_STACK_STACK: 'owned-cold-runtime',
+      };
+      // Exercise the real runtime resolver/bootstrap. Only the remote release
+      // service and the native process identity are replaced at system boundaries.
+      const runtime = await vi.importActual<typeof import('@/packagedRuntime/js/ensureJavaScriptRuntimeExecutable')>(
+        '@/packagedRuntime/js/ensureJavaScriptRuntimeExecutable',
+      );
+      ensureJavaScriptRuntimeExecutableMock.mockImplementationOnce(runtime.ensureJavaScriptRuntimeExecutable);
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 503 }));
+      Object.defineProperty(process, 'execPath', { value: join(root, 'happier'), configurable: true });
+
+      const mod = await import('./resolveDaemonLaunchSpec');
+      await expect(mod.resolveDaemonLaunchSpec(['daemon', 'start-sync'], environment)).rejects.toMatchObject({
+        message: 'Managed JavaScript runtime is unavailable: bootstrap failed',
+        cause: expect.objectContaining({ message: 'Failed to fetch Node release index (503)' }),
+      });
+    });
+  });
+
+  it('executes the admitted closure with the requested home runtime from a native launcher', async () => {
+    await withTempDir('happier-daemon-launch-home-runtime-', async (root) => {
+      const closure = writeAdmittedDaemonStartupClosure(join(root, 'closure'));
+      const home = join(root, 'home');
+      const current = join(home, 'tools', 'js-runtime', 'current');
+      const nodeBinary = process.platform === 'win32'
+        ? join(current, 'runtime', 'node.exe')
+        : join(current, 'runtime', 'bin', 'node');
+      const wrapper = join(current, 'bin', process.platform === 'win32' ? 'happier-js-runtime.cmd' : 'happier-js-runtime');
+      mkdirSync(dirname(nodeBinary), { recursive: true });
+      mkdirSync(dirname(wrapper), { recursive: true });
+      copyFileSync(process.execPath, nodeBinary);
+      writeFileSync(wrapper, process.platform === 'win32'
+        ? '@echo off\r\n"%~dp0..\\runtime\\node.exe" %*\r\n'
+        : '#!/bin/sh\nexec "${0%/*}/../runtime/bin/node" "$@"\n');
+      if (process.platform !== 'win32') {
+        chmodSync(nodeBinary, 0o755);
+        chmodSync(wrapper, 0o755);
+      }
+      const environment: NodeJS.ProcessEnv = {
+        ...process.env,
+        HAPPIER_HOME_DIR: home,
+        HAPPIER_JS_RUNTIME_PATH: '',
+        HAPPIER_MANAGED_NODE_BIN: '',
+        HAPPIER_NODE_PATH: '',
+        PATH: '',
+        HAPPIER_CLI_SUBPROCESS_RUNTIME: 'node',
+        HAPPIER_CLI_SUBPROCESS_PREFER_TSX: '0',
+        HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT: closure.entrypoint,
+        HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT: closure.fingerprint,
+        HAPPIER_CLI_SUBPROCESS_STACK_RUNTIME_STATE_PATH: closure.runtimeStatePath,
+        HAPPIER_STACK_STACK: 'owned-home-runtime',
+      };
+      const runtime = await vi.importActual<typeof import('@/packagedRuntime/js/ensureJavaScriptRuntimeExecutable')>(
+        '@/packagedRuntime/js/ensureJavaScriptRuntimeExecutable',
+      );
+      ensureJavaScriptRuntimeExecutableMock.mockImplementationOnce(runtime.ensureJavaScriptRuntimeExecutable);
+      vi.stubEnv('HAPPIER_JS_RUNTIME_PATH', join(root, 'missing-parent-runtime'));
+      Object.defineProperty(process, 'execPath', { value: join(root, 'happier'), configurable: true });
+
+      const mod = await import('./resolveDaemonLaunchSpec');
+      const result = await mod.resolveDaemonLaunchSpec(['daemon', 'start-sync'], environment);
+      expect(result.filePath).toBe(wrapper);
+      expect(result.args).toContain('start-sync');
+      expect(result.args.join(' ')).toContain(closure.fingerprint);
+      // Run only the fixture's empty module, never a daemon or a user's stack.
+      // The direct Node member is used on Windows because cmd wrappers require
+      // the platform spawn adapter exercised by the adjacent detached suite.
+      expect(execFileSync(process.platform === 'win32' ? nodeBinary : result.filePath, result.args, {
+        env: { ...environment, ...result.env },
+        encoding: 'utf8',
+      })).toBe('');
+      expect(process.env.HAPPIER_JS_RUNTIME_PATH).toBe(join(root, 'missing-parent-runtime'));
     });
   });
 

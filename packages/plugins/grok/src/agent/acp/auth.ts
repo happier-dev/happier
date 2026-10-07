@@ -14,8 +14,15 @@ export function selectGrokAuthentication(
   context: AgentAcpAuthenticationContext,
   launchEnvironment: Readonly<Record<string, string>>,
 ): AgentAcpAuthenticationSelection | null {
+  return selectGrokAuthenticationFromFacts(context, { hasApiKey: Boolean(launchEnvironment.XAI_API_KEY?.trim()) });
+}
+
+export function selectGrokAuthenticationFromFacts(
+  context: AgentAcpAuthenticationContext,
+  facts: Readonly<{ hasApiKey: boolean }>,
+): AgentAcpAuthenticationSelection | null {
   const advertised = new Set(context.advertisedMethodIds);
-  if (launchEnvironment.XAI_API_KEY?.trim() && advertised.has('xai.api_key')) {
+  if (facts.hasApiKey && advertised.has('xai.api_key')) {
     return { methodId: 'xai.api_key', metadata: HEADLESS_METADATA };
   }
 

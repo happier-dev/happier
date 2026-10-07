@@ -290,7 +290,8 @@ describe('Azure DevOps Triage source contribution conformance', () => {
     })).toMatchObject({
       ok: false,
       diagnostics: expect.arrayContaining([expect.objectContaining({
-        message: 'Connected Account purpose bindings must target one exact qualified credential-ref input leaf in every declared input arm.',
+        code: 'plugin_manifest_invalid',
+        path: expect.arrayContaining(['connectedAccountPurposeBindings']),
       })]),
     });
 
@@ -303,7 +304,8 @@ describe('Azure DevOps Triage source contribution conformance', () => {
     })).toMatchObject({
       ok: false,
       diagnostics: expect.arrayContaining([expect.objectContaining({
-        message: 'Connected Account purpose bindings must target one exact qualified credential-ref input leaf in every declared input arm.',
+        code: 'plugin_manifest_invalid',
+        path: expect.arrayContaining(['connectedAccountPurposeBindings']),
       })]),
     });
   });

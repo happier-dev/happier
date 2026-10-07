@@ -237,6 +237,7 @@ export type HostTerminalTranscriptFollowService = Readonly<{
         replay?: 'historical' | 'fresh';
         agentId: string;
         providerSessionId: string;
+        admissionDeadlineAtMs?: number;
         signal?: AbortSignal;
     }>): Promise<HostTerminalTranscriptFollowBindResult>;
     releaseActiveBindings(): Promise<void>;

@@ -121,8 +121,8 @@ describe('plugin activation contract', () => {
         type ResolveSourceRequest = Parameters<AgentExternalSessionsContribution['resolveSource']>[0];
         expectTypeOf<ResolveSourceRequest>().toMatchTypeOf<AgentExternalSessionsInvocation>();
         expectTypeOf<ResolveSourceRequest['signal']>().toEqualTypeOf<AbortSignal>();
-        expectTypeOf<ResolveSourceRequest['deadlineAtMs']>().toEqualTypeOf<number>();
-        expectTypeOf<ResolveSourceRequest['maxSerializedBytes']>().toEqualTypeOf<number>();
+        expectTypeOf<ResolveSourceRequest['deadlineAtMs']>().toEqualTypeOf<number | undefined>();
+        expectTypeOf<ResolveSourceRequest['maxSerializedBytes']>().toEqualTypeOf<number | undefined>();
         expectTypeOf<AgentExternalSessionsInvocation['exec']>().toEqualTypeOf<ExecService>();
 
         type ListRequest = Parameters<AgentExternalSessionsContribution['listCandidates']>[0];
