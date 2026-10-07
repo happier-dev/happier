@@ -399,12 +399,20 @@ controls require `present_user`.
 
 `ApiTokenGrantV1` is the canonical grant (optional only on root creation): Action families/ids,
 session/machine targets, opt-in `approve`, origins, models, permission modes and
-bound creation placement. A missing persisted grant reads as the full grant,
-whose `approve` is false. `evaluateApiTokenGrantV1` applies at HTTP, socket-event
+bound creation placement. Root creation defaults an omitted grant to an explicit
+stored full grant, whose `approve` is false. Missing or malformed persisted grants
+refuse authentication as `invalid_token`; they never imply full access.
+`evaluateApiTokenGrantV1` applies at HTTP, socket-event
 and declared RPC admission, and again in the daemon executor. Approval and
 permission decisions use `approve` plus target membership, without requiring
 the approved Action itself. Tokens may decide their own requests. Conversational
 `session.user_action.answer` instead uses the Action allowlist.
+
+Persisted grants, embed configuration and authentication-evidence snapshots read
+known fields recursively and discard unknown fields through the shared stored-read
+schema projection. Invalid known fields still fail closed; request admission and
+new writes retain their canonical strict schemas. Grant attenuation uses the same
+conversational Action admission as execution, including Send's question-answer alias.
 
 `account.sessions.signOutEverywhere` invalidates
 signed sessions but intentionally leaves API Tokens active; revoke API Tokens
@@ -1369,8 +1377,9 @@ integrated package and loaded-Provider validation is still open.
   stable `updatedAt`, `id` order. The optional opaque cursor resumes after the
   last observed row, allowing typed clients to continue through sparse pages
   without loading Artifact bodies or assuming the first page is complete.
-  In 0.3 development source, `includeBody=true` adds each row's `body` and
-  `bodyVersion` to that same authorized batch. The Artifact access and Account-mode
+  In 0.3 development source, each header includes its current `bodyVersion`;
+  `includeBody=true` additionally returns the stored `body` for that same authorized
+  batch. The Artifact access and Account-mode
   owner applies the same content checks as an exact read; E2EE bodies remain
   opaque until the client opens them. Workflow library counts use these opened
   bodies, not persisted count metadata or per-row requests. Omitting the option
@@ -1429,6 +1438,13 @@ Session and ordinary Artifact publications share one owner and the existing
 - `GET /v1/public-shares/:lookupId/content` reads admitted stored content without Account credentials on the publication's isolated origin. Consent and Session pagination use the existing publication-use/access-grant policy.
 - `GET /s/:lookupId` serves the isolated text viewer; its wrapping secret is carried in `#k=...`, not in an HTTP field.
 - `GET /v2/sessions/metadata-upgrades` returns authenticated owner-only Session ids needing the existing privacy-layout upgrade, including archived shared Sessions; it returns no metadata or key material.
+
+Unavailable public landings retain HTTP 404 (or 429 for rate limiting) and serve
+the same viewer shell so it can render its typed recovery state. The generic
+`GET /s/:lookupId/viewer.js` asset contains no subject content and remains
+loadable after expiry, viewing-limit exhaustion or revocation. Content reads
+still enforce publication admission and isolated-origin checks; credential-bearing
+viewer requests remain refused.
 
 The lookup and wrapping secret are independent. E2EE content and its wrapped DEK
 remain opaque to the server; plaintext Accounts send no wrapped key. Publication

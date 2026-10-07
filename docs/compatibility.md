@@ -523,8 +523,9 @@ merge; opaque server storage preserves the separate E2EE facet without opening
 it. No parallel persistence format or subscription reader is introduced.
 
 The development Connected Account SDK quota result now admits optional
-`ProviderAccountSubscriptionV1`; its existing host result owner validates that
-shared strict schema and snapshots the data before the coordinator consumes it.
+`ProviderAccountSubscriptionV1`; its host result owner snapshots the trusted
+in-process SDK result before the coordinator consumes it. External quota wire
+and persistence readers still validate the shared strict schema.
 Plugins omitting the field retain their quota behavior. This is a development
 author-surface extension, not a predecessor SDK contract or a promise that an
 older host accepts newly authored plugin results.
@@ -557,8 +558,10 @@ member. These rejected starts do not consume turn or hourly switch limits;
 ordinary switches retain those limits. Exhaustion reports
 `connected_service_run_model_unavailable` with the requested model. This is an
 unreleased 0.3 source contract, not a change to the predecessor's daemon. Detached
-Codex production reachability remains blocked on its canonical Run auth-service
-refresh hook; isolated rejection/recovery tests do not establish availability.
+Codex's canonical Run host now supplies bounded native-home reads and Run-scoped
+refresh through the existing materialization control channel and shared daemon
+authority. Focused and composed source checks do not establish loaded-daemon or
+released availability.
 The projected `ConnectedAccountUiProjectionEntryV1` contract is also absent from
 that predecessor; its current strict development schema adds the optional
 recovery-credit declaration together with its producer and UI consumer.
