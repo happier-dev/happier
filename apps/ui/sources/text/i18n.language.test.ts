@@ -2,9 +2,26 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { es } from './translations/es';
 import { en } from './translations/en';
+import { fr } from './translations/fr';
 import * as i18n from './i18n';
 
 describe('text/i18n language state', () => {
+    it('keeps the latest selected locale when settings change during readiness', async () => {
+        i18n.setPreferredLanguageFromSettings('es');
+        const ready = i18n.preloadTranslations();
+        i18n.setPreferredLanguageFromSettings('fr');
+        await ready;
+        expect(i18n.getPreferredLanguage()).toBe('fr');
+        expect(i18n.t('tabs.inbox')).toBe(fr.tabs.inbox);
+    });
+
+    it('preloads an explicitly requested voice locale without activating it as UI language', async () => {
+        i18n.setPreferredLanguageFromSettings('es');
+        await i18n.preloadTranslations('fr');
+        expect(i18n.getPreferredLanguage()).toBe('es');
+        expect(i18n.t('tabs.inbox')).toBe(es.tabs.inbox);
+        expect(i18n.getTranslationValue('voicePresence.welcomeText', 'fr')).toBe(fr.voicePresence.welcomeText);
+    });
     afterEach(() => {
         i18n.setPreferredLanguageFromSettings(null);
     });
