@@ -1294,3 +1294,5 @@ CLI reports that the two native workspace-custody failures require the existing 
 2026-10-07 CI-03: exact-head run37565358387 inventoried (compiler failure + Gate propagation; units/artifacts skipped); two UI type-only corrections applied isolated, Run HTTP missing-route RED measured. Existing current codec/purpose owner correction underway. P0 OPEN; P1–P6 pending.
 
 2026-10-07 CI-03: isolated FF to1753bb5f34, edits preserved. SDK34/34 and Codex11/11 producer RED→GREEN; current Project8/8 GREEN, Host98/111 (13 failures) under fixture repair. Independent artifact/admission review advisory/no confirmed defect. P0 OPEN; P1–P6 pending.
+
+2026-10-07 CI-03 authority correction: reports now written only to this shared, uncommitted file; all `.project/**` excluded from commits and packets. PRESERVE-03D owns existing tracked-report reconciliation; CI-03 will not touch it in Git. Latest Host replay101/111 (10 failures), projection retirement reached intended RED. Coordinator replay failed genuine source-custody setup, not behavioral RED; its fixture is corrected through real admitted-runtime construction and production awaits a valid rerun. P0 OPEN; P1–P6 pending.

@@ -1,4 +1,4 @@
-export type ResolvedBottomPanePresentation = 'docked' | 'overlay';
+export type ResolvedBottomPanePresentation = 'docked' | 'overlay' | 'hidden';
 
 export type ResolvedBottomPaneLayout = Readonly<{
     presentation: ResolvedBottomPanePresentation;
