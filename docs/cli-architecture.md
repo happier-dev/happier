@@ -316,6 +316,25 @@ Continue and daemon replacement preserve frozen definitions and per-run keys.
 The signed claim receipt excludes private snapshot bytes and reads them from
 the canonical Run row on replay.
 
+Accepted snapshots also freeze `targetSessionIds`: resolved `origin_session`
+and explicit `existing_session` destinations from the materialized leaves.
+`workflow.run.list` accepts `targetSessionId` alongside `originSessionId`.
+The Account Action owner opens the existing list sidecars and filters privately,
+advancing past nonmatching pages with the server's bound keyset cursor. The
+server never learns E2EE destination content. Definitions and Automation trigger
+sets derive their destinations through the same Protocol walker and authorized
+definition resolver; unresolved references remain explicit.
+
+Machine start capacity is independent of trigger scope. The incumbent Automation
+worker's active-execution map reserves the existing server-configured budget
+only for accepted graphs that can start an Agent. Existing-Session writes from
+Account recipes and Session-scoped triggers reserve no slot. At a full budget,
+the worker still claims Workflow recipes so it can classify their private graph;
+new Agent starts wait on that same budget with claim cancellation and heartbeat
+still active. `scopeSessionId` retains Session-trigger identity and serialization,
+not capacity authority. Old accepted snapshots derive these projections from
+their frozen leaves when the added fields are absent.
+
 Automation warnings use the single daemon telemetry owner. Error messages,
 causes and transport payloads remain redacted; diagnostics retain a typed error
 name/code, the failing operation and recognized repository, packaged-runtime or
@@ -574,6 +593,26 @@ Nested definitions and sources use the ordinary JSON-field grammar, opaque
 cursors remain strings, and decimal-string wire values are never coerced to
 JavaScript numbers. `--machine-id` routes `workflow.run.start`; it is not added
 to that Action's strict input.
+
+Development Workflow effect presets remain ordinary Action leaves. The
+Protocol `stepActionsV1` family declares `webhooks.call` and
+`machines.command.run`; the Action catalog supplies CLI/MCP discovery and the
+editor's typed fields. Workflow schema admission requires literal command text
+in every block dialect; dynamic bindings are permitted in `env`, not shell
+syntax. The CLI host routes commands through the existing Machine BASH RPC in
+the resolved step workspace, inheriting the Machine environment and passing
+the containing cancellation signal. Explicit zero disables BASH's incumbent
+legacy caller deadline; the new Action adds none. Both exec arms preserve output
+without Node's incidental shell-buffer cap.
+
+Webhook Actions and Activity notifications share destination admission and
+pinned POST in `sendWebhookActivityNotification.ts`. JSON Actions collect the
+response without redirects and fail on status 300 or higher; notifications
+retain their existing delivery deadline and signing behavior. Workflow Action
+request identities are `run/logical-invocation/attempt`, while the Session input
+identity remains separate. Definitive JSON Action failure details are sealed
+as invocation output without changing the failed lifecycle; a lost or malformed
+post-effect acknowledgement remains uncertain rather than authorizing replay.
 
 The Agent/MCP catalog derives the direct `workflow_run_start`,
 `workflow_run_get`, `workflow_run_wait`, and `workflow_run_cancel` tools from
@@ -1387,6 +1426,14 @@ control; recovered-host admission never creates or replaces that server. Claude'
 runtime lives in `packages/plugins/claude/src/agent/runtime/terminal/unified` and
 uses the host's terminal service, composer parsing, and prompt-submission
 verification. Successful terminal writes are not Agent acceptance acknowledgements.
+In current development source, the shared submission verifier observes staging and
+consumption under the native Session scope's cancellation signal, separately from
+bounded terminal write/capture commands. Slow Agent redraws do not exhaust a
+transport deadline. It submits Enter once and reads the arbiter's existing
+accepted/retired custody to stop waiting after provider evidence or manual
+retirement. A positively foreign composer fails before Enter through the shared
+Claude draft classifier; ambiguous capture remains pending. The same classifier
+owns leftover-draft clearing, which independently refuses generation and usage-limit waits.
 The Herdr client stages large text in sequential Unicode-safe requests within
 Herdr's 1 MiB serialized JSON-line limit, including escape expansion and envelope
 bytes. Submission still belongs to the existing verifier: it sends Enter only
