@@ -2917,7 +2917,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `intent` (json, required): Customization intent — Use move, move_to (sectionId, position: anchorId and before/after placement), reorder, visibility, frameStyle (card/plain/null), setup_visibility (stepId, hidden), restore_setup, reset, widget_add (instance, optional position), widget_remove (instanceId), widget_rename (instanceId, optional displayName), widget_inputs (instanceId, bindings) or widget_width (instanceId, half/full). move_to preserves concurrent additions. Read the current layout first; reorder lists all sections returned by that read.
+- `intent` (json, required): Customization intent — Use move, move_to (sectionId, position: anchorId and before/after placement), reorder, visibility, frameStyle (card/plain/null), setup_visibility (stepId, hidden), restore_setup, reset, widget_add (instance, optional size and position), widget_remove (instanceId), widget_rename (instanceId, optional displayName), widget_inputs (instanceId, bindings) or widget_size (instanceId, declared size). move_to preserves concurrent additions. Read the current layout first; reorder lists all sections returned by that read.
 
 ## `home.mailDelivery.get`
 
@@ -10450,9 +10450,9 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 No field hints are published. Use the typed input accepted by `execute`.
 
-## `widgets.instance.width.set`
+## `widgets.instance.size.set`
 
-**widgets.instance.width.set** — Operate on a qualified widget instance through its canonical surface owner.
+**widgets.instance.size.set** — Operate on a qualified widget instance through its canonical surface owner.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.

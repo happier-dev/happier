@@ -203,8 +203,9 @@ Public plugin-ui `<WidgetSurface area="pinned" context={…} />` and declarative
 `widgetArea` nodes reach the same [core area composition](../apps/ui/sources/components/widgets/area/WidgetArea.tsx)
 through the mounted host port. The host derives captured Home/Account,
 plugin/page/area identity, Artifact transport and access; author context is
-validated data, never routing or authority. Gallery, Set up, Edit inputs,
-frames and mutations reuse the Home/widget owners. Declarative area nodes
+validated data, never routing or authority. The Add surface
+(`components/widgets/add/WidgetAddSurface.tsx`), Edit inputs, frames and
+mutations reuse the Home/widget owners. Declarative area nodes
 require a mounted plugin page and are excluded from Session Board documents
 and transcript projection.
 
