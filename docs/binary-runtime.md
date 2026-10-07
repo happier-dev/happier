@@ -307,7 +307,7 @@ artifact storage and source labels bound to the producer.
 Build placement is resolved against the producer's target registry only. Controlled-runtime
 consumer projections omit it; a consumer build entry is ignored with a warning naming the
 producer config, even when its target is absent from the consumer registry.
-It captures the flight's source after worker admission, reuses the install-freshness owner, and keeps worker
+It captures and uploads source before worker admission, reuses the install-freshness owner, and keeps worker
 dependencies/dist separate from the moving mirror and live outputs. Source identity labels retain
 the producer checkout origin so relocation alone does not change an input fingerprint. Component
 and workspace-package identity readers share those origin labels. Runtime capture uses
@@ -316,7 +316,12 @@ fingerprints are derived from captured bytes, not from a before/after quiet-chec
 comparison. Producer edits after capture do not invalidate the build; existing demand
 coalescing serves them in the next flight. Worker capture, requests, source trees,
 and transfer archives live in the existing producer workspace partitioned by platform/architecture, so
-concurrent targets cannot overwrite each other's prepared source or results. The shared workspace input-path
+concurrent targets cannot overwrite each other's prepared source or results. The worker source-transfer
+owner reconciles captured authored inputs into the retained target checkout without rewriting unchanged
+bytes; package outputs, compiler build info and receipts remain subject to their existing currentness
+checks. The producer's request-local incoming archive does not replace target staging until actual
+admission READY and the existing publication flight are acquired. Source-transfer PREPARE/ACK is not
+admission READY and holds no runtime-build reservation. The shared workspace input-path
 owner includes relative extended tsconfigs even when the referenced config is excluded as a
 test-only root, so capture and package admission consume one complete config closure. Capture
 and runtime-support fingerprints apply that owner's source-test exclusions during recursive
@@ -363,8 +368,8 @@ Other daemon cross-target pairs still require a matching native worker. The shar
 admission owner reports missing cross prerequisites before dispatch.
 Finished payloads return through the shared runtime artifact closure
 transfer, existing manifest validation and producer retention, then ordinary snapshot publication.
-Transfer archives are staging files, not retained runtime artifacts. The producer releases its
-captured `source.tar` after upload and before compilation; the worker removes its source archive
+Transfer archives are staging files, not retained runtime artifacts. The producer retains its
+captured `source.tar` until all selected transfer channels finish, then releases it; the worker removes its source archive
 after extraction, including failed extraction. Downloaded artifact archives are released after
 extraction, and the transfer owner cleans its local staging directory and remote archives on
 success or failure. Remote cleanup failures remain visible without replacing the build failure.

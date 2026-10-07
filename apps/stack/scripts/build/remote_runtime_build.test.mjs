@@ -102,7 +102,8 @@ test('source capture rereads only changed members once and admits continuing edi
   const sourceDir = join(root, 'source');
   const captureDir = join(root, 'capture');
   await mkdir(sourceDir);
-  await writeFile(join(sourceDir, 'a.ts'), 'initial');
+  const changing = Array.from({ length: 700 }, (_, index) => `member-${index}.ts`);
+  await Promise.all(changing.map(name => writeFile(join(sourceDir, name), 'initial')));
   await writeFile(join(sourceDir, 'z.ts'), 'unchanged');
   const counts = new Map();
   const realCopy = fsPromises.cp;
@@ -110,16 +111,22 @@ test('source capture rereads only changed members once and admits continuing edi
     await realCopy(source, target, options);
     const name = basename(source);
     counts.set(name, (counts.get(name) ?? 0) + 1);
-    if (name === 'a.ts') await writeFile(source, counts.get(name) === 1 ? 'trailing' : 'after trailing');
+    if (name !== 'z.ts') await writeFile(source, counts.get(name) === 1 ? 'trailing' : 'after trailing');
   });
   syncBuiltinESMExports();
   t.after(() => { copy.mock.restore(); syncBuiltinESMExports(); });
-  const captured = await captureBuildInputFiles({ sourceDir, captureDir, readPaths: () => ['a.ts', 'z.ts'] });
-  assert.deepEqual(captured.rereadPaths, ['a.ts']);
-  assert.equal(counts.get('a.ts'), 2);
+  let inventories = 0;
+  const started = performance.now();
+  const captured = await captureBuildInputFiles({ sourceDir, captureDir, readPaths: () => { inventories++; return [...changing, 'z.ts']; } });
+  t.diagnostic(JSON.stringify({ sourceMembers: changing.length + 1, trailingReads: captured.rereadPaths.length, captureMs: performance.now() - started }));
+  assert.deepEqual([...captured.rereadPaths].sort(), [...changing].sort());
+  assert.equal(inventories, 2, 'continuing edits cannot trigger a third inventory');
+  for (const name of changing) {
+    assert.equal(counts.get(name), 2);
+    assert.equal(await readFile(join(captureDir, name), 'utf8'), 'trailing');
+    assert.equal(await readFile(join(sourceDir, name), 'utf8'), 'after trailing');
+  }
   assert.equal(counts.get('z.ts'), 1);
-  assert.equal(await readFile(join(captureDir, 'a.ts'), 'utf8'), 'trailing');
-  assert.equal(await readFile(join(sourceDir, 'a.ts'), 'utf8'), 'after trailing');
 });
 
 test('runtime source upload completes before the worker enters admission', async t => {
@@ -687,6 +694,62 @@ for await (const line of input) {
     outcome = 'payload-75';
     await assert.rejects(buildRuntimeArtifactComponentsAtPlacement({ ...options, selection: { components: {} } }), /exit 75.*no local replay/);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('merged daemon and server demand admits the captured server closure in a reused worker', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'runtime-merged-capture-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const repoDir = join(root, 'producer');
+  const stackBaseDir = join(root, 'stack');
+  const workspaceDir = join(root, 'worker');
+  await mkdir(stackBaseDir);
+  await mkdir(join(repoDir, 'apps/cli/src'), { recursive: true });
+  await writeFile(join(repoDir, 'apps/cli/src/index.ts'), 'daemon source');
+  await mkdir(join(repoDir, 'apps/server/scripts/empty'), { recursive: true });
+  await writeFile(join(repoDir, 'apps/server/scripts/generated.mjs'), 'captured server input');
+  await writeFile(join(repoDir, '.gitignore'), 'apps/server/scripts/\n');
+  await initializeCaptureRepo(repoDir);
+  // A prior worker generation can contain descendants absent from both Git
+  // and the prior captured inventory. Complete directory membership retires them.
+  await mkdir(join(workspaceDir, 'repo/apps/server/scripts/stale'), { recursive: true });
+  await writeFile(join(workspaceDir, 'repo/apps/server/scripts/stale/fixture.mjs'), 'stale worker input');
+  await writeFile(join(workspaceDir, 'source-files.json'), '[]');
+  const worker = { name: 'worker', platform: 'posix', ssh: 'worker', repoDir: '/mirror', cliHomeDir: '/worker' };
+  await writeFile(join(stackBaseDir, 'dev-targets.json'), JSON.stringify({ version: 3, targets: [worker],
+    runtimePlacement: { build: { mode: 'prefer-target', targets: ['worker'] } } }));
+  const selection = { components: { daemon: true, server: true } };
+  let verified = false;
+  await assert.rejects(withAdmittedRuntimeBuildPlacement({ rootDir: join(repoDir, 'apps/stack'), stackBaseDir,
+    selection: { components: { daemon: true } }, env: { ...process.env, HAPPIER_STACK_REPO_DIR: repoDir },
+    run: execution => execution.buildComponents({ selection }),
+    transport: {
+      // Only the physical admission/SSH transport is replaced. Source capture,
+      // archive extraction and both component fingerprint owners remain real.
+      spawnController: () => spawn(process.execPath, ['-e',
+        'console.log("HAPPIER_RUNTIME_BUILD_PREPARE="+JSON.stringify({worker:"worker"})); process.stdin.once("data",()=>{console.log("HAPPIER_RUNTIME_BUILD_READY="+JSON.stringify({worker:"worker",runtimeTarget:{platform:process.platform,arch:process.arch}})); process.stdin.once("data",()=>process.exit(23));}); process.stdin.once("end",()=>process.exit(0));',
+      ], { stdio: ['pipe', 'pipe', 'pipe'] }),
+      runCommand: async () => ({ code: 0 }),
+      transfer: async ({ localPath, remotePath }) => {
+        if (remotePath.endsWith('source.tar')) {
+          await writeFile(join(workspaceDir, 'source.tar'), await readFile(localPath));
+          return;
+        }
+        const request = JSON.parse(await readFile(localPath, 'utf8'));
+        const extracted = await extractCapturedBuildSource({ workspaceDir, files: request.files });
+        assert.equal(await readFile(join(extracted, 'apps/server/scripts/generated.mjs'), 'utf8'), 'captured server input');
+        assert.equal((await stat(join(extracted, 'apps/server/scripts/empty'))).isDirectory(), true);
+        await assert.rejects(stat(join(extracted, 'apps/server/scripts/stale')), { code: 'ENOENT' });
+        const extractedInputEntries = {};
+        const extractedInputs = await collectRuntimeComponentSourceFingerprints({ selection, sourceMetadata: { ...request.sourceMetadata, repoDir: extracted },
+          identityRepoDir: repoDir, includeRuntimeSupportInputs: true, excludeGeneratedPluginArtifacts: true, inputEntries: extractedInputEntries });
+        assertCapturedRuntimeInputs({ expectedInputs: request.expectedInputs, extractedInputs,
+          expectedInputEntries: request.expectedInputEntries, extractedInputEntries });
+        assert.deepEqual(Object.keys(request.expectedInputs).sort(), ['daemon', 'server']);
+        verified = true;
+      },
+    },
+  }), /exit 23.*no local replay/);
+  assert.equal(verified, true);
 });
 
 test('local runtime source capture keeps post-capture producer edits out of the dispatched build', async t => {
