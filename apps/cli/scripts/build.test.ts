@@ -52,12 +52,12 @@ describe('buildCliDist', () => {
       ]);
     } finally { rmSync(packageRoot, { recursive: true, force: true }); }
   });
-  it.each(['strict', 'qa-runtime', 'release'] as const)('records CLI type errors only in QA publication (%s)', async (mode) => {
+  it.each(['strict', 'qa-runtime', 'release', 'qa-syntax'] as const)('records CLI type errors only in QA publication (%s)', async (mode) => {
     const packageRoot = createTempDirSync('happier-cli-qa-typecheck-');
     try {
       writeBuildPackageManifest(packageRoot);
       mkdirSync(join(packageRoot, 'src'));
-      writeFileSync(join(packageRoot, 'src', 'index.ts'), 'export const invalid: string = 42;\n');
+      writeFileSync(join(packageRoot, 'src', 'index.ts'), mode === 'qa-syntax' ? 'export const = ;\n' : 'export const invalid: string = 42;\n');
       writeFileSync(join(packageRoot, 'tsconfig.build.json'), JSON.stringify({
         compilerOptions: { strict: true, noEmit: true, types: [], skipLibCheck: true },
         include: ['src/index.ts'],
