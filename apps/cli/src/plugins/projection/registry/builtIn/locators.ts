@@ -259,8 +259,13 @@ export function loadBundledPluginLocators(
     return result.loadedPlugins;
 }
 
+let admittedBundledPlugins: ReturnType<typeof loadBundledPluginLocatorResult> | null = null;
+
 export function loadCurrentBundledPluginLocatorResult() {
-    return loadBundledPluginLocatorResult(
+    // Imported bundled declarations are fixed for this process, as is its admitted
+    // publication. Installed-plugin discovery reuses that graph instead of cloning
+    // and validating every bundled manifest on each catalog/settings refresh.
+    return admittedBundledPlugins ??= loadBundledPluginLocatorResult(
         generatedBundledPluginManifests.BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS,
         readCurrentBundledPluginPublicationFailures(),
     );
