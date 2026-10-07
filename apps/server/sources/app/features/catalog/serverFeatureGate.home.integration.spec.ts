@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { setHomeSettings } from "@/app/home/settings/homeSettings";
+import { readRequestHomeEnv } from "@/app/home/settings/requestHomeEnv";
 import { createPresentUserSessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication.testkit";
 import { listSessionsForAccount, SessionListUnavailableQueryError } from "@/app/session/listing/service";
 import { createV2SessionListServerTiming } from "@/app/session/listing/timing";
@@ -105,6 +106,24 @@ afterEach(async () => {
 });
 
 describe("Home feature switches reach service readers", () => {
+    it("keeps an initially empty Home configuration resolved for its request while a new request sees changes", async () => {
+        const previousPublicUrl = process.env.HAPPIER_PUBLIC_SERVER_URL;
+        setDeploymentEnv("HAPPIER_PUBLIC_SERVER_URL", "https://home.test");
+        try {
+            const request = {};
+            const env = await readRequestHomeEnv(request);
+            expect(await isServerFeatureEnabledForHome("teams", { env })).toBe(true);
+
+            await storeSwitches({ [TEAMS]: false });
+
+            expect(await isServerFeatureEnabledForHome("teams", { env })).toBe(true);
+            expect(await isServerFeatureEnabledForHome("teams", { request })).toBe(true);
+            expect(await isServerFeatureEnabledForHome("teams", { request: {} })).toBe(false);
+        } finally {
+            setDeploymentEnv("HAPPIER_PUBLIC_SERVER_URL", previousPublicUrl);
+        }
+    });
+
     it("refuses a following-scope Session list once the Home turns sessions.following off", async () => {
         const viewer = await createAccount("member");
         await expect(listFollowing(viewer)).resolves.toBeTruthy();

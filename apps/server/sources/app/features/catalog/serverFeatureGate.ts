@@ -1,7 +1,7 @@
 import type { FeaturesResponse } from "@/app/features/types";
 import { readServerEnabledBit, type FeatureId, type ServerConfigEnv } from "@happier-dev/protocol";
 
-import { resolveServerFeaturePayload } from "./resolveServerFeaturePayload";
+import { resolveServerFeatureGate, resolveServerFeaturePayload } from "./resolveServerFeaturePayload";
 import { serverFeatureRegistry } from "./serverFeatureRegistry";
 import { readHomeConfigEnv, readHomeConfigEnvInTx } from "@/app/home/settings/homeSettings";
 import { readRequestHomeEnv } from "@/app/home/settings/requestHomeEnv";
@@ -13,8 +13,7 @@ export function resolveServerFeaturesForGating(env: NodeJS.ProcessEnv): Features
 
 /** The sync decision for a caller that already holds the Home-effective env (or a startup capture). */
 export function isServerFeatureEnabledForRequest(featureId: FeatureId, env: NodeJS.ProcessEnv): boolean {
-    const payload = resolveServerFeaturesForGating(env);
-    return readServerEnabledBit(payload, featureId) === true;
+    return resolveServerFeatureGate(env, serverFeatureRegistry, featureId);
 }
 
 /**

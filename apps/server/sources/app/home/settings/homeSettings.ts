@@ -139,13 +139,15 @@ export function buildHomeConfigEnvFromRecord(
         if (typeof secret === "string") opened[key] = secret;
     }
     const origin = { base, settingsValues: record.values, policyValues, openedSecrets: opened };
-    const overlay = composeHomeConfigEnv(origin, { registry });
+    // Even an empty Home resolves to a distinct snapshot: downstream Home readers must not
+    // mistake process.env for an unresolved source and read the same rows again mid-request.
+    const overlay = composeHomeConfigEnv(origin, { registry, snapshot: true });
     // §3.2: the public address falls back to what the hosting computer infers, last and read-only.
     // Peeking never waits; it probes only when neither the deployment nor the owner set an address.
     if (overlay.HAPPIER_PUBLIC_SERVER_URL?.trim()) return overlay;
     const inferred = peekInferredPublicServerUrl(process.env);
     return inferred
-        ? composeHomeConfigEnv({ ...origin, inferred: { HAPPIER_PUBLIC_SERVER_URL: inferred.url } }, { registry })
+        ? composeHomeConfigEnv({ ...origin, inferred: { HAPPIER_PUBLIC_SERVER_URL: inferred.url } }, { registry, snapshot: true })
         : overlay;
 }
 

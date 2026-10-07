@@ -1,4 +1,4 @@
-import type { FeaturesPayloadDelta } from '../types';
+import type { FeaturesPayloadDelta, FeaturesResponse } from '../types';
 
 import { resolveAutomationsFeature } from '../automationsFeature';
 import { resolveWorkflowsFeature } from '../workflowsFeature';
@@ -46,52 +46,62 @@ import { resolveAccountStoredContentCompatibilityFeature } from '../accountStore
 import { resolveAccountDirectoryFeature } from '../accountDirectoryFeature';
 import { resolveSessionConversationsFeature } from '../sessionConversationsFeature';
 
-export type ServerFeatureResolver = (env: NodeJS.ProcessEnv) => FeaturesPayloadDelta;
+export type ServerFeatureResolver = ((env: NodeJS.ProcessEnv) => FeaturesPayloadDelta) & Readonly<{
+    /** Every feature root this producer writes; empty for a diagnostic-only producer. */
+    featureRoots?: readonly (keyof FeaturesResponse['features'])[];
+}>;
+
+function register(
+    featureRoots: readonly (keyof FeaturesResponse['features'])[],
+    resolver: ServerFeatureResolver,
+): ServerFeatureResolver {
+    return Object.freeze(Object.assign(resolver, { featureRoots: Object.freeze(featureRoots) }));
+}
 
 export const serverFeatureRegistry = Object.freeze([
-    () => resolveAccountStoredContentCompatibilityFeature(),
-    (env) => resolveAccountDirectoryFeature(env),
-    () => resolveSessionProtocolCapabilitiesFeature(),
-    (env) => resolveServerUrlCapabilitiesFeature(env),
-    (env) => resolveServerRetentionCapabilitiesFeature(env),
-    () => resolveServerUsageAnalyticsCapabilitiesFeature(),
-    (env) => resolveLiveActivityRemoteUpdatesFeature(env),
-    (env) => resolveBugReportsFeature(env),
-    (env) => resolveAutomationsFeature(env),
-    (env) => resolveWorkflowsFeature(env),
-    (_env) => resolveSharingFeature(),
-    (env) => resolveVoiceFeature(env),
-    (env) => resolveConnectedServicesFeature(env),
-    (env) => resolveUpdatesFeature(env),
-    (env) => resolveAttachmentsUploadsFeature(env),
-    (env) => resolvePetsFeature(env),
-    (env) => resolveMachineTransferFeature(env),
-    (env) => resolveMachineTunnelFeature(env),
-    (env) => resolvePeerMediationFeature(env),
-    (env) => resolveLocalServicesFeature(env),
-    (env) => resolveProvidersFeature(env),
-    (env) => resolveSearchFeature(env),
-    (env) => resolveTeamsFeature(env),
-    (env) => resolveBrowserFeature(env),
-    (env) => resolvePluginsFeature(env),
-    (env) => resolveDevicesFeature(env),
-    (env) => resolveMachineLiveStreamFeature(env),
-    (env) => resolveMachineRpcFeature(env),
-    (env) => resolveMachinePoolsFeature(env),
-    (env) => resolveSessionFoldersFeature(env),
-    (env) => resolveSessionDraftsFeature(env),
-    (env) => resolveSessionBoardFeature(env),
-    (env) => resolveSessionFollowingFeature(env),
-    (env) => resolveSessionConversationsFeature(env),
-    (env) => resolveSessionFilteredListingFeature(env),
-    (env) => resolveSessionEphemeralRunnerFeature(env),
-    (env) => resolveSessionAgentSwitchingFeature(env),
-    (env) => resolveSessionHandoffFeature(env),
-    (env) => resolveSessionUsageLimitRecoveryFeature(env),
-    (env) => resolveTerminalFeature(env),
-    (env) => resolveFriendsFeature(env),
-    (env) => resolveOAuthFeature(env),
-    (env) => resolveAuthFeature(env),
-    (env) => resolveEncryptionFeature(env),
-    (env) => resolveE2eeFeature(env),
+    register([], () => resolveAccountStoredContentCompatibilityFeature()),
+    register([], (env) => resolveAccountDirectoryFeature(env)),
+    register([], () => resolveSessionProtocolCapabilitiesFeature()),
+    register([], (env) => resolveServerUrlCapabilitiesFeature(env)),
+    register([], (env) => resolveServerRetentionCapabilitiesFeature(env)),
+    register([], () => resolveServerUsageAnalyticsCapabilitiesFeature()),
+    register([], (env) => resolveLiveActivityRemoteUpdatesFeature(env)),
+    register(['bugReports'], (env) => resolveBugReportsFeature(env)),
+    register(['automations'], (env) => resolveAutomationsFeature(env)),
+    register(['workflows'], (env) => resolveWorkflowsFeature(env)),
+    register(['sharing'], (_env) => resolveSharingFeature()),
+    register(['voice'], (env) => resolveVoiceFeature(env)),
+    register(['connectedServices'], (env) => resolveConnectedServicesFeature(env)),
+    register(['updates'], (env) => resolveUpdatesFeature(env)),
+    register(['attachments'], (env) => resolveAttachmentsUploadsFeature(env)),
+    register(['pets'], (env) => resolvePetsFeature(env)),
+    register(['machines'], (env) => resolveMachineTransferFeature(env)),
+    register(['machines'], (env) => resolveMachineTunnelFeature(env)),
+    register(['machines'], (env) => resolvePeerMediationFeature(env)),
+    register(['localServices'], (env) => resolveLocalServicesFeature(env)),
+    register(['providers'], (env) => resolveProvidersFeature(env)),
+    register(['search'], (env) => resolveSearchFeature(env)),
+    register(['teams'], (env) => resolveTeamsFeature(env)),
+    register(['browser'], (env) => resolveBrowserFeature(env)),
+    register(['plugins'], (env) => resolvePluginsFeature(env)),
+    register(['devices'], (env) => resolveDevicesFeature(env)),
+    register(['machines'], (env) => resolveMachineLiveStreamFeature(env)),
+    register(['machines'], (env) => resolveMachineRpcFeature(env)),
+    register(['machines'], (env) => resolveMachinePoolsFeature(env)),
+    register(['sessions'], (env) => resolveSessionFoldersFeature(env)),
+    register(['sessions'], (env) => resolveSessionDraftsFeature(env)),
+    register(['sessions'], (env) => resolveSessionBoardFeature(env)),
+    register(['sessions'], (env) => resolveSessionFollowingFeature(env)),
+    register(['sessions'], (env) => resolveSessionConversationsFeature(env)),
+    register(['sessions'], (env) => resolveSessionFilteredListingFeature(env)),
+    register(['sessions'], (env) => resolveSessionEphemeralRunnerFeature(env)),
+    register(['sessions'], (env) => resolveSessionAgentSwitchingFeature(env)),
+    register(['sessions'], (env) => resolveSessionHandoffFeature(env)),
+    register(['sessions'], (env) => resolveSessionUsageLimitRecoveryFeature(env)),
+    register(['terminal'], (env) => resolveTerminalFeature(env)),
+    register(['social'], (env) => resolveFriendsFeature(env)),
+    register([], (env) => resolveOAuthFeature(env)),
+    register(['auth'], (env) => resolveAuthFeature(env)),
+    register(['encryption'], (env) => resolveEncryptionFeature(env)),
+    register(['e2ee'], (env) => resolveE2eeFeature(env)),
 ] satisfies readonly ServerFeatureResolver[]);
