@@ -244,7 +244,7 @@ export function createAccountArtifactStore(params: Readonly<{
   const headers = () => ({ Authorization: `Bearer ${params.credentials.token}` });
   const fetchStored = async (artifactId: string, signal?: AbortSignal): Promise<StoredArtifact | null> => {
     const response = await axios.get(`${resolveServerHttpBaseUrl()}/v1/artifacts/${encodeURIComponent(artifactId)}`, {
-      headers: headers(), timeout: 15_000, ...(signal ? { signal } : {}), validateStatus: () => true,
+      headers: headers(), ...(signal ? { signal } : {}), validateStatus: () => true,
     });
     if (response.status === 404) return null;
     if (response.data?.error === 'artifact_content_unavailable') throw new ArtifactEncryptionMaterialUnavailableError();
@@ -252,7 +252,7 @@ export function createAccountArtifactStore(params: Readonly<{
     return response.status >= 200 && response.status < 300 ? parseStoredArtifact(response.data) : null;
   };
   const accessUrl = (artifactId: string, leaf: string) => `${resolveServerHttpBaseUrl()}/v1/artifacts/${encodeURIComponent(artifactId)}/access/${leaf}`;
-  const accessConfig = (signal?: AbortSignal) => ({ headers: headers(), timeout: 15_000,
+  const accessConfig = (signal?: AbortSignal) => ({ headers: headers(),
     ...(signal ? { signal } : {}), validateStatus: () => true });
   const requireAccessResponse = (response: Readonly<{ status: number; data: unknown }>) => {
     if (response.status >= 200 && response.status < 300) return response.data;
@@ -548,7 +548,7 @@ export function createAccountArtifactStore(params: Readonly<{
       if (options?.limit !== undefined) url.searchParams.set('limit', String(options.limit));
       if (options?.cursor) url.searchParams.set('cursor', options.cursor);
       if (options?.includeBody) url.searchParams.set('includeBody', 'true');
-      const response = await axios.get(url.toString(), { headers: headers(), timeout: 15_000,
+      const response = await axios.get(url.toString(), { headers: headers(),
         ...(options?.signal ? { signal: options.signal } : {}), validateStatus: () => true });
       if (response.status === 500 && response.data?.error === 'Failed to get artifacts') throw new ArtifactEncryptionMaterialUnavailableError();
       if (response.status < 200 || response.status >= 300 || !Array.isArray(response.data)) {
@@ -639,7 +639,7 @@ export function createAccountArtifactStore(params: Readonly<{
         : await axios.post(`${resolveServerHttpBaseUrl()}/v1/artifacts${content.blob ? '/content/binary' : ''}`, {
         id: artifactId, header, body, dataEncryptionKey: codec.dataEncryptionKey, ...provenance,
         ...(content.blob ? { blob: content.blob } : {}),
-      }, { headers: headers(), timeout: 15_000, ...(input.signal ? { signal: input.signal } : {}), validateStatus: () => true });
+      }, { headers: headers(), ...(input.signal ? { signal: input.signal } : {}), validateStatus: () => true });
       const quota = readQuotaFailure(response);
       if (quota) throw Object.assign(new Error(quota.error), { code: quota.errorCode, details: quota.details });
       if (response.status < 200 || response.status >= 300) throw Object.assign(new Error(response.status === 409 ? 'artifact_create_conflict' : 'artifact_create_failed'), { code: response.status === 409 ? 'conflict' : 'create_failed' });
@@ -674,7 +674,7 @@ export function createAccountArtifactStore(params: Readonly<{
         body, expectedBodyVersion: input.expectedRevision.bodyVersion,
         ...provenance.wire,
         ...(blob !== undefined ? { blob } : {}),
-      }, { headers: headers(), timeout: 15_000, ...(input.signal ? { signal: input.signal } : {}), validateStatus: () => true });
+      }, { headers: headers(), ...(input.signal ? { signal: input.signal } : {}), validateStatus: () => true });
       const quota = readQuotaFailure(response);
       if (quota) return quota;
       if (response.status === 404) return { ok: false, errorCode: 'not_found', error: 'artifact_not_found' } as const;
@@ -692,7 +692,7 @@ export function createAccountArtifactStore(params: Readonly<{
       const revisionPath = options?.expectedRevision
         ? `/revision/${options.expectedRevision.headerVersion}/${options.expectedRevision.bodyVersion}` : '';
       const response = await axios.delete(`${resolveServerHttpBaseUrl()}/v1/artifacts/${encodeURIComponent(artifactId)}${revisionPath}`, {
-        headers: headers(), timeout: 15_000, ...(options?.signal ? { signal: options.signal } : {}), validateStatus: () => true,
+        headers: headers(), ...(options?.signal ? { signal: options.signal } : {}), validateStatus: () => true,
       });
       if (response.status === 404) return { ok: false, errorCode: 'not_found', error: 'artifact_not_found' } as const;
       if (response.status === 409 && response.data?.error === 'version-mismatch') return { ok: false, errorCode: 'version_mismatch', error: 'artifact_version_mismatch' } as const;

@@ -1,4 +1,5 @@
-import type { FeaturesResponse as ServerFeatures } from '@happier-dev/protocol';
+import { AsyncTtlCache, type FeaturesResponse as ServerFeatures } from '@happier-dev/protocol';
+import { armDeadlineTimer } from '@happier-dev/protocol/common/deadlineTimer';
 
 import { normalizeBaseUrl, withAbortTimeout } from '../diagnostics/httpClient';
 import { decodeServerFeaturesResponseBody } from './serverFeaturesParse';
@@ -30,19 +31,15 @@ export type FetchServerFeaturesSnapshotParams = Readonly<{
   }>) => Readonly<Record<string, string>> | null;
 }>;
 
-export const SERVER_FEATURES_REQUEST_ATTEMPT_TIMEOUT_MS = 60_000;
 const READY_TTL_MS = 10 * 60_000;
 const TRANSIENT_TTL_MS = 5_000;
 const RESPONSE_ERROR_TTL_MS = 30_000;
 const UNSUPPORTED_TTL_MS = 60 * 60_000;
 
-type CacheEntry = Readonly<{
-  snapshot: CliServerFeaturesSnapshot;
-  expiresAt: number;
-}>;
-
-const publicCache = new Map<string, CacheEntry>();
-const publicInFlight = new Map<string, Promise<CliServerFeaturesSnapshot>>();
+const publicCache = new AsyncTtlCache<CliServerFeaturesSnapshot>({
+  successTtlMs: READY_TTL_MS,
+  errorTtlMs: TRANSIENT_TTL_MS,
+});
 
 function isEndpointMissing(status: number): boolean {
   return status === 404 || status === 405 || status === 501;
@@ -63,20 +60,20 @@ function ttlForSnapshot(snapshot: CliServerFeaturesSnapshot): number {
 
 function writePublicSnapshot(key: string, snapshot: CliServerFeaturesSnapshot): CliServerFeaturesSnapshot {
   if (isRetryableError(snapshot)) {
-    const previous = publicCache.get(key)?.snapshot;
+    const previousEntry = publicCache.get(key);
+    const previous = previousEntry?.kind === 'success' ? previousEntry.value : undefined;
     if (previous?.status === 'ready') {
-      publicCache.set(key, { snapshot: previous, expiresAt: Date.now() + ttlForSnapshot(snapshot) });
+      publicCache.setSuccess(key, previous, { ttlMs: ttlForSnapshot(snapshot) });
       return previous;
     }
   }
-  publicCache.set(key, { snapshot, expiresAt: Date.now() + ttlForSnapshot(snapshot) });
+  publicCache.setSuccess(key, snapshot, { ttlMs: ttlForSnapshot(snapshot) });
   return snapshot;
 }
 
 async function requestServerFeaturesSnapshot(
   params: FetchServerFeaturesSnapshotParams,
 ): Promise<CliServerFeaturesSnapshot> {
-  const timeoutMs = params.timeoutMs ?? SERVER_FEATURES_REQUEST_ATTEMPT_TIMEOUT_MS;
   const token = params.token?.trim();
   const projection = params.projection ?? (token ? 'authenticated' : 'public');
   const authenticatedPath = '/v1/features/authenticated';
@@ -91,7 +88,7 @@ async function requestServerFeaturesSnapshot(
       return { status: 'error', reason: 'response_status' };
     }
     let response = await withAbortTimeout(
-      timeoutMs,
+      params.timeoutMs,
       async (signal) => await fetchImpl(`${normalizeBaseUrl(params.serverUrl)}${requestPath}`, {
         method: 'GET',
         redirect: 'manual',
@@ -106,7 +103,7 @@ async function requestServerFeaturesSnapshot(
     if (projection === 'authenticated' && token && !params.resolveAuthorizationHeaders && isEndpointMissing(response.status)) {
       provenance = 'public';
       response = await withAbortTimeout(
-        timeoutMs,
+        params.timeoutMs,
         async (signal) => await fetchImpl(`${normalizeBaseUrl(params.serverUrl)}${publicPath}`, {
           method: 'GET',
           redirect: 'manual',
@@ -136,57 +133,32 @@ async function requestServerFeaturesSnapshot(
   }
 }
 
-function waitForSharedPublicSnapshot(
-  request: Promise<CliServerFeaturesSnapshot>,
+async function readSharedPublicSnapshot(
+  key: string,
   params: Pick<FetchServerFeaturesSnapshotParams, 'timeoutMs' | 'signal'>,
 ): Promise<CliServerFeaturesSnapshot> {
   const waitBudgetMs = params.timeoutMs;
-  const signal = params.signal;
-  if (!signal && (typeof waitBudgetMs !== 'number' || !Number.isFinite(waitBudgetMs) || waitBudgetMs <= 0)) {
-    return request;
+  const waitController = typeof waitBudgetMs === 'number' && Number.isFinite(waitBudgetMs) && waitBudgetMs > 0
+    ? new AbortController()
+    : undefined;
+  const signal = waitController
+    ? params.signal ? AbortSignal.any([params.signal, waitController.signal]) : waitController.signal
+    : params.signal;
+  const cancelDeadline = waitController && typeof waitBudgetMs === 'number'
+    ? armDeadlineTimer(Date.now() + waitBudgetMs, () => waitController.abort(), { unref: true })
+    : undefined;
+  try {
+    return await publicCache.runDedupe(key, async (context) => {
+      const snapshot = await requestServerFeaturesSnapshot({ serverUrl: key, signal: context.signal });
+      return context.isCurrent() ? writePublicSnapshot(key, snapshot) : snapshot;
+    }, { signal });
+  } catch (error) {
+    if (params.signal?.aborted) params.signal.throwIfAborted();
+    if (waitController?.signal.aborted) return { status: 'error', reason: 'timeout' };
+    throw error;
+  } finally {
+    cancelDeadline?.();
   }
-
-  return new Promise<CliServerFeaturesSnapshot>((resolve, reject) => {
-    let settled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const cleanup = () => {
-      if (timer) clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
-    };
-    const finish = (snapshot: CliServerFeaturesSnapshot) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resolve(snapshot);
-    };
-    const onAbort = () => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(signal?.reason ?? new DOMException('Feature discovery cancelled', 'AbortError'));
-    };
-
-    if (signal?.aborted) {
-      onAbort();
-      return;
-    }
-    signal?.addEventListener('abort', onAbort, { once: true });
-    if (typeof waitBudgetMs === 'number' && Number.isFinite(waitBudgetMs) && waitBudgetMs > 0) {
-      timer = setTimeout(() => finish({ status: 'error', reason: 'timeout' }), waitBudgetMs);
-    }
-    void request.then(finish, reject);
-  });
-}
-
-function getOrStartPublicRequest(key: string): Promise<CliServerFeaturesSnapshot> {
-  let request = publicInFlight.get(key);
-  if (!request) {
-    request = requestServerFeaturesSnapshot({ serverUrl: key, timeoutMs: SERVER_FEATURES_REQUEST_ATTEMPT_TIMEOUT_MS })
-      .then((snapshot) => writePublicSnapshot(key, snapshot))
-      .finally(() => publicInFlight.delete(key));
-    publicInFlight.set(key, request);
-  }
-  return request;
 }
 
 /**
@@ -208,8 +180,8 @@ export async function fetchServerFeaturesSnapshot(
 
   const key = normalizeBaseUrl(params.serverUrl);
   const cached = publicCache.get(key);
-  if (cached && Date.now() < cached.expiresAt) return cached.snapshot;
-  return await waitForSharedPublicSnapshot(getOrStartPublicRequest(key), params);
+  if (cached?.kind === 'success' && publicCache.isFresh(cached)) return cached.value;
+  return await readSharedPublicSnapshot(key, params);
 }
 
 /** Force a fresh observation while updating the reusable public snapshot when applicable. */
@@ -226,7 +198,7 @@ export async function refreshServerFeaturesSnapshot(
   }
 
   const key = normalizeBaseUrl(params.serverUrl);
-  return await waitForSharedPublicSnapshot(getOrStartPublicRequest(key), params);
+  return await readSharedPublicSnapshot(key, params);
 }
 
 /** Explicit fresh transactional observation for enrollment, authentication, and diagnostics. */
@@ -238,5 +210,4 @@ export async function observeServerFeaturesSnapshot(
 
 export function resetServerFeaturesClientForTests(): void {
   publicCache.clear();
-  publicInFlight.clear();
 }

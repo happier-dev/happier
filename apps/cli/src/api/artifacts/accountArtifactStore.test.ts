@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHash, randomBytes } from 'node:crypto';
+import { createServer } from 'node:http';
 import { ed25519, x25519 } from '@noble/curves/ed25519';
 import { z } from 'zod';
 
@@ -34,6 +35,74 @@ describe('createAccountArtifactStore', () => {
     mockDelete.mockReset();
     mockGet.mockReset();
     mockPost.mockReset();
+  });
+
+  it('lets the operation lifecycle govern slow Artifact HTTP responses and cancellation', async () => {
+    // Keep Axios real: the loopback HTTP peer is the only substituted boundary,
+    // so a phase-local Axios timeout rejects valid work in this regression.
+    const { default: http } = await vi.importActual<typeof import('axios')>('axios');
+    mockGet.mockImplementation(http.get);
+    mockPost.mockImplementation(http.post);
+    mockDelete.mockImplementation(http.delete);
+    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: null },
+      getAccountEncryptionMode: async () => 'plain' });
+    const lifecycle = new AbortController();
+    const cancelled = new AbortController();
+    const row = { id: 'read', ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain',
+      header: encodePlainArtifactStoredContent({ title: 'Slow document' }),
+      body: encodePlainArtifactStoredContent({ body: 'valid content' }),
+      dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1,
+      seq: 1, createdAt: 1, updatedAt: 1 };
+    const usage = { usedBytes: 80, limitBytes: null, documentLimitBytes: null, revisionRetentionCount: 10 };
+    const server = createServer((request, response) => {
+      request.resume();
+      const path = new URL(request.url ?? '/', 'http://localhost').pathname;
+      if (path === '/v1/artifacts/cancel') { cancelled.abort(); return; }
+      if (path === '/v1/artifacts/network-failure') { request.socket.destroy(); return; }
+      const data = request.method === 'DELETE' ? {}
+        : request.method === 'POST' ? { id: 'create', success: true, headerVersion: 2, bodyVersion: 2 }
+        : path === '/v1/artifacts/storage/usage' ? usage
+        : path === '/v1/artifacts' ? [row] : row;
+      const respond = () => { response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify(data)); };
+      // The update's prerequisite read is fast; its write exercises the slow path.
+      if (request.method === 'GET' && path === '/v1/artifacts/update') { respond(); return; }
+      const timer = setTimeout(respond, 15_100);
+      response.once('close', () => clearTimeout(timer));
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', resolve);
+    });
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('missing_loopback_address');
+      await runWithServerHttpBaseUrl(`http://127.0.0.1:${address.port}`, async () => {
+        const results = await Promise.allSettled([
+          store.read('read', { signal: lifecycle.signal }),
+          store.list({ signal: lifecycle.signal }),
+          store.storageUsage(lifecycle.signal),
+          store.create({ artifactId: 'create', header: {}, body: 'valid content', signal: lifecycle.signal }),
+          store.update({ artifactId: 'update', header: {}, body: 'changed',
+            expectedRevision: { headerVersion: 1, bodyVersion: 1 }, signal: lifecycle.signal }),
+          store.delete('delete', { signal: lifecycle.signal }),
+        ]);
+        expect(results).toMatchObject([
+          { status: 'fulfilled', value: { artifactId: 'read', body: 'valid content' } },
+          { status: 'fulfilled', value: { coverage: 'complete', items: [{ artifactId: 'read' }] } },
+          { status: 'fulfilled', value: usage },
+          { status: 'fulfilled', value: { artifactId: 'create', revision: { headerVersion: 2, bodyVersion: 2 } } },
+          { status: 'fulfilled', value: { ok: true, revision: { headerVersion: 2, bodyVersion: 2 } } },
+          { status: 'fulfilled', value: { ok: true } },
+        ]);
+        await expect(store.delete('cancel', { signal: cancelled.signal })).rejects.toMatchObject({ code: 'ERR_CANCELED' });
+        await expect(store.read('network-failure', { signal: lifecycle.signal })).rejects.toMatchObject({ code: 'ECONNRESET' });
+        expect(lifecycle.signal.aborted).toBe(false);
+      });
+    } finally {
+      lifecycle.abort();
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
   });
 
   it.each(['plain', 'e2ee'] as const)('runs widget definition Actions through the real %s Account Artifact transport and refuses mode mismatch before writing', async mode => {

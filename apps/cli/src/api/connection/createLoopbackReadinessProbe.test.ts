@@ -62,7 +62,7 @@ describe('createLoopbackReadinessProbe', () => {
     expect(axiosGet).not.toHaveBeenCalled();
   });
 
-  it('uses the feature request owner deadline rather than a shorter identity cutoff', async () => {
+  it('accepts identity readiness beyond the old five-second phase cutoff', async () => {
     vi.useFakeTimers();
     try {
       let respond: (response: Response) => void = () => undefined;
@@ -90,10 +90,13 @@ describe('createLoopbackReadinessProbe', () => {
       vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
         features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_expected' } },
       }), { status: 200, headers: { 'content-type': 'application/json' } })));
-      axiosGet.mockImplementation(async (_url: string, options: { timeout: number }) => await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('authentication probe timed out')), options.timeout);
+      axiosGet.mockImplementation(async (_url: string, options: { timeout?: number }) => await new Promise((resolve, reject) => {
+        // Axios applies no deadline when timeout is omitted or zero.
+        const timeout = options.timeout && options.timeout > 0
+          ? setTimeout(() => reject(new Error('authentication probe timed out')), options.timeout)
+          : undefined;
         setTimeout(() => {
-          clearTimeout(timeout);
+          if (timeout !== undefined) clearTimeout(timeout);
           resolve({ status: 200 });
         }, 6_000);
       }));
