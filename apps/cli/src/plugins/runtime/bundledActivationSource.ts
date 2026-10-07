@@ -5,6 +5,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
+import { defaultCanImportFirstPartyPluginSource } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
 import { readCanonicalPluginManifest } from '@/plugins/manifest/normalize';
 
 import {
@@ -223,11 +224,6 @@ export function resolveBundledActivationSourceRepoRoot(
 
 function defaultRepoRoot(): string {
     return resolveBundledActivationSourceRepoRoot(import.meta.url);
-}
-
-function defaultCanImportFirstPartyPluginSource(): boolean {
-    const currentModulePath = normalizePathSeparators(fileURLToPath(import.meta.url));
-    return currentModulePath.endsWith('/src/plugins/runtime/bundledActivationSource.ts');
 }
 
 function resolveComparableFileIdentity(path: string): string {

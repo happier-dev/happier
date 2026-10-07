@@ -46,6 +46,12 @@ function normalizePathLike(pathLike: string): string {
   return String(pathLike ?? '').trim().replaceAll('\\', '/');
 }
 
+/** Actual source loading is distinct from a compiled module in a source checkout. */
+export function defaultCanImportFirstPartyPluginSource(): boolean {
+  const currentModulePath = normalizePathLike(fileURLToPath(import.meta.url));
+  return currentModulePath.endsWith('/src/packagedRuntime/resolvePackagedRuntimeEntrypoint.ts');
+}
+
 function normalizeExecutableBase(pathLike: string): string {
   return basename(normalizePathLike(pathLike)).toLowerCase().replace(/\.exe$/, '');
 }
