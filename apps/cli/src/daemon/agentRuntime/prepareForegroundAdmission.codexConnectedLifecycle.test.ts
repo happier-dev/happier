@@ -112,8 +112,8 @@ describe('foreground Codex Connected Account lifecycle through real materializat
       });
       let secondForeground: ReturnType<typeof spawnTestProcess> | null = null;
       try {
-        const claim = async (sessionId: string, foregroundPid: number, attemptId: string) => {
-          const admitted = await admission.admit(fixture.request({ connectedServices, sessionId, foregroundPid, attemptId }));
+        const claim = async (sessionId: string, foregroundPid: number, attemptId: string, provisionalSessionId = sessionId) => {
+          const admitted = await admission.admit(fixture.request({ connectedServices, sessionId: provisionalSessionId, foregroundPid, attemptId }));
           expect(admitted.ok, admitted.ok ? undefined : `${admitted.error.code}; ${String(connectedServicePreparationError)}`).toBe(true);
           if (!admitted.ok) throw new Error(admitted.error.code);
           const descriptor = admitted.capability.descriptor;
@@ -121,7 +121,7 @@ describe('foreground Codex Connected Account lifecycle through real materializat
             JSON.parse(await readFile(admitted.capability.admissionFilePath, 'utf8')),
           ).capability;
           const claimed = await admission.claimEnvironment({ v: 1, attemptId,
-            provisionalSessionId: sessionId, canonicalSessionId: sessionId,
+            provisionalSessionId, canonicalSessionId: sessionId,
             foregroundPid, pluginId: descriptor.pluginId, agentId: descriptor.agentId,
             occurrenceId: descriptor.occurrenceId, sourceCustody: descriptor.sourceCustody, capability,
             ...(admitted.launchPolicy.nativeHomeSourceEnvironmentKey
@@ -132,10 +132,11 @@ describe('foreground Codex Connected Account lifecycle through real materializat
           if (!claimed.ok) throw new Error(claimed.error.code);
           return claimed;
         };
-        const claimed = await claim(claimInput.canonicalSessionId, fixture.foregroundPid, 'attempt-1');
+        const provisionalSessionId = 'provisional-session-codex';
+        const claimed = await claim(claimInput.canonicalSessionId, fixture.foregroundPid, 'attempt-1', provisionalSessionId);
         expect(registry.getBySessionId(claimInput.canonicalSessionId)).toMatchObject({
           pid: fixture.foregroundPid, agentId: 'codex',
-          materializationKey: claimInput.canonicalSessionId,
+          materializationKey: provisionalSessionId,
           exactPurposeBindingSubjectId: `agent-session:${claimInput.canonicalSessionId}`,
         });
         secondForeground = spawnTestProcess(process.execPath, [join(fixture.directory, 'foreground', 'dist', 'index.mjs')]);
@@ -165,7 +166,7 @@ describe('foreground Codex Connected Account lifecycle through real materializat
           access_token: 'access-fresh', refresh_token: 'refresh-fresh', id_token: 'id-fresh', expires_in: 3600,
         }), { status: 200 }));
         const authority = authorityBySession.get(claimInput.canonicalSessionId);
-        const prepared = preparedBySession.get(claimInput.canonicalSessionId);
+        const prepared = preparedBySession.get(provisionalSessionId);
         if (!authority || !prepared) throw new Error('Actual promoted native auth source is unavailable');
         const refresh = createSessionConnectedServiceRuntimeAuthRefreshHandler({ registry,
           captureSessionAuthority: () => ({ identity: authority, isCurrent: () => prepared.isCurrent()
@@ -213,6 +214,9 @@ describe('foreground Codex Connected Account lifecycle through real materializat
         expect(registry.getBySessionId(secondSessionId)).toBeNull();
         await expect(stat(secondNativeHome)).rejects.toMatchObject({ code: 'ENOENT' });
         expect(registry.getBySessionId(claimInput.canonicalSessionId)).not.toBeNull();
+        await admission.releaseSession(claimInput.canonicalSessionId);
+        expect(registry.getBySessionId(claimInput.canonicalSessionId)).toBeNull();
+        await expect(stat(nativeHome)).rejects.toMatchObject({ code: 'ENOENT' });
       } finally {
         try { await admission.dispose(); }
         finally {

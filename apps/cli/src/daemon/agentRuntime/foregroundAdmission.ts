@@ -27,6 +27,8 @@ import type { AgentCliSessionCommandBuildInputV1 } from '@happier-dev/plugin-sdk
 import type { ProviderSessionRuntimePreferences } from '@/agent/catalog/types';
 import { normalizeAgentCliSessionCommandOptions } from '@/plugins/projection/registry/agentCatalogEntryHooks';
 import { runnerPinnedBundledCustodyCanSupersedeBootstrap } from '@/plugins/runtime/retainedPluginSourceAttestation';
+import type { ConnectedServiceRuntimeRegistry } from '@/daemon/connectedServices/runtimeRegistry/registry';
+import type { ConnectedServiceRuntimeTargetInput } from '@/daemon/connectedServices/runtimeRegistry/target';
 
 type Cleanup = () => void | Promise<void>;
 
@@ -54,6 +56,13 @@ export type PreparedForegroundAgentRuntimeAdmission = Readonly<{
         unsetEnvironmentVariableNames: readonly string[];
         sensitiveEnvironmentVariableNames: readonly string[];
         invocationContext: RunnerAgentInvocationContext;
+        connectedServiceRuntimeTarget?: Pick<ConnectedServiceRuntimeTargetInput,
+          | 'materializationKey'
+          | 'connectedServicesBindingsRaw'
+          | 'connectedServiceSelectionsEnvRaw'
+          | 'sessionDirectory'
+          | 'exactPurposeBindingSubjectId'
+        >;
         authority: Readonly<{
           retainedAgent: AgentSessionRunnerBindingV1;
           runner: AgentRuntimeDaemonServiceAuthorityRunnerIdentity;
@@ -93,6 +102,7 @@ type Admission = {
   detachRetirementListener: () => void;
   released: boolean;
   releasePromise: Promise<void> | null;
+  connectedServiceRuntimeTargetPid: number | null;
   daemonServiceAuthority: {
     retainedAgent: AgentSessionRunnerBindingV1;
     runner: AgentRuntimeDaemonServiceAuthorityRunnerIdentity;
@@ -128,6 +138,7 @@ type PendingAdmission = {
 };
 
 export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonly<{
+  connectedServiceRuntimeRegistry?: ConnectedServiceRuntimeRegistry;
   prepare(
     request: ForegroundAgentRuntimeAdmissionOwnerRequestV1,
   ): Promise<
@@ -204,6 +215,14 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
     if (admission.released) return;
     admission.released = true;
     admission.detachRetirementListener();
+    const targetPid = admission.connectedServiceRuntimeTargetPid;
+    if (targetPid !== null) {
+      const target = dependencies.connectedServiceRuntimeRegistry?.getByPid(targetPid);
+      if (target?.sessionId === admission.runtimeSessionId) {
+        dependencies.connectedServiceRuntimeRegistry?.unregisterPid(targetPid);
+      }
+      admission.connectedServiceRuntimeTargetPid = null;
+    }
     byAttemptId.delete(admission.request.attemptId);
     releaseReservation(admission.request, admission.runtimeSessionId);
     stopLivenessTimerIfIdle();
@@ -304,6 +323,7 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
           detachRetirementListener: () => {},
           released: false,
           releasePromise: null,
+          connectedServiceRuntimeTargetPid: null,
           daemonServiceAuthority: null,
         };
         const retire = () => {
@@ -576,6 +596,18 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
             invocationContext,
             admission: null,
           };
+        }
+        if (admission.released || admission.retirementSignal.aborted || !admission.isCurrent()) {
+          throw new Error('Foreground Agent runtime admission is unavailable');
+        }
+        if (claimed.connectedServiceRuntimeTarget && dependencies.connectedServiceRuntimeRegistry) {
+          admission.connectedServiceRuntimeTargetPid = claimRequest.foregroundPid;
+          dependencies.connectedServiceRuntimeRegistry.registerTarget({
+            ...claimed.connectedServiceRuntimeTarget,
+            pid: claimRequest.foregroundPid,
+            sessionId: claimRequest.canonicalSessionId,
+            agentId: retainedAgent.agentId,
+          });
         }
         return {
           ok: true,

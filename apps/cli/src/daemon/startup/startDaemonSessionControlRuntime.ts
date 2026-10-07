@@ -5701,6 +5701,7 @@ export async function startDaemonSessionControlRuntime(
     let foregroundAgentRuntimeHttpPort: number | null = null;
     const foregroundAgentRuntimeAdmission =
         createForegroundAgentRuntimeAdmissionOwner({
+            connectedServiceRuntimeRegistry,
             prepare: (request) =>
                 prepareForegroundAgentRuntimeAdmission(request, {
                     ...(params.activateSessionPurposeBindings
