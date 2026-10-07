@@ -13317,14 +13317,14 @@ describe('startDaemonSessionControlRuntime', () => {
         const setBrowserDaemonAutomationRoutesProvider = vi.fn();
         const onBrowserContextRoutesReady = vi.fn();
         const onBrowserAutomationRoutesReady = vi.fn();
-        const dispatchCommand = vi.fn(async (command: { commandId: string }) => ({
-            v: 1 as const,
-            commandId: command.commandId,
-            status: 'dispatched' as const,
-            adapterKind: 'chromiumSidecar' as const,
-            events: [],
-        }));
-        const browserSidecarControlAdapterFactory = createBrowserCapsSidecarAdapterFactory(dispatchCommand);
+        const onBrowserControlRoutesReady = vi.fn<(routes: import('../browser/control/routes').BrowserDaemonControlRoutes) => void>();
+        const { createBrowserSidecarCdpControlAdapter } = await import('../browser/sidecar/controlAdapter');
+        const browserView = { browserSessionId: 'browser_disabled', viewId: 'view_disabled' };
+        const sidecar = createBrowserSidecarCdpControlAdapter({ browserSessionId: browserView.browserSessionId, sidecarId: 'sidecar_disabled',
+            // The real startup, broker and controller remain in place; only Chromium is replaced.
+            transport: { openPage: async () => ({ targetId: 'page', sessionId: 'cdp-page' }),
+                dispatchPageCommand: async () => ({}), dispatchBrowserCommand: async () => ({}) } });
+        const browserSidecarControlAdapterFactory = () => ({ ok: true as const, adapter: sidecar, dispose: () => sidecar.dispose() });
         const browserContextSourceFactory = browserCapsContextSourceFactory();
 
         const runtime = await startDaemonSessionControlRuntime({
@@ -13354,6 +13354,7 @@ describe('startDaemonSessionControlRuntime', () => {
             processEnv: {},
             onBrowserContextRoutesReady,
             onBrowserAutomationRoutesReady,
+            onBrowserControlRoutesReady,
             ...({
                 browserSidecarControlAdapterFactory,
                 browserContextSourceFactory,
@@ -13370,8 +13371,21 @@ describe('startDaemonSessionControlRuntime', () => {
         expect(setBrowserDaemonAutomationRoutesProvider).not.toHaveBeenCalledWith(expect.any(Function));
         expect(onBrowserContextRoutesReady).not.toHaveBeenCalled();
         expect(onBrowserAutomationRoutesReady).not.toHaveBeenCalled();
-
-        await runtime.stopControlServer();
+        try {
+            const control = onBrowserControlRoutesReady.mock.calls[0]?.[0];
+            expect(control).toBeDefined();
+            if (!control) throw new Error('Browser control routes were not constructed');
+            expect(await control.dispatchCommand({ ...browserView, kind: 'openView', commandId: 'open', focus: true, platform: 'web',
+                target: { kind: 'externalUrl', targetId: 'external', url: 'https://example.test/' } }, { authority: 'present_user' }))
+                .toMatchObject({ status: 'dispatched' });
+            expect(await control.dispatchCommand({ ...browserView, kind: 'navigate', commandId: 'human', url: 'https://example.test/human' }, { authority: 'present_user' }))
+                .toMatchObject({ status: 'dispatched', events: expect.arrayContaining([
+                    expect.objectContaining({ kind: 'controllerChanged', state: expect.objectContaining({ controller: 'human' }) }),
+                ]) });
+            expect(await control.dispatchCommand({ ...browserView, kind: 'navigate', commandId: 'agent', url: 'https://example.test/agent' },
+                { authority: 'account_automation', bypassApprovals: true }))
+                .toMatchObject({ status: 'failed', error: { code: 'permission_denied' } });
+        } finally { await runtime.stopControlServer(); }
     });
 
     it('can register browser route owners after the server feature snapshot recovers', async () => {

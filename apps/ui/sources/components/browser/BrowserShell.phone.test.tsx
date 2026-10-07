@@ -10,7 +10,8 @@ import type { BrowserControlState } from '@/sync/domains/browser/control';
 const windowSize = vi.hoisted(() => ({ width: 390, height: 844 }));
 
 // The phone composition is decided by the window (a compact device) as well as the container, so
-// this file pins the window at a 390 × 844 phone through the canonical React Native boundary mock.
+// this file defaults to 390 × 844 through the canonical React Native boundary mock; the address
+// interaction regression also exercises the desktop composition.
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({ useWindowDimensions: () => ({ ...windowSize, scale: 3, fontScale: 1 }) });

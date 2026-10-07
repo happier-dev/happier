@@ -8,6 +8,7 @@ import { createCliActionExecutorHarness } from '@/session/actions/createCliActio
 import { createDaemonRuntimeActionExecutor } from '../../runtimeActionExecutor';
 import { ActionsSettingsV1Schema, FeaturesResponseSchema, type ApprovalRequest, type BrowserCommandV1 } from '@happier-dev/protocol';
 import { createControlAdapterAutomationTransport } from '../automation/adapters/controlBridge';
+import { createUnavailableRuntimeActionExecutor } from '@happier-dev/protocol/actions/executor/dispatch';
 
 function deferred() {
   let resolve: () => void = () => undefined;
@@ -216,7 +217,8 @@ describe('daemon browser controller commands', () => {
     let decision: 'approve' | 'reject' = 'reject';
     let stored: ApprovalRequest | undefined;
     const harness = createCliActionExecutorHarness({ token: 'token', sessionId: 'browser', mode: 'plain', ctx: null }, {
-      runtimeActionExecute: createDaemonRuntimeActionExecutor({ env: {}, resolveRouteOwners: () => ({ browserControl: control }),
+      runtimeActionExecute: createDaemonRuntimeActionExecutor({ env: {}, resolveRouteOwners: () => ({ browserControl: control,
+        browserUiAutomation: { ownsAutomationView: broker.ownsView, uiAutomation: createUnavailableRuntimeActionExecutor() } }),
         resolveServerFeaturesSnapshot: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({ features: {
           browser: { enabled: true, viewTargets: { enabled: true }, internal: { enabled: true }, sidecar: { enabled: true } },
         } }) }) }),
