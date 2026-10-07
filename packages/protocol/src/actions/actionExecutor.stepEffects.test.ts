@@ -39,7 +39,8 @@ describe('workflow effect Actions', () => {
         return { exitCode: 0, stdout: '$(touch unwanted)', stderr: '' };
       },
     } as unknown as ActionExecutorDeps);
-    const context = { surface: 'cli' as const, authority: 'present_user' as const,
+    // The effect is already host-approved; policy defaults are covered by the adjacent Action suite.
+    const context = { surface: 'cli' as const, authority: 'present_user' as const, bypassApprovals: true,
       externalActionTarget: { kind: 'machine' as const, machineId: 'machine', project: { machineId: 'machine', directory: '/workspace' } },
       actionRequestId: 'run/step/0' };
     const command = { command: 'printf "%s" "$VALUE"', env: { VALUE: '$(touch unwanted)' } };
