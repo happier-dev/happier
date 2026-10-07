@@ -13,7 +13,7 @@ export const DEFAULT_REMOTE_STACK_STARTUP_TIMEOUT_MS = 30 * 60_000;
 // while argv and path normalization remain thin transport adapters.
 export const REMOTE_COMMAND_CLASSIFICATION = Object.freeze({
   packageManagerCommands: Object.freeze(['npm', 'npx', 'pnpm', 'yarn']),
-  sourceTestComponents: Object.freeze(['apps/cli', 'apps/ui']),
+  sourceTestComponents: Object.freeze(['apps/cli', 'apps/ui', 'packages/plugins/triage']),
   sourceTestConfigs: Object.freeze(['vitest.config.ts']),
   sourceTestScripts: Object.freeze(['vitest', 'vitest:local']),
 });

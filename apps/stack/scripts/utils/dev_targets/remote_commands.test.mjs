@@ -297,6 +297,14 @@ test('source-test classification follows the configured resolver contract rather
     ['corepack', 'yarn', '-s', 'vitest:artifact'],
   ]) assert.equal(resolveRemoteValidationKind(args, { cwd: 'apps/cli' }), 'runtime');
   assert.equal(resolveRemoteValidationKind(['vitest', 'run'], { cwd: 'apps/ui' }), 'source-test');
+  assert.equal(resolveRemoteValidationKind(
+    ['node', '../../../node_modules/vitest/vitest.mjs', 'run', '--config=vitest.config.ts'],
+    { cwd: 'packages/plugins/triage' },
+  ), 'source-test');
+  assert.equal(resolveRemoteValidationKind(
+    ['vitest', 'run', '--config=vitest.integration.config.ts'],
+    { cwd: 'packages/plugins/triage' },
+  ), 'runtime');
 });
 
 test('remote command classification admits declaration preparation for package-manager component cwd', () => {
