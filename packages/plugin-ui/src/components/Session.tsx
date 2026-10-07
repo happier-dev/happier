@@ -1,17 +1,19 @@
 import {
   createContext,
-  useCallback,
   useContext,
-  useId,
-  useLayoutEffect,
   useState,
-  useSyncExternalStore,
   type ReactElement,
   type ReactNode,
 } from 'react';
 
 import { useOptionalPluginUiPresentationHost } from '../presentationHost/context.js';
 import { useOptionalHappierTabPanelActivityInternal } from '../presentation/navigation/Tabs.js';
+import {
+  createSessionPartClaims,
+  useSessionPartClaim,
+  type SessionPartClaims,
+  type SessionPartKind,
+} from '../presentationHost/sessionPartClaims.js';
 
 export type SessionProviderProps = Readonly<{
   /** A Session in the mounting surface's Account. The host resolves it; nothing else is trusted. */
@@ -33,62 +35,9 @@ export type SessionChatProps = Readonly<{
   testID?: string;
 }>;
 
-type SessionPartKind = 'transcript' | 'composer';
-
-/**
- * The enclosing `SessionProvider`, as far as this package knows it: which part slot each kind is
- * held by. A part outside a provider, or a second part of a kind inside one, renders nothing and
- * never reaches the host (one controller, at most one of each part).
- */
-type SessionPartClaims = Readonly<{
-  subscribe(listener: () => void): () => void;
-  owner(part: SessionPartKind): string | null;
-  claim(part: SessionPartKind, id: string): void;
-  release(part: SessionPartKind, id: string): void;
-}>;
-
-function createSessionPartClaims(): SessionPartClaims {
-  const owners: Record<SessionPartKind, string | null> = { transcript: null, composer: null };
-  const listeners = new Set<() => void>();
-  const emit = () => {
-    for (const listener of Array.from(listeners)) listener();
-  };
-  return {
-    subscribe(listener) {
-      listeners.add(listener);
-      return () => {
-        listeners.delete(listener);
-      };
-    },
-    owner: (part) => owners[part],
-    claim(part, id) {
-      if (owners[part] !== null) return;
-      owners[part] = id;
-      emit();
-    },
-    release(part, id) {
-      if (owners[part] !== id) return;
-      owners[part] = null;
-      emit();
-    },
-  };
-}
-
 const SessionPartClaimsContext = createContext<SessionPartClaims | null>(null);
-const NO_SUBSCRIPTION = () => () => undefined;
-
-function useSessionPartClaim(part: SessionPartKind): boolean {
-  const claims = useContext(SessionPartClaimsContext);
-  const id = useId();
-  const readOwner = useCallback(() => claims?.owner(part) ?? null, [claims, part]);
-  const owner = useSyncExternalStore(claims?.subscribe ?? NO_SUBSCRIPTION, readOwner, readOwner);
-  useLayoutEffect(() => {
-    if (!claims || owner !== null) return;
-    claims.claim(part, id);
-  }, [claims, id, owner, part]);
-  useLayoutEffect(() => () => claims?.release(part, id), [claims, id, part]);
-  return claims !== null && owner === id;
-}
+const TRANSCRIPT_PART = ['transcript'] as const;
+const COMPOSER_PART = ['composer'] as const;
 
 function normalizeSessionId(sessionId: string): string {
   return typeof sessionId === 'string' ? sessionId.trim() : '';
@@ -124,7 +73,8 @@ export function SessionProvider(props: SessionProviderProps): ReactElement | nul
 
 function SessionPart(props: SessionPartProps & Readonly<{ part: SessionPartKind }>): ReactElement | null {
   const host = useOptionalPluginUiPresentationHost();
-  const owns = useSessionPartClaim(props.part);
+  const claims = useContext(SessionPartClaimsContext);
+  const owns = useSessionPartClaim(claims, props.part === 'transcript' ? TRANSCRIPT_PART : COMPOSER_PART);
   const renderSessionPart = host?.renderSessionPart;
   if (!renderSessionPart || !owns) return null;
   return (

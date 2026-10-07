@@ -177,6 +177,23 @@ describe('EmbeddedSessionProvider', () => {
         expect(screen.tree.findAllHostsByTestId('duplicate-transcript')).toHaveLength(0);
     });
 
+    it('keeps nested controllers independent while suppressing duplicates within each controller', async () => {
+        const screen = await renderScreen(host(embedded(CHAT, <>
+            <EmbeddedSessionTranscriptPart testID="outer-transcript" />
+            <EmbeddedSessionComposerPart testID="outer-composer" />
+            {embedded(CHAT, <>
+                <EmbeddedSessionTranscriptPart testID="inner-transcript" />
+                <EmbeddedSessionTranscriptPart testID="inner-duplicate" />
+                <EmbeddedSessionComposerPart testID="inner-composer" />
+            </>)}
+        </>)));
+        expect(screen.tree.findAllHostsByTestId('outer-transcript')).toHaveLength(1);
+        expect(screen.tree.findAllHostsByTestId('inner-transcript')).toHaveLength(1);
+        expect(screen.tree.findAllHostsByTestId('inner-duplicate')).toHaveLength(0);
+        expect(screen.tree.findAll(matchesComponent(ChatList))).toHaveLength(2);
+        expect(screen.tree.findAll(matchesComponent(AgentInput))).toHaveLength(2);
+    });
+
     it.each([
         ['openSession', 'session.embedded.respondInSession'],
         ['readOnly', 'session.sharing.permissionApprovalsDisabledReadOnly'],
