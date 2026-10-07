@@ -24,6 +24,7 @@ import {
     resolveNewSessionDraftAgentId,
     resolveNewSessionDraftMachineId,
 } from '@/components/sessions/drafts/newSessionDraftPresentation';
+import * as draftPresentation from '@/components/sessions/drafts/newSessionDraftPresentation';
 
 import {
     NewSessionDraftsSection,
@@ -216,13 +217,22 @@ vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return createUnistylesMock();
 });
-vi.mock('@/text', () => ({
-    t: (key: string, params?: Readonly<Record<string, unknown>>) => (
-        key === 'sessionDrafts.sectionTitleForHome' || key === 'sessionDrafts.waitingSectionTitleForHome'
-            ? `${key}:${String(params?.home ?? '')}`
-            : key
-    ),
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key, params) => (
+            key === 'sessionDrafts.sectionTitleForHome' || key === 'sessionDrafts.waitingSectionTitleForHome'
+                ? `${key}:${String(params?.home ?? '')}`
+                : key
+        ),
+    });
+});
+// Catalog consumers read the locale through this entry point as well. Keep
+// locale I/O at the same testkit boundary as `t`, rather than loading all locales.
+vi.mock('@/text/i18n', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 const focusState = vi.hoisted(() => ({ calls: [] as string[] }));
 vi.mock('@/components/ui/lists/Item', async () => {
     const ReactModule = await import('react');
@@ -367,6 +377,76 @@ describe('NewSessionDraftsSection', () => {
         serverProfilesState.unavailableProfileIds.clear();
         modalMockState.confirmResult = false;
         standardCleanup();
+    });
+
+    it('renders only the edited draft while typing and keeps unchanged availability inert', async () => {
+        // Observe the real row's presentation work, without replacing its implementation.
+        const presentation = vi.spyOn(draftPresentation, 'buildNewSessionDraftRowPresentation');
+        const first = draft({ draftId: 'draft-first' });
+        const second = draft({ draftId: 'draft-second' });
+        const onContinue = vi.fn();
+        const onDelete = vi.fn(async () => false);
+        const render = (edited: NewSessionDraftProjection, machineUnavailable = false) => (
+            <NewSessionDraftsSectionView
+                drafts={[edited, second]}
+                availabilityByDraftId={{
+                    [first.draftId]: { machineUnavailable: false, pluginUnavailable: false, attachmentNeedsAttention: false },
+                    [second.draftId]: { machineUnavailable, pluginUnavailable: false, attachmentNeedsAttention: false },
+                }}
+                onContinue={onContinue}
+                onDelete={onDelete}
+            />
+        );
+        try {
+            const screen = await renderScreen(render(first));
+            presentation.mockClear();
+            let edited = first;
+            for (let index = 1; index <= 14; index++) {
+                edited = draft({ draftId: first.draftId }, 'x'.repeat(index));
+                await act(async () => screen.update(render(edited)));
+            }
+            const editedRenders = presentation.mock.calls.filter(([value]) => value.draftId === first.draftId).length;
+            const untouchedRenders = presentation.mock.calls.filter(([value]) => value.draftId === second.draftId).length;
+            expect({ editedRenders, untouchedRenders }).toEqual({ editedRenders: 14, untouchedRenders: 0 });
+            expect(screen.findByTestId(`session-draft-row:new-session:${first.draftId}`)?.props.title).toBe('x'.repeat(14));
+            // A fresh projection of the same availability does not invalidate either row.
+            presentation.mockClear();
+            await act(async () => screen.update(render(edited)));
+            expect(presentation).not.toHaveBeenCalled();
+            // Real availability changes still reach exactly the affected row.
+            await act(async () => screen.update(render(edited, true)));
+            expect(presentation.mock.calls.map(([value]) => value.draftId)).toEqual([second.draftId]);
+            expect(screen.findByTestId(`session-draft-row:new-session:${second.draftId}`)?.props.subtitle)
+                .toBe('sessionDrafts.availability.machineUnavailable');
+            await screen.unmount();
+        } finally {
+            presentation.mockRestore();
+        }
+    });
+
+    it('uses the latest committed deletion handler without rendering unchanged rows', async () => {
+        const presentation = vi.spyOn(draftPresentation, 'buildNewSessionDraftRowPresentation');
+        const drafts = [draft()];
+        const onContinue = vi.fn();
+        const oldDelete = vi.fn(async () => false);
+        const currentDelete = vi.fn(async () => false);
+        const render = (onDelete: typeof oldDelete) => (
+            <NewSessionDraftsSectionView drafts={drafts} onContinue={onContinue} onDelete={onDelete} rowScope={HOME_A_SCOPE} />
+        );
+        try {
+            const screen = await renderScreen(render(oldDelete));
+            presentation.mockClear();
+            await screen.update(render(currentDelete));
+            expect(presentation).not.toHaveBeenCalled();
+            await act(async () => {
+                screen.findByTestId(`session-draft-delete:new-session:${drafts[0].draftId}`)?.props.onPress({ stopPropagation() {} });
+            });
+            expect(oldDelete).not.toHaveBeenCalled();
+            expect(currentDelete).toHaveBeenCalledWith(drafts[0].draftId, HOME_A_SCOPE);
+            await screen.unmount();
+        } finally {
+            presentation.mockRestore();
+        }
     });
 
     it('derives a prompt-first title without routine machine, folder, agent, or model metadata', () => {
