@@ -200,7 +200,7 @@ describe('public declarative voice model-pack authoring integration fixture', ()
         }),
       ]);
       expect(enabled.registry.settings
-        .filter(entry => entry.pluginId === pluginId)
+        ?.filter(entry => entry.pluginId === pluginId)
         .map(entry => entry.definition)).toEqual(manifest.contributes.settings);
       expect(enabled.projection.settingsById).toHaveProperty(qualifiedSettingsId);
       expect(enabled.projection.familiesById.voiceModelPacks?.entriesById).toHaveProperty(qualifiedPackId);
