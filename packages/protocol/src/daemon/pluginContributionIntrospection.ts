@@ -1,6 +1,5 @@
 import { z } from 'zod';
 
-import { utf8ByteLength } from '../bugs/reports/utf8.js';
 import { PluginJsonValueV2Schema } from '../plugins/contributions/publicTypes.js';
 import {
   PluginComposerReferenceProviderPresentationV1Schema,
@@ -9,12 +8,7 @@ import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdent
 import { PluginIdSchema } from '../plugins/pluginId.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
-export const PLUGIN_DIAGNOSTIC_TEXT_MAX_UTF8_BYTES_V1 = 2_048;
-
-export const PluginDiagnosticTextV1Schema = z.string().trim().min(1).refine(
-  (value) => utf8ByteLength(value) <= PLUGIN_DIAGNOSTIC_TEXT_MAX_UTF8_BYTES_V1,
-  `Plugin diagnostic text must not exceed ${PLUGIN_DIAGNOSTIC_TEXT_MAX_UTF8_BYTES_V1} UTF-8 bytes`,
-);
+export const PluginDiagnosticTextV1Schema = z.string().trim().min(1);
 
 export const PluginDiagnosticRemediationV1Schema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('retry') }).strict(),

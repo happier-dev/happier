@@ -7,14 +7,7 @@ export type ReviewCommentTextSnapshotLinesV1 = Readonly<{
   afterContext: readonly string[];
 }>;
 
-export const REVIEW_COMMENT_TEXT_SNAPSHOT_MAX_BYTES_V1 = 5 * 1024 * 1024;
-export const REVIEW_COMMENT_TEXT_SNAPSHOT_MAX_LINE_BYTES_V1 = 4_000;
-
 const BIDI_CONTROL_RE_V1 = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/u;
-
-export function reviewCommentTextSnapshotUtf8BytesV1(value: string): number {
-  return utf8ToBytes(value).length;
-}
 
 export function reviewCommentTextSnapshotHasBidiControlsV1(lines: readonly string[]): boolean {
   return lines.some((line) => BIDI_CONTROL_RE_V1.test(line));

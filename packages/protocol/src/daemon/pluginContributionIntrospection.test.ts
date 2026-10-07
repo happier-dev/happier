@@ -200,12 +200,12 @@ describe('plugin contribution introspection wire contract', () => {
     }).success).toBe(false);
   });
 
-  it('rejects diagnostic and lifecycle reason text beyond the wire UTF-8 bound', () => {
-    const oversized = '🙂'.repeat(513);
+  it('preserves complete diagnostic and lifecycle reason text in its strict wire records', () => {
+    const message = '🙂'.repeat(1_200);
     const record = {
       version: 1,
       id: 'diag-oversized',
-      data: { code: 'broken', severity: 'error', message: oversized },
+      data: { code: 'broken', severity: 'error', message },
       plugin: { id: 'acme.example', version: '1.0.0', source: 'development' },
       stage: 'activation',
       host: 'cli',
@@ -214,17 +214,17 @@ describe('plugin contribution introspection wire contract', () => {
       resolution: { state: 'current' },
     } as const;
 
-    expect(PluginDiagnosticRecordV1Schema.safeParse(record).success).toBe(false);
-    expect(PluginContributionLifecycleRecordV1Schema.safeParse({
+    expect(PluginDiagnosticRecordV1Schema.parse(record).data.message).toBe(message);
+    expect(PluginContributionLifecycleRecordV1Schema.parse({
       version: 1,
       contribution,
       progression: { declared: true, normalized: true, merged: true },
-      registration: { requirement: 'required', state: 'unavailable', reason: oversized },
+      registration: { requirement: 'required', state: 'unavailable', reason: message },
       activation: { state: 'dormant' },
       projection: { state: 'projected' },
       consumer: 'test-consumer',
       platforms: ['cli'],
       diagnostics: [],
-    }).success).toBe(false);
+    }).registration).toMatchObject({ state: 'unavailable', reason: message });
   });
 });

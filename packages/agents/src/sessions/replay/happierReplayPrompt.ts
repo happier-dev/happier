@@ -1,4 +1,8 @@
 import { MENTION_BOUNDS } from '@happier-dev/protocol/runtime/input/mentionRefV1';
+import {
+  HappierReplayRecentMessagesCountSchema,
+  HappierReplayWireMaxSeedCharsSchema,
+} from '@happier-dev/protocol/sessions/replay-seed-budget';
 import type { SessionWorkStateV1 } from '@happier-dev/protocol';
 
 export type HappierReplayStrategy = 'recent_messages' | 'summary_plus_recent';
@@ -90,24 +94,6 @@ export type HappierReplayRetrievalPointerV1 = Readonly<{
    */
   nativeTranscriptPath?: string | null;
 }>;
-
-function normalizePositiveInt(value: unknown, fallback: number, opts?: { min?: number; max?: number }): number {
-  const raw = typeof value === 'number' && Number.isFinite(value) ? value : Number(value);
-  const n = Number.isFinite(raw) ? Math.floor(raw) : fallback;
-  const min = opts?.min ?? 1;
-  const max = opts?.max ?? 500;
-  if (!Number.isFinite(n)) return fallback;
-  return Math.max(min, Math.min(max, n));
-}
-
-function normalizeNullablePositiveInt(value: unknown, opts: { min: number; max: number }): number | null {
-  if (value == null) return null;
-  const raw = typeof value === 'number' && Number.isFinite(value) ? value : Number(value);
-  if (!Number.isFinite(raw)) return null;
-  const n = Math.floor(raw);
-  if (!Number.isFinite(n)) return null;
-  return Math.max(opts.min, Math.min(opts.max, n));
-}
 
 function normalizeStrategy(value: unknown): HappierReplayStrategy {
   return value === 'summary_plus_recent' ? 'summary_plus_recent' : 'recent_messages';
@@ -1487,7 +1473,9 @@ function resolveHappierReplayFrameLayout(
     return sameSession ? raw : null;
   })();
 
-  const totalCap = normalizeNullablePositiveInt(params.maxPromptChars, { min: 200, max: 200_000 });
+  const totalCap = params.maxPromptChars == null
+    ? null
+    : HappierReplayWireMaxSeedCharsSchema.parse(params.maxPromptChars);
   const reserved = Number.isFinite(params.reservedChars) ? Math.max(0, Math.trunc(params.reservedChars ?? 0)) : 0;
   // The reservation is taken off the top so BOTH the plan and the rendered seed
   // are sized against the same number the dispatch-time refit will apply.
@@ -1835,14 +1823,9 @@ export function buildHappierReplayPromptFromDialog(params: Readonly<{
    * truncates the newest item's TEXT, marking every omission. The returned prompt is never
    * longer than this value at ANY budget: when the structural frame plus one marked fragment
    * cannot fit, the builder returns `''` rather than a frame that announces replayed context it
-   * did not carry. The sole caller treats an empty draft as "no replay seed".
-   *
-   * The floor that matters is NOT the env var. `HAPPIER_REPLAY_MAX_SEED_CHARS` is clamped to
-   * `min: 500` (apps/cli/src/configuration.ts), but `maxSeedChars` is also caller-supplied on
-   * the wire with `min(200)` (packages/protocol/src/execution/runs/startRequest.ts) and
-   * continueWithReplay/fork/execution-run callers pass it through in place of the configured
-   * value, so 200..499 is reachable in production. The spec sweeps every budget from 200 and
-   * pins both invariants: within the total, and never a sliced `User: ` / `Assistant: ` label.
+   * did not carry. A source with dialog that cannot fit is unavailable, not empty.
+   * Every selected positive total is honored; feasibility depends on the actual
+   * frame and reservation rather than a separate configurable minimum.
    */
   maxPromptChars?: number | null;
   /** See `HappierReplayFrameParams.reservedChars`. */
@@ -1850,7 +1833,7 @@ export function buildHappierReplayPromptFromDialog(params: Readonly<{
 }>): string {
   const recentMessagesCount = params.recentMessagesCount === null
     ? null
-    : normalizePositiveInt(params.recentMessagesCount, 16, { min: 1, max: 500 });
+    : HappierReplayRecentMessagesCountSchema.catch(16).parse(params.recentMessagesCount);
 
   const dialog: Array<{
     role: 'User' | 'Assistant';

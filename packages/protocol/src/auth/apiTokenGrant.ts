@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { CallerInputConstraintsV1Schema, type CallerInputConstraintsV1 } from './callerInputConstraintsV1.js';
 export { CallerInputConstraintsV1Schema, type CallerInputConstraintsV1 } from './callerInputConstraintsV1.js';
 import { ACTION_ID_FAMILIES_V1, ActionIdFamilyV1Schema, type ActionIdFamilyV1 } from '../actions/actionIds.js';
@@ -24,7 +25,7 @@ export const ApiTokenGrantOriginV1Schema = CanonicalHttpOriginSchema.refine((val
   return url.protocol === 'https:' || ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
 }, 'Grant origins require HTTPS, except HTTP on loopback.');
 
-const GrantIdSchema = z.string().min(1).max(512);
+const GrantIdSchema = z.string().min(1);
 const modelKey = (ref: ProviderBoundModelRef) => JSON.stringify([ref.agentTargetKey, ref.providerConnectionId, ref.modelId]);
 
 export const ApiTokenGrantV1Schema = z.object({
@@ -57,6 +58,7 @@ export const ApiTokenGrantV1Schema = z.object({
   }
 });
 export type ApiTokenGrantV1 = z.infer<typeof ApiTokenGrantV1Schema>;
+export const StoredApiTokenGrantV1Schema = createStoredReadSchema(ApiTokenGrantV1Schema);
 
 export const API_TOKEN_FULL_GRANT_V1: ApiTokenGrantV1 = Object.freeze({
   v: 1, actions: null, targets: null, approve: false, origins: [], models: null, permissionModes: null, create: null,
@@ -137,10 +139,8 @@ export function isApiTokenGrantWithinV1(child: ApiTokenGrantV1, parent: ApiToken
       parent.permissionModes?.map((mode) => parseAgentPermissionIntentV1Alias(mode)!) ?? null)) return false;
   if (parent.actions !== null) {
     if (child.actions === null) return false;
-    const ordinaryIdWithin = (id: string) => DISCOVERY_IDS.has(id)
-      || (DECISION_ACTION_IDS as readonly string[]).includes(id)
-      || parent.actions!.ids.includes(id)
-      || parent.actions!.families.some((family) => (ACTION_ID_FAMILIES_V1[family] as readonly string[]).includes(id));
+    const ordinaryIdWithin = (id: string) => (DECISION_ACTION_IDS as readonly string[]).includes(id)
+      || actionGranted(parent, id);
     if (!child.actions.ids.every(ordinaryIdWithin)
       || !child.actions.families.every((family: ActionIdFamilyV1) => parent.actions!.families.includes(family) || (ACTION_ID_FAMILIES_V1[family] as readonly string[]).every(ordinaryIdWithin))) return false;
   }

@@ -5,7 +5,6 @@ import {
   type PluginDiagnosticDataV1,
   type PluginDiagnosticRemediationV1,
 } from '../../daemon/pluginContributionIntrospection.js';
-import { trimBugReportTextHeadToMaxBytes } from '../../bugs/reports/redaction.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import { computeCanonicalDomainSeparatedHexDigest } from '../../crypto/canonicalDigest.js';
 import type { JsonValue as StrictJsonValue } from '../../json/strictJsonValue.js';
@@ -32,7 +31,6 @@ import type {
 
 const PLUGIN_ACTION_FAILURE_FALLBACK_CODE = 'plugin_action_execution_failed';
 const PLUGIN_ACTION_FAILURE_FALLBACK_MESSAGE = 'Plugin operation failed';
-export const PLUGIN_ACTION_FAILURE_MESSAGE_MAX_UTF8_BYTES = 2_048;
 
 /**
  * Stable, non-secret Action failure projection shared by every realm that
@@ -49,19 +47,12 @@ export function projectPluginActionFailureCode(value: unknown): string {
 
 export function projectPluginActionFailureMessage(
   value: unknown,
-  options: Readonly<{ maxUtf8Bytes?: number }> = {},
 ): string {
   try {
     if (typeof value !== 'string') return PLUGIN_ACTION_FAILURE_FALLBACK_MESSAGE;
     const trimmed = value.trim();
     if (!trimmed) return PLUGIN_ACTION_FAILURE_FALLBACK_MESSAGE;
-    const maxUtf8Bytes = typeof options.maxUtf8Bytes === 'number'
-      && Number.isFinite(options.maxUtf8Bytes)
-      && options.maxUtf8Bytes > 0
-      ? Math.trunc(options.maxUtf8Bytes)
-      : PLUGIN_ACTION_FAILURE_MESSAGE_MAX_UTF8_BYTES;
-    const bounded = trimBugReportTextHeadToMaxBytes(trimmed, maxUtf8Bytes).trim();
-    return bounded || PLUGIN_ACTION_FAILURE_FALLBACK_MESSAGE;
+    return trimmed;
   } catch {
     return PLUGIN_ACTION_FAILURE_FALLBACK_MESSAGE;
   }
@@ -833,12 +824,19 @@ export function createPluginActionInvocation(params: Readonly<{
     inputParser: PluginActionInputParser | undefined;
     resultParser: PluginActionResultParser | undefined;
   }> | null = null;
-  const prepareSchemas = () => prepared ??= Object.freeze({
-    inputValidator: compileSchema(params.inputSchema),
-    resultValidator: compileSchema(params.resultSchema),
-    inputParser: params.inputParser ?? rehydrateActionParser(params.inputSchema),
-    resultParser: params.resultParser ?? rehydrateActionParser(params.resultSchema),
-  });
+  const prepareSchemas = () => {
+    if (prepared) return prepared;
+    const resultParser = params.resultParser ?? rehydrateActionParser(params.resultSchema);
+    return prepared = Object.freeze({
+      inputValidator: compileSchema(params.inputSchema),
+      // The author's executable parser owns result shaping. Only raw JSON
+      // Schema declarations need the ABI validator; reparsing a projected
+      // result distrusts the same author and can reject an already-known effect.
+      resultValidator: resultParser ? null : compileSchema(params.resultSchema),
+      inputParser: params.inputParser ?? rehydrateActionParser(params.inputSchema),
+      resultParser,
+    });
+  };
 
   return Object.freeze({
     qualifiedId,
@@ -991,9 +989,7 @@ export function createPluginActionInvocation(params: Readonly<{
           normalizedResult = parsedNormalizedResult.data;
         }
         if (!validates(resultValidator, normalizedResult)) {
-          return resultParser
-            ? resultSchemaProjectionMismatch
-            : invalidResult('Plugin action result does not match its manifest resultSchema');
+          return invalidResult('Plugin action result does not match its manifest resultSchema');
         }
         return Object.freeze({ status: 'executed', value: normalizedResult });
       } finally {

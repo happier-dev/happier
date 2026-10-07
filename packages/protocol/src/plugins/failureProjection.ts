@@ -1,12 +1,7 @@
 import {
   redactBugReportSensitiveText,
 } from '../bugs/reports/redaction.js';
-import {
-  PLUGIN_ACTION_FAILURE_MESSAGE_MAX_UTF8_BYTES,
-  projectPluginActionFailureMessage,
-} from './actions/invocation.js';
-
-export const PLUGIN_FAILURE_TEXT_MAX_UTF8_BYTES = PLUGIN_ACTION_FAILURE_MESSAGE_MAX_UTF8_BYTES;
+import { projectPluginActionFailureMessage } from './actions/invocation.js';
 const NEUTRAL_PLUGIN_FAILURE_TEXT = 'Plugin operation failed';
 const REDACTED_PLUGIN_FAILURE_PATH = '[REDACTED_PATH]';
 
@@ -147,7 +142,7 @@ function redactPluginFailureAbsolutePaths(value: string): string {
 /**
  * The canonical public projection for arbitrary plugin/model failure text.
  * It admits only an Error message, strips credentials and local paths, and
- * applies the same bounded fallback behavior as plugin Action failures.
+ * retains ordinary failure text after privacy projection.
  */
 export function projectPluginFailureText(error: unknown): string {
   try {
@@ -158,13 +153,10 @@ export function projectPluginFailureText(error: unknown): string {
 }
 
 /**
- * The string form of the canonical plugin/model failure projection. Callers
- * supply a narrower published ceiling here rather than trimming after privacy
- * projection, so redaction and bounds remain a single owner.
+ * The string form of the canonical plugin/model failure projection.
  */
 export function projectPluginFailureMessage(
   message: unknown,
-  options: Readonly<{ maxUtf8Bytes?: number }> = {},
 ): string {
   try {
     if (typeof message !== 'string' || message.trim().length === 0) {
@@ -174,7 +166,7 @@ export function projectPluginFailureMessage(
       redactBugReportSensitiveText(message),
     ).trim();
     if (!redacted) return NEUTRAL_PLUGIN_FAILURE_TEXT;
-    return projectPluginActionFailureMessage(redacted, options);
+    return projectPluginActionFailureMessage(redacted);
   } catch {
     return NEUTRAL_PLUGIN_FAILURE_TEXT;
   }

@@ -8,6 +8,7 @@ import {
   sealSessionOwnerMetadataEnvelopeV1,
 } from '../sessions/metadata/sessionMetadataEnvelopesV1.js';
 import {
+  bindReviewCommentEventSensitiveEnvelopeV1,
   buildReviewCommentEventRequestBindingV1,
 } from '../reviews/comments/content.js';
 import * as migrationContract from './encryptionMigrate.js';
@@ -30,6 +31,7 @@ import {
   ACCOUNT_ENCRYPTION_MIGRATE_TRANSITION_COLLECTION_STAGE_BATCH_MAX_UTF8_BYTES,
   AccountEncryptionMigrateKeyProofSchema,
   AccountEncryptionMigrateRequestSchema,
+  ACCOUNT_ENCRYPTION_MIGRATE_REQUEST_MAX_UTF8_BYTES,
   AccountEncryptionMigrateSessionDraftsDirectiveSchema,
   AccountEncryptionMigrateRequestBindingDigestV1Schema,
   AccountEncryptionMigrateExternalAuthBindingDigestV1Schema,
@@ -459,6 +461,60 @@ describe('account/encryptionMigrate', () => {
         }],
       },
     }).success).toBe(false);
+  });
+
+  it.each([
+    { comments: 201, eventsPerComment: 10 },
+    { comments: 1, eventsPerComment: 2_001 },
+  ])('accepts complete compact Review Comment inventories of $comments comments with $eventsPerComment events each', ({ comments, eventsPerComment }) => {
+    const request = {
+      ...createPlainRequest(),
+      reviewComments: {
+        action: 'migrate' as const,
+        items: Array.from({ length: comments }, (_, commentIndex) => {
+          const commentId = `comment-${commentIndex}`;
+          return {
+            commentId,
+            expectedServerRevision: 1,
+            expectedBodyVersion: 1,
+            expectedSensitiveSource: {
+              v: 1 as const, layout: 'canonical_v1' as const,
+              envelope: { t: 'encrypted' as const, c: 'source' },
+            },
+            targetSensitiveEnvelope: { t: 'plain' as const, v: {} },
+            events: Array.from({ length: eventsPerComment }, (_, eventIndex) => {
+              const eventId = `event-${commentIndex}-${eventIndex}`;
+              const actor = { kind: 'user' as const, userId: 'user-1' };
+              const input = { projectId: 'project-1', commentId, expectedServerRevision: 1,
+                expectedBodyVersion: 1, clientMutationId: `mutation-${eventId}` };
+              const requestBinding = buildReviewCommentEventRequestBindingV1({
+                accountId: 'account-1', projectId: 'project-1', actor,
+                actionId: 'reviews.comments.edit', input,
+              });
+              const event = { eventId, commentId, accountId: 'account-1', projectId: 'project-1',
+                eventKind: 'edited' as const, actor, createdAt: 1, serverRevision: 1, event: {} };
+              return {
+                eventId,
+                expectedSensitiveEnvelope: bindReviewCommentEventSensitiveEnvelopeV1({
+                  event, requestBinding, sensitive: { t: 'encrypted', c: 'source' },
+                }),
+                targetSensitiveEnvelope: bindReviewCommentEventSensitiveEnvelopeV1({
+                  event, requestBinding, sensitive: { t: 'plain', v: {} },
+                }),
+              };
+            }),
+          };
+        }),
+      },
+    };
+    expect(new TextEncoder().encode(JSON.stringify(request)).byteLength)
+      .toBeLessThan(ACCOUNT_ENCRYPTION_MIGRATE_REQUEST_MAX_UTF8_BYTES);
+    const parsed = AccountEncryptionMigrateRequestSchema.parse(request);
+    expect(parsed.reviewComments.action).toBe('migrate');
+    if (parsed.reviewComments.action !== 'migrate') throw new Error('unexpected directive');
+    expect(parsed.reviewComments.items).toHaveLength(comments);
+    expect(parsed.reviewComments.items.reduce((count, item) => count + item.events.length, 0))
+      .toBe(comments * eventsPerComment);
   });
 
   it('admits only the provenance-exact legacy Review Comment source variant across modes', () => {
