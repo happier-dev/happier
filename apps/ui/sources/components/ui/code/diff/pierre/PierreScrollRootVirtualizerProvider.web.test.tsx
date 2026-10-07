@@ -8,23 +8,32 @@ import { describe, expect, it, vi } from 'vitest';
 
 const setupSpy = vi.fn();
 const cleanUpSpy = vi.fn();
+const constructorSpy = vi.fn();
 
 vi.mock('@pierre/diffs', () => {
     class Virtualizer {
+        constructor() { constructorSpy(); }
         setup = setupSpy;
         cleanUp = cleanUpSpy;
     }
     return { Virtualizer };
 });
 
-vi.mock('@pierre/diffs/react', async () => {
-    const ReactMod = await import('react');
-    return {
-        VirtualizerContext: ReactMod.createContext(undefined),
-    };
-});
-
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+async function loadDemandedProvider() {
+    const { PierreScrollRootVirtualizerProvider, usePierreScrollRootVirtualizer } = await import('./PierreScrollRootVirtualizerProvider.web');
+    const { Virtualizer } = await import('@pierre/diffs');
+    function Demand(props: Readonly<{ children: React.ReactNode }>) {
+        usePierreScrollRootVirtualizer(() => new Virtualizer());
+        return <>{props.children}</>;
+    }
+    return {
+        PierreScrollRootVirtualizerProvider: (props: Readonly<{ children: React.ReactNode }>) => (
+            <PierreScrollRootVirtualizerProvider><Demand>{props.children}</Demand></PierreScrollRootVirtualizerProvider>
+        ),
+    };
+}
 
 function defineSizeProperty(node: Element, property: 'clientHeight' | 'scrollHeight', value: number): void {
     Object.defineProperty(node, property, {
@@ -91,6 +100,100 @@ function instrumentScrollElement(
 }
 
 describe('PierreScrollRootVirtualizerProvider (web)', () => {
+    it('keeps a diff list mounted without activating Pierre before a renderer needs it', async () => {
+        vi.resetModules();
+        setupSpy.mockClear();
+        cleanUpSpy.mockClear();
+        constructorSpy.mockClear();
+        vi.stubGlobal('IntersectionObserver', class {});
+        vi.stubGlobal('ResizeObserver', class {});
+
+        const { PierreScrollRootVirtualizerProvider } = await import('./PierreScrollRootVirtualizerProvider.web');
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const root = createRoot(container);
+        try {
+            await act(async () => {
+                root.render(React.createElement(PierreScrollRootVirtualizerProvider, null,
+                    React.createElement('input', { defaultValue: 'retained list state' })));
+            });
+            expect(container.querySelector('input')?.value).toBe('retained list state');
+            expect(setupSpy).not.toHaveBeenCalled();
+            expect(constructorSpy).not.toHaveBeenCalled();
+        } finally {
+            await act(async () => root.unmount());
+            container.remove();
+            vi.unstubAllGlobals();
+        }
+    });
+
+    it('shares the demanded instance while retaining list state and scroll through renderer changes', async () => {
+        vi.resetModules();
+        setupSpy.mockClear();
+        cleanUpSpy.mockClear();
+        constructorSpy.mockClear();
+        vi.stubGlobal('IntersectionObserver', class {});
+        vi.stubGlobal('ResizeObserver', class {});
+        const { PierreScrollRootVirtualizerProvider, usePierreScrollRootVirtualizer } = await import('./PierreScrollRootVirtualizerProvider.web');
+        const { Virtualizer } = await import('@pierre/diffs');
+        const instances: Virtualizer[] = [];
+        let mounts = 0;
+        function Demand() {
+            const instance = usePierreScrollRootVirtualizer(() => new Virtualizer());
+            if (instance) instances.push(instance);
+            return null;
+        }
+        function RetainedList() {
+            React.useEffect(() => { mounts += 1; }, []);
+            return <div data-testid="list"><input defaultValue="initial" /></div>;
+        }
+        function Contents(props: Readonly<{ demanded: boolean }>) {
+            return <PierreScrollRootVirtualizerProvider>
+                <RetainedList />
+                {props.demanded ? <Demand /> : null}
+                {props.demanded ? <Demand /> : null}
+            </PierreScrollRootVirtualizerProvider>;
+        }
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const root = createRoot(container);
+        try {
+            await act(async () => root.render(<React.StrictMode><Contents demanded={false} /></React.StrictMode>));
+            const mountsAtFirstCommit = mounts;
+            const list = container.querySelector<HTMLElement>('[data-testid="list"]')!;
+            const input = container.querySelector('input')!;
+            list.style.overflowY = 'auto';
+            defineSizeProperty(list, 'clientHeight', 120);
+            defineSizeProperty(list, 'scrollHeight', 560);
+            list.scrollTop = 91;
+            input.value = 'user state';
+            await act(async () => root.render(<React.StrictMode><Contents demanded /></React.StrictMode>));
+            expect(constructorSpy).toHaveBeenCalledTimes(1);
+            expect(instances[0]).toBe(instances[1]);
+            expect(setupSpy.mock.calls.at(-1)?.[0]).toBe(list);
+            expect(container.querySelector('[data-testid="list"]')).toBe(list);
+            expect(container.querySelector('input')).toBe(input);
+            expect(input.value).toBe('user state');
+            expect(list.scrollTop).toBe(91);
+            expect(mounts).toBe(mountsAtFirstCommit);
+            const cleanupsAfterBinding = cleanUpSpy.mock.calls.length;
+            await act(async () => root.render(<React.StrictMode><Contents demanded={false} /></React.StrictMode>));
+            await act(async () => root.render(<React.StrictMode><Contents demanded /></React.StrictMode>));
+            expect(constructorSpy).toHaveBeenCalledTimes(1);
+            expect(cleanUpSpy.mock.calls.length).toBe(cleanupsAfterBinding);
+            expect(instances.at(-1)).toBe(instances[0]);
+            expect(input.value).toBe('user state');
+            expect(list.scrollTop).toBe(91);
+            expect(mounts).toBe(mountsAtFirstCommit);
+            await act(async () => root.unmount());
+            expect(cleanUpSpy.mock.calls.length).toBe(cleanupsAfterBinding + 1);
+        } finally {
+            await act(async () => root.unmount());
+            container.remove();
+            vi.unstubAllGlobals();
+        }
+    });
+
     it('never binds to, writes to, or patches a taller scrollable ancestor outside the diff subtree', async () => {
         vi.resetModules();
         setupSpy.mockClear();
@@ -99,7 +202,7 @@ describe('PierreScrollRootVirtualizerProvider (web)', () => {
         (globalThis as any).IntersectionObserver = class {};
         (globalThis as any).ResizeObserver = class {};
 
-        const { PierreScrollRootVirtualizerProvider } = await import('./PierreScrollRootVirtualizerProvider.web');
+        const { PierreScrollRootVirtualizerProvider } = await loadDemandedProvider();
 
         const container = document.createElement('div');
         document.body.appendChild(container);
@@ -186,7 +289,7 @@ describe('PierreScrollRootVirtualizerProvider (web)', () => {
         (globalThis as any).IntersectionObserver = class {};
         (globalThis as any).ResizeObserver = class {};
 
-        const { PierreScrollRootVirtualizerProvider } = await import('./PierreScrollRootVirtualizerProvider.web');
+        const { PierreScrollRootVirtualizerProvider } = await loadDemandedProvider();
 
         const container = document.createElement('div');
         document.body.appendChild(container);
@@ -249,7 +352,7 @@ describe('PierreScrollRootVirtualizerProvider (web)', () => {
         (globalThis as any).IntersectionObserver = class {};
         (globalThis as any).ResizeObserver = class {};
 
-        const { PierreScrollRootVirtualizerProvider } = await import('./PierreScrollRootVirtualizerProvider.web');
+        const { PierreScrollRootVirtualizerProvider } = await loadDemandedProvider();
 
         const container = document.createElement('div');
         document.body.appendChild(container);
@@ -282,7 +385,7 @@ describe('PierreScrollRootVirtualizerProvider (web)', () => {
         (globalThis as any).IntersectionObserver = class {};
         (globalThis as any).ResizeObserver = class {};
 
-        const { PierreScrollRootVirtualizerProvider } = await import('./PierreScrollRootVirtualizerProvider.web');
+        const { PierreScrollRootVirtualizerProvider } = await loadDemandedProvider();
 
         const container = document.createElement('div');
         document.body.appendChild(container);
@@ -340,7 +443,7 @@ describe('PierreScrollRootVirtualizerProvider (web)', () => {
         (globalThis as any).IntersectionObserver = class {};
         (globalThis as any).ResizeObserver = class {};
 
-        const { PierreScrollRootVirtualizerProvider } = await import('./PierreScrollRootVirtualizerProvider.web');
+        const { PierreScrollRootVirtualizerProvider } = await loadDemandedProvider();
 
         const container = document.createElement('div');
         document.body.appendChild(container);

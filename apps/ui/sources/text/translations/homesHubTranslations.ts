@@ -1,215 +1,28 @@
-type HomesHubTranslation = Readonly<{
-    /** The one way to add a Home or sign in: the Homes page primary, the account popover row, the sheet title. */
-    addHomeOrSignIn: string;
-    sheetDescription: string;
-    continueWithService: (params: Readonly<{ service: string }>) => string;
-    continueWithServiceSubtitle: string;
-    /** The service card when the Home in use is its own sign-in service and has no name. */
-    continueWithThisHome: string;
-    serviceUnavailable: (params: Readonly<{ service: string }>) => string;
-    serviceUnsupported: (params: Readonly<{ service: string }>) => string;
-    /** The same two states when the service has no name to offer: a sentence of their own. */
-    serviceUnavailableUnnamed: string;
-    serviceUnsupportedUnnamed: string;
-    scanOrPaste: string;
-    scanOrPasteSubtitle: string;
-    createPersonalHome: string;
-    createPersonalHomeSubtitle: string;
-    /** The Home this device opens first (its device default). */
-    opensFirst: string;
-}>;
+// Tooling aggregate. Product locale roots import only their locale payload.
+import { homesHubTranslations as en } from './features/en';
+import { homesHubTranslations as ca } from './features/ca';
+import { homesHubTranslations as de } from './features/de';
+import { homesHubTranslations as es } from './features/es';
+import { homesHubTranslations as fr } from './features/fr';
+import { homesHubTranslations as it } from './features/it';
+import { homesHubTranslations as ja } from './features/ja';
+import { homesHubTranslations as pl } from './features/pl';
+import { homesHubTranslations as pt } from './features/pt';
+import { homesHubTranslations as ru } from './features/ru';
+import { homesHubTranslations as zh_Hans } from './features/zh-Hans';
+import { homesHubTranslations as zh_Hant } from './features/zh-Hant';
 
 export const homesHubTranslations = {
-    en: {
-        addHomeOrSignIn: 'Add a Home / Sign in',
-        sheetDescription: 'Connect this device to another Home, or find yours.',
-        continueWithService: ({ service }) => `Continue with ${service}`,
-        continueWithThisHome: 'Continue with this Home',
-        continueWithServiceSubtitle: 'Find your Homes and make this one available on your other devices.',
-        serviceUnavailable: ({ service }) => `${service} is unavailable right now.`,
-        serviceUnsupported: ({ service }) => `${service} doesn’t offer account sign-in.`,
-        serviceUnavailableUnnamed: 'Your sign-in service is unavailable right now.',
-        serviceUnsupportedUnnamed: 'Your sign-in service doesn’t offer account sign-in.',
-        scanOrPaste: 'Scan or paste a Home link',
-        scanOrPasteSubtitle: 'Join a Home from a QR code or link.',
-        createPersonalHome: 'Create a Personal Home on this computer',
-        createPersonalHomeSubtitle: 'Run a Home here for your own machines and devices.',
-        opensFirst: 'Opens first',
-    },
-    ca: {
-        addHomeOrSignIn: 'Afegeix una Home / Inicia sessió',
-        sheetDescription: 'Connecta aquest dispositiu a una altra Home o troba les teves.',
-        continueWithService: ({ service }) => `Continua amb ${service}`,
-        continueWithThisHome: 'Continua amb aquesta Home',
-        continueWithServiceSubtitle: 'Troba les teves Homes i fes que aquesta estigui disponible als teus altres dispositius.',
-        serviceUnavailable: ({ service }) => `${service} no està disponible ara mateix.`,
-        serviceUnsupported: ({ service }) => `${service} no ofereix inici de sessió amb compte.`,
-        serviceUnavailableUnnamed: 'El teu servei d’inici de sessió no està disponible ara mateix.',
-        serviceUnsupportedUnnamed: 'El teu servei d’inici de sessió no ofereix inici de sessió amb compte.',
-        scanOrPaste: 'Escaneja o enganxa un enllaç de Home',
-        scanOrPasteSubtitle: 'Uneix-te a una Home amb un codi QR o un enllaç.',
-        createPersonalHome: 'Crea una Home personal en aquest ordinador',
-        createPersonalHomeSubtitle: 'Executa aquí una Home per a les teves màquines i dispositius.',
-        opensFirst: 'S’obre primer',
-    },
-    de: {
-        addHomeOrSignIn: 'Home hinzufügen / Anmelden',
-        sheetDescription: 'Verbinde dieses Gerät mit einem anderen Home oder finde deine.',
-        continueWithService: ({ service }) => `Weiter mit ${service}`,
-        continueWithThisHome: 'Mit diesem Home fortfahren',
-        continueWithServiceSubtitle: 'Finde deine Homes und mach dieses auf deinen anderen Geräten verfügbar.',
-        serviceUnavailable: ({ service }) => `${service} ist gerade nicht erreichbar.`,
-        serviceUnsupported: ({ service }) => `${service} bietet keine Kontoanmeldung an.`,
-        serviceUnavailableUnnamed: 'Dein Anmeldedienst ist gerade nicht erreichbar.',
-        serviceUnsupportedUnnamed: 'Dein Anmeldedienst bietet keine Kontoanmeldung an.',
-        scanOrPaste: 'Home-Link scannen oder einfügen',
-        scanOrPasteSubtitle: 'Tritt einem Home per QR-Code oder Link bei.',
-        createPersonalHome: 'Ein persönliches Home auf diesem Computer erstellen',
-        createPersonalHomeSubtitle: 'Betreibe hier ein Home für deine eigenen Maschinen und Geräte.',
-        opensFirst: 'Öffnet zuerst',
-    },
-    es: {
-        addHomeOrSignIn: 'Añadir un Home / Iniciar sesión',
-        sheetDescription: 'Conecta este dispositivo a otro Home o encuentra los tuyos.',
-        continueWithService: ({ service }) => `Continuar con ${service}`,
-        continueWithThisHome: 'Continuar con este Home',
-        continueWithServiceSubtitle: 'Encuentra tus Homes y haz que este esté disponible en tus otros dispositivos.',
-        serviceUnavailable: ({ service }) => `${service} no está disponible en este momento.`,
-        serviceUnsupported: ({ service }) => `${service} no ofrece inicio de sesión con cuenta.`,
-        serviceUnavailableUnnamed: 'Tu servicio de inicio de sesión no está disponible en este momento.',
-        serviceUnsupportedUnnamed: 'Tu servicio de inicio de sesión no ofrece inicio de sesión con cuenta.',
-        scanOrPaste: 'Escanear o pegar un enlace de Home',
-        scanOrPasteSubtitle: 'Únete a un Home con un código QR o un enlace.',
-        createPersonalHome: 'Crear un Home personal en este ordenador',
-        createPersonalHomeSubtitle: 'Ejecuta aquí un Home para tus propias máquinas y dispositivos.',
-        opensFirst: 'Se abre primero',
-    },
-    fr: {
-        addHomeOrSignIn: 'Ajouter un Home / Se connecter',
-        sheetDescription: 'Connectez cet appareil à un autre Home, ou retrouvez les vôtres.',
-        continueWithService: ({ service }) => `Continuer avec ${service}`,
-        continueWithThisHome: 'Continuer avec ce Home',
-        continueWithServiceSubtitle: 'Retrouvez vos Homes et rendez celui-ci disponible sur vos autres appareils.',
-        serviceUnavailable: ({ service }) => `${service} est indisponible pour le moment.`,
-        serviceUnsupported: ({ service }) => `${service} ne propose pas de connexion par compte.`,
-        serviceUnavailableUnnamed: 'Votre service de connexion est indisponible pour le moment.',
-        serviceUnsupportedUnnamed: 'Votre service de connexion ne propose pas de connexion par compte.',
-        scanOrPaste: 'Scanner ou coller un lien de Home',
-        scanOrPasteSubtitle: 'Rejoignez un Home avec un code QR ou un lien.',
-        createPersonalHome: 'Créer un Home personnel sur cet ordinateur',
-        createPersonalHomeSubtitle: 'Faites tourner ici un Home pour vos propres machines et appareils.',
-        opensFirst: 'S’ouvre en premier',
-    },
-    it: {
-        addHomeOrSignIn: 'Aggiungi una Home / Accedi',
-        sheetDescription: 'Collega questo dispositivo a un’altra Home o trova le tue.',
-        continueWithService: ({ service }) => `Continua con ${service}`,
-        continueWithThisHome: 'Continua con questa Home',
-        continueWithServiceSubtitle: 'Trova le tue Home e rendi questa disponibile sugli altri tuoi dispositivi.',
-        serviceUnavailable: ({ service }) => `${service} non è disponibile in questo momento.`,
-        serviceUnsupported: ({ service }) => `${service} non offre l’accesso con account.`,
-        serviceUnavailableUnnamed: 'Il tuo servizio di accesso non è disponibile in questo momento.',
-        serviceUnsupportedUnnamed: 'Il tuo servizio di accesso non offre l’accesso con account.',
-        scanOrPaste: 'Scansiona o incolla un link di Home',
-        scanOrPasteSubtitle: 'Entra in una Home con un codice QR o un link.',
-        createPersonalHome: 'Crea una Home personale su questo computer',
-        createPersonalHomeSubtitle: 'Esegui qui una Home per le tue macchine e i tuoi dispositivi.',
-        opensFirst: 'Si apre per prima',
-    },
-    ja: {
-        addHomeOrSignIn: 'Home を追加 / サインイン',
-        sheetDescription: 'このデバイスを別の Home に接続するか、自分の Home を見つけます。',
-        continueWithService: ({ service }) => `${service} で続行`,
-        continueWithThisHome: 'この Home で続行',
-        continueWithServiceSubtitle: 'Home を見つけて、この Home をほかのデバイスでも使えるようにします。',
-        serviceUnavailable: ({ service }) => `${service} は現在利用できません。`,
-        serviceUnsupported: ({ service }) => `${service} はアカウントでのサインインに対応していません。`,
-        serviceUnavailableUnnamed: 'サインインサービスは現在利用できません。',
-        serviceUnsupportedUnnamed: 'サインインサービスはアカウントでのサインインに対応していません。',
-        scanOrPaste: 'Home リンクをスキャンまたは貼り付け',
-        scanOrPasteSubtitle: 'QR コードまたはリンクで Home に参加します。',
-        createPersonalHome: 'このコンピューターにパーソナル Home を作成',
-        createPersonalHomeSubtitle: '自分のマシンとデバイスのための Home をここで実行します。',
-        opensFirst: '最初に開く',
-    },
-    pl: {
-        addHomeOrSignIn: 'Dodaj Home / Zaloguj się',
-        sheetDescription: 'Połącz to urządzenie z innym Home lub znajdź swoje.',
-        continueWithService: ({ service }) => `Kontynuuj z ${service}`,
-        continueWithThisHome: 'Kontynuuj z tym Home',
-        continueWithServiceSubtitle: 'Znajdź swoje Home i udostępnij ten na innych urządzeniach.',
-        serviceUnavailable: ({ service }) => `${service} jest teraz niedostępny.`,
-        serviceUnsupported: ({ service }) => `${service} nie oferuje logowania na konto.`,
-        serviceUnavailableUnnamed: 'Twoja usługa logowania jest teraz niedostępna.',
-        serviceUnsupportedUnnamed: 'Twoja usługa logowania nie oferuje logowania na konto.',
-        scanOrPaste: 'Zeskanuj lub wklej link do Home',
-        scanOrPasteSubtitle: 'Dołącz do Home za pomocą kodu QR lub linku.',
-        createPersonalHome: 'Utwórz osobisty Home na tym komputerze',
-        createPersonalHomeSubtitle: 'Uruchom tutaj Home dla własnych maszyn i urządzeń.',
-        opensFirst: 'Otwiera się pierwszy',
-    },
-    pt: {
-        addHomeOrSignIn: 'Adicionar um Home / Iniciar sessão',
-        sheetDescription: 'Ligue este dispositivo a outro Home ou encontre os seus.',
-        continueWithService: ({ service }) => `Continuar com ${service}`,
-        continueWithThisHome: 'Continuar com este Home',
-        continueWithServiceSubtitle: 'Encontre os seus Homes e torne este disponível nos seus outros dispositivos.',
-        serviceUnavailable: ({ service }) => `${service} está indisponível neste momento.`,
-        serviceUnsupported: ({ service }) => `${service} não oferece início de sessão com conta.`,
-        serviceUnavailableUnnamed: 'O seu serviço de início de sessão está indisponível neste momento.',
-        serviceUnsupportedUnnamed: 'O seu serviço de início de sessão não oferece início de sessão com conta.',
-        scanOrPaste: 'Ler ou colar uma ligação de Home',
-        scanOrPasteSubtitle: 'Junte-se a um Home com um código QR ou uma ligação.',
-        createPersonalHome: 'Criar um Home pessoal neste computador',
-        createPersonalHomeSubtitle: 'Execute aqui um Home para as suas próprias máquinas e dispositivos.',
-        opensFirst: 'Abre primeiro',
-    },
-    ru: {
-        addHomeOrSignIn: 'Добавить Home / Войти',
-        sheetDescription: 'Подключите это устройство к другому Home или найдите свои.',
-        continueWithService: ({ service }) => `Продолжить с ${service}`,
-        continueWithThisHome: 'Продолжить с этим Home',
-        continueWithServiceSubtitle: 'Найдите свои Home и сделайте этот доступным на других устройствах.',
-        serviceUnavailable: ({ service }) => `${service} сейчас недоступен.`,
-        serviceUnsupported: ({ service }) => `${service} не поддерживает вход с аккаунтом.`,
-        serviceUnavailableUnnamed: 'Ваш сервис входа сейчас недоступен.',
-        serviceUnsupportedUnnamed: 'Ваш сервис входа не поддерживает вход с аккаунтом.',
-        scanOrPaste: 'Отсканировать или вставить ссылку на Home',
-        scanOrPasteSubtitle: 'Присоединитесь к Home по QR-коду или ссылке.',
-        createPersonalHome: 'Создать личный Home на этом компьютере',
-        createPersonalHomeSubtitle: 'Запустите здесь Home для своих машин и устройств.',
-        opensFirst: 'Открывается первым',
-    },
-    'zh-Hans': {
-        addHomeOrSignIn: '添加 Home / 登录',
-        sheetDescription: '将此设备连接到另一个 Home，或找到你的 Home。',
-        continueWithService: ({ service }) => `使用 ${service} 继续`,
-        continueWithThisHome: '使用此 Home 继续',
-        continueWithServiceSubtitle: '找到你的 Home，并让此 Home 在你的其他设备上可用。',
-        serviceUnavailable: ({ service }) => `${service} 暂时不可用。`,
-        serviceUnsupported: ({ service }) => `${service} 不支持账户登录。`,
-        serviceUnavailableUnnamed: '你的登录服务暂时不可用。',
-        serviceUnsupportedUnnamed: '你的登录服务不支持账户登录。',
-        scanOrPaste: '扫描或粘贴 Home 链接',
-        scanOrPasteSubtitle: '通过二维码或链接加入 Home。',
-        createPersonalHome: '在这台电脑上创建个人 Home',
-        createPersonalHomeSubtitle: '在这里为你自己的机器和设备运行一个 Home。',
-        opensFirst: '优先打开',
-    },
-    'zh-Hant': {
-        addHomeOrSignIn: '新增 Home / 登入',
-        sheetDescription: '將此裝置連接到另一個 Home，或找到你的 Home。',
-        continueWithService: ({ service }) => `使用 ${service} 繼續`,
-        continueWithThisHome: '使用此 Home 繼續',
-        continueWithServiceSubtitle: '找到你的 Home，並讓此 Home 在你的其他裝置上可用。',
-        serviceUnavailable: ({ service }) => `${service} 暫時無法使用。`,
-        serviceUnsupported: ({ service }) => `${service} 不支援帳戶登入。`,
-        serviceUnavailableUnnamed: '你的登入服務暫時無法使用。',
-        serviceUnsupportedUnnamed: '你的登入服務不支援帳戶登入。',
-        scanOrPaste: '掃描或貼上 Home 連結',
-        scanOrPasteSubtitle: '透過 QR 碼或連結加入 Home。',
-        createPersonalHome: '在這台電腦上建立個人 Home',
-        createPersonalHomeSubtitle: '在這裡為你自己的機器和裝置執行一個 Home。',
-        opensFirst: '優先開啟',
-    },
-} as const satisfies Record<string, HomesHubTranslation>;
+    ...en.homesHubTranslations,
+    ...ca.homesHubTranslations,
+    ...de.homesHubTranslations,
+    ...es.homesHubTranslations,
+    ...fr.homesHubTranslations,
+    ...it.homesHubTranslations,
+    ...ja.homesHubTranslations,
+    ...pl.homesHubTranslations,
+    ...pt.homesHubTranslations,
+    ...ru.homesHubTranslations,
+    ...zh_Hans.homesHubTranslations,
+    ...zh_Hant.homesHubTranslations,
+};

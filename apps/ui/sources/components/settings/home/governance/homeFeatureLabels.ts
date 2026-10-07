@@ -1,7 +1,7 @@
 import type { FeatureId } from '@happier-dev/protocol';
 
 import { t, type TranslationKeyNoParams } from '@/text';
-import { homeFeatureTranslations } from '@/text/translations/homeFeatureTranslations';
+import { en } from '@/text/translations/en';
 
 /**
  * The one reader of Home feature labels (`homeFeatures.<featureId>.title|description`, and
@@ -13,7 +13,7 @@ import { homeFeatureTranslations } from '@/text/translations/homeFeatureTranslat
 type LabelNode = Readonly<{ [segment: string]: LabelNode | string }>;
 
 function labelNode(path: string): LabelNode | null {
-    let node: LabelNode | string | undefined = homeFeatureTranslations.en as LabelNode;
+    let node: LabelNode | string | undefined = en.homeFeatures as LabelNode;
     for (const segment of path.split('.')) {
         if (!node || typeof node === 'string') return null;
         node = node[segment];

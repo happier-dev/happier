@@ -1,47 +1,28 @@
-const en = {
-    consentRequired: 'Permission needed',
-    consentBody: 'Allow the vendor installer, then try again.',
-    unsupportedPlatform: 'Not available on this machine',
-    unsupportedBody: 'Choose an agent that supports this operating system and processor.',
-    manualInstall: 'Install this agent manually',
-    manualBody: 'Follow the agent’s installation guide, then check again.',
-    downloadFailed: 'Download failed',
-    downloadBody: 'Check the machine’s connection, then try again.',
-    verificationFailed: 'The agent could not be verified',
-    verificationBody: 'The installed agent did not pass its check. Try installing it again.',
-    timeout: 'The installer took too long',
-    timeoutBody: 'The machine stopped this install step. Try again.',
-    cancelled: 'Install cancelled',
-    cancelledBody: 'You can start another install when you are ready.',
-    updateUnavailable: 'Update this agent manually',
-    updateBody: 'This installation uses an update method Happier cannot run. Follow the agent’s guide.',
-    machineUnreachable: 'The machine is not answering',
-    unreachableBody: 'Reconnect to this machine to check the install’s progress.',
-    jobUnavailable: 'Agent installation is not available',
-    jobUnavailableBody: 'Update Happier CLI on this machine, then try again.',
-    jobMissing: 'This install is no longer available',
-    jobMissingBody: 'Check the machine’s current agent status, then try again.',
-    failed: 'Install failed',
-    failedBody: 'Try again, or follow the agent’s installation guide.',
-    retry: 'Try again',
-    openGuide: 'Open installation guide',
-    chooseAgent: 'Choose another agent',
-    reconnect: 'Reconnect',
-};
+// Tooling aggregate. Product locale roots import only their locale payload.
+import { agentInstallJobTranslations as en } from './features/en';
+import { agentInstallJobTranslations as ca } from './features/ca';
+import { agentInstallJobTranslations as de } from './features/de';
+import { agentInstallJobTranslations as es } from './features/es';
+import { agentInstallJobTranslations as fr } from './features/fr';
+import { agentInstallJobTranslations as it } from './features/it';
+import { agentInstallJobTranslations as ja } from './features/ja';
+import { agentInstallJobTranslations as pl } from './features/pl';
+import { agentInstallJobTranslations as pt } from './features/pt';
+import { agentInstallJobTranslations as ru } from './features/ru';
+import { agentInstallJobTranslations as zh_Hans } from './features/zh-Hans';
+import { agentInstallJobTranslations as zh_Hant } from './features/zh-Hant';
 
-// The approved configuration-surface contract permits English placeholders in every locale.
-// Keep the complete key set present until reviewed translations replace these placeholders.
 export const agentInstallJobTranslations = {
-    en,
-    de: { ...en },
-    es: { ...en },
-    fr: { ...en },
-    it: { ...en },
-    ja: { ...en },
-    pl: { ...en },
-    pt: { ...en },
-    ru: { ...en },
-    ca: { ...en },
-    zhHans: { ...en },
-    zhHant: { ...en },
+    ...en.agentInstallJobTranslations,
+    ...ca.agentInstallJobTranslations,
+    ...de.agentInstallJobTranslations,
+    ...es.agentInstallJobTranslations,
+    ...fr.agentInstallJobTranslations,
+    ...it.agentInstallJobTranslations,
+    ...ja.agentInstallJobTranslations,
+    ...pl.agentInstallJobTranslations,
+    ...pt.agentInstallJobTranslations,
+    ...ru.agentInstallJobTranslations,
+    ...zh_Hans.agentInstallJobTranslations,
+    ...zh_Hant.agentInstallJobTranslations,
 };

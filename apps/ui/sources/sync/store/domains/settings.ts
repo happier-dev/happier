@@ -33,7 +33,7 @@ import {
 import { resolveSessionListIndexSettingsImpact } from './settingsSessionListIndexImpact';
 import { emitLocalSettingChangedEvents } from '@/track/settingsAnalytics/emitSettingChangedEvent';
 import type { SettingsAnalyticsSource } from '@/track/settingsAnalytics/types';
-import { setPreferredLanguageFromSettings } from '@/text/i18n';
+import { areTranslationsReadyForSettings, getPreferredLanguage, preloadTranslationsForSettings, setPreferredLanguageFromSettings } from '@/text/i18n';
 import { loadHomeViewState } from '@/sync/domains/server/serverProfiles';
 import { normalizeServerSelectionGroupsForSettings } from '@/sync/domains/server/selection/serverSelectionSettingsAdapter';
 
@@ -41,7 +41,7 @@ import type { StoreGet, StoreSet } from './_shared';
 
 function safeSetPreferredLanguageFromSettings(preferredLanguage: unknown): void {
     try {
-        setPreferredLanguageFromSettings(preferredLanguage as any);
+        setPreferredLanguageFromSettings(preferredLanguage);
     } catch {
         // In Vitest/Vite SSR, circular module initialization can surface as TDZ errors on imports.
         // Preferred-language sync is best-effort and should never crash store initialization.
@@ -166,8 +166,6 @@ function buildSettingsProjectionState<S extends SettingsDomain & SettingsDomainD
         : incomingSettings;
     const nextSettings = reconcileSettingsReferences(state.settings, projectedSettings);
 
-    safeSetPreferredLanguageFromSettings(nextSettings.preferredLanguage);
-
     const shouldRebuildSessionListIndex = resolveSessionListIndexSettingsImpact(
         state.settings,
         nextSettings,
@@ -219,6 +217,28 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
     const localSettings = loadLocalSettings();
     const purchases = loadPurchases();
 
+    function projectSettings(state: S, incoming: Settings, nextVersion: number | null, nextScope: AccountSettingsScope | null): S {
+        const projected = buildSettingsProjectionState(state, incoming, nextVersion, nextScope);
+        const selected = projected.settings.preferredLanguage;
+        safeSetPreferredLanguageFromSettings(selected);
+        if (!areTranslationsReadyForSettings(selected)) {
+            void preloadTranslationsForSettings(selected).then(() => {
+                set((current) => {
+                    // A server echo, local edit or Account switch may supersede this request.
+                    if (current.settings.preferredLanguage !== selected) return current;
+                    const previousLanguage = getPreferredLanguage();
+                    setPreferredLanguageFromSettings(selected);
+                    if (getPreferredLanguage() === previousLanguage) return current;
+                    // Activation and the existing settings subscription notification are atomic.
+                    return { ...current, settings: { ...current.settings } };
+                });
+            }).catch((error: unknown) => {
+                console.error('Failed to load preferred language; keeping the current locale:', error);
+            });
+        }
+        return projected;
+    }
+
     return {
         settings,
         settingsVersion: version,
@@ -236,20 +256,20 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
                 } else {
                     saveSettings(newSettings, state.settingsVersion ?? 0);
                 }
-                return buildSettingsProjectionState(state, newSettings, state.settingsVersion, state.settingsScope);
+                return projectSettings(state, newSettings, state.settingsVersion, state.settingsScope);
             }),
         applySettings: (nextSettings, nextVersion) =>
             set((state) => {
                 if (state.settingsScope) {
                     if (state.settingsVersion == null || state.settingsVersion < nextVersion) {
                         saveAccountSettings(state.settingsScope, nextSettings, nextVersion);
-                        return buildSettingsProjectionState(state, nextSettings, nextVersion, state.settingsScope);
+                        return projectSettings(state, nextSettings, nextVersion, state.settingsScope);
                     }
                     return state;
                 }
                 if (state.settingsVersion == null || state.settingsVersion < nextVersion) {
                     saveSettings(nextSettings, nextVersion);
-                    return buildSettingsProjectionState(state, nextSettings, nextVersion, null);
+                    return projectSettings(state, nextSettings, nextVersion, null);
                 }
                 return state;
             }),
@@ -259,14 +279,14 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
             set((state) => {
                 const loaded = loadParsedAccountSettings(scope);
                 return {
-                    ...buildSettingsProjectionState(state, loaded.settings, loaded.version, scope),
+                    ...projectSettings(state, loaded.settings, loaded.version, scope),
                     purchases: loadAccountPurchases(scope),
                 };
             });
         },
         clearSettingsScope: () =>
             set((state) => ({
-                ...buildSettingsProjectionState(state, { ...settingsDefaults }, null, null),
+                ...projectSettings(state, { ...settingsDefaults }, null, null),
                 purchases: { ...purchasesDefaults },
             })),
         applySettingsForScope: (scope, nextSettings, nextVersion) =>
@@ -278,7 +298,7 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
                 if (!areAccountSettingsScopesEqual(state.settingsScope, scope)) {
                     return state;
                 }
-                return buildSettingsProjectionState(state, nextSettings, nextVersion, scope);
+                return projectSettings(state, nextSettings, nextVersion, scope);
             }),
         applyLocalSettings: (delta, options) =>
             set((state) => {

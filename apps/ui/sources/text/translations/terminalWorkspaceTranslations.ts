@@ -1,138 +1,29 @@
-// The session terminal bottom pane (terminal lab B1–B4, A1, L, M, ST, P1): its strip, menus,
-// list view, Jump, states and the phone key rail.
-const en = {
-    terminalWorkspace: {
-        stripA11y: 'Terminals',
-        shell: 'Shell',
-        agentTerminal: ({ agent }: { agent: string }) => `${agent}’s terminal`,
-        agentTerminalOn: ({ agent, host, machine }: { agent: string; host: string; machine: string }) => `${agent}’s terminal · ${host} on ${machine}`,
-        agentTerminalHost: ({ agent, host }: { agent: string; host: string }) => `${agent}’s terminal · ${host}`,
-        agentTerminalHint: ({ agent }: { agent: string }) => `Watch and answer ${agent}`,
-        agentNotAttachable: 'This session doesn’t run in a terminal. New sessions in tmux, zellij or herdr have one.',
-        actionFailed: 'That didn’t work. Try again.',
-        placeOnMachine: ({ cwd, machine }: { cwd: string; machine: string }) => `${cwd} · ${machine}`,
-        readOnlyPlace: ({ cwd }: { cwd: string }) => `Read only · ${cwd}`,
-        status: {
-            running: 'Running',
-            needsYou: 'Needs you',
-            exited: 'Exited',
-            failed: 'Couldn’t start',
-            showing: 'Showing',
-        },
-        tabA11y: ({ title, status }: { title: string; status: string }) => `${title}, ${status}`,
-        split: 'Split',
-        actions: {
-            newShell: 'New terminal',
-            newOptions: 'New terminal options',
-            split: 'Split terminal',
-            more: 'Terminal actions',
-            hide: 'Hide the bottom pane (terminals keep running)',
-        },
-        newMenu: {
-            shellIn: ({ folder }: { folder: string }) => `Shell in ${folder}`,
-            runScript: 'Run a script',
-            allScripts: 'All scripts…',
-            scriptInNewTab: ({ command }: { command: string }) => `${command} · in a new tab`,
-            otherMachine: 'On another machine',
-            machineOnline: ({ cwd }: { cwd: string }) => `Online · ${cwd}`,
-            machineOffline: 'Offline',
-        },
-        tabMenu: {
-            rename: 'Rename…',
-            splitRight: 'Split right',
-            moveToOwnTab: 'Move to its own tab',
-            openInDetails: 'Open in Details',
-            openInDetailsHint: 'A wide view, beside the chat',
-            copySelection: 'Copy selection',
-            paste: 'Paste',
-            clear: 'Clear',
-            restart: 'Restart',
-            restartHint: ({ title }: { title: string }) => `Stops ${title} and starts a new shell`,
-            close: 'Close',
-            closeHint: 'Stops what is running in it',
-            closeView: 'Close',
-            closeViewHint: 'It keeps running',
-            closeOthers: 'Close the others',
-        },
-        paneMenu: {
-            jump: 'Jump to a terminal…',
-            showList: 'Show list',
-            showListHint: 'What each terminal is doing',
-            hide: 'Hide the bottom pane',
-            hideHint: 'Terminals keep running',
-            settings: 'Terminal settings…',
-            settingsHint: 'Font and renderer',
-        },
-        rename: {
-            title: 'Rename terminal',
-            placeholder: 'Name',
-        },
-        livePill: {
-            open: 'Open',
-            a11y: ({ address }: { address: string }) => `Running at ${address}. Open it`,
-        },
-        states: {
-            exited: ({ title }: { title: string }) => `${title} exited`,
-            exitedWithCode: ({ title, code }: { title: string; code: number }) => `${title} exited with code ${code}`,
-            offline: ({ machine }: { machine: string }) => `${machine} is offline · commands there keep running`,
-            connecting: 'Connecting…',
-            failedTitle: ({ title }: { title: string }) => `Couldn’t start ${title}`,
-            tryAgain: 'Try again',
-            checkAgain: 'Check again',
-            restart: 'Restart',
-            close: 'Close',
-            empty: 'No terminals are open in this session.',
-            emptyAction: 'New terminal',
-        },
-        jump: {
-            title: 'Jump to a terminal',
-            scope: 'Terminals',
-            thisSession: 'This session',
-            otherSessions: ({ machine }: { machine: string }) => `Other sessions on ${machine}`,
-            newGroup: 'New',
-            runScript: 'Run a script',
-            hintShow: 'Show',
-            hintOpenInDetails: 'Open in Details',
-            hintSearchEverything: 'Search everything',
-            hintMove: 'Move',
-            hintClose: 'Close',
-            split: ({ members }: { members: string }) => `Split · ${members}`,
-            foreignExited: ({ session }: { session: string }) => `${session} · exited`,
-            foreignExitedWithCode: ({ session, code }: { session: string; code: number }) => `${session} · exited with code ${code}`,
-            foreignDetail: ({ session, detail }: { session: string; detail: string }) => `${session} · ${detail}`,
-            otherSessionsUnavailable: 'Couldn’t list the terminals other sessions left running.',
-            scriptCommand: ({ command }: { command: string }) => `${command} · in a new tab`,
-            clearScopeA11y: 'Search everything',
-        },
-        keys: {
-            railA11y: 'Terminal keys, scrolls sideways',
-            hideKeyboard: 'Hide keyboard',
-            esc: 'Esc',
-            tab: 'Tab',
-            ctrl: 'Ctrl',
-            alt: '⌥',
-            ctrlC: '⌃C',
-            ctrlD: '⌃D',
-            dpadA11y: 'Arrow keys. Tap to send; press and hold, then drag, to move them',
-            dpadTuckedA11y: 'Arrow keys, tucked away. Tap to show them',
-            up: 'Up',
-            down: 'Down',
-            left: 'Left',
-            right: 'Right',
-            pagerA11y: ({ index, count }: { index: number; count: number }) => `${index} of ${count}`,
-            pagerNext: ({ title }: { title: string }) => `Swipe for ${title}`,
-        },
-    },
-};
+// Tooling aggregate. Product locale roots import only their locale payload.
+import { terminalWorkspaceTranslations as en } from './features/en';
+import { terminalWorkspaceTranslations as ca } from './features/ca';
+import { terminalWorkspaceTranslations as de } from './features/de';
+import { terminalWorkspaceTranslations as es } from './features/es';
+import { terminalWorkspaceTranslations as fr } from './features/fr';
+import { terminalWorkspaceTranslations as it } from './features/it';
+import { terminalWorkspaceTranslations as ja } from './features/ja';
+import { terminalWorkspaceTranslations as pl } from './features/pl';
+import { terminalWorkspaceTranslations as pt } from './features/pt';
+import { terminalWorkspaceTranslations as ru } from './features/ru';
+import { terminalWorkspaceTranslations as zh_Hans } from './features/zh-Hans';
+import { terminalWorkspaceTranslations as zh_Hant } from './features/zh-Hant';
+export { terminalWorkspaceKeyboardTranslations } from './terminalWorkspaceTranslations.shared';
 
-export const terminalWorkspaceKeyboardTranslations = {
-    terminalJump: 'Jump to a terminal',
-    terminalToggle: 'Show or hide the terminal',
-    terminalNewShell: 'New terminal',
-    terminalSplit: 'Split terminal',
-};
-
-// English fallback follows the shared translation namespace convention until translated.
 export const terminalWorkspaceTranslations = {
-    en, ca: en, de: en, es: en, fr: en, it: en, ja: en, pl: en, pt: en, ru: en, 'zh-Hans': en, 'zh-Hant': en,
+    ...en.terminalWorkspaceTranslations,
+    ...ca.terminalWorkspaceTranslations,
+    ...de.terminalWorkspaceTranslations,
+    ...es.terminalWorkspaceTranslations,
+    ...fr.terminalWorkspaceTranslations,
+    ...it.terminalWorkspaceTranslations,
+    ...ja.terminalWorkspaceTranslations,
+    ...pl.terminalWorkspaceTranslations,
+    ...pt.terminalWorkspaceTranslations,
+    ...ru.terminalWorkspaceTranslations,
+    ...zh_Hans.terminalWorkspaceTranslations,
+    ...zh_Hant.terminalWorkspaceTranslations,
 };

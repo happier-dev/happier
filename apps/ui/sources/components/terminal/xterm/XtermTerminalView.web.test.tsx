@@ -11,6 +11,8 @@ import { createTerminalStreamRuntime } from '@/sync/domains/terminal/stream/runt
 import type { XtermTerminalHandle } from './XtermTerminalView.web';
 // Collection loads the real owner graph outside the SDK interaction timeout.
 import './XtermTerminalView.web';
+import { EmbeddedTerminalPane } from '../embedded/EmbeddedTerminalPane.web';
+import type { EmbeddedTerminalPaneController } from '../embedded/types';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -240,6 +242,53 @@ describe('XtermTerminalView.web', () => {
         });
         HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
         container.remove();
+    });
+
+    it('retains output, focus and its renderer handle across pane updates after loading', async () => {
+        const ref = React.createRef<XtermTerminalHandle>();
+        const onInput = vi.fn();
+        const nextInput = vi.fn();
+        const onReady = vi.fn();
+        const controller: EmbeddedTerminalPaneController = {
+            status: 'connected', error: null, detectedUrl: null,
+            onInput, onPaste: () => {}, onResize: () => {}, onReady,
+            onWriteComplete: () => {}, clearTerminal: () => {},
+            requestRestart: () => {}, retryConnect: () => {}, dismissDetectedUrl: () => {},
+        };
+        await act(async () => {
+            root.render(<EmbeddedTerminalPane title="shell" controller={controller} terminalRef={ref}
+                chrome="none" showQuickKeys={false} focused testIdPrefix="loaded-terminal" />);
+            await vi.dynamicImportSettled();
+        });
+        const handle = requireTerminalHandle(ref);
+        const find = handle.find;
+        expect(find).toBeDefined();
+        const terminal = terminalInstances[0];
+        focusSpy.mockImplementation(() => terminal.textarea?.focus());
+        await act(async () => {
+            handle.focus();
+            handle.write('retained terminal output');
+            find?.setQuery('retained query');
+            await new Promise((resolve) => setTimeout(resolve, 40));
+        });
+        const surface = container.querySelector('[data-testid="loaded-terminal-xterm"]');
+        expect(surface?.getAttribute('data-happier-terminal-text')).toContain('retained terminal output');
+        expect(document.activeElement).toBe(terminal.textarea);
+        expect(onReady).toHaveBeenCalledWith(80, 24);
+
+        await act(async () => root.render(<EmbeddedTerminalPane title="renamed shell"
+            controller={{ ...controller, status: 'exited', onInput: nextInput }} terminalRef={ref}
+            chrome="none" showQuickKeys={false} focused testIdPrefix="loaded-terminal" />));
+        expect(ref.current).toBe(handle);
+        expect(container.querySelector('[data-testid="loaded-terminal-xterm"]')).toBe(surface);
+        expect(surface?.getAttribute('data-happier-terminal-text')).toContain('retained terminal output');
+        expect(document.activeElement).toBe(terminal.textarea);
+        expect(terminal.disposed).toBe(false);
+        expect(ref.current?.find).toBe(find);
+        expect(find?.query).toBe('retained query');
+        onDataSpy('continued input');
+        expect(nextInput).toHaveBeenCalledWith('continued input');
+        expect(onInput).not.toHaveBeenCalled();
     });
 
     it('allows the content material to clear the terminal background without fading foreground text', async () => {

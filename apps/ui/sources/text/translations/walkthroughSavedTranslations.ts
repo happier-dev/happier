@@ -1,24 +1,28 @@
-const en = {
-    edit: 'Edit walkthrough', title: 'Walkthrough title', stopTitle: 'Stop title', prose: 'Explanation',
-    refine: 'Refine', instructions: 'What should change?', moveUp: 'Move up', moveDown: 'Move down', mergeNext: 'Merge with next stop',
-    addSummary: 'Add summary', addCommitPlan: 'Propose commits', updated: 'Saved result updated',
-    conflict: 'This walkthrough changed elsewhere. Your draft is kept. Load the latest version and review it before saving again.',
-    reload: 'Load latest version', applicationLocked: 'Commit application is in progress. Editing is paused.',
-    missingStop: "This stop is no longer in the latest walkthrough. Your draft is kept; select another stop to continue.",
-};
-type SavedCopy = { [K in keyof typeof en]: string };
+// Tooling aggregate. Product locale roots import only their locale payload.
+import { walkthroughSavedTranslations as en } from './features/en';
+import { walkthroughSavedTranslations as ca } from './features/ca';
+import { walkthroughSavedTranslations as de } from './features/de';
+import { walkthroughSavedTranslations as es } from './features/es';
+import { walkthroughSavedTranslations as fr } from './features/fr';
+import { walkthroughSavedTranslations as it } from './features/it';
+import { walkthroughSavedTranslations as ja } from './features/ja';
+import { walkthroughSavedTranslations as pl } from './features/pl';
+import { walkthroughSavedTranslations as pt } from './features/pt';
+import { walkthroughSavedTranslations as ru } from './features/ru';
+import { walkthroughSavedTranslations as zh_Hans } from './features/zh-Hans';
+import { walkthroughSavedTranslations as zh_Hant } from './features/zh-Hant';
 
 export const walkthroughSavedTranslations = {
-    en,
-    ca: { edit: 'Edita el recorregut', title: 'Títol del recorregut', stopTitle: 'Títol de la parada', prose: 'Explicació', refine: 'Refina', instructions: 'Què ha de canviar?', moveUp: 'Mou amunt', moveDown: 'Mou avall', mergeNext: 'Fusiona amb la parada següent', addSummary: 'Afegeix un resum', addCommitPlan: 'Proposa commits', updated: 'Resultat desat actualitzat', conflict: 'Aquest recorregut ha canviat en un altre lloc. Es conserva l’esborrany. Carrega la versió més recent i revisa-la abans de tornar a desar.', reload: 'Carrega la versió més recent', missingStop: "Aquesta parada ja no és al recorregut més recent. Es conserva l’esborrany; tria una altra parada per continuar.", applicationLocked: 'S’estan aplicant commits. L’edició està en pausa.' },
-    de: { edit: 'Walkthrough bearbeiten', title: 'Walkthrough-Titel', stopTitle: 'Abschnittstitel', prose: 'Erklärung', refine: 'Überarbeiten', instructions: 'Was soll sich ändern?', moveUp: 'Nach oben', moveDown: 'Nach unten', mergeNext: 'Mit nächstem Abschnitt zusammenführen', addSummary: 'Zusammenfassung hinzufügen', addCommitPlan: 'Commits vorschlagen', updated: 'Gespeichertes Ergebnis aktualisiert', conflict: 'Dieser Walkthrough wurde anderswo geändert. Dein Entwurf bleibt erhalten. Lade die aktuelle Version und prüfe sie vor dem erneuten Speichern.', reload: 'Aktuelle Version laden', missingStop: "Dieser Abschnitt ist im aktuellen Walkthrough nicht mehr enthalten. Dein Entwurf bleibt erhalten; wähle einen anderen Abschnitt.", applicationLocked: 'Commits werden angewendet. Die Bearbeitung ist pausiert.' },
-    es: { edit: 'Editar recorrido', title: 'Título del recorrido', stopTitle: 'Título de la parada', prose: 'Explicación', refine: 'Refinar', instructions: '¿Qué debería cambiar?', moveUp: 'Subir', moveDown: 'Bajar', mergeNext: 'Combinar con la siguiente parada', addSummary: 'Añadir resumen', addCommitPlan: 'Proponer commits', updated: 'Resultado guardado actualizado', conflict: 'Este recorrido cambió en otro lugar. Tu borrador se conserva. Carga la última versión y revísala antes de guardar de nuevo.', reload: 'Cargar última versión', missingStop: "Esta parada ya no está en el último recorrido. Tu borrador se conserva; selecciona otra parada para continuar.", applicationLocked: 'Se están aplicando commits. La edición está en pausa.' },
-    fr: { edit: 'Modifier le parcours', title: 'Titre du parcours', stopTitle: 'Titre de l’étape', prose: 'Explication', refine: 'Affiner', instructions: 'Que faut-il changer ?', moveUp: 'Monter', moveDown: 'Descendre', mergeNext: 'Fusionner avec l’étape suivante', addSummary: 'Ajouter un résumé', addCommitPlan: 'Proposer des commits', updated: 'Résultat enregistré mis à jour', conflict: 'Ce parcours a changé ailleurs. Votre brouillon est conservé. Chargez la dernière version et vérifiez-la avant d’enregistrer à nouveau.', reload: 'Charger la dernière version', missingStop: "Cette étape n’est plus dans le dernier parcours. Votre brouillon est conservé ; choisissez une autre étape pour continuer.", applicationLocked: 'Des commits sont en cours d’application. La modification est suspendue.' },
-    it: { edit: 'Modifica il percorso', title: 'Titolo del percorso', stopTitle: 'Titolo della tappa', prose: 'Spiegazione', refine: 'Perfeziona', instructions: 'Cosa deve cambiare?', moveUp: 'Sposta su', moveDown: 'Sposta giù', mergeNext: 'Unisci alla tappa successiva', addSummary: 'Aggiungi riepilogo', addCommitPlan: 'Proponi commit', updated: 'Risultato salvato aggiornato', conflict: 'Questo percorso è cambiato altrove. La tua bozza è conservata. Carica l’ultima versione e controllala prima di salvare di nuovo.', reload: 'Carica l’ultima versione', missingStop: "Questa tappa non è più nell’ultimo percorso. La bozza è conservata; seleziona un’altra tappa per continuare.", applicationLocked: 'Applicazione dei commit in corso. Le modifiche sono sospese.' },
-    ja: { edit: 'ウォークスルーを編集', title: 'ウォークスルーのタイトル', stopTitle: 'ステップのタイトル', prose: '説明', refine: '改善', instructions: '何を変更しますか？', moveUp: '上に移動', moveDown: '下に移動', mergeNext: '次のステップと結合', addSummary: '要約を追加', addCommitPlan: 'コミットを提案', updated: '保存済みの結果を更新しました', conflict: 'このウォークスルーは別の場所で変更されました。下書きは保持されています。最新のバージョンを読み込み、確認してから再度保存してください。', reload: '最新のバージョンを読み込む', missingStop: "このステップは最新のウォークスルーに含まれていません。下書きは保持されています。別のステップを選択して続けてください。", applicationLocked: 'コミットを適用中です。編集は一時停止しています。' },
-    pl: { edit: 'Edytuj przewodnik', title: 'Tytuł przewodnika', stopTitle: 'Tytuł kroku', prose: 'Wyjaśnienie', refine: 'Dopracuj', instructions: 'Co należy zmienić?', moveUp: 'Przesuń w górę', moveDown: 'Przesuń w dół', mergeNext: 'Połącz z następnym krokiem', addSummary: 'Dodaj podsumowanie', addCommitPlan: 'Zaproponuj commity', updated: 'Zapisany wynik zaktualizowany', conflict: 'Ten przewodnik zmienił się gdzie indziej. Twój szkic został zachowany. Wczytaj najnowszą wersję i sprawdź ją przed ponownym zapisaniem.', reload: 'Wczytaj najnowszą wersję', missingStop: "Tego kroku nie ma już w najnowszym przewodniku. Szkic został zachowany; wybierz inny krok, aby kontynuować.", applicationLocked: 'Trwa stosowanie commitów. Edycja jest wstrzymana.' },
-    pt: { edit: 'Editar percurso', title: 'Título do percurso', stopTitle: 'Título da etapa', prose: 'Explicação', refine: 'Refinar', instructions: 'O que deve mudar?', moveUp: 'Mover para cima', moveDown: 'Mover para baixo', mergeNext: 'Combinar com a próxima etapa', addSummary: 'Adicionar resumo', addCommitPlan: 'Propor commits', updated: 'Resultado salvo atualizado', conflict: 'Este percurso mudou em outro lugar. Seu rascunho foi preservado. Carregue a versão mais recente e confira antes de salvar novamente.', reload: 'Carregar versão mais recente', missingStop: "Esta etapa não está mais no percurso mais recente. Seu rascunho foi preservado; selecione outra etapa para continuar.", applicationLocked: 'Os commits estão sendo aplicados. A edição está pausada.' },
-    ru: { edit: 'Редактировать обзор', title: 'Название обзора', stopTitle: 'Название этапа', prose: 'Объяснение', refine: 'Уточнить', instructions: 'Что нужно изменить?', moveUp: 'Переместить выше', moveDown: 'Переместить ниже', mergeNext: 'Объединить со следующим этапом', addSummary: 'Добавить сводку', addCommitPlan: 'Предложить коммиты', updated: 'Сохранённый результат обновлён', conflict: 'Этот обзор изменён в другом месте. Ваш черновик сохранён. Загрузите последнюю версию и проверьте её перед повторным сохранением.', reload: 'Загрузить последнюю версию', missingStop: "Этого этапа больше нет в последней версии обзора. Черновик сохранён; выберите другой этап, чтобы продолжить.", applicationLocked: 'Выполняются коммиты. Редактирование приостановлено.' },
-    'zh-Hans': { edit: '编辑导览', title: '导览标题', stopTitle: '步骤标题', prose: '说明', refine: '优化', instructions: '需要更改什么？', moveUp: '上移', moveDown: '下移', mergeNext: '与下一步骤合并', addSummary: '添加摘要', addCommitPlan: '提议提交', updated: '已更新保存的结果', conflict: '此导览已在其他地方更改。草稿已保留。请加载最新版本并检查，然后再次保存。', reload: '加载最新版本', missingStop: "最新导览中已没有此步骤。草稿已保留，请选择其他步骤以继续。", applicationLocked: '正在应用提交。编辑已暂停。' },
-    'zh-Hant': { edit: '編輯導覽', title: '導覽標題', stopTitle: '步驟標題', prose: '說明', refine: '改善', instructions: '需要更改什麼？', moveUp: '上移', moveDown: '下移', mergeNext: '與下一步驟合併', addSummary: '新增摘要', addCommitPlan: '提議提交', updated: '已更新儲存的結果', conflict: '此導覽已在其他地方變更。草稿已保留。請載入最新版本並檢查，然後再次儲存。', reload: '載入最新版本', missingStop: "最新導覽中已沒有此步驟。草稿已保留，請選擇其他步驟以繼續。", applicationLocked: '正在套用提交。編輯已暫停。' },
-} satisfies Record<string, SavedCopy>;
+    ...en.walkthroughSavedTranslations,
+    ...ca.walkthroughSavedTranslations,
+    ...de.walkthroughSavedTranslations,
+    ...es.walkthroughSavedTranslations,
+    ...fr.walkthroughSavedTranslations,
+    ...it.walkthroughSavedTranslations,
+    ...ja.walkthroughSavedTranslations,
+    ...pl.walkthroughSavedTranslations,
+    ...pt.walkthroughSavedTranslations,
+    ...ru.walkthroughSavedTranslations,
+    ...zh_Hans.walkthroughSavedTranslations,
+    ...zh_Hant.walkthroughSavedTranslations,
+};

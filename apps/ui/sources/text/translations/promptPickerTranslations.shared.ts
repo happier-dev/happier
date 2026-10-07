@@ -1,0 +1,38 @@
+
+
+
+export const promptPickerTranslationsEnglish = { "en": {
+        "partialHistory": "Sent before covers only known sessions.",
+        "loadedHistory": "Sent before shows loaded messages only.",
+        "open": "Open prompts",
+        "menu": "Prompts…",
+        "placeholder": "Search prompts and what you sent",
+        "favorites": "Favourites",
+        "library": "Library",
+        "sentBefore": "Sent before",
+        "builtIn": "Built in",
+        "readError": "This prompt could not be read. Try again.",
+        "libraryError": "The library could not be loaded.",
+        "partialLibrary": "Some library prompts could not be read.",
+        "loadOlder": "Search older messages",
+        "stop": "Stop",
+        "insert": "Insert",
+        "send": "Send now",
+        "addFavorite": "Add to favourites",
+        "removeFavorite": "Remove from favourites",
+        "empty": "Save a message as a prompt to reuse it here.",
+        "applyError": "The prompt could not be applied. Try again.",
+        "historyError": "Older messages could not be loaded. Try again.",
+        "title": "Prompts",
+        "clear": "Clear",
+        "favorite": "Favourite",
+        "favoritesInvite": "Star a prompt or something you sent to keep it here.",
+        "saveAsFavorite": "Save as a favourite prompt",
+        "saveInPlaceStarred": ({ time }: { time: string }) => `From your message of ${time} · goes to your library, starred`,
+        "saveInPlace": ({ time }: { time: string }) => `From your message of ${time} · goes to your library`,
+        "noMatchesFor": ({ query }: { query: string }) => `No prompts or loaded messages match “${query}”`,
+        "previewInserts": "inserts, then you send",
+        "previewSent": "sent before",
+        "previewEdited": ({ time }: { time: string }) => `Edited ${time}`,
+        "searchingOlder": ({ searched, total }: { searched: number; total: number }) => `Searching older messages… ${searched} of ${total} sessions`
+    } } as const;

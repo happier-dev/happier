@@ -1,219 +1,28 @@
-/**
- * Copy owned by the Review tab in Details (details lab 2, R1/SG): its header, the file list that
- * comes first, and the comment tray. The chrome's own copy is `detailsChromeTranslations`.
- */
-type Count = Readonly<{ count: number }>;
-
-type DetailsReviewTranslations = Readonly<{
-    title: string;
-    files: (params: Count) => string;
-    nextCommit: (params: Count) => string;
-    changedFiles: string;
-    commitColumn: string;
-    jumpA11y: string;
-    comments: (params: Count) => string;
-    goesWithNext: (params: Count) => string;
-    askForChanges: string;
-    detachCommentA11y: string;
-    trayExpandedHint: string;
-    askPlaceholder: string;
-    send: string;
-    draftAuthor: string;
-    draftStatus: string;
-    includeComment: string;
-}>;
+// Tooling aggregate. Product locale roots import only their locale payload.
+import { detailsReviewTranslations as en } from './features/en';
+import { detailsReviewTranslations as ca } from './features/ca';
+import { detailsReviewTranslations as de } from './features/de';
+import { detailsReviewTranslations as es } from './features/es';
+import { detailsReviewTranslations as fr } from './features/fr';
+import { detailsReviewTranslations as it } from './features/it';
+import { detailsReviewTranslations as ja } from './features/ja';
+import { detailsReviewTranslations as pl } from './features/pl';
+import { detailsReviewTranslations as pt } from './features/pt';
+import { detailsReviewTranslations as ru } from './features/ru';
+import { detailsReviewTranslations as zh_Hans } from './features/zh-Hans';
+import { detailsReviewTranslations as zh_Hant } from './features/zh-Hant';
 
 export const detailsReviewTranslations = {
-    en: {
-        title: 'Review',
-        files: ({ count }) => (count === 1 ? `1 file` : `${count} files`),
-        nextCommit: ({ count }) => `${count} in the next commit`,
-        changedFiles: 'Changed files',
-        commitColumn: 'Commit',
-        jumpA11y: 'Jump to a file',
-        comments: ({ count }) => (count === 1 ? `1 comment` : `${count} comments`),
-        goesWithNext: ({ count }): string => (count === 1 ? `goes with your next message` : `go with your next message`),
-        askForChanges: 'Ask for changes',
-        detachCommentA11y: 'Leave this comment out of the next message',
-        trayExpandedHint: 'They go with your next message to the agent.',
-        askPlaceholder: 'Tell the agent what to change…',
-        send: 'Send',
-        draftAuthor: 'You', draftStatus: 'draft', includeComment: 'Goes with your next message',
-    },
-    ca: {
-        title: 'Revisió',
-        files: ({ count }) => (count === 1 ? `1 fitxer` : `${count} fitxers`),
-        nextCommit: ({ count }) => `${count} al proper commit`,
-        changedFiles: 'Fitxers canviats',
-        commitColumn: 'Commit',
-        jumpA11y: 'Salta a un fitxer',
-        comments: ({ count }) => (count === 1 ? `1 comentari` : `${count} comentaris`),
-        goesWithNext: ({ count }) => (count === 1 ? `va amb el teu proper missatge` : `van amb el teu proper missatge`),
-        askForChanges: 'Demana canvis',
-        detachCommentA11y: 'Deixa aquest comentari fora del proper missatge',
-        trayExpandedHint: 'Van amb el teu proper missatge a l’agent.',
-        askPlaceholder: 'Digues a l’agent què ha de canviar…',
-        send: 'Envia',
-        draftAuthor: 'Tu', draftStatus: 'esborrany', includeComment: 'Va amb el teu proper missatge',
-    },
-    de: {
-        title: 'Prüfen',
-        files: ({ count }) => (count === 1 ? `1 Datei` : `${count} Dateien`),
-        nextCommit: ({ count }) => `${count} im nächsten Commit`,
-        changedFiles: 'Geänderte Dateien',
-        commitColumn: 'Commit',
-        jumpA11y: 'Zu einer Datei springen',
-        comments: ({ count }) => (count === 1 ? `1 Kommentar` : `${count} Kommentare`),
-        goesWithNext: ({ count }) => (count === 1 ? `geht mit deiner nächsten Nachricht mit` : `gehen mit deiner nächsten Nachricht mit`),
-        askForChanges: 'Änderungen anfragen',
-        detachCommentA11y: 'Diesen Kommentar aus der nächsten Nachricht herausnehmen',
-        trayExpandedHint: 'Sie gehen mit deiner nächsten Nachricht an den Agenten.',
-        askPlaceholder: 'Sag dem Agenten, was er ändern soll…',
-        send: 'Senden',
-        draftAuthor: 'Du', draftStatus: 'Entwurf', includeComment: 'Geht mit deiner nächsten Nachricht mit',
-    },
-    es: {
-        title: 'Revisión',
-        files: ({ count }) => (count === 1 ? `1 archivo` : `${count} archivos`),
-        nextCommit: ({ count }) => `${count} en el próximo commit`,
-        changedFiles: 'Archivos cambiados',
-        commitColumn: 'Commit',
-        jumpA11y: 'Ir a un archivo',
-        comments: ({ count }) => (count === 1 ? `1 comentario` : `${count} comentarios`),
-        goesWithNext: ({ count }) => (count === 1 ? `va con tu próximo mensaje` : `van con tu próximo mensaje`),
-        askForChanges: 'Pedir cambios',
-        detachCommentA11y: 'Dejar este comentario fuera del próximo mensaje',
-        trayExpandedHint: 'Van con tu próximo mensaje al agente.',
-        askPlaceholder: 'Dile al agente qué cambiar…',
-        send: 'Enviar',
-        draftAuthor: 'Tú', draftStatus: 'borrador', includeComment: 'Va con tu próximo mensaje',
-    },
-    fr: {
-        title: 'Relecture',
-        files: ({ count }) => (count === 1 ? `1 fichier` : `${count} fichiers`),
-        nextCommit: ({ count }) => `${count} dans le prochain commit`,
-        changedFiles: 'Fichiers modifiés',
-        commitColumn: 'Commit',
-        jumpA11y: 'Aller à un fichier',
-        comments: ({ count }) => (count === 1 ? `1 commentaire` : `${count} commentaires`),
-        goesWithNext: ({ count }) => (count === 1 ? `part avec votre prochain message` : `partent avec votre prochain message`),
-        askForChanges: 'Demander des modifications',
-        detachCommentA11y: 'Retirer ce commentaire du prochain message',
-        trayExpandedHint: 'Ils partent avec votre prochain message à l’agent.',
-        askPlaceholder: 'Dites à l’agent quoi modifier…',
-        send: 'Envoyer',
-        draftAuthor: 'Vous', draftStatus: 'brouillon', includeComment: 'Part avec votre prochain message',
-    },
-    it: {
-        title: 'Revisione',
-        files: ({ count }) => (count === 1 ? `1 file` : `${count} file`),
-        nextCommit: ({ count }) => `${count} nel prossimo commit`,
-        changedFiles: 'File modificati',
-        commitColumn: 'Commit',
-        jumpA11y: 'Vai a un file',
-        comments: ({ count }) => (count === 1 ? `1 commento` : `${count} commenti`),
-        goesWithNext: ({ count }) => (count === 1 ? `va con il tuo prossimo messaggio` : `vanno con il tuo prossimo messaggio`),
-        askForChanges: 'Chiedi modifiche',
-        detachCommentA11y: 'Escludi questo commento dal prossimo messaggio',
-        trayExpandedHint: 'Vanno con il tuo prossimo messaggio all’agente.',
-        askPlaceholder: 'Di all’agente cosa cambiare…',
-        send: 'Invia',
-        draftAuthor: 'Tu', draftStatus: 'bozza', includeComment: 'Va con il tuo prossimo messaggio',
-    },
-    ja: {
-        title: 'レビュー',
-        files: ({ count }) => `${count} 個のファイル`,
-        nextCommit: ({ count }) => `次のコミットに ${count} 個`,
-        changedFiles: '変更されたファイル',
-        commitColumn: 'コミット',
-        jumpA11y: 'ファイルへ移動',
-        comments: ({ count }) => `${count} 件のコメント`,
-        goesWithNext: ({ count }) => `次のメッセージに添付`,
-        askForChanges: '変更を依頼',
-        detachCommentA11y: 'このコメントを次のメッセージから外す',
-        trayExpandedHint: '次のメッセージと一緒にエージェントへ送られます。',
-        askPlaceholder: 'エージェントに変更内容を伝える…',
-        send: '送信',
-        draftAuthor: 'あなた', draftStatus: '下書き', includeComment: '次のメッセージに添付',
-    },
-    pl: {
-        title: 'Przegląd',
-        files: ({ count }) => (count === 1 ? `1 plik` : `Pliki: ${count}`),
-        nextCommit: ({ count }) => `W następnym commicie: ${count}`,
-        changedFiles: 'Zmienione pliki',
-        commitColumn: 'Commit',
-        jumpA11y: 'Przejdź do pliku',
-        comments: ({ count }) => (count === 1 ? `1 komentarz` : `Komentarze: ${count}`),
-        goesWithNext: ({ count }) => (count === 1 ? `trafi do następnej wiadomości` : `trafią do następnej wiadomości`),
-        askForChanges: 'Poproś o zmiany',
-        detachCommentA11y: 'Nie dołączaj tego komentarza do następnej wiadomości',
-        trayExpandedHint: 'Trafią do agenta z twoją następną wiadomością.',
-        askPlaceholder: 'Powiedz agentowi, co zmienić…',
-        send: 'Wyślij',
-        draftAuthor: 'Ty', draftStatus: 'szkic', includeComment: 'Trafi do następnej wiadomości',
-    },
-    pt: {
-        title: 'Revisão',
-        files: ({ count }) => (count === 1 ? `1 arquivo` : `${count} arquivos`),
-        nextCommit: ({ count }) => `${count} no próximo commit`,
-        changedFiles: 'Arquivos alterados',
-        commitColumn: 'Commit',
-        jumpA11y: 'Ir para um arquivo',
-        comments: ({ count }) => (count === 1 ? `1 comentário` : `${count} comentários`),
-        goesWithNext: ({ count }) => (count === 1 ? `vai com sua próxima mensagem` : `vão com sua próxima mensagem`),
-        askForChanges: 'Pedir alterações',
-        detachCommentA11y: 'Deixar este comentário fora da próxima mensagem',
-        trayExpandedHint: 'Eles vão com sua próxima mensagem para o agente.',
-        askPlaceholder: 'Diga ao agente o que mudar…',
-        send: 'Enviar',
-        draftAuthor: 'Você', draftStatus: 'rascunho', includeComment: 'Vai com sua próxima mensagem',
-    },
-    ru: {
-        title: 'Проверка',
-        files: ({ count }) => (count === 1 ? `1 файл` : `Файлов: ${count}`),
-        nextCommit: ({ count }) => `В следующем коммите: ${count}`,
-        changedFiles: 'Изменённые файлы',
-        commitColumn: 'Коммит',
-        jumpA11y: 'Перейти к файлу',
-        comments: ({ count }) => (count === 1 ? `1 комментарий` : `Комментариев: ${count}`),
-        goesWithNext: ({ count }) => (count === 1 ? `уйдёт со следующим сообщением` : `уйдут со следующим сообщением`),
-        askForChanges: 'Попросить изменения',
-        detachCommentA11y: 'Не прикладывать этот комментарий к следующему сообщению',
-        trayExpandedHint: 'Они уйдут агенту вместе со следующим сообщением.',
-        askPlaceholder: 'Скажите агенту, что изменить…',
-        send: 'Отправить',
-        draftAuthor: 'Вы', draftStatus: 'черновик', includeComment: 'Уйдёт со следующим сообщением',
-    },
-    'zh-Hans': {
-        title: '审查',
-        files: ({ count }) => `${count} 个文件`,
-        nextCommit: ({ count }) => `下次提交包含 ${count} 个`,
-        changedFiles: '已更改的文件',
-        commitColumn: '提交',
-        jumpA11y: '跳转到文件',
-        comments: ({ count }) => `${count} 条评论`,
-        goesWithNext: ({ count }) => `随下一条消息发送`,
-        askForChanges: '请求修改',
-        detachCommentA11y: '不随下一条消息发送此评论',
-        trayExpandedHint: '它们会随你的下一条消息发送给代理。',
-        askPlaceholder: '告诉代理要修改什么…',
-        send: '发送',
-        draftAuthor: '你', draftStatus: '草稿', includeComment: '随下一条消息发送',
-    },
-    'zh-Hant': {
-        title: '審查',
-        files: ({ count }) => `${count} 個檔案`,
-        nextCommit: ({ count }) => `下次提交包含 ${count} 個`,
-        changedFiles: '已變更的檔案',
-        commitColumn: '提交',
-        jumpA11y: '跳到檔案',
-        comments: ({ count }) => `${count} 則評論`,
-        goesWithNext: ({ count }) => `隨下一則訊息傳送`,
-        askForChanges: '請求修改',
-        detachCommentA11y: '不隨下一則訊息傳送此評論',
-        trayExpandedHint: '它們會隨你的下一則訊息傳送給代理。',
-        askPlaceholder: '告訴代理要修改什麼…',
-        send: '傳送',
-        draftAuthor: '你', draftStatus: '草稿', includeComment: '隨下一則訊息傳送',
-    },
-} satisfies Record<string, DetailsReviewTranslations>;
+    ...en.detailsReviewTranslations,
+    ...ca.detailsReviewTranslations,
+    ...de.detailsReviewTranslations,
+    ...es.detailsReviewTranslations,
+    ...fr.detailsReviewTranslations,
+    ...it.detailsReviewTranslations,
+    ...ja.detailsReviewTranslations,
+    ...pl.detailsReviewTranslations,
+    ...pt.detailsReviewTranslations,
+    ...ru.detailsReviewTranslations,
+    ...zh_Hans.detailsReviewTranslations,
+    ...zh_Hant.detailsReviewTranslations,
+};

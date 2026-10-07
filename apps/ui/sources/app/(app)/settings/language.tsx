@@ -20,6 +20,7 @@ import { useUpdates } from '@/hooks/inbox/useUpdates';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { LANGUAGE_SETTINGS } from '@/components/settings/language/languageSettings';
+import { preloadTranslationsForSettings } from '@/text/i18n';
 
 type LanguageOption = 'auto' | SupportedLanguage;
 
@@ -74,7 +75,14 @@ export function LanguageSettingsScreen() {
         );
         if (!confirmed) return;
 
-        setPreferredLanguage(newLanguage === 'auto' ? null : newLanguage);
+        const selected = newLanguage === 'auto' ? null : newLanguage;
+        try {
+            await preloadTranslationsForSettings(selected);
+        } catch {
+            Modal.alert(t('common.error'), t('errors.operationFailed'));
+            return;
+        }
+        setPreferredLanguage(selected);
         // Small delay so the setting is saved before the app restarts.
         setTimeout(() => {
             reloadApp();

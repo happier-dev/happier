@@ -1,15 +1,28 @@
-/** Find's transcript paging and keyboard labels, shared by every locale. */
+// Tooling aggregate. Product locale roots import only their locale payload.
+import { transcriptFindTranslations as en } from './features/en';
+import { transcriptFindTranslations as ca } from './features/ca';
+import { transcriptFindTranslations as de } from './features/de';
+import { transcriptFindTranslations as es } from './features/es';
+import { transcriptFindTranslations as fr } from './features/fr';
+import { transcriptFindTranslations as it } from './features/it';
+import { transcriptFindTranslations as ja } from './features/ja';
+import { transcriptFindTranslations as pl } from './features/pl';
+import { transcriptFindTranslations as pt } from './features/pt';
+import { transcriptFindTranslations as ru } from './features/ru';
+import { transcriptFindTranslations as zh_Hans } from './features/zh-Hans';
+import { transcriptFindTranslations as zh_Hant } from './features/zh-Hant';
+
 export const transcriptFindTranslations = {
-    en: { searchOlder: 'Search older messages', partialErrors: 'Some content could not be searched. Results are incomplete.', olderRemaining: 'Older messages remain unsearched.', findOpen: 'Open Find', findNext: 'Next Find match', findPrevious: 'Previous Find match' },
-    ca: { searchOlder: 'Cerca missatges anteriors', partialErrors: 'No s’ha pogut cercar en part del contingut. Els resultats són incomplets.', olderRemaining: 'Queden missatges anteriors sense cercar.', findOpen: 'Obre la cerca', findNext: 'Coincidència següent', findPrevious: 'Coincidència anterior' },
-    de: { searchOlder: 'Ältere Nachrichten durchsuchen', partialErrors: 'Einige Inhalte konnten nicht durchsucht werden. Die Ergebnisse sind unvollständig.', olderRemaining: 'Ältere Nachrichten wurden noch nicht durchsucht.', findOpen: 'Find öffnen', findNext: 'Nächster Suchtreffer', findPrevious: 'Vorheriger Suchtreffer' },
-    es: { searchOlder: 'Buscar mensajes anteriores', partialErrors: 'No se pudo buscar en parte del contenido. Los resultados están incompletos.', olderRemaining: 'Quedan mensajes anteriores sin buscar.', findOpen: 'Abrir búsqueda', findNext: 'Siguiente coincidencia', findPrevious: 'Coincidencia anterior' },
-    fr: { searchOlder: 'Chercher dans les messages précédents', partialErrors: 'Une partie du contenu n’a pas pu être parcourue. Les résultats sont incomplets.', olderRemaining: 'Des messages précédents restent à parcourir.', findOpen: 'Ouvrir la recherche', findNext: 'Résultat suivant', findPrevious: 'Résultat précédent' },
-    it: { searchOlder: 'Cerca nei messaggi precedenti', partialErrors: 'Non è stato possibile cercare in alcuni contenuti. I risultati sono incompleti.', olderRemaining: 'Restano messaggi precedenti da cercare.', findOpen: 'Apri ricerca', findNext: 'Corrispondenza successiva', findPrevious: 'Corrispondenza precedente' },
-    ja: { searchOlder: '以前のメッセージを検索', partialErrors: '一部のコンテンツを検索できませんでした。結果は不完全です。', olderRemaining: '未検索の以前のメッセージがあります。', findOpen: '検索を開く', findNext: '次の一致', findPrevious: '前の一致' },
-    pl: { searchOlder: 'Szukaj w starszych wiadomościach', partialErrors: 'Nie udało się przeszukać części treści. Wyniki są niepełne.', olderRemaining: 'Starsze wiadomości pozostają nieprzeszukane.', findOpen: 'Otwórz wyszukiwanie', findNext: 'Następne dopasowanie', findPrevious: 'Poprzednie dopasowanie' },
-    pt: { searchOlder: 'Pesquisar mensagens anteriores', partialErrors: 'Não foi possível pesquisar parte do conteúdo. Os resultados estão incompletos.', olderRemaining: 'Ainda há mensagens anteriores não pesquisadas.', findOpen: 'Abrir pesquisa', findNext: 'Próxima correspondência', findPrevious: 'Correspondência anterior' },
-    ru: { searchOlder: 'Искать в старых сообщениях', partialErrors: 'Поиск по части содержимого недоступен. Результаты неполные.', olderRemaining: 'Старые сообщения ещё не просмотрены.', findOpen: 'Открыть поиск', findNext: 'Следующее совпадение', findPrevious: 'Предыдущее совпадение' },
-    'zh-Hans': { searchOlder: '搜索较早的消息', partialErrors: '部分内容无法搜索。结果不完整。', olderRemaining: '还有较早的消息尚未搜索。', findOpen: '打开查找', findNext: '下一个匹配', findPrevious: '上一个匹配' },
-    'zh-Hant': { searchOlder: '搜尋較早的訊息', partialErrors: '部分內容無法搜尋。結果不完整。', olderRemaining: '還有較早的訊息尚未搜尋。', findOpen: '開啟尋找', findNext: '下一個相符項目', findPrevious: '上一個相符項目' },
-} as const;
+    ...en.transcriptFindTranslations,
+    ...ca.transcriptFindTranslations,
+    ...de.transcriptFindTranslations,
+    ...es.transcriptFindTranslations,
+    ...fr.transcriptFindTranslations,
+    ...it.transcriptFindTranslations,
+    ...ja.transcriptFindTranslations,
+    ...pl.transcriptFindTranslations,
+    ...pt.transcriptFindTranslations,
+    ...ru.transcriptFindTranslations,
+    ...zh_Hans.transcriptFindTranslations,
+    ...zh_Hant.transcriptFindTranslations,
+};

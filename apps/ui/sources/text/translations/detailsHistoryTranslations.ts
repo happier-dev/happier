@@ -1,232 +1,28 @@
-/**
- * Copy owned by a commit tab and a stash tab in Details (details lab 2, CM and SZ). Their headers
- * fill the shared `DetailsTabHeader`; the chrome's own copy is `detailsChromeTranslations`.
- */
-type Count = Readonly<{ count: number }>;
-type Branch = Readonly<{ branch: string }>;
-type Folder = Readonly<{ folder: string }>;
-
-type DetailsHistoryTranslations = Readonly<{
-    copyCommitSha: string;
-    filesChanged: (params: Count) => string;
-    files: (params: Count) => string;
-    revertEllipsis: string;
-    stashKeptOn: (params: Branch) => string;
-    stashOriginBranch: (params: Branch) => string;
-    stashOriginBranchShort: string;
-    stashOriginTransient: string;
-    stashOriginUnmanaged: string;
-    stashRestoreExplains: (params: Folder) => string;
-    stashApply: string;
-    stashApplyA11y: string;
-    stashDiscardEllipsis: string;
-    stashSwitcherA11y: string;
-    stashCount: (params: Count) => string;
-}>;
+// Tooling aggregate. Product locale roots import only their locale payload.
+import { detailsHistoryTranslations as en } from './features/en';
+import { detailsHistoryTranslations as ca } from './features/ca';
+import { detailsHistoryTranslations as de } from './features/de';
+import { detailsHistoryTranslations as es } from './features/es';
+import { detailsHistoryTranslations as fr } from './features/fr';
+import { detailsHistoryTranslations as it } from './features/it';
+import { detailsHistoryTranslations as ja } from './features/ja';
+import { detailsHistoryTranslations as pl } from './features/pl';
+import { detailsHistoryTranslations as pt } from './features/pt';
+import { detailsHistoryTranslations as ru } from './features/ru';
+import { detailsHistoryTranslations as zh_Hans } from './features/zh-Hans';
+import { detailsHistoryTranslations as zh_Hant } from './features/zh-Hant';
 
 export const detailsHistoryTranslations = {
-    en: {
-        copyCommitSha: 'Copy commit SHA',
-        filesChanged: ({ count }) => (count === 1 ? '1 file changed' : `${count} files changed`),
-        files: ({ count }) => (count === 1 ? '1 file' : `${count} files`),
-        revertEllipsis: 'Revert…',
-        stashKeptOn: ({ branch }) => `Kept on ${branch}`,
-        stashOriginBranch: ({ branch }) => `Saved when you switched away from ${branch}`,
-        stashOriginBranchShort: 'When you switched branches',
-        stashOriginTransient: 'Saved by Happier',
-        stashOriginUnmanaged: 'Made outside Happier',
-        stashRestoreExplains: ({ folder }) => `Restoring puts these changes back in ${folder} and removes the stash. Nothing else in the folder changes.`,
-        stashApply: 'Apply',
-        stashApplyA11y: 'Apply these changes and keep the stash',
-        stashDiscardEllipsis: 'Discard…',
-        stashSwitcherA11y: 'Choose a stash',
-        stashCount: ({ count }) => (count === 1 ? '1 stash' : `${count} stashes`),
-    },
-    ca: {
-        copyCommitSha: 'Copia el SHA del commit',
-        filesChanged: ({ count }) => (count === 1 ? '1 fitxer canviat' : `${count} fitxers canviats`),
-        files: ({ count }) => (count === 1 ? '1 fitxer' : `${count} fitxers`),
-        revertEllipsis: 'Reverteix…',
-        stashKeptOn: ({ branch }) => `Desat a ${branch}`,
-        stashOriginBranch: ({ branch }) => `Desat quan vas sortir de ${branch}`,
-        stashOriginBranchShort: 'Quan vas canviar de branca',
-        stashOriginTransient: 'Desat per Happier',
-        stashOriginUnmanaged: 'Fet fora de Happier',
-        stashRestoreExplains: ({ folder }) => `En restaurar, aquests canvis tornen a ${folder} i el stash s’elimina. No canvia res més a la carpeta.`,
-        stashApply: 'Aplica',
-        stashApplyA11y: 'Aplica aquests canvis i conserva el stash',
-        stashDiscardEllipsis: 'Descarta…',
-        stashSwitcherA11y: 'Tria un stash',
-        stashCount: ({ count }) => (count === 1 ? '1 stash' : `${count} stashes`),
-    },
-    de: {
-        copyCommitSha: 'Commit-SHA kopieren',
-        filesChanged: ({ count }) => (count === 1 ? '1 Datei geändert' : `${count} Dateien geändert`),
-        files: ({ count }) => (count === 1 ? '1 Datei' : `${count} Dateien`),
-        revertEllipsis: 'Zurücknehmen…',
-        stashKeptOn: ({ branch }) => `Aufbewahrt auf ${branch}`,
-        stashOriginBranch: ({ branch }) => `Gespeichert, als du ${branch} verlassen hast`,
-        stashOriginBranchShort: 'Beim Wechsel des Branches',
-        stashOriginTransient: 'Von Happier gespeichert',
-        stashOriginUnmanaged: 'Außerhalb von Happier erstellt',
-        stashRestoreExplains: ({ folder }) => `Wiederherstellen bringt diese Änderungen zurück nach ${folder} und entfernt den Stash. Sonst ändert sich nichts im Ordner.`,
-        stashApply: 'Anwenden',
-        stashApplyA11y: 'Diese Änderungen anwenden und den Stash behalten',
-        stashDiscardEllipsis: 'Verwerfen…',
-        stashSwitcherA11y: 'Stash auswählen',
-        stashCount: ({ count }) => (count === 1 ? '1 Stash' : `${count} Stashes`),
-    },
-    es: {
-        copyCommitSha: 'Copiar el SHA del commit',
-        filesChanged: ({ count }) => (count === 1 ? '1 archivo cambiado' : `${count} archivos cambiados`),
-        files: ({ count }) => (count === 1 ? '1 archivo' : `${count} archivos`),
-        revertEllipsis: 'Revertir…',
-        stashKeptOn: ({ branch }) => `Guardado en ${branch}`,
-        stashOriginBranch: ({ branch }) => `Guardado al salir de ${branch}`,
-        stashOriginBranchShort: 'Al cambiar de rama',
-        stashOriginTransient: 'Guardado por Happier',
-        stashOriginUnmanaged: 'Creado fuera de Happier',
-        stashRestoreExplains: ({ folder }) => `Al restaurar, estos cambios vuelven a ${folder} y se elimina el stash. Nada más cambia en la carpeta.`,
-        stashApply: 'Aplicar',
-        stashApplyA11y: 'Aplicar estos cambios y conservar el stash',
-        stashDiscardEllipsis: 'Descartar…',
-        stashSwitcherA11y: 'Elegir un stash',
-        stashCount: ({ count }) => (count === 1 ? '1 stash' : `${count} stashes`),
-    },
-    fr: {
-        copyCommitSha: 'Copier le SHA du commit',
-        filesChanged: ({ count }) => (count === 1 ? '1 fichier modifié' : `${count} fichiers modifiés`),
-        files: ({ count }) => (count === 1 ? '1 fichier' : `${count} fichiers`),
-        revertEllipsis: 'Annuler le commit…',
-        stashKeptOn: ({ branch }) => `Mis de côté sur ${branch}`,
-        stashOriginBranch: ({ branch }) => `Enregistré quand vous avez quitté ${branch}`,
-        stashOriginBranchShort: 'Au changement de branche',
-        stashOriginTransient: 'Enregistré par Happier',
-        stashOriginUnmanaged: 'Créé hors de Happier',
-        stashRestoreExplains: ({ folder }) => `Restaurer remet ces modifications dans ${folder} et supprime le stash. Rien d’autre ne change dans le dossier.`,
-        stashApply: 'Appliquer',
-        stashApplyA11y: 'Appliquer ces modifications et garder le stash',
-        stashDiscardEllipsis: 'Supprimer…',
-        stashSwitcherA11y: 'Choisir un stash',
-        stashCount: ({ count }) => (count === 1 ? '1 stash' : `${count} stashes`),
-    },
-    it: {
-        copyCommitSha: 'Copia lo SHA del commit',
-        filesChanged: ({ count }) => (count === 1 ? '1 file modificato' : `${count} file modificati`),
-        files: ({ count }) => (count === 1 ? '1 file' : `${count} file`),
-        revertEllipsis: 'Annulla commit…',
-        stashKeptOn: ({ branch }) => `Messo da parte su ${branch}`,
-        stashOriginBranch: ({ branch }) => `Salvato quando hai lasciato ${branch}`,
-        stashOriginBranchShort: 'Al cambio di branch',
-        stashOriginTransient: 'Salvato da Happier',
-        stashOriginUnmanaged: 'Creato fuori da Happier',
-        stashRestoreExplains: ({ folder }) => `Ripristinando, queste modifiche tornano in ${folder} e lo stash viene rimosso. Nient’altro cambia nella cartella.`,
-        stashApply: 'Applica',
-        stashApplyA11y: 'Applica queste modifiche e conserva lo stash',
-        stashDiscardEllipsis: 'Elimina…',
-        stashSwitcherA11y: 'Scegli uno stash',
-        stashCount: ({ count }) => (count === 1 ? '1 stash' : `${count} stash`),
-    },
-    ja: {
-        copyCommitSha: 'コミット SHA をコピー',
-        filesChanged: ({ count }) => `${count} 個のファイルを変更`,
-        files: ({ count }) => `${count} 個のファイル`,
-        revertEllipsis: '取り消す…',
-        stashKeptOn: ({ branch }) => `${branch} で保管`,
-        stashOriginBranch: ({ branch }) => `${branch} から切り替えたときに保存`,
-        stashOriginBranchShort: 'ブランチ切り替え時',
-        stashOriginTransient: 'Happier が保存',
-        stashOriginUnmanaged: 'Happier の外で作成',
-        stashRestoreExplains: ({ folder }) => `復元すると、これらの変更が ${folder} に戻り、スタッシュは削除されます。フォルダ内のほかのものは変わりません。`,
-        stashApply: '適用',
-        stashApplyA11y: 'これらの変更を適用してスタッシュを残す',
-        stashDiscardEllipsis: '破棄…',
-        stashSwitcherA11y: 'スタッシュを選択',
-        stashCount: ({ count }) => `スタッシュ ${count} 件`,
-    },
-    pl: {
-        copyCommitSha: 'Kopiuj SHA commita',
-        filesChanged: ({ count }) => (count === 1 ? 'Zmieniono 1 plik' : `Zmienione pliki: ${count}`),
-        files: ({ count }) => (count === 1 ? '1 plik' : `Pliki: ${count}`),
-        revertEllipsis: 'Cofnij…',
-        stashKeptOn: ({ branch }) => `Odłożone na ${branch}`,
-        stashOriginBranch: ({ branch }) => `Zapisane, gdy opuszczono ${branch}`,
-        stashOriginBranchShort: 'Przy zmianie gałęzi',
-        stashOriginTransient: 'Zapisane przez Happier',
-        stashOriginUnmanaged: 'Utworzone poza Happier',
-        stashRestoreExplains: ({ folder }) => `Przywrócenie przenosi te zmiany z powrotem do ${folder} i usuwa stash. Nic innego w folderze się nie zmienia.`,
-        stashApply: 'Zastosuj',
-        stashApplyA11y: 'Zastosuj te zmiany i zachowaj stash',
-        stashDiscardEllipsis: 'Odrzuć…',
-        stashSwitcherA11y: 'Wybierz stash',
-        stashCount: ({ count }) => (count === 1 ? '1 stash' : `Stashe: ${count}`),
-    },
-    pt: {
-        copyCommitSha: 'Copiar o SHA do commit',
-        filesChanged: ({ count }) => (count === 1 ? '1 arquivo alterado' : `${count} arquivos alterados`),
-        files: ({ count }) => (count === 1 ? '1 arquivo' : `${count} arquivos`),
-        revertEllipsis: 'Reverter…',
-        stashKeptOn: ({ branch }) => `Guardado em ${branch}`,
-        stashOriginBranch: ({ branch }) => `Salvo quando você saiu de ${branch}`,
-        stashOriginBranchShort: 'Ao trocar de branch',
-        stashOriginTransient: 'Salvo pelo Happier',
-        stashOriginUnmanaged: 'Criado fora do Happier',
-        stashRestoreExplains: ({ folder }) => `Restaurar coloca estas alterações de volta em ${folder} e remove o stash. Nada mais muda na pasta.`,
-        stashApply: 'Aplicar',
-        stashApplyA11y: 'Aplicar estas alterações e manter o stash',
-        stashDiscardEllipsis: 'Descartar…',
-        stashSwitcherA11y: 'Escolher um stash',
-        stashCount: ({ count }) => (count === 1 ? '1 stash' : `${count} stashes`),
-    },
-    ru: {
-        copyCommitSha: 'Скопировать SHA коммита',
-        filesChanged: ({ count }) => `Изменено файлов: ${count}`,
-        files: ({ count }) => `Файлов: ${count}`,
-        revertEllipsis: 'Отменить…',
-        stashKeptOn: ({ branch }) => `Отложено в ${branch}`,
-        stashOriginBranch: ({ branch }) => `Сохранено при уходе с ${branch}`,
-        stashOriginBranchShort: 'При смене ветки',
-        stashOriginTransient: 'Сохранено Happier',
-        stashOriginUnmanaged: 'Создано вне Happier',
-        stashRestoreExplains: ({ folder }) => `Восстановление вернёт эти изменения в ${folder} и удалит stash. Больше ничего в папке не изменится.`,
-        stashApply: 'Применить',
-        stashApplyA11y: 'Применить эти изменения и сохранить stash',
-        stashDiscardEllipsis: 'Удалить…',
-        stashSwitcherA11y: 'Выбрать stash',
-        stashCount: ({ count }) => `Stash-и: ${count}`,
-    },
-    'zh-Hans': {
-        copyCommitSha: '复制提交 SHA',
-        filesChanged: ({ count }) => `更改了 ${count} 个文件`,
-        files: ({ count }) => `${count} 个文件`,
-        revertEllipsis: '还原…',
-        stashKeptOn: ({ branch }) => `保存在 ${branch}`,
-        stashOriginBranch: ({ branch }) => `在你离开 ${branch} 时保存`,
-        stashOriginBranchShort: '切换分支时',
-        stashOriginTransient: '由 Happier 保存',
-        stashOriginUnmanaged: '在 Happier 之外创建',
-        stashRestoreExplains: ({ folder }) => `恢复会把这些更改放回 ${folder} 并移除这个储藏。文件夹中的其他内容不会改变。`,
-        stashApply: '应用',
-        stashApplyA11y: '应用这些更改并保留储藏',
-        stashDiscardEllipsis: '丢弃…',
-        stashSwitcherA11y: '选择储藏',
-        stashCount: ({ count }) => `${count} 个储藏`,
-    },
-    'zh-Hant': {
-        copyCommitSha: '複製提交 SHA',
-        filesChanged: ({ count }) => `變更了 ${count} 個檔案`,
-        files: ({ count }) => `${count} 個檔案`,
-        revertEllipsis: '還原…',
-        stashKeptOn: ({ branch }) => `保存在 ${branch}`,
-        stashOriginBranch: ({ branch }) => `在你離開 ${branch} 時儲存`,
-        stashOriginBranchShort: '切換分支時',
-        stashOriginTransient: '由 Happier 儲存',
-        stashOriginUnmanaged: '在 Happier 之外建立',
-        stashRestoreExplains: ({ folder }) => `還原會把這些變更放回 ${folder} 並移除這個暫存。資料夾中的其他內容不會改變。`,
-        stashApply: '套用',
-        stashApplyA11y: '套用這些變更並保留暫存',
-        stashDiscardEllipsis: '捨棄…',
-        stashSwitcherA11y: '選擇暫存',
-        stashCount: ({ count }) => `${count} 個暫存`,
-    },
-} satisfies Record<string, DetailsHistoryTranslations>;
+    ...en.detailsHistoryTranslations,
+    ...ca.detailsHistoryTranslations,
+    ...de.detailsHistoryTranslations,
+    ...es.detailsHistoryTranslations,
+    ...fr.detailsHistoryTranslations,
+    ...it.detailsHistoryTranslations,
+    ...ja.detailsHistoryTranslations,
+    ...pl.detailsHistoryTranslations,
+    ...pt.detailsHistoryTranslations,
+    ...ru.detailsHistoryTranslations,
+    ...zh_Hans.detailsHistoryTranslations,
+    ...zh_Hant.detailsHistoryTranslations,
+};

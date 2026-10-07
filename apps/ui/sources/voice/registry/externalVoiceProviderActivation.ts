@@ -3,21 +3,15 @@ import type {
   BundledRealtimeProviderRuntimeHost,
 } from './bundledConversationRuntimeContract';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import {
-  buildQualifiedPluginContributionKey,
-  ConnectedServiceBindingsV2IngressSchema,
-  createPluginContributionIdentity,
-  deriveVoiceCredentialBindingIdentityV1,
-  VoiceProviderContributionSchema,
-  readVoiceProviderCredentialRemediationCode,
-  VoiceRealtimeJsonValueSchema,
-  type VoiceRealtimeJsonValue,
-  type VoiceProviderContribution,
-  type RecipientContractV1,
-  listVoiceToolActionSpecs,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey, createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
+import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { deriveVoiceCredentialBindingIdentityV1, VoiceProviderContributionSchema, type VoiceProviderContribution } from '@happier-dev/protocol/plugins/contributions/voice';
+import { readVoiceProviderCredentialRemediationCode } from '@happier-dev/protocol/voice/providerOperations';
+import { VoiceRealtimeJsonValueSchema, type VoiceRealtimeJsonValue } from '@happier-dev/protocol/voice/realtime/events';
+import type { RecipientContractV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
+import { listVoiceToolActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import { buildVoiceRealtimeAttemptPolicy } from '@happier-dev/agents/voice';
-import { resolveVoiceWelcomeText } from '@/voice/agent/voiceWelcomeText';
+import { preloadVoiceWelcomeText, resolveVoiceWelcomeText } from '@/voice/agent/voiceWelcomeText';
 import { resolveUiVoicePromptStackBlocks } from '@/voice/agent/resolveUiVoicePromptStackBlocks';
 import type { PluginReactNativeBundleCacheIdentity } from '@/sync/domains/plugins/ui/reactNativeRuntime';
 import { PLUGIN_UI_HOST_API_VERSION_V1 } from '@happier-dev/protocol/plugins/ui';
@@ -618,6 +612,7 @@ export function createExternalProtocol(
               exposure: 'voice_assistant',
             })]);
             const extraSystemAppendBlocks = await resolveUiVoicePromptStackBlocks();
+            await preloadVoiceWelcomeText(voice.assistantLanguage);
             signal.throwIfAborted();
             attemptPolicy = buildVoiceRealtimeAttemptPolicy({
                 actionSpecs: listVoiceToolActionSpecs(),

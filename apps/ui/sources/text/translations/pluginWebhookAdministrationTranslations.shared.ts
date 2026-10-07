@@ -1,0 +1,48 @@
+
+
+export const english = {
+    webhookAdministration: {
+        title: 'Plugin webhooks',
+        footer: 'Account endpoints, exact machine targets, delivery queues, and dead-letter recovery. Delivery bodies are never shown here.',
+        unavailableTitle: 'Plugin webhooks are unavailable',
+        unavailableSubtitle: 'This server has not enabled plugin webhook ingress.',
+        endpointsTitle: 'Webhook endpoints',
+        emptyTitle: 'No plugin webhook endpoints',
+        emptySubtitle: 'Endpoints created by installed plugins will remain visible here, including endpoints whose target is unavailable.',
+        loadError: 'Webhook status could not be loaded.',
+        endpointSubtitle: ({ readiness, routing, sourceInstanceId }: { readiness: string; routing: string; sourceInstanceId: string }) => `${readiness} · ${routing} · ${sourceInstanceId}`,
+        targetSubtitle: ({ machineId, materializationId, status }: { machineId: string; materializationId: string; status: string }) => `${machineId} / ${materializationId} · ${status}`,
+        queueSubtitle: ({ queued, retrying, claimed, deadLetter }: { queued: number; retrying: number; claimed: number; deadLetter: number }) => `Queued ${queued} · retrying ${retrying} · claimed ${claimed} · dead letter ${deadLetter}`,
+        copyUrl: 'Copy webhook URL',
+        selectTarget: 'Select delivery target',
+        retarget: 'Retarget endpoint',
+        retargetUnavailable: 'Select an available exact plugin materialization before retargeting this endpoint.',
+        originSelected: 'The selected exact plugin materialization will be rechecked when you continue.',
+        originUnavailable: 'No exact available plugin materialization is selected.',
+        movePendingTitle: 'Move pending deliveries?',
+        movePendingBody: 'Move queued and dead-letter deliveries to the new exact target? Actively claimed deliveries remain on their current target.',
+        resumePendingMove: 'Resume pending-delivery move',
+        resumePendingMoveSubtitle: ({ count }: { count: number }) => `${count} queued or dead-letter deliveries still use the prior exact target.`,
+        configureCredential: 'Configure signing credential',
+        rotateCredential: 'Rotate signing credential',
+        finishRotation: 'Finish credential rotation',
+        finishRotationSubtitle: 'Stop accepting the previous credential now.',
+        credentialSecretTitle: 'Save the new signing secret',
+        credentialSecretBody: ({ secret }: { secret: string }) => `This secret is shown once. Save it before closing this message.\n\n${secret}`,
+        revoke: 'Revoke endpoint',
+        revokeTitle: 'Revoke webhook endpoint?',
+        revokeBody: 'New deliveries to this endpoint will be rejected. Existing delivery metadata remains available according to retention policy.',
+        operationFailed: 'The webhook operation did not complete. Refresh current status before trying again.',
+        deliveryTitle: ({ digest }: { digest: string }) => `Dead letter ${digest}`,
+        deliveryStatus: 'Delivery status',
+        deliverySubtitle: ({ errorCode, attempts, replays, machineId, materializationId }: { errorCode: string; attempts: number; replays: number; machineId: string; materializationId: string }) => `${errorCode} · ${attempts} attempts · ${replays} replays · ${machineId} / ${materializationId}`,
+        unresolvedAutomationAdmissionTitle: ({ totalCount }: { totalCount: number }) => `${totalCount} unresolved Automation admissions`,
+        unresolvedAutomationAdmissionSubtitle: ({ sample, omittedCount }: { sample: string; omittedCount: number }) => `Sample: ${sample} · ${omittedCount} not shown`,
+        replay: 'Replay delivery',
+        discardTitle: 'Discard delivery?',
+        discardBody: 'The encrypted or plain stored delivery body will be removed and cannot be recovered.',
+    },
+} as const;
+
+
+export const pluginWebhookAdministrationTranslationsEnglish = { en: english } as const;

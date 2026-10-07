@@ -8,7 +8,7 @@ import { Slot, Stack, usePathname, useRouter } from 'expo-router';
 import { ctx } from 'expo-router/_ctx';
 import { registerWorkspaceRouteContext } from '@/components/appShell/workspace/workspaceRouteContext';
 import {
-    PUSH_NOTIFICATION_BUNDLED_SOUND_FILES, PUSH_NOTIFICATION_ACTION_IDS, PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS, PUSH_NOTIFICATION_CATEGORY_IDS, resolveAndroidNotificationSoundName, } from '@happier-dev/protocol';
+    PUSH_NOTIFICATION_BUNDLED_SOUND_FILES, PUSH_NOTIFICATION_ACTION_IDS, PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS, PUSH_NOTIFICATION_CATEGORY_IDS, resolveAndroidNotificationSoundName, } from '@happier-dev/protocol/push/pushNotificationActions';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { AuthProvider, ConcurrentSessionCacheRuntime } from '@/auth/context/AuthContext';
 import { WebServerOverrideGate } from '@/components/navigation/root/RootLayoutRedirectGate';
@@ -32,7 +32,7 @@ import {
     clearSessionSurfaceVisibilityForNonSessionRoute,
     isSessionSurfaceVisible,
 } from '@/sync/domains/session/sessionSurfaceVisibility';
-import { NotificationsSettingsV1Schema } from '@happier-dev/protocol';
+import { NotificationsSettingsV1Schema } from '@happier-dev/protocol/account/settings/accountSettings';
 import { useTrackScreens } from '@/track/useTrackScreens';
 import { RealtimeProvider } from '@/realtime/RealtimeProvider';
 import { VoiceEnergyAppProvider } from '@/components/voice/light/VoiceEnergyAppProvider';
@@ -53,9 +53,9 @@ import { AsyncLock } from '@/utils/system/lock';
 import { useWebUiFontScale } from '@/components/ui/text/useWebUiFontScale';
 import { GlassMaterialRuntime } from '@/components/ui/glass/GlassMaterialRuntime';
 import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
-import { usePierreDiffWorkerPoolWarmup } from '@/components/ui/code/diff/pierre/usePierreDiffWorkerPoolWarmup';
 import { initializeSentryOnce, wrapWithSentryIfEnabled } from '@/utils/system/sentry';
 import { t } from '@/text';
+import { preloadTranslations } from '@/text/i18n';
 import { AppCrashRecoveryBoundary } from '@/components/appShell/AppCrashRecoveryBoundary';
 import { WebCryptoStartupGate } from '@/components/web/WebCryptoStartupGate';
 import { consumeRestartBugReportIntent } from '@/utils/system/restartBugReportIntent';
@@ -664,6 +664,7 @@ function EmbedAppBoot() {
             resolveCredentials: () => resolveBootCredentials(Platform.OS),
             prepareWarmCache: prepareWarmCacheStorage,
             prepareSessionDrafts: prepareSessionDraftPersistenceStorage,
+            prepareTranslations: () => preloadTranslations(),
             restoreSync: restoreConnectionToActiveServer,
             onReady: () => {
                 if (cancelled) return;
@@ -696,7 +697,6 @@ function FullAppRootLayout() {
     const { theme } = useUnistyles();
     const isDesktopOverlayWindow = isDesktopOverlayWindowContext();
     useWebUiFontScale();
-    usePierreDiffWorkerPoolWarmup();
     const navigationTheme = React.useMemo(() => {
         const background = isDesktopOverlayWindow ? 'transparent' : glassSurfaceBackgroundColor(theme.colors.background.canvas, 'chrome', true);
         if (theme.dark) {
@@ -785,6 +785,7 @@ function AppBoot(props: {
             resolveCredentials: () => resolveBootCredentials(Platform.OS),
             prepareWarmCache: prepareWarmCacheStorage,
             prepareSessionDrafts: prepareSessionDraftPersistenceStorage,
+            prepareTranslations: () => preloadTranslations(),
             restoreSync: isDesktopActivityOverlayWindow ? null : restoreConnectionToActiveServer,
             onReady: (state) => {
                 if (cancelled) return;

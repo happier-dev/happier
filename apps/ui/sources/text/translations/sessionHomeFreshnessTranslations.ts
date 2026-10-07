@@ -1,73 +1,28 @@
-const en = {
-    offline: 'Offline',
-    stale: "Couldn't refresh",
-    lastUpdated: ({ ago }: { ago: string }) => `Last updated ${ago} ago`,
-};
+// Tooling aggregate. Product locale roots import only their locale payload.
+import { sessionHomeFreshnessTranslations as en } from './features/en';
+import { sessionHomeFreshnessTranslations as ca } from './features/ca';
+import { sessionHomeFreshnessTranslations as de } from './features/de';
+import { sessionHomeFreshnessTranslations as es } from './features/es';
+import { sessionHomeFreshnessTranslations as fr } from './features/fr';
+import { sessionHomeFreshnessTranslations as it } from './features/it';
+import { sessionHomeFreshnessTranslations as ja } from './features/ja';
+import { sessionHomeFreshnessTranslations as pl } from './features/pl';
+import { sessionHomeFreshnessTranslations as pt } from './features/pt';
+import { sessionHomeFreshnessTranslations as ru } from './features/ru';
+import { sessionHomeFreshnessTranslations as zh_Hans } from './features/zh-Hans';
+import { sessionHomeFreshnessTranslations as zh_Hant } from './features/zh-Hant';
 
-function translated(value: typeof en): typeof en { return value; }
-
-/**
- * The one copy owner for "how current is this Home's Session list here".
- *
- * Every Lane 07 surface — rows, Activity, Inbox, notifications, widgets, the pet, the desktop
- * overlay and Live Activities — reads the same fact through `buildSessionContextFacts`, so the
- * words live here rather than in each surface (Lane 07.4 §8).
- */
 export const sessionHomeFreshnessTranslations = {
-    en,
-    de: translated({
-        offline: 'Offline',
-        stale: 'Aktualisierung fehlgeschlagen',
-        lastUpdated: ({ ago }) => `Zuletzt aktualisiert vor ${ago}`,
-    }),
-    fr: translated({
-        offline: 'Hors ligne',
-        stale: 'Actualisation impossible',
-        lastUpdated: ({ ago }) => `Mis à jour il y a ${ago}`,
-    }),
-    es: translated({
-        offline: 'Sin conexión',
-        stale: 'No se pudo actualizar',
-        lastUpdated: ({ ago }) => `Actualizado hace ${ago}`,
-    }),
-    it: translated({
-        offline: 'Offline',
-        stale: 'Aggiornamento non riuscito',
-        lastUpdated: ({ ago }) => `Aggiornato ${ago} fa`,
-    }),
-    pt: translated({
-        offline: 'Sem ligação',
-        stale: 'Não foi possível atualizar',
-        lastUpdated: ({ ago }) => `Atualizado há ${ago}`,
-    }),
-    ca: translated({
-        offline: 'Sense connexió',
-        stale: 'No s’ha pogut actualitzar',
-        lastUpdated: ({ ago }) => `Actualitzat fa ${ago}`,
-    }),
-    pl: translated({
-        offline: 'Offline',
-        stale: 'Nie udało się odświeżyć',
-        lastUpdated: ({ ago }) => `Ostatnia aktualizacja ${ago} temu`,
-    }),
-    ru: translated({
-        offline: 'Не в сети',
-        stale: 'Не удалось обновить',
-        lastUpdated: ({ ago }) => `Обновлено ${ago} назад`,
-    }),
-    ja: translated({
-        offline: 'オフライン',
-        stale: '更新できませんでした',
-        lastUpdated: ({ ago }) => `${ago}前に更新`,
-    }),
-    'zh-Hans': translated({
-        offline: '离线',
-        stale: '无法刷新',
-        lastUpdated: ({ ago }) => `${ago}前更新`,
-    }),
-    'zh-Hant': translated({
-        offline: '離線',
-        stale: '無法重新整理',
-        lastUpdated: ({ ago }) => `${ago}前更新`,
-    }),
+    ...en.sessionHomeFreshnessTranslations,
+    ...ca.sessionHomeFreshnessTranslations,
+    ...de.sessionHomeFreshnessTranslations,
+    ...es.sessionHomeFreshnessTranslations,
+    ...fr.sessionHomeFreshnessTranslations,
+    ...it.sessionHomeFreshnessTranslations,
+    ...ja.sessionHomeFreshnessTranslations,
+    ...pl.sessionHomeFreshnessTranslations,
+    ...pt.sessionHomeFreshnessTranslations,
+    ...ru.sessionHomeFreshnessTranslations,
+    ...zh_Hans.sessionHomeFreshnessTranslations,
+    ...zh_Hant.sessionHomeFreshnessTranslations,
 };

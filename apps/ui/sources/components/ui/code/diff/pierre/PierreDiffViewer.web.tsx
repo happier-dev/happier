@@ -6,9 +6,10 @@ import { useUnistyles } from 'react-native-unistyles';
 import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
 import { createTwoFilesPatch } from 'diff';
 
-import { getSingularPatch, parseDiffFromFile } from '@pierre/diffs';
+import { getSingularPatch, parseDiffFromFile, Virtualizer as PierreVirtualizer } from '@pierre/diffs';
 import type { DiffLineAnnotation, FileDiffMetadata, FileDiffOptions, OnDiffLineClickProps } from '@pierre/diffs';
-import { FileDiff, Virtualizer, WorkerPoolContext, useVirtualizer } from '@pierre/diffs/react';
+import { FileDiff, Virtualizer, VirtualizerContext, WorkerPoolContext, useVirtualizer } from '@pierre/diffs/react';
+import { usePierreScrollRootVirtualizer } from './PierreScrollRootVirtualizerProvider.web';
 
 import { useSetting } from '@/sync/domains/state/storage';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
@@ -24,6 +25,7 @@ import { resolvePierreLanguageOverride } from './resolvePierreLanguageOverride.w
 import { buildCodeLinesFromUnifiedDiff } from '@/components/ui/code/model/buildCodeLinesFromUnifiedDiff';
 import type { CodeLine } from '@/components/ui/code/model/codeLineTypes';
 import { HAPPIER_UI_FONT_SCALE_CSS_VAR } from '@/components/ui/text/webUnistylesFontOverrides';
+import { getDefaultFont } from '@/constants/Typography';
 import { Icon } from '@/components/ui/icons/Icon';
 import {
     REVIEW_COMMENT_LINE_AFFORDANCE_ICON_NAME,
@@ -402,10 +404,15 @@ function extractUnifiedPreludeDiffForSingleFile(params: Readonly<{ patch: string
     return patch;
 }
 
-export function resolvePierreTypographyStyle(): React.CSSProperties {
+export function resolvePierreTypographyStyle(): React.CSSProperties & Readonly<{
+    '--diffs-font-size': string;
+    '--diffs-line-height': string;
+    '--diffs-header-font-family': string;
+}> {
     return {
-        ['--diffs-font-size' as any]: `calc(12px * var(${HAPPIER_UI_FONT_SCALE_CSS_VAR}, 1))`,
-        ['--diffs-line-height' as any]: `calc(${CODE_LINE_BASE_HEIGHT}px * var(${HAPPIER_UI_FONT_SCALE_CSS_VAR}, 1))`,
+        '--diffs-font-size': `calc(12px * var(${HAPPIER_UI_FONT_SCALE_CSS_VAR}, 1))`,
+        '--diffs-line-height': `calc(${CODE_LINE_BASE_HEIGHT}px * var(${HAPPIER_UI_FONT_SCALE_CSS_VAR}, 1))`,
+        '--diffs-header-font-family': getDefaultFont(),
     };
 }
 
@@ -460,7 +467,9 @@ export function resolvePierreSelectionStyle(theme: { colors?: Record<string, any
 export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
     const { theme } = useUnistyles();
     const isDark = theme.dark === true;
-    const sharedVirtualizer = useVirtualizer();
+    const inheritedVirtualizer = useVirtualizer();
+    const scopedVirtualizer = usePierreScrollRootVirtualizer(() => new PierreVirtualizer());
+    const sharedVirtualizer = scopedVirtualizer ?? inheritedVirtualizer;
     const containerRef = React.useRef<HTMLDivElement | null>(null);
     const lastScrolledLineIdRef = React.useRef<{ lineId: string; filePath: string | null | undefined } | null>(null);
     const typographyStyle = React.useMemo(() => resolvePierreTypographyStyle(), []);
@@ -983,13 +992,15 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
             onClickCapture={props.onPressLine ? pressLineForPierreDomClick : undefined}
             style={wrapperStyle}
         >
-            <WorkerPoolContext.Provider value={pool ?? undefined}>
-                <PierreDiffErrorBoundary resetKey={sanitizedPatch} fallback={fallbackNode}>
-                    <PierreDiffScrollAnchor patch={sanitizedPatch} filePath={props.filePath} scrollToLineId={props.scrollToLineId} containerRef={containerRef}>
-                        {body}
-                    </PierreDiffScrollAnchor>
-                </PierreDiffErrorBoundary>
-            </WorkerPoolContext.Provider>
+            <VirtualizerContext.Provider value={sharedVirtualizer}>
+                <WorkerPoolContext.Provider value={pool ?? undefined}>
+                    <PierreDiffErrorBoundary resetKey={sanitizedPatch} fallback={fallbackNode}>
+                        <PierreDiffScrollAnchor patch={sanitizedPatch} filePath={props.filePath} scrollToLineId={props.scrollToLineId} containerRef={containerRef}>
+                            {body}
+                        </PierreDiffScrollAnchor>
+                    </PierreDiffErrorBoundary>
+                </WorkerPoolContext.Provider>
+            </VirtualizerContext.Provider>
         </div>
     );
 });

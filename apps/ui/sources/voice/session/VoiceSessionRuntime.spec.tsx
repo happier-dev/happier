@@ -420,6 +420,44 @@ describe('VoiceSessionRuntime', () => {
     vi.clearAllMocks();
   });
 
+  it('does not reparse unchanged Voice provider settings for an endpoint connectivity update', async () => {
+    platformOsMock.value = 'web';
+    useSetting.mockImplementation((key) => key === 'voice' || key === 'voiceSettingsV1'
+      ? { providerId: 'off' }
+      : null);
+    const { VoiceSessionRuntime } = await import('./VoiceSessionRuntime');
+    const { storage } = await import('@/sync/domains/state/storage');
+    await renderScreen(React.createElement(VoiceSessionRuntime));
+
+    const voice = storage.getState().settings.voice;
+    const providers = voice.providers;
+    const providersDescriptor = Object.getOwnPropertyDescriptor(voice, 'providers');
+    if (!providersDescriptor) throw new Error('Parsed Voice fixture is missing its providers field');
+    let providerReads = 0;
+    // Observe work on real stored input; the privacy reader and normalization remain real.
+    try {
+      Object.defineProperty(voice, 'providers', {
+        configurable: true,
+        get() {
+          providerReads += 1;
+          return providers;
+        },
+      });
+      await act(async () => {
+        storage.getState().setEndpointConnectivity({
+          status: 'online', reason: null, attempt: 1, nextRetryAt: null,
+          lastConnectedAt: 1, lastDisconnectedAt: null, lastErrorMessage: null,
+        });
+      });
+
+      expect(storage.getState().settings.voice).toBe(voice);
+      expect(storage.getState().endpointStatus).toBe('online');
+      expect(providerReads).toBe(0);
+    } finally {
+      Object.defineProperty(voice, 'providers', providersDescriptor);
+    }
+  });
+
   it('publishes the active adapter snapshot into the voice session store', async () => {
     const snap: Snapshot = {
       adapterId: 'local_direct',

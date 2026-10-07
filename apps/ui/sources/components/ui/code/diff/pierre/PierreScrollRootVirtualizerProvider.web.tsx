@@ -1,8 +1,24 @@
 import * as React from 'react';
 
-import { Virtualizer as PierreVirtualizer } from '@pierre/diffs';
-import { VirtualizerContext } from '@pierre/diffs/react';
+import type { Virtualizer as PierreVirtualizer } from '@pierre/diffs';
 import { iterateWebDescendantElements } from '@/components/ui/scroll/resolveWebScrollableElement';
+
+type PierreScrollRootScope = Readonly<{
+    getInstance: (create: () => PierreVirtualizer) => PierreVirtualizer | undefined;
+    activate: () => void;
+}>;
+
+const PierreScrollRootContext = React.createContext<PierreScrollRootScope | undefined>(undefined);
+
+/** The demanded Pierre leaf supplies the constructor; the retained list owns its lifetime. */
+export function usePierreScrollRootVirtualizer(create: () => PierreVirtualizer): PierreVirtualizer | undefined {
+    const scope = React.useContext(PierreScrollRootContext);
+    const instance = scope?.getInstance(create);
+    React.useEffect(() => {
+        scope?.activate();
+    }, [scope]);
+    return instance;
+}
 
 function isElementScrollable(el: HTMLElement): boolean {
     if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return false;
@@ -72,17 +88,14 @@ function findOwnedScrollRoot(anchor: HTMLElement): HTMLElement | Document {
 
 export function PierreScrollRootVirtualizerProvider(props: Readonly<{ children: React.ReactNode }>) {
     const anchorRef = React.useRef<HTMLDivElement | null>(null);
+    const instanceRef = React.useRef<PierreVirtualizer | undefined>(undefined);
+    const cleanupRef = React.useRef<(() => void) | undefined>(undefined);
 
-    const [instance] = React.useState(() => {
-        if (typeof window === 'undefined' || typeof document === 'undefined') return undefined;
-        if (typeof (globalThis as any).IntersectionObserver === 'undefined') return undefined;
-        if (typeof (globalThis as any).ResizeObserver === 'undefined') return undefined;
-        return new PierreVirtualizer();
-    });
-
-    React.useEffect(() => {
+    const activate = React.useCallback(() => {
+        if (cleanupRef.current) return;
         const anchor = anchorRef.current;
         if (!anchor) return;
+        const instance = instanceRef.current;
         if (!instance) return;
 
         const raf: (cb: FrameRequestCallback) => number =
@@ -112,9 +125,9 @@ export function PierreScrollRootVirtualizerProvider(props: Readonly<{ children: 
                     //   that scroll root. Pierre infers the content container from the scroll root.
                     // - For document root, the 2nd argument is ignored.
                     if (root instanceof Document) {
-                        instance.setup(root as any, anchor);
+                        instance.setup(root, anchor);
                     } else {
-                        instance.setup(root as any);
+                        instance.setup(root);
                     }
                     lastRoot = root;
                 } catch {
@@ -133,9 +146,7 @@ export function PierreScrollRootVirtualizerProvider(props: Readonly<{ children: 
             raf(() => bindToCurrentRoot());
         };
 
-        bindToCurrentRoot();
-
-        return () => {
+        cleanupRef.current = () => {
             cancelled = true;
             try {
                 instance.cleanUp();
@@ -143,7 +154,23 @@ export function PierreScrollRootVirtualizerProvider(props: Readonly<{ children: 
                 // ignore
             }
         };
-    }, [instance]);
+        bindToCurrentRoot();
+    }, []);
+
+    const [scope] = React.useState<PierreScrollRootScope>(() => ({
+        getInstance: (create) => {
+            if (typeof window === 'undefined' || typeof document === 'undefined') return undefined;
+            if (typeof globalThis.IntersectionObserver === 'undefined') return undefined;
+            if (typeof globalThis.ResizeObserver === 'undefined') return undefined;
+            return instanceRef.current ??= create();
+        },
+        activate,
+    }));
+
+    React.useEffect(() => () => {
+        cleanupRef.current?.();
+        cleanupRef.current = undefined;
+    }, []);
 
     const rootStyle = React.useMemo<React.CSSProperties>(() => {
         // This wrapper participates in many flex-based panes (details/review/file viewers).
@@ -160,10 +187,10 @@ export function PierreScrollRootVirtualizerProvider(props: Readonly<{ children: 
     }, []);
 
     return (
-        <VirtualizerContext.Provider value={instance}>
+        <PierreScrollRootContext.Provider value={scope}>
             <div ref={anchorRef} style={rootStyle} data-happier-diff-virtual-root="1">
                 {props.children}
             </div>
-        </VirtualizerContext.Provider>
+        </PierreScrollRootContext.Provider>
     );
 }

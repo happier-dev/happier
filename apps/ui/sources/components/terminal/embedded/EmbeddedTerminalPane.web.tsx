@@ -4,7 +4,8 @@ import { useTerminalFind } from './useTerminalFind';
 
 import { resolveCodeEditorFontMetrics } from '@/components/ui/code/editor/codeEditorFontMetrics';
 import { useLocalSetting } from '@/sync/domains/state/storage';
-import { XtermTerminalView, type XtermTerminalHandle } from '@/components/terminal/xterm/XtermTerminalView.web';
+import type { XtermTerminalHandle } from '@/components/terminal/xterm/XtermTerminalView.web';
+import { SessionPaneLazyLoader } from '@/components/sessions/panes/SessionPaneLazyLoader';
 import type { EmbeddedTerminalRendererHandle, EmbeddedTerminalCursorRow } from './embeddedTerminalRendererHandle';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { EmbeddedTerminalPaneFrame } from './EmbeddedTerminalPaneFrame';
@@ -12,6 +13,9 @@ import { TerminalKeyRail } from './keys/TerminalKeyRail';
 import { TerminalKeysSurface } from './keys/TerminalKeysSurface';
 import { useTerminalKeys } from './keys/useTerminalKeys';
 import type { EmbeddedTerminalPaneController } from './types';
+
+const loadXtermTerminalView = () => import('@/components/terminal/xterm/XtermTerminalView.web')
+    .then((module) => module.XtermTerminalView);
 
 export type EmbeddedTerminalPaneProps = Readonly<{
     title: string;
@@ -61,20 +65,24 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneWeb(
             footer={showKeys ? find.open ? find.bar : <TerminalKeyRail modifiers={keys.modifiers} onPressKey={keys.pressRailKey} testIdPrefix={props.testIdPrefix} /> : null}
             surface={(
                 <TerminalKeysSurface showArrowPad={showKeys && !find.open} cursorRow={cursorRow} onArrow={keys.pressArrow} testIdPrefix={props.testIdPrefix}>
-                    <XtermTerminalView
-                        testID={props.testIdPrefix ? `${props.testIdPrefix}-xterm` : undefined}
-                        ref={xtermRef}
-                        onFindEngine={find.onFindEngine}
-                        fontSize={fontMetrics.fontSize}
-                        lineHeight={fontMetrics.lineHeight / fontMetrics.fontSize}
-                        onInput={showKeys ? keys.onInput : props.controller.onInput}
-                        onPaste={props.controller.onPaste}
-                        onCopySelection={(text) => props.controller.copySelection?.({ source: 'user-selection', text })}
-                        onLink={props.controller.onLink}
-                        onResize={props.controller.onResize}
-                        onReady={props.controller.onReady}
-                        onWriteComplete={props.controller.onWriteComplete}
-                        onCursorRowChange={showKeys ? onCursorRowChange : undefined}
+                    <SessionPaneLazyLoader
+                        testID={props.testIdPrefix ? `${props.testIdPrefix}-renderer-loading` : 'terminal-renderer-loading'}
+                        load={loadXtermTerminalView}
+                        props={{
+                            testID: props.testIdPrefix ? `${props.testIdPrefix}-xterm` : undefined,
+                            ref: xtermRef,
+                            onFindEngine: find.onFindEngine,
+                            fontSize: fontMetrics.fontSize,
+                            lineHeight: fontMetrics.lineHeight / fontMetrics.fontSize,
+                            onInput: showKeys ? keys.onInput : props.controller.onInput,
+                            onPaste: props.controller.onPaste,
+                            onCopySelection: (text: string) => props.controller.copySelection?.({ source: 'user-selection', text }),
+                            onLink: props.controller.onLink,
+                            onResize: props.controller.onResize,
+                            onReady: props.controller.onReady,
+                            onWriteComplete: props.controller.onWriteComplete,
+                            onCursorRowChange: showKeys ? onCursorRowChange : undefined,
+                        }}
                     />
                     {!showKeys ? find.bar : null}
                 </TerminalKeysSurface>
