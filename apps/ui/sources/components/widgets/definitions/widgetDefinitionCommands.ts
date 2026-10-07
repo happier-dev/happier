@@ -26,8 +26,7 @@ type CommandId = Extract<ActionId,
     | 'widgets.definition.saveFromSession'
     | 'widgets.instance.add'
     | 'widgets.instance.refresh'
-    | 'widgets.snapshot.post'
-    | 'composer.transaction.apply'>;
+    | 'widgets.snapshot.post'>;
 
 /** The exact Home and Account the person is acting in; a call never drifts to another. */
 export type WidgetCommandTarget = Readonly<{ serverId: string; accountId: string }>;

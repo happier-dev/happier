@@ -9,6 +9,7 @@ function sameCandidates(left: readonly WidgetCandidate[], right: readonly Widget
         const other = right[index]!;
         return candidate.key === other.key
             && candidate.title === other.title
+            && candidate.description === other.description
             && candidate.pluginName === other.pluginName
             && candidate.sharedPluginName === other.sharedPluginName
             && candidate.icon === other.icon

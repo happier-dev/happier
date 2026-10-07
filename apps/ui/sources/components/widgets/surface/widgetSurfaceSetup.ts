@@ -3,7 +3,7 @@ import { readInputPath } from '@happier-dev/protocol/inputs';
 import { projectWidgetBindingInputV1, resolveConfiguredWidgetInputs, widgetCandidateDefinitionV1, isSameWidgetDefinitionV1, countWidgetInstancesV1, type WidgetInstanceV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 
 import type { SessionBoardCommandOutcome } from '@/components/sessions/board/useSessionBoardController';
-import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
+import { describeWidgetCandidatePurpose, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import {
     proposeWidgetSetupDraft,
     isLiteralWidgetSetupField,
@@ -134,7 +134,7 @@ export function buildWidgetCandidateSetup(input: Readonly<{
     const providedContext = widgetProvidedContext(input.context);
     return {
         title: mode.kind === 'edit' ? t('widgetAdd.editTitle', { widget: candidate.title }) : t('widgetAdd.setupTitle', { widget: candidate.title }),
-        hint: mode.kind === 'edit' ? t('widgetAdd.editHint') : candidate.pluginName,
+        hint: mode.kind === 'edit' ? t('widgetAdd.editHint') : describeWidgetCandidatePurpose(candidate),
         submitLabel: mode.kind === 'edit' ? t('common.save') : mode.submitLabel,
         widget: { title: (mode.kind === 'edit' ? mode.instance.displayName : undefined) ?? candidate.title, mark: candidate.icon },
         fields,
