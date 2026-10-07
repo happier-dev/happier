@@ -55,9 +55,9 @@ export function registerDaemonLocalServicePreviewSnapshotHandler(
         const openOrCreate = routes.openOrCreate;
         rpc.registerHandler(
             RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_OPEN_OR_CREATE,
-            async (raw: unknown): Promise<DaemonLocalServicePreviewOpenOrCreateResponseV1> => {
+            async (raw: unknown, context): Promise<DaemonLocalServicePreviewOpenOrCreateResponseV1> => {
                 const request = DaemonLocalServicePreviewOpenOrCreateRequestV1Schema.parse(raw);
-                const result = await openOrCreate(request);
+                const result = await openOrCreate(request, context?.signal);
                 if (!result.ok) {
                     throw new DaemonLocalServicePreviewLifecycleError(result.reasonCode);
                 }

@@ -68,8 +68,8 @@ export function createLocalServicePreviewServerRoutes(input: LocalServicePreview
                 return { signal: abort.signal, close };
             } catch (error) { close(); throw error; }
         },
-        async registerPreview(resource: LocalServicePreviewResourceV1): Promise<LocalServicePreviewSnapshotRowV1> {
-            const response = await http.post(endpoint('/v1/local-services/preview'), resource, { headers });
+        async registerPreview(resource: LocalServicePreviewResourceV1, signal?: AbortSignal): Promise<LocalServicePreviewSnapshotRowV1> {
+            const response = await http.post(endpoint('/v1/local-services/preview'), resource, { headers, ...(signal ? { signal } : {}) });
             const payload: unknown = response.data;
             if (typeof payload !== 'object' || payload === null) throw new Error('invalid_preview_registration');
             const row = LocalServicePreviewSnapshotRowV1Schema.parse({ ...payload, previewId: resource.previewId, diagnostics: [] });

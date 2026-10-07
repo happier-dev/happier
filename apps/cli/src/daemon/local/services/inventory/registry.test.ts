@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { LocalServiceInventoryUpdateEventV1Schema } from '@happier-dev/protocol/local/services/inventory';
@@ -50,6 +50,50 @@ const snapshot = {
 } as const;
 
 describe('createLocalServiceInventoryRegistry', () => {
+    it.each(['process', 'unattributed'] as const)('restores extended stored annotations and writes canonical %s suppression data', (kind) => {
+        const dir = mkdtempSync(join(tmpdir(), 'happier-inventory-extensions-'));
+        try {
+            const path = join(dir, 'annotations.json');
+            const annotations = createLocalServiceInventoryAnnotationsFileStore({ path });
+            const current = {
+                ...snapshot,
+                entries: [{ ...snapshot.entries[0], ...(kind === 'process' ? {
+                    provenance: { process: { pid: 400, processStartTimeMs: 1_000, lineagePids: [400], command: 'vite', redacted: true as const } },
+                } : {}) }],
+            } as const;
+            const first = createLocalServiceInventoryRegistry({ annotations });
+            first.replaceSnapshot(current);
+            first.applyLabelPatch({ inventoryId: 'entry-1', text: 'Storefront', source: 'user', updatedAt: 2_000 });
+            const forgotten = first.forgetEntry({ inventoryId: 'entry-1', updatedAt: 3_000 });
+            if (!forgotten.ok) throw new Error('Expected forgotten service');
+            const canonical = annotations.read();
+            if (!canonical) throw new Error('Expected stored annotations');
+            const extended = {
+                ...canonical, futureRoot: true,
+                labelsByFallbackKey: canonical.labelsByFallbackKey.map(([key, labels]) => [key, labels.map((label) => ({ ...label, futureLabel: true }))]),
+                forgottenFallbackKeys: canonical.forgottenFallbackKeys.map(([key, suppression]) => [key, {
+                    ...suppression, futureSuppression: true, runIdentity: { ...suppression.runIdentity, futureIdentity: true },
+                }]),
+            };
+            writeFileSync(path, JSON.stringify(extended));
+            expect(annotations.read()).toEqual(canonical);
+            const extendedWrite = { ...canonical, futureRoot: true };
+            annotations.write(extendedWrite);
+            expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual(canonical);
+            const restarted = createLocalServiceInventoryRegistry({ annotations });
+            restarted.replaceSnapshot(current);
+            expect(restarted.getSnapshot().entries).toEqual([]);
+            expect(restarted.undoForget(forgotten.undoKey)).toEqual({ ok: true });
+            restarted.replaceSnapshot(current);
+            expect(restarted.getSnapshot().entries[0]?.labels.map((label) => label.text)).toEqual(['Storefront']);
+            expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ ...canonical, forgottenFallbackKeys: [] });
+            writeFileSync(path, JSON.stringify({ ...canonical, v: 2, futureRoot: true }));
+            expect(annotations.read()).toBeNull();
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
     it('publishes snapshots and applies labels only to existing entries', () => {
         const events: unknown[] = [];
         const registry = createLocalServiceInventoryRegistry();

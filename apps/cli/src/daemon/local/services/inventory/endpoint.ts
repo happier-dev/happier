@@ -22,13 +22,16 @@ export type LocalServiceEndpointProbeInput = Readonly<{
     scheme: Exclude<LocalServiceEndpointScheme, 'unknown'>;
     host: string;
     port: number;
-    timeoutMs: number;
+    /** Inventory observation budget; explicit Open has no subordinate deadline. */
+    timeoutMs?: number;
+    signal?: AbortSignal;
 }>;
 
-export type LocalServiceEndpointProbe = (input: LocalServiceEndpointProbeInput) => Promise<boolean>;
+export type LocalServiceEndpointProbe = (input: LocalServiceEndpointProbeInput) => Promise<boolean | 'inconclusive'>;
 
 export type LocalServiceEndpointEnricher = Readonly<{
     enrich(snapshot: NormalizedLocalServiceInventorySnapshot): Promise<NormalizedLocalServiceInventorySnapshot>;
+    resolve(entry: NormalizedLocalServiceInventoryEntry, signal?: AbortSignal): Promise<LocalServiceEndpointFact | null>;
 }>;
 
 export type LocalServiceEndpointEnricherParams = Readonly<{
@@ -39,6 +42,7 @@ export type LocalServiceEndpointEnricherParams = Readonly<{
     failureTtlMs: number;
     maxCacheEntries?: number;
     probe?: LocalServiceEndpointProbe;
+    signal?: AbortSignal;
 }>;
 
 const DEFAULT_ENDPOINT_MAX_CACHE_ENTRIES = 512;
@@ -89,8 +93,9 @@ function writeCached(
     }
 }
 
-function defaultProbe(input: LocalServiceEndpointProbeInput): Promise<boolean> {
-    return new Promise((resolve) => {
+function defaultProbe(input: LocalServiceEndpointProbeInput): Promise<boolean | 'inconclusive'> {
+    input.signal?.throwIfAborted();
+    return new Promise((resolve, reject) => {
         const client = input.scheme === 'https' ? https : http;
         const request = client.request({
             protocol: `${input.scheme}:`,
@@ -99,6 +104,7 @@ function defaultProbe(input: LocalServiceEndpointProbeInput): Promise<boolean> {
             method: 'HEAD',
             path: '/',
             timeout: input.timeoutMs,
+            signal: input.signal,
             headers: {
                 accept: 'text/html,application/xhtml+xml,*/*;q=0.1',
                 connection: 'close',
@@ -106,13 +112,17 @@ function defaultProbe(input: LocalServiceEndpointProbeInput): Promise<boolean> {
             rejectUnauthorized: false,
         }, (response) => {
             response.resume();
+            request.setTimeout(0);
             resolve(true);
         });
         request.once('timeout', () => {
             request.destroy();
-            resolve(false);
+            resolve('inconclusive');
         });
-        request.once('error', () => resolve(false));
+        request.once('error', (error) => {
+            if (input.signal?.aborted) reject(input.signal.reason ?? error);
+            else resolve(false);
+        });
         request.end();
     });
 }
@@ -127,21 +137,42 @@ export function createLocalServiceEndpointEnricher(
     const active = { count: 0 };
     const waiters: Array<() => void> = [];
 
-    const acquire = async () => {
+    const acquire = async (signal?: AbortSignal) => {
+        signal?.throwIfAborted();
         const limit = Math.max(1, Math.trunc(params.concurrency));
         if (active.count < limit) {
             active.count += 1;
             return;
         }
-        await new Promise<void>((resolve) => waiters.push(resolve));
-        active.count += 1;
+        await new Promise<void>((resolve, reject) => {
+            const acquired = () => {
+                signal?.removeEventListener('abort', aborted);
+                resolve();
+            };
+            const aborted = () => {
+                const index = waiters.indexOf(acquired);
+                if (index >= 0) waiters.splice(index, 1);
+                reject(signal?.reason);
+            };
+            waiters.push(acquired);
+            signal?.addEventListener('abort', aborted, { once: true });
+        });
+        // release transfers the active slot directly to this waiter.
     };
     const release = () => {
-        active.count = Math.max(0, active.count - 1);
-        waiters.shift()?.();
+        const next = waiters.shift();
+        if (next) next();
+        else active.count = Math.max(0, active.count - 1);
     };
 
-    const classify = async (entry: NormalizedLocalServiceInventoryEntry): Promise<LocalServiceEndpointFact | null> => {
+    const classify = async (
+        entry: NormalizedLocalServiceInventoryEntry,
+        resolving = false,
+        requestSignal?: AbortSignal,
+    ): Promise<LocalServiceEndpointFact | null> => {
+        const signals = [params.signal, requestSignal].filter((signal): signal is AbortSignal => Boolean(signal));
+        const signal = signals.length > 1 ? AbortSignal.any(signals) : signals[0];
+        signal?.throwIfAborted();
         if (entry.state !== 'listening') return entry.endpoint ?? null;
         // Known host endpoints are control planes, not candidate application pages.
         if (entry.classification?.kind === 'happier') return null;
@@ -150,13 +181,18 @@ export function createLocalServiceEndpointEnricher(
         const cacheKey = `${host}:${entry.port}`;
         const now = params.now();
         const cached = readCached(cache, cacheKey, now);
-        if (cached) return cached;
-        await acquire();
+        // An inconclusive cached observation must never refuse an explicit Open.
+        if (cached && (!resolving || cached.probeState === 'ready')) return cached;
+        await acquire(signal);
         try {
-            const httpsReady = await probe({ scheme: 'https', host, port: entry.port, timeoutMs });
-            const scheme: LocalServiceEndpointScheme = httpsReady
+            signal?.throwIfAborted();
+            const probeInput = { host, port: entry.port, ...(resolving ? {} : { timeoutMs }), signal };
+            const httpsReady = await probe({ ...probeInput, scheme: 'https' });
+            const httpReady = httpsReady === true ? false : await probe({ ...probeInput, scheme: 'http' });
+            signal?.throwIfAborted();
+            const scheme: LocalServiceEndpointScheme = httpsReady === true
                 ? 'https'
-                : await probe({ scheme: 'http', host, port: entry.port, timeoutMs })
+                : httpReady === true
                     ? 'http'
                     : 'unknown';
             const value: LocalServiceEndpointFact = scheme === 'unknown'
@@ -166,7 +202,8 @@ export function createLocalServiceEndpointEnricher(
                     port: entry.port,
                     probeState: 'unknown',
                     probedAt: now,
-                    reasonCode: 'endpoint_probe_failed',
+                    reasonCode: httpsReady === 'inconclusive' || httpReady === 'inconclusive'
+                        ? 'endpoint_probe_inconclusive' : 'endpoint_probe_failed',
                 }
                 : {
                     scheme,
@@ -186,6 +223,7 @@ export function createLocalServiceEndpointEnricher(
     };
 
     return {
+        resolve: (entry, signal) => classify(entry, true, signal),
         async enrich(snapshot) {
             const entries = await Promise.all(snapshot.entries.map(async (entry) => {
                 const endpoint = await classify(entry);

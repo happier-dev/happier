@@ -113,10 +113,6 @@ function terminalUrlCandidateMatchesInventoryEntry(
         && (!candidate.host || hostMatchesCandidate(entry.address.host, candidate.host));
 }
 
-function entryHasLoopbackPreviewCandidate(entry: NormalizedLocalServiceInventoryEntry): boolean {
-    return entry.address.kind === 'loopback' || entry.address.kind === 'wildcard';
-}
-
 function browserTargetForPreview(preview: LocalServicePreviewResourceV1): BrowserLocalServicePreviewTargetV1 {
     return preview.browserTarget ?? {
         kind: 'localServicePreview',
@@ -234,16 +230,11 @@ function targetFromInventoryEntry(
     }
 
     // Every viewer resolves the resource through the same private-preview access owner.
-    const endpointUnknownReason = !preview
-        && entryHasLoopbackPreviewCandidate(entry)
-        && (!entry.endpoint || entry.endpoint.scheme === 'unknown')
-        ? 'endpoint_scheme_unknown'
-        : null;
     const browserTarget = preview ? browserTargetForPreview(preview) : undefined;
 
     const actions: LocalServiceLaunchTargetActionV1[] = preview
         ? ['open_preview', 'register_preview']
-        : endpointUnknownReason ? [] : ['register_preview'];
+        : ['register_preview'];
     if (resolveLocalServiceActionEligibility({
         action: 'terminate_detected',
         target: { kind: 'inventory_entry', entry },
@@ -268,7 +259,6 @@ function targetFromInventoryEntry(
         commandPreview: entryCommandPreview(entry),
         confidence: entry.confidence,
         state: 'available',
-        ...(endpointUnknownReason ? { unavailableReason: endpointUnknownReason } : {}),
         actions,
         ...(browserTarget ? { browserTarget } : {}),
     };

@@ -245,6 +245,7 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
     const processEnv = params.processEnv ?? process.env;
     const now = params.now ?? (() => Date.now());
     const scan = params.scan ?? scanPlatformLocalServices;
+    const endpointCancellation = new AbortController();
     const endpointEnricher = params.endpointEnricher ?? (
         params.scan
             ? null
@@ -254,6 +255,7 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
                 concurrency: 8,
                 successTtlMs: 30_000,
                 failureTtlMs: 5_000,
+                signal: endpointCancellation.signal,
             })
     );
     const workspaceFacts = params.workspaceFacts
@@ -315,6 +317,8 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
         server: params.previewServer,
         registry: previewRegistry,
         inventoryRegistry,
+        ...(endpointEnricher ? { endpointEnricher } : {}),
+        signal: endpointCancellation.signal,
         now,
     });
     const hostedWebStaticAssets: HostedWebStaticAssetLifecycle | null = params.hostedWebStaticAssets
@@ -618,6 +622,7 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
             await hostedWebStaticAssets?.stop();
         },
         async stop() {
+            endpointCancellation.abort();
             loop?.stop();
             unsubscribeInventorySummary();
             summarySubscribers.clear();

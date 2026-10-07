@@ -18,6 +18,10 @@ import type { LocalServiceLauncherLeafRoutes } from '../launch/leaves';
 import type { LocalServicesDaemonFeatureGate, LocalServicesDaemonFeatureGateId } from '../featureGate';
 import type { LocalServiceInventoryRoutes } from '../inventory/routes';
 import type { NormalizedLocalServiceInventorySnapshot } from '../inventory/scanner';
+import { createLocalServiceInventoryRegistry } from '../inventory/registry';
+import { createLocalServicePreviewRegistry } from '../preview/registry';
+import { createLocalServicePreviewRoutes } from '../preview/routes';
+import { LocalServicePreviewResourceV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
 
 function runtimeArgs(
     args: Omit<RuntimeActionExecuteArgs, 'context'> & Partial<Pick<RuntimeActionExecuteArgs, 'context'>>,
@@ -195,45 +199,37 @@ describe('daemon local-services runtime action executor', () => {
         expect(leaves.clearHistory).toHaveBeenCalledOnce();
     });
 
-    it('routes localServices.preview.openOrCreate through the daemon preview lifecycle route', async () => {
-        const mod = await import('./runtimeActionExecutor').catch(() => null);
-        if (!mod?.createLocalServicesDaemonRuntimeActionExecutor) return;
-
-        const openOrCreate = vi.fn(async () => ({
-            ok: true as const,
-            response: {
-                protocolVersion: 1 as const,
-                status: 'created' as const,
-                preview: {
-                    previewId: 'lsv-preview:inventory:entry_1',
-                    resource: {
-                        previewId: 'lsv-preview:inventory:entry_1',
-                        sessionId: 'session_1',
-                        machineId: 'machine_1',
-                        owner: { kind: 'session' as const, id: 'session_1' },
-                        target: { scheme: 'http' as const, host: '127.0.0.1', port: 5173 },
-                        initialPath: { pathname: '/', search: '' },
-                        display: { title: 'Vite', addressLabel: 'localhost:5173' },
-                        originMode: 'host' as const,
+    it('opens the requested inventory listener and Session through real private-preview registration', async () => {
+        const { createLocalServicesDaemonRuntimeActionExecutor } = await import('./runtimeActionExecutor');
+        const inventoryRegistry = createLocalServiceInventoryRegistry();
+        inventoryRegistry.replaceSnapshot({
+            v: 1, machineId: 'machine_1', generatedAt: 1_000, refreshState: 'idle', diagnostics: [],
+            entries: [{
+                id: 'entry_1', machineId: 'machine_1',
+                address: { kind: 'loopback', host: '127.0.0.1', family: 'ipv4' },
+                endpoint: { scheme: 'http', host: '127.0.0.1', port: 5173, probeState: 'ready', probedAt: 1_000 },
+                port: 5173, protocol: 'tcp', detectedAt: 1_000, lastSeenAt: 1_000,
+                state: 'listening', source: 'detected', labels: [], diagnostics: [],
+                confidence: 'high', processOwnershipConfidence: 'high', workspaceAssociationConfidence: 'high',
+            }],
+        });
+        const previewRoutes = createLocalServicePreviewRoutes({
+            machineId: 'machine_1', accountId: 'account_1', inventoryRegistry, registry: createLocalServicePreviewRegistry(),
+            server: {
+                token: 'daemon-token', serverBaseUrl: 'https://home.example.test',
+                // The server transport is the genuine boundary; request mapping and lifecycle are real.
+                http: {
+                    async post(_url, body) {
+                        const resource = LocalServicePreviewResourceV1Schema.parse(body);
+                        return { data: { resource, accessUrl: 'https://private.example.test/?previewToken=admission', expiresAt: 61_000 } };
                     },
-                    accessUrl: 'http://127.0.0.1:5173/',
-                    expiresAt: null,
-                    diagnostics: [],
-                },
-                snapshot: {
-                    v: 1 as const,
-                    machineId: 'machine_1',
-                    generatedAt: 1_000,
-                    refreshState: 'idle' as const,
-                    resources: [],
-                    previews: [],
-                    diagnostics: [],
+                    async delete() { return { data: { ok: true } }; },
                 },
             },
-        }));
-        const execute = mod.createLocalServicesDaemonRuntimeActionExecutor({
+        });
+        const execute = createLocalServicesDaemonRuntimeActionExecutor({
             featureGate: allowAllFeatureGate,
-            routes: { previewRoutes: { getSnapshot: vi.fn(), openOrCreate, revoke: vi.fn() } },
+            routes: { previewRoutes },
         });
 
         const result = await execute(runtimeArgs({
@@ -241,12 +237,15 @@ describe('daemon local-services runtime action executor', () => {
             input: { machineId: 'machine_1', sessionId: 'session_1', targetId: 'entry_1' },
         }));
 
-        expect(openOrCreate).toHaveBeenCalledWith({
-            machineId: 'machine_1',
-            sessionId: 'session_1',
-            inventoryEntryId: 'entry_1',
+        const snapshot = await previewRoutes.getSnapshot();
+        expect(snapshot.resources).toHaveLength(1);
+        expect(snapshot.resources[0]).toMatchObject({
+            machineId: 'machine_1', sessionId: 'session_1', owner: { kind: 'session', id: 'session_1' },
+            target: { scheme: 'http', host: '127.0.0.1', port: 5173 },
         });
-        expect((result as { status?: string }).status).toBe('created');
+        expect(result).toMatchObject({
+            status: 'created', preview: { resource: snapshot.resources[0], accessUrl: 'https://private.example.test/?previewToken=admission' },
+        });
     });
 
     it('surfaces a preview lifecycle refusal reasonCode instead of a generic disable', async () => {

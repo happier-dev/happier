@@ -10,6 +10,10 @@ import type { LocalServicePreviewServerInput } from './serverRoutes';
 import { createServer, request as httpRequest } from 'node:http';
 import { once } from 'node:events';
 import { startLocalServicePreviewNativeAdapter } from './nativeAdapter';
+import { createLocalServiceEndpointEnricher } from '../inventory/endpoint';
+import { registerDaemonLocalServicePreviewSnapshotHandler } from '@/rpc/handlers/daemonLocalServicePreviewSnapshot';
+import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 const MACHINE_ID = 'machine-a';
 
@@ -80,6 +84,90 @@ function inventoryRegistryWith(entries: readonly NormalizedLocalServiceInventory
 }
 
 describe('createLocalServicePreviewRoutes lifecycle', () => {
+    it('resolves a slow loopback endpoint after an inconclusive inventory observation before registering Open', async () => {
+        let delayResponse = true;
+        const target = createServer((_request, response) => {
+            if (!delayResponse) { response.end(); return; }
+            const timer = setTimeout(() => response.end(), 300);
+            response.once('close', () => clearTimeout(timer));
+        });
+        target.listen(0, '127.0.0.1');
+        await once(target, 'listening');
+        const address = target.address();
+        if (!address || typeof address === 'string') throw new Error('Expected loopback listener');
+        try {
+            const endpointEnricher = createLocalServiceEndpointEnricher({
+                now: () => 2_000, timeoutMs: 250, concurrency: 1, successTtlMs: 30_000, failureTtlMs: 5_000,
+            });
+            const registry = inventoryRegistryWith([inventoryEntry({ port: address.port, endpoint: undefined })]);
+            registry.replaceSnapshot(await endpointEnricher.enrich(registry.getSnapshot()));
+            expect(registry.getSnapshot().entries[0]?.endpoint).toMatchObject({ scheme: 'unknown', probeState: 'unknown' });
+            const routes = createLocalServicePreviewRoutes({
+                machineId: MACHINE_ID, registry: createLocalServicePreviewRegistry(), inventoryRegistry: registry, endpointEnricher,
+            });
+            const opened = await routes.openOrCreate({ machineId: MACHINE_ID, inventoryEntryId: 'entry-vite' });
+            expect(opened.ok).toBe(true);
+            if (!opened.ok) throw new Error(opened.reasonCode);
+            expect(opened.response.preview.resource.target).toEqual({ scheme: 'http', host: '127.0.0.1', port: address.port });
+            expect(opened.response.preview.accessUrl).toContain('.preview.example.test/');
+            expect(registry.getSnapshot().entries[0]?.endpoint?.scheme).toBe('http');
+            delayResponse = false;
+        } finally {
+            target.closeAllConnections();
+            await new Promise<void>((resolve) => target.close(() => resolve()));
+        }
+    });
+
+    it.each(['direct', 'machineRpc'] as const)('cancels an unresolved %s Open without publishing a preview and permits a later Open', async (transport) => {
+        let respond = false;
+        let completeResponse: (() => void) | undefined;
+        let received: (() => void) | undefined;
+        const target = createServer((_request, response) => {
+            completeResponse = () => response.end();
+            received?.();
+            if (respond) response.end();
+        });
+        target.listen(0, '127.0.0.1');
+        await once(target, 'listening');
+        const address = target.address();
+        if (!address || typeof address === 'string') throw new Error('Expected loopback listener');
+        try {
+            const endpointEnricher = createLocalServiceEndpointEnricher({
+                now: () => 2_000, timeoutMs: 250, concurrency: 1, successTtlMs: 30_000, failureTtlMs: 5_000,
+            });
+            const routes = createLocalServicePreviewRoutes({
+                machineId: MACHINE_ID, registry: createLocalServicePreviewRegistry(),
+                inventoryRegistry: inventoryRegistryWith([inventoryEntry({ port: address.port, endpoint: undefined })]), endpointEnricher,
+            });
+            const abort = new AbortController();
+            const requestSeen = new Promise<void>((resolve) => { received = resolve; });
+            const handlers = new Map<string, (payload: unknown, context?: RpcHandlerContext) => Promise<unknown>>();
+            const registrar: RpcHandlerRegistrar = {
+                registerHandler(method, handler) {
+                    // The transport harness invokes only the known registered request shape.
+                    handlers.set(method, handler as (payload: unknown, context?: RpcHandlerContext) => Promise<unknown>);
+                },
+            };
+            registerDaemonLocalServicePreviewSnapshotHandler(registrar, { localServicesPreview: routes });
+            const request = { machineId: MACHINE_ID, inventoryEntryId: 'entry-vite' };
+            const handler = handlers.get(RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_OPEN_OR_CREATE);
+            if (!handler) throw new Error('Expected preview RPC registration');
+            const pending = transport === 'direct' ? routes.openOrCreate(request, abort.signal) : handler(request, { signal: abort.signal });
+            // Race the owner result so pre-fix refusal fails rather than waiting for an absent request.
+            expect(await Promise.race([requestSeen.then(() => 'requested'), pending.then(() => 'refused')])).toBe('requested');
+            const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+            abort.abort();
+            completeResponse?.();
+            await rejected;
+            expect((await routes.getSnapshot()).resources).toEqual([]);
+            respond = true;
+            expect((await routes.openOrCreate({ machineId: MACHINE_ID, inventoryEntryId: 'entry-vite' })).ok).toBe(true);
+        } finally {
+            target.closeAllConnections();
+            await new Promise<void>((resolve) => target.close(() => resolve()));
+        }
+    });
+
     it.each(['http', 'websocket'] as const)('rejects a malformed absolute %s request target and keeps the native adapter live', async (kind) => {
         let upstreamRequests = 0;
         const target = createServer((_request, response) => { upstreamRequests += 1; response.end('alive'); });
