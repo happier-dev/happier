@@ -101,17 +101,10 @@ export function createBrowserDaemonControlRoutes(input: Readonly<{
             if (event.browserSessionId === view.browserSessionId && 'viewId' in event && event.viewId === view.viewId) events.push(event);
           });
           try {
-            let result: BrowserCommandDispatchResultV1;
-            if (context.authority === 'present_user') {
-              // Chrome navigation is human input too: hold control and drain agent cleanup before touching the page.
-              await automation.recordHumanInput({ browserSessionId: view.browserSessionId, viewId: view.viewId, authority: 'present_user' });
-              result = await dispatchToBroker(command.data);
-            } else {
-              const execution = await automation.executeControlCommand(view, () => dispatchToBroker(command.data));
-              if (!execution.ok) return browserCommandDispatchFailure({ commandId: command.data.commandId,
-                code: 'permission_denied', message: `Browser input controller refused the command: ${execution.errorCode}.` });
-              result = execution.value;
-            }
+            const execution = await automation.executeControlCommand(view, context.authority, () => dispatchToBroker(command.data));
+            if (!execution.ok) return browserCommandDispatchFailure({ commandId: command.data.commandId,
+              code: 'permission_denied', message: `Browser input controller refused the command: ${execution.errorCode}.` });
+            const result = execution.value;
             return result.status === 'dispatched' ? { ...result, events: [...events, ...result.events] } : result;
           } finally { unsubscribe(); }
         }

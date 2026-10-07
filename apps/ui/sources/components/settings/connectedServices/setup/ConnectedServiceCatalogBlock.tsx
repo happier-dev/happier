@@ -9,6 +9,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { t } from '@/text';
+import { Modal } from '@/modal';
 
 import { ConnectedServiceMark } from '../ConnectedServiceMark';
 import type { ConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
@@ -55,6 +56,11 @@ export const ConnectedServiceCatalogBlock = React.memo(function ConnectedService
             {entry.usedByAgentIds.map((agentId) => <AgentIcon key={agentId} agentId={agentId} size={14} />)}
         </View>
     ) : null;
+    const diagnostic = entry.statusLine ? <Text style={styles.body}>{entry.statusLine}</Text> : null;
+    const supportDetails = entry.supportDetails ? (
+        <RoundButton size="small" display="secondary" title={t('common.details')}
+            onPress={(event) => { event?.stopPropagation?.(); void Modal.alert(t('common.details'), entry.supportDetails ?? ''); }} />
+    ) : null;
     return (
         <Pressable
             testID={`connected-service-setup:tile:${entry.serviceKey}`}
@@ -62,7 +68,7 @@ export const ConnectedServiceCatalogBlock = React.memo(function ConnectedService
             accessible={false}
             focusable={false}
             tabIndex={-1}
-            onPress={props.onConnect}
+            onPress={entry.canAdd ? props.onConnect : undefined}
             style={styles.press}
         >
             {({ pressed, hovered }: Readonly<{ pressed: boolean; hovered?: boolean }>) => card ? (
@@ -70,7 +76,7 @@ export const ConnectedServiceCatalogBlock = React.memo(function ConnectedService
                     testID={`connected-service-setup:block:${entry.serviceKey}`}
                     layout="card"
                     appearance="tile"
-                    highlighted={pressed || hovered === true}
+                    highlighted={entry.canAdd && (pressed || hovered === true)}
                 >
                     <View style={styles.top}>
                         <ConnectedServiceMark legacyServiceId={entry.legacyServiceId} size="card" />
@@ -79,14 +85,17 @@ export const ConnectedServiceCatalogBlock = React.memo(function ConnectedService
                     <View>
                         <Text style={styles.title} numberOfLines={1}>{entry.label}</Text>
                         {signIn ? <Text style={styles.body}>{signIn}</Text> : null}
+                        {diagnostic}
                     </View>
                     <View style={styles.foot}>
                         {agents}
+                        {supportDetails}
                         <RoundButton testID={`connected-service-setup:connect:${entry.serviceKey}`}
                             size="small" display="secondary" title={t('connectedServicesSettings.connect')}
                             accessibilityLabel={t('connectedServicesSettings.setupServiceTitle', { service: entry.label })}
                             accessibilityHint={entry.usedBy.length > 0 ? entry.usedBy.join(', ') : undefined}
-                            onPress={(event) => { event?.stopPropagation?.(); props.onConnect(); }} />
+                            disabled={!entry.canAdd}
+                            onPress={(event) => { event?.stopPropagation?.(); if (entry.canAdd) props.onConnect(); }} />
                     </View>
                 </SetupBlockPaper>
             ) : (
@@ -94,7 +103,7 @@ export const ConnectedServiceCatalogBlock = React.memo(function ConnectedService
                     testID={`connected-service-setup:block:${entry.serviceKey}`}
                     layout="row"
                     appearance="tile"
-                    highlighted={pressed || hovered === true}
+                    highlighted={entry.canAdd && (pressed || hovered === true)}
                 >
                     <View style={styles.rowIdentity}>
                         <ConnectedServiceMark legacyServiceId={entry.legacyServiceId} size="card" />
@@ -103,14 +112,17 @@ export const ConnectedServiceCatalogBlock = React.memo(function ConnectedService
                     <View style={styles.rowText}>
                         <Text style={styles.title} numberOfLines={1}>{entry.label}</Text>
                         {signIn ? <Text style={styles.body}>{signIn}</Text> : null}
+                        {diagnostic}
                     </View>
                     <View style={styles.rowFoot}>
                     {agents}
+                    {supportDetails}
                     <RoundButton testID={`connected-service-setup:connect:${entry.serviceKey}`}
                         size="small" display="secondary" title={t('connectedServicesSettings.connect')}
                         accessibilityLabel={t('connectedServicesSettings.setupServiceTitle', { service: entry.label })}
                         accessibilityHint={entry.usedBy.length > 0 ? entry.usedBy.join(', ') : undefined}
-                        onPress={(event) => { event?.stopPropagation?.(); props.onConnect(); }} />
+                        disabled={!entry.canAdd}
+                        onPress={(event) => { event?.stopPropagation?.(); if (entry.canAdd) props.onConnect(); }} />
                     </View>
                 </SetupBlockPaper>
             )}

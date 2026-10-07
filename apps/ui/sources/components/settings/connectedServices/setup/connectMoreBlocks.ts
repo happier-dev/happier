@@ -33,20 +33,20 @@ export function signsInWithAnAccount(entry: Pick<ConnectedServiceSetupCatalogEnt
  * What "Connect more" offers as its own blocks (lab `csvc` A1, P0). On the page: the services the agents
  * on your machines accept that nobody connected yet and nobody set aside ("Not now" is the Home set-up
  * dismissal `connect:<service>`). On first run: the registry's explicitly featured services. Everything
- * else addable is behind the browse block.
+ * else known is behind the browse block, including services that cannot currently connect.
  */
 export function selectConnectMoreOffer(input: Readonly<{
     layout: 'section' | 'firstRun';
-    addable: readonly ConnectedServiceSetupCatalogEntry[];
+    catalog: readonly ConnectedServiceSetupCatalogEntry[];
     /** The index's services without an account (its G3 list). */
     connectableKeys: ReadonlySet<string>;
     hidden: ReadonlySet<string>;
 }>): Readonly<{ offered: readonly ConnectedServiceSetupCatalogEntry[]; browse: boolean }> {
-    const agentServices = input.addable.filter((entry) => entry.section === 'agents' && input.connectableKeys.has(entry.serviceKey));
+    const agentServices = input.catalog.filter((entry) => entry.canAdd && entry.section === 'agents' && input.connectableKeys.has(entry.serviceKey));
     const offered = input.layout === 'section'
         ? agentServices.filter((entry) => entry.usedBy.length > 0 && !input.hidden.has(homeConnectServiceStepId(entry.serviceKey)))
         : agentServices.filter((entry) => getConnectedServiceSetupPresentation(entry.service)?.firstRun === true);
-    return { offered, browse: input.addable.length > offered.length };
+    return { offered, browse: input.catalog.length > offered.length };
 }
 
 /**

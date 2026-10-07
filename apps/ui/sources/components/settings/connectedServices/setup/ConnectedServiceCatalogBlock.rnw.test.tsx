@@ -30,14 +30,14 @@ const entry: ConnectedServiceSetupCatalogEntry = {
 };
 
 describe('ConnectedServiceCatalogBlock web activation', () => {
-    it('does not activate a non-addable known service from its tile or Connect control', async () => {
+    it.each(['card', 'row'] as const)('does not activate a non-addable known service from its %s tile or Connect control', async (layout) => {
         const container = document.createElement('div');
         document.body.appendChild(container);
         const root = createRoot(container);
         const connected = vi.fn();
         try {
             await act(async () => { root.render(<ConnectedServiceCatalogBlock
-                entry={{ ...entry, canAdd: false }} layout="card" showCount={false} onConnect={connected}
+                entry={{ ...entry, canAdd: false }} layout={layout} showCount={false} onConnect={connected}
             />); });
             const tile = container.querySelector<HTMLElement>(`[data-testid="connected-service-setup:tile:${entry.serviceKey}"]`);
             const connect = container.querySelector<HTMLElement>(`[data-testid="connected-service-setup:connect:${entry.serviceKey}"]`);

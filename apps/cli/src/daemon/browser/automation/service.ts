@@ -68,8 +68,8 @@ export type BrowserAutomationDaemonService = Readonly<{
     input: BrowserAutomationViewRef & Readonly<{ authority: 'present_user' }>,
   ): Promise<BrowserAutomationCancelResult>;
   recordHumanInput(input: BrowserAutomationViewRef & BrowserControllerAuthority): Promise<BrowserAutomationCancelResult>;
-  /** Account-automation control commands share agent admission and drain without becoming human input. */
-  executeControlCommand(view: BrowserAutomationViewRef, dispatch: () => Promise<BrowserCommandDispatchResultV1>): Promise<SurfaceInputExecutionResult<BrowserCommandDispatchResultV1>>;
+  /** Page-changing control commands retain their host authority through the same admission and drain. */
+  executeControlCommand(view: BrowserAutomationViewRef, authority: 'present_user' | 'account_automation', dispatch: () => Promise<BrowserCommandDispatchResultV1>): Promise<SurfaceInputExecutionResult<BrowserCommandDispatchResultV1>>;
   handBack(input: BrowserAutomationViewRef & BrowserControllerAuthority): Readonly<{ ok: boolean }>;
   getStatus(view: BrowserAutomationViewRef): BrowserAutomationControllerStateV1;
   getTimeline(view: BrowserAutomationViewRef): BrowserAutomationTimelineV1;
@@ -352,21 +352,25 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
   }
   return {
     execute,
-    async executeControlCommand(view, dispatch) {
+    async executeControlCommand(view, authority, dispatch) {
       const runtime = runtimeFor(view);
+      if (authority === 'present_user') await recordHumanInput({ ...view, authority });
       const navigationGeneration = input.adapter.getNavigationGeneration?.(view) ?? 0;
       if (runtime.navigationGeneration !== navigationGeneration) runtime.inputControl.invalidateObservation();
       runtime.navigationGeneration = navigationGeneration;
       try {
         return await runtime.inputControl.execute({
-          requestedBy: 'agent',
+          requestedBy: authority === 'present_user' ? 'human' : 'agent',
           effect: async () => {
             emitController(view);
             // The broker awaits the actual CDP acknowledgement. Keep admission until it settles;
             // abort cannot retract a page command already issued to Chromium.
             return await dispatch();
           },
-          classifyCompletion: result => result.status === 'dispatched' ? 'known' : 'unknown',
+          // The broker/sidecar refuse missing views and unavailable history before a page effect.
+          // Transport/invalid-result failures cannot establish whether Chromium applied the command.
+          classifyCompletion: result => result.status === 'dispatched' || result.error.code === 'view_not_found'
+            || result.error.code === 'unsupported_command' ? 'known' : 'unknown',
         });
       } finally { emitController(view); }
     },

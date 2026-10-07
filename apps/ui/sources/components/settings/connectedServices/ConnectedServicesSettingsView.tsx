@@ -141,9 +141,8 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
   }, [machines]);
 
   const accountCount = indexModel.sheets.reduce((total, sheet) => total + sheet.accounts.length, 0);
-  const needsYouCount = indexModel.sheets.reduce((total, sheet) => total + (sheet.canOpen
-    ? sheet.accounts.filter((account) => normalizeConnectedServiceCredentialHealthStatus(account.status) === 'needs_reauth').length
-    : 0), 0);
+  const needsYouCount = indexModel.sheets.reduce((total, sheet) => total
+    + sheet.accounts.filter((account) => normalizeConnectedServiceCredentialHealthStatus(account.status) === 'needs_reauth').length, 0);
   const projectionLoading = registrySnapshot.status === 'loading';
   const projectionFailed = registrySnapshot.status === 'error';
   const agentConnectable = indexModel.connectable.filter((service) => service.section === 'agents');
@@ -286,7 +285,7 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
           status={account.status}
           billedPerUse={account.kind === 'qualified' && account.profile.kind === 'token'}
           showsUsage={sheet.section === 'agents'}
-          signedOut={sheet.canOpen && normalizeConnectedServiceCredentialHealthStatus(account.status) === 'needs_reauth'}
+          signedOut={normalizeConnectedServiceCredentialHealthStatus(account.status) === 'needs_reauth'}
           refreshToken={refreshToken}
           render={render}
         />

@@ -71,8 +71,8 @@ export type ConnectedServicesRailViewProps = Readonly<{
     renderAccountMeta?: (sheet: ConnectedServicesIndexSheet, account: ConnectedServicesIndexAccount) => React.ReactNode;
 }>;
 
-function isSignedOut(sheet: ConnectedServicesIndexSheet, account: ConnectedServicesIndexAccount): boolean {
-    return sheet.canOpen && normalizeConnectedServiceCredentialHealthStatus(account.status) === 'needs_reauth';
+function isSignedOut(account: ConnectedServicesIndexAccount): boolean {
+    return normalizeConnectedServiceCredentialHealthStatus(account.status) === 'needs_reauth';
 }
 
 /**
@@ -116,7 +116,7 @@ export const ConnectedServicesRailView = React.memo(function ConnectedServicesRa
                 || sheet.label.toLowerCase().includes(needle));
         if (needle && rows.length === 0) return null;
         const open = expandable && isExpanded(sheet);
-        const trouble = !open && sheet.accounts.some((account) => isSignedOut(sheet, account));
+        const trouble = !open && sheet.accounts.some(isSignedOut);
         const serviceSelected = selection.kind === 'service' && selection.serviceKey === sheet.serviceKey;
         const caret = expandable ? (
             <Icon name={open ? 'caret-down' : 'caret-right'} size={12} color={theme.colors.text.tertiary} />
@@ -283,7 +283,7 @@ const LiveAccountMeta = React.memo(function LiveAccountMeta(props: Readonly<{
     sheet: ConnectedServicesIndexSheet;
     account: ConnectedServicesIndexAccount;
 }>) {
-    if (isSignedOut(props.sheet, props.account)) return <RailAccountMeta meta={{ kind: 'signedOut' }} />;
+    if (isSignedOut(props.account)) return <RailAccountMeta meta={{ kind: 'signedOut' }} />;
     if (props.account.kind !== 'qualified') return null;
     if (props.account.profile.kind === 'token') return <RailAccountMeta meta={{ kind: 'key' }} />;
     return <QualifiedAccountMeta account={props.account} />;

@@ -157,7 +157,9 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
     // The detail beside the collection, in the app's details pane; without one, its own page.
     const besidePage = useDetailsPaneAvailable();
     const { openItem, open: setOpenItem, close: closePane } = usePluginsOpenItem();
-    const paneOpen = openItem !== null && besidePage;
+    // A selected detail stays in the existing pane instance while the layout owner recomposes
+    // it into a full-width overlay. Availability chooses where a NEW open goes, not what to retain.
+    const paneOpen = openItem !== null;
     const openPlugin = React.useCallback((pluginId: string) => {
         if (besidePage) {
             setOpenItem({ kind: 'installed', pluginId });

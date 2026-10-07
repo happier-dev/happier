@@ -142,6 +142,7 @@ describe('buildConnectedServicesIndexModel · who uses what', () => {
         const codex = model.sheets.find((sheet) => sheet.serviceKey === 'happier.agent.codex/openai-codex');
         expect(codex).toMatchObject({
             canOpen: true,
+            canAdd: false,
             attentionAccountId: 'work',
             statusLine: diagnostic,
             accounts: [{ accountId: 'work', status: 'needs_reauth' }],
@@ -150,6 +151,7 @@ describe('buildConnectedServicesIndexModel · who uses what', () => {
         // A known service with no accounts still carries its diagnostic; it is not discarded.
         expect(model.sheets.find((sheet) => sheet.service.localId === 'gemini')).toMatchObject({
             canOpen: true,
+            canAdd: false,
             accounts: [],
             statusLine: diagnostic,
         });

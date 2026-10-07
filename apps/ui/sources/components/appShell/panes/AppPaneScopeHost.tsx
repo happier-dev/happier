@@ -626,6 +626,7 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps) => {
             bottomPane={bottomPane}
             rightOpen={rightOpen}
             detailsOpen={effectiveDetailsOpen}
+            destinationOwnsDetails={destinationOwnsDetails}
             detailsOpenedFrom={scopeState?.details.openedFrom ?? null}
             bottomOpen={bottomOpen}
             paneFocusModeActive={paneFocusModeActive}

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { isAbsolute, join, relative, sep } from 'node:path';
+import { join, relative } from 'node:path';
 
 import {
   commandExists,
@@ -22,7 +22,7 @@ import {
   createHappyCliRuntimeInputIgnorePath,
 } from '../utils/proc/cli_runtime_inputs.mjs';
 import { readDevReloadWatchChangeSignatureAsync } from '../utils/dev/watchSignature.mjs';
-import { createWorkspaceBuildInputIgnorePath, isWorkspaceBuildSourcePath, resolveWorkspaceBuildInputWatchPaths } from '../utils/fs/workspaceBuildInputs.mjs';
+import { createWorkspaceBuildInputIgnorePath, resolveWorkspaceBuildInputWatchPaths } from '../utils/fs/workspaceBuildInputs.mjs';
 import { resolveBundledPluginGeneratorInputPaths } from '../../../cli/scripts/build-owned/bundledPlugins/authoringInputs.mjs';
 
 const RUNTIME_COMPONENTS = Object.freeze(['web', 'server', 'daemon']);
@@ -71,14 +71,8 @@ export function createRuntimeComponentSourceIgnorePath({ component, sourceMetada
   const hostDir = join(repoDir, 'apps', component === 'web' ? 'ui' : 'server');
   const packageDirs = collectWorkspaceSourceDirs({ repoDir, hostDir });
   if (component === 'web') packageDirs.push(...collectHappyCliRuntimePackageDirs({ cliDir }).map(({ dir }) => dir));
-  const ignoreInput = createWorkspaceBuildInputIgnorePath(packageDirs, { includeShippedFiles: true, excludeGeneratedPluginArtifacts });
-  return path => {
-    const hostRelative = relative(hostDir, path);
-    const belongsToHost = !isAbsolute(hostRelative) && hostRelative !== '..' && !hostRelative.startsWith(`..${sep}`);
-    // Explicit host assets, patches and Prisma inputs are opaque build data.
-    if (belongsToHost && !isWorkspaceBuildSourcePath(hostRelative)) return false;
-    return ignoreInput(path);
-  };
+  return createWorkspaceBuildInputIgnorePath(packageDirs,
+    { repoDir, hostDir, includeShippedFiles: true, excludeGeneratedPluginArtifacts });
 }
 
 export function resolveRuntimeComponentSourcePaths({

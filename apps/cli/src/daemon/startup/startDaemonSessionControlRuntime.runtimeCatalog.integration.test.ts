@@ -131,6 +131,7 @@ import * as sessionRunnerRespawnModule from '../processSupervision/sessionRunner
 import { resolveSessionRunnerRestartEligibility } from '../sessionRunnerRuntime/resolveRestartEligibility';
 import { resolveConnectedServiceMaterializedRootDir } from '../connectedServices/materialize/resolveConnectedServiceMaterializedRootDir';
 import { createMachineLiveStreamCaptureRegistry } from '../peer/mediation/stream/captureRegistry';
+import { createBrowserDaemonFeatureGate } from '../browser/featureGate';
 import { ConnectedServiceRuntimeRegistry } from '../connectedServices/runtimeRegistry/registry';
 import { ConnectedServiceRefreshCoordinator } from '../connectedServices/refresh/ConnectedServiceRefreshCoordinator';
 import { authorizeConnectedServiceRuntimeAuthFailureSource } from '../connectedServices/runtimeAuth/handleConnectedServiceRuntimeAuthFailureForSession';
@@ -13316,16 +13317,26 @@ describe('startDaemonSessionControlRuntime', () => {
         const setBrowserDaemonContextRoutesProvider = vi.fn();
         const setBrowserDaemonAutomationRoutesProvider = vi.fn();
         const onBrowserContextRoutesReady = vi.fn();
-        const onBrowserAutomationRoutesReady = vi.fn();
+        const onBrowserAutomationRoutesReady = vi.fn<(routes: import('../browser/automation/routes').BrowserAutomationRoutes) => void>();
         const onBrowserControlRoutesReady = vi.fn<(routes: import('../browser/control/routes').BrowserDaemonControlRoutes) => void>();
         const { createBrowserSidecarCdpControlAdapter } = await import('../browser/sidecar/controlAdapter');
         const browserView = { browserSessionId: 'browser_disabled', viewId: 'view_disabled' };
+        const cdpListeners = new Set<import('../browser/sidecar/controlAdapter').BrowserSidecarCdpEventSubscriber>();
         const sidecar = createBrowserSidecarCdpControlAdapter({ browserSessionId: browserView.browserSessionId, sidecarId: 'sidecar_disabled',
             // The real startup, broker and controller remain in place; only Chromium is replaced.
             transport: { openPage: async () => ({ targetId: 'page', sessionId: 'cdp-page' }),
-                dispatchPageCommand: async () => ({}), dispatchBrowserCommand: async () => ({}) } });
+                dispatchPageCommand: async () => ({}), dispatchBrowserCommand: async () => ({}),
+                subscribeCdpEvents: listener => { cdpListeners.add(listener); return () => { cdpListeners.delete(listener); }; } } });
         const browserSidecarControlAdapterFactory = () => ({ ok: true as const, adapter: sidecar, dispose: () => sidecar.dispose() });
         const browserContextSourceFactory = browserCapsContextSourceFactory();
+        const gateState = { 'browser.sidecar': true, 'browser.context': false, 'browser.automation': false };
+        const browserDaemonFeatureGate = createBrowserDaemonFeatureGate({ env: {},
+            resolveServerFeaturesSnapshot: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({ features: {
+                browser: { enabled: true, viewTargets: { enabled: true }, internal: { enabled: true },
+                    sidecar: { enabled: gateState['browser.sidecar'] }, context: { enabled: gateState['browser.context'] },
+                    automation: { enabled: gateState['browser.automation'] } },
+            } }) }),
+        });
 
         const runtime = await startDaemonSessionControlRuntime({
             machineId: 'machine-browser-caps-disabled',
@@ -13358,12 +13369,8 @@ describe('startDaemonSessionControlRuntime', () => {
             ...({
                 browserSidecarControlAdapterFactory,
                 browserContextSourceFactory,
-                // Sidecar host on, but the server disables context + automation: no owner registers.
-                browserDaemonFeatureGate: fakeBrowserGate({
-                    'browser.sidecar': true,
-                    'browser.context': false,
-                    'browser.automation': false,
-                }),
+                // Page control retains its authority; disabled context + automation Actions do not register.
+                browserDaemonFeatureGate,
             } satisfies Record<string, unknown>),
         });
 
@@ -13378,6 +13385,12 @@ describe('startDaemonSessionControlRuntime', () => {
             expect(await control.dispatchCommand({ ...browserView, kind: 'openView', commandId: 'open', focus: true, platform: 'web',
                 target: { kind: 'externalUrl', targetId: 'external', url: 'https://example.test/' } }, { authority: 'present_user' }))
                 .toMatchObject({ status: 'dispatched' });
+            expect(await control.dispatchCommand({ ...browserView, kind: 'navigate', commandId: 'first-agent', url: 'https://example.test/first' }, { authority: 'account_automation' }))
+                .toMatchObject({ status: 'dispatched' });
+            for (const listener of cdpListeners) listener({ method: 'Page.frameNavigated', sessionId: 'cdp-page',
+                params: { frame: { id: 'main', loaderId: 'next-document', url: 'https://example.test/first' } } });
+            expect(await control.dispatchCommand({ ...browserView, kind: 'reload', commandId: 'next-generation-agent' }, { authority: 'account_automation' }))
+                .toMatchObject({ status: 'failed', error: { code: 'permission_denied', message: expect.stringContaining('observation_required') } });
             expect(await control.dispatchCommand({ ...browserView, kind: 'navigate', commandId: 'human', url: 'https://example.test/human' }, { authority: 'present_user' }))
                 .toMatchObject({ status: 'dispatched', events: expect.arrayContaining([
                     expect.objectContaining({ kind: 'controllerChanged', state: expect.objectContaining({ controller: 'human' }) }),
@@ -13385,6 +13398,19 @@ describe('startDaemonSessionControlRuntime', () => {
             expect(await control.dispatchCommand({ ...browserView, kind: 'navigate', commandId: 'agent', url: 'https://example.test/agent' },
                 { authority: 'account_automation', bypassApprovals: true }))
                 .toMatchObject({ status: 'failed', error: { code: 'permission_denied' } });
+            expect(await control.dispatchCommand({ ...browserView, kind: 'handBack', commandId: 'back' }, { authority: 'present_user' }))
+                .toMatchObject({ status: 'dispatched' });
+            await control.listViews(browserView.browserSessionId);
+            expect(await control.dispatchCommand({ ...browserView, kind: 'reload', commandId: 'control-only-resume' }, { authority: 'account_automation' }))
+                .toMatchObject({ status: 'failed', error: { code: 'permission_denied', message: expect.stringContaining('observation_required') } });
+            expect(onBrowserAutomationRoutesReady).not.toHaveBeenCalled();
+            await control.dispatchCommand({ ...browserView, kind: 'takeControl', commandId: 'take-again' }, { authority: 'present_user' });
+            gateState['browser.automation'] = true;
+            await runtime.refreshBrowserRouteOwners();
+            expect(onBrowserAutomationRoutesReady).toHaveBeenCalledOnce();
+            const automation = onBrowserAutomationRoutesReady.mock.calls[0]?.[0];
+            expect(await automation?.dispatch('browser.automation.status', browserView))
+                .toMatchObject({ status: 'succeeded', resultSummary: { controller: 'human' } });
         } finally { await runtime.stopControlServer(); }
     });
 

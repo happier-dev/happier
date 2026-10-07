@@ -34,7 +34,8 @@ export type DetailsPaneHostProps = Readonly<{
  * content to open it and null to close it. It stands in the App's pane host, so the App's right
  * sidebar opens beside the same page.
  *
- * On a phone there is no side pane (`useDetailsPaneAvailable()` is false): push a page instead.
+ * Fresh phone opens push a page (`useDetailsPaneAvailable()` is false). An already-selected
+ * detail stays in this same instance and takes the full viewport when side panes cannot be shown.
  */
 export const DetailsPaneHost = React.memo(function DetailsPaneHost(props: DetailsPaneHostProps) {
     const testID = props.testID ?? 'details-pane';
