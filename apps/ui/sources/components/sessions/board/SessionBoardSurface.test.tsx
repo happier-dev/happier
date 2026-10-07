@@ -29,8 +29,16 @@ import { useSessionBoardController } from './useSessionBoardController';
 import { realBoardActions } from './sessionBoardActionsTestkit';
 
 vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit');
+    // The mock factory, not the testkit index: the index's graph imports react-native, so loading it here
+    // waits on this very factory and module collection never finishes.
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock();
+});
+
+// The popover's portal/window-measurement boundary renders the open Add chooser inline; the chooser is real.
+vi.mock('@/components/ui/popover', async (importOriginal) => {
+    const { createInlinePopoverModuleMock } = await import('@/dev/testkit/mocks/popover');
+    return createInlinePopoverModuleMock(importOriginal);
 });
 
 /**

@@ -13,7 +13,9 @@ import { useCodeLinesReviewComments } from './useCodeLinesReviewComments';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit');
+    // The mock factory, not the testkit index: the index's graph imports react-native, so loading it here
+    // waits on this very factory and module collection never finishes.
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return await createReactNativeWebMock({
         View: ({ children, ...props }: any) => React.createElement('View', props, children),
         Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
@@ -23,7 +25,7 @@ vi.mock('react-native', async () => {
 });
 
 vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit');
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return await createUnistylesMock();
 });
 
