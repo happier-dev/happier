@@ -23,6 +23,7 @@ import type {
     SessionAgentContinuationMachineTarget,
     SessionAgentContinuationSourceState,
 } from './resolveSessionAgentContinuationEligibility';
+import { continueSessionWithArmedAgent } from '@/sync/domains/session/input/continueSessionWithArmedAgent';
 
 const announceAccessibilityMessage = vi.hoisted(() => vi.fn());
 const machineRpcWithServerScope = vi.hoisted(() => vi.fn());
@@ -241,7 +242,7 @@ describe('useInSessionAgentPickerControls arm draft', () => {
                 input: {
                     localId: submittedLocalId as string,
                     text: 'switch and send this',
-                    meta: {},
+                    meta: { permissionMode: 'yolo' },
                 },
                 currentness: {
                     text: 'switch and send this',
@@ -251,9 +252,16 @@ describe('useInSessionAgentPickerControls arm draft', () => {
                 },
             })).toBe(true);
         });
+        await act(async () => {
+            expect(first.getCurrent().recordArmedContinuationSubmission({
+                localId: submittedLocalId as string,
+                input: { localId: submittedLocalId as string, text: 'newer draft', meta: { permissionMode: 'read-only' } },
+                currentness: { text: 'newer draft', mentions: [], composerAttachments: [], attachmentDraftIds: [] },
+            })).toBe(true);
+        });
         expect(readPersistedArm()?.submission).toMatchObject({
             localId: submittedLocalId,
-            input: { text: 'switch and send this' },
+            input: { text: 'switch and send this', meta: { permissionMode: 'yolo' } },
         });
         await first.unmount();
 
@@ -263,8 +271,35 @@ describe('useInSessionAgentPickerControls arm draft', () => {
         expect(second.getCurrent().armedContinuationLocalId).toBe(submittedLocalId);
         expect(second.getCurrent().armedContinuationSubmission).toMatchObject({
             localId: submittedLocalId,
-            input: { text: 'switch and send this' },
+            input: { text: 'switch and send this', meta: { permissionMode: 'yolo' } },
         });
+    });
+
+    it('refuses an unsupported permission transfer before retaining a first submitted input', async () => {
+        const first = await renderControls();
+        await armTarget(first, 'agent:happier.agent.codex/codex');
+        const localId = first.getCurrent().armedContinuationLocalId;
+        if (!localId) throw new Error('Expected an armed continuation identity');
+        machineRpcWithServerScope.mockResolvedValueOnce({ protocolVersion: 1, results: {
+            'tool.sessionAgentTransition': { ok: false, checkedAt: 1, error: { code: 'unknown-capability', message: 'Unknown capability' } },
+        } });
+        const outcome = await continueSessionWithArmedAgent({
+            sessionId: 'session-1', serverId: 'server-1', machineId: 'machine-1', localId,
+            intent: armedIntentFor('codex'), sourceAgentLabel: 'Claude', targetAgentLabel: 'Codex',
+            committedPermissionMode: 'default', input: { text: 'still editable', meta: { permissionMode: 'yolo' } },
+        }, {
+            onBeforeTransitionDispatch: () => first.getCurrent().recordArmedContinuationSubmission({
+                localId, input: { localId, text: 'still editable', meta: { permissionMode: 'yolo' } },
+                currentness: { text: 'still editable', mentions: [], composerAttachments: [], attachmentDraftIds: [] },
+            }),
+        });
+        expect(outcome.result).toBeNull();
+        expect(readPersistedArm()).toMatchObject({ intent: armedIntentFor('codex') });
+        expect(readPersistedArm()?.submission).toBeUndefined();
+        await first.unmount();
+        const restored = await renderControls();
+        expect(restored.getCurrent().armedContinuation).toEqual(armedIntentFor('codex'));
+        expect(restored.getCurrent().armedContinuationSubmission).toBeNull();
     });
 
     it('mints a fresh identity when a distinct target is armed after a submission', async () => {

@@ -21,6 +21,9 @@ import {
   EXTERNAL_SESSION_OPERATION_TIMELINES_V1,
   MACHINE_PLAIN_DATA_KEY_MARKER,
   SessionExecutionRunPendingEnqueueRequestV1Schema,
+  SessionAgentTransitionRequestV1Schema,
+  SessionContinuationInspectionBatchRequestV1Schema,
+  tryWriteServerEnabledBitInPlace,
   StrictJsonValueSchema,
   type ProviderAccountUsageSnapshotV1,
   type SessionRunnerRuntimeStateV1,
@@ -55,6 +58,10 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHo
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
+import type { SessionArmedAgentContinuation } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
@@ -64,6 +71,7 @@ import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fi
 const machineDirectSessionStatusGetSpy = vi.hoisted(() => vi.fn());
 const machineDirectSessionTakeoverSpy = vi.hoisted(() => vi.fn<(input: unknown) => Promise<unknown>>(async () => ({ ok: true })));
 const machineDirectSessionTakeoverPersistSpy = vi.hoisted(() => vi.fn<(input: unknown) => Promise<unknown>>(async () => ({ ok: true })));
+let agentTransitionResult: 'accepted' | 'outcome_unknown' = 'accepted';
 const syncSubmitMessageSpy = vi.hoisted(() => vi.fn(async (...args: unknown[]): Promise<unknown> => {
   const payload = args[0] as Readonly<{ localId: string }>;
   return { ok: true, id: 'direct-message-1', seq: 2, localId: payload.localId, didWrite: true };
@@ -638,6 +646,8 @@ installDisconnectedServerSocketBoundary((socket: Socket) => {
     for (const listener of socket.listeners('connect')) listener();
     return socket;
   });
+  // Fire-and-forget status demand is also an outbound network operation.
+  vi.spyOn(socket, 'emit').mockImplementation(() => socket);
   // The outbound network acknowledgement is controlled here; Sync itself creates
   // the local Pending projection and publishes the composer's handoff.
   vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event: string, payload: unknown) => {
@@ -670,6 +680,14 @@ installDisconnectedServerSocketBoundary((socket: Socket) => {
         result = request.targetStorageMode === 'persisted'
           ? await machineDirectSessionTakeoverPersistSpy(rpc.params)
           : await machineDirectSessionTakeoverSpy(rpc.params);
+      } else if (method === RPC_METHODS.SESSION_CONTINUATION_INSPECT_BATCH) {
+        const request = SessionContinuationInspectionBatchRequestV1Schema.parse(rpc.params);
+        result = { v: 1, inspections: request.selections.map(() => ({
+          type: 'available', protocolVersion: 1, sameSessionTransition: true,
+        })) };
+      } else if (method === RPC_METHODS.SESSION_AGENT_TRANSITION) {
+        const request = SessionAgentTransitionRequestV1Schema.parse(rpc.params);
+        result = { type: agentTransitionResult, localId: request.input.localId };
       } else {
         return { ok: false, error: 'RPC method not found', errorCode: 'METHOD_NOT_FOUND' };
       }
@@ -699,6 +717,143 @@ describe('SessionView (direct sessions)', () => {
   function useCanonicalDraftScope() {
     expect(storage.getState().settingsScope).toEqual(canonicalDraftScope);
   }
+
+  describe('persisted Agent continuation custody', () => {
+    const currentAgentRow: AgentInputChipPickerOption = {
+      id: 'engine:current', label: 'Current Agent', renderDetailContent: () => null,
+    };
+
+    function targetKey(agentId: string): string {
+      const entry = getResolvedBackendCatalogEntries({
+        enabledAgentIds: ['claude', 'codex', 'gemini'],
+        acpCatalogSettingsV1: { v: 2, backends: [] },
+      }).find((candidate) => candidate.agentId === agentId);
+      if (!entry) throw new Error(`Agent catalog entry ${agentId} is unavailable`);
+      return entry.backendTargetKey;
+    }
+
+    function readArm(): SessionArmedAgentContinuation | null | undefined {
+      return draftValues.readSessionDraftValue(canonicalDraftScope, 's1', 'routing.agentContinuation');
+    }
+
+    function readOptions(screen: Awaited<ReturnType<typeof renderSessionView>>): AgentInputChipPickerOption[] {
+      return findAgentInput(screen).props.composeAgentPickerOptions([currentAgentRow]);
+    }
+
+    async function openPicker(screen: Awaited<ReturnType<typeof renderSessionView>>) {
+      await act(async () => { findAgentInput(screen).props.onAgentPickerVisibilityChange(true); });
+      await settleDirectSessionView();
+    }
+
+    async function selectAgent(screen: Awaited<ReturnType<typeof renderSessionView>>, agentId: string) {
+      await openPicker(screen);
+      const option = readOptions(screen).find((row) => row.id === targetKey(agentId));
+      if (!option?.onSelectImmediate) throw new Error(`Agent option ${agentId} is unavailable`);
+      const select = option.onSelectImmediate;
+      await act(async () => { select(); });
+      expect(readArm()?.backendTargetKey).toBe(targetKey(agentId));
+    }
+
+    async function submitSwitch(screen: Awaited<ReturnType<typeof renderSessionView>>) {
+      await selectAgent(screen, 'claude');
+      await act(async () => { findAgentInput(screen).props.onChangeText('switch and send this'); });
+      await act(async () => { await findAgentInput(screen).props.onSend(); });
+      await settleDirectSessionView();
+      const dispatch = externalRpcRequests.find((request) => request.method === RPC_METHODS.SESSION_AGENT_TRANSITION);
+      if (!dispatch) throw new Error('Agent transition did not reach the Socket boundary');
+      return SessionAgentTransitionRequestV1Schema.parse(dispatch.payload).input.localId;
+    }
+
+    async function publishCustody(localId: string) {
+      homes.answer(canonicalDraftScope.serverId, '/v2/sessions/s1/pending?includeDiscarded=1', { body: {
+        pending: [{
+          localId, content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'switch and send this' } } },
+          messageRole: 'user', position: 0, createdAt: 1, updatedAt: 2,
+          status: 'delivering', deliveryStatus: { status: 'delivering' },
+        }],
+      } });
+      await act(async () => { await sync.fetchPendingMessages('s1'); });
+      expect(storage.getState().sessionPending.s1.messages).toEqual(expect.arrayContaining([
+        expect.objectContaining({ localId, source: 'server_pending' }),
+      ]));
+      await settleDirectSessionView();
+    }
+
+    beforeEach(async () => {
+      useCanonicalDraftScope();
+      settingsState.current = {
+        enabledAgentIds: ['claude', 'codex', 'gemini'],
+        featureToggles: { sessions: true, 'sessions.agentSwitching': true },
+      };
+      const features = createRootLayoutFeaturesResponse();
+      for (const id of ['sessions', 'sessions.agentSwitching'] as const) {
+        if (!tryWriteServerEnabledBitInPlace(features, id, true)) throw new Error(`Feature fixture ${id} is unavailable`);
+      }
+      homes.answer(canonicalDraftScope.serverId, '/v1/features', { body: features });
+      homes.answer(canonicalDraftScope.serverId, '/v1/features/authenticated', { body: features });
+      const { directSessionV1: _direct, ...metadata } = storageState.sessions.s1.metadata;
+      storageState.sessions.s1 = { ...storageState.sessions.s1, metadata };
+      applyDirectSessionFixtures();
+      const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+      await getServerFeaturesSnapshot({ serverId: canonicalDraftScope.serverId, force: true });
+    });
+
+    it('consumes the accepted submission and offers selectable Agents after remount', async () => {
+      const first = await renderSessionViewAndSettle();
+      await submitSwitch(first);
+      expect(readArm()).toBeNull();
+      expect(findAgentInput(first).props.value).toBe('');
+      expect(getSessionDraftSnapshot(canonicalDraftScope, { kind: 'session', sessionId: 's1' })?.document.composer.text.value ?? '').toBe('');
+      storageState.sessions.s1.metadata = { ...storageState.sessions.s1.metadata, flavor: 'claude' };
+      await first.unmount();
+
+      const second = await renderSessionViewAndSettle();
+      await openPicker(second);
+      expect(readArm()).toBeNull();
+      expect(readOptions(second).map((row) => row.id)).toContain(targetKey('codex'));
+      await selectAgent(second, 'codex');
+    });
+
+    it('retains unknown submission identity through remount and consumes delayed custody while preserving newer text', async () => {
+      agentTransitionResult = 'outcome_unknown';
+      const first = await renderSessionViewAndSettle();
+      const localId = await submitSwitch(first);
+      expect(readArm()?.submission).toMatchObject({
+        localId, currentness: { text: 'switch and send this', mentions: [], composerAttachments: [], attachmentDraftIds: [] },
+      });
+      storageState.sessions.s1.metadata = { ...storageState.sessions.s1.metadata, flavor: 'claude' };
+      await first.unmount();
+
+      const second = await renderSessionViewAndSettle();
+      expect(readArm()?.submission?.localId).toBe(localId);
+      expect(findAgentInput(second).props.value).toBe('switch and send this');
+      expect(readOptions(second).map((row) => row.id)).not.toContain(targetKey('codex'));
+      await act(async () => { findAgentInput(second).props.onChangeText('a newer draft'); });
+      await publishCustody(localId);
+
+      expect(readArm()).toBeNull();
+      expect(findAgentInput(second).props.value).toBe('a newer draft');
+      await openPicker(second);
+      expect(readOptions(second).map((row) => row.id)).toContain(targetKey('codex'));
+      await selectAgent(second, 'codex');
+    });
+
+    it('preserves a newer armed Agent and composer when an older submission reaches custody', async () => {
+      agentTransitionResult = 'outcome_unknown';
+      const screen = await renderSessionViewAndSettle();
+      const previousLocalId = await submitSwitch(screen);
+      await selectAgent(screen, 'gemini');
+      await act(async () => { findAgentInput(screen).props.onChangeText('send this to Gemini'); });
+      const newerArm = readArm();
+      expect(newerArm?.submission).toBeUndefined();
+
+      await publishCustody(previousLocalId);
+
+      expect(readArm()).toEqual(newerArm);
+      expect(findAgentInput(screen).props.agentPickerSelectedOptionId).toBe(targetKey('gemini'));
+      expect(findAgentInput(screen).props.value).toBe('send this to Gemini');
+    });
+  });
 
   function writeCanonicalSessionDraft(input: Readonly<{
     recipient?: unknown;
@@ -782,7 +937,6 @@ describe('SessionView (direct sessions)', () => {
       let wireSession = SessionCurrentProjectionRecordV1Schema.parse({
         ...sessionWireInput,
         metadataLayoutVersion: 0,
-        ownerMetadata: null,
         metadata: JSON.stringify(session.metadata),
         agentState: session.agentState == null ? null : JSON.stringify(session.agentState),
         effectiveAccess: {
@@ -1314,6 +1468,7 @@ describe('SessionView (direct sessions)', () => {
 
   beforeEach(async () => {
     externalRpcRequests.length = 0;
+    agentTransitionResult = 'accepted';
     await homes.reset();
     await homes.addHome({ name: 'Active Home', serverUrl: 'https://server-1', accountId: 'account-route-1', active: false });
     for (const serverId of ['server-a', 'server-b', 'server-route-2', 'server-route-1-cleared', 'server-runtime-refresh', 'server-route-polled']) {
