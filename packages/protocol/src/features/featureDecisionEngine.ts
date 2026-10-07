@@ -188,7 +188,9 @@ const SERVER_FEATURE_DEPENDENCY_SCOPE: FeatureDecisionScope = { scopeKind: 'runt
 
 export type ServerFeatureDecisionsInput = Readonly<{
   /** A server payload before dependency closure (its bits are the resolvers' own answers). */
-  serverPayload: FeaturesResponse;
+  serverPayload: Pick<FeaturesResponse, 'features'>;
+  /** Restrict output and evaluation to these ids and their dependencies; omitted evaluates all bits. */
+  featureIds?: readonly FeatureId[];
   /** The server build policy; omitted when denies were already written into the payload. */
   buildPolicy?: (featureId: FeatureId) => FeatureBuildPolicyEvaluation;
 }>;
@@ -234,7 +236,7 @@ export function evaluateServerFeatureDecisions(
   };
 
   const out = new Map<FeatureId, FeatureDecision>();
-  for (const featureId of FEATURE_IDS) {
+  for (const featureId of params.featureIds ?? FEATURE_IDS) {
     if (readServerEnabledBit(response, featureId) === null) continue;
     out.set(featureId, evaluate(featureId));
   }
