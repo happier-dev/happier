@@ -180,6 +180,10 @@ export type BrowserUrlFieldProps = Readonly<{
      * part of the address, so it sits inside it rather than in a chip beside it.
      */
     leading?: React.ReactNode;
+    /** First actual change in an edit gesture, never focus or Copy. The caller owns admission. */
+    onEditStart?: () => void;
+    /** An owner context change starts a fresh gesture even while the field stays focused. */
+    editIntentKey?: string;
     onSubmitUrl: (url: string) => void;
 }>;
 
@@ -222,6 +226,7 @@ export function BrowserUrlField(props: BrowserUrlFieldProps): React.ReactElement
     // latest text even when the render that produced the handler has not flushed.
     const draftRef = React.useRef(rawDraft);
     draftRef.current = rawDraft;
+    const editIntent = React.useRef({ key: props.editIntentKey, started: false });
 
     // Keep the editable draft in sync with the authoritative value while blurred so navigations
     // driven elsewhere (redirects, programmatic loads) are reflected on the next focus without
@@ -240,27 +245,34 @@ export function BrowserUrlField(props: BrowserUrlFieldProps): React.ReactElement
         : formatBrowserDisplayUrl(props.value, { hostOnly: densityKey === 'capsule' });
 
     const handleFocus = React.useCallback(() => {
+        editIntent.current = { key: props.editIntentKey, started: false };
         setFocused(true);
         setRawDraft(props.value);
         draftRef.current = props.value;
         if (props.value.length > 0) {
             setSelection({ start: 0, end: props.value.length });
         }
-    }, [props.value]);
+    }, [props.value, props.editIntentKey]);
 
     const handleBlur = React.useCallback(() => {
+        editIntent.current.started = false;
         setFocused(false);
         setSelection(NO_SELECTION);
     }, []);
 
     const handleChangeText = React.useCallback((next: string) => {
+        if (!props.disabled && next !== draftRef.current
+            && (!editIntent.current.started || editIntent.current.key !== props.editIntentKey)) {
+            editIntent.current = { key: props.editIntentKey, started: true };
+            props.onEditStart?.();
+        }
         // Once the user types, stop forcing the select-all range so the caret behaves, and drop a
         // stale failure so the field never accuses text the user has already replaced.
         setSelection(NO_SELECTION);
         setRawDraft(next);
         draftRef.current = next;
         setMessage(null);
-    }, []);
+    }, [props.disabled, props.editIntentKey, props.onEditStart]);
 
     const submit = React.useCallback(() => {
         if (props.disabled) return;

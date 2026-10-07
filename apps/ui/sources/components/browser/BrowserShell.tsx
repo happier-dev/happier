@@ -475,6 +475,11 @@ export function BrowserShell(props: Readonly<{
     // daemon's, already in the view state.
     const agentDrivesPage = Boolean(activeView && isDaemonAuthoritativeBrowserView(activeView)
         && activeView.automationController?.controller === 'agent');
+    const onAddressEdit = React.useCallback(() => {
+        if (!agentDrivesPage || !activeView?.automationController) return;
+        const { browserSessionId, viewId } = activeView;
+        props.onCommand({ kind: 'takeControl', commandId: createCommandId('takeControl', viewId), browserSessionId, viewId });
+    }, [activeView, agentDrivesPage, props.onCommand]);
     const browserContextPresent = Boolean(props.browserContext) && !agentDrivesPage;
     const markUpOffered = browserContextPresent && annotation.supported;
     const markUpDisabledReason = annotation.contextButtonDisabled
@@ -514,6 +519,9 @@ export function BrowserShell(props: Readonly<{
             formatWhileBlurred
             value={activeView?.pendingUrl ?? activeView?.currentUrl ?? ''}
             disabled={activeView ? !toolbar.canNavigate : !props.onNavigateInPlace}
+            onEditStart={onAddressEdit}
+            editIntentKey={activeView ? JSON.stringify([activeView.browserSessionId, activeView.viewId,
+                activeView.automationController?.controller, activeView.automationController?.controlEpoch]) : undefined}
             {...(props.searchUrlTemplate ? { searchUrlTemplate: props.searchUrlTemplate } : {})}
             leading={(
                 <SecurityOriginIndicator
