@@ -1,22 +1,31 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { Tx } from "@/storage/inTx";
-import { AutomationPluginEventOccurrenceEvidenceV1Schema } from "@happier-dev/protocol";
+import { AutomationPluginEventOccurrenceEvidenceV1Schema, AutomationRunLifecycleOccurrenceEvidenceV1Schema } from "@happier-dev/protocol";
 
 import { classifyPlainAutomationOccurrenceEvidence, findAutomationOccurrencesTx } from "./automationOccurrencePersistence";
 
 describe("retained host occurrence provenance", () => {
-    it("reads legacy evidence and host-origin wrapped evidence while rejecting different immutable origins", () => {
+    it("reads canonical plain evidence and rejects unsupported host-origin wrappers", () => {
         const evidence = AutomationPluginEventOccurrenceEvidenceV1Schema.parse({ v: 1, kind: "pluginEvent",
-            eventRef: { pluginId: "acme.events", localId: "changed" }, sourceSelectorId: "source",
+            eventRef: { pluginId: "acme.events", localId: "changed" }, sourceSelectorId: "00000000-0000-4000-8000-000000000001",
             occurrenceId: "occurrence", occurredAt: 100, payload: { changed: true } });
         const legacy = JSON.stringify({ t: "plain", v: evidence });
         expect(classifyPlainAutomationOccurrenceEvidence({ triggerEvidenceEnvelope: legacy, expectedEvidence: evidence })).toBe("match");
         const wrapped = JSON.stringify({ v: 1, originRunId: "host-origin", evidence: JSON.parse(legacy) });
         expect(classifyPlainAutomationOccurrenceEvidence({ triggerEvidenceEnvelope: wrapped,
-            expectedEvidence: evidence, expectedOriginRunId: "host-origin" })).toBe("match");
-        expect(classifyPlainAutomationOccurrenceEvidence({ triggerEvidenceEnvelope: wrapped,
-            expectedEvidence: evidence, expectedOriginRunId: "different-origin" })).toBe("mismatch");
+            expectedEvidence: evidence })).toBe("unavailable");
+    });
+
+    it("compares the immutable host origin retained inside canonical Run lifecycle evidence", () => {
+        const evidence = AutomationRunLifecycleOccurrenceEvidenceV1Schema.parse({
+            v: 1, kind: "runLifecycle", source: { kind: "execution_run", machineId: "machine", runId: "execution" },
+            condition: "terminal", sourceRevision: 1, occurredAt: 100, originRunId: "host-origin",
+        });
+        const triggerEvidenceEnvelope = JSON.stringify({ t: "plain", v: evidence });
+        expect(classifyPlainAutomationOccurrenceEvidence({ triggerEvidenceEnvelope, expectedEvidence: evidence })).toBe("match");
+        expect(classifyPlainAutomationOccurrenceEvidence({ triggerEvidenceEnvelope,
+            expectedEvidence: { ...evidence, originRunId: "different-origin" } })).toBe("mismatch");
     });
 });
 

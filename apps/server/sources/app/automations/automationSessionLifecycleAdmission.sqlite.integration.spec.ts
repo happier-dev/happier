@@ -438,7 +438,7 @@ describe("Session lifecycle Automation admission on SQLite", () => {
         const keyPair = tweetnacl.sign.keyPair();
         const installationId = randomUUID();
         await db.machine.update({ where: { id: assignment.machineId },
-            data: { installationId, installationPublicKey: keyPair.publicKey } });
+            data: { installationId, installationPublicKey: new Uint8Array(keyPair.publicKey) } });
         await db.automationRunAssignment.create({ data: { runId: root.id, machineId: assignment.machineId } });
         await withAuthenticatedTestApp(registerSessionArchiveRoutes, async (app) => {
             const url = `/v2/sessions/${current.sessionId}/archive`;
@@ -463,6 +463,7 @@ describe("Session lifecycle Automation admission on SQLite", () => {
         await db.automationTrigger.update({ where: { id: attached.id }, data: { sessionLifecycleEventsJson: '["sessionArchived"]' } });
         await withAuthenticatedTestApp(registerSessionArchiveRoutes, async (app) => {
             const post = (action: string) => app.inject({ method: "POST", url: `/v2/sessions/${current.sessionId}/${action}`,
+                ...(action === "archive" ? { payload: {} } : {}),
                 headers: { "x-test-user-id": current.accountId } });
             const restore = failRunCreate(attached.automationId);
             try {
