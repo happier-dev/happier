@@ -65,8 +65,9 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
   const accountScope = useActiveServerAccountScope();
   const connectedServices = profile?.connectedServicesV2 ?? null;
   const connectedServiceCredentialRevisions = profile?.connectedServiceCredentialRevisionsV1 ?? null;
-  const currentUiContextToolSetEnabled = storage(
-    (state) => readVoicePrivacySettings(state.settings).currentUiContextMode !== 'off',
+  const currentUiContextToolSetEnabled = React.useMemo(
+    () => readVoicePrivacySettings({ voice }).currentUiContextMode !== 'off',
+    [voice],
   );
   useVoiceDiagnosticsRuntimeSync(voice);
   const canonicalVoiceSettings = voiceSettingsParse(canonicalVoice);
