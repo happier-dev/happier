@@ -7,6 +7,11 @@ import { resetRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { standardCleanup } from './testkit/cleanup/standardCleanup';
 import { createReanimatedModuleMock } from './testkit/mocks/reanimated';
 import { createReactNavigationNativeMock } from './testkit/mocks/reactNavigation';
+import { installShippedNativeFrameScheduler } from './testkit/legend/shippedNativeLegendRuntime';
+
+// Native lists and frame-deferred controls need the same timer-backed platform
+// boundary in every Node suite, before their modules or effects can schedule work.
+installShippedNativeFrameScheduler();
 
 // UI tests should not inherit embedded build-policy gating (set in CI).
 // Clear it by default so feature tests can opt-in explicitly per case.
@@ -337,6 +342,8 @@ beforeEach(() => {
     // Some test files enable fake timers and forget to restore them. Force real timers at the start
     // of every test to avoid cross-test leakage (Vitest workers may execute multiple test files).
     vi.useRealTimers();
+
+    installShippedNativeFrameScheduler();
 
     // Many UI tests intentionally fake DOM globals by assigning directly to `globalThis.window` /
     // `globalThis.document` without using `vi.stubGlobal`. Reset them to the original node runtime

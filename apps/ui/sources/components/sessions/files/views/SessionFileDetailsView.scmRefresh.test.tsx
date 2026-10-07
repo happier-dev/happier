@@ -51,7 +51,7 @@ describe('SessionFileDetailsView (SCM refresh)', () => {
         expect(screen.tree.root.findAllByType(FileLoadingState)).toHaveLength(0);
     });
 
-    it('reacts to active server changes when the session server id is not hydrated yet', async () => {
+    it('keeps an unknown Session origin unresolved across Home focus changes until it is hydrated', async () => {
         const { SessionFileDetailsView } = await import('./SessionFileDetailsView');
         const { WorkspaceFileDetailsView } = await import('@/components/workspaces/files/details/WorkspaceFileDetailsView');
         const { upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');
@@ -59,9 +59,7 @@ describe('SessionFileDetailsView (SCM refresh)', () => {
         fixture.storage.setState({ sessions: { s1: { ...fixture.session, serverId: undefined } },
             sessionListRowsByServerId: {}, ordinarySessionListMembershipByServerId: {}, sessionListIndexByServerId: {}, concurrentSessionListCacheByServerId: {} });
         const screen = await fixture.render(<SessionFileDetailsView sessionId="s1" scopeId="session:s1" filePath="src/a.txt" />);
-        const initialScope = screen.tree.root.findByType(WorkspaceFileDetailsView).props.scope;
-        if (!initialScope) throw new Error('Expected the initial focused Home workspace scope');
-        expect(initialScope.serverId).toBe(fixture.home.id);
+        expect(screen.tree.root.findByType(WorkspaceFileDetailsView).props.scope).toBeNull();
         const secondHome = await upsertServerProfile({ serverUrl: 'https://session-file-views-second.test' });
         await act(async () => {
             await setActiveServer({ serverId: secondHome.id });
@@ -70,8 +68,9 @@ describe('SessionFileDetailsView (SCM refresh)', () => {
             const machine = fixture.storage.getState().machines.m1!;
             fixture.storage.setState((state) => ({ machineListByServerId: { ...state.machineListByServerId, [secondHome.id]: [machine] } }));
         });
-        const nextScope = screen.tree.root.findByType(WorkspaceFileDetailsView).props.scope;
-        if (!nextScope) throw new Error('Expected the newly focused Home workspace scope');
-        expect(nextScope.serverId).toBe(secondHome.id);
+        expect(screen.tree.root.findByType(WorkspaceFileDetailsView).props.scope).toBeNull();
+        await act(async () => { fixture.storage.getState().applySessions([fixture.session]); });
+        const hydratedScope = screen.tree.root.findByType(WorkspaceFileDetailsView).props.scope;
+        expect(hydratedScope).toMatchObject(fixture.scope);
     });
 });

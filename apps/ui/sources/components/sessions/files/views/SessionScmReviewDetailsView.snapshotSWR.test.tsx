@@ -116,6 +116,8 @@ describe('SessionScmReviewDetailsView (snapshot SWR)', () => {
 
     it('finds a Project grant after counter reassignment and refuses another checkout or a missing ref', async () => {
         enableReviewComments();
+        const sessionMetadata = fixture.session.metadata;
+        if (!sessionMetadata) throw new Error('Expected the fixture Session workspace metadata');
         const { projectManager } = await import('@/sync/runtime/orchestration/projectManager');
         const workspaceRef: WorkspaceRefV1 = {
             id: 'wr_stable', serverId: fixture.home.id, machineId: 'm1', rootPath: '/tmp/repo',
@@ -128,7 +130,7 @@ describe('SessionScmReviewDetailsView (snapshot SWR)', () => {
             targetScope: { kind: 'project', projectId: workspaceRef.id }, authoritySource: { kind: 'bundled' },
             subject: { kind: 'general' }, status: 'active', grantedAt: 1, createdAt: 1, updatedAt: 1,
         }];
-        const firstCounter = projectManager.getProjectForSession('s1', fixture.home.id)?.id;
+        const firstCounter = projectManager.getProjectForSession('s1')?.id;
         const { ReviewCommentsSessionSurface } = await import('@/components/reviews/ReviewCommentsSessionSurface');
         const screen = await render();
         expect(screen.tree.root.findByType(ReviewCommentsSessionSurface).props.permissionGrantError).toBeNull();
@@ -138,14 +140,14 @@ describe('SessionScmReviewDetailsView (snapshot SWR)', () => {
             targetScope: { kind: 'project', projectId: 'wr_stable' },
         });
         projectManager.clear();
-        projectManager.addSession({ ...fixture.session, id: 'other', metadata: { ...fixture.session.metadata, path: '/tmp/other' } }, { serverId: fixture.home.id });
+        projectManager.addSession({ ...fixture.session, id: 'other', metadata: { ...sessionMetadata, path: '/tmp/other' } }, { serverId: fixture.home.id });
         projectManager.addSession(fixture.session, { serverId: fixture.home.id });
-        expect(projectManager.getProjectForSession('s1', fixture.home.id)?.id).not.toBe(firstCounter);
+        expect(projectManager.getProjectForSession('s1')?.id).not.toBe(firstCounter);
         await screen.update(1);
         expect(screen.findHostByTestId('review-comments-session-direct-write-grant-grant-project')).not.toBeNull();
         const otherRef = { ...workspaceRef, id: 'wr_other', rootPath: '/tmp/other' };
         fixture.storage.getState().applySettingsLocal({ workspaceRefsV1: [workspaceRef, otherRef] });
-        const otherCheckoutSession = { ...fixture.session, metadata: { ...fixture.session.metadata, path: '/tmp/other' } };
+        const otherCheckoutSession = { ...fixture.session, metadata: { ...sessionMetadata, path: '/tmp/other' } };
         await act(async () => { fixture.storage.getState().applySessions([otherCheckoutSession]); });
         await screen.update(2);
         expect(screen.findHostByTestId('review-comments-session-direct-write-grant-grant-project')).toBeNull();
@@ -211,10 +213,11 @@ describe('SessionScmReviewDetailsView (snapshot SWR)', () => {
         const surface = screen.tree.root.findByType(ReviewCommentsSessionSurface).props as React.ComponentProps<typeof ReviewCommentsSessionSurface>;
         const project = fixture.storage.getState().getProjectForSession('s1', fixture.home.id);
         expect(Boolean(project)).toBe(hasProject);
-        expect(surface).toEqual(expect.objectContaining({ projectId: project?.id, workspace: { machineId: 'm1', path: '/tmp/repo' }, sessionId: 's1',
+        expect(surface).not.toHaveProperty('projectId');
+        expect(surface).toEqual(expect.objectContaining({ scope: { serverId: fixture.home.id, accountId: 'alice' }, workspace: { machineId: 'm1', path: '/tmp/repo' }, sessionId: 's1',
             directWriteGrants: [], pendingDirectWriteGrantRequests: [], defaultPanelOpen: false, testID: 'review-comments-session', execute: expect.any(Function) }));
         expect(screen.getTextContent()).not.toContain('Durable session review comment.');
-        await expect(surface.execute('reviews.comments.list', { projectId: surface.projectId, workspace: surface.workspace, includeHistory: true })).resolves.toEqual({
+        await expect(surface.execute('reviews.comments.list', { workspace: surface.workspace, includeHistory: true })).resolves.toEqual({
             items: [expect.objectContaining({ body: 'Durable session review comment.' })], cursor: null,
         });
         expect(requests).toEqual([{ path: '/v1/reviews/comments', method: 'GET', accountId: 'alice' }]);

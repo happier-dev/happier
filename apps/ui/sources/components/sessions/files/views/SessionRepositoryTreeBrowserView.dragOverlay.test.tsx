@@ -20,6 +20,8 @@ let SessionRepositoryTreeBrowserView: typeof import('./SessionRepositoryTreeBrow
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+// On web, draft persistence reads IndexedDB; the canonical fixture stands in for that browser boundary.
+vi.mock('@/sync/domains/state/browserRecordStorage', async () => (await import('@/dev/testkit/mocks/browserRecordStorage')).createBrowserRecordStorageModuleMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit')).createTextModuleMock({ translate: key => key }));
 vi.mock('@/modal', async () => (await import('@/dev/testkit')).createModalModuleMock().module);
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit')).createExpoVectorIconsMock());
@@ -33,7 +35,11 @@ vi.mock('@/utils/files/webDroppedEntries', () => import('@/utils/files/webDroppe
 describe('SessionRepositoryTreeBrowserView (drag overlay)', () => {
     let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>>;
     let restorePortal = () => {};
+    let restoreLocks = () => {};
     beforeAll(async () => {
+        // jsdom has no Web Locks; Home profile writes take a browser lock on web.
+        const { installWebLockManagerMock } = await import('@/auth/storage/tokenStorage.web.testHelpers');
+        restoreLocks = installWebLockManagerMock().restore;
         await prepareSessionFilesViewTestkit();
         // Test renderer has no ReactDOM portal host; keep the native DOM SDK boundary inline.
         const { requireReactDOM } = await import('@/utils/web/reactDomCjs');
@@ -41,7 +47,7 @@ describe('SessionRepositoryTreeBrowserView (drag overlay)', () => {
         restorePortal = () => portalBoundary.mockRestore();
         ({ SessionRepositoryTreeBrowserView } = await import('./SessionRepositoryTreeBrowserView'));
     }, 60_000);
-    afterAll(() => restorePortal());
+    afterAll(() => { restorePortal(); restoreLocks(); });
 
     beforeEach(async () => {
         vi.stubGlobal('SharedWorker', class SharedWorker {});

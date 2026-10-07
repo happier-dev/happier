@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { afterAll, vi } from 'vitest';
 import { AccountSettingsV2GetResponseSchema, MACHINE_PLAIN_DATA_KEY_MARKER, ScmWorkingSnapshotSchema } from '@happier-dev/protocol';
+import { createScmCapabilities } from '@happier-dev/protocol/scm/capabilities';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -156,6 +157,7 @@ export function fileViewSnapshot(input: Readonly<{
         branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
         hasConflicts: false, entries: input.entries ?? [],
         totals: { includedFiles: 0, pendingFiles: input.entries?.length ?? 0, untrackedFiles: 0, includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 },
-        capabilities: { readStatus: true, readLog: true, writeDiscard: true, ...input.capabilities },
+        // The canonical builder fills every declared capability; this fixture turns on only what it reads.
+        capabilities: createScmCapabilities({ readStatus: true, readLog: true, writeDiscard: true, ...input.capabilities }),
     });
 }

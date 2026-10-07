@@ -29,7 +29,16 @@ export async function createSocketIoClientBoundary(importOriginal: <T>() => Prom
     return { ...actual, io: factory, connect: factory, default: factory };
 }
 
-/** Keep the real Socket and Sync owners; only the external transport is replaced. */
+/**
+ * Keep the real Socket and Sync owners; only the external transport is replaced.
+ *
+ * The `vi.mock` here is registered when this harness module loads. A test that statically imports a
+ * transport owner (for example the transfer plumbing, whose server-scoped RPC pool imports
+ * `socket.io-client`) before this harness binds the real client first. Such a test also registers
+ * the boundary itself, so it is hoisted above every import:
+ * `vi.mock('socket.io-client', async (importOriginal) => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal))`.
+ * This call then only configures it.
+ */
 export function installDisconnectedServerSocketBoundary(configure?: ConfigureSocketBoundary): void {
     socketBoundary.configure = configure;
     vi.mock('socket.io-client', createSocketIoClientBoundary);

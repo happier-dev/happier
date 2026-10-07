@@ -22,6 +22,9 @@ vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit')).createExpoVectorIconsMock());
 vi.mock('expo-router', async () => (await import('@/dev/testkit')).createExpoRouterMock().module);
 vi.mock('@/modal', async () => (await import('@/dev/testkit')).createModalModuleMock({ spies: { show: modalShowMock } }).module);
+// Registered here (hoisted above every import) so the transfer plumbing imported above binds the socket
+// boundary too; the harness call below only configures it.
+vi.mock('socket.io-client', async (importOriginal) => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 
 // Real Socket, encryption, routing and Account owners remain above the wire boundary.
 installDisconnectedServerSocketBoundary(socket => {

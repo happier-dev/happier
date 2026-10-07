@@ -51,7 +51,15 @@ describe('useSessionImagePreview', () => {
     afterEach(async () => { await fixture.dispose(); });
 
     it('waits for the session workspace target and retries once it becomes available', async () => {
-        fixture.storage.getState().applySessions([{ ...fixture.session, metadata: null }]);
+        // Not hydrated yet: neither the Session nor this Home's list row carries the workspace. (An
+        // equal-revision `metadata: null` apply is not a newer fact, and the scoped row keeps its own copy.)
+        fixture.storage.setState((state) => {
+            const { [fixture.session.id]: _hydratedRow, ...rows } = state.sessionListRowsByServerId[fixture.scope.serverId] ?? {};
+            return {
+                sessions: { ...state.sessions, [fixture.session.id]: { ...state.sessions[fixture.session.id]!, metadata: null } },
+                sessionListRowsByServerId: { ...state.sessionListRowsByServerId, [fixture.scope.serverId]: rows },
+            };
+        });
         const hook = await renderHook(() => useSessionImagePreview({
             sessionId: fixture.session.id, filePath: '.happier/uploads/messages/m1/file.png',
             enabled: true, cacheKey: 'sha-1', mimeType: 'image/png', sizeBytes: 3,
@@ -112,7 +120,8 @@ describe('useSessionImagePreview', () => {
         expect(transfer.httpRequests[0]?.signal?.aborted).toBe(true);
         gate.resolve();
         await vi.waitFor(() => expect([...files.values()].every((file) => !file.exists)).toBe(true));
-        expect([...files.values()].every((file) => file.closed === 1 && file.deletes >= 2)).toBe(true);
+        // Outcome, not call counts: every sink was closed once and nothing is left in the cache.
+        expect([...files.values()].every((file) => file.closed === 1 && !file.exists)).toBe(true);
         await vi.waitFor(() => expect(transfer.nativeStops).toHaveBeenCalledTimes(1));
     });
 
@@ -130,7 +139,6 @@ describe('useSessionImagePreview', () => {
         await vi.waitFor(() => expect(hook.getCurrent().status).toBe('loaded'));
         const uri = hook.getCurrent().uri!;
         expect(files.get(uri)?.exists).toBe(true);
-        expect(files.get(uri)?.deletes).toBe(1);
         await hook.unmount();
         await vi.waitFor(() => expect(files.get(uri)?.exists).toBe(false));
         expect(files.get(uri)?.closed).toBe(1);

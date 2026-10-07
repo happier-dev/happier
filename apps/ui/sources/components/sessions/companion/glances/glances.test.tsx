@@ -50,9 +50,9 @@ afterEach(() => {
 describe('Sized agent plan', () => {
     it('leads a compact body with the current step and restores source order in a tall body without dropping steps', async () => {
         const plan = projectSessionAgentPlan([
-            { id: 'done', content: 'Prepared', status: 'completed' },
-            { id: 'now', content: 'Verifying', status: 'in_progress' },
-            { id: 'next', content: 'Handing off', status: 'pending' },
+            { id: 'done', content: 'Prepared', status: 'completed', priority: 'medium' },
+            { id: 'now', content: 'Verifying', status: 'in_progress', priority: 'medium' },
+            { id: 'next', content: 'Handing off', status: 'pending', priority: 'medium' },
         ]);
         const render = (size: 'small' | 'tall') => <WidgetPresentationProvider value={{ size,
             footprint: { columns: 2, columnSpan: 1, rowSpan: size === 'small' ? 1 : 4,
