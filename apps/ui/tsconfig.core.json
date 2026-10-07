@@ -303,6 +303,7 @@
     "sources/components/devices/simulator/relay/useSimulatorLiveStreamRelaySocket.ts",
     "sources/components/devices/simulator/relay/useSimulatorPreviewLiveSurface.ts",
     "sources/components/devices/simulator/relay/useSimulatorRelayIngestion.ts",
+    "sources/components/hub/layout/homeHubActionWriter.ts",
     "sources/components/hub/layout/useHomeHubArtifactLayout.ts",
     "sources/components/hub/layout/useHomeSetupDismissals.ts",
     "sources/components/hub/layout/useHomeWidgetCandidates.ts",
@@ -1958,6 +1959,7 @@
     "sources/components/widgets/flow/WidgetFlowPanel.tsx",
     "sources/components/widgets/flow/WidgetFlowShell.tsx",
     "sources/components/widgets/frame/WidgetFrame.tsx",
+    "sources/components/widgets/frame/WidgetSizeControl.tsx",
     "sources/components/widgets/frame/useWidgetFrameRename.tsx",
     "sources/components/widgets/frame/useWidgetFrameStyle.ts",
     "sources/components/widgets/frame/widgetFrameMenu.ts",
@@ -2333,7 +2335,6 @@
     "sources/sync/domains/connectedServices/connectedAccountPurposeSetup.ts",
     "sources/sync/domains/connectedServices/connectedServiceQuotaBadges.ts",
     "sources/sync/domains/connectedServices/connectedServiceQuotaGauge.ts",
-    "sources/sync/domains/connectedServices/connectedServiceQuotaMeterVisibility.ts",
     "sources/sync/domains/connectedServices/connectedServiceRegistry.ts",
     "sources/sync/domains/connectedServices/deriveAccountHealth.ts",
     "sources/sync/domains/connectedServices/qualifiedConnectedAccountServiceOptions.ts",
@@ -3151,7 +3152,8 @@
     "sources/voice/transcript/voiceConversationTranscript.ts",
     "sources/voice/transcript/voiceTranscriptNotePresentation.ts",
     "sources/voice/transcript/voiceTranscriptSelectors.ts",
-    "sources/voice/transcript/voiceTurnInterruption.ts"
+    "sources/voice/transcript/voiceTurnInterruption.ts",
+    "sources/components/ui/surfaces/SceneArt.tsx"
   ],
   "include": [
     "expo-env.d.ts",
