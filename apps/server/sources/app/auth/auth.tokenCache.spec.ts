@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { applyEnvValues, restoreEnv, snapshotEnv } from "@/testkit/env";
+import { auth as singletonAuth } from "./auth";
 
 const dbAccountFindUniqueMock = vi.hoisted(() => vi.fn());
 vi.mock("@/storage/db", () => ({
@@ -11,12 +12,15 @@ vi.mock("@/storage/db", () => ({
 }));
 
 const envBackup = snapshotEnv();
+// Keep the canonical crypto/module graph loaded once while giving each case a
+// fresh real owner: cache TTL/capacity are captured by Auth's init lifecycle.
+const AuthForTest = singletonAuth.constructor as new () => typeof singletonAuth;
 
 describe("auth (token cache)", () => {
-    beforeEach(async () => {
-        // Load the real crypto/module graph before virtualizing timers; async
-        // module initialization may need the host event loop.
-        await import("./auth");
+    let auth: typeof singletonAuth;
+
+    beforeEach(() => {
+        auth = new AuthForTest();
         vi.useFakeTimers();
         vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
 
@@ -27,7 +31,6 @@ describe("auth (token cache)", () => {
 
     afterEach(() => {
         vi.useRealTimers();
-        vi.resetModules();
         restoreEnv(envBackup);
     });
 
@@ -37,7 +40,6 @@ describe("auth (token cache)", () => {
             AUTH_TOKEN_CACHE_MAX_ENTRIES: "10",
         });
 
-        const { auth } = await import("./auth");
         await auth.init();
 
         const firstToken = await auth.createToken(
@@ -60,7 +62,6 @@ describe("auth (token cache)", () => {
     });
 
     it("refreshes terminal authority from the Account policy without trusting the crypto cache", async () => {
-        const { auth } = await import("./auth");
         await auth.init();
         dbAccountFindUniqueMock.mockResolvedValue({ tokenEpoch: 0, status: "active", terminalPresentUserPolicy: "allowed" });
         const token = await auth.createToken("terminal-policy-account", undefined, { kind: "terminal", authority: "account_automation" });
@@ -79,7 +80,6 @@ describe("auth (token cache)", () => {
             AUTH_TOKEN_CACHE_MAX_ENTRIES: "2",
         });
 
-        const { auth } = await import("./auth");
         await auth.init();
 
         const firstToken = await auth.createToken(
@@ -105,7 +105,6 @@ describe("auth (token cache)", () => {
     });
 
     it.each(["suspended", "disabled"])("rejects %s Accounts at mint and on a warmed verification cache", async (status) => {
-        const { auth } = await import("./auth");
         await auth.init();
         const token = await auth.createToken("user-1", undefined, { kind: "account", authority: "present_user" });
         await expect(auth.verifyToken(token)).resolves.toMatchObject({ userId: "user-1" });

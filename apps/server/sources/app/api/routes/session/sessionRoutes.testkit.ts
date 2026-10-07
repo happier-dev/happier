@@ -139,7 +139,8 @@ const sessionDbMocks = createDbMocks({
 
 const txDbMocks = createDbMocks({
     automationRun: ["groupBy"],
-    sessionReportsTo: ["findMany"],
+    automationTrigger: ["findMany"],
+    sessionReportsTo: ["findMany", "findUnique"],
     homeSettings: ["findUnique"],
     homeGovernancePolicy: ["findUnique"],
     identityProviderInstance: ["findMany"],
@@ -566,7 +567,9 @@ export function resetSessionRouteMocks(): void {
     // List/detail projections read these persisted relations even when a
     // fixture has neither pending review runs nor Reports-to edges.
     txDb.automationRun.groupBy.mockResolvedValue([]);
+    txDb.automationTrigger.findMany.mockResolvedValue([]);
     txDb.sessionReportsTo.findMany.mockResolvedValue([]);
+    txDb.sessionReportsTo.findUnique.mockResolvedValue(null);
     txDb.teamMembership.findMany.mockResolvedValue([]);
     // No persisted Home overrides: exercise the real deployment-inheriting overlay.
     sessionDbMocks.db.homeSettings.findUnique.mockResolvedValue(null);

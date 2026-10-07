@@ -1,4 +1,5 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
+import * as publishedProtocol from '@happier-dev/protocol';
 
 import * as protocol from './index.js';
 import * as sessionProtocol from './sessions/index.js';
@@ -678,6 +679,8 @@ describe('protocol package root exports', () => {
             'subagents.delegate.start',
             'voice_agent.start',
         ]);
+        expect(publishedProtocol.ACTION_ID_FAMILIES_V1.intent_start)
+            .toEqual(protocol.ACTION_ID_FAMILIES_V1.intent_start);
         expect((protocol as any).ACTION_IDS).toContain('approval.request.create');
     });
 
