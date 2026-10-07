@@ -1769,6 +1769,13 @@ test('QA workspace builds publish captured inputs despite edits during compilati
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: '@happier-dev/moving', main: './dist/index.js', scripts: { build: 'fixture-compiler' } }));
     const source = join(dir, 'src/index.ts');
     writeFileSync(source, 'export const value = "captured";');
+    // Package-root JavaScript helpers resolve their authored declaration
+    // companions during compilation, before any dist declarations exist.
+    writeFileSync(join(dir, 'runtime-helper.mjs'), 'export const helper = "captured";\n');
+    writeFileSync(join(dir, 'runtime-helper.cjs'), 'exports.helper = "captured";\n');
+    const declarations = ['runtime-helper.d.mts', 'runtime-helper.d.cts', 'types.d.ts'];
+    const declarationBytes = 'export declare const helper: string;\n';
+    for (const name of declarations) writeFileSync(join(dir, name), declarationBytes);
     const fingerprint = readWorkspacePackageInputFingerprint({ packageDir: dir });
     let attempts = 0;
     const building = ensureWorkspacePackagesBuiltByName(root, ['@happier-dev/moving'], { quiet: true, buildMode,
@@ -1776,6 +1783,14 @@ test('QA workspace builds publish captured inputs despite edits during compilati
         runPackageBuild: async (buildDir, { env }) => {
           attempts++;
           const contents = await readFile(join(buildDir, 'src/index.ts'), 'utf8');
+          for (const name of declarations) {
+            const currentDeclaration = await readFile(join(dir, name), 'utf8');
+            const capturedDeclaration = await readFile(join(buildDir, name), 'utf8');
+            assert.equal(capturedDeclaration, currentDeclaration);
+            await writeFile(join(dir, name), 'export declare const helper: number;\n');
+            assert.equal(await readFile(join(buildDir, name), 'utf8'), buildMode === 'qa-runtime'
+              ? capturedDeclaration : 'export declare const helper: number;\n');
+          }
           await writeFile(source, 'export const value = "later-' + attempts + '";');
           assert.equal(await readFile(join(buildDir, 'src/index.ts'), 'utf8'), buildMode === 'qa-runtime' ? contents : 'export const value = "later-' + attempts + '";');
           await writeFile(join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.js'), contents);
