@@ -32,8 +32,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.state.danger.foreground,
     },
     footer: {
-        paddingHorizontal: 12,
-        paddingVertical: 10,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',

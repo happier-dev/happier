@@ -15,11 +15,10 @@ export function ActionOperationDetailControls(props: Readonly<{
     canCancel: boolean;
     onClose: () => void;
     leading?: React.ReactNode;
-    placement?: 'body' | 'modal-footer';
 }>) {
     const stopControl = useActionOperationStopControl(props.operation);
     return (
-        <View style={[styles.container, props.placement === 'modal-footer' ? styles.modalFooter : null]}>
+        <View style={styles.container}>
             {props.canCancel && stopControl.feedback ? (
                 <Text
                     testID="action-operation-cancel-feedback"
@@ -65,10 +64,6 @@ const styles = StyleSheet.create((theme) => ({
     container: {
         width: '100%',
         gap: 8,
-    },
-    modalFooter: {
-        paddingHorizontal: 16,
-        paddingVertical: 12,
     },
     feedback: {
         color: theme.colors.text.primary,

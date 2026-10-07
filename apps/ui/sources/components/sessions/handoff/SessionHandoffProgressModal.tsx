@@ -633,7 +633,6 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
                 terminal={operationTerminal}
                 canCancel={!operationTerminal && operation?.cancellation === 'supported' && operationStopTarget !== undefined}
                 onClose={onClose}
-                placement="modal-footer"
             />
         ),
     }), [onClose, operation, operationStopTarget, operationTerminal, resolvedTitle]);

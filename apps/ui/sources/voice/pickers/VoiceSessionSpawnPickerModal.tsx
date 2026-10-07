@@ -45,8 +45,6 @@ const stylesheet = StyleSheet.create(() => ({
     minHeight: 0,
   },
   footer: {
-    paddingHorizontal: 16,
-    paddingVertical: 14,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end',

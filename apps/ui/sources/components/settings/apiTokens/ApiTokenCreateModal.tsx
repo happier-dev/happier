@@ -52,8 +52,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         justifyContent: 'flex-end',
         alignItems: 'center',
-        paddingHorizontal: 16,
-        paddingVertical: 12,
         gap: 10,
     },
     footerNote: {

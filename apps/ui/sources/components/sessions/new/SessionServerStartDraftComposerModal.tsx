@@ -208,7 +208,7 @@ export function SessionServerStartDraftComposerModal(props: Props): React.ReactE
         }
     }, [canSubmit, directory, props, selectedAgent, selectedTarget]);
     const footer = React.useMemo(() => (
-        <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8, paddingHorizontal: 16, paddingVertical: 12 }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
             <RoundButton title={t('common.cancel')} display="inverted" onPress={dismiss} />
             <RoundButton title={t('common.create')} onPress={submit} disabled={!canSubmit} />
         </View>

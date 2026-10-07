@@ -40,8 +40,6 @@ const stylesheet = StyleSheet.create(() => ({
         flexDirection: 'row',
         justifyContent: 'flex-end',
         gap: 8,
-        paddingHorizontal: 16,
-        paddingVertical: 12,
     },
 }));
 

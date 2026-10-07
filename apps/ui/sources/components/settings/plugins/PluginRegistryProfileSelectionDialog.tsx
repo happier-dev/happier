@@ -74,8 +74,6 @@ export function PluginRegistryProfileSelectionDialog(props: PluginRegistryProfil
 
     const footer = React.useMemo(() => (
         <View style={{
-            paddingHorizontal: 16,
-            paddingVertical: 12,
             flexDirection: 'row',
             alignItems: 'center',
             justifyContent: 'space-between',
