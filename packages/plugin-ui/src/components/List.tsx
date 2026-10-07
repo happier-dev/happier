@@ -87,6 +87,7 @@ import {
   type CollectionVirtualizerHandle,
 } from '../presentation/collection/collectionVirtualizer.js';
 import { NATIVE_COLLECTION_VIRTUALIZER } from '../presentation/collection/nativeCollectionVirtualizer.js';
+import { HappierListRowOpenContext } from '../presentation/collection/CollectionList.js';
 
 const LIST_MORE_ACTIONS_TRANSLATION_KEY = 'happier.plugin-ui.list.moreActions';
 
@@ -561,6 +562,8 @@ type VirtualizedListRowProps<Item> = Readonly<{
   multiSelectable: boolean;
   activatable: boolean;
   selected: boolean;
+  /** The single selected key's row (the open detail), whatever `selected` means with a bulk set mounted. */
+  open: boolean;
   /**
    * Resolved per row rather than passed as the collection's tab-stop index, so
    * moving the stop commits only the two rows whose tab order actually changed
@@ -614,7 +617,11 @@ class VirtualizedListRow<Item> extends PureComponent<VirtualizedListRowProps<Ite
 
     return selection === null
       ? row
-      : <ListItemSelectionContext.Provider value={selection}>{row}</ListItemSelectionContext.Provider>;
+      : (
+        <HappierListRowOpenContext.Provider value={props.open}>
+          <ListItemSelectionContext.Provider value={selection}>{row}</ListItemSelectionContext.Provider>
+        </HappierListRowOpenContext.Provider>
+      );
   }
 }
 
@@ -1272,6 +1279,7 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
         selected={multiStore === null
           ? selectedKeyRef.current === itemKey
           : multiSelectedKeysRef.current.has(itemKey)}
+        open={selectedKeyRef.current === itemKey}
         isTabStop={selectionEnabled && tabStopIndexRef.current === input.rowIndex}
         onSelect={selectItem}
         onFocus={observeFocus}

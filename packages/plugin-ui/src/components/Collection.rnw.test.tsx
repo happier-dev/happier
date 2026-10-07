@@ -215,6 +215,7 @@ type HarnessOptions = Readonly<{
   grouping?: HappierCollectionGrouping<Entry>;
   boardLayout?: CollectionProps<Entry>['boardLayout'];
   loading?: boolean;
+  empty?: React.ReactNode;
   anatomy?: CollectionAnatomy<Entry>;
   header?: React.ReactNode;
   footer?: React.ReactNode;
@@ -262,6 +263,7 @@ function Harness(props: HarnessProps): ReactElement {
       {...(props.detailHeader === undefined ? {} : { detailHeader: props.detailHeader })}
       windowStatement="3 loaded · complete"
       {...(props.loading === undefined ? {} : { loading: props.loading })}
+      {...(props.empty === undefined ? {} : { empty: props.empty })}
       {...(props.header === undefined ? {} : { header: props.header })}
       {...(props.footer === undefined ? {} : { footer: props.footer })}
       testID="collection"
@@ -684,35 +686,116 @@ describe('detail auto beside the host details pane', () => {
     view.unmount();
   });
 
-  it('keeps the table, narrowed and dropping columns, with the open row marked and its detail in the pane', async () => {
+  it('recomposes the narrowed table into the two-line list beside the pane, the same rows, the open one marked', async () => {
     const pane = createPaneHost();
     const view = mount({ pane });
     view.measure(1440);
     const wideColumns = headerTitles(view.container);
+    expect(wideColumns).toContain('Where');
     const rows = { a: view.query('row:a'), b: view.query('row:b') };
     act(() => { view.query('row:b')!.click(); });
     await view.setOpen('b');
+    // The pane docks and the page narrows: like the lab's Desk list beside its detail, the rows become the
+    // two-line list (title over where · why) instead of a squeezed table.
+    view.measure(760);
     expect(within(view.query('host-pane'), 'detail:b')).toBe(true);
     expect(visible(view.query('collection-detail'))).toBe(false);
-    // Still the table (its column header and peeks), the same rows, and the open one marked.
-    expect(headerTitles(view.container)).toEqual(wideColumns);
-    expect(view.query('row:a:peek')).not.toBeNull();
+    expect(headerTitles(view.container)).not.toContain('Where');
+    expect(view.query('row:a:peek')).toBeNull();
+    expect(view.query('row:a')?.textContent).toContain('payments-api');
+    // The same row elements (no remount) and the open one marked.
     expect(view.query('row:a')).toBe(rows.a);
     const rowSelected = (key: string) => view.query(`row:${key}`)!.closest('[role="row"]')?.getAttribute('aria-selected');
     expect(rowSelected('b')).toBe('true');
     expect(rowSelected('a')).toBe('false');
-    // The pane docks and the page narrows: the table drops its lowest priority columns, never the title.
-    view.measure(520);
-    const narrowColumns = headerTitles(view.container);
-    expect(narrowColumns.length).toBeGreaterThan(0);
-    expect(narrowColumns.length).toBeLessThan(wideColumns.length);
-    expect(narrowColumns).toContain('Entry');
-    expect(rowSelected('b')).toBe('true');
 
     act(() => { pane.close(); });
     await view.setOpen(null);
+    view.measure(1440);
     expect(view.query('host-pane')).toBeNull();
+    // Closed: the table again, with its columns and peeks.
+    expect(headerTitles(view.container)).toEqual(wideColumns);
+    expect(view.query('row:a:peek')).not.toBeNull();
     expect(document.activeElement).toBe(view.query('row:b'));
+    view.unmount();
+  });
+});
+
+describe('render scope', () => {
+  it('re-renders only the rows whose own state changed when the open item and the focus move', async () => {
+    const renders = new Map<string, number>();
+    const counting: CollectionAnatomy<Entry> = {
+      ...anatomy,
+      title: (entry) => { renders.set(entry.id, (renders.get(entry.id) ?? 0) + 1); return entry.title; },
+    };
+    const view = mount({ anatomy: counting, pane: createPaneHost() });
+    view.measure(1440);
+    // Opening beside the pane recomposes every row into the list (a real change for each); moving the open
+    // item from there changes only the two rows involved.
+    await view.setOpen('a');
+    renders.clear();
+    await view.setOpen('b');
+    // `c` neither opened nor closed: a row that did not change must not run again (a mounted list of 30 rows
+    // otherwise re-renders all 30 on every selection change and every J/K move).
+    expect(renders.get('c') ?? 0).toBe(0);
+    view.unmount();
+  });
+});
+
+describe('render scope (cards)', () => {
+  it('re-renders only the cards whose own state changed when the open item moves', async () => {
+    for (const presentation of ['grid', 'board'] as const) {
+      const renders = new Map<string, number>();
+      const counting: CollectionAnatomy<Entry> = {
+        ...anatomy,
+        title: (entry) => { renders.set(entry.id, (renders.get(entry.id) ?? 0) + 1); return entry.title; },
+      };
+      const view = mount({ presentation, anatomy: counting, pane: createPaneHost() });
+      view.measure(1440);
+      renders.clear();
+      await view.setOpen('b');
+      expect({ presentation, c: renders.get('c') ?? 0 }).toEqual({ presentation, c: 0 });
+      view.unmount();
+    }
+  });
+});
+
+describe('board loading', () => {
+  it('holds the board with skeleton rows while loading, never its empty state', async () => {
+    const view = mount({ presentation: 'board', items: [], loading: true, empty: <Text testID="empty-state">Nothing here</Text> });
+    view.measure(1440, 420);
+    expect(view.queryAll('collection:skeleton-row').length).toBeGreaterThan(0);
+    expect(view.query('empty-state')).toBeNull();
+    await view.update({ items: [], loading: false });
+    expect(view.query('empty-state')).not.toBeNull();
+    view.unmount();
+  });
+});
+
+describe('a phone list', () => {
+  it('lets a long title take a second line instead of truncating it on the first (lab phone list)', () => {
+    const view = mount();
+    view.measure(360);
+    const row = view.query('row:a')!;
+    const title = [...row.querySelectorAll<HTMLElement>('[dir="auto"]')].find((node) => node.textContent === 'Retry idempotent payment intents')!;
+    expect(title).toBeDefined();
+    expect(getComputedStyle(title).webkitLineClamp ?? title.style.webkitLineClamp).toBe('2');
+    view.unmount();
+  });
+});
+
+describe('a phone-width page in a pane host', () => {
+  it('recomposes the table into the two-line list where the table could show nothing beside the title', () => {
+    const pane = createPaneHost();
+    const view = mount({ pane });
+    view.measure(1440);
+    expect(headerTitles(view.container)).toContain('Where');
+    // 360 still clears the list minimum, but a table there is a title column alone: the list keeps what the
+    // other columns said (where, why, age) on its second line instead (COLLECTION.md "Phones").
+    view.measure(360);
+    expect(headerTitles(view.container)).toEqual([]);
+    expect(view.query('row:a:peek')).toBeNull();
+    expect(view.query('row:a')?.textContent).toContain('Review requested');
     view.unmount();
   });
 });
@@ -1036,11 +1119,31 @@ describe('grid', () => {
     flat.unmount();
   });
 
-  it('holds the grid geometry with skeleton cards while loading: the last known count, else one row', async () => {
+  it('holds the table geometry with skeleton rows while loading, never its empty state', async () => {
+    const view = mount({ items: [], loading: true, empty: <Text testID="empty-state">Nothing here</Text> });
+    view.measure(1440, 420);
+    // The rows that are coming stand in their own height, filling what is on screen; "empty" would be a lie.
+    expect(view.queryAll('collection:skeleton-row').length).toBeGreaterThan(3);
+    expect(view.query('empty-state')).toBeNull();
+    await view.update({ items: entries, loading: false });
+    expect(view.queryAll('collection:skeleton-row')).toHaveLength(0);
+    expect(view.query('row:a')).not.toBeNull();
+    await view.update({ items: [], loading: false });
+    expect(view.query('empty-state')).not.toBeNull();
+    view.unmount();
+  });
+
+  it('holds the grid geometry with skeleton cards while loading: the last known count, else what fills the view', async () => {
     const view = mount({ presentation: 'grid', grouped: false, anatomy: described, items: [], loading: true });
-    view.measure(1440);
-    // Nothing known yet: one row of the measured column count (1440 fits 4 at the default minimum).
-    expect(view.queryAll('collection:skeleton-card').length).toBe(4);
+    view.measure(1440, 800);
+    // Nothing known yet: as many rows of the measured column count (1440 fits 4) as fill what is on screen,
+    // like the table's skeleton rows; a phone's one column is never a single lonely card.
+    const wide = view.queryAll('collection:skeleton-card').length;
+    expect(wide % 4).toBe(0);
+    expect(wide).toBeGreaterThan(4);
+    view.measure(390, 800);
+    expect(view.queryAll('collection:skeleton-card').length).toBeGreaterThan(1);
+    view.measure(1440, 800);
     await view.update({ items: entries, loading: false });
     expect(view.queryAll('collection:skeleton-card').length).toBe(0);
     await view.update({ items: [], loading: true });

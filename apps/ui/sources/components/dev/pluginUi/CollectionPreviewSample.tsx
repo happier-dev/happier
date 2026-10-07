@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import {
+    Badge,
     Button,
     Collection,
     Heading,
@@ -8,11 +9,15 @@ import {
     Row,
     Select,
     Stack,
+    Step,
+    Tabs,
     Text,
     useHappierCollection,
+    usePluginTheme,
     type CollectionAnatomy,
     type TextTone,
 } from '@happier-dev/plugin-ui';
+import { HAPPIER_TONE_COLOR_TOKEN, HappierStatusDot } from '@happier-dev/plugin-ui/presentation';
 
 /**
  * Dev-only preview of the plugin-ui Collection (`/dev/plugin-ui`): the PRs & Issues table at rest, peek, the
@@ -61,6 +66,19 @@ const GROUPS = {
 
 const keyOf = (entry: PreviewEntry) => entry.id;
 
+/** The PRs & Issues cell state (Triage `list/rows.tsx`): a tone mark beside a quiet word; secondary facts stay unmarked. */
+function CellState(props: Readonly<{ tone: TextTone; label: string; live?: boolean }>): React.ReactElement {
+    const theme = usePluginTheme();
+    return (
+        <Row gap="xsmall" align="center" style={{ minWidth: 0, maxWidth: '100%' }}>
+            {props.tone === 'secondary' ? null : <HappierStatusDot color={theme.colors[HAPPIER_TONE_COLOR_TOKEN[props.tone]]} isPulsing={props.live === true} />}
+            <Stack style={{ flexShrink: 1, minWidth: 0 }}><Text variant="caption" tone="secondary" value={props.label} numberOfLines={1} /></Stack>
+        </Row>
+    );
+}
+
+const AGENT_TONES: Readonly<Record<string, TextTone>> = { Working: 'info', 'Needs you': 'warning', 'Ready for review': 'secondary' };
+
 function useAnatomy(open: (key: string) => void): CollectionAnatomy<PreviewEntry> {
     return React.useMemo(() => ({
         glyph: (entry) => (
@@ -72,22 +90,22 @@ function useAnatomy(open: (key: string) => void): CollectionAnatomy<PreviewEntry
         ),
         title: (entry) => entry.title,
         where: (entry) => entry.where,
-        reason: (entry) => (entry.reason === null ? null : (
-            <Text variant="caption" tone={entry.reason.tone} value={entry.reason.label} numberOfLines={1} />
+        reason: (entry) => (entry.reason === null ? null : entry.reason.tone === 'secondary' ? (
+            <Text variant="caption" tone="secondary" value={entry.reason.label} numberOfLines={1} />
+        ) : <Badge variant="tinted" tone={entry.reason.tone} value={entry.reason.label} />),
+        signal: (entry) => (entry.signal === null ? null : <CellState tone={entry.signal.tone} label={entry.signal.label} />),
+        agent: (entry) => (entry.agent === null ? null : (
+            <CellState tone={AGENT_TONES[entry.agent] ?? 'secondary'} label={entry.agent} live={entry.agent === 'Working'} />
         )),
-        signal: (entry) => (entry.signal === null ? null : (
-            <Text variant="caption" tone={entry.signal.tone} value={entry.signal.label} numberOfLines={1} />
-        )),
-        agent: (entry) => entry.agent,
         age: (entry) => entry.age,
         description: (entry) => entry.summary,
-        action: () => <Button title="Pin" variant="plain" onPress={() => undefined} />,
+        action: () => <Button title="Pin" variant="plain" size="small" onPress={() => undefined} />,
         peek: (entry) => (
             <Stack gap="small">
                 <Text variant="body" tone="secondary" value={entry.summary} numberOfLines={3} />
                 <Row gap="small">
-                    <Button title="Open" variant="primary" onPress={() => { open(entry.id); }} />
-                    <Button title="Pin" variant="secondary" onPress={() => undefined} />
+                    <Button title="Open" variant="primary" size="small" onPress={() => { open(entry.id); }} />
+                    <Button title="Pin" variant="secondary" size="small" onPress={() => undefined} />
                 </Row>
             </Stack>
         ),
@@ -97,11 +115,15 @@ function useAnatomy(open: (key: string) => void): CollectionAnatomy<PreviewEntry
     }), [open]);
 }
 
+const NO_ENTRIES: readonly PreviewEntry[] = [];
+
 export function CollectionPreviewSample(): React.ReactElement {
     const [openKey, setOpenKey] = React.useState<string | null>(null);
     const [presentation, setPresentation] = React.useState<'table' | 'board' | 'grid'>('table');
+    // The first window still reading: no rows yet, so each view holds its geometry with skeletons.
+    const [reading, setReading] = React.useState(false);
     const model = useHappierCollection({
-        items: ENTRIES,
+        items: reading ? NO_ENTRIES : ENTRIES,
         keyOf,
         groups: GROUPS,
         openKey,
@@ -113,7 +135,7 @@ export function CollectionPreviewSample(): React.ReactElement {
     const opened = ENTRIES.find((entry) => entry.id === openKey) ?? null;
     return (
         <View testID="dev-collection-preview" style={{ height: 760 }}>
-            <Row style={{ paddingBottom: 12 }}>
+            <Row gap="medium" style={{ paddingBottom: 12 }}>
                 <Select
                     label="View"
                     presentation="segmented"
@@ -128,12 +150,24 @@ export function CollectionPreviewSample(): React.ReactElement {
                     }}
                     testID="dev-collection-view"
                 />
+                <Select
+                    label="Data"
+                    presentation="segmented"
+                    value={reading ? 'reading' : 'loaded'}
+                    options={[
+                        { value: 'loaded', label: 'Loaded' },
+                        { value: 'reading', label: 'Reading' },
+                    ]}
+                    onChange={(value) => { setReading(value === 'reading'); }}
+                    testID="dev-collection-data"
+                />
             </Row>
             <Collection
                 model={model}
                 anatomy={anatomy}
                 accessibilityLabel="PRs & Issues"
                 presentation={presentation}
+                loading={reading}
                 detail="auto"
                 minListWidth={320}
                 minDetailWidth={520}
@@ -144,13 +178,39 @@ export function CollectionPreviewSample(): React.ReactElement {
                     <Stack gap="medium" style={{ padding: 24 }}>
                         <Row justify="space-between" align="center">
                             <Text variant="caption" tone="secondary" value={opened.where} />
-                            <Button title="Close" variant="plain" onPress={() => { setOpenKey(null); }} />
+                            <Button title="Close" variant="plain" size="small" onPress={() => { setOpenKey(null); }} />
                         </Row>
                         <Heading level={1} value={opened.title} />
-                        <Text variant="body" tone="secondary" value={opened.summary} />
+                        <PreviewDetailTabs entry={opened} />
                     </Stack>
                 ))}
             />
         </View>
+    );
+}
+
+/** The lab's detail chrome over the shared primitives: the tab strip and the numbered story rail (c7 Overview). */
+function PreviewDetailTabs(props: Readonly<{ entry: PreviewEntry }>): React.ReactElement {
+    const [tab, setTab] = React.useState('overview');
+    return (
+        <Tabs value={tab} onValueChange={setTab} ariaLabel="Entry sections" testID="dev-collection-detail-tabs">
+            <Tabs.Item value="overview" title="Overview">
+                <Stack gap="large">
+                    <Step marker={{ kind: 'number', value: 1 }} title="The ask">
+                        <Text variant="reading" tone="neutral" value={props.entry.summary} />
+                    </Step>
+                    <Step marker={{ kind: 'number', value: 2 }} title="What changed" trailing={<Text variant="caption" tone="secondary" value="+388 −142 in 17 files" />}>
+                        <Text variant="reading" tone="secondary" value="src/cart/totals.ts, services/pricing/round.ts and 15 more" />
+                    </Step>
+                    <Step marker={{ kind: 'state', state: 'failed', label: '2 failing' }} title="Checks" trailing={<Text variant="caption" tone="danger" value="2 failing" />}>
+                        <Text variant="reading" tone="secondary" value="e2e / webkit rounds VAT on mixed baskets: expected 12.30, received 12.29" />
+                    </Step>
+                    <Step marker={{ kind: 'state', state: 'passed', label: 'Passed' }} title="Review" />
+                </Stack>
+            </Tabs.Item>
+            <Tabs.Item value="activity" title="Activity" />
+            <Tabs.Item value="files" title="Files" badge="17" />
+            <Tabs.Item value="checks" title="Checks" />
+        </Tabs>
     );
 }

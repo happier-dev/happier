@@ -368,7 +368,7 @@ export function FreshnessLine(props: FreshnessLineProps): ReactElement {
     <HappierFreshnessLine
       testID={props.testID}
       busy={props.busy}
-      colors={{ background: palette?.freshnessBackground ?? theme.colors.surface, border: palette?.sheetBorder ?? theme.colors.border }}
+      colors={{ background: palette?.inset ?? theme.colors.surface, border: palette?.sheetBorder ?? theme.colors.border }}
       icon={props.busy ? (
         <HappierSpinnerGlyph color={glyphColor} animationEnabled={surfaceActivity.active} />
       ) : (

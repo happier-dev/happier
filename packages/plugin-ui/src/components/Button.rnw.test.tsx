@@ -517,6 +517,25 @@ describe('plugin-ui Button renders real React Native pressable semantics', () =>
     mount.unmount();
   });
 
+  it('draws a small button at the dense pointer height and never under the native touch floor', () => {
+    const regular = mountSurface(<Button title="Open" onPress={() => {}} />);
+    const regularHeight = Number.parseFloat(getComputedStyle(findButton(regular.container)).minHeight);
+    regular.unmount();
+
+    const web = mountSurface(<Button title="Open" size="small" onPress={() => {}} />);
+    const webHeight = Number.parseFloat(getComputedStyle(findButton(web.container)).minHeight);
+    web.unmount();
+
+    const ios = mountSurface(<Button title="Open" size="small" onPress={() => {}} />, createSurfaceContext({ platform: 'ios' }));
+    const iosHeight = Number.parseFloat(getComputedStyle(findButton(ios.container)).minHeight);
+    ios.unmount();
+
+    // A pointer layout keeps its density (the host's desktop control height); a finger keeps its 44 pt target.
+    expect(webHeight).toBeLessThan(regularHeight);
+    expect(webHeight).toBe(32);
+    expect(iosHeight).toBeGreaterThanOrEqual(44);
+  });
+
   it('keeps a declared selection in the shared pressable style state', () => {
     let observedSelection: boolean | undefined;
     const mount = mountSurface(

@@ -46,7 +46,7 @@ export type HappierUiEnvironment = Readonly<{
  * shared text owner reads them; without them the snapshot's metrics apply, so
  * the two never disagree on size (the host projects both from one role table).
  */
-export type HappierTypeRole = 'heading' | 'title' | 'label' | 'body' | 'caption';
+export type HappierTypeRole = 'heading' | 'title' | 'label' | 'body' | 'reading' | 'caption';
 
 export type HappierTypeRoleStyle = Readonly<{
   fontSize: number;
@@ -117,8 +117,11 @@ export type HappierUiPalette = Readonly<{
    */
   navigationSelected: string;
   navigationHover: string;
-  /** Quiet retained-content freshness line, projected from the host's inset surface. */
-  freshnessBackground?: string;
+  /**
+   * The host's quiet inset surface, a hair off the page: a dense collection's group band and the
+   * retained-content freshness line.
+   */
+  inset?: string;
   /** Same-realm compact search radius; unhosted search uses its public theme's control radius. */
   searchFieldRadiusPx?: number;
 }>;

@@ -8,6 +8,7 @@ import { HappierText } from '../text/Text.js';
 import { HappierHeading } from './Foundation.js';
 import type { HappierStyleProp } from '../portableTypes.js';
 import { useHappierTypeRoleStyle } from '../text/typeRole.js';
+import { softenHappierWorkColor } from '../work/workStatus.js';
 
 /**
  * One step of a numbered story rail: a marker, a title with optional trailing
@@ -51,12 +52,18 @@ export function HappierStepMarkerView(props: Readonly<{
   const { marker, theme } = props;
   const numberTextStyle = useHappierTypeRoleStyle('caption', theme);
   const current = marker.kind === 'number' && props.numberState === 'current';
+  // A settled state sits on its own tone at the shared tint strength (a passed check on green, a failure on
+  // red), so the rail reads its states before its words; a count stays on the raised control fill.
+  const fill = marker.kind === 'state'
+    ? softenHappierWorkColor(theme.colors[HAPPIER_TONE_COLOR_TOKEN[HAPPIER_STEP_STATE_TONE[marker.state]]], 0.1)
+      ?? theme.colors.control
+    : theme.colors.control;
   return <View testID={props.testID}
     {...(marker.kind === 'state' && props.markerLabel !== undefined
       ? { role: 'img' as const, 'aria-label': props.markerLabel, accessibilityLabel: props.markerLabel }
       : { 'aria-hidden': true })}
     style={{ width: MARKER_SIZE, height: MARKER_SIZE, borderRadius: MARKER_SIZE / 2,
-      backgroundColor: theme.colors.control, borderWidth: current ? 1.5 : 0,
+      backgroundColor: fill, borderWidth: current ? 1.5 : 0,
       borderColor: theme.colors.text, alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
     {marker.kind === 'number' ? (props.numberState === 'done' ? props.stateGlyph :
       <HappierText style={{ ...numberTextStyle, color: current ? theme.colors.text : theme.colors.secondaryText }}>{String(marker.value)}</HappierText>)

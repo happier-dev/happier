@@ -50,6 +50,14 @@ const PLUGIN_UI_ICON_TOKEN_TO_ICON_NAME: Readonly<Record<PluginUiIconTokenV1, Ic
     failure: 'warning-circle',
     unavailable: 'cloud-slash',
     denied: 'lock',
+    review: 'eye',
+    attention: 'hand',
+    escalating: 'pulse',
+    'merge-ready': 'git-merge',
+    mention: 'chat-circle',
+    assigned: 'crosshair',
+    new: 'sparkle',
+    waiting: 'clock',
 });
 
 /** Glyph rendered for a missing or non-canonical semantic icon token. */

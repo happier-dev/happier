@@ -13,7 +13,7 @@
  * families each owning a tone→token table would disagree the first time either
  * changed.
  */
-export type HappierTextVariant = 'body' | 'label' | 'title' | 'caption' | 'code';
+export type HappierTextVariant = 'body' | 'reading' | 'label' | 'title' | 'caption' | 'code';
 
 export type HappierTone =
   | 'neutral'

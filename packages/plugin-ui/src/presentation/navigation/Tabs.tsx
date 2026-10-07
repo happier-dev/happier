@@ -28,6 +28,9 @@ import { HappierPressable } from '../interaction/Pressable.js';
 import { HappierText } from '../text/Text.js';
 import { HAPPIER_PRESS_FEEDBACK_V1 } from '../interaction/pressFeedback.js';
 
+/** A tab's pointer height (lab `.tabs .tb`); a native touch platform's floor still wins. */
+const TAB_STRIP_HEIGHT = 38;
+
 /**
  * Whether leaving a panel keeps its subtree, declared per tab.
  *
@@ -356,6 +359,9 @@ export function HappierTabs(props: Readonly<{
 
   return (
     <View testID={props.testID} style={fill ? { ...fillStyle, gap: props.theme.spacing.medium } : { gap: props.theme.spacing.medium }}>
+      <View>
+      {/* The strip's one hairline across the full width; the selected tab's underline lands on it (lab `.tabs`). */}
+      <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 1, backgroundColor: props.theme.colors.divider }} />
       <HappierScrollArea horizontal>
         <View
           role="tablist"
@@ -363,7 +369,8 @@ export function HappierTabs(props: Readonly<{
           accessibilityLabel={props.ariaLabel}
           // The strip scrolls rather than wraps: a wrapped tablist reflows the
           // panel below it every time a source adds or withdraws a tab.
-          style={{ flexDirection: 'row', flexWrap: 'nowrap', gap: props.theme.spacing.xsmall }}
+          // The tabs are spaced, not boxed: each underline is its label's own width.
+          style={{ flexDirection: 'row', flexWrap: 'nowrap', gap: props.theme.spacing.large }}
         >
           {tabs.map((tab, tabIndex) => {
             const isSelected = isHappierTabSelected(selected?.value ?? '', tab.value);
@@ -413,7 +420,7 @@ export function HappierTabs(props: Readonly<{
                   // instead compress until its own label is unreadable.
                   flexShrink: 0,
                   gap: props.theme.spacing.xsmall,
-                  paddingHorizontal: props.theme.spacing.medium,
+                  minHeight: Math.max(TAB_STRIP_HEIGHT, nativeMinimumTouchTarget ?? 0),
                   borderBottomWidth: state.focused ? 3 : 2,
                   borderBottomColor: state.focused ? props.theme.colors.focus : (isSelected ? props.theme.colors.accent : 'transparent'),
                   opacity: state.disabled ? 0.4 : state.pressed ? HAPPIER_PRESS_FEEDBACK_V1.opacity : 1,
@@ -429,6 +436,7 @@ export function HappierTabs(props: Readonly<{
           })}
         </View>
       </HappierScrollArea>
+      </View>
       {props.sharedPanel !== undefined && selected !== undefined ? (
         <HappierTabPanel
           active

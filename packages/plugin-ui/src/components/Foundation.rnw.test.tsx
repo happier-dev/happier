@@ -264,4 +264,31 @@ describe('foundation presentation families', () => {
 
     mount.unmount();
   });
+
+  it('draws stacked shares as one named image, each share at its width in its tone', () => {
+    const context = createSurfaceContext();
+    const mount = mountFoundation(
+      <Progress label="src/a.ts: 96 added, 71 removed" testID="lines"
+        segments={[{ value: 0.6, tone: 'success' }, { value: 0.3, tone: 'danger' }]} />,
+    );
+
+    const bar = mount.container.querySelector<HTMLElement>('[data-testid="lines"]');
+    // A stack of shares reports no progress: it is one picture, named by its label.
+    expect(bar?.getAttribute('role')).toBe('img');
+    expect(bar?.getAttribute('aria-label')).toBe('src/a.ts: 96 added, 71 removed');
+    expect(bar?.getAttribute('aria-valuenow')).toBeNull();
+    const fills = [0, 1].map((index) => mount.container.querySelector<HTMLElement>(`[data-testid="lines-segment-${index}"]`));
+    expect(fills.map((fill) => fill?.style.width)).toEqual(['60%', '30%']);
+    expect(getComputedStyle(fills[0]!).backgroundColor).toBe(getComputedStyle(withColor(context.theme.colors.success)).backgroundColor);
+    expect(getComputedStyle(fills[1]!).backgroundColor).toBe(getComputedStyle(withColor(context.theme.colors.danger)).backgroundColor);
+
+    mount.unmount();
+  });
 });
+
+function withColor(color: string): HTMLElement {
+  const probe = document.createElement('div');
+  probe.style.backgroundColor = color;
+  document.body.appendChild(probe);
+  return probe;
+}
