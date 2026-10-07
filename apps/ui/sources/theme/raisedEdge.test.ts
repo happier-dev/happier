@@ -37,15 +37,23 @@ describe('raised edge colours', () => {
             expect(luminance(darkTheme.colors.edge[role], darkGround)).toBeGreaterThan(luminance(darkTheme.colors.border[role], darkGround));
             expect(luminance(lightTheme.colors.edge[role], lightGround)).toBeLessThan(luminance(lightTheme.colors.border[role], lightGround));
         }
-        // A light sheet with no border still gets a visible lip.
-        expect(lightTheme.colors.border.surface).toBe('transparent');
-        expect(alpha(lightTheme.colors.edge.surface)).toBeGreaterThan(0);
+        // A light sheet's ink border carries a visible lip.
+        expect(alpha(lightTheme.colors.edge.surface)).toBeGreaterThan(alpha(lightTheme.colors.border.surface));
         // The rim's corner is the theme's own ink: lighter on dark, a breath darker on light, never white.
         expect(luminance(darkTheme.colors.edge.rimHi, darkGround)).toBeGreaterThan(Color(darkGround).luminosity());
         expect(luminance(lightTheme.colors.edge.rimHi, lightGround)).toBeLessThan(Color(lightGround).luminosity());
         // Dark controls stand on a lifted fill; light ones on the page.
         expect(darkTheme.colors.edge.fill).not.toBe(darkTheme.colors.surface.base);
         expect(lightTheme.colors.edge.fill).toBe(lightTheme.colors.surface.base);
+    });
+
+    it('layers dark surfaces by small steps of light — navigation < page < card < floating — and keeps one paper on light', () => {
+        const step = (color: string) => luminance(color, darkTheme.colors.background.canvas);
+        expect(step(darkTheme.colors.surface.base)).toBeGreaterThan(step(darkTheme.colors.background.canvas));
+        expect(step(darkTheme.colors.edge.cardFill)).toBeGreaterThan(step(darkTheme.colors.surface.base));
+        expect(step(darkTheme.colors.edge.floatingFill)).toBeGreaterThan(step(darkTheme.colors.edge.cardFill));
+        expect(lightTheme.colors.edge.cardFill).toBe(lightTheme.colors.surface.base);
+        expect(lightTheme.colors.edge.floatingFill).toBe(lightTheme.colors.surface.base);
     });
 
     it('re-derives a theme profile\'s edges from its own ink and borders, and keeps an ink the profile set', () => {

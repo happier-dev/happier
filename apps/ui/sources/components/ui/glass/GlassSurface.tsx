@@ -26,7 +26,10 @@ export type GlassSurfaceProps = Readonly<{
     blurIntensity?: number;
     /** When false, renders an opaque solid surface instead of glass/blur. */
     enabled?: boolean;
-    /** Fill color for the opaque solid tier (web / reduce-transparency / disabled). Defaults to `surface.base`. */
+    /**
+     * Fill color for the opaque solid tier (web / reduce-transparency / disabled). Defaults to the group's
+     * step of the surface ladder: a floating surface's fill (`edge.floatingFill`), otherwise `surface.base`.
+     */
     solidColor?: string;
     testID?: string;
     surfaceGroup?: GlassSurfaceGroup;
@@ -53,6 +56,7 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
     const settings = useGlassMaterialSettings();
     const environment = useGlassRuntimeEnvironment();
     const group = props.surfaceGroup ?? 'floating';
+    const solidColor = props.solidColor ?? (group === 'floating' ? theme.colors.edge.floatingFill : theme.colors.surface.base);
     const { material } = resolveGlassSurfaceMaterial(settings, group, {
         ...environment,
         reduceTransparency: reduceTransparency || environment.reduceTransparency === true,
@@ -99,7 +103,7 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
     }
 
     if (Platform.OS !== 'web') {
-        const color = props.solidColor ?? theme.colors.surface.base;
+        const color = solidColor;
         const backgroundColor = nativeBackdrop ? 'transparent'
             : Platform.OS === 'android' && props.enabled !== false
                 ? Color(color).alpha(material.opacity).rgb().string() : color;
@@ -114,36 +118,39 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
         </View>;
     }
 
-    if (capability === 'webBlur') {
-        return (
-            <View
-                testID={props.testID}
-                // `createBackdropWebStyle` returns web `CSSProperties` (backdrop-filter +
-                // -webkit- prefix + tint, with a "blur off" preference fallback); cast to
-                // the RN-web `ViewStyle` at this web boundary.
-                style={[
-                    createBackdropWebStyle({
-                        backgroundColor: glassSurfaceBackgroundColor(props.solidColor ?? theme.colors.surface.base, group, props.nested),
-                        // Map the native blur intensity (≈25/50/80) to a softer CSS radius
-                        // so web glass reads as a refined frost, not an overpowering blur.
-                        blurPx: Math.round(intensity / 5),
-                        surfaceGroup: group,
-                        fallbackBackgroundColorWhenBlurDisabled: props.solidColor ?? theme.colors.surface.base,
-                    }) as unknown as ViewStyle,
-                    props.style,
-                ]}
-            >
-                {props.children}
-            </View>
-        );
-    }
-
+    // Web paints the material on its own layer beneath the content, in every tier, so a tier change
+    // never moves the content to another parent. A CSS `backdrop-filter` makes its element a backdrop
+    // root: on the surface itself it would cut everything inside (a menu, tooltip or popover opened
+    // from this surface) off the page, and that nested glass would blur an empty plane.
+    const paint = capability === 'webBlur'
+        // `createBackdropWebStyle` returns web `CSSProperties` (backdrop-filter + -webkit- prefix +
+        // tint); cast to the RN-web `ViewStyle` at this web boundary.
+        ? createBackdropWebStyle({
+            backgroundColor: glassSurfaceBackgroundColor(solidColor, group, props.nested),
+            // Map the native blur intensity (≈25/50/80) to a softer CSS radius
+            // so web glass reads as a refined frost, not an overpowering blur.
+            blurPx: Math.round(intensity / 5),
+            surfaceGroup: group,
+        }) as unknown as ViewStyle
+        : { backgroundColor: glassSurfaceBackgroundColor(solidColor, group, props.nested) };
     return (
-        <View
-            testID={props.testID}
-            style={[{ backgroundColor: glassSurfaceBackgroundColor(props.solidColor ?? theme.colors.surface.base, group, props.nested) }, props.style]}
-        >
+        <View testID={props.testID} style={props.style}>
+            <View style={[StyleSheet.absoluteFillObject, webMaterialLayerShape(props.style), paint]} />
             {props.children}
         </View>
     );
 });
+
+const WEB_CORNER_RADII = ['borderRadius', 'borderTopLeftRadius', 'borderTopRightRadius', 'borderBottomLeftRadius', 'borderBottomRightRadius'] as const;
+
+/** The layer fills the surface's padding box, so its corners follow the surface's inner radius. */
+function webMaterialLayerShape(style: StyleProp<ViewStyle>): ViewStyle {
+    const flat = StyleSheet.flatten(style) ?? {};
+    const inset = typeof flat.borderWidth === 'number' ? flat.borderWidth : 0;
+    const shape: ViewStyle = { pointerEvents: 'none' };
+    for (const key of WEB_CORNER_RADII) {
+        const radius = flat[key];
+        if (typeof radius === 'number') shape[key] = Math.max(0, radius - inset);
+    }
+    return shape;
+}

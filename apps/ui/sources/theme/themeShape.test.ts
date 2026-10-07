@@ -32,30 +32,30 @@ describe('canonical theme color shape', () => {
 
     it('uses the public canvas, surface, border, effect, and chrome token shape', () => {
         expect(lightTheme.colors.background.canvas).toBe('#F5F5F5');
-        expect(darkTheme.colors.background.canvas).toBe('#131111');
+        expect(darkTheme.colors.background.canvas).toBe('#141212');
 
         expect(lightTheme.colors.surface.base).toBe('#ffffff');
         expect(lightTheme.colors.surface.inset).toBe('#F8F8F8');
         expect(lightTheme.colors.surface.elevated).toBe('#f0f0f0');
-        expect(darkTheme.colors.surface.base).toBe('#191717');
+        expect(darkTheme.colors.surface.base).toBe('#1B1919');
         expect(darkTheme.colors.surface.inset).toBe('#171515');
         expect(darkTheme.colors.surface.elevated).toBe('#221C1C');
 
         expect(lightTheme.colors.surface.pressed).toBe('#fafafa');
-        expect(lightTheme.colors.surface.selected).toBe('#f8f8f8');
+        expect(lightTheme.colors.surface.selected).toBe('rgba(0, 0, 0, 0.055)');
         expect(lightTheme.colors.surface.pressedOverlay).toBe('#fafafa');
         expect(lightTheme.colors.surface.ripple).toBe('rgba(0, 0, 0, 0.08)');
 
-        expect(lightTheme.colors.border.default).toBe('#eaeaea');
-        expect(lightTheme.colors.border.surface).toBe('transparent');
-        expect(lightTheme.colors.border.modal).toBe('rgba(0, 0, 0, 0.1)');
-        expect(darkTheme.colors.border.default).toBe('rgba(255,255,255,0.050)');
-        expect(darkTheme.colors.border.surface).toBe('rgba(255,255,255,0.056)');
-        expect(darkTheme.colors.border.modal).toBe('rgba(255,255,255,0.064)');
+        expect(lightTheme.colors.border.default).toBe('rgba(0, 0, 0, 0.08)');
+        expect(lightTheme.colors.border.surface).toBe('rgba(0, 0, 0, 0.08)');
+        expect(lightTheme.colors.border.modal).toBe('rgba(0, 0, 0, 0.08)');
+        expect(darkTheme.colors.border.default).toBe('rgba(255,255,255,0.060)');
+        expect(darkTheme.colors.border.surface).toBe('rgba(255,255,255,0.060)');
+        expect(darkTheme.colors.border.modal).toBe('rgba(255,255,255,0.080)');
 
         expect(lightTheme.colors.chrome.header.background).toBe('#ffffff');
         expect(lightTheme.colors.chrome.header.foreground).toBe('#18171C');
-        expect(darkTheme.colors.chrome.header.background).toBe('#131111');
+        expect(darkTheme.colors.chrome.header.background).toBe('#141212');
         expect(darkTheme.colors.chrome.header.foreground).toBe('#EFEFEF');
 
         expect(lightTheme.colors.composer.chipTint).toBe('#767676');

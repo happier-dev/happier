@@ -1,6 +1,7 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { FLOATING_OVERLAY_METRICS } from './floatingOverlayMetrics';
 
 (
     globalThis as typeof globalThis & {
@@ -117,7 +118,7 @@ function findOverlayFrame(screen: RenderedOverlayScreen): Readonly<{
     style: Record<string, unknown>;
 }> {
     const node = findAnimatedViewStyles(screen).find(({ style }) => (
-        style.borderRadius === 12
+        style.borderRadius === FLOATING_OVERLAY_METRICS.radiusPx
         && style.overflow !== 'hidden'
         && style.maxHeight !== undefined
     ));
@@ -141,7 +142,7 @@ function findOverlayClipSurface(screen: RenderedOverlayScreen): Readonly<{
     // frame animates. Inspect its public geometry without fixing the renderer tier.
     const candidate = screen.tree.root.findAll((node) => typeof node.type === 'string').find((node) => (
         flattenStyle(node.props.style).overflow === 'hidden'
-        && flattenStyle(node.props.style).borderRadius === 12
+        && flattenStyle(node.props.style).borderRadius === FLOATING_OVERLAY_METRICS.radiusPx
     ));
     const node = candidate ? { rawStyle: candidate.props.style, style: flattenStyle(candidate.props.style) } : undefined;
     if (!node) throw new Error('expected floating overlay clipped surface to exist');
@@ -230,7 +231,7 @@ describe('FloatingOverlay', () => {
         // floating hairline, so the clipped surface carries no border or flat edge of its own.
         expect(clipStyle.borderWidth).toBe(0);
         expect(clipStyle.borderBottomColor).toBeUndefined();
-        const hairlines = screen.findAll((node) => node.type === 'Rect' && node.props.fill === 'none');
+        const hairlines = screen.findAll((node) => String(node.type) === 'Rect' && node.props.fill === 'none');
         expect(hairlines.map((node) => node.props.stroke)).toContain('rgba(0,0,0,0.08)');
         expect(hasShadow(frameStyle)).toBe(true);
         expect(hasShadow(clipStyle)).toBe(false);
@@ -277,14 +278,14 @@ describe('FloatingOverlay', () => {
         expect(Array.isArray(frameRawStyle)).toBe(true);
         const frameStyleEntries = frameRawStyle as readonly unknown[];
         expect(frameStyleEntries[0]).toMatchObject({
-            borderRadius: 12,
+            borderRadius: FLOATING_OVERLAY_METRICS.radiusPx,
         });
         expect(flattenStyle(frameStyleEntries[0]).overflow).toBeUndefined();
         expect(frameStyleEntries[1]).toEqual({ maxHeight: 200 });
 
         const clipRawStyle = findOverlayClipRawStyle(screen);
         expect(flattenStyle(clipRawStyle)).toMatchObject({
-            borderRadius: 12,
+            borderRadius: FLOATING_OVERLAY_METRICS.radiusPx,
             overflow: 'hidden',
             borderWidth: 0,
             maxHeight: 200,

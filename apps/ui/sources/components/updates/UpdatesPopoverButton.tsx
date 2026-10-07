@@ -166,7 +166,7 @@ export const UpdatesPopoverButton = React.memo(function UpdatesPopoverButton(pro
             <View style={styles.railGlyph}>
                 {mark(props.markSize ?? ICON_SIZE.sm, markColor)}
                 {copy?.count && !props.hostDrawsCount ? (
-                    <TabBadge variant="count" tone={copy.warning ? 'alert' : 'neutral'} value={copy.count} style={styles.railBadge} />
+                    <TabBadge variant="count" tone={copy.warning ? 'attention' : 'neutral'} value={copy.count} style={styles.railBadge} />
                 ) : null}
             </View>
             {/* The sentence the mark stands for, on hover or keyboard focus (web). */}

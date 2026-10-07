@@ -253,11 +253,12 @@ export function VoiceDiagnosticsSettingsSection(props: Readonly<{
           <SettingRow
             setting={VOICE_PRIVACY_SETTINGS.settings.diagnosticsRetention}
             mode="info"
-            detail={t('settingsVoice.diagnostics.retentionDetail', {
+            subtitle={t('settingsVoice.diagnostics.retentionDetail', {
               hours: Math.round(diagnostics.maxAgeMs / 3_600_000),
               files: diagnostics.maxFiles,
               megabytes: Math.round(diagnostics.maxBytes / (1024 * 1024)),
             })}
+            subtitleLines={0}
           />
           <SettingRow
             setting={VOICE_PRIVACY_SETTINGS.settings.diagnosticsBackupPolicy}

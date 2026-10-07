@@ -126,16 +126,21 @@ describe('declarative item action structure', () => {
             pressed: boolean;
             disabled: boolean;
         }>) => Readonly<Record<string, unknown>>;
+        // Focus draws the shared ring around the action; its own border keeps its colour.
         expect(style({ focused: true, pressed: false, disabled: false })).toMatchObject({
-            borderColor: '#0055ff',
+            borderColor: '#777777',
+            outlineColor: '#0055ff',
+            outlineOffset: 2,
             opacity: 1,
         });
-        expect(style({ focused: false, pressed: true, disabled: false })).toMatchObject({
+        const unfocused = style({ focused: false, pressed: true, disabled: false });
+        expect(unfocused).toMatchObject({
             borderColor: '#777777',
             opacity: motionTokens.press.opacitySubtle,
         });
+        expect(unfocused.outlineColor).toBeUndefined();
         expect(style({ focused: true, pressed: true, disabled: true })).toMatchObject({
-            borderColor: '#0055ff',
+            outlineColor: '#0055ff',
             opacity: 0.5,
         });
     });
@@ -292,5 +297,23 @@ describe('declarative data nodes', () => {
             kind: 'metric', path: 'root', label: 'Signups', data: { kind: 'value', value: { total: 'many' } },
             value: { path: ['total'], type: 'number' },
         }, context)).toBeNull();
+    });
+
+    it('gives the widget body’s height to a chart only when the chart is the whole body, never to one beside a metric', () => {
+        const sized = { ...context, widgetPresentation: { size: 'medium' as const, footprint: { columns: 2, columnSpan: 1, rowSpan: 2, height: 'regular' as const, width: 'half' as const },
+            geometry: { width: 320, height: 300 } } } satisfies DeclarativeNodeRenderContext;
+        const series = { kind: 'chart', label: 'Signups per day', style: 'bar', rows: [],
+            data: { kind: 'value', value: [{ x: 'Tue', y: 236 }, { x: 'Wed', y: 183 }] },
+            x: { path: ['x'], type: 'string' }, y: { path: ['y'], type: 'number' } };
+        const alone = renderDeclarativeNode({ ...series, path: 'root' }, sized) as React.ReactElement<Readonly<Record<string, unknown>>>;
+        expect(alone.props.viewportHeight).toBe(300);
+        const stack = renderDeclarativeNode({ kind: 'stack', path: 'root', children: [
+            { kind: 'metric', label: 'Signups', data: { kind: 'value', value: 1284 }, value: { path: [], type: 'number' } }, series,
+        ] }, sized) as React.ReactElement<Readonly<{ children: React.ReactNode }>>;
+        const nested = React.Children.toArray(stack.props.children).flat()
+            .find((child): child is React.ReactElement<Readonly<Record<string, unknown>>> => React.isValidElement(child) && child.type === HappierDataChart);
+        expect(nested).toBeDefined();
+        // Beside the metric the chart keeps its own plot height, so metric and bars both fit the card.
+        expect(nested!.props.viewportHeight).toBeUndefined();
     });
 });

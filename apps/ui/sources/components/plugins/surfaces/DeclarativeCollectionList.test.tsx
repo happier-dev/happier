@@ -83,6 +83,7 @@ const presentationTheme = Object.freeze({
         onAccent: '#ffffff',
         success: '#00ff00',
         warning: '#ffff00',
+        attention: '#945200',
         danger: '#ff0000',
         info: '#0000ff',
         control: '#777777',

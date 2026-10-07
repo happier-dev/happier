@@ -8,6 +8,8 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 // drift apart, and `sharedFamilyOwnership.test.ts` names this file as the required core consumer of
 // `resolveHappierTabKeySelection` — importing it is the contract, not a convenience.
 import {
+    HAPPIER_FOCUS_RING_DELEGATED_STYLE,
+    happierFocusRingStyle,
     isHappierFocusVisible,
     HAPPIER_SEGMENTED_METRICS,
     isHappierTabSelected,
@@ -154,9 +156,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexGrow: 1,
         minWidth: 0,
     },
-    tabCaption: { flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0 },
+    tabCaption: { flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0, maxWidth: '100%' },
     containerContent: {
         width: 'auto',
+        maxWidth: '100%',
         flexGrow: 0,
         alignSelf: 'flex-start',
     },
@@ -175,6 +178,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     innerContent: {
         width: 'auto',
+        maxWidth: '100%',
         flexGrow: 0,
     },
     innerPills: {
@@ -241,7 +245,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         // padding-only width and CLIPS the label to nothing (the "naked Switch"
         // regression). `auto` basis sizes the segment to its content.
         flexGrow: 0,
-        flexShrink: 0,
+        flexShrink: 1,
         flexBasis: 'auto',
     },
     /** The box that actually paints: background, radius, focus ring, and the visible height. */
@@ -271,17 +275,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.segmentedControl.activeBackground,
         ...shadowLevelStyle(theme.colors.shadowLevels[1]),
     },
-    tabFocused: {
-        ...(Platform.select({
-            web: {
-                outlineStyle: 'solid',
-                outlineWidth: 2,
-                outlineColor: theme.colors.border.focus,
-                outlineOffset: -2,
-            },
-            default: {},
-        }) as object),
-    },
     thumb: {
         position: 'absolute',
         top: SEGMENT_TRACK_PADDING_PX,
@@ -305,6 +298,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     // The label's line box is its slot, so the drawn segment is exactly padding + slot.
     tabLabel: {
+        flexShrink: 1,
         fontSize: HAPPIER_SEGMENTED_METRICS.labelFontSizePx.default,
         lineHeight: SEGMENT_LABEL_SLOT_PX.default,
         color: theme.colors.text.secondary,
@@ -531,6 +525,7 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                                 styles.tabFrame,
                                 contentSized ? styles.tabFrameContent : null,
                                 tabFrameTarget,
+                                HAPPIER_FOCUS_RING_DELEGATED_STYLE,
                             ]}
                             {...(iconOnly ? ({ title: tab.label } as object) : {})}
                             accessibilityRole={valueChoice ? 'radio' : 'tab'}
@@ -552,7 +547,7 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                                     showOwnActiveSurface && !pills ? styles.tabActive : null,
                                     pills ? styles.pillSurface : null,
                                     pills && active ? styles.pillActive : null,
-                                    !tabDisabled && focusedTabId === tab.id ? styles.tabFocused : null,
+                                    happierFocusRingStyle({ visible: !tabDisabled && focusedTabId === tab.id, color: theme.colors.border.focus }),
                                     !disabled && tab.disabled === true ? styles.tabDisabled : null,
                                 ]}
                             >
@@ -569,7 +564,9 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                                 ) : (
                                     <View style={styles.tabCaption}>
                                     <Text
-                                        numberOfLines={1}
+                                        // Value choices keep their full names visible when the row
+                                        // stacks into a narrow slot; view tabs remain single-line.
+                                        numberOfLines={valueChoice ? undefined : 1}
                                         ellipsizeMode="tail"
                                         style={[
                                             styles.tabLabel,

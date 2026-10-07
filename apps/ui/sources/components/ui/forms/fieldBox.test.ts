@@ -21,7 +21,11 @@ describe('field box colours', () => {
         expect(invalid.edge).toBeNull();
 
         const focused = resolveFieldBoxColors(lightTheme, 'focused');
-        expect(focused.borderColor).toBe(lightTheme.colors.border.focus);
+        // The ring is the shared outline around the box, never its own border recoloured.
+        expect(focused.focusRing).toBe(lightTheme.colors.border.focus);
+        expect(focused.borderColor).toBe(lightTheme.colors.border.strong);
         expect(focused.edge).toBeNull();
+        expect(resolveFieldBoxColors(lightTheme).focusRing).toBeNull();
+        expect(resolveFieldBoxColors(lightTheme, 'invalid').focusRing).toBeNull();
     });
 });

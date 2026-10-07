@@ -5,6 +5,7 @@ import { createAutomationDefinitionSummary } from '@/sync/domains/automations/au
 import type { AutomationDefinition, AutomationDefinitionRun } from '@/sync/domains/automations/automationTypes';
 
 import {
+    automationRunStatusTone,
     automationRunTone,
     projectLatestAutomationRuns,
     selectLatestRunAutomationIds,
@@ -94,10 +95,24 @@ describe('latest Automation runs', () => {
         expect(rows.map((row) => row.run.id)).toEqual(['kept-run']);
     });
 
-    it('reads every state the Protocol publishes as one of the glance tones', () => {
+    it('reads every state the Protocol publishes as one of the glance tones, as the shared work status vocabulary does', () => {
         expect(automationRunTone('queued')).toBe('active');
+        expect(automationRunTone('succeeded')).toBe('succeeded');
         expect(automationRunTone('dispatch_failed')).toBe('failed');
-        expect(automationRunTone('outcome_uncertain')).toBe('uncertain');
+        expect(automationRunTone('failed')).toBe('failed');
+        // A Run the person should look at (it may or may not have happened) is attention, never failure.
+        expect(automationRunTone('outcome_uncertain')).toBe('attention');
+        expect(automationRunTone('expired')).toBe('attention');
+        expect(automationRunTone('missed')).toBe('attention');
         expect(automationRunTone('skipped')).toBe('neutral');
+        expect(automationRunTone('cancelled')).toBe('neutral');
+    });
+
+    it('colours a glance tone only where the person must look: failure is danger, attention is attention, the rest is quiet', () => {
+        expect(automationRunStatusTone('succeeded')).toBe('neutral');
+        expect(automationRunStatusTone('active')).toBe('neutral');
+        expect(automationRunStatusTone('neutral')).toBe('neutral');
+        expect(automationRunStatusTone('failed')).toBe('danger');
+        expect(automationRunStatusTone('attention')).toBe('attention');
     });
 });

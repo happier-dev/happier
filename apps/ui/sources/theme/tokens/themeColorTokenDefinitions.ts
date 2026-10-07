@@ -278,6 +278,11 @@ export const THEME_COLOR_TOKEN_CLASSIFICATIONS = [
         reason: 'Directional rim of a floating surface (one corner light anchored top-left), in the theme\'s own text ink (theme/raisedEdge.ts).',
     } as const)),
     { path: ['edge', 'fill'], status: 'derived', reason: 'Fill of a bordered control: the page, lifted by a breath of ink on dark themes (theme/raisedEdge.ts).' },
+    ...(['cardFill', 'floatingFill'] as const).map((leaf) => ({
+        path: ['edge', leaf],
+        status: 'derived',
+        reason: 'A step of the dark surface ladder (page < card < floating): the page lifted by the theme\'s own ink on dark themes, the page itself on light ones (theme/raisedEdge.ts).',
+    } as const)),
 
     { path: ['feed', 'card', 'background'], status: 'derived', reason: 'Tool feed card surface derived from surface.elevated so private transcript chrome follows active theme profiles.' },
     { path: ['shadow', 'color'], status: 'internal', reason: 'Legacy tint helper for computed shadows, not a standalone editable color token.' },

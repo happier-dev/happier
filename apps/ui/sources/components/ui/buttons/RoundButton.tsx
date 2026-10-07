@@ -1,4 +1,4 @@
-import { HappierPressable, happierRaisedEdgeStyle, type HappierPressableProps } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, HappierPressable, happierRaisedEdgeStyle, type HappierPressableProps } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import { Platform, StyleProp, TextStyle, View } from 'react-native';
 import Animated from 'react-native-reanimated';
@@ -39,7 +39,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexGrow: 1,
         justifyContent: 'center',
         borderWidth: 1,
-        borderRadius: 10,
+        // A control: the `md` step of the one radius base.
+        borderRadius: theme.borderRadius.md,
         overflow: 'hidden',
     },
     loadingContainer: {
@@ -106,12 +107,12 @@ const stylesheet = StyleSheet.create((theme) => ({
 
 /**
  * What the pill stands on: the primary fill's gloss, the bordered actions' raised edge, nothing for a
- * bare text button. A focused or disabled pill sits flat (press feedback is the pill's own scale).
+ * bare text button. A pressed, focused or disabled pill sits flat, like every other raised control.
  */
 function resolveRoundButtonEdge(
     theme: Parameters<typeof resolveThemeGloss>[0],
     display: RoundButtonDisplay,
-    state: Readonly<{ focused: boolean; disabled: boolean }>,
+    state: Readonly<{ pressed: boolean; focused: boolean; disabled: boolean }>,
 ) {
     if (display === 'default') return resolveThemeGloss(theme, state);
     if (display === 'secondary') return resolveThemeControlEdge(theme, 'strong', state);
@@ -237,12 +238,29 @@ export const RoundButton = React.memo((props: {
     }
 
     const pressFeedback = usePressFeedback();
+    // The visible pill is the pressable's child, which the pressable does not hand `pressed` (it lives
+    // only in its style callback), so the button follows its own press to drop the raised edge.
+    const [pressed, setPressed] = React.useState(false);
+    const handlePressIn = () => {
+        setPressed(true);
+        pressFeedback.onPressIn();
+    };
+    const handlePressOut = () => {
+        setPressed(false);
+        pressFeedback.onPressOut();
+    };
     // A caller fill (for example a destructive tone) belongs to the pill that moves,
     // not to the static layout box behind it.
     const callerBackgroundColor = readBackgroundColor(props.style);
     const resolvedSize = props.size ?? scopedDefaultSize;
     const size = sizes[resolvedSize];
-    const display = displays[props.display || 'default'];
+    const baseDisplay = displays[props.display || 'default'];
+    // A disabled primary is the theme's own disabled slab with quiet words (muted dark on dark,
+    // a light ink on light), not the primary fill dimmed: a dimmed light fill reads as a grey slab.
+    const disabledPrimary = props.disabled === true && (props.display ?? 'default') === 'default';
+    const display: (typeof displays)[RoundButtonDisplay] = disabledPrimary
+        ? { textColor: theme.colors.text.tertiary, backgroundColor: theme.colors.button.primary.disabled, borderColor: 'transparent' }
+        : baseDisplay;
     const titleLines = props.titleNumberOfLines ?? 1;
     // `undefined` is React Native's "as many lines as it takes"; `0` is not portable
     // across the platforms this primitive renders on.
@@ -265,13 +283,15 @@ export const RoundButton = React.memo((props: {
             // The touch-target floor is `HappierPressable`'s (native only); web and
             // desktop keep their pointer density, so the button adds none of its own.
             style={[
-                { opacity: props.disabled ? 0.35 : 1 },
+                { opacity: props.disabled && !disabledPrimary ? 0.35 : 1 },
                 props.capsuleHeight !== undefined ? styles.capsuleBox : null,
                 props.style,
                 TRANSPARENT_LAYOUT_BOX,
+                // The ring belongs to the pill inside the hit area.
+                HAPPIER_FOCUS_RING_DELEGATED_STYLE,
             ]}
-            onPressIn={pressFeedback.onPressIn}
-            onPressOut={pressFeedback.onPressOut}
+            onPressIn={handlePressIn}
+            onPressOut={handlePressOut}
             onPress={doAction}
         >
             {(state) => (
@@ -286,7 +306,7 @@ export const RoundButton = React.memo((props: {
                             ? { flexGrow: 0, height: props.capsuleHeight, borderRadius: props.capsuleHeight / 2 }
                             : null,
                         focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
-                        happierRaisedEdgeStyle(resolveRoundButtonEdge(theme, props.display ?? 'default', { focused: state.focused, disabled: props.disabled === true })),
+                        happierRaisedEdgeStyle(resolveRoundButtonEdge(theme, props.display ?? 'default', { pressed, focused: state.focused, disabled: props.disabled === true })),
                         pressFeedback.animatedStyle,
                     ]}
                 >
@@ -303,7 +323,7 @@ export const RoundButton = React.memo((props: {
                             <GradientSurface
                                 fallbackColor={display.backgroundColor}
                                 gradient={display.gradient}
-                                borderRadius={10}
+                                borderRadius={theme.borderRadius.md}
                                 style={StyleSheet.absoluteFillObject}
                             />
                         ) : null}

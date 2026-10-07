@@ -1,3 +1,4 @@
+import { HAPPIER_RADIUS_V1 } from '@happier-dev/plugin-ui/environment';
 import {
     HAPPIER_PAGE_METRICS,
     resolveHappierPageBackPlacement,
@@ -13,6 +14,12 @@ import {
  * does not add its own horizontal padding to line something up.
  */
 export const PAGE_LIST_METRICS = HAPPIER_PAGE_METRICS;
+
+/**
+ * The corner of a grouped card or section (`ItemGroup`, its rows' selection, `SurfaceCard`): a card,
+ * the `xl` step of the one radius base, on every platform.
+ */
+export const GROUPED_SURFACE_RADIUS_PX = HAPPIER_RADIUS_V1.xl;
 
 export type PageBackPlacement = HappierPageBackPlacement;
 

@@ -507,14 +507,16 @@ describe('SegmentedTabBar', () => {
         const surfaceFlat = flattenStyle(requireTabSurface(screen, 'seg:alpha').props.style);
         // Segments hug their label (label-sized, no equal stretch) so a short
         // label never ellipsizes into "Tok…". Must be expressed as
-        // `flexBasis: 'auto'` + grow/shrink 0 and NEVER the `flex: 0` shorthand:
+        // `flexBasis: 'auto'` + grow 0 and NEVER the `flex: 0` shorthand:
         // on react-native-web `flex: 0` forces `flex-basis: 0%`, which — with the
         // tab's `overflow: 'hidden'` — collapses the segment to padding-only
         // width and clips the label to nothing (the "naked Switch" regression).
         expect(tabFlat.flex).toBeUndefined();
         expect(tabFlat.flexBasis).toBe('auto');
         expect(tabFlat.flexGrow).toBe(0);
-        expect(tabFlat.flexShrink).toBe(0);
+        // A bounded slot may shrink the intrinsic widths; value-choice labels wrap
+        // there rather than sending the final strategy outside the viewport.
+        expect(tabFlat.flexShrink).toBe(1);
         // The horizontal breathing room belongs to the DRAWN surface: on the press frame it would
         // inset the active background by 12px on each side.
         expect(surfaceFlat.paddingHorizontal).toBe(12);
@@ -630,6 +632,8 @@ describe('SegmentedTabBar', () => {
         expect(focusedStyle.outlineStyle).toBe('solid');
         expect(focusedStyle.outlineWidth).toBeGreaterThanOrEqual(2);
         expect(focusedStyle.outlineColor).toBe(theme.colors.border.focus);
+        // The shared ring stands off the segment: the page shows through the gap.
+        expect(focusedStyle.outlineOffset).toBe(2);
         expect(requireTab(screen, 'seg:beta').props.accessibilityState).toEqual({ selected: false, disabled: false });
 
         await act(async () => {

@@ -132,8 +132,11 @@ describe('AppShellPeek', () => {
         const style = getComputedStyle(layer);
         expect([style.position, style.left, style.top, style.bottom, style.width]).toEqual(['absolute', '0px', '0px', '0px', `${COLUMN_WIDTH_PX}px`]);
         const dockedColumn = container.querySelector<HTMLElement>('[data-testid="docked-column"]')!;
-        expect(style.backgroundColor).not.toBe('');
-        expect(style.backgroundColor).toBe(getComputedStyle(dockedColumn).backgroundColor);
+        // The peek wears the column's coat (on its material layer, beneath the column it shows).
+        const coat = [layer, ...Array.from(layer.querySelectorAll<HTMLElement>('*'))]
+            .map((node) => getComputedStyle(node).backgroundColor)
+            .find((color) => color !== '' && color !== 'transparent' && color !== 'rgba(0, 0, 0, 0)');
+        expect(coat).toBe(getComputedStyle(dockedColumn).backgroundColor);
         // A layer above the open column: its lift shows on the trailing edge.
         expect(style.boxShadow).not.toBe('');
 

@@ -94,7 +94,8 @@ export type SessionListSampleGroup = Readonly<{ heading: string; rows: readonly 
 export function SessionListSample(props: Readonly<{
     density: 'detailed' | 'cozy' | 'narrow';
     groups: readonly SessionListSampleGroup[];
-    width: number;
+    /** Omit to fill the stage's native content width. */
+    width?: number;
 }>) {
     const viewState = resolveSessionListDensityViewState(props.density);
     const density: SessionListRowDensity = viewState.compactMinimal ? 'minimal' : viewState.compact ? 'compact' : 'default';

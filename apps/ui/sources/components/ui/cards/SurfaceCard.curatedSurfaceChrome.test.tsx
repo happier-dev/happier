@@ -2,6 +2,7 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { GROUPED_SURFACE_RADIUS_PX } from '@/components/ui/lists/pageListMetrics';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -54,7 +55,7 @@ describe('SurfaceCard curated surface chrome', () => {
 
         const surfaceStyle = screen.findAllByType('View' as never)
             .map((node) => flattenStyle(node.props.style))
-            .find((style) => style.minWidth === 0 && style.borderRadius === 16) ?? {};
+            .find((style) => style.minWidth === 0 && style.borderRadius === GROUPED_SURFACE_RADIUS_PX) ?? {};
 
         expect(hasShadow(surfaceStyle)).toBe(true);
     });

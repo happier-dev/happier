@@ -4,6 +4,8 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { StatusDot } from '@/components/ui/status/StatusDot';
+import type { WorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
+import { workStatusGlyphColor } from '@/components/work/status/workStatusTreatment';
 
 import type {
     SessionRowAttentionIndicator as SessionRowAttentionIndicatorKind,
@@ -28,12 +30,30 @@ const stylesheet = StyleSheet.create(() => ({
     },
 }));
 
+/**
+ * Each marker in the shared status vocabulary: needs-you (an attention ask, a permission, an action)
+ * is the attention amber, a failure is rose, and everything else — working (a moving mark), ready,
+ * unread, pending, kept in attention — is the quiet ink. Blue stays reserved for focus and links.
+ */
+const INDICATOR_TONE: Readonly<Record<Exclude<SessionRowAttentionIndicatorKind, 'none'>, WorkStatusTone>> = Object.freeze({
+    working: 'neutral',
+    ready: 'neutral',
+    unread: 'neutral',
+    pending: 'neutral',
+    // Attention standing explains a row that is only in the band because the person put it there; it
+    // takes the same muted ink as the sentence beside it, so the line reads as one quiet utterance.
+    standing: 'neutral',
+    attention: 'attention',
+    permission: 'attention',
+    action: 'attention',
+    failed: 'danger',
+});
+
 export const SessionRowAttentionIndicator = React.memo(function SessionRowAttentionIndicator(props: Readonly<{
     indicator: SessionRowAttentionIndicatorKind;
     sessionId: string;
     attentionState: SessionRowAttentionState;
     workingMode?: 'spinner' | 'pulse';
-    workingSpinnerTone?: 'info' | 'neutral';
     animationEnabled?: boolean;
 }>) {
     const { theme } = useUnistyles();
@@ -42,33 +62,7 @@ export const SessionRowAttentionIndicator = React.memo(function SessionRowAttent
         return null;
     }
 
-    const color = (() => {
-        switch (props.indicator) {
-            case 'working':
-                if (props.workingMode !== 'pulse' && props.workingSpinnerTone === 'neutral') {
-                    return theme.colors.text.tertiary;
-                }
-                return theme.colors.state.info.foreground;
-            case 'ready':
-                return theme.colors.state.success.foreground;
-            case 'failed':
-                return theme.colors.state.danger.foreground;
-            case 'attention':
-            case 'unread':
-                return theme.colors.text.link;
-            case 'pending':
-                return theme.colors.state.neutral.foreground;
-            case 'permission':
-            case 'action':
-                return theme.colors.state.warning.foreground;
-            // Attention standing explains a row that is only in the band because
-            // the person put it there. It takes the same muted ink as the
-            // sentence beside it — every other marker matches its own status
-            // text — so the line reads as one quiet utterance, not a signal.
-            case 'standing':
-                return theme.colors.text.secondary;
-        }
-    })();
+    const color = workStatusGlyphColor(theme.colors, INDICATOR_TONE[props.indicator]);
 
     const shouldRenderWorkingSpinner = props.indicator === 'working' && props.workingMode !== 'pulse';
     const shouldPulse =

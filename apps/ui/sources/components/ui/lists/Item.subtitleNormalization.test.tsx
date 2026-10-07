@@ -279,4 +279,18 @@ describe('Item', () => {
 
         expect(findTestInstanceByTypeWithProps(screen, 'HoverIcon' as any, { marker: 'hovered' })).toBeTruthy();
     });
+
+    it('sets its meta (a time, a count) in the shared right-aligned tabular column', async () => {
+        const { Item } = await import('./Item');
+        const { HAPPIER_META_COLUMN_V1 } = await import('@happier-dev/plugin-ui/presentation');
+
+        const screen = await renderScreen(<Item title="Pricing page copy" detail="11h" detailTestID="row-meta" />);
+        const meta = screen.findByTestId('row-meta');
+        expect(meta).toBeTruthy();
+        const style = flattenTestStyle(meta!.props.style) as Record<string, unknown>;
+
+        expect(style.fontVariant).toEqual(expect.arrayContaining(['tabular-nums']));
+        expect(style.textAlign).toBe('right');
+        expect(style.minWidth).toBe(HAPPIER_META_COLUMN_V1.minWidthPx);
+    });
 });

@@ -327,7 +327,7 @@ const AppRailUsage = React.memo(function AppRailUsage(props: Readonly<{ renderTr
     // A red count only for accounts that need a new sign-in; low limits never badge (lab G2).
     const signInCount = useConnectedAccountsNeedingSignInCount();
     const menuTrigger: SidebarFooterPopoverTrigger | undefined = props.renderTrigger ? state => props.renderTrigger?.({ ...state,
-        right: signInCount > 0 ? <TabBadge variant="count" tone="alert" value={signInCount} /> : undefined,
+        right: signInCount > 0 ? <TabBadge variant="count" tone="attention" value={signInCount} /> : undefined,
     }) : undefined;
     const openUsage = React.useCallback(() => {
         const result = runGuardedNavigation(() => router.push(SETTINGS_ROUTES.usage as never));
@@ -375,7 +375,7 @@ const AppRailUpdates = React.memo(function AppRailUpdates(props: Readonly<{ rend
     const updatesSummary = useSharedUpdatesSummary();
     const updatesCopy = describeUpdatesEntry(updatesSummary);
     const menuTrigger: SidebarFooterPopoverTrigger | undefined = props.renderTrigger ? state => props.renderTrigger?.({ ...state,
-        right: updatesCopy?.count ? <TabBadge variant="count" tone={updatesCopy.warning ? 'alert' : 'neutral'} value={updatesCopy.count} /> : undefined,
+        right: updatesCopy?.count ? <TabBadge variant="count" tone={updatesCopy.warning ? 'attention' : 'neutral'} value={updatesCopy.count} /> : undefined,
     }) : undefined;
     return <>
                     <UpdatesPopoverButton

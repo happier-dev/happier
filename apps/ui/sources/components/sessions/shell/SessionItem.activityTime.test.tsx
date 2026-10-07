@@ -28,6 +28,8 @@ vi.mock('react-native-reanimated', () => ({
     Easing: {
         bezier: () => 'bezier',
         linear: 'linear',
+        cubic: 'cubic',
+        out: (easing: unknown) => easing,
     },
     default: { View: 'Animated.View' },
     useSharedValue: (value: unknown) => ({ value }),
@@ -287,6 +289,32 @@ describe('SessionItem activity time', () => {
 
         expect(screen.findByTestId('session-list-item-sess_1')).toBeTruthy();
         expect(screen.getTextContent()).toContain('1m');
+    });
+
+    it('sets the activity time in the shared right-aligned tabular meta column', async () => {
+        const SessionItem = await importSessionItem();
+        const { HAPPIER_META_COLUMN_V1 } = await import('@happier-dev/plugin-ui/presentation');
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={createSession('sess_1')}
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+            />,
+        );
+
+        const time = screen.root.findAll((node) => String(node.type) === 'Text' && node.props.children === '1m')[0];
+        expect(time).toBeTruthy();
+        const style = flattenStyle(time!.props.style);
+        expect(style.fontVariant).toEqual(expect.arrayContaining(['tabular-nums']));
+        expect(style.textAlign).toBe('right');
+        expect(style.minWidth).toBe(HAPPIER_META_COLUMN_V1.minWidthPx);
     });
 
     it('renders the row view model activity timestamp for date-grouped lists', async () => {

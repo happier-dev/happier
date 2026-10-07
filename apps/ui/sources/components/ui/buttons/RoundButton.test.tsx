@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { motionTokens } from '@/components/ui/motion/motionTokens';
 
 const { RoundButton, RoundButtonSizeScope } = await import('./RoundButton');
 
@@ -38,13 +39,37 @@ describe('RoundButton', () => {
             screen.findByTestId('pressed-round-button')!.props.onPressIn();
         });
         await screen.update(scene());
-        expect(pill()).toMatchObject({ backgroundColor: 'caller-fill', transform: [{ scale: 0.96 }] });
+        expect(pill()).toMatchObject({ backgroundColor: 'caller-fill', transform: [{ scale: motionTokens.press.scale }] });
 
         await act(async () => {
             screen.findByTestId('pressed-round-button')!.props.onPressOut();
         });
         await screen.update(scene());
         expect(pill()).toMatchObject({ transform: [{ scale: 1 }] });
+    });
+
+    it('sits flat while pressed, like every other raised control, and stands again on release', async () => {
+        const flatten = (style: unknown): Record<string, unknown> => (Array.isArray(style)
+            ? style.reduce((acc: Record<string, unknown>, next) => ({ ...acc, ...(flatten(next)) }), {})
+            : ((style as Record<string, unknown> | null | undefined) ?? {}));
+        const scene = () => <RoundButton title="Retry" display="secondary" testID="edge-round-button" onPress={() => {}} />;
+        const screen = await renderScreen(scene());
+        const pill = () => flatten(screen.findByTestId('edge-round-button')!.findAll((node) => String(node.type) === 'Animated.View')[0]!.props.style);
+        const raisedSide = (style: Record<string, unknown>) => style.borderTopColor ?? style.borderBottomColor;
+
+        expect(raisedSide(pill())).toBeDefined();
+
+        await act(async () => {
+            screen.findByTestId('edge-round-button')!.props.onPressIn();
+        });
+        await screen.update(scene());
+        expect(raisedSide(pill())).toBeUndefined();
+
+        await act(async () => {
+            screen.findByTestId('edge-round-button')!.props.onPressOut();
+        });
+        await screen.update(scene());
+        expect(raisedSide(pill())).toBeDefined();
     });
 
     it('takes its touch target from the shared pressable: the platform floor on native, none on web', async () => {

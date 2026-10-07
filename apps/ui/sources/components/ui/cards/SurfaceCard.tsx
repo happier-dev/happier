@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, View, type StyleProp, type ViewStyle } from 'react-native';
+import { View, type StyleProp, type ViewStyle } from 'react-native';
 import { HappierSurface } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet } from 'react-native-unistyles';
 
@@ -8,7 +8,7 @@ import { resolveThemeSurfaceChromeStyle } from '@/components/ui/surfaces/resolve
 import { resolveThemeRaisedEdge } from '@/components/ui/surfaces/themeRaisedEdge';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useListPresentation } from '@/components/ui/lists/listPresentation';
-import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
+import { GROUPED_SURFACE_RADIUS_PX, PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 
 /**
  * `flat` draws no chrome at all: the content is one section of a column that already
@@ -27,7 +27,7 @@ export type SurfaceCardPadding = 'none' | 'sm' | 'md' | 'lg';
  * padding step; hardcoding "18" beside it silently overhangs the card at `sm`
  * and clips outside its rounded corner.
  */
-export const SURFACE_CARD_RADIUS_PX: number = Platform.select({ ios: 10, default: 16 }) ?? 16;
+export const SURFACE_CARD_RADIUS_PX: number = GROUPED_SURFACE_RADIUS_PX;
 
 export const SURFACE_CARD_PADDING_PX: Readonly<Record<
     SurfaceCardPadding,
@@ -58,7 +58,7 @@ const styles = StyleSheet.create((theme) => {
             width: '100%',
             minWidth: 0,
             borderRadius: SURFACE_CARD_RADIUS_PX,
-            backgroundColor: theme.colors.surface.base,
+            backgroundColor: theme.colors.edge.cardFill,
             ...resolveThemeSurfaceChromeStyle({
                 borderColor: theme.colors.border.surface,
                 edge: resolveThemeRaisedEdge(theme, 'surface'),

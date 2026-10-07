@@ -1,3 +1,4 @@
+import { deriveHappierRadiusScale, HAPPIER_RADIUS_BASE_PX } from '@happier-dev/plugin-ui/environment';
 import { Platform } from 'react-native';
 
 /**
@@ -14,23 +15,33 @@ export type ThemePartName = 'userBubble' | 'composer' | 'toolCard' | 'approvalCa
 
 type RadiusScale = Readonly<Record<ThemeRadiusStep, number>>;
 
+/**
+ * Every scale is one base with the shared derived steps (`@happier-dev/plugin-ui/environment` → `radius.ts`;
+ * DESIGN.md → "Radii derive from one base"): sm small marks · md controls and rows · lg menus · xl cards
+ * and sheets · xxl dialogs. A modal card is a dialog.
+ */
+function radiusScaleFromBase(basePx: number): RadiusScale {
+    const steps = deriveHappierRadiusScale(basePx);
+    return { ...steps, modalCard: steps.xxl };
+}
+
 const RADIUS_SCALES: Readonly<Record<ThemeRadiusScaleName, RadiusScale>> = {
-    sharp: { sm: 2, md: 4, lg: 5, xl: 6, xxl: 8, modalCard: 8 },
-    // Today's radii: checkboxes 4, buttons 8, fields 10, cards 12, main containers 16, modal cards 14.
-    soft: { sm: 4, md: 8, lg: 10, xl: 12, xxl: 16, modalCard: 14 },
-    round: { sm: 6, md: 12, lg: 14, xl: 18, xxl: 24, modalCard: 20 },
+    sharp: radiusScaleFromBase(5),
+    // Happier's own base: sm 6 · md 8 · lg 10 · xl 14 · xxl 18.
+    soft: radiusScaleFromBase(HAPPIER_RADIUS_BASE_PX),
+    round: radiusScaleFromBase(14),
 };
 
 /** The step each part takes from the active radius scale unless the style picks another. */
 const PART_RADIUS_STEPS: Readonly<Record<ThemePartName, ThemeRadiusStep>> = {
     userBubble: 'xl',
-    composer: 'xxl',
+    composer: 'xl',
     toolCard: 'md',
     approvalCard: 'xl',
     codeBlock: 'lg',
 };
 
-/** Android draws the composer stack 4 px rounder than its step (today 20 against 16). */
+/** Android draws the composer stack 4 px rounder than its step. */
 const ANDROID_COMPOSER_RADIUS_EXTRA = Platform.OS === 'android' ? 4 : 0;
 
 type Margins = Readonly<{ xs: number; sm: number; md: number; lg: number; xl: number; xxl: number }>;

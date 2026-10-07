@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { Animated, Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+
 import { resolveHappierFocusRingVisible } from '@happier-dev/plugin-ui/presentation';
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
@@ -22,17 +24,6 @@ import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 const stepMotion = slideTransitionTokens.routine.timed;
 
 const stylesheet = StyleSheet.create((theme) => ({
-    webFocusRing: {
-        ...(Platform.select({
-            web: {
-                outlineStyle: 'solid',
-                outlineWidth: 2,
-                outlineColor: theme.colors.border.focus,
-                outlineOffset: -2,
-            },
-            default: {},
-        })),
-    },
     error: {
         ...Typography.default(),
         color: theme.colors.state.danger.foreground,
@@ -357,7 +348,7 @@ export function ApiTokenRevealBody(props: Readonly<{
                             const webState = interactionState as typeof interactionState & { focused?: boolean };
                             return [
                                 styles.copyRow,
-                                resolveHappierFocusRingVisible(webState.focused) ? styles.webFocusRing : null,
+                                focusRingStyle({ focused: resolveHappierFocusRingVisible(webState.focused), color: theme.colors.border.focus }),
                                 { opacity: interactionState.pressed ? motionTokens.press.opacity : 1 },
                             ];
                         }}

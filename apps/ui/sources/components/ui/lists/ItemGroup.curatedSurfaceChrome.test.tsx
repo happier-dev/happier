@@ -2,6 +2,7 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { GROUPED_SURFACE_RADIUS_PX } from './pageListMetrics';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -58,7 +59,7 @@ describe('ItemGroup curated surface chrome', () => {
 
         const surfaceStyle = screen.findAllByType('View' as never)
             .map((node) => flattenStyle(node.props.style))
-            .find((style) => style.backgroundColor === '#ffffff' && style.borderRadius === 16) ?? {};
+            .find((style) => style.backgroundColor === '#ffffff' && style.borderRadius === GROUPED_SURFACE_RADIUS_PX) ?? {};
 
         expect(surfaceStyle.borderColor).toBe('rgba(0,0,0,0.08)');
         expect(Number(surfaceStyle.borderWidth)).toBeGreaterThan(0);

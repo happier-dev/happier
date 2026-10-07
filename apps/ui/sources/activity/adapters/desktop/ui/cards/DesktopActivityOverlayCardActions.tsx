@@ -116,7 +116,7 @@ export function DesktopActivityOverlayCardActions(props: Readonly<{
                                     hovered ? { opacity: 0.98 } : null,
                                     state.pressed ? { opacity: motionTokens.press.opacitySubtle } : null,
                                     inlineTextActionDisabled ? styles.disabledAction : null,
-                                    interaction.focused === true ? createDesktopActivityOverlayFocusRingStyle(theme) : null,
+                                    createDesktopActivityOverlayFocusRingStyle(theme, interaction.focused),
                                 ];
                             }}
                         >

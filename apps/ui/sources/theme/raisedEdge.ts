@@ -21,6 +21,14 @@ const RAISED_EDGE_GLOSS_ALPHA = 0.16;
 const RAISED_CONTROL_FILL_ALPHA_DARK = 0.025;
 
 /**
+ * The dark surface ladder (DESIGN.md → "Dark themes are layered, not inverted"; lab `ui-refine` R1): from
+ * the page, an in-flow card and a floating surface each lift by a small step of the theme's own ink, so
+ * depth reads without heavier shadows. Light themes keep one paper for page, cards and floating surfaces
+ * (their border, edge and elevation carry the depth).
+ */
+const SURFACE_LAYER_LIFT_ALPHA_DARK = { card: 0.035, floating: 0.075 } as const;
+
+/**
  * The directional rim (`components/ui/surfaces/SurfaceRim.tsx`; DESIGN.md → "The rim is a whisper"): one
  * corner light anchored top-left on a floating surface's hairline, falling off by 22% and gone by 35% of
  * the way, and a breath of sheen inside that corner. Drawn in the theme's own ink: on dark it reads as a
@@ -52,6 +60,10 @@ export type RaisedEdgeColors = Readonly<{
      * of the theme's ink, so the control reads as standing on it; on light the page itself.
      */
     fill: string;
+    /** An in-flow card's fill (grouped sheets, widget cards): the page, one step of light up on dark. */
+    cardFill: string;
+    /** A floating surface's fill (menus, popovers, dialogs, toasts): two steps of light up on dark. */
+    floatingFill: string;
     /** The rim's corner light at the top-left of a floating surface. */
     rimHi: string;
     /** The rim a fifth of the way out (22%); it is gone by 35%. */
@@ -117,6 +129,8 @@ export function buildRaisedEdgeColors(colors: RaisedEdgeThemeColors, ink: string
     const raise = (border: string) => compositeRaisedEdgeColor(border, ink);
     let gloss: string;
     let fill: string;
+    let cardFill: string;
+    let floatingFill: string;
     let rimHi = 'transparent';
     let rimMid = 'transparent';
     let sheen = 'transparent';
@@ -126,12 +140,15 @@ export function buildRaisedEdgeColors(colors: RaisedEdgeThemeColors, ink: string
         rimMid = withAlpha(colors.text.primary, rim.mid);
         sheen = withAlpha(colors.text.primary, rim.sheen);
         gloss = withAlpha(dark ? colors.text.primary : colors.surface.base, RAISED_EDGE_GLOSS_ALPHA);
-        fill = dark
-            ? compositeRaisedEdgeColor(colors.surface.base, withAlpha(colors.text.primary, RAISED_CONTROL_FILL_ALPHA_DARK))
-            : colors.surface.base;
+        const lift = (alpha: number) => compositeRaisedEdgeColor(colors.surface.base, withAlpha(colors.text.primary, alpha));
+        fill = dark ? lift(RAISED_CONTROL_FILL_ALPHA_DARK) : colors.surface.base;
+        cardFill = dark ? lift(SURFACE_LAYER_LIFT_ALPHA_DARK.card) : colors.surface.base;
+        floatingFill = dark ? lift(SURFACE_LAYER_LIFT_ALPHA_DARK.floating) : colors.surface.base;
     } catch {
         gloss = 'transparent';
         fill = colors.surface.base;
+        cardFill = colors.surface.base;
+        floatingFill = colors.surface.base;
     }
     return {
         default: raise(colors.border.default),
@@ -142,6 +159,8 @@ export function buildRaisedEdgeColors(colors: RaisedEdgeThemeColors, ink: string
         danger: raise(colors.state.danger.border),
         gloss,
         fill,
+        cardFill,
+        floatingFill,
         rimHi,
         rimMid,
         sheen,

@@ -1,8 +1,9 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierPressable, resolveHappierFocusRingVisible } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { useOptionalSessionScreenTestId } from '@/components/sessions/shell/sessionScreenTestIds';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -93,7 +94,7 @@ export const SessionHeaderWorkStrip = React.memo((props: Readonly<{
             onPress={onPress}
             style={({ focused, pressed }) => [
                 styles.strip,
-                resolveHappierFocusRingVisible(focused) ? { borderColor: theme.colors.border.focus } : null,
+                focusRingStyle({ focused, color: theme.colors.border.focus }),
                 { opacity: pressed ? motionTokens.press.opacitySubtle : 1 },
             ]}
         >

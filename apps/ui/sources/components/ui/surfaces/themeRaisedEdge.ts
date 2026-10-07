@@ -12,7 +12,7 @@ type RaisedEdgeTheme = Readonly<{ dark: boolean; colors: Readonly<{ edge: Raised
 type RaisedControlTheme = Readonly<{ dark: boolean; colors: Readonly<{ edge: RaisedEdgeColors; shadowLevels: ShadowLevels }> }>;
 
 /** A border role that has a raised twin in `theme.colors.edge` (the gloss and the fill are not border roles). */
-export type ThemeRaisedEdgeRole = Exclude<keyof RaisedEdgeColors, 'gloss' | 'fill' | 'rimHi' | 'rimMid' | 'sheen'>;
+export type ThemeRaisedEdgeRole = Exclude<keyof RaisedEdgeColors, 'gloss' | 'fill' | 'cardFill' | 'floatingFill' | 'rimHi' | 'rimMid' | 'sheen'>;
 
 /**
  * The raised edge of a surface drawn with `border.<role>` (or `state.danger.border` for `danger`) in

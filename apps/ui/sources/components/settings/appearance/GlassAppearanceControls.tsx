@@ -130,8 +130,8 @@ export function GlassAppearanceControls(props: Readonly<{ presentation: 'tiles' 
                         <Item {...headerProps} showChevron={false} rightElement={<Icon name={isExpanded ? 'caret-up' : 'caret-down'} color={theme.colors.text.secondary} size={theme.iconSize.medium} />} testID="appearance-customize" title={t('settingsAppearance.glassControls.customize')} detail={expanded ? undefined : t(`settingsAppearance.glassControls.${appearance.preset}`)} />
                     </SettingAnchor>}
                 >
-                    {GLASS_SURFACE_GROUPS.map(group => <SettingAnchor key={group} settings={[surfaceSettings[group].blur, surfaceSettings[group].opacity]}>
-                        <Item title={t(surfaceSettings[group].blur.titleKey)} subtitle={t(`settingsAppearance.glassControls.${group}Description`)} subtitleLines={0} showChevron={false} accessoryLayout="stacked" rightElement={<View style={styles.groupControls}>
+                    {GLASS_SURFACE_GROUPS.map(group => {
+                        const row = <Item title={t(surfaceSettings[group].blur.titleKey)} subtitle={t(`settingsAppearance.glassControls.${group}Description`)} subtitleLines={0} showChevron={false} accessoryLayout="stacked" rightElement={<View style={styles.groupControls}>
                             <SegmentedTabBar role="radiogroup" segmentSizing="equal" targetSize="platform" testIDPrefix={`appearance-${group}-blur`} accessibilityLabel={`${t(surfaceSettings[group].blur.titleKey)} · ${t('settingsAppearance.glassControls.blur')}`} tabs={GLASS_BLUR_STEPS.map(id => ({ id, label: id === 'off' ? t('settingsAppearance.glassControls.off') : blurOptions.find(option => option.id === id)?.label ?? id }))} activeTabId={appearance.materials[group].blur} onSelectTab={blur => appearance.updateSurface(group, { blur })} />
                             {Platform.OS === 'web' ? <View>
                                 <View style={styles.opacityLabels}>
@@ -141,8 +141,11 @@ export function GlassAppearanceControls(props: Readonly<{ presentation: 'tiles' 
                                 </View>
                                 <Slider testID={`appearance-${group}-opacity`} accessibilityLabel={`${t(surfaceSettings[group].opacity.titleKey)} · ${t('settingsAppearance.glassControls.opacity')}`} min={0} max={1} step={0.01} value={appearance.materials[group].opacity} onValueChange={opacity => appearance.updateSurface(group, { opacity })} formatValueText={formatOpacity} />
                             </View> : null}
-                        </View>} />
-                    </SettingAnchor>)}
+                        </View>} />;
+                        return <SettingAnchor key={group} setting={surfaceSettings[group].blur}>
+                            {Platform.OS === 'web' ? <SettingAnchor setting={surfaceSettings[group].opacity}>{row}</SettingAnchor> : row}
+                        </SettingAnchor>;
+                    })}
                 </ExpandableItem>
             </SettingAnchor>
         </SettingSection> : null}

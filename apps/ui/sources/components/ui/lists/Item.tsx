@@ -46,9 +46,11 @@ import { buildActionRowAccessibilityLabel } from './actionRowAccessibility';
 import { Icon } from '@/components/ui/icons/Icon';
 import { ICON_LABEL_OPTICAL_NUDGE_STYLE } from '@/components/ui/icons/iconOpticalAlignment';
 import { useListPresentation } from './listPresentation';
-import { PAGE_LIST_METRICS } from './pageListMetrics';
+import { GROUPED_SURFACE_RADIUS_PX, PAGE_LIST_METRICS } from './pageListMetrics';
 import { useSectionLeadingColumn } from './sectionLeadingColumn';
 import {
+    HAPPIER_COLLECTION_LIST_METRICS,
+    HAPPIER_META_COLUMN_STYLE,
     resolveHappierItemBehavior,
     HappierDivider,
     useHappierItemGroupItemBehavior,
@@ -274,7 +276,8 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         paddingHorizontal: ITEM_ROW_PADDING_HORIZONTAL.compact,
         // Compact rows are used heavily in right rails (files/SCM) and should feel editor-like on web/tablet.
         // Keep iOS slightly taller for touch affordance, but reduce desktop web density.
-        minHeight: Platform.select({ ios: 38, default: 34 }),
+        // The dense row of the spacing rhythm on pointer platforms (`HAPPIER_COLLECTION_LIST_METRICS.rowMinHeight`).
+        minHeight: Platform.select({ ios: 38, default: HAPPIER_COLLECTION_LIST_METRICS.rowMinHeight }),
     },
     containerCozy: {
         paddingHorizontal: ITEM_ROW_PADDING_HORIZONTAL.cozy,
@@ -430,8 +433,10 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     splitRightSectionStacked: {
         paddingTop: 0,
     },
+    // The row's meta (a time, a count, a value summary) in the shared right-aligned tabular column.
     detail: {
         ...Typography.default('regular'),
+        ...HAPPIER_META_COLUMN_STYLE,
         color: theme.colors.text.secondary,
         ...ITEM_TITLE_TEXT_METRICS.comfortable,
         flexShrink: 1,
@@ -682,7 +687,7 @@ export const Item = React.memo<ItemProps>((props) => {
     const isRadioRole = accessibilityRole === 'radio' || webRole === 'radio';
     const isCheckboxRole = accessibilityRole === 'checkbox' || webRole === 'checkbox';
     const inferredInteractiveWebRole = isWeb
-        ? (webRole ?? (isRadioRole ? 'radio' : isCheckboxRole ? 'checkbox' : (!rightElement || rightElementOutsidePressable ? 'button' : undefined)))
+        ? (webRole ?? (isRadioRole ? 'radio' : isCheckboxRole ? 'checkbox' : (accessibilityRole === 'button' || !rightElement || rightElementOutsidePressable ? 'button' : undefined)))
         : undefined;
     const passiveWebRole = isWeb
         ? (webRole ?? (isRadioRole ? 'radio' : isCheckboxRole ? 'checkbox' : undefined))
@@ -759,7 +764,7 @@ export const Item = React.memo<ItemProps>((props) => {
         && Boolean(onPress || onDoublePress)
         && sharedItemBehavior.navigationAccessoryVisible;
     const showSelectedBackground = sharedItemBehavior.selectionVisible;
-    const groupCornerRadius = Platform.select({ ios: 10, default: 16 });
+    const groupCornerRadius = GROUPED_SURFACE_RADIUS_PX;
 
     const titleColor = destructive ? styles.titleDestructive : (selected ? styles.titleSelected : styles.titleNormal);
     const isCozy = resolvedDensity === 'cozy';

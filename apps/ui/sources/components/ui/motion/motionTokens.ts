@@ -10,9 +10,11 @@ export const motionTokens = {
         release: HAPPIER_PRESS_FEEDBACK_V1.releaseMs,
         // The state-transition scale core and plugin controls share (a switch's fade and slide);
         // plugin-ui's presentation layer owns the values (`interaction/motion.ts`).
+        /** Hover paints colour only, never movement (`HAPPIER_MOTION_V1.hoverMs`). */
+        hover: HAPPIER_MOTION_V1.hoverMs,
         fast: HAPPIER_MOTION_V1.fastMs,
         base: HAPPIER_MOTION_V1.baseMs,
-        slow: 320,
+        slow: HAPPIER_MOTION_V1.slowMs,
         stageCrossfade: 320,
         stageCamera: 1000,
     },
@@ -38,7 +40,7 @@ export const motionTokens = {
         popover: {
             enterMs: 140,
             exitMs: 120,
-            fromScale: 0.96,
+            fromScale: 0.98,
             fromDistance: 8,
             /**
              * How long a pointer rests on a trigger before its popover previews (sidebar Usage).
@@ -46,10 +48,14 @@ export const motionTokens = {
              */
             hoverOpenDelayMs: 300,
         },
+        /**
+         * Popovers and menus grow from their trigger and leave faster than they arrive; dialogs fade
+         * and scale a little. Under reduced motion both become a short cross-fade (`reducedMotionFadeMs`).
+         */
         modal: {
             enterMs: 200,
             exitMs: 160,
-            fromScale: 0.985,
+            fromScale: 0.98,
             fromTranslateY: 10,
             backdropMaxOpacity: 0.5,
         },

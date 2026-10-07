@@ -12,7 +12,8 @@ const styles = StyleSheet.create((theme) => ({
         position: 'absolute',
         top: -3,
         right: -8,
-        backgroundColor: theme.colors.status.error,
+        // A count that waits on the person (a request, a sign-in): the one attention amber.
+        backgroundColor: theme.colors.state.attention.foreground,
         borderRadius: 6.5,
         minWidth: 13,
         height: 13,
@@ -37,7 +38,7 @@ const styles = StyleSheet.create((theme) => ({
         gap: 1,
     },
     countBadgeNeutral: {
-        backgroundColor: theme.colors.accent.blue,
+        backgroundColor: theme.colors.text.secondary,
     },
     countBadgeNeutralCompact: {
         backgroundColor: theme.colors.surface.elevated,
@@ -46,7 +47,8 @@ const styles = StyleSheet.create((theme) => ({
         color: theme.colors.text.secondary,
     },
     countText: {
-        color: theme.colors.button.primary.tint,
+        // Knocked out of the fill in the surface colour (the attention amber is asserted AA under it).
+        color: theme.colors.surface.base,
         fontSize: 8,
         fontVariant: ['tabular-nums'],
         ...Typography.default('semiBold'),
@@ -62,7 +64,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     /** Needs you: the one colour a tab dot may carry, the same amber as every waiting-for-you signal. */
     dotAttention: {
-        backgroundColor: theme.colors.state.warning.foreground,
+        backgroundColor: theme.colors.state.attention.foreground,
     },
     diffChip: {
         position: 'absolute',
@@ -108,7 +110,7 @@ type TabBadgeProps =
         size?: 'default' | 'compact';
         value: number;
         max?: number;
-        tone?: 'alert' | 'neutral';
+        tone?: 'attention' | 'neutral';
         style?: StyleProp<ViewStyle>;
         testID?: string;
     }>

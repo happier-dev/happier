@@ -18,6 +18,7 @@ import type {
 } from '@happier-dev/protocol/marketplace/internal';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { resolveHappierFocusRingVisible } from '@happier-dev/plugin-ui/presentation';
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 
 type AuthorityExpansion = Extract<PluginChangePendingReviewResult, Readonly<{
     kind: 'reviewRequired';
@@ -121,17 +122,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         justifyContent: 'center',
         paddingHorizontal: 16,
         borderRadius: 12,
-    },
-    actionFocused: {
-        ...(Platform.select({
-            web: {
-                outlineStyle: 'solid',
-                outlineWidth: 2,
-                outlineColor: theme.colors.border.focus,
-                outlineOffset: -2,
-            },
-            default: {},
-        }) as object),
     },
     cancelAction: {
         backgroundColor: theme.colors.surface.inset,
@@ -538,7 +528,7 @@ export function PluginInstallationReviewDialog(props: PluginInstallationReviewDi
                             { minHeight: minimumInteractiveTargetSize },
                             styles.cancelAction,
                             { opacity: interactionState.pressed ? motionTokens.press.opacity : 1 },
-                            resolveHappierFocusRingVisible(webState.focused) ? styles.actionFocused : null,
+                            focusRingStyle({ focused: resolveHappierFocusRingVisible(webState.focused), color: theme.colors.border.focus }),
                         ];
                     }}
                 >
@@ -556,7 +546,7 @@ export function PluginInstallationReviewDialog(props: PluginInstallationReviewDi
                             { minHeight: minimumInteractiveTargetSize },
                             styles.confirmAction,
                             { opacity: interactionState.pressed ? motionTokens.press.opacitySubtle : 1 },
-                            resolveHappierFocusRingVisible(webState.focused) ? styles.actionFocused : null,
+                            focusRingStyle({ focused: resolveHappierFocusRingVisible(webState.focused), color: theme.colors.border.focus }),
                         ];
                     }}
                 >

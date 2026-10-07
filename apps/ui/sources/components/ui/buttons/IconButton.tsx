@@ -203,8 +203,7 @@ export function IconButton(props: Readonly<{
             selected: theme.colors.surface.pressed,
             focus: theme.colors.border.focus,
         } : {
-            // The fill is its own edge: the outline the chrome draws matches it, so only the
-            // keyboard focus ring ever shows as a border.
+            // The fill is its own edge: the outline the chrome draws matches it.
             background: fillColor,
             border: fillColor,
             hover: props.fill === 'danger' ? fillColor : theme.colors.state.neutral.border,
@@ -215,8 +214,8 @@ export function IconButton(props: Readonly<{
     });
     /*
      * A filled well is the drawn square itself: its fill (and its hover/selected step)
-     * paints the visible circle, never the larger touch frame around it, and it has no edge but the
-     * keyboard focus ring. Painting the frame drew a second, wider disc — a double ring on a selected
+     * paints the visible circle, never the larger touch frame around it, and it has no edge (the
+     * keyboard focus ring is the shared outline, outside it). Painting the frame drew a second, wider disc — a double ring on a selected
      * Mute and a ring around End inside a touch target.
      */
     const resolveChrome = (state: Parameters<typeof chrome>[0]) => {
@@ -225,7 +224,7 @@ export function IconButton(props: Readonly<{
         const { backgroundColor, ...frame } = resolved.frame;
         return {
             frame,
-            surface: { ...resolved.surface, backgroundColor, ...(state.focused ? null : { borderWidth: 0 }) },
+            surface: { ...resolved.surface, backgroundColor, borderWidth: 0 },
         };
     };
     const minimumInteractiveTargetSize = Number.isFinite(props.minimumInteractiveTargetSize)

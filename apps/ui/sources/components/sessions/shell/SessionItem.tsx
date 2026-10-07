@@ -1,4 +1,5 @@
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
+import { HAPPIER_META_COLUMN_STYLE } from '@happier-dev/plugin-ui/presentation';
 import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessions/awareness/availability';
 import React from 'react';
 import {
@@ -633,10 +634,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     statusTextMinimal: {
         ...SESSION_LIST_ROW_STATUS_TEXT_METRICS.minimal,
     },
+    // The row's meta: the shared right-aligned tabular column, so times scan down the list.
     activityTime: {
         fontSize: 10,
         color: theme.colors.text.secondary,
         ...Typography.default(),
+        ...HAPPIER_META_COLUMN_STYLE,
     },
     activityTimeMinimal: {
         fontSize: 10,
@@ -1894,7 +1897,6 @@ const SessionItemContent = React.memo(
                                     sessionId={`${resolvedSession.id}-trailing`}
                                     attentionState={statusAttentionState}
                                     workingMode={workingIndicatorMode}
-                                    workingSpinnerTone="neutral"
                                     animationEnabled={attentionIndicatorAnimationEnabled}
                                 />
                             ) : null}

@@ -85,7 +85,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     row: {
         flexDirection: 'row',
         alignItems: 'center',
-        borderRadius: 10,
+        // A row: the `md` step of the one radius base.
+        borderRadius: theme.borderRadius.md,
         backgroundColor: 'transparent',
         borderWidth: RNStyleSheet.hairlineWidth || 1,
         borderColor: 'transparent',
@@ -105,7 +106,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 12,
         marginHorizontal: 8,
         marginVertical: 2,
-        borderRadius: 8,
+        borderRadius: theme.borderRadius.md,
     },
     rowPressed: {
         backgroundColor: theme.colors.surface.pressed,

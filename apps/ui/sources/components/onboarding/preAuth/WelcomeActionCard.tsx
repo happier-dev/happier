@@ -1,4 +1,4 @@
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import { View } from 'react-native';
 import Animated from 'react-native-reanimated';
@@ -103,6 +103,8 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
             onPress={escape ? () => props.onPress() : () => admission.run(actionId, props.onPress)}
             onPressIn={pressFeedback.onPressIn}
             onPressOut={pressFeedback.onPressOut}
+            // The ring belongs to the card frame inside the hit area.
+            style={HAPPIER_FOCUS_RING_DELEGATED_STYLE}
         >
             {({ hovered, focused }) => (
                 // The pressable is the hit area; the card chrome is the animated frame,

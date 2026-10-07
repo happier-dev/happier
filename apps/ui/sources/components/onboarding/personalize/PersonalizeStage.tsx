@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, type LayoutChangeEvent } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { SessionListSample, type SessionListSampleGroup, type SessionListSampleRow } from '@/components/settings/session/SessionListPreview';
@@ -136,11 +136,6 @@ export const PersonalizeStage = React.memo(function PersonalizeStage(props: Read
     testID?: string;
 }>) {
     const { theme } = useUnistyles();
-    const [width, setWidth] = React.useState(0);
-    const onLayout = React.useCallback((event: LayoutChangeEvent) => {
-        const next = Math.round(event.nativeEvent.layout.width);
-        setWidth((current) => current === next ? current : next);
-    }, []);
     const { draft, focus } = props;
     const groups = React.useMemo(
         () => buildPersonalizeListSample(draft.listLayout, draft.attention),
@@ -148,26 +143,23 @@ export const PersonalizeStage = React.memo(function PersonalizeStage(props: Read
     );
     const ring = { borderColor: theme.colors.state.active.foreground };
     const sessions = (
-        <GlassSurface surfaceGroup="sidebar" testID={props.testID ? `${props.testID}-sessions` : undefined} style={[styles.sessions, focus === 'sessions' ? [styles.ring, ring] : null]}>
-            <SessionListSample density={draft.listDensity} groups={groups} width={SIDEBAR_WIDTH - 16} />
+        <GlassSurface surfaceGroup="sidebar" testID={props.testID ? `${props.testID}-sessions` : undefined} style={[styles.sessions, props.presentation !== 'card' ? styles.sessionsSidebar : null, focus === 'sessions' ? [styles.ring, ring] : null]}>
+            <SessionListSample density={draft.listDensity} groups={groups} />
         </GlassSurface>
     );
-    const transcript = (transcriptWidth: number) => (
+    const transcript = (
         <GlassSurface surfaceGroup="content" testID={props.testID ? `${props.testID}-transcript` : undefined} solidColor={theme.colors.background.canvas} style={[styles.transcript, focus === 'transcript' ? [styles.ring, ring] : null]}>
             <View style={styles.sessionHeader}>
                 <Icon name="chat-circle" size={16} color={theme.colors.text.secondary} />
                 <Text numberOfLines={1} style={styles.sessionTitle}>{t('personalize.sampleSessionReconnect')}</Text>
             </View>
-            {transcriptWidth > 0 ? (
-                <View style={styles.messages}><SessionTranscriptSample
-                    layout={draft.transcriptLayout}
-                    thinking={draft.thinking}
-                    toolChrome={draft.toolChrome}
-                    toolDetail={draft.toolDetail}
-                    width={transcriptWidth}
-                /></View>
-            ) : null}
-            {props.presentation !== 'card' && transcriptWidth > 0 ? <SessionComposerSample layout="wrap" labels="core" width={transcriptWidth} /> : null}
+            <View style={styles.messages}><SessionTranscriptSample
+                layout={draft.transcriptLayout}
+                thinking={draft.thinking}
+                toolChrome={draft.toolChrome}
+                toolDetail={draft.toolDetail}
+            /></View>
+            {props.presentation !== 'card' ? <SessionComposerSample layout="wrap" labels="core" width="100%" /> : null}
         </GlassSurface>
     );
 
@@ -175,14 +167,13 @@ export const PersonalizeStage = React.memo(function PersonalizeStage(props: Read
         const showSessions = focus === 'sessions';
         return (
             <GlassPresetPreview preset={draft.glass} settings={draft.glassSettings} style={styles.preview}>
-                <View testID={props.testID} style={styles.card} onLayout={onLayout}>
-                    {showSessions ? sessions : focus === 'notifications' ? <NotificationSamples draft={draft} /> : transcript(Math.max(0, width - 24))}
+                <View testID={props.testID} style={styles.card}>
+                    {showSessions ? sessions : focus === 'notifications' ? <NotificationSamples draft={draft} /> : transcript}
                 </View>
             </GlassPresetPreview>
         );
     }
 
-    const transcriptWidth = Math.max(0, Math.min(720, width - SIDEBAR_WIDTH - APP_RAIL_WIDTH_PX * 2 - 40));
     const window = (
         <GlassPresetPreview preset={draft.glass} settings={draft.glassSettings} style={[styles.window, props.presentation === 'miniature' ? styles.windowMiniature : null, focus === 'window' ? [styles.ring, ring] : null]}>
             <GlassSurface surfaceGroup="chrome" style={styles.titleStrip}>
@@ -190,14 +181,14 @@ export const PersonalizeStage = React.memo(function PersonalizeStage(props: Read
                 <Icon name="caret-right" size={16} color={theme.colors.text.secondary} />
                 <Text numberOfLines={1} style={styles.windowTitle}>{t('personalize.sampleSessionReconnect')}</Text>
             </GlassSurface>
-            <View style={styles.windowBody} onLayout={onLayout}>
+            <View style={styles.windowBody}>
                 <GlassSurface surfaceGroup="chrome" style={styles.appRail}>
                     <Icon name="chat-circle" size={20} color={theme.colors.text.primary} />
                     <Icon name="folder" size={20} color={theme.colors.text.secondary} />
                     <Icon name="bell" size={20} color={theme.colors.text.secondary} />
                 </GlassSurface>
                 {sessions}
-                {transcript(transcriptWidth)}
+                {transcript}
                 <GlassSurface surfaceGroup="chrome" style={styles.appRail}>
                     <Icon name="dots-three" size={20} color={theme.colors.text.secondary} />
                 </GlassSurface>
@@ -304,7 +295,6 @@ const styles = StyleSheet.create((theme) => ({
         borderWidth: 2,
     },
     sessions: {
-        width: SIDEBAR_WIDTH,
         paddingHorizontal: 8,
         paddingTop: 12,
         overflow: 'hidden',
@@ -313,6 +303,7 @@ const styles = StyleSheet.create((theme) => ({
         borderRadius: 12,
         borderCurve: 'continuous',
     },
+    sessionsSidebar: { width: SIDEBAR_WIDTH },
     transcript: {
         flex: 1,
         minWidth: 0,

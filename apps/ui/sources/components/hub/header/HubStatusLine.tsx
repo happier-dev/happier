@@ -41,7 +41,6 @@ export function HubStatusLineView(props: Readonly<{
                         indicator="working"
                         sessionId="home-status"
                         attentionState="working"
-                        workingSpinnerTone="neutral"
                     />
                     <Text style={styles.text}>{t('homeIndex.sessionsWorking', { count: working })}</Text>
                 </View>

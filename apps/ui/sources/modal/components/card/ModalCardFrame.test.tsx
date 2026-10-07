@@ -137,7 +137,8 @@ describe('ModalCardFrame', () => {
 
         const clippedSurface = screen.findAllByType('View').find((node) => {
             const style = flattenStyle(node.props.style);
-            return style.borderRadius === 14 && style.overflow === 'hidden';
+            // The clipped surface rounds exactly like the shadow frame around it.
+            return style.borderRadius === frameStyle.borderRadius && style.overflow === 'hidden';
         });
         expect(clippedSurface).toBeTruthy();
         const clippedSurfaceStyle = flattenStyle(clippedSurface?.props.style);
