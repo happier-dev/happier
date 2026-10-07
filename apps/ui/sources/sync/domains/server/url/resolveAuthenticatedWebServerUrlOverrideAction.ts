@@ -1,33 +1,15 @@
 import { canonicalizeServerUrl as normalizeServerUrl } from './serverUrlCanonical';
 import { getActiveServerUrl, resolveUniqueServerProfileByUrl } from '../serverProfiles';
-import { readWebServerUrlOverrideFromLocation } from './bootstrapActiveServerFromWebLocation';
+import { readWebServerUrlOverrideFromLocation, type WebServerUrlOverrideAction } from './bootstrapActiveServerFromWebLocation';
 import { shouldSwitchToServerUrl } from './serverUrlOverridePolicy';
 
 type NoAuthenticatedWebServerUrlOverrideAction = Readonly<{
     kind: 'none';
 }>;
 
-type CleanupAuthenticatedWebServerUrlOverrideAction = Readonly<{
-    kind: 'cleanup_only';
-    cleanedRelativeUrl: string;
-}>;
-
-type RefreshAuthenticatedWebServerUrlOverrideAction = Readonly<{
-    kind: 'refresh_auth';
-    cleanedRelativeUrl: string;
-}>;
-
-type SwitchAuthenticatedWebServerUrlOverrideAction = Readonly<{
-    kind: 'switch_server';
-    cleanedRelativeUrl: string;
-    serverUrl: string;
-}>;
-
 export type AuthenticatedWebServerUrlOverrideAction =
     | NoAuthenticatedWebServerUrlOverrideAction
-    | CleanupAuthenticatedWebServerUrlOverrideAction
-    | RefreshAuthenticatedWebServerUrlOverrideAction
-    | SwitchAuthenticatedWebServerUrlOverrideAction;
+    | WebServerUrlOverrideAction;
 
 export function resolveWebServerUrlOverrideAction(
     params: Readonly<{
@@ -44,7 +26,6 @@ export function resolveWebServerUrlOverrideAction(
         || shouldSwitchToServerUrl({ targetServerUrl: desired, activeServerUrl: getActiveServerUrl() })) {
         return {
             kind: 'switch_server',
-            cleanedRelativeUrl: override.cleanedRelativeUrl,
             serverUrl: desired,
         };
     }
@@ -52,12 +33,12 @@ export function resolveWebServerUrlOverrideAction(
     if (!shouldSwitchToServerUrl({ targetServerUrl: desired, activeServerUrl: params.bootstrappedServerUrl })) {
         return {
             kind: 'refresh_auth',
-            cleanedRelativeUrl: override.cleanedRelativeUrl,
+            serverUrl: desired,
         };
     }
 
     return {
         kind: 'cleanup_only',
-        cleanedRelativeUrl: override.cleanedRelativeUrl,
+        serverUrl: desired,
     };
 }

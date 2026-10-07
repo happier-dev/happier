@@ -16,12 +16,14 @@ import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storage
  * Web is not that shape and does not use this module: see `resolveWarmCacheStoragePlacement` in
  * `warmCachePersistence.ts` for why the cache is deliberately plaintext there.
  *
- * Resolution is async and the warm-cache accessor is synchronous and on the boot critical path, so
- * boot resolves this once, in parallel with the credential read it already performs, and the
- * accessor only ever reads the settled answer.
+ * Resolution is async and the warm-cache accessor is synchronous, so boot starts this once in
+ * parallel with the credential read and the accessor only ever reads the settled answer. A pending
+ * keystore operation leaves the optional cache unavailable; it never blocks rendering or schedules
+ * a later Account hydration. The key is device-local, not Account encryption material.
  *
- * Every failure mode resolves to `unavailable` rather than throwing: the warm cache is derived
- * state, so "no key" must degrade to a cold boot and never wedge startup.
+ * Rejections resolve to `unavailable` rather than throwing: the warm cache is derived state, so
+ * "no key" must degrade to a cold boot. A keystore operation may also remain pending, during which
+ * synchronous readers continue returning no key.
  *
  * This deliberately talks to `expo-secure-store` directly instead of reusing
  * `@/auth/storage/nativeSecureStoreWithDevFallback`. That wrapper mirrors auth secrets into

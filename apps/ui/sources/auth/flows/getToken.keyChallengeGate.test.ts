@@ -174,47 +174,28 @@ describe('authGetToken key-challenge gate', () => {
         expect(body).not.toHaveProperty('contentPublicKey');
     });
 
-    it('uses the released v1 request shape when an ordinary unbound Home feature probe times out', async () => {
+    it('waits for a valid slow unbound Home observation before choosing the authentication wire version', async () => {
         vi.useFakeTimers();
-        let featureSignal: AbortSignal | null | undefined;
         mocks.serverFetch
-            .mockImplementationOnce((_url: string, init?: RequestInit) => {
-                featureSignal = init?.signal;
-                return new Promise<Response>((_resolve, reject) => {
-                    const signal = init?.signal;
-                    if (!signal) {
-                        reject(new Error('missing feature-probe abort signal'));
-                        return;
-                    }
-                    signal.addEventListener('abort', () => {
-                        const error = Object.assign(new Error('feature probe timed out'), {
-                            name: 'AbortError',
-                        });
-                        reject(error);
-                    }, { once: true });
-                });
+            .mockImplementationOnce(async () => {
+                await new Promise<void>((resolve) => setTimeout(resolve, 1_500));
+                return jsonResponse({ features: {}, capabilities: {} });
             })
             .mockResolvedValueOnce(jsonResponse({ token: 'legacy-token' }));
-
-        const result = authGetToken(new Uint8Array(32));
-        await vi.advanceTimersByTimeAsync(799);
+        let settled = false;
+        const result = authGetToken(new Uint8Array(32)).then((token) => { settled = true; return token; });
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(settled).toBe(false);
         expect(mocks.serverFetch.mock.calls.map((call) => call[0])).toEqual(['/v1/features']);
-        await vi.advanceTimersByTimeAsync(1);
+        await vi.advanceTimersByTimeAsync(500);
         await expect(result).resolves.toBe('legacy-token');
-        expect(featureSignal).toBeDefined();
-        expect(featureSignal?.aborted).toBe(false);
         const body = JSON.parse(String(mocks.serverFetch.mock.calls[1]?.[1]?.body)) as Record<string, unknown>;
         expect(body).toHaveProperty('challenge');
         expect(body).not.toHaveProperty('challengeId');
-        expect(mocks.serverFetch.mock.calls.map((call) => call[0])).toEqual([
-            '/v1/features',
-            '/v1/auth',
-        ]);
-        await vi.advanceTimersByTimeAsync(59_200);
     });
 
     it('waits for slow features when focused key login requires an Account-bound challenge', async () => {
-        const profile = upsertServerProfile({ serverUrl: 'https://slow-focused.example.test', name: 'Slow Home' });
+        const profile = await upsertServerProfile({ serverUrl: 'https://slow-focused.example.test', name: 'Slow Home' });
         await setActiveServerId(profile.id);
         vi.useFakeTimers();
         mocks.serverFetch.mockImplementation(async (path: string) => {

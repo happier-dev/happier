@@ -44,7 +44,7 @@ describe('runAppBootSequence', () => {
             onReady: (state) => ready.push(state),
         });
         expect(events).toEqual(['fonts']);
-        expect(ready).toEqual([{ credentials: null, authGeneration: 0 }]);
+        expect(ready).toEqual([{ credentials: null }]);
     });
     it.each(['authenticated', 'signed-out', 'deferred'] as const)('waits for authoritative drafts before restore or first paint: %s', async (mode) => {
         const drafts = createDeferred<void>();
@@ -65,7 +65,7 @@ describe('runAppBootSequence', () => {
         await flushMicrotasks();
         if (mode === 'deferred') credentials.resolve(CREDENTIALS);
         await run;
-        expect(events).toEqual(mode === 'authenticated' ? ['restore', 'ready'] : mode === 'deferred' ? ['ready', 'restore', 'ready'] : ['ready']);
+        expect(events).toEqual(mode === 'signed-out' ? ['ready'] : ['restore', 'ready']);
     });
 
     it('rejects failed authoritative draft preparation without restoring or painting empty state', async () => {
@@ -142,13 +142,18 @@ describe('runAppBootSequence', () => {
             onReady: (state) => ready.push(state),
         });
 
+        // Optional fonts must not hold first paint behind a deadline. The platform font remains
+        // usable while the original load continues in the background.
+        await flushMicrotasks();
+        expect(ready).toEqual([{ credentials: CREDENTIALS }]);
         await vi.runAllTimersAsync();
         await run;
 
-        expect(ready).toEqual([{ credentials: CREDENTIALS, authGeneration: 0 }]);
+        expect(ready).toEqual([{ credentials: CREDENTIALS }]);
+        expect(console.error).not.toHaveBeenCalled();
     });
 
-    it('reaches first paint when the keychain read stalls forever, without signing the user out', async () => {
+    it('waits for a slow keychain read instead of painting signed out and remounting auth', async () => {
         const credentials = createDeferred<AuthCredentials | null>();
         const ready: AppBootReadyState[] = [];
         const restored: AuthCredentials[] = [];
@@ -165,20 +170,18 @@ describe('runAppBootSequence', () => {
             onReady: (state) => ready.push(state),
         });
 
-        await vi.runAllTimersAsync();
-        expect(ready).toEqual([{ credentials: null, authGeneration: 0 }]);
+        await vi.advanceTimersByTimeAsync(9_000);
+        expect(ready).toEqual([]);
         expect(restored).toEqual([]);
+        expect(console.error).not.toHaveBeenCalled();
 
-        // A slow keychain must become a late sign-in, never a silent sign-out.
+        // A valid slow read still supplies the sole initial Account authority.
         credentials.resolve(CREDENTIALS);
         await vi.runAllTimersAsync();
         await run;
 
         expect(restored).toEqual([CREDENTIALS]);
-        expect(ready).toEqual([
-            { credentials: null, authGeneration: 0 },
-            { credentials: CREDENTIALS, authGeneration: 1 },
-        ]);
+        expect(ready).toEqual([{ credentials: CREDENTIALS }]);
     });
 
     it('starts restore (its synchronous local phase) before first paint, but never waits for its transport', async () => {
@@ -207,7 +210,7 @@ describe('runAppBootSequence', () => {
         await vi.runAllTimersAsync();
         await run;
         expect(events).toEqual(['local-restore', 'ready']);
-        expect(ready).toEqual([{ credentials: CREDENTIALS, authGeneration: 0 }]);
+        expect(ready).toEqual([{ credentials: CREDENTIALS }]);
         transport.resolve();
     });
 
@@ -227,7 +230,7 @@ describe('runAppBootSequence', () => {
 
         transport.reject(new Error('carrier unreachable'));
         await flushMicrotasks();
-        expect(ready).toEqual([{ credentials: CREDENTIALS, authGeneration: 0 }]);
+        expect(ready).toEqual([{ credentials: CREDENTIALS }]);
         expect(console.error).toHaveBeenCalledWith(
             'Failed to restore sync during init, continuing startup:',
             expect.any(Error),
@@ -249,7 +252,33 @@ describe('runAppBootSequence', () => {
             onReady: (state) => ready.push(state),
         });
 
-        expect(ready).toEqual([{ credentials: CREDENTIALS, authGeneration: 0 }]);
+        expect(ready).toEqual([{ credentials: CREDENTIALS }]);
+    });
+
+    it('restores cold without waiting for optional cache preparation or restoring again when it lands', async () => {
+        const key = createDeferred<void>();
+        const ready: AppBootReadyState[] = [];
+        const restored: AuthCredentials[] = [];
+        const run = runAppBootSequence({
+            loadFonts: async () => {},
+            sodiumReady: Promise.resolve(),
+            resolveCredentials: async () => CREDENTIALS,
+            prepareWarmCache: () => key.promise,
+            prepareSessionDrafts: async () => {},
+            restoreSync: async (credentials) => { restored.push(credentials); },
+            onReady: (state) => ready.push(state),
+        });
+        try {
+            await flushMicrotasks();
+            expect(ready).toEqual([{ credentials: CREDENTIALS }]);
+            expect(restored).toEqual([CREDENTIALS]);
+        } finally {
+            key.resolve();
+            await run;
+        }
+        expect(ready).toEqual([{ credentials: CREDENTIALS }]);
+        expect(restored).toEqual([CREDENTIALS]);
+        expect(console.error).not.toHaveBeenCalled();
     });
 
     it('boots when sync restore rejects', async () => {
@@ -267,7 +296,7 @@ describe('runAppBootSequence', () => {
             onReady: (state) => ready.push(state),
         });
 
-        expect(ready).toEqual([{ credentials: CREDENTIALS, authGeneration: 0 }]);
+        expect(ready).toEqual([{ credentials: CREDENTIALS }]);
     });
 
     it('does not re-key the auth tree when a deferred read confirms there is no session', async () => {
@@ -289,7 +318,7 @@ describe('runAppBootSequence', () => {
         await vi.runAllTimersAsync();
         await run;
 
-        expect(ready).toEqual([{ credentials: null, authGeneration: 0 }]);
+        expect(ready).toEqual([{ credentials: null }]);
     });
 
     it('skips sync restore when the host has no restore owner (desktop activity overlay)', async () => {
@@ -305,6 +334,6 @@ describe('runAppBootSequence', () => {
             onReady: (state) => ready.push(state),
         });
 
-        expect(ready).toEqual([{ credentials: CREDENTIALS, authGeneration: 0 }]);
+        expect(ready).toEqual([{ credentials: CREDENTIALS }]);
     });
 });

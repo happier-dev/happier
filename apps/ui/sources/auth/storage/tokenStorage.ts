@@ -1,4 +1,6 @@
 import { Platform } from 'react-native';
+import { z } from 'zod';
+import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import type { AccountContinuationIntent } from '@happier-dev/cli-common/accountService';
 import {
     AccountEncryptionMigrateRequestBindingDigestV1Schema,
@@ -169,27 +171,49 @@ export type AccountHomeAuthenticationContinuation = Readonly<Pick<AccountDirecto
     | 'credentialTokenDigest'
 > & { homeServerIdentityId: string }>;
 
+const ContinuationIdentitySchema = z.string().trim().min(1);
+const AccountContinuationIntentSchema = z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('refresh') }).strict(),
+    z.object({ kind: z.literal('link'), homeServerIdentityId: ContinuationIdentitySchema }).strict(),
+    z.object({ kind: z.literal('enroll'), homeServerIdentityId: ContinuationIdentitySchema }).strict(),
+    z.object({ kind: z.literal('enter'), target: z.discriminatedUnion('kind', [
+        z.object({ kind: z.literal('automatic') }).strict(),
+        z.object({ kind: z.literal('explicit'), homeServerIdentityId: ContinuationIdentitySchema }).strict(),
+    ]) }).strict(),
+]);
+const ContinuationEndpointSchema = z.string().transform((value, context) => {
+    const endpoint = normalizeAccountDirectoryEndpoint(value);
+    if (endpoint) return endpoint;
+    context.addIssue({ code: 'custom', message: 'Invalid Account-service endpoint' });
+    return z.NEVER;
+});
+const ContinuationReturnPathSchema = z.string().transform((value, context) => {
+    const path = normalizeInternalReturnPath(value);
+    if (path) return path;
+    context.addIssue({ code: 'custom', message: 'Invalid internal return path' });
+    return z.NEVER;
+});
+const AccountHomeAuthenticationContinuationSchema = z.object({
+    endpoint: ContinuationEndpointSchema,
+    canonicalServerUrl: ContinuationEndpointSchema,
+    serverIdentityId: ContinuationIdentitySchema,
+    homeServerIdentityId: ContinuationIdentitySchema,
+    entryIntent: AccountContinuationIntentSchema,
+    returnTo: ContinuationReturnPathSchema,
+    accountEntryReturnTo: ContinuationReturnPathSchema.optional(),
+    credentialTokenDigest: z.string().refine(isAccountDirectoryCredentialTokenDigest),
+}).strict().superRefine((row, context) => {
+    const intentTarget = row.entryIntent.kind === 'enter'
+        ? row.entryIntent.target.kind === 'explicit' ? row.entryIntent.target.homeServerIdentityId : null
+        : row.entryIntent.kind === 'refresh' ? null : row.entryIntent.homeServerIdentityId;
+    if (intentTarget && intentTarget !== row.homeServerIdentityId) {
+        context.addIssue({ code: 'custom', path: ['entryIntent'], message: 'Home continuation target mismatch' });
+    }
+});
+
 export function parseAccountHomeAuthenticationContinuation(value: unknown): AccountHomeAuthenticationContinuation | null {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-    const row = value as Record<string, unknown>;
-    if (Object.keys(row).some((key) => !['endpoint', 'serverIdentityId', 'canonicalServerUrl', 'entryIntent', 'returnTo', 'accountEntryReturnTo', 'homeServerIdentityId', 'credentialTokenDigest'].includes(key))) return null;
-    const endpoint = typeof row.endpoint === 'string' ? normalizeAccountDirectoryEndpoint(row.endpoint) : null;
-    const canonicalServerUrl = typeof row.canonicalServerUrl === 'string' ? normalizeAccountDirectoryEndpoint(row.canonicalServerUrl) : null;
-    const entryIntent = parseAccountContinuationIntent(row.entryIntent);
-    const returnTo = normalizeInternalReturnPath(row.returnTo);
-    const accountEntryReturnTo = normalizeInternalReturnPath(row.accountEntryReturnTo);
-    if (!endpoint || !canonicalServerUrl || !entryIntent || !returnTo
-        || !isNonEmptyString(row.serverIdentityId) || !isNonEmptyString(row.homeServerIdentityId)
-        || !isAccountDirectoryCredentialTokenDigest(row.credentialTokenDigest)
-        || (row.accountEntryReturnTo !== undefined && !accountEntryReturnTo)) return null;
-    const homeServerIdentityId = row.homeServerIdentityId.trim();
-    const intentTarget = entryIntent.kind === 'enter'
-        ? entryIntent.target.kind === 'explicit' ? entryIntent.target.homeServerIdentityId : null
-        : entryIntent.kind === 'refresh' ? null : entryIntent.homeServerIdentityId;
-    if (intentTarget && intentTarget !== homeServerIdentityId) return null;
-    return { endpoint, canonicalServerUrl, entryIntent, returnTo, serverIdentityId: row.serverIdentityId.trim(), homeServerIdentityId,
-        credentialTokenDigest: row.credentialTokenDigest,
-        ...(accountEntryReturnTo ? { accountEntryReturnTo } : {}) };
+    const parsed = AccountHomeAuthenticationContinuationSchema.safeParse(value);
+    return parsed.success ? parsed.data : null;
 }
 
 let accountDirectoryOAuthReturnCustody: AccountDirectoryOAuthReturnCustody | null = null;
@@ -744,54 +768,29 @@ export type AuthCredentials =
     | LegacyAuthCredentials
     | DataKeyAuthCredentials;
 
-/**
- * Strict parser for credentials crossing an authentication/enrollment boundary.
- * Persisted legacy readers remain tolerant at their storage envelope, but the
- * credential value itself has exactly one ordinary AuthCredentials shape.
- */
-export function parseAuthCredentials(value: unknown): AuthCredentials | null {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-    const record = value as Record<string, unknown>;
-    const token = typeof record.token === 'string' && record.token.trim() === record.token && record.token.length > 0
-        ? record.token
-        : null;
-    if (!token) return null;
-
-    const keys = Object.keys(record).sort();
-    if (keys.length === 1 && keys[0] === 'token') return { token };
-
-    if (keys.length === 2 && keys[0] === 'secret' && keys[1] === 'token') {
-        const secret = typeof record.secret === 'string'
-            && record.secret.trim() === record.secret
-            && record.secret.length > 0
-            ? record.secret
-            : null;
-        return secret ? { token, secret } : null;
+const CredentialStringSchema = z.string().min(1).refine((value) => value.trim() === value);
+const AuthCredentialsSchema = z.object({
+    token: CredentialStringSchema,
+    secret: CredentialStringSchema.optional(),
+    encryption: z.object({ publicKey: CredentialStringSchema, machineKey: CredentialStringSchema }).strict().optional(),
+}).strict().superRefine((record, context) => {
+    // Known material fields select the credential shape; dropping additive
+    // fields must never reinterpret E2EE or conflicting material as keyless.
+    if ((Object.hasOwn(record, 'secret') && record.secret === undefined)
+        || (Object.hasOwn(record, 'encryption') && record.encryption === undefined)
+        || (Object.hasOwn(record, 'secret') && Object.hasOwn(record, 'encryption'))) {
+        context.addIssue({ code: 'custom', message: 'Invalid credential material shape' });
     }
+}).transform((record): AuthCredentials => record.secret !== undefined
+    ? { token: record.token, secret: record.secret }
+    : record.encryption !== undefined ? { token: record.token, encryption: record.encryption }
+        : { token: record.token });
+const StoredAuthCredentialsSchema = createStoredReadSchema(AuthCredentialsSchema);
 
-    if (keys.length !== 2 || keys[0] !== 'encryption' || keys[1] !== 'token') return null;
-    const encryption = record.encryption;
-    if (!encryption || typeof encryption !== 'object' || Array.isArray(encryption)) return null;
-    const encryptionRecord = encryption as Record<string, unknown>;
-    const encryptionKeys = Object.keys(encryptionRecord).sort();
-    if (
-        encryptionKeys.length !== 2
-        || encryptionKeys[0] !== 'machineKey'
-        || encryptionKeys[1] !== 'publicKey'
-    ) return null;
-    const publicKey = typeof encryptionRecord.publicKey === 'string'
-        && encryptionRecord.publicKey.trim() === encryptionRecord.publicKey
-        && encryptionRecord.publicKey.length > 0
-        ? encryptionRecord.publicKey
-        : null;
-    const machineKey = typeof encryptionRecord.machineKey === 'string'
-        && encryptionRecord.machineKey.trim() === encryptionRecord.machineKey
-        && encryptionRecord.machineKey.length > 0
-        ? encryptionRecord.machineKey
-        : null;
-    return publicKey && machineKey
-        ? { token, encryption: { publicKey, machineKey } }
-        : null;
+/** Strict credential admission; stored reads derive their projection from this same schema. */
+export function parseAuthCredentials(value: unknown): AuthCredentials | null {
+    const parsed = AuthCredentialsSchema.safeParse(value);
+    return parsed.success ? parsed.data : null;
 }
 
 /**
@@ -897,25 +896,8 @@ export type AccountDirectoryOAuthCredentialCommitResult =
     }>;
 
 export function parseAccountContinuationIntent(value: unknown): AccountContinuationIntent | null {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-    const row = value as Record<string, unknown>;
-    if (row.kind === 'refresh') {
-        return Object.keys(row).length === 1 ? { kind: 'refresh' } : null;
-    }
-    if (row.kind === 'link' || row.kind === 'enroll') {
-        if (Object.keys(row).some((key) => key !== 'kind' && key !== 'homeServerIdentityId')
-            || !isNonEmptyString(row.homeServerIdentityId)) return null;
-        return { kind: row.kind, homeServerIdentityId: row.homeServerIdentityId.trim() };
-    }
-    if (row.kind !== 'enter' || Object.keys(row).some((key) => key !== 'kind' && key !== 'target')) return null;
-    if (!row.target || typeof row.target !== 'object' || Array.isArray(row.target)) return null;
-    const target = row.target as Record<string, unknown>;
-    if (target.kind === 'automatic' && Object.keys(target).length === 1) return { kind: 'enter', target: { kind: 'automatic' } };
-    if (target.kind === 'explicit' && isNonEmptyString(target.homeServerIdentityId)
-        && Object.keys(target).every((key) => key === 'kind' || key === 'homeServerIdentityId')) {
-        return { kind: 'enter', target: { kind: 'explicit', homeServerIdentityId: target.homeServerIdentityId.trim() } };
-    }
-    return null;
+    const parsed = AccountContinuationIntentSchema.safeParse(value);
+    return parsed.success ? parsed.data : null;
 }
 
 export function isLegacyAuthCredentials(credentials: AuthCredentials): credentials is LegacyAuthCredentials {
@@ -1078,11 +1060,9 @@ function isStoredAccountDirectoryCredentialRecord(
         || !Number.isSafeInteger(updatedAt)
     ) return false;
     if (!credentials || typeof credentials !== 'object' || Array.isArray(credentials)) return false;
-    const credentialKeys = Object.keys(credentials as object);
-    if (credentialKeys.some((key) => key !== 'token')) return false;
-    const rowKeys = Object.keys(row);
-    const expectedKeys = new Set(['endpoint', 'serverIdentityId', 'credentials', 'updatedAt']);
-    return rowKeys.length === expectedKeys.size && rowKeys.every((key) => expectedKeys.has(key));
+    // Unknown stored fields are projected away below. Home material is a known
+    // conflicting credential shape, not an additive Account-service field.
+    return !Object.hasOwn(credentials, 'secret') && !Object.hasOwn(credentials, 'encryption');
 }
 
 function parseStoredAccountDirectoryCredentialRecords(value: unknown): StoredAccountDirectoryCredentialRecord[] | null {
@@ -1115,7 +1095,7 @@ function accountDirectoryCredentialRecordMatchesTarget(
 
 type PendingAccountDirectoryAuthStoredRecord = NormalizedPendingAccountDirectoryAuth;
 
-function isPendingAccountDirectoryAuthRecord(
+function isPendingAccountDirectoryAuthFieldsValid(
     value: unknown,
 ): value is PendingAccountDirectoryAuthStoredRecord {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -1174,37 +1154,27 @@ function isPendingAccountDirectoryAuthRecord(
         return false;
     }
 
-    const allowedKeys = new Set([
-        'endpoint',
-        'serverIdentityId',
-        'credentialTarget',
-        'entryIntent',
-        'canonicalServerUrl',
-        'provider',
-        'purpose',
-        'pending',
-        'createdAt',
-        'expiresAt',
-        'mode',
-        'proof',
-        'secret',
-        'returnTo',
-        'accountEntryReturnTo',
-        'linkHomeServerIdentityId',
-        'explicitHomeServerIdentityId',
-        'state',
-        'nonce',
-    ]);
-    const keys = Object.keys(row);
-    if (!keys.every((key) => allowedKeys.has(key))) return false;
     return isNonEmptyString(identity);
 }
+
+const PendingAccountDirectoryAuthSchema = z.object({
+    endpoint: z.string(), serverIdentityId: z.string(), canonicalServerUrl: z.string(),
+    credentialTarget: z.literal('account_directory'), purpose: z.literal('account_directory'),
+    entryIntent: AccountContinuationIntentSchema, provider: z.string(), pending: z.string().optional(),
+    createdAt: z.number(), expiresAt: z.number(), mode: z.enum(['keyed', 'keyless']).optional(),
+    proof: z.string().optional(), secret: z.string().optional(), returnTo: z.string().optional(),
+    accountEntryReturnTo: z.string().optional(), linkHomeServerIdentityId: z.string().optional(),
+    explicitHomeServerIdentityId: z.string().optional(), state: z.string().optional(), nonce: z.string().optional(),
+}).strict().refine(isPendingAccountDirectoryAuthFieldsValid);
+const StoredPendingAccountDirectoryAuthSchema = createStoredReadSchema(PendingAccountDirectoryAuthSchema);
 
 function normalizePendingAccountDirectoryAuth(
     value: PendingAccountDirectoryAuthInput | PendingAccountDirectoryAuth,
     options: Readonly<{ includeExpired?: boolean }> = {},
 ): NormalizedPendingAccountDirectoryAuth | null {
-    if (!isPendingAccountDirectoryAuthRecord(value)) return null;
+    const parsed = PendingAccountDirectoryAuthSchema.safeParse(value);
+    if (!parsed.success) return null;
+    value = parsed.data;
     const raw = value as Record<string, unknown>;
     const endpoint = normalizeAccountDirectoryEndpoint(String(raw.endpoint ?? ''));
     const identity = normalizeAccountDirectoryIdentity(raw.serverIdentityId);
@@ -1276,7 +1246,7 @@ function isOptionalPendingProviderPresentation(value: unknown): boolean {
     return value === undefined || AuthEntryProviderPresentationV1Schema.safeParse(value).success;
 }
 
-function isPendingExternalAuthRecord(value: unknown): value is PendingExternalAuth {
+function isPendingExternalAuthFieldsValid(value: unknown): value is PendingExternalAuth {
     if (!value || typeof value !== 'object') return false;
     const maybe = value as Record<string, unknown>;
     if (maybe.accountPasswordEnrollment !== undefined) return false;
@@ -1437,6 +1407,48 @@ function isPendingExternalAuthRecord(value: unknown): value is PendingExternalAu
     }
     if (maybe.intent === undefined) return true;
     return maybe.intent === 'signup' || maybe.intent === 'reset';
+}
+
+const PendingExternalAuthSchema = z.object({
+    provider: z.string(),
+    presentation: AuthEntryProviderPresentationV1Schema.optional(),
+    proof: z.string().optional(),
+    secret: z.string().optional(),
+    mode: z.enum(['keyed', 'keyless']).optional(),
+    intent: z.enum(['signup', 'reset']).optional(),
+    serverId: z.string().optional(),
+    serverUrl: z.string().optional(),
+    returnTo: z.string().optional(),
+    accountContinuation: AccountHomeAuthenticationContinuationSchema.optional(),
+    teamContinuation: z.object({
+        v: z.literal(1), purpose: z.literal('team_admission'),
+        admissionReference: z.string(), teamId: z.string(), homeServerIdentityId: z.string(),
+        destination: z.object({ kind: z.literal('team_sign_in'), teamId: z.string() }).strict(),
+    }).strict().optional(),
+    postAuthInvitation: TeamInvitationPostAuthContinuationV1Schema.optional(),
+    accountEncryptionFirstKey: z.object({
+        accountId: z.string(), requestDigest: z.string(), requestJson: z.string(),
+        createdAt: z.number(), expiresAt: z.number(), pending: z.string().optional(),
+        migrationSubmissionAttempted: z.literal(true).optional(), rejectedCredentialTokenDigest: z.string().optional(),
+    }).strict().optional(),
+    // This recognized custody is intentionally never persisted; it cannot
+    // become an ignorable future field in the stored projection.
+    accountPasswordEnrollment: z.never().optional(),
+}).strict().refine(isPendingExternalAuthFieldsValid);
+const StoredPendingExternalAuthSchema = createStoredReadSchema(PendingExternalAuthSchema);
+
+function isPendingExternalAuthRecord(value: unknown): value is PendingExternalAuth {
+    return PendingExternalAuthSchema.safeParse(value).success;
+}
+
+function parseStoredJsonValue<T>(value: unknown, validator: (value: unknown) => value is T): T | null {
+    // The pending Home return consumes the same canonical fields and domain
+    // checks as admission. Only persisted unknown-field policy differs.
+    if (validator === isPendingExternalAuthRecord) {
+        const parsed = StoredPendingExternalAuthSchema.safeParse(value);
+        return parsed.success && validator(parsed.data) ? parsed.data : null;
+    }
+    return validator(value) ? value : null;
 }
 
 function isPendingPurposeBoundExternalAuthExpired(
@@ -1635,7 +1647,7 @@ async function readStoredJson<T>(
             const raw = storage.getItem(key);
             if (!raw) return null;
             const parsed = safeParseJson(raw);
-            return validator(parsed) ? parsed : null;
+            return parseStoredJsonValue(parsed, validator);
         } catch (error) {
             if (storageReadFailure === 'surface') throw error;
             console.error(`Error getting ${label}:`, error);
@@ -1647,7 +1659,7 @@ async function readStoredJson<T>(
         const stored = await readNativeSecureStoreString(key);
         if (!stored) return null;
         const parsed = safeParseJson(stored);
-        return validator(parsed) ? parsed : null;
+        return parseStoredJsonValue(parsed, validator);
     } catch (error) {
         if (storageReadFailure === 'surface') throw error;
         console.error(`Error getting ${label}:`, error);
@@ -1765,8 +1777,9 @@ async function readPendingAccountDirectoryAuthRecords(): Promise<
         if (!Array.isArray(parsed)) return { kind: 'corrupt' };
         const records: NormalizedPendingAccountDirectoryAuth[] = [];
         for (const candidate of parsed) {
-            if (!isPendingAccountDirectoryAuthRecord(candidate)) return { kind: 'corrupt' };
-            const normalized = normalizePendingAccountDirectoryAuth(candidate, {
+            const read = StoredPendingAccountDirectoryAuthSchema.safeParse(candidate);
+            if (!read.success) return { kind: 'corrupt' };
+            const normalized = normalizePendingAccountDirectoryAuth(read.data, {
                 includeExpired: true,
             });
             if (!normalized) return { kind: 'corrupt' };
@@ -1801,7 +1814,8 @@ async function writePendingAccountDirectoryAuthRecords(
 function parseCredentialsRaw(raw: string | null): AuthCredentials | null {
     if (!raw) return null;
     try {
-        return parseAuthCredentials(safeParseJson(raw));
+        const parsed = StoredAuthCredentialsSchema.safeParse(safeParseJson(raw));
+        return parsed.success ? parsed.data : null;
     } catch {
         return null;
     }

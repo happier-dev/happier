@@ -20,6 +20,24 @@ import { startNativeLoopbackTunnelRuntimeAppStateLifecycle } from '@/sync/runtim
 import type { IrohHomeTunnelRuntime } from '@/sync/runtime/nativeIrohTunnels/types';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
+import {
+    getAppliedActiveServerId,
+    getAppliedActiveServerSnapshot,
+    isAppliedActiveServerRuntimeAvailable,
+    publishAppliedActiveServerRuntimeAvailability,
+    publishAppliedActiveServerSnapshot,
+    publishApplyingActiveServerId,
+} from './appliedActiveServerRuntime';
+
+export {
+    getAppliedActiveServerId,
+    getAppliedActiveServerSnapshot,
+    isAppliedActiveServerRuntimeAvailable,
+    subscribeAppliedActiveServer,
+    subscribeAppliedActiveServerRuntimeAvailability,
+    subscribeApplyingActiveServer,
+    type AppliedActiveServerSnapshot,
+} from './appliedActiveServerRuntime';
 
 let activeSwitchPromise: Promise<AuthCredentials | null> | null = null;
 // The cold restore's transport phase. Boot paints once restore's local phase has
@@ -61,124 +79,6 @@ function startActiveIrohRecoveryLifecycle(runtime: IrohHomeTunnelRuntime): void 
         });
     });
 }
-export type AppliedActiveServerSnapshot = Readonly<Pick<
-    ReturnType<typeof getActiveServerSnapshot>,
-    'serverId' | 'serverUrl' | 'generation'
->>;
-
-function captureAppliedActiveServerSnapshot(
-    snapshot: Readonly<Pick<ReturnType<typeof getActiveServerSnapshot>, 'serverId' | 'serverUrl' | 'generation'>>,
-): AppliedActiveServerSnapshot {
-    return {
-        serverId: String(snapshot.serverId ?? '').trim(),
-        serverUrl: String(snapshot.serverUrl ?? '').trim(),
-        generation: snapshot.generation,
-    };
-}
-
-// `appliedActiveServerSnapshot` records the last Home whose switch completed.
-// It is deliberately not proof that the singleton Sync runtime still serves
-// that Home: switching begins by retiring that runtime before the next Home is
-// restored.
-let appliedActiveServerSnapshot: AppliedActiveServerSnapshot | null = null;
-
-/**
- * Before any switch completes, the applied Home is simply the selected one. That
- * fact is resolved on first read rather than at module load: this module is
- * imported eagerly by the Sync graph, often before the persisted Home has been
- * restored, and an import-time capture would pin that empty Home for the whole
- * process. `appliedActiveServerRuntimeAvailable` stays the separate authority for
- * whether a runtime actually serves it.
- */
-function readAppliedActiveServerSnapshot(): AppliedActiveServerSnapshot {
-    appliedActiveServerSnapshot ??= captureAppliedActiveServerSnapshot(getActiveServerSnapshot());
-    return appliedActiveServerSnapshot;
-}
-// This flag is the connection owner's one direct-runtime authority.
-let appliedActiveServerRuntimeAvailable = false;
-const appliedActiveServerListeners = new Set<(serverId: string, generation: number) => void>();
-const appliedActiveServerRuntimeAvailabilityListeners = new Set<(available: boolean) => void>();
-const applyingActiveServerListeners = new Set<(serverId: string, generation: number) => void>();
-
-function publishAppliedActiveServerRuntimeAvailability(runtimeAvailable: boolean): boolean {
-    if (appliedActiveServerRuntimeAvailable === runtimeAvailable) return false;
-    appliedActiveServerRuntimeAvailable = runtimeAvailable;
-    for (const listener of appliedActiveServerRuntimeAvailabilityListeners) listener(runtimeAvailable);
-    return true;
-}
-
-function publishApplyingActiveServerId(serverIdRaw: string, generation: number): void {
-    publishAppliedActiveServerRuntimeAvailability(false);
-    const serverId = String(serverIdRaw ?? '').trim();
-    for (const listener of applyingActiveServerListeners) listener(serverId, generation);
-}
-
-function publishAppliedActiveServerSnapshot(
-    snapshot: Readonly<Pick<ReturnType<typeof getActiveServerSnapshot>, 'serverId' | 'serverUrl' | 'generation'>>,
-    runtimeAvailable = true,
-): void {
-    const next = captureAppliedActiveServerSnapshot(snapshot);
-    publishAppliedActiveServerRuntimeAvailability(runtimeAvailable);
-    // Compare against the raw value, not the lazily-resolved one: before any switch
-    // has completed there is no applied Home, and resolving the selected Home here
-    // would make the first successful apply look like a no-op and never reach the
-    // applied-Home listeners.
-    const current = appliedActiveServerSnapshot;
-    const didChangeSnapshot = current === null || !(
-        next.serverId === current.serverId
-        && next.serverUrl === current.serverUrl
-        && next.generation === current.generation
-    );
-    if (!didChangeSnapshot) return;
-    appliedActiveServerSnapshot = next;
-    for (const listener of appliedActiveServerListeners) listener(next.serverId, next.generation);
-}
-
-export function getAppliedActiveServerId(): string {
-    return readAppliedActiveServerSnapshot().serverId;
-}
-
-export function getAppliedActiveServerSnapshot(): AppliedActiveServerSnapshot {
-    return readAppliedActiveServerSnapshot();
-}
-
-/**
- * Whether the singleton Sync runtime currently serves the last fully applied
- * Home. During a switch it is false before the old runtime is reset, and it
- * becomes true only after the target has restored successfully.
- */
-export function isAppliedActiveServerRuntimeAvailable(): boolean {
-    return appliedActiveServerRuntimeAvailable;
-}
-
-export function subscribeAppliedActiveServer(
-    listener: (serverId: string, generation: number) => void,
-): () => void {
-    appliedActiveServerListeners.add(listener);
-    return () => {
-        appliedActiveServerListeners.delete(listener);
-    };
-}
-
-/** Runtime availability is a separate fact from the last successfully applied Home identity. */
-export function subscribeAppliedActiveServerRuntimeAvailability(
-    listener: (available: boolean) => void,
-): () => void {
-    appliedActiveServerRuntimeAvailabilityListeners.add(listener);
-    return () => {
-        appliedActiveServerRuntimeAvailabilityListeners.delete(listener);
-    };
-}
-
-export function subscribeApplyingActiveServer(
-    listener: (serverId: string, generation: number) => void,
-): () => void {
-    applyingActiveServerListeners.add(listener);
-    return () => {
-        applyingActiveServerListeners.delete(listener);
-    };
-}
-
 async function resolveCredentialsForActiveServer(
     snapshot: Readonly<ReturnType<typeof getActiveServerSnapshot>>,
 ): Promise<AuthCredentials | null> {
@@ -380,7 +280,7 @@ export async function retryActiveServerConnection(): Promise<void> {
             !isAppliedActiveServerRuntimeAvailable()
             ||
             getAppliedActiveServerId() !== snapshot.serverId
-            || readAppliedActiveServerSnapshot().generation !== snapshot.generation
+            || getAppliedActiveServerSnapshot().generation !== snapshot.generation
         ) {
             // A failed staged switch has no applied socket for this target to
             // retry. Re-enter the serialized switch owner so credentials,
@@ -420,10 +320,10 @@ async function applyPendingServerSwitches(): Promise<AuthCredentials | null> {
         if (!isActiveSwitchTargetCurrent(snapshot, targetGeneration)) continue;
         const canReuseAppliedRuntime = (
             targetGeneration <= lastAppliedGeneration
-            && appliedActiveServerRuntimeAvailable
-            && readAppliedActiveServerSnapshot().serverId === snapshot.serverId
-            && readAppliedActiveServerSnapshot().serverUrl === snapshot.serverUrl
-            && readAppliedActiveServerSnapshot().generation === targetGeneration
+            && isAppliedActiveServerRuntimeAvailable()
+            && getAppliedActiveServerSnapshot().serverId === snapshot.serverId
+            && getAppliedActiveServerSnapshot().serverUrl === snapshot.serverUrl
+            && getAppliedActiveServerSnapshot().generation === targetGeneration
             && appliedCredentialToken === readCredentialToken(credentials)
         );
         if (canReuseAppliedRuntime) {

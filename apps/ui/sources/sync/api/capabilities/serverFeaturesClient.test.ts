@@ -14,7 +14,6 @@ let learnedServerIdentityId: string | null;
 let serverBProfileOverrides: Record<string, unknown>;
 
 const frozenServerFeaturesTime = new Date('2026-02-13T00:00:00.000Z');
-const frozenServerFeaturesTimeAfterCooldown = new Date('2026-02-13T00:01:00.000Z');
 const frozenServerFeaturesTimeAfterErrorTtl = new Date('2026-02-13T00:00:06.000Z');
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
@@ -182,8 +181,9 @@ describe('serverFeaturesClient', () => {
         const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('./serverFeaturesClient');
         resetServerFeaturesClientForTests();
 
+        const patient = getServerFeaturesSnapshot({ force: true });
+        await vi.waitFor(() => expect(featuresFetchMock).toHaveBeenCalledTimes(1));
         const impatient = getServerFeaturesSnapshot({ force: true, timeoutMs: 10 });
-        const patient = getServerFeaturesSnapshot({ force: true, timeoutMs: 100 });
         await vi.advanceTimersByTimeAsync(10);
         await expect(impatient).resolves.toEqual({ status: 'error', reason: 'timeout' });
 
@@ -518,7 +518,7 @@ describe('serverFeaturesClient', () => {
         }
     });
 
-    it('caches endpoint-missing responses even when forced (cooldown)', async () => {
+    it('caches ordinary endpoint-missing reads but immediately honors explicit revalidation', async () => {
         const payload = {
             features: {
                 sharing: { session: { enabled: true }, public: { enabled: true }, contentKeys: { enabled: true }, pendingQueueV2: { enabled: true } },
@@ -538,7 +538,6 @@ describe('serverFeaturesClient', () => {
 
         featuresFetchMock
             .mockResolvedValueOnce(createResponse(404, {}))
-            // If the client incorrectly refetches during cooldown, this 200 would flip the snapshot to ready.
             .mockResolvedValueOnce(createResponse(200, payload));
 
         const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('./serverFeaturesClient');
@@ -547,49 +546,13 @@ describe('serverFeaturesClient', () => {
         useFrozenServerFeaturesClock();
 
         const first = await getServerFeaturesSnapshot({ force: true, timeoutMs: 50 });
-        const second = await getServerFeaturesSnapshot({ force: true, timeoutMs: 50 });
+        const second = await getServerFeaturesSnapshot({ timeoutMs: 50 });
 
         expect(first.status).toBe('unsupported');
         expect(second.status).toBe('unsupported');
         expect(featuresFetchMock.mock.calls.length).toBe(1);
-    });
-
-    it('allows forced revalidation after endpoint-missing cooldown expires', async () => {
-        const payload = {
-            features: {
-                sharing: { session: { enabled: true }, public: { enabled: true }, contentKeys: { enabled: true }, pendingQueueV2: { enabled: true } },
-                voice: { enabled: false, configured: false, provider: null },
-                social: { friends: { enabled: true, allowUsername: false, requiredIdentityProviderId: 'github' } },
-                oauth: { providers: {} },
-                auth: {
-                    signup: { methods: [] },
-                    login: { requiredProviders: [] },
-                    recovery: { providerReset: { enabled: false, providers: [] } },
-                    ui: { autoRedirect: { enabled: false, providerId: null }, recoveryKeyReminder: { enabled: true } },
-                    providers: {},
-                    misconfig: [],
-                },
-            },
-        };
-
-        featuresFetchMock
-            .mockResolvedValueOnce(createResponse(404, {}))
-            .mockResolvedValueOnce(createResponse(200, payload));
-
-        const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('./serverFeaturesClient');
-        resetServerFeaturesClientForTests();
-
-        useFrozenServerFeaturesClock();
-
-        const first = await getServerFeaturesSnapshot({ force: true, timeoutMs: 50 });
-        expect(first.status).toBe('unsupported');
-        expect(featuresFetchMock.mock.calls.length).toBe(1);
-
-        // After cooldown, a forced refresh should revalidate.
-        setFrozenServerFeaturesClock(frozenServerFeaturesTimeAfterCooldown);
-
-        const second = await getServerFeaturesSnapshot({ force: true, timeoutMs: 50 });
-        expect(second.status).toBe('ready');
+        const refreshed = await getServerFeaturesSnapshot({ force: true, timeoutMs: 50 });
+        expect(refreshed.status).toBe('ready');
         expect(featuresFetchMock.mock.calls.length).toBe(2);
     });
 
@@ -1488,29 +1451,32 @@ describe('serverFeaturesClient', () => {
         expect(featuresFetchMock).toHaveBeenCalledOnce();
     });
 
-    it('ends an endpoint probe at its shared attempt timeout when no response arrives', async () => {
+    it.each(['endpoint', 'focused'] as const)('accepts a valid slow %s feature response without an invented attempt deadline', async (projection) => {
         useFrozenServerFeaturesClock();
         let requestSignal: AbortSignal | null | undefined;
+        let resolveFetch!: (response: Response) => void;
         featuresFetchMock.mockImplementation(async (_input: unknown, init?: RequestInit) => {
             requestSignal = init?.signal;
-            return await new Promise<Response>((_resolve, reject) => {
+            return await new Promise<Response>((resolve, reject) => {
+                resolveFetch = resolve;
                 requestSignal?.addEventListener('abort', () => reject(Object.assign(new Error('cancelled'), { name: 'AbortError' })), { once: true });
             });
         });
-        const { probeServerFeaturesAtUrl, resetServerFeaturesClientForTests } = await import('./serverFeaturesClient');
+        const { probeServerFeaturesAtUrl, getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('./serverFeaturesClient');
         resetServerFeaturesClientForTests();
         let settled = false;
-        const result = probeServerFeaturesAtUrl({ endpointUrl: 'https://home.example.test' }).then((snapshot) => {
+        const result = (projection === 'endpoint'
+            ? probeServerFeaturesAtUrl({ endpointUrl: 'https://home.example.test' })
+            : getServerFeaturesSnapshot()).then((snapshot) => {
             settled = true;
             return snapshot;
         });
         await vi.dynamicImportSettled();
-        await vi.advanceTimersByTimeAsync(59_999);
+        await vi.advanceTimersByTimeAsync(61_000);
         expect(settled).toBe(false);
         expect(requestSignal?.aborted).toBe(false);
-        await vi.advanceTimersByTimeAsync(1);
-        await expect(result).resolves.toEqual({ status: 'error', reason: 'timeout' });
-        expect(requestSignal?.aborted).toBe(true);
+        resolveFetch(createResponse(200, createValidFeaturesPayload()));
+        await expect(result).resolves.toMatchObject({ status: 'ready' });
     });
 
     it('probes an explicit ingress-less Home through its semantic carrier', async () => {

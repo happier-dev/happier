@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { StorageState } from '@/sync/store/types';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { buildDismissedThisComputerSetupIntent } from './pendingSetupIntent.shared';
 
 async function importFresh() {
@@ -8,6 +9,8 @@ async function importFresh() {
 }
 
 async function applyActiveServer(serverUrl: string) {
+    // The app entry registers the real Sync runtime before Home switches.
+    await loadSyncSingletonForTests();
     const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
     const { switchConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
 
@@ -26,19 +29,18 @@ async function applyActiveServer(serverUrl: string) {
 
 async function activateServerAccount(serverUrl: string, accountId: string) {
     const { createServerAccountScope } = await import('@/sync/domains/scope/serverAccountScope');
-    const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
 
     const server = await applyActiveServer(serverUrl);
     const scope = createServerAccountScope(server.id, accountId);
     expect(scope).not.toBeNull();
-    registerStorageStateReader(() => ({ profileScope: scope } as unknown as StorageState));
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    storage.getState().activateProfileScope(scope!);
 }
 
 async function activateServerWithoutAccount(serverUrl: string) {
-    const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
-
     await applyActiveServer(serverUrl);
-    registerStorageStateReader(() => ({ profileScope: null } as unknown as StorageState));
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    storage.getState().clearProfileScope();
 }
 
 describe('pendingSetupIntent', () => {
@@ -126,6 +128,14 @@ describe('pendingSetupIntent', () => {
             relayUrl: 'https://relay.example.test',
         });
         expect(second).toBe(first);
+
+        setPendingSetupIntent({ branch: 'thisComputer', phase: 'post_auth', relayUrl: 'https://relay.example.test' });
+        const updated = getPendingSetupIntent();
+        expect(updated?.phase).toBe('post_auth');
+        expect(updated).not.toBe(first);
+        expect(getPendingSetupIntent()).toBe(updated);
+        clearPendingSetupIntent();
+        expect(getPendingSetupIntent()).toBeNull();
     });
 
     it('notifies subscribers when pending setup intent storage changes', async () => {
@@ -178,13 +188,17 @@ describe('pendingSetupIntent', () => {
             relayUrl: 'https://relay.example.test/',
         });
 
+        const beforeAuth = getPendingSetupIntent();
         await activateServerAccount('https://relay.example.test', 'account-a');
 
-        expect(getPendingSetupIntent()).toEqual({
+        const adopted = getPendingSetupIntent();
+        expect(adopted).toEqual({
             branch: 'thisComputer',
             phase: 'awaiting_auth',
             relayUrl: 'https://relay.example.test',
         });
+        expect(adopted).toBe(beforeAuth);
+        expect(getPendingSetupIntent()).toBe(adopted);
     });
 
     it('debug-logs and drops an unauthenticated pending setup intent when auth lands on a different relay URL', async () => {

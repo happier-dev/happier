@@ -379,6 +379,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
             <>
                 <View style={params.styles.authEntryWrapper}>
                     <WelcomeDecisionPanel
+                        showGreeting={false}
                         authEntryOptions={params.authEntryOptions}
                         accountServiceEntry={params.accountServiceEntry}
                         onContinueWithAccountServiceProvider={params.onContinueWithAccountServiceProvider}

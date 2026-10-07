@@ -107,11 +107,6 @@ let cachedServerIdentityId: string | null = null;
 let cachedSnapshotOnlyUnscoped = false;
 let boundQrV2Enabled = true;
 let profileReady = true;
-/**
- * When set, the Home's shared feature request never answers and only completes after
- * this attempt bound — the real client's `REQUEST_ATTEMPT_TIMEOUT_MS`.
- */
-let unansweredFeatureProbeAttemptMs: number | null = null;
 let descriptorOverride: import('@happier-dev/protocol').HomeConnectionDescriptorV1 | null = null;
 const serverProfileMocks = vi.hoisted(() => ({
     getServerProfileById: vi.fn(() => profileReady ? ({ id: 'srv-a' }) : null),
@@ -130,9 +125,6 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
 }));
 const observeAuthenticatedServerFeaturesFreshMock = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
-    // Mirrors the real module's exported foreground budget; the hook imports it, so the
-    // fake must provide it or the module graph fails at import.
-    FOREGROUND_FEATURE_PROBE_WAIT_BUDGET_MS: 800,
     getCachedServerFeaturesSnapshot: (params?: { serverId?: string }) =>
         cachedSnapshotOnlyUnscoped && params?.serverId
             ? null
@@ -147,16 +139,7 @@ vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
                 },
             }
             : null,
-    // Mirrors the real caller-budget contract (`serverFeaturesClient.ts`
-    // `waitForServerFeaturesSnapshot`): a caller that passes `timeoutMs` is released
-    // with a timeout snapshot while the shared request keeps running, and a caller
-    // that passes none waits out that request's own long attempt bound.
-    getServerFeaturesSnapshot: async (params?: { timeoutMs?: number }) => {
-        if (unansweredFeatureProbeAttemptMs !== null) {
-            const waitMs = params?.timeoutMs ?? unansweredFeatureProbeAttemptMs;
-            await new Promise((resolve) => { setTimeout(resolve, waitMs); });
-            return { status: 'error', reason: 'timeout' };
-        }
+    getServerFeaturesSnapshot: async () => {
         profileReady = true;
         return cachedCanonicalServerUrl
             ? {
@@ -218,7 +201,6 @@ describe('usePairingSession (pairing deep link server URL)', () => {
         cachedSnapshotOnlyUnscoped = false;
         boundQrV2Enabled = true;
         profileReady = true;
-        unansweredFeatureProbeAttemptMs = null;
         activeServer.serverUrl = 'http://localhost:53288';
         activeServer.shareableServerUrl = null;
         activeServer.shareableServerUrlValidatedAgainstServerUrl = null;
@@ -381,35 +363,6 @@ describe('usePairingSession (pairing deep link server URL)', () => {
             act(() => screen.tree.unmount());
         }
     });
-
-    it('gives up the QR generating state when the Home feature probe never answers', async () => {
-        cachedCanonicalServerUrl = 'https://home-a.test';
-        cachedServerIdentityId = 'srv_home_a';
-        activeServer.serverUrl = cachedCanonicalServerUrl;
-        // The Home accepts the request and never responds; the shared probe would keep
-        // trying for a full minute. A person is watching the QR placeholder, so this
-        // flow must fail over on its own budget instead.
-        unansweredFeatureProbeAttemptMs = 60_000;
-
-        const { usePairingSession } = await import('./usePairingSession');
-        let hookApi: ReturnType<typeof usePairingSession> | null = null;
-        function Probe() { hookApi = usePairingSession({ enabled: true, isAuthenticated: true }); return null; }
-        const screen = await renderScreen(<Probe />);
-        try {
-            await act(async () => {
-                await expect(hookApi!.startPairing()).resolves.toEqual({ ok: false, status: 412 });
-            });
-            expect(pairingStartMock).not.toHaveBeenCalled();
-            expect(hookApi!.deepLink).toBeNull();
-            expect(hookApi!.isStarting).toBe(false);
-            // The failure says why: the Home did not answer.
-            expect(hookApi!.presentation).toEqual({ phase: 'invalid_request', cause: 'home_unreachable' });
-        } finally {
-            act(() => screen.tree.unmount());
-        }
-        // The assertion that matters is the deadline itself: without a caller budget this
-        // resolves only after the 60 s attempt bound above.
-    }, 5_000);
 
     it('fails closed before direct QR creation when the exact descriptor contradicts retained profile authority', async () => {
         cachedCanonicalServerUrl = 'https://home-a.test';

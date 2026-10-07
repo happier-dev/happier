@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { StorageState } from '@/sync/store/types';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 type StorageLike = {
     readonly length: number;
@@ -32,6 +32,8 @@ async function importFreshWeb() {
 }
 
 async function applyActiveServer(serverUrl: string) {
+    // The app entry registers the real Sync runtime before Home switches.
+    await loadSyncSingletonForTests();
     const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
     const { switchConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
 
@@ -50,19 +52,18 @@ async function applyActiveServer(serverUrl: string) {
 
 async function activateServerAccount(serverUrl: string, accountId: string) {
     const { createServerAccountScope } = await import('@/sync/domains/scope/serverAccountScope');
-    const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
 
     const server = await applyActiveServer(serverUrl);
     const scope = createServerAccountScope(server.id, accountId);
     expect(scope).not.toBeNull();
-    registerStorageStateReader(() => ({ profileScope: scope } as unknown as StorageState));
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    storage.getState().activateProfileScope(scope!);
 }
 
 async function activateServerWithoutAccount(serverUrl: string) {
-    const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
-
     await applyActiveServer(serverUrl);
-    registerStorageStateReader(() => ({ profileScope: null } as unknown as StorageState));
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    storage.getState().clearProfileScope();
 }
 
 describe('pendingSetupIntent.web', () => {
@@ -136,6 +137,14 @@ describe('pendingSetupIntent.web', () => {
             relayUrl: 'https://relay.example.test',
         });
         expect(second).toBe(first);
+
+        setPendingSetupIntent({ branch: 'thisComputer', phase: 'post_auth', relayUrl: 'https://relay.example.test' });
+        const updated = getPendingSetupIntent();
+        expect(updated?.phase).toBe('post_auth');
+        expect(updated).not.toBe(first);
+        expect(getPendingSetupIntent()).toBe(updated);
+        clearPendingSetupIntent();
+        expect(getPendingSetupIntent()).toBeNull();
     });
 
     it('notifies subscribers when pending setup intent storage changes on web', async () => {
@@ -178,24 +187,37 @@ describe('pendingSetupIntent.web', () => {
         });
     });
 
-    it('reads a legacy mmkv pending setup intent record on web', async () => {
-        const record = JSON.stringify({
-            branch: 'thisComputer',
-            phase: 'dismissed',
-            relayUrl: null,
-            createdAtMs: Date.now(),
-        });
-        globalThis.localStorage.setItem('mmkv.pending-setup-intent\\record', record);
-        await activateServerAccount('https://relay.example.test', 'account-a');
+    it.each(['pending-setup-intent-record', 'mmkv.pending-setup-intent\\record'])(
+        'keeps the snapshot and original expiry when adopting legacy key %s on web',
+        async (legacyKey) => {
+            const writtenAtMs = 1_700_000_000_000;
+            const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(writtenAtMs + 60_000);
+            const record = JSON.stringify({
+                branch: 'thisComputer',
+                phase: 'dismissed',
+                relayUrl: null,
+                createdAtMs: writtenAtMs,
+            });
+            // An empty first legacy key is absent, so the MMKV-compatible fallback still adopts.
+            globalThis.localStorage.setItem('pending-setup-intent-record', '');
+            globalThis.localStorage.setItem(legacyKey, record);
+            const { getPendingSetupIntent } = await importFreshWeb();
+            const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+            await upsertAndActivateServer({ serverUrl: 'https://relay.example.test', source: 'manual', scope: 'device' });
 
-        const { getPendingSetupIntent } = await importFreshWeb();
+            const first = getPendingSetupIntent();
+            expect(first).toEqual({
+                branch: 'thisComputer',
+                phase: 'dismissed',
+                relayUrl: null,
+            });
+            expect(getPendingSetupIntent()).toBe(first);
+            expect(globalThis.localStorage.getItem(legacyKey)).toBeNull();
 
-        expect(getPendingSetupIntent()).toEqual({
-            branch: 'thisComputer',
-            phase: 'dismissed',
-            relayUrl: null,
-        });
-    });
+            nowSpy.mockReturnValue(writtenAtMs + (24 * 60 * 60 * 1000) + 1);
+            expect(getPendingSetupIntent()).toBeNull();
+        },
+    );
 
     it('round-trips a pending setup intent before an account scope exists on web', async () => {
         const { clearPendingSetupIntent, setPendingSetupIntent, getPendingSetupIntent } = await importFreshWeb();
@@ -228,13 +250,17 @@ describe('pendingSetupIntent.web', () => {
             relayUrl: 'https://relay.example.test/',
         });
 
+        const beforeAuth = getPendingSetupIntent();
         await activateServerAccount('https://relay.example.test', 'account-a');
 
-        expect(getPendingSetupIntent()).toEqual({
+        const adopted = getPendingSetupIntent();
+        expect(adopted).toEqual({
             branch: 'thisComputer',
             phase: 'awaiting_auth',
             relayUrl: 'https://relay.example.test',
         });
+        expect(adopted).toBe(beforeAuth);
+        expect(getPendingSetupIntent()).toBe(adopted);
     });
 
     it('debug-logs and drops an unauthenticated pending setup intent when auth lands on a different relay URL on web', async () => {

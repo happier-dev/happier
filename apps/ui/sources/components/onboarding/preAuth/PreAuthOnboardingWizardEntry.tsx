@@ -53,7 +53,7 @@ import {
     ACCOUNT_SECURITY_EMAIL_PASSWORD_CONNECT_INTENT,
     openAccountSecurityForHome,
 } from '@/components/settings/account/openAccountSecurityForHome';
-import { readWebServerUrlOverrideFromLocation } from '@/sync/domains/server/url/bootstrapActiveServerFromWebLocation';
+import { consumeWebServerUrlOverrideFromLocation, readWebServerUrlOverrideFromLocation } from '@/sync/domains/server/url/bootstrapActiveServerFromWebLocation';
 import { useOpenPersonalize } from '@/components/onboarding/personalize/useOpenPersonalize';
 import type { JourneyCompletion } from '@/components/onboarding/tour/state/useJourneyProgress';
 
@@ -174,10 +174,7 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
     const openPersonalize = useOpenPersonalize();
     const suppliedHomeAddress = React.useMemo(() => readWebServerUrlOverrideFromLocation(), []);
     const clearSuppliedHomeAddress = React.useCallback(() => {
-        if (!suppliedHomeAddress || typeof window === 'undefined') return;
-        const current = readWebServerUrlOverrideFromLocation();
-        if (current?.serverUrl !== suppliedHomeAddress.serverUrl) return;
-        window.history.replaceState(null, '', current.cleanedRelativeUrl);
+        if (suppliedHomeAddress) consumeWebServerUrlOverrideFromLocation({ serverUrl: suppliedHomeAddress.serverUrl });
     }, [suppliedHomeAddress]);
     const onboardingTourDecision = useFeatureDecision('app.ui.onboardingTour', { scopeKind: 'runtime' });
     const onboardingTourEnabled = onboardingTourDecision?.state === 'enabled';

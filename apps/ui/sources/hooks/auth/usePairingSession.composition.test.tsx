@@ -30,7 +30,6 @@ vi.mock('@/sync/http/client', () => ({
 }));
 
 vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
-    FOREGROUND_FEATURE_PROBE_WAIT_BUDGET_MS: 800,
     getServerFeaturesSnapshot: (...args: unknown[]) => boundary.featureSnapshot(...args),
     observeAuthenticatedServerFeaturesFresh: (...args: unknown[]) => boundary.featureSnapshot(...args),
 }));
