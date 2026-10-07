@@ -80,7 +80,10 @@ describe('ActionIdSchema', () => {
    */
   it('registers the Account Security family and the single API-token create intent', () => {
     expect(ACTION_ID_FAMILIES_V1.account_security).toEqual([
+      'account.encryption.historicalKey.forget',
+      'account.encryption.automationTemplates.recover',
       'account.security.get',
+      'account.security.terminalPresentUser.set',
       'account.password.enroll',
       'account.password.change',
       'account.password.remove',
@@ -89,6 +92,7 @@ describe('ActionIdSchema', () => {
     expect(ACTION_ID_FAMILIES_V1.account_api_tokens).toEqual([
       'account.apiTokens.create',
       'account.apiTokens.list',
+      'account.apiTokens.update',
       'account.apiTokens.revoke',
       'account.apiTokens.revokeAll',
     ]);

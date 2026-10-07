@@ -57,9 +57,9 @@ describe('managed GitHub App Action contracts', () => {
     });
   });
 
-  it('keeps secrets on interactive create surfaces', () => {
+  it('admits managed App create requests while retaining strict secret-bearing input', () => {
     const spec = getActionSpec(ActionIdSchema.parse('identity.githubApps.create'));
-    expect(spec.surfaces).toMatchObject({ ui: true, cli: true, agent: false, mcp: false });
+    expect(spec.surfaces).toMatchObject({ ui: true, cli: true, agent: true, mcp: true, api: false });
     expect(spec.inputSchema.safeParse({
       owner: { kind: 'team', teamId: 'team-1' },
       githubHost: 'https://github.com',
@@ -76,7 +76,7 @@ describe('managed GitHub App Action contracts', () => {
     }).success).toBe(false);
   });
 
-  it('exposes only the redacted managed App read to autonomous agents', () => {
+  it('exposes the redacted managed App read and human-decided mutation requests to agents', () => {
     expect(getActionSpec(ActionIdSchema.parse('identity.githubApps.list')).surfaces)
       .toMatchObject({ ui: true, cli: true, agent: true, mcp: false });
     for (const id of [
@@ -86,16 +86,14 @@ describe('managed GitHub App Action contracts', () => {
       'identity.githubApps.verifyInstallation',
       'identity.githubApps.remove',
     ] as const) {
-      expect(getActionSpec(ActionIdSchema.parse(id)).surfaces.agent).toBe(false);
+      expect(getActionSpec(ActionIdSchema.parse(id)).surfaces)
+        .toMatchObject({ agent: true, mcp: true, api: false });
     }
   });
 
   it('keeps every secret-bearing or browser-mediated managed App operation on an authenticated human caller', () => {
-    // The safe redacted read is the one managed-App operation automation may
-    // carry; every other row registers or rebinds an App whose input carries
-    // write-only key material or whose result is a one-time browser handoff.
-    // Withholding it from the Agent tool surface is not enough: an API-token or
-    // trusted-plugin caller reaches the same spec through the public ABI.
+    // Request surfaces do not supply human execution authority for write-only
+    // key material or one-time browser handoffs.
     expect(getActionSpec(ActionIdSchema.parse('identity.githubApps.list')).requiredAuthority)
       .toBe('account_automation');
     for (const id of [

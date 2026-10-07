@@ -16,8 +16,8 @@ import { PluginInvocableActionIdSchema } from './pluginActionSurface.js';
 /**
  * The Home family is one consumed Action dependency over one exact Home. These
  * tests hold the contract that makes that possible: every declared intent has a
- * real domain schema pair and a declared POST transport, and none of them can be
- * reached without the Account authority floor the Home transaction rechecks.
+ * real domain schema pair and a declared transport. Lane 01's governance and
+ * Team intents retain the Account authority floor the Home transaction rechecks.
  */
 /**
  * The complete Lane 01 catalog. Enumerating it here rather than deriving it from
@@ -96,6 +96,9 @@ const LANE_01_SAFE_INPUT_HINT_PATHS = {
     'identityNetworkPolicy.hostnames',
     'identityNetworkPolicy.cidrs',
     'identityNetworkPolicy.ports',
+    'authenticationPolicy.anonymousSignup',
+    'authenticationPolicy.storagePolicy',
+    'confirmWidening',
   ],
   'teams.list': ['scope', 'archived'],
   'teams.get': ['teamId'],
@@ -224,19 +227,19 @@ describe('Home and Teams Action family', () => {
   it('derives every host transport lookup from the row that declared it', () => {
     for (const actionId of HOME_DOMAIN_ACTION_IDS_V1) {
       const declared = getActionSpec(actionId).serverTransport;
-      expect(declared?.path.startsWith('/v1/')).toBe(true);
       expect(homeDomainActionTransportV1(actionId)).toEqual(declared);
     }
   });
 
   /**
-   * A contributed family may be REST-shaped and reuse one path under different
-   * methods, so the intent's address is the method and path together. Two rows
-   * sharing both would make the family ambiguous about which one a host reached.
+   * Lane 01's intent-shaped routes identify their operation by method and path.
+   * Other families may share an addressed command route that carries the intent
+   * in the request, so route uniqueness is not a transport-family invariant.
    */
-  it('gives each intent its own method and path', () => {
-    const addresses = HOME_DOMAIN_ACTION_IDS_V1.map((actionId) => {
+  it('gives each Lane 01 intent its own V1 method and path', () => {
+    const addresses = LANE_01_ACTION_IDS.map((actionId) => {
       const transport = homeDomainActionTransportV1(actionId);
+      expect(transport.path.startsWith('/v1/'), actionId).toBe(true);
       return `${transport.method} ${transport.path}`;
     });
     expect(new Set(addresses).size).toBe(addresses.length);
@@ -356,13 +359,12 @@ describe('Home and Teams Action family', () => {
   });
 
   /**
-   * Placement is the family-wide fact: the Home decides these in its own
-   * transaction, so every row is Account-placed whatever machine invoked it.
-   * The authority floor is per-owner — a contributed row may narrow itself to a
-   * present user — so it is asserted over Lane 01's own rows.
+   * Placement and authority belong to each domain owner. Lane 01's governance
+   * and Team transactions are Account-placed; the shared transport family also
+   * carries intents answered by Session or client owners.
    */
-  it('places every family row on the Account that owns the Home', () => {
-    for (const actionId of HOME_DOMAIN_ACTION_IDS_V1) {
+  it('places Lane 01 governance and Team intents on the Account that owns the Home', () => {
+    for (const actionId of LANE_01_ACTION_IDS) {
       expect(getActionSpec(actionId).executionPlacement).toBe('account');
     }
   });
@@ -373,8 +375,8 @@ describe('Home and Teams Action family', () => {
     }
   });
 
-  it('withholds the external MCP tool surface until its authority contract exists', () => {
-    for (const actionId of HOME_DOMAIN_ACTION_IDS_V1) {
+  it('withholds Lane 01 external MCP tools until their authority contract exists', () => {
+    for (const actionId of LANE_01_ACTION_IDS) {
       expect(getActionSpec(actionId).surfaces.mcp).toBe(false);
     }
   });

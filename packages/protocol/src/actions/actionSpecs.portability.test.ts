@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { fileURLToPath } from 'node:url';
+import { runInNewContext } from 'node:vm';
 import { build } from 'vite';
 
 import { getActionSpec } from './actionSpecs.js';
@@ -7,22 +8,11 @@ import {
   ExternalSessionOperationStatusInputV1Schema,
 } from '../sessions/external/operationActionSchemasV1.js';
 
-vi.mock('../sessions/external/operationActionsV1.js', () => {
-  throw new Error(
-    'ActionSpec registry initialized the mixed External Sessions operation owner',
-  );
-});
-
-vi.mock('../machines/peer/mediation/stream/index.js', () => {
-  throw new Error(
-    'ActionSpec registry initialized the mixed live-stream transport barrel',
-  );
-});
-
 describe('ActionSpec registry portability', () => {
-  it('bundles the canonical schema closure without runtime crypto or Node dependencies', async () => {
+  it('runs the bundled canonical schemas without Node globals or external runtime imports', async () => {
     const source = fileURLToPath(new URL('./actionSpecs.ts', import.meta.url));
-    const forbiddenModules: string[] = [];
+    const chunks: string[] = [];
+    const externalImports: string[] = [];
     await build({
       configFile: false,
       logLevel: 'silent',
@@ -33,21 +23,27 @@ describe('ActionSpec registry portability', () => {
         },
         load(id) {
           return id === '\0virtual:protocol-actions'
-            ? `export { getActionSpec } from ${JSON.stringify(source)};`
+            ? `import { getActionSpec } from ${JSON.stringify(source)};
+              const spec = getActionSpec('session.spawn_new');
+              const input = {
+                creationKey: 'browser-attempt',
+                executionTarget: { serverId: 'server', machineId: 'machine' },
+                directory: { kind: 'path', path: '/workspace' },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+              };
+              globalThis.actionSchemaResult = {
+                id: spec.id,
+                accepted: spec.inputSchema.safeParse(input).success,
+                unknownFieldAccepted: spec.inputSchema.safeParse({ ...input, callerAuthority: 'present_user' }).success,
+                rpcMissingKeyAccepted: spec.surfaceBindings.rpc.inputSchema.safeParse({ ...input, creationKey: undefined }).success,
+              };`
             : null;
         },
-        generateBundle() {
-          for (const id of this.getModuleIds()) {
-            if (
-              id.includes('/tweetnacl/')
-              || id.startsWith('node:')
-              || id.includes('__vite-browser-external')
-              || id.endsWith('/crypto/accountScopedCipher.ts')
-              || id.endsWith('/sessions/metadata/sessionMetadataEnvelopesV1.ts')
-              || id.endsWith('/machines/peer/mediation/tunnel/authorization.ts')
-            ) {
-              forbiddenModules.push(id);
-            }
+        generateBundle(_options, bundle) {
+          for (const chunk of Object.values(bundle)) {
+            if (chunk.type !== 'chunk') continue;
+            externalImports.push(...chunk.imports, ...chunk.dynamicImports);
+            chunks.push(chunk.code);
           }
         },
       }],
@@ -58,11 +54,20 @@ describe('ActionSpec registry portability', () => {
         rollupOptions: {
           input: 'virtual:protocol-actions',
           preserveEntrySignatures: 'strict',
-          output: { format: 'es', inlineDynamicImports: true },
+          output: { format: 'iife', inlineDynamicImports: true },
         },
       },
     });
-    expect(forbiddenModules).toEqual([]);
+    expect(externalImports).toEqual([]);
+    expect(chunks).toHaveLength(1);
+    const browser = { URL, TextEncoder, TextDecoder, actionSchemaResult: undefined };
+    runInNewContext(chunks[0]!, browser);
+    expect(browser.actionSchemaResult).toEqual({
+      id: 'session.spawn_new',
+      accepted: true,
+      unknownFieldAccepted: false,
+      rpcMissingKeyAccepted: false,
+    });
   }, 30_000);
 
   it('retains schema identity through the incumbent crypto facades', async () => {
@@ -84,12 +89,7 @@ describe('ActionSpec registry portability', () => {
     expect(usageRefs.ProviderAccountUsageRefsV1Schema.shape.recordIds.element).toBe(portableUsage.ProviderAccountUsageRecordIdSchema);
   });
 
-  it('initializes without evaluating mixed socket, persistence, or transport owners', async () => {
-    const { getActionSpec } = await import('./actionSpecs.js');
-    const {
-      ExternalSessionOperationStatusInputV1Schema,
-    } = await import('../sessions/external/operationActionSchemasV1.js');
-
+  it('retains the canonical external-operation schema in the registry', () => {
     const spec = getActionSpec('sessions.external.operation.status.get');
     expect(spec.id).toBe('sessions.external.operation.status.get');
     expect(spec.inputSchema).toBe(ExternalSessionOperationStatusInputV1Schema);

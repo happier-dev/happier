@@ -14,7 +14,7 @@ describe('session.spawn_new dev adaptation', () => {
       serverId: 'server-1',
       machineId: 'machine-1',
     },
-    directory: '/workspace/project',
+    directory: { kind: 'path', path: '/workspace/project' },
     organizationPlacement: {
       folderId: 'folder-1',
       tagIds: ['tag-1'],
@@ -75,6 +75,7 @@ describe('session.spawn_new dev adaptation', () => {
   });
 
   it.each([
+    ['untyped directory', { ...canonicalInput, directory: '/workspace/project' }],
     ['legacy metadata tag', { ...canonicalInput, tag: 'not-a-creation-key' }],
     ['flat machine target', { ...canonicalInput, machineId: 'machine-2' }],
     ['flat server target', { ...canonicalInput, serverId: 'server-2' }],

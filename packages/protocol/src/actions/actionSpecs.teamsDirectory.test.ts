@@ -33,8 +33,8 @@ describe('Team directory Action contracts', () => {
       expect(spec.surfaces).toMatchObject({
         ui: true,
         cli: true,
-        agent: isRead,
-        mcp: false,
+        agent: isRead || !isPublicRemoval,
+        mcp: !isRead && !isPublicRemoval,
         api: isRead || isPublicRemoval,
       });
     }
