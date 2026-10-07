@@ -287,7 +287,13 @@ export async function startHappyServer(
 
         let pluginToolCatalog: readonly ProjectedPluginToolCatalogEntry[];
         try {
-            pluginToolCatalog = await readCurrentPluginToolCatalog(client, opts?.pluginRuntimeRegistryLease);
+            // GET only opens the notification stream; the SDK cannot dispatch
+            // tools from it. Keep its already-admitted startup registrations
+            // without making notification transport depend on a fresh catalog.
+            // POST requests still bind the current executable catalog.
+            pluginToolCatalog = req.method === 'GET'
+                ? initialPluginToolCatalog
+                : await readCurrentPluginToolCatalog(client, opts?.pluginRuntimeRegistryLease);
         } catch (error) {
             stopKeepAlive();
             logger.debug('[happierMCP] Plugin catalog unavailable', { error: 'daemon_plugin_catalog_unavailable' });
