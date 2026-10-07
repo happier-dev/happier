@@ -2901,7 +2901,8 @@ export function createCliActionDeps(params: Readonly<{
       const response = raw as Record<string, unknown>;
       const output = WorkflowMachineCommandOutputV1Schema.safeParse({
         exitCode: response.exitCode ?? (response.success ? undefined : -1),
-        stdout: response.stdout ?? '', stderr: response.stderr ?? '',
+        stdout: response.success ? response.stdout : response.stdout ?? '',
+        stderr: response.success ? response.stderr : response.stderr ?? '',
       });
       if (!output.success) return { ok: false, errorCode: 'action_failed', error: 'Command result is invalid' };
       if (response.success) return output.data;

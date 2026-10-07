@@ -136,7 +136,8 @@ describe('createAccountArtifactStore', () => {
     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
       widgetAccountScope: () => ({ serverId: 'home', accountId: 'owner' }), widgetDefinitionArtifacts: port });
     const account = { serverId: 'home', accountId: 'owner' };
-    const definition = { name: 'Private count', body: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Private data' } } },
+    const definition = { name: 'Private count', sizeDeclaration: { sizes: ['medium', 'full'], defaultSize: 'medium' },
+      body: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Private data' } } },
       inputs: { fields: [] }, inputSchema: { type: 'object', additionalProperties: false } };
     const id = '11111111-1111-4111-8111-111111111111';
     const created = await executor.execute('widgets.definition.create', { account, artifactId: id, definition }, { surface: 'ui', serverId: 'home' });
@@ -160,9 +161,9 @@ describe('createAccountArtifactStore', () => {
     const area = createWidgetSurfaceArtifactPortV1(createAcknowledgedAccountArtifactTransport(store), { surface, isCurrent: () => true });
     const instance = { v: 1 as const, id: 'private-copy', definition: { kind: 'builtin' as const, id: 'session_summary' }, bindings: {} };
     await area.apply({ kind: 'add', instance });
-    await area.apply({ kind: 'width', instanceId: instance.id, width: 'full' });
+    await area.apply({ kind: 'size', instanceId: instance.id, size: 'full' });
     expect((await createWidgetSurfaceArtifactPortV1(createAcknowledgedAccountArtifactTransport(store), { surface, isCurrent: () => true }).read()).instances)
-      .toEqual([{ instance, width: 'full' }]);
+      .toEqual([{ instance, size: 'full' }]);
     if (mode === 'e2ee') expect(JSON.stringify(mockPost.mock.calls)).not.toContain('private-copy');
     const calls = mockPost.mock.calls.length;
     const wrongModeStore = createAccountArtifactStore({ credentials: { token: 'token', encryption: null },

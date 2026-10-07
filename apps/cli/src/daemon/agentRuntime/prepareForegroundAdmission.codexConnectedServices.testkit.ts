@@ -57,7 +57,8 @@ export async function createCodexForegroundConnectedAccountFixture() {
   const readCredential = async () => {
     const credential = await readQualifiedConnectedAccountCredentialV4({ token: credentials.token, ref: { service, accountId: 'work' } });
     if (!credential) throw new Error('Exact Account credential unavailable');
-    return credential;
+    if (credential.authenticationModeId !== 'oauth') throw new Error('Exact Account OAuth credential unavailable');
+    return { ...credential, authenticationModeId: credential.authenticationModeId };
   };
   let registry: ResolvedExecutablePluginRuntimeRegistry | null = null;
   const account = createForegroundPurposeOwnerFixture({

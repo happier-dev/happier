@@ -8,6 +8,7 @@ import { MessageQueue2 } from './modeMessageQueue';
 import { combinePermissionModeQueuedPrompts, type PermissionModeQueuedPrompt, type PermissionModeQueuedPromptMode } from './permissions/queuedPrompt';
 import { runPermissionModePromptLoop } from './runPermissionModePromptLoop';
 import { createSessionProviderInputConsumer } from './session/input/sessionProviderInputConsumer';
+import { createSessionProviderInputConsumerSessionAdapter } from './waitForNextPermissionModeMessage';
 
 type PlanTurn = Readonly<{
   text: string;
@@ -25,7 +26,9 @@ async function dispatchPlans(turns: readonly PlanTurn[], nativePlans?: string[],
   const queue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(
     (mode) => JSON.stringify(mode), { batcher: combinePermissionModeQueuedPrompts },
   );
-  const inputConsumer = createSessionProviderInputConsumer({ messageQueue: queue, session });
+  const inputConsumer = createSessionProviderInputConsumer({
+    messageQueue: queue, session: createSessionProviderInputConsumerSessionAdapter(session),
+  });
   const acceptedEffects = new Map<string, (() => void) | null>();
   const runtimeListeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
   const prompts: string[] = [];

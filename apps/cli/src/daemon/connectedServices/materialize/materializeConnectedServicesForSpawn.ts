@@ -342,9 +342,10 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
     const diagnostics: ConnectedServicesMaterializationDiagnostic[] = [];
     const stateSharingDescriptor =
       await catalogEntry?.getConnectedServiceStateSharingDescriptor?.() ?? null;
+    const nativeHome = stateSharingDescriptor?.nativeHome;
     if (
       stateSharingDescriptor?.providerSupportStatus === 'supported'
-      && stateSharingDescriptor.nativeHome
+      && nativeHome
     ) {
       const sourceEnvironment = Object.freeze(Object.fromEntries(
         Object.entries(params.processEnv ?? process.env).filter(
@@ -360,7 +361,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
         descriptor: stateSharingDescriptor,
         nativeSourceContext: {
           sourceRoot: resolveConnectedServiceNativeHomeRoot({
-            nativeHome: stateSharingDescriptor.nativeHome,
+            nativeHome,
             sourceEnvironment,
             homeDir: homedir(),
           }),
@@ -378,7 +379,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
         providerLabel: params.agentId,
       }));
       Object.assign(env, stateSharing.envOverrides, {
-        [stateSharingDescriptor.nativeHome.environmentKey]: params.rootDir,
+        [nativeHome.environmentKey]: params.rootDir,
       });
       diagnostics.push(...stateSharing.diagnostics);
 
