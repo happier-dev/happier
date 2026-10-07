@@ -35,6 +35,7 @@ export async function machineMarketplaceSourceRegistryGet(
         machineId,
         serverId: opts?.serverId ?? undefined,
         timeoutMs: opts?.timeoutMs ?? undefined,
+        ...(opts?.timeoutMs === null ? { operationTimeoutMs: null } : {}),
         method: RPC_METHODS.DAEMON_MARKETPLACE_SOURCE_REGISTRY_GET,
         payload: {},
     });
@@ -52,6 +53,7 @@ export async function machineMarketplaceSourceRegistryMutate(
             machineId,
             serverId: opts?.serverId ?? undefined,
             timeoutMs: opts?.timeoutMs ?? undefined,
+            ...(opts?.timeoutMs === null ? { operationTimeoutMs: null } : {}),
             method: RPC_METHODS.DAEMON_MARKETPLACE_SOURCE_REGISTRY_MUTATE,
             payload,
             onIssued: () => { issued = true; },
@@ -84,6 +86,7 @@ export async function machineMarketplaceIndexQuery(
         machineId,
         serverId: opts?.serverId ?? undefined,
         timeoutMs: opts?.timeoutMs ?? undefined,
+        ...(opts?.timeoutMs === null ? { operationTimeoutMs: null } : {}),
         method: RPC_METHODS.DAEMON_MARKETPLACE_INDEX_QUERY,
         payload: query,
     });

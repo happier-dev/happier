@@ -133,4 +133,22 @@ describe('embed bridge guest', () => {
 
         await expect(outcome).resolves.toEqual({ kind: 'closed' });
     });
+
+    it('retires a superseded credential request without waiting for the host to answer it', async () => {
+        const frame = createFrameWindow();
+        const guest = startEmbedBridgeGuest({ window: frame.frameWindow, identity, embedPublicKey: PUBLIC_KEY, events: {} });
+        frame.deliver({ source: frame.parent as unknown as Window, origin: HOST_ORIGIN, data: initEnvelope(), ports: [openChannel().port2] });
+        let retired: unknown;
+        const first = guest.requestCredential({ sessionId: 'session-a', embedPublicKey: PUBLIC_KEY, reason: 'expiring' });
+        void first.then((outcome) => { retired = outcome; });
+        guest.requestCredential({ sessionId: 'session-b', embedPublicKey: PUBLIC_KEY, reason: 'open' });
+        try {
+            // The host intentionally drops the old callback result after open(B). Its promise
+            // must settle locally so repeated switches cannot retain abandoned requests.
+            await Promise.resolve();
+            expect(retired).toEqual({ kind: 'closed' });
+        } finally {
+            guest.dispose();
+        }
+    });
 });

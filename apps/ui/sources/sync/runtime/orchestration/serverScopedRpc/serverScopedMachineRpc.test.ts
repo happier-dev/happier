@@ -523,6 +523,73 @@ describe('machineRpcWithServerScope', () => {
         } finally { vi.useRealTimers(); }
     });
 
+    it.each(['capability', 'installDecision', 'marketplaceQuery'] as const)('keeps plugin capability execution pending until its admitted daemon operation completes (%s)', async (operation) => {
+        vi.useFakeTimers();
+        try {
+            getActiveServerSnapshotSpy.mockReturnValue({
+                serverId: 'server-a', serverUrl: 'https://server-a.example.test', kind: 'custom', generation: 1,
+            });
+            // A wrong timed-out implementation may try its ordinary scoped fallback;
+            // keep that transport available so RED is not a missing-credentials fixture failure.
+            getCredentialsSpy.mockResolvedValue({ token: TOKEN_A });
+            mockScopedMachineFetch({ id: 'machine-1', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER });
+            const emitWithAck = vi.fn(() => new Promise<never>(() => {}));
+            createEphemeralSocketSpy.mockResolvedValue({
+                timeout: () => ({ emitWithAck }), emitWithAck, emit: vi.fn(), disconnect: vi.fn(),
+            });
+            let resolveResult!: (value: unknown) => void;
+            machineRpcSpy.mockImplementation(async (_machineId, _method, _params, options) => {
+                options?.onIssued?.();
+                return await new Promise((resolve) => { resolveResult = resolve; });
+            });
+            const page = { revision: 7, items: [], nextCursor: null, sources: [], diagnostics: [] };
+            const pending = operation === 'capability'
+                ? (await import('@/sync/ops/capabilities')).machineCapabilitiesInvoke('machine-1', {
+                    id: 'tool.plugins', method: 'install', params: { pluginId: 'example' },
+                }, { timeoutMs: null })
+                : operation === 'installDecision'
+                    ? (await import('@/sync/ops/machinePluginInstallDecision')).machinePluginInstallDecision('machine-1', {
+                        timeoutMs: null, isAuthorityCurrent: () => true,
+                        decision: { pendingChangeId: 'pending-1', decision: 'cancel' },
+                    })
+                    : (await import('@/sync/ops/machineMarketplaceSources')).machineMarketplaceIndexQuery('machine-1', {
+                        text: '', cursor: null, limit: 50, filters: {},
+                    }, { timeoutMs: null });
+            const settled = vi.fn();
+            void pending.then(settled, settled);
+            await vi.advanceTimersByTimeAsync(601_000);
+            expect(settled).not.toHaveBeenCalled();
+            resolveResult(operation === 'capability' ? { ok: true, result: { installed: true } }
+                : operation === 'installDecision' ? { kind: 'cancelled' } : page);
+            await expect(pending).resolves.toMatchObject(operation === 'capability'
+                ? { supported: true, response: { ok: true, result: { installed: true } } }
+                : operation === 'installDecision' ? { supported: true, outcome: { kind: 'cancelled' } } : page);
+            expect(createEphemeralSocketSpy).not.toHaveBeenCalled();
+        } finally { vi.useRealTimers(); }
+    });
+
+    it('keeps capability inventory loading until its admitted daemon probe completes', async () => {
+        vi.useFakeTimers();
+        try {
+            getActiveServerSnapshotSpy.mockReturnValue({
+                serverId: 'server-a', serverUrl: 'https://server-a.example.test', kind: 'custom', generation: 1,
+            });
+            let resolveResult!: (value: unknown) => void;
+            machineRpcSpy.mockImplementation(async (_machineId, _method, _params, options) => {
+                options?.onIssued?.();
+                return await new Promise((resolve) => { resolveResult = resolve; });
+            });
+            const { prefetchMachineCapabilities, getMachineCapabilitiesCacheState } = await import('@/hooks/server/useMachineCapabilitiesCache');
+            const target = { machineId: 'machine-1', cacheKeySalt: 'slow-plugin-probe' };
+            const pending = prefetchMachineCapabilities({ ...target, request: { checklistId: 'new-session' } });
+            await vi.advanceTimersByTimeAsync(31_000);
+            expect(getMachineCapabilitiesCacheState(target.machineId, undefined, target.cacheKeySalt)?.status).toBe('loading');
+            resolveResult({ protocolVersion: 1, results: {} });
+            await pending;
+            expect(getMachineCapabilitiesCacheState(target.machineId, undefined, target.cacheKeySalt)?.status).toBe('loaded');
+        } finally { vi.useRealTimers(); }
+    });
+
     it('decrypts a scoped E2EE observation after its caller-owned wait without an expired setup budget', async () => {
         const { Encryption } = await import('@/sync/encryption/encryption');
         const { createFakeCryptoWorker } = await import('@/sync/encryption/nativeCryptoWorker/fakeCryptoWorker');
