@@ -53,8 +53,14 @@ For a suitable read-only or ignored-output command without a public entry point:
 ./apps/stack/bin/hstack-exec -- <command> [args...]
 ```
 
-Default to these automatic forms whenever the command is eligible for remote execution. Do not
-preemptively add `--local` because a target might be unavailable, synchronization might be slow, or
+Default to these automatic forms whenever the command is eligible for remote execution. Pin
+`--target=...` only when the evidence requires a particular platform, host or machine-local state.
+Explicit targets retain the same Linux memory, PSI and class-reservation admission as automatic
+targets: a busy pinned worker waits and reports its admission reason. A configured service target
+such as `mac-host` is eligible for auto placement only when it is also explicitly included in
+`commandExecution.targets`.
+
+Do not preemptively add `--local` because a target might be unavailable, synchronization might be slow, or
 the caller wants a reliable fallback. Target selection and the configured `fallback=local` policy
 own that decision: the launcher tries healthy targets and runs locally when none is usable.
 
@@ -76,8 +82,17 @@ the executable directly when practical; `sh -lc` hides inner tool requirements f
 Local load participation and local fallback are independent settings. A running Stack is not
 required when independent synchronization is healthy. With no usable remote, the launcher follows
 the configured fallback. A selected host that cannot establish its command connection is excluded
-and the launcher tries another configured target before fallback. A command that actually starts is
-authoritative and is never replayed elsewhere after failure.
+and the launcher tries another configured target before fallback. If Linux admission cannot register
+or maintain its state before bootstrap or the payload starts, automatic routing excludes that worker
+for the existing unavailable TTL and tries another configured target. An explicitly pinned target
+reports the failure without changing hosts. A command that actually starts is authoritative and is
+never replayed elsewhere after failure, including when it exits with the admission protocol's status.
+
+In current 0.3 development, AUTO also retries actual worker admission before bootstrap or payload
+execution. An execution-qualified busy result re-evaluates the remaining pool without an unavailable
+TTL. If every usable worker is busy, it waits and re-evaluates the pool; busy workers do not justify
+local fallback. Pins retain their observable worker admission wait. Already-loaded launchers are
+not restarted or relocated by a source update.
 
 Use `./apps/stack/bin/hstack-exec --local -- <command> [args...]` only when that invocation must run
 on the authoritative local machine even while healthy remote targets are available—for example, it

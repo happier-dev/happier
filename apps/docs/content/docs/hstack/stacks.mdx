@@ -360,7 +360,7 @@ node ./apps/stack/scripts/repo_local.mjs stack env agent-qa-shared shared-db <de
 node ./apps/stack/scripts/repo_local.mjs stack env agent-qa-shared set HAPPIER_STACK_EXPO_SOURCE_STACK=<repository-stack>
 ```
 
-The preset places the QA server on the database host. That server reads the source stack's existing SQLite URL, at-rest secret, and file roots on the host; no secret is copied into the QA env file. QA has separate ports, runtime/data directories, CLI home, daemon state, logs, and process ownership. Its daemon remains on the VM. QA metrics and automatic migrations are disabled, and Stack skips migration. Do not migrate or restart the development server to recover a QA stack.
+The preset places the QA server on the database host. That server reads the source stack's existing SQLite URL, at-rest secret, and file roots on the host; no secret is copied into the QA env file. QA has separate ports, runtime/data directories, CLI home, daemon state, logs, and process ownership. Its daemon stays local by default because sessions, resume and workspaces belong to that Machine. An explicit per-stack `daemon` pin can select one named host; an unavailable pinned host fails closed. QA metrics and automatic migrations are disabled, and Stack skips migration. Do not migrate or restart the development server to recover a QA stack.
 
 All Accounts and their data are in one database, with normal Account access controls unchanged. A new QA Account does not inherit the development Account's connected services: use the development Account when you are authorized to test its connected services. Separate servers still have separate in-memory socket/RPC relays, so database sharing alone does not route live operations to a daemon connected to the other server.
 
@@ -372,7 +372,7 @@ node ./apps/stack/scripts/repo_local.mjs stack runtime agent-qa-shared select --
 node ./apps/stack/scripts/repo_local.mjs stack start agent-qa-shared --background --runtime --no-browser
 ```
 
-The foreign snapshot needs only a server component; CLI login and the VM daemon use a native daemon snapshot from the same repository authority. No Darwin daemon or web artifact is needed for borrowed Expo. Create a new QA Account in the browser and approve `stack auth agent-qa-shared login --no-open` there, or sign into an explicitly authorized existing Account.
+The foreign snapshot needs only a server component; CLI login and the default local QA daemon use the controller-native daemon snapshot from the same repository authority. An explicit consumer daemon pin selects a snapshot matching that one host; QA and command pools cannot override it. Fresh presets leave the daemon unpinned and therefore local. Start/select/activate/doctor share placement-owned component targets, so a local Linux ARM64 daemon stays ARM64 even when commands execute on an x64 worker. No Darwin daemon or web artifact is needed for borrowed Expo with a Linux daemon. Remote services require healthy source synchronization and matching snapshots; the complete split-host browser journey is not yet live-certified. Create a new QA Account in the browser and approve `stack auth agent-qa-shared login --no-open` there, or sign into an explicitly authorized existing Account.
 
 If the development schema advances beyond the loaded QA snapshot, known missing tables or columns report `shared_qa_schema_mismatch` with a reload instruction. Build/select a newer server snapshot and explicitly restart only the QA stack. QA never migrates the shared database. Stop the remembered QA stack when it is idle:
 

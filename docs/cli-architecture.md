@@ -82,6 +82,14 @@ Model Provider configuration remains in the ordinary Agent/Provider selection
 seam, including migrated predecessor direct-chat settings. There is no second
 Voice-owned HTTP chat runtime.
 
+An Agent may ask to open or recover Voice through the existing danger/Ask-first
+Actions; approval does not give it control of the conversation. The execution-run
+dispatcher admits caller turns and run Actions for `voice_agent` only with
+`present_user` authority, including transcript-aware streams. Agent/MCP execution-run
+calls retain automation authority through the existing Session/Machine socket
+`authorityCeiling`; no caller-authored request field can elevate it. Other run
+intents keep their existing admission policy.
+
 Speech capture and inference retain their existing application/attempt authority.
 Binary speech grants authorize the speech application, not a TCP destination port;
 see [peer mediation](peer-mediation.md).
@@ -268,6 +276,17 @@ child frame's project base. Authored workspace provenance distinguishes a leaf's
 explicit selection from an inherited frame default, avoiding duplicate worktree
 creation. These are development contracts; composed loaded-runtime validation
 remains pending.
+
+In unreleased 0.3 development source, every Workflow block may carry an optional
+authored `name`, independent of its prompt, Role or Action name. Protocol trims
+the name; blank input restores an unnamed block. The shared block-label owner
+uses the authored name for editor headings, read-only cards, Flow/Map nodes and
+Run rows, with the existing derived label as the fallback. Inline heading edits
+use the canonical draft callback and its Undo/Redo history. Fresh step Sessions
+receive a creation title from the accepted definition: `{ordinal} · {step name}`,
+plus ` · {item}` for per-item work. The ordinal matches the block heading and
+map. Unnamed steps omit the creation title; retained Sessions and later human
+renames remain under the existing Session naming owner.
 
 An explicit **Run workflow again** is a new Run, not custody recovery. In 0.3
 development it uses the existing inline `workflow.run.start` source with
@@ -716,6 +735,7 @@ Configuration lives in `src/configuration.ts`:
 - `HAPPIER_SERVER_URL` and `HAPPIER_WEBAPP_URL` override defaults.
 - `serverUrl` is the canonical public Home URL used for first-contact key-challenge audience checks. `apiServerUrl` is the request transport: `HAPPIER_PUBLIC_SERVER_URL` selects the canonical URL, while `HAPPIER_LOCAL_SERVER_URL` selects a local/forwarded transport without changing that audience.
 - In the 0.3 development stack, stack-scoped CLI invocations pass both URLs and reconcile the stack-stable active profile through `server set`, including on a fresh CLI home. The wrapper verifies the persisted profile before forwarding the requested command and fails closed if reconciliation did not apply.
+- Recovery-key login failures retain the originating error code and operation phase (plus HTTP status when present). The CLI writes a local-only, redacted error diagnostic; attached HTTP bodies and credentials are never serialized into that diagnostic.
 - `HAPPIER_VARIANT`, `HAPPIER_EXPERIMENTAL`, `HAPPIER_DISABLE_CAFFEINATE` control behavior.
 
 ### One default channel per Happier home
@@ -1549,11 +1569,18 @@ there is no platform-specific build selector or parallel Vite/Re.Pack loader.
 The same daemon owner also holds one process-local slot per plugin. Managed
 third-party packages load from immutable installation generations, bundled
 first-party packages load from the exact CLI version root or a pinned runner
-snapshot, and trusted development/drop-in plugins load from their selected
+snapshot (including a producer's immutable Stack daemon artifact), and trusted development/drop-in plugins load from their selected
 source in place. Only a fully prepared candidate replaces its plugin's current
 occurrence; a failed in-process edit preserves the incumbent without rotating
 unrelated slots. A daemon restart rebuilds current development source and never
 claims to restore a historical copied source.
+
+In current development source, `resolveAuthoritativePackagedRuntimeCustody`
+binds a Stack snapshot's physical daemon payload to its producer manifest's
+artifact fingerprint, using the existing `pinned_runner_snapshot` custody shape.
+Native launch and `package-dist` launch resolve the same identity, including
+when several snapshots reference that artifact. This is exact loaded-runtime
+custody, not selection of a release channel or a managed installation.
 
 Artifact digests identify bytes, not trust, release selection, or slot
 currentness. Portable installed UI follows Account release/digest adoption;
@@ -2102,7 +2129,7 @@ The source stack may start from a valid last-green runtime while changed source 
 
 For development services placed on a remote target, the target supervisor owns the worker and its independent SSH tunnel. Worker recovery retains a healthy tunnel and rechecks its lifetime at dispatch, replacing a tunnel that exited during backoff or retirement. Remote Expo readiness reports a degraded service at the existing readiness deadline, including with an attended TUI, and continues readiness recovery through the supervisor. Standalone attended Metro waits retain their cancellation-controlled checkpoints. An Expo heap failure is handled separately by the existing Expo process restart policy; it does not select a different host or start a local duplicate.
 
-Remote dependency bootstrap installs tools without workspace lifecycle scripts before loading the package-manager owner. That scriptless admission does not certify runtime readiness. The full install owner explicitly runs the canonical UI postinstall under the existing dependency-refresh lock before publishing readiness, including for daemon and build workers. UI patches and asset-generator sources participate through `apps/ui/package.json`'s `happier.installFreshnessInputs`; changing either reruns postinstall even when Yarn reuses installed packages. Postinstall failure leaves admission stale and fails preparation before a fresh Metro starts.
+Remote dependency bootstrap installs tools without general workspace lifecycle scripts before loading the package-manager owner. Every install that materializes the shared UI dependency tree, including source-test and stage-zero refreshes, completes the canonical UI postinstall under the existing dependency-refresh lock. The dependency-free `utils/proc/ui_postinstall.mjs` owner serves both bootstrap and full package-manager preparation; the UI verifier also loads without compiled Stack packages. The mandatory password-worker asset producer compiles the canonical Protocol codec source directly, so cold UI postinstall does not require or consume stale Protocol dist. Scriptless admission still does not certify other runtime lifecycle prerequisites. UI patches and asset-generator sources participate through `apps/ui/package.json`'s `happier.installFreshnessInputs`; changing either reruns postinstall even when Yarn reuses installed packages. Postinstall failure leaves admission stale and fails preparation; an unchanged source-test preparation reuses completed outputs. This prevents a validation install from leaving an already-running Expo with unpatched dependencies.
 
 In 0.3 web development, `apps/ui/metro.config.js` rewrites development bundle, source-map and HMR entry requests to `lazy=false`. Dynamic imports are included in the initial graph and still resolve asynchronously; `inlineRequires` defers module evaluation. This prevents Metro from retaining overlapping transitive graphs for each large optional presentation entry. Native development and production lazy bundling retain Expo's existing behavior. Web Babel uses Expo's existing `import.meta` transform so optional dependencies remain valid in Metro's script bundles; the Metro cache-version bump invalidates older transforms on restart. App and vendor source maps remain intact. A running Metro must be restarted to load this configuration change.
 
