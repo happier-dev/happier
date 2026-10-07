@@ -9,8 +9,6 @@ import { resolveRuntimeBuildAuthority } from '../../runtime/shared/runtime_build
 import { getServerLightDataDirFromEnvOrDefault } from '../stack/dirs.mjs';
 import { hasRetainedServerData } from './retained_server_data.mjs';
 
-export const DEFAULT_QA_TARGET_NAMES = Object.freeze(['linux2', 'linux3', 'windows1-linux', 'windows2-linux', 'linux1']);
-
 export async function loadControlledRuntimeConfig({ stackName, sourceDir, preserveLocalPlacement = false, env = process.env },
   { logger = console } = {}) {
   const rootDir = getRootDir(import.meta.url);
@@ -22,23 +20,21 @@ export async function loadControlledRuntimeConfig({ stackName, sourceDir, preser
   });
   const qaExplicitlySet = own.config.runtimePlacement?.qa != null;
   if (preserveLocalPlacement && own.config.runtimePlacement?.server?.mode !== 'prefer-target') {
-    const explicitRemoteQa = qaExplicitlySet && own.config.runtimePlacement.qa.mode !== 'local';
-    const localData = explicitRemoteQa && await hasRetainedServerData(getServerLightDataDirFromEnvOrDefault({ stackBaseDir: authority.consumerStackBaseDir, env }));
-    if (localData || !explicitRemoteQa) {
-      // An unplaced/local-data stack must not depend on even parsing the
-      // producer's unproven QA default to activate its existing local runtime.
+    const explicitLocalQa = qaExplicitlySet && own.config.runtimePlacement.qa.mode === 'local';
+    const localData = await hasRetainedServerData(getServerLightDataDirFromEnvOrDefault({ stackBaseDir: authority.consumerStackBaseDir, env }));
+    if (localData || explicitLocalQa) {
       return { ...own, config: parseDevTargetsConfig({ version: 3, targets: own.config.targets,
         runtimePlacement: { ...own.config.runtimePlacement, qa: { mode: 'local' } },
         commandExecution: own.config.commandExecution,
       }), authority, producer: stackName === authority.producerStackName, qaExplicitlySet,
-      localPlacementReason: localData ? 'retained-local-data' : qaExplicitlySet ? 'explicit-local' : 'unproven-qa-default' };
+      localPlacementReason: localData ? 'retained-local-data' : 'explicit-local' };
     }
   }
   const producer = await loadDevTargetsConfig({ stackName: authority.producerStackName, env });
   const targets = own.config.targets.length ? own.config.targets : producer.config.targets;
-  const defaults = DEFAULT_QA_TARGET_NAMES.filter(name => targets.some(target => target.name === name));
-  const qa = own.config.runtimePlacement?.qa ?? producer.config.runtimePlacement?.qa
-    ?? (defaults.length ? { mode: 'auto', targets: defaults, fallback: 'local' } : { mode: 'local' });
+  // Commands can move between workers; a Machine's sessions and workspace
+  // cannot. Only this consumer's explicit daemon pin can place its Machine.
+  const qa = own.config.runtimePlacement?.qa ?? { mode: 'local' };
   const config = parseDevTargetsConfig({ version: 3, targets,
     runtimePlacement: { ...own.config.runtimePlacement, qa },
     commandExecution: own.config.commandExecution ?? producer.config.commandExecution,
@@ -58,11 +54,13 @@ export async function persistControlledServerPlacement({ stackName, sourceDir, t
   if (!loaded.config.targets.some(target => target.name === targetName)) {
     throw new Error(`[dev-targets] unknown QA target: ${targetName}`);
   }
-  await writeJsonAtomic(loaded.path, parseDevTargetsConfig({ ...loaded.config,
+  const persisted = parseDevTargetsConfig({ ...loaded.config,
     runtimePlacement: { ...loaded.config.runtimePlacement,
       server: { mode: 'prefer-target', target: targetName, fallback: 'local' },
     },
-  }));
+  });
+  if (!loaded.daemonExplicitlySet) delete persisted.runtimePlacement.daemon;
+  await writeJsonAtomic(loaded.path, persisted);
 }
 
 function qaProbeFailure(message, result, env) {
@@ -106,18 +104,37 @@ export async function resolveControlledRuntimePlacement({ stackName, stackBaseDi
   if (!retained && loaded.localPlacementReason) {
     if (loaded.localPlacementReason === 'retained-local-data') {
       logger.warn?.(`[dev-targets] retained local server data keeps ${stackName} local; use explicit move-server before remote placement`);
-    } else if (loaded.localPlacementReason === 'unproven-qa-default') logger.warn?.('[dev-targets] QA default is not activated until remote live verification; keeping local placement');
-    return local;
+    }
   }
   const configuredQa = config.runtimePlacement.qa;
   const qa = retained ? { mode: 'prefer-target', targets: [retained], fallback: 'error' }
     : configuredQa.mode === 'local' ? configuredQa
       : { ...configuredQa, targets: configuredQa.targets.filter(name => !excludeTargetNames.includes(name)) };
-  if (qa.mode === 'local') return local;
-  if (qa.targets.length === 0) {
+  if (qa.mode !== 'local' && qa.targets.length === 0) {
     logger.warn?.('[dev-targets] QA targets unavailable; using local runtime placement');
-    return local;
   }
+  const selected = qa.mode !== 'local' && qa.targets.length
+    ? await selectControlledTarget({ loaded, config, qa, retained, sourceDir, env, logger, runCaptureResultImpl }) : null;
+  const target = selected?.target ?? null;
+  const runtimeTarget = selected?.runtimeTarget ?? local.runtimeTarget;
+  const daemonOverride = loaded.daemonExplicitlySet ? config.runtimePlacement.daemon : null;
+  if (daemonOverride?.mode === 'local-and-targets') {
+    throw new Error('[dev-targets] controlled QA Machine placement requires one named daemon host');
+  }
+  const daemon = daemonOverride?.mode === 'prefer-target'
+    ? await selectControlledTarget({ loaded, config,
+      qa: { mode: 'prefer-target', targets: [daemonOverride.target], fallback: 'error' },
+      retained: daemonOverride.target, authorityLabel: 'daemon', sourceDir, env, logger, runCaptureResultImpl }) : null;
+  const policy = { server: target ? { mode: 'prefer-target', target: target.name, fallback: 'error' } : { mode: 'local' },
+    daemons: daemon ? { mode: 'prefer-target', target: daemon.target.name, fallback: 'error' } : { mode: 'local' },
+    expo: { mode: 'local' }, commands: { mode: 'local' } };
+  const serviceTargets = [target, daemon?.target].filter((candidate, index, all) => candidate && all.findIndex(other => other?.name === candidate.name) === index);
+  const plans = resolveDevTargetServicePlans({ targets: serviceTargets, policy, requested: { server: true, daemon: true, expo: false } });
+  return { ...loaded, target, runtimeTarget, policy, targetPlans: plans.targets, stackBaseDir,
+    daemonTarget: daemon?.target ?? null, daemonRuntimeTarget: daemon?.runtimeTarget ?? null };
+}
+
+async function selectControlledTarget({ loaded, config, qa, retained, authorityLabel = 'server', sourceDir, env, logger, runCaptureResultImpl }) {
   const attempts = qa.mode === 'auto' ? [null] : qa.targets;
   for (const targetName of attempts) {
     let result;
@@ -147,25 +164,22 @@ export async function resolveControlledRuntimePlacement({ stackName, stackBaseDi
           continue;
         }
         logger.warn?.('[dev-targets] QA selector exhausted available targets; using local runtime placement');
-        return local;
+        return null;
       }
       const selected = targetName ?? [...diagnostic.matchAll(/\[preferred-execution\] selected ([a-z0-9._-]+) \(/g)].at(-1)?.[1];
       const target = config.targets.find(candidate => candidate.name === selected);
       if (!target || (qa.mode === 'auto' && !qa.targets.includes(target.name))) {
         throw failure('QA host probe did not identify a configured selected target');
       }
-      const policy = { server: { mode: 'prefer-target', target: target.name, fallback: 'error' },
-        daemons: env.HAPPIER_STACK_SHARED_DB_SOURCE_STACK ? { mode: 'local' } : { mode: 'prefer-target', target: target.name, fallback: 'local' }, expo: { mode: 'local' }, commands: { mode: 'local' } };
-      const plans = resolveDevTargetServicePlans({ targets: [target], policy, requested: { server: true, daemon: true, expo: false } });
-      return { ...loaded, target, runtimeTarget: { platform: host.platform, arch: host.arch }, policy, targetPlans: plans.targets, stackBaseDir };
+      return { target, runtimeTarget: { platform: host.platform, arch: host.arch } };
     } catch (error) {
       const message = error === probeError ? error.message : redactFailureDiagnostic(error instanceof Error ? error.message : String(error), env);
-      if (retained) throw new Error(`[dev-targets] persisted server placement is authoritative and ${retained} is unavailable: ${message}`);
+      if (retained) throw new Error(`[dev-targets] persisted ${authorityLabel} placement is authoritative and ${retained} is unavailable: ${message}`);
       logger.warn?.(`[dev-targets] QA placement skipped; keeping local fallback available: ${message}`);
     }
   }
   logger.warn?.('[dev-targets] QA targets unavailable; using local runtime placement');
-  return local;
+  return null;
 }
 
 function requestedPlacement(placement, requested) {

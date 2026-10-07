@@ -421,10 +421,10 @@ function shouldSkipBundledWorkspacePreflight(argv) {
     return true;
   }
 
-  // An explicit runtime start launches already-admitted immutable artifacts. Keep
-  // restart availability independent of unrelated source workspace publication;
+  // Explicit runtime start and daemon commands consume already-admitted artifacts. Keep
+  // lifecycle availability independent of unrelated source workspace publication;
   // the existing bundled Stack control plane still fails loudly if it is unusable.
-  if (subcommand === 'start' && preSeparatorArgs.includes('--runtime')) return true;
+  if ((subcommand === 'start' || subcommand === 'daemon') && preSeparatorArgs.includes('--runtime')) return true;
 
   // These management paths only inspect or edit Stack-owned metadata. Keep the
   // positive list narrow so dependency-consuming commands still repair bundled

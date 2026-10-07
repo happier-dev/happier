@@ -128,7 +128,8 @@ test('stack env shared-db opts a fresh QA stack into source server placement wit
   assert.doesNotMatch(written + result.stdout + result.stderr, /fixture-only-secret/);
   const config = JSON.parse(await readFile(join(storage, fixture.stackName, 'dev-targets.json'), 'utf8'));
   assert.equal(config.runtimePlacement.server.target, 'mac-host');
-  assert.equal(config.runtimePlacement.daemon.mode, 'local');
+  assert.equal(config.runtimePlacement.daemon, undefined, 'fresh shared QA must not manufacture a local daemon pin');
+  assert.equal(config.runtimePlacement.qa, undefined, 'the shared preset must inherit the QA command pool rather than pin a local runtime');
   assert.equal(config.targets.find(target => target.name === 'mac-host').ssh, 'mac-host');
   assert.equal(config.targets.find(target => target.name === 'mac-host').cliHomeDir, '/state/dev/cli');
   assert.equal(config.targets.find(target => target.name === 'mac-host').remoteServerPort, null,
@@ -140,4 +141,10 @@ test('stack env shared-db opts a fresh QA stack into source server placement wit
     'shared database reference must follow the active source remote-state owner');
   assert.ok(!written.includes('HAPPIER_STACK_SHARED_DB_SOURCE_ENV_FILE=/state/dev/env\n'),
     'the retained top-level copy is not the source server authority');
+  config.runtimePlacement.daemon = { mode: 'local' };
+  await writeFile(join(storage, fixture.stackName, 'dev-targets.json'), JSON.stringify(config));
+  const repeated = await runNodeCapture([join(rootDir, 'scripts', 'stack.mjs'), 'env', fixture.stackName, 'shared-db', 'dev', '--json'], { cwd: rootDir, env: fixture.baseEnv });
+  assert.equal(repeated.code, 0, repeated.stderr);
+  const pinned = JSON.parse(await readFile(join(storage, fixture.stackName, 'dev-targets.json'), 'utf8'));
+  assert.deepEqual(pinned.runtimePlacement.daemon, { mode: 'local' }, 'an existing explicit daemon placement remains authoritative');
 });

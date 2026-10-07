@@ -279,10 +279,18 @@ export async function startStackDevTargets(
     ? syncTargets
     : plans.map((plan) => plan.target);
   const servicePlans = plans.filter(planRunsRuntimeServices);
-  const controlled = Boolean(runtimeSnapshot);
+  const resolvePlanRuntime = plan => ({
+    snapshot: plan.runtimeSnapshot ?? runtimeSnapshot,
+    target: plan.runtimeTarget ?? runtimeTarget,
+  });
+  const controlled = Boolean(runtimeSnapshot || servicePlans.some(plan => plan.runtimeSnapshot));
   const runtimeMode = controlled ? 'controlled' : 'source';
-  if (controlled && (!runtimeTarget || servicePlans.some(plan => !plan.services.server || plan.services.expo))) {
-    throw new Error('[dev-targets] controlled runtime requires a target identity and colocated server/daemon without owned Expo');
+  if (controlled && servicePlans.some(plan => {
+    const selected = resolvePlanRuntime(plan);
+    return !selected.snapshot || !selected.target?.platform || !selected.target?.arch
+      || (!plan.services.server && !plan.services.daemon) || plan.services.expo;
+  })) {
+    throw new Error('[dev-targets] controlled runtime requires a selected snapshot and target identity for each server/daemon plan without owned Expo');
   }
   // When this supervisor owns runtime services, only their synchronization may
   // gate service startup. Command-only targets are routed and freshness-checked
@@ -322,6 +330,7 @@ export async function startStackDevTargets(
   });
   const publishTargetState = (plan, status, details = {}) => {
     if (typeof onTargetStateChange !== 'function') return;
+    const forward = tunnelsByTarget.get(plan.target.name);
     const servicePorts = servicePortsByTarget.get(plan.target.name);
     const publishesServicePorts = servicePorts && Object.keys(servicePorts).length > 0;
     const serviceStatus = Object.fromEntries(
@@ -333,11 +342,13 @@ export async function startStackDevTargets(
       name: plan.target.name,
       commands: plan.commands === true,
       services: { ...plan.services },
+      forwardPid: forward && forward.exitCode == null && forward.signalCode == null ? forward.pid ?? null : null,
       ...(publishesServicePorts ? { repoDir: plan.target.repoDir, servicePorts } : {}),
       serviceStatus,
       status,
       ...(status === 'running' ? { phase: null, error: null } : {}),
-      ...(controlled && serviceStatus.server === 'running' ? { runtimeSnapshotId: runtimeSnapshot.snapshotId } : {}),
+      ...(controlled && (serviceStatus.server === 'running' || serviceStatus.daemon === 'running')
+        ? { runtimeSnapshotId: resolvePlanRuntime(plan).snapshot.snapshotId } : {}),
       ...details,
     };
     try {
@@ -386,6 +397,7 @@ export async function startStackDevTargets(
 
     const startTarget = async (plan, index, existingTunnel = null) => {
       const { target, services } = plan;
+      const { snapshot: selectedSnapshot, target: selectedRuntimeTarget } = resolvePlanRuntime(plan);
       const hasServices = Object.values(services).some(Boolean);
       const deferCompanionPreparation = !controlled && planDefersRemoteCompanionPreparation(plan);
       let phase = 'prepare';
@@ -485,16 +497,16 @@ export async function startStackDevTargets(
             if (retainedRemoteData) await pinServerDataAuthority();
           }
           const paths = resolveRemoteStackStatePaths(target, { stackName, runtimeMode });
-          const remoteArchive = `${paths.stackBaseDir}/.runtime-${runtimeSnapshot.snapshotId}.tar`;
+          const remoteArchive = `${paths.stackBaseDir}/.runtime-${selectedSnapshot.snapshotId}.tar`;
           const temporary = await mkdtemp(join(tmpdir(), 'hstack-controlled-runtime-'));
           try {
             const archivePath = join(temporary, 'snapshot.tar');
-            await packControlledRuntimeSnapshot({ snapshot: runtimeSnapshot, target: runtimeTarget, archivePath, env: infraEnv });
+            await packControlledRuntimeSnapshot({ snapshot: selectedSnapshot, target: selectedRuntimeTarget, archivePath, env: infraEnv });
             await transferFile({ target, direction: 'upload', localPath: archivePath, remotePath: remoteArchive });
             requireSuccessful(await runProcess({ label: `remote:${target.name}`, command: 'ssh', args: [
               ...openSsh.sshArgs, '-o', 'BatchMode=yes', target.ssh,
-              buildRemoteRuntimeSnapshotImportCommand(target, { stackName, archivePath: remoteArchive, snapshotId: runtimeSnapshot.snapshotId,
-                requiredComponents: services.daemon ? undefined : ['server'] }),
+              buildRemoteRuntimeSnapshotImportCommand(target, { stackName, archivePath: remoteArchive, snapshotId: selectedSnapshot.snapshotId,
+                requiredComponents: services.server ? (services.daemon ? undefined : ['server']) : ['daemon'] }),
             ], env: infraEnv }), `${target.name} controlled runtime import`);
           } finally {
             try {
@@ -544,7 +556,7 @@ export async function startStackDevTargets(
         if (syncProject.ownership !== 'owned' && syncProject.unhealthyTargets?.has(target.name)) {
           beginPhase('sync');
           const syncStatus = await inspectSync({ target, stackBaseDir: syncStackBaseDir, env: infraEnv });
-          if (syncStatus.state !== 'ready' && syncStatus.state !== 'synchronizing') {
+          if (syncStatus.state !== 'ready' && syncStatus.state !== 'synchronizing' && syncStatus.state !== 'needs-flush') {
             throw new Error(
               `[dev-targets] ${target.name} independent synchronization is ${syncStatus.state}`,
             );
@@ -655,7 +667,7 @@ export async function startStackDevTargets(
         }
         const remoteStackOptions = {
           runtimeMode,
-          runtimeSnapshotId: runtimeSnapshot?.snapshotId,
+          runtimeSnapshotId: selectedSnapshot?.snapshotId,
           borrowedExpoProducerStackName,
           services,
           attended: env.HAPPIER_STACK_TUI === '1',
@@ -848,6 +860,15 @@ export async function startStackDevTargets(
 
     const startTargetLifecycle = (plan, index, initialWorker, initialTunnel) => {
       const { target, services } = plan;
+      const verifyLoadedRuntimeIdentity = async () => {
+        if (!controlled) return;
+        requireSuccessful(await runProcess({
+          label: `remote:${target.name}`, command: 'ssh', args: [
+            ...openSsh.sshArgs, '-o', 'BatchMode=yes', target.ssh,
+            buildRemoteRuntimeSnapshotProbeCommand(target, { stackName, snapshotId: resolvePlanRuntime(plan).snapshot.snapshotId }),
+          ], env: infraEnv,
+        }), `${target.name} loaded runtime identity`);
+      };
       lifecycleTasks.push((async () => {
         let worker = initialWorker;
         let tunnel = initialTunnel;
@@ -937,14 +958,7 @@ export async function startStackDevTargets(
                     target,
                     env,
                     signal: readinessController.signal,
-                  }).then(async () => {
-                    if (controlled) requireSuccessful(await runProcess({
-                      label: `remote:${target.name}`, command: 'ssh', args: [
-                        ...openSsh.sshArgs, '-o', 'BatchMode=yes', target.ssh,
-                        buildRemoteRuntimeSnapshotProbeCommand(target, { stackName, snapshotId: runtimeSnapshot.snapshotId }),
-                      ], env: infraEnv,
-                    }), `${target.name} loaded runtime identity`);
-                  }).then(
+                  }).then(verifyLoadedRuntimeIdentity).then(
                     () => ({ kind: 'server-ready' }),
                     (error) => ({ kind: 'server-readiness-failed', error }),
                   ),
@@ -964,7 +978,7 @@ export async function startStackDevTargets(
                 if (!daemonReady) outcomePromises.push(
                   credentialPreparationsByTarget.get(target.name)(readinessController.signal).then(() => {
                     readinessController.signal.throwIfAborted();
-                    return waitForDaemonReady({
+                    const readiness = waitForDaemonReady({
                       target,
                       stackName,
                       sshArgs: openSsh.sshArgs,
@@ -973,6 +987,9 @@ export async function startStackDevTargets(
                       signal: readinessController.signal,
                       runtimeMode,
                     });
+                    return controlled && !services.server
+                      ? readiness.then(verifyLoadedRuntimeIdentity)
+                      : readiness;
                   }).then(
                     () => ({ kind: 'daemon-ready' }),
                     (error) => ({ kind: 'daemon-readiness-failed', error }),

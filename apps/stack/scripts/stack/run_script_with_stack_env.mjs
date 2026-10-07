@@ -23,6 +23,7 @@ import {
   resolveCliDistBuildLockPath,
 } from '../utils/proc/cliDistBuildLock.mjs';
 import { coercePort } from '../utils/server/port.mjs';
+import { resolveStackServerEndpoint } from '../utils/server/urls.mjs';
 import { waitForHappierHealthOk } from '../utils/server/server.mjs';
 import { resolveStackOwnedListenPid } from '../utils/server/listener_ownership.mjs';
 import { parseArgs } from '../utils/cli/args.mjs';
@@ -40,7 +41,6 @@ import {
   isPidAlive,
   isStackRuntimeProcessTrusted,
   readStackRuntimeStateFile,
-  resolveTrustedStackRuntimeServerPort,
   withStackRuntimeStartClaim,
 } from '../utils/stack/runtime_state.mjs';
 import { normalizeStackRuntimeOwnerStartedAt } from '../utils/stack/runtime_owner_incarnation.mjs';
@@ -496,7 +496,15 @@ export async function inspectExistingStartLikeRuntime({
       existingForwarderPid,
       { ...runtimeProcessTrustContext, key: 'expoTailscaleForwarderPid' },
     );
-  const trustedServerPort = await resolveTrustedStackRuntimeServerPort(runtimeState, runtimeProcessTrustContext);
+  const { runtimePort: trustedServerPort } = await resolveStackServerEndpoint({
+    env: {
+      ...env,
+      HAPPIER_STACK_STACK: stackName,
+      HAPPIER_STACK_ENV_FILE: envPath,
+      ...(baseDir ? { HAPPIER_STACK_CLI_HOME_DIR: join(baseDir, 'cli') } : {}),
+    },
+    stackName, runtimeState, defaultPort: null,
+  });
   const serverEndpoint = await resolveVerifiedStackServerEndpoint({ port: trustedServerPort });
   const hasRecordedServerPort = Number.isFinite(existingServerPort) && existingServerPort > 0;
   const serverRunning =
@@ -693,7 +701,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
       let runtimeLaunchContext = { snapshot: null };
       if (scriptPath === 'run.mjs') {
         try {
-          runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv: args, env });
+          runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv: args, env, purpose: 'deployment' });
         } catch (error) {
           if (isStartLike && wantsRestart) {
             let shouldCleanup = shouldReuseRuntimePortsOnRestart({

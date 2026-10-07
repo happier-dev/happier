@@ -14,6 +14,8 @@ import { resolveLatestComponentArtifact } from './build/resolve_latest_component
 import { pruneRuntimeSnapshots, resolveRuntimeRetentionPolicy } from './build/runtime_retention.mjs';
 import { resolveStackRuntimePaths } from './runtime/shared/runtime_paths.mjs';
 import { resolveControlledRuntimePlacement } from './utils/dev_targets/service_placement.mjs';
+import { resolveStackRuntimeComponentSnapshots } from './runtime/launch/resolveStackRuntimeLaunchContext.mjs';
+import { resolveStackDaemonStartRequested } from './utils/auth/daemon_gate.mjs';
 import { ensureStackRuntimeModePrefer } from './runtime/shared/ensureStackRuntimeModePrefer.mjs';
 import { resolveRuntimeBuildAuthority } from './runtime/shared/runtime_build_authority.mjs';
 import { withWorkspaceBundleLock } from '@happier-dev/cli-common/workspaceBundleLock';
@@ -51,6 +53,8 @@ export async function activateRuntimeForAuthority({
   selectedComponents,
   authority,
   target = { platform: process.platform, arch: process.arch },
+  hostTarget = { platform: process.platform, arch: process.arch },
+  placement,
   env = process.env,
   retentionPolicy = resolveRuntimeRetentionPolicy({ env }),
   collectBuildSourceMetadataImpl = collectBuildSourceMetadata,
@@ -62,6 +66,28 @@ export async function activateRuntimeForAuthority({
   pruneRuntimeSnapshotsImpl = pruneRuntimeSnapshots,
   ensureStackRuntimeModePreferImpl = ensureStackRuntimeModePrefer,
 }) {
+  if (placement) {
+    const components = [...new Set([
+      ...Object.keys(selectedComponents).filter(component => selectedComponents[component]),
+      ...(env.HAPPIER_STACK_SHARED_DB_SOURCE_STACK ? ['server',
+        ...(resolveStackDaemonStartRequested({ env }) ? ['daemon'] : [])] : []),
+    ])];
+    const composition = await resolveStackRuntimeComponentSnapshots({ stackName, stackBaseDir: authority.consumerStackBaseDir,
+      env, placement, hostTarget, components });
+    if (env.HAPPIER_STACK_SHARED_DB_SOURCE_STACK || composition.groups.length > 1) {
+      const selected = await resolveStackRuntimeComponentSnapshots({ stackName, stackBaseDir: authority.consumerStackBaseDir,
+        env, placement, hostTarget, components, select: true, snapshotId: composition.snapshot?.snapshotId ?? '' });
+      if (!selected.valid) throw new Error(selected.errors[0]);
+      const { envPath } = resolveStackEnvPath(stackName, env);
+      await ensureStackRuntimeModePreferImpl({ envPath });
+      return { stackBaseDir: authority.producerStackBaseDir, artifacts: {}, componentSnapshots: selected.componentSnapshots,
+        componentTargets: selected.componentTargets,
+        runtime: composeRuntimePublicationResult({ consumerStackName: authority.consumerStackName,
+          producerStackName: authority.producerStackName, published: { ...selected.snapshot, reused: true },
+          selectedRuntime: selected.selectedRuntime }) };
+    }
+    target = composition.groups[0].target;
+  }
   return await withRuntimePublicationAdmission({ authority, env, withWorkspaceBundleLockImpl, publish: async () => {
     const stackBaseDir = authority.producerStackBaseDir;
     const sourceMetadata = await collectBuildSourceMetadataImpl({ rootDir, env });
@@ -149,6 +175,7 @@ async function main() {
     selectedComponents,
     authority,
     target: placement.runtimeTarget,
+    placement,
     env: process.env,
     retentionPolicy,
   });
@@ -165,6 +192,8 @@ async function main() {
       reused: runtime.reused,
       selected: runtime.selected,
       activatedComponents: Object.keys(selectedComponents).filter((component) => selectedComponents[component]),
+      componentSnapshotIds: Object.fromEntries(Object.entries(activation.componentSnapshots ?? {}).map(([component, snapshot]) => [component, snapshot.snapshotId])),
+      componentTargets: activation.componentTargets ?? null,
       runtime,
     },
     text: [

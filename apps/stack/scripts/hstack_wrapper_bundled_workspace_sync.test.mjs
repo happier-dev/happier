@@ -1027,6 +1027,31 @@ test('hstack wrapper starts an explicit runtime snapshot without bundled workspa
   }
 });
 
+test('hstack wrapper reaches explicit runtime daemon admission without reading checkout build inputs', async (t) => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const repoRoot = coerceHappyMonorepoRootFromPath(rootDir);
+  const fixture = await createRuntimeSnapshotFixture(t, {
+    stackName: 'runtime-daemon-without-publication',
+    cliEntrypoint: 'cli/happier.mjs',
+  });
+  // Filesystem availability is the boundary. Runtime selection and daemon
+  // admission stay real; the unauthenticated fixture must reach auth_required.
+  const { loaderPath, markerPath } = createSourceWorkspaceReadBoundary(fixture.root, repoRoot);
+  writeFileSync(join(fixture.stackDir, 'env'), [
+    `HAPPIER_STACK_STACK=${fixture.stackName}`,
+    `HAPPIER_STACK_REPO_DIR=${repoRoot}`,
+    `HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK=${fixture.stackName}`,
+    'HAPPIER_STACK_RUNTIME_MODE=require', '',
+  ].join('\n'));
+  const env = bundledWorkspaceFailureEnv({ fixtureDir: fixture.root, loaderPath, storageDir: fixture.storageDir });
+  const result = await runNodeCapture([
+    join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'daemon', fixture.stackName,
+    'restart', '--runtime', '--json',
+  ], { cwd: rootDir, env });
+  assert.equal(existsSync(markerPath), false, 'runtime daemon admission must not read checkout build inputs');
+  assert.equal(JSON.parse(result.stdout).error, 'auth_required', result.stderr);
+});
+
 test('hstack wrapper runs an explicit runtime CLI without bundled workspace publication', async (t) => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
   const fixtureDir = mkdtempSync(join(tmpdir(), 'hstack-wrapper-runtime-cli-skip-'));

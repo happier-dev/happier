@@ -45,6 +45,7 @@ import { writeFileSync } from 'node:fs';
 import { spawnDaemonLikeProcess } from ${JSON.stringify(DAEMON_TEST_PROCESS_HELPER_PATH)};
 
 const args = process.argv.slice(2);
+${buildStubHappierServerSetSource()}
 const home = process.env.HAPPIER_HOME_DIR || process.env.HAPPIER_STACK_CLI_HOME_DIR;
 if (!home) process.exit(2);
 
@@ -83,6 +84,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { spawnDaemonLikeProcess } from ${JSON.stringify(DAEMON_TEST_PROCESS_HELPER_PATH)};
 
 const args = process.argv.slice(2);
+${buildStubHappierServerSetSource()}
 if (args[0] !== 'daemon') process.exit(0);
 const sub = args[1] || '';
 if (sub === 'stop') process.exit(0);
@@ -116,6 +118,7 @@ function buildSynchronousDaemonStartCliScript({ cliHomeDir, startDelayMs }) {
 import { startDaemonLikeProcess } from ${JSON.stringify(DAEMON_TEST_PROCESS_HELPER_PATH)};
 
 const args = process.argv.slice(2);
+${buildStubHappierServerSetSource()}
 const home = process.env.HAPPIER_HOME_DIR || process.env.HAPPIER_STACK_CLI_HOME_DIR;
 if (!home) process.exit(2);
 
@@ -248,6 +251,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const args = process.argv.slice(2);
+${buildStubHappierServerSetSource()}
 const home = process.env.HAPPIER_HOME_DIR || process.env.HAPPIER_STACK_CLI_HOME_DIR;
 if (!home) process.exit(2);
 const logsDir = join(home, 'logs');
@@ -332,7 +336,9 @@ process.exit(0);
 }
 
 async function overwriteStubCliDist(cliDir, source) {
-  await writeFile(join(cliDir, 'dist', 'index.mjs'), source, 'utf-8');
+  // Custom daemon behavior still crosses the same profile-setting OS boundary.
+  const profileSource = `{\nconst args = process.argv.slice(2);\n${buildStubHappierServerSetSource()}\n}\n`;
+  await writeFile(join(cliDir, 'dist', 'index.mjs'), profileSource + source, 'utf-8');
   writeStubCliDistBuildManifest(cliDir);
 }
 
@@ -416,7 +422,7 @@ test('startLocalDaemonWithAuth treats daemon start exit=0 as failure when daemon
       HAPPIER_STACK_AUTO_AUTH_SEED: '0',
       HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
       HAPPIER_STACK_CLI_BUILD: '1',
-      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '20',
+      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: PROCESS_BACKED_DAEMON_FIXTURE_TIMEOUT_MS,
       HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '1',
       HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
     };
@@ -550,6 +556,7 @@ test('startLocalDaemonWithAuth reconciles a stale active stack profile before sp
     const cliHomeDir = join(tmp, 'stack', 'cli');
     const cliBin = join(tmp, 'bin', 'happier');
     const cliCommandScript = join(tmp, 'profile-capture-daemon.mjs');
+    const cliNodeEntrypoint = join(tmp, 'inspection-only-entrypoint.mjs');
     const capturePath = join(tmp, 'profile-at-daemon-start.json');
     const activeServerId = 'stack_dev__id_default';
     const internalServerUrl = 'http://127.0.0.1:4311';
@@ -565,6 +572,9 @@ test('startLocalDaemonWithAuth reconciles a stale active stack profile before sp
       buildProfileCaptureDaemonCliScript({ cliHomeDir, capturePath }),
       'utf-8',
     );
+    // Runtime snapshots expose their dist for closure inspection alongside an admitted
+    // launcher. Executing that inspection path must not replace the launch command.
+    await writeFile(cliNodeEntrypoint, 'process.exit(88);\n', 'utf-8');
     await writeFile(
       join(cliHomeDir, 'settings.json'),
       JSON.stringify({
@@ -611,6 +621,7 @@ test('startLocalDaemonWithAuth reconciles a stale active stack profile before sp
       cliBin,
       cliCommand: process.execPath,
       cliCommandArgs: [cliCommandScript],
+      cliNodeEntrypoint,
       cliHomeDir,
       internalServerUrl,
       publicServerUrl,
@@ -785,7 +796,7 @@ process.exit(0);
           HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
           HAPPIER_STACK_CLI_BUILD: '1',
           HAPPIER_STACK_CREDENTIAL_VALIDATE_TIMEOUT_MS: '10',
-          HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '20',
+          HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: PROCESS_BACKED_DAEMON_FIXTURE_TIMEOUT_MS,
           HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '1',
           HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
         },
@@ -913,7 +924,7 @@ test('startLocalDaemonWithAuth fails fast when stack-scoped auth is stale and on
       HAPPIER_STACK_AUTO_AUTH_SEED: '0',
       HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
       HAPPIER_STACK_CLI_BUILD: '1',
-      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '20',
+      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: PROCESS_BACKED_DAEMON_FIXTURE_TIMEOUT_MS,
       HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '1',
       HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
       HAPPIER_ACTIVE_SERVER_ID: 'stack_dev__id_default',
@@ -970,7 +981,7 @@ test('startLocalDaemonWithAuth does not backfill legacy access.key from main whe
       HAPPIER_STACK_AUTO_AUTH_SEED: '0',
       HAPPIER_STACK_MIGRATE_CREDENTIALS: '1',
       HAPPIER_STACK_CLI_BUILD: '1',
-      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '20',
+      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: PROCESS_BACKED_DAEMON_FIXTURE_TIMEOUT_MS,
       HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '1',
       HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
       HAPPIER_ACTIVE_SERVER_ID: `stack_${stackName}__id_default`,
@@ -1036,7 +1047,7 @@ test('startLocalDaemonWithAuth seeds the current server credential when the stac
       HAPPIER_STACK_AUTO_AUTH_SEED: '0',
       HAPPIER_STACK_MIGRATE_CREDENTIALS: '1',
       HAPPIER_STACK_CLI_BUILD: '1',
-      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '20',
+      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: PROCESS_BACKED_DAEMON_FIXTURE_TIMEOUT_MS,
       HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '1',
       HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
       HAPPIER_ACTIVE_SERVER_ID: `stack_${stackName}__id_default`,
@@ -1207,7 +1218,7 @@ await startLocalDaemonWithAuth({
     HAPPIER_STACK_AUTO_AUTH_SEED: '0',
     HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
     HAPPIER_STACK_CLI_BUILD: '1',
-    HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '20',
+    HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: ${JSON.stringify(PROCESS_BACKED_DAEMON_FIXTURE_TIMEOUT_MS)},
     HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '1',
     HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
     HAPPIER_STACK_DAEMON_LIFECYCLE_LOCK_TIMEOUT_MS: '1000',

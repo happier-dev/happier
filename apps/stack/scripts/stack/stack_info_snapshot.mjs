@@ -22,7 +22,7 @@ import { join } from 'node:path';
 import { checkDaemonStatePingAware } from '../daemon.mjs';
 import { resolveVerifiedStackServerEndpoint, resolveVerifiedStackUiEndpoint } from '../utils/stack/verified_endpoints.mjs';
 import { isTcpPortListening, listListenPidsWithStatus } from '../utils/net/ports.mjs';
-import { createListenerOwnershipObservationScope } from '../utils/server/listener_ownership.mjs';
+import { createListenerOwnershipObservationScope, STACK_LISTENER_OBSERVATION_TIMEOUT_MS } from '../utils/server/listener_ownership.mjs';
 import { getProcessGroupId, isPidOwnedByStack } from '../utils/proc/ownership.mjs';
 import { resolveRuntimeRemoteServiceObservation } from '../utils/tui/runtime_placement_summary.mjs';
 import { buildBorrowedExpoUiUrl, isBorrowedExpoConsumer, resolveBorrowedExpoRuntime } from '../runtime/shared/borrowed_expo.mjs';
@@ -119,7 +119,7 @@ export async function readStackInfoSnapshot({
   isTcpPortListeningImpl = isTcpPortListening,
   isPidOwnedByStackImpl = isPidOwnedByStack,
   getProcessGroupIdImpl = getProcessGroupId,
-  listenerObservationTimeoutMs = 5_000,
+  listenerObservationTimeoutMs = STACK_LISTENER_OBSERVATION_TIMEOUT_MS,
   resolveBorrowedExpoRuntimeImpl = resolveBorrowedExpoRuntime,
 }) {
   const baseDir = resolveStackEnvPath(stackName).baseDir;
@@ -136,7 +136,13 @@ export async function readStackInfoSnapshot({
   const pinnedServerPort = pinnedServerPortRaw ? Number(pinnedServerPortRaw) : null;
   const stackScopedEnv = applyStackDaemonLifecycleScopeEnv({
     env: applyStackActiveServerScopeEnv({
-      env: { ...process.env, ...stackEnv },
+      env: {
+        ...process.env, ...stackEnv,
+        HAPPIER_STACK_STACK: stackName,
+        HAPPIER_STACK_ENV_FILE: envPath,
+        HAPPIER_STACK_RUNTIME_STATE_PATH: runtimeStatePath,
+        HAPPIER_STACK_CLI_HOME_DIR: stackEnv.HAPPIER_STACK_CLI_HOME_DIR || join(baseDir, 'cli'),
+      },
       stackName,
       cliIdentity: 'default',
     }),
@@ -146,6 +152,12 @@ export async function readStackInfoSnapshot({
   const initialRuntimeState = await readStackRuntimeStateFile(runtimeStatePath);
   const runtimeProcessTrustContext = { stackName, envPath, cliHomeDir: join(baseDir, 'cli') };
   const runtimeStatusTrustOptions = { throwOnInconclusive: false };
+  // Reconciliation and presentation consume the same daemon transport evidence
+  // for this snapshot. A new snapshot creates a fresh observation.
+  let daemonStateObservation;
+  const observeDaemonState = (cliHomeDir, options) => (
+    daemonStateObservation ??= Promise.resolve().then(() => checkDaemonStatePingAware(cliHomeDir, options))
+  );
   const endpoint = await resolveStackServerEndpoint({ env: stackScopedEnv, stackName,
     runtimeState: initialRuntimeState, defaultPort: null, trustOptions: runtimeStatusTrustOptions });
   const trustedRuntimeServerPort = endpoint.runtimePort;
@@ -158,7 +170,7 @@ export async function readStackInfoSnapshot({
         internalServerUrl: trustedRuntimeServerPort ? `http://127.0.0.1:${trustedRuntimeServerPort}` : '',
         env: stackScopedEnv,
       }, {
-        checkDaemonStateImpl: checkDaemonStatePingAware,
+        checkDaemonStateImpl: observeDaemonState,
       });
 
   const runtimePorts = runtimeState?.ports && typeof runtimeState.ports === 'object' ? runtimeState.ports : {};
@@ -199,12 +211,13 @@ export async function readStackInfoSnapshot({
   });
   const observedDaemon = await getObservedStackDaemonAsync({
     cliHomeDir: join(baseDir, 'cli'),
+    stackName,
     internalServerUrl: trustedRuntimeServerPort ? `http://127.0.0.1:${trustedRuntimeServerPort}` : '',
     runtimeDaemonPid: runtimeState?.processes?.daemonPid ?? null,
     runtimeDaemonPids: runtimeState?.processes?.daemonPids ?? [],
     env: stackScopedEnv,
   }, {
-    checkDaemonStateImpl: checkDaemonStatePingAware,
+    checkDaemonStateImpl: observeDaemonState,
   });
   const daemonPid = Number(observedDaemon.pid);
   const daemonPidAlive = await isStackRuntimeProcessTrusted(daemonPid, {
@@ -385,7 +398,7 @@ export async function readStackInfoSnapshot({
 
   const repoWorktreeSpec = repoDir ? worktreeSpecFromDir({ rootDir, component: 'happier-ui', dir: repoDir }) || null : null;
   const runtimeMode = resolveStackRuntimeMode({ argv: [], env: stackEnv }).mode;
-  const runtimeInspection = await inspectStackRuntimeSelection({ stackBaseDir: baseDir, env: componentEnv });
+  const runtimeInspection = await inspectStackRuntimeSelection({ stackName, stackBaseDir: baseDir, env: componentEnv });
   const selectedSnapshotId = runtimeInspection.activeSnapshotId;
   // The state file's snapshot identity is authoritative while a recorded lifecycle
   // process is still trusted as live. A listener is stronger evidence for endpoint
@@ -512,6 +525,8 @@ export async function readStackInfoSnapshot({
       valid: runtimeInspection.valid,
       errors: runtimeInspection.errors,
       snapshotComponents: runtimeInspection.manifest?.components ?? null,
+      componentSnapshotIds: Object.fromEntries(Object.entries(runtimeInspection.componentSnapshots ?? {}).map(([component, snapshot]) => [component, snapshot.snapshotId])),
+      componentTargets: runtimeInspection.componentTargets ?? null,
       sourceWorkspaceStalePackages,
     },
     urls: {
