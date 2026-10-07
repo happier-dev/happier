@@ -287,10 +287,10 @@ Its host-only `onWaitSnapshot` sink emits `{run}` summaries, including canonical
 ordered and awaited for backpressure; unchanged summaries are suppressed, and
 passive observation stays open through terminal until cancellation or deadline.
 Invalidations catch up current facts, not an event journal. No polling or new
-transport is introduced. The generic adapters have not yet adopted these owner
-contracts. These unsupported generic requests return an
-explicit non-match disposition, not a
-terminal substitute. Plugin conditions carry `{kind:'plugin', actionLocalId,
+transport is introduced. In development, generic execution and workflow waits
+delegate terminal, attention and combined selectors, and passive snapshot sinks,
+to these native owners. Unsupported conditions return an explicit non-match
+disposition, not a terminal substitute. Plugin conditions carry `{kind:'plugin', actionLocalId,
 condition}`: choose the exact admitted Action from discovery, rather than
 deriving an id from the plugin name. The existing contributed-Action dispatcher
 admits `{sourceId, condition, timeoutMs?}` against that declaration. GitHub's
@@ -305,7 +305,7 @@ snapshot through the same passive Action sink as CLI watch. MCP hosts can send
 `resources/unsubscribe` to release observation. Disconnect also releases the
 owner subscription. Unsupported passive targets return `unsupported_condition`;
 resource subscription/read refusals carry that typed result in the MCP error data.
-External MCP consumes the current Session passive feed. The Session-host MCP
+External MCP consumes the current Session, execution and workflow passive feeds. The Session-host MCP
 Account Action channel currently carries one result rather than a passive feed,
 so its passive requests return `unsupported_condition` until that channel exposes
 snapshot delivery; Account authority remains with the daemon.
@@ -707,7 +707,10 @@ use their current membership for pruning. Mode switches retain Canvas positions.
 
 Board edits use Account automation authority. The mutation can delete a Board and uses
 the shared Action approval policy; approval results are blocking and required
-so callers receive the mutation outcome. A host without the Board Artifact
+so callers receive the mutation outcome. UI create, settings, remove, widget and drag
+controls enter `boards.apply` before the optimistic queue; Retry re-enters the same
+Action admission under its captured Home and Account. Live UI membership is supplied
+only by the Board adapter, never trusted from agent input. A host without the Board Artifact
 transport reports `unsupported_action`.
 
 ## Session-spawn model choices (0.3 development source)
@@ -956,12 +959,20 @@ authority for these rows. The caller's
 discussion operations are automation rows with Agent/MCP exposure off. Read-state
 operations also admit Agent and MCP callers.
 
-In 0.3 development, Agent and MCP calls can request API-token creation, update
-(including embed configuration), revocation and terminal-present-user policy changes.
+In 0.3 development, Agent, MCP and trusted-plugin calls can request present-user
+mutations, including
+API-token creation, update (including embed configuration), revocation,
+sign-out-everywhere and terminal-present-user policy changes. Requestability derives
+from the Action's authority and custody metadata, not a mutation allowlist.
 `resolveCredentialActionAdmissionV1` admits these requests into the existing Ask-first
 flow; it does not grant execution authority. The single approval policy requires a
 deferred approval Artifact even when settings waive approval or a host supplies a false
-approval hint. Direct API-token mutations remain refused. `account.apiTokens.list`
+approval hint. Credential-bearing input is the custody exception: the admitted
+invocation remains the blocking waiter and the Artifact holds only its safe
+preview. Authenticated approval or exact-daemon replay delivers human authority
+through that existing live continuation, never through an Artifact field. A
+detached raw-input invocation cannot be replayed from durable history.
+Direct API-token mutations remain refused. `account.apiTokens.list`
 and `account.security.get` are ordinary Agent/MCP-exposed reads.
 The decision owner requires present-user authority before recording approval of any
 present-user Action. For the built-in host Agent/MCP Account requests, the deciding app
@@ -971,6 +982,11 @@ existing exact-daemon replay path.
 Private replay also requires authenticated present-user RPC authority for every
 human-mandated Action. An approved Artifact or its stored authority field is not
 proof of a human decision.
+
+Stored approval bodies project known fields recursively before header correspondence
+and replay checks; strict Action and write admission are unchanged. Stored Board
+failure details use the same request-bound family owner and keep known recovery
+facts without preserving unknown detail fields.
 
 Session Actions include `session.delete` (the existing durable Session deletion;
 the daemon owns managed-folder cleanup), `session.folder.set` and `session.tags.set`
@@ -1257,9 +1273,9 @@ from the status rather than assumed.
 
 ## Git mutation outcomes (development)
 
-The Git Actions extension is development-only. Expanded UI write exposure
-remains behind the existing client-local `scm.writeOperations` gate until its
-current-source and composed validation gates are satisfied. This toggle is not
+The Git Actions extension is development-only. The client-local
+`scm.writeOperations` preference defaults on without requiring Experiments;
+an explicit off choice preserves read-only UI behavior. This preference is not
 a daemon or Home authorization boundary. The canonical rows live in
 `actions/scmGitActionSpecs.ts`;
 Agent, MCP and CLI mutations use the same Action admission and danger-approval
