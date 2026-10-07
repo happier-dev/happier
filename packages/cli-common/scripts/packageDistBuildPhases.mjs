@@ -2,9 +2,11 @@ import { existsSync } from 'node:fs';
 import { cp, mkdir, mkdtemp, rename, rm } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { verifyPackageExportTargets } from './verifyExports.mjs';
 import { resolveTypeScriptCliInvocation } from '../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
+import { resolveRemoteCommandPolicy } from '../../../apps/stack/scripts/utils/dev_targets/remote_commands.mjs';
 
 async function removeDir(path) {
     await rm(path, { recursive: true, force: true });
@@ -50,6 +52,8 @@ export function resolveTypeScriptBuildInvocation({
     processExecPath = process.execPath,
     requireResolve,
     readFileSyncImpl,
+    env = process.env,
+    platform = process.platform,
     tsconfigPath = 'tsconfig.json',
     outDir,
 } = {}) {
@@ -59,6 +63,12 @@ export function resolveTypeScriptBuildInvocation({
         processExecPath,
         requireResolve,
         readFileSyncImpl,
+        env,
+        platform,
+        admissionClass: resolveRemoteCommandPolicy([
+            processExecPath,
+            fileURLToPath(new URL('./build.mjs', import.meta.url)),
+        ], { cwd: relative(repoRoot, packageDir).replaceAll('\\', '/') }).heavyClass,
     });
 
     return {
@@ -71,6 +81,7 @@ async function runTscBuild({ packageDir, stagingDistDir, env }) {
     const invocation = resolveTypeScriptBuildInvocation({
         packageDir,
         outDir: stagingDistDir,
+        env,
     });
     const result = spawnSync(invocation.command, invocation.args, {
         cwd: packageDir,
