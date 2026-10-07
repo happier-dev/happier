@@ -12,6 +12,7 @@ import { resolveInstalledPath, resolveInstalledCliRoot } from '../paths/runtime.
 import { expandHome } from '../paths/canonical_home.mjs';
 import { resolveCliDistBuildLockPath, withCliDistBuildLock } from './cliDistBuildLock.mjs';
 import { withDependencyRefresh } from './dependency_refresh.mjs';
+import { ensureUiPostinstallOutputs as prepareUiPostinstallOutputs } from './ui_postinstall.mjs';
 import { createWorkspaceBuildWaitNotifier } from './workspaceBuildWaitNotifier.mjs';
 import { resolveWorkspaceToolBinDirs } from './workspace_tool_bins.mjs';
 import { probeCliDistRuntimeImport, readCliDistIntegrity } from '../cli/cliDistIntegrity.mjs';
@@ -481,101 +482,36 @@ async function ensureServerGeneratedProviderOutputs(componentDir, installDir, { 
   });
 }
 
-function findInstalledEnrichedMarkdownPackageDirs(componentDir, installDir) {
-  return Array.from(new Set([
-    join(componentDir, 'node_modules', 'react-native-enriched-markdown'),
-    join(installDir, 'node_modules', 'react-native-enriched-markdown'),
-  ])).filter((packageDir) => existsSync(packageDir));
-}
-
 async function ensureUiPostinstallOutputs(componentDir, installDir, { quiet = false, env: envIn, pm: pmIn, force = false } = {}) {
-  const componentPkg = await readPackageJsonIfExists(join(componentDir, 'package.json'));
-  if (componentPkg?.name !== '@happier-dev/app') return;
-  if (typeof componentPkg?.scripts?.['postinstall:real'] !== 'string') return;
-
-  const requiredRelativePath = join('lib', 'module', 'web', 'streamingReveal.js');
-  const inspectLegacyOutputReadiness = () => {
-    const packageDirs = findInstalledEnrichedMarkdownPackageDirs(componentDir, installDir);
-    if (packageDirs.length === 0) {
-      return [join(componentDir, 'node_modules', 'react-native-enriched-markdown', requiredRelativePath)];
-    }
-    return packageDirs
-      .map((packageDir) => join(packageDir, requiredRelativePath))
-      .filter((outputPath) => !existsSync(outputPath));
+  let env = envIn ?? process.env;
+  let pm = pmIn;
+  const prepare = async () => {
+    if (pm) return;
+    env = await preparePmEnv(installDir, env);
+    pm = await getComponentPm(installDir, env);
   };
-  const inspectPostinstallReadiness = async () => {
-    const canonicalUiPreflightPath = join(componentDir, 'scripts', 'ensureWorkspacePackagesBuilt.mjs');
-    if (await pathExists(canonicalUiPreflightPath)) {
-      const canonicalUiPreflight = await import(pathToFileURL(canonicalUiPreflightPath).href);
-      if (typeof canonicalUiPreflight.verifyUiPatchedDependencies === 'function') {
-        try {
-          await canonicalUiPreflight.verifyUiPatchedDependencies({ uiPackageDir: componentDir });
-          return [];
-        } catch (error) {
-          return [error instanceof Error ? error.message : String(error)];
-        }
-      }
-    }
-    return inspectLegacyOutputReadiness();
-  };
-  if (!force && (await inspectPostinstallReadiness()).length === 0) return;
-
-  const env = pmIn
-    ? (envIn ?? process.env)
-    : await preparePmEnv(installDir, envIn ?? process.env);
-  const pm = pmIn ?? await getComponentPm(installDir, env);
   const stdio = quiet ? 'ignore' : 'inherit';
-  if (!quiet) {
-    // eslint-disable-next-line no-console
-    console.log('[local] repairing happier-ui postinstall outputs...');
-  }
-
-  const runUiPostinstall = async () => {
-    if (pm.name === 'yarn') {
-      await ensureYarnReady({ dir: installDir, env, quiet, pm });
-      await runPm(pm, ['-s', 'workspace', '@happier-dev/app', 'postinstall:real'], {
-        cwd: installDir,
-        stdio,
-        env,
+  await prepareUiPostinstallOutputs(componentDir, installDir, {
+    quiet, force,
+    runPostinstall: async () => {
+      await prepare();
+      if (pm.name === 'yarn') {
+        await ensureYarnReady({ dir: installDir, env, quiet, pm });
+        await runPm(pm, ['-s', 'workspace', '@happier-dev/app', 'postinstall:real'], { cwd: installDir, stdio, env });
+      } else {
+        await runPm(pm, ['run', '-s', 'postinstall:real'], { cwd: componentDir, stdio, env });
+      }
+    },
+    restoreDependencies: async () => {
+      await prepare();
+      const repairArgs = buildDependencyInstallArgs(pm.name, {
+        force: true,
+        preserveLockfile: String(env?.HAPPIER_DEV_TARGET_EXECUTION ?? '').trim() === '1',
       });
-      return;
-    }
-    await runPm(pm, ['run', '-s', 'postinstall:real'], {
-      cwd: componentDir,
-      stdio,
-      env,
-    });
-  };
-
-  try {
-    await runUiPostinstall();
-  } catch {
-    // patch-package is intentionally not idempotent across changed patch inputs:
-    // a synchronized dev target can retain bytes from the previous patch while
-    // receiving the newer patch file. Restore pristine dependency bytes through
-    // the package-manager owner, without running lifecycle scripts against the
-    // mixed tree, then apply the one canonical UI postinstall again.
-    const repairArgs = buildDependencyInstallArgs(pm.name, {
-      force: true,
-      preserveLockfile: String(env?.HAPPIER_DEV_TARGET_EXECUTION ?? '').trim() === '1',
-    });
-    repairArgs.push('--ignore-scripts');
-    if (!quiet) {
-      // eslint-disable-next-line no-console
-      console.log('[local] repairing mixed happier-ui patched dependency bytes...');
-    }
-    await runPm(pm, repairArgs, { cwd: installDir, stdio, env });
-    await runUiPostinstall();
-  }
-
-  const readinessFailures = await inspectPostinstallReadiness();
-  if (readinessFailures.length > 0) {
-    throw new Error(
-      `[local] happier-ui postinstall completed without satisfying patched dependency readiness:\n${readinessFailures
-        .map((failure) => `- ${failure}`)
-        .join('\n')}`,
-    );
-  }
+      repairArgs.push('--ignore-scripts');
+      await runPm(pm, repairArgs, { cwd: installDir, stdio, env });
+    },
+  });
 }
 
 async function ensureComponentPrerequisites(componentDir, _label, { quiet = false, env = process.env, pm } = {}) {

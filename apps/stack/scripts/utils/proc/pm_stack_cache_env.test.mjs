@@ -293,6 +293,8 @@ async function writeYarnUiPostinstallStub({
       'set -euo pipefail',
       'echo "$*" >> "${OUTPUT_PATH:?}"',
       'if [[ "${1:-}" == "install" ]]; then mkdir -p node_modules; fi',
+      // Re-extraction replaces patched dependency bytes even with lifecycle scripts disabled.
+      'if [[ "${1:-}" == "install" ]]; then rm -f ' + shellSingleQuote(requiredOutputPath) + '; fi',
       ...(forcedRepairMarkerPath ? [
         'if [[ "${1:-}" == "install" && "${2:-}" == "--force" ]]; then',
         `  mkdir -p ${JSON.stringify(dirname(forcedRepairMarkerPath))}`,
@@ -1204,7 +1206,7 @@ test('ensureDepsInstalled delegates Prisma output freshness to the server genera
   assert.match(out, /\bworkspace @happier-dev\/server generate:providers\b/, `expected provider generation, got:\n${out}`);
 });
 
-test('remote runtime bootstrap completes UI postinstall under install freshness for every worker role', async (t) => {
+test('remote runtime and source-test bootstrap complete UI postinstall under install freshness for every worker role', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'hs-pm-remote-ui-postinstall-'));
   t.after(async () => rm(root, { recursive: true, force: true }));
   for (const component of ['cli', 'server', 'stack']) {
@@ -1236,6 +1238,10 @@ test('remote runtime bootstrap completes UI postinstall under install freshness 
   // as an unchanged tree previously installed with --ignore-scripts can do.
   await writeYarnUiPostinstallStub({ binDir, outputPath, requiredOutputPath,
     postinstallSourcePath: patchPath, assetSourcePath, assetOutputPath });
+  // Corepack/Yarn are the process boundary; both installer entry points use the same stub.
+  const corepackPath = join(binDir, 'corepack');
+  await writeFile(corepackPath, `#!/bin/sh\nshift\nexec ${shellSingleQuote(join(binDir, 'yarn'))} "$@"\n`);
+  await chmod(corepackPath, 0o755);
   const env = { ...process.env, PATH: `${binDir}:/usr/bin:/bin`, OUTPUT_PATH: outputPath,
     HAPPIER_STACK_HOME_DIR: join(root, 'home'), HAPPIER_STACK_ENV_FILE: '' };
   await withDependencyRefresh({ installDir: root, env, installMode: SCRIPTLESS_DEPENDENCY_INSTALL_MODE },
@@ -1262,6 +1268,30 @@ test('remote runtime bootstrap completes UI postinstall under install freshness 
     'postinstall failure must not publish runtime-ready dependency admission');
   await prepare('apps/ui');
   assert.equal(await readFile(assetOutputPath, 'utf8'), 'recovered worker\n');
+
+  // Source validation can refresh the same tree while Expo is running. It must
+  // restore UI outputs before publishing admission, without a compiled Stack owner.
+  await rm(join(root, 'packages/cli-common/dist'), { recursive: true });
+  const sourcePrepare = (extraEnv = {}) => bootstrapRemoteDependencies({
+    repoDir: root, componentRelativeDir: 'apps/ui', validationKind: 'source-test',
+    env: { ...env, ...extraEnv },
+  });
+  await writeFile(join(root, 'yarn.lock'), '# source-test refresh\n');
+  await sourcePrepare();
+  assert.equal(await readFile(requiredOutputPath, 'utf8'), await readFile(patchPath, 'utf8'),
+    'source-test re-extraction must not leave the running UI without its patch');
+  assert.equal(await readFile(assetOutputPath, 'utf8'), 'recovered worker\n');
+  assert.equal((await inspectDependencyRefresh({ installDir: root })).required, true,
+    'UI postinstall alone does not certify all runtime lifecycle prerequisites');
+  const warmCommands = await readFile(outputPath, 'utf8');
+  await sourcePrepare();
+  assert.equal(await readFile(outputPath, 'utf8'), warmCommands, 'unchanged source tests do not reinstall');
+  await writeFile(join(root, 'yarn.lock'), '# failed source-test refresh\n');
+  await assert.rejects(sourcePrepare({ HAPPIER_TEST_UI_POSTINSTALL_FAIL: '1' }));
+  assert.equal((await inspectDependencyRefresh({ installDir: root,
+    installMode: SCRIPTLESS_DEPENDENCY_INSTALL_MODE })).required, true);
+  await sourcePrepare();
+  assert.equal(await readFile(requiredOutputPath, 'utf8'), await readFile(patchPath, 'utf8'));
 });
 
 test('ensureDepsInstalled repairs missing UI postinstall outputs on a warm dependency tree', async (t) => {
@@ -1341,7 +1371,7 @@ test('ensureDepsInstalled repairs an invalid UI patch even when the legacy outpu
     await writeFile(join(root, 'apps', component, 'package.json'), `{ "name": "@happier-dev/${component}" }\n`, 'utf-8');
   }
   const componentDir = join(root, 'apps', 'ui');
-  await mkdir(join(componentDir, 'scripts'), { recursive: true });
+  await mkdir(join(componentDir, 'tools', 'postinstall'), { recursive: true });
   await writeFile(
     join(componentDir, 'package.json'),
     JSON.stringify({
@@ -1377,7 +1407,7 @@ test('ensureDepsInstalled repairs an invalid UI patch even when the legacy outpu
   await mkdir(dirname(requiredOutputPath), { recursive: true });
   await writeFile(requiredOutputPath, 'export const legacySentinel = true;\n', 'utf-8');
   await writeFile(
-    join(componentDir, 'scripts', 'ensureWorkspacePackagesBuilt.mjs'),
+    join(componentDir, 'tools', 'postinstall', 'verifyReactNativeEnrichedMarkdownWebStreamingPatch.mjs'),
     [
       "import { existsSync } from 'node:fs';",
       `const patchMarkerPath = ${JSON.stringify(patchMarkerPath)};`,

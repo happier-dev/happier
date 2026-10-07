@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 
 import { execYarn } from '../../../../../scripts/workspaces/execYarnCommand.mjs';
 import { SCRIPTLESS_DEPENDENCY_INSTALL_MODE, withDependencyRefresh } from '../proc/dependency_refresh.mjs';
+import { ensureUiPostinstallOutputs } from '../proc/ui_postinstall.mjs';
 
 export const REMOTE_INITIAL_DEPENDENCY_INSTALL_ARGS = [
   'install',
@@ -51,9 +52,20 @@ async function installInitialDependencies({ repoDir, env }) {
   });
 }
 
+async function prepareInitialUiOutputs({ repoDir, env }) {
+  const installEnv = resolveInitialInstallEnv(env);
+  const runYarn = args => execYarn(args, { cwd: repoDir, env: installEnv, preferCorepack: true, stdio: 'inherit' });
+  await ensureUiPostinstallOutputs(join(repoDir, 'apps', 'ui'), repoDir, {
+    force: true,
+    runPostinstall: async () => runYarn(['-s', 'workspace', '@happier-dev/app', 'postinstall:real']),
+    restoreDependencies: async () => runYarn(['install', '--force', ...REMOTE_INITIAL_DEPENDENCY_INSTALL_ARGS.slice(1)]),
+  });
+}
+
 export async function bootstrapRemoteDependencies({
   repoDir = resolve(process.cwd()),
   validationKind = 'runtime',
+  toolsOnly = false,
   componentRelativeDir = '.',
   env = process.env,
   packageExists = existsSync,
@@ -63,12 +75,19 @@ export async function bootstrapRemoteDependencies({
   loadDependencyOwner = async () => await import('../proc/pm.mjs'),
 } = {}) {
   const componentDir = join(repoDir, 'apps', 'stack');
-  if (validationKind === 'source-test') {
+  const installAndPrepare = async () => {
+    await installInitialDependenciesImpl({ repoDir, env });
+    // Scriptless installation also materializes the shared UI dependency tree.
+    // Restore its mandatory outputs before releasing install admission/lock,
+    // even for source tests and before a compiled Stack owner exists.
+    await prepareInitialUiOutputs({ repoDir, env });
+  };
+  if (toolsOnly || validationKind === 'source-test') {
     // Source tests consume installed tools, not the Stack dependency owner's
     // compiled closure. Keep installation freshness and its lock authoritative.
     return await withDependencyRefreshImpl(
       { installDir: repoDir, componentDir, env, installMode: SCRIPTLESS_DEPENDENCY_INSTALL_MODE },
-      async () => await installInitialDependenciesImpl({ repoDir, env }),
+      installAndPrepare,
     );
   }
   const dependencyOwnerEntrypoints = ['workspaces', 'process'].map((domain) => join(
@@ -83,7 +102,7 @@ export async function bootstrapRemoteDependencies({
   if (!dependencyOwnerReady) {
     await withDependencyRefreshImpl(
       { installDir: repoDir, componentDir, env, installMode: SCRIPTLESS_DEPENDENCY_INSTALL_MODE },
-      async () => await installInitialDependenciesImpl({ repoDir, env }),
+      installAndPrepare,
     );
     const { ensureWorkspacePackagesBuiltByName } = await loadWorkspaceBuildOwner();
     await ensureWorkspacePackagesBuiltByName(
@@ -117,7 +136,10 @@ const entryPath = String(process.argv[1] ?? '').trim();
 if (entryPath && pathToFileURL(resolve(entryPath)).href === import.meta.url) {
   const kind = process.argv.slice(2).find(value => value.startsWith('--validation-kind='));
   const component = process.argv.slice(2).find(value => value.startsWith('--component-relative-dir='));
+  const repo = process.argv.slice(2).find(value => value.startsWith('--repo-dir='));
   await bootstrapRemoteDependencies({
+    ...(repo ? { repoDir: resolve(repo.slice('--repo-dir='.length)) } : {}),
+    toolsOnly: process.argv.includes('--tools-only'),
     validationKind: kind?.slice('--validation-kind='.length) ?? 'runtime',
     componentRelativeDir: component?.slice('--component-relative-dir='.length) ?? '.',
   });

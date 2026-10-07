@@ -14,7 +14,8 @@ const REFRESH_MARKER = '.happier-stack-dependencies-ready';
 // Earlier full admission relied on Yarn's lifecycle reuse and could omit UI
 // patches/assets. Only an explicitly completed UI postinstall proves this mode.
 const DEPENDENCY_INSTALL_MODE = 'development-full-ui-postinstall-v1';
-export const SCRIPTLESS_DEPENDENCY_INSTALL_MODE = 'development-scriptless-v1';
+// Scriptless workspace lifecycle admission still completes mandatory UI outputs.
+export const SCRIPTLESS_DEPENDENCY_INSTALL_MODE = 'development-scriptless-ui-postinstall-v1';
 
 function installDirLockKey(installDir) {
   return createHash('sha256').update(resolve(installDir), 'utf-8').digest('hex');
@@ -164,8 +165,8 @@ async function resolveDependencyIdentity({ installDir, runtimeIdentity, installM
 }
 
 function dependencyIdentitySatisfies(before, after) {
-  // Runtime-ready installs also admit source tests, but a scripts-skipping
-  // bootstrap cannot prove that the runtime's postinstall outputs are ready.
+  // Runtime-ready installs also admit source tests. Bootstrap completes UI
+  // outputs but cannot prove the other runtime lifecycle prerequisites.
   return before?.packageManager === after?.packageManager
     && before?.nodeVersion === after?.nodeVersion
     && before?.nodeAbi === after?.nodeAbi
