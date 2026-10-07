@@ -38,7 +38,7 @@ import { RootLayoutRedirectGate } from '@/components/navigation/root/RootLayoutR
 import { useOnboardingJourneySessionActive } from '@/components/onboarding/tour/state/journeySession';
 import { VoiceAnnouncer } from '@/components/voice/surface/VoiceAnnouncer';
 import { ActivityPersonalSessionMembershipProvider } from '@/activity/source/activityPersonalSessionMembership';
-import { buildUniversalSearchRouteScreenOptions } from './universalSearchRouteScreenOptions';
+import { buildUniversalSearchRouteScreenOptions } from '@/components/appShell/search/universalSearchRouteScreenOptions';
 import { buildSessionRouteScreenOptions } from '@/components/navigation/sessionRouteScreenOptions';
 
 type StackScreenOptions = ExtendedStackNavigationOptions;
@@ -333,27 +333,6 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                 headerBackTitle: back,
             },
             userId: visibleBlankBack,
-            devIndex: {
-                headerTitle: t('navigation.developerTools'),
-            },
-            devListDemo: {
-                headerTitle: t('navigation.listComponentsDemo'),
-            },
-            devTypography: {
-                headerTitle: t('navigation.typography'),
-            },
-            devColors: {
-                headerTitle: t('navigation.colors'),
-            },
-            devTools2: {
-                headerTitle: t('navigation.toolViewsDemo'),
-            },
-            devShimmerDemo: {
-                headerTitle: t('navigation.shimmerViewDemo'),
-            },
-            devMultiTextInput: {
-                headerTitle: t('navigation.multiTextInput'),
-            },
             blankBack,
             newPickSecretRequirement: {
                 headerShown: false,
@@ -750,34 +729,6 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                 <Stack.Screen
                     name="user/[id]"
                     options={rootStackRouteOptions.userId}
-                />
-                <Stack.Screen
-                    name="dev/index"
-                    options={rootStackRouteOptions.devIndex}
-                />
-                <Stack.Screen
-                    name="dev/list-demo"
-                    options={rootStackRouteOptions.devListDemo}
-                />
-                <Stack.Screen
-                    name="dev/typography"
-                    options={rootStackRouteOptions.devTypography}
-                />
-                <Stack.Screen
-                    name="dev/colors"
-                    options={rootStackRouteOptions.devColors}
-                />
-                <Stack.Screen
-                    name="dev/tools2"
-                    options={rootStackRouteOptions.devTools2}
-                />
-                <Stack.Screen
-                    name="dev/shimmer-demo"
-                    options={rootStackRouteOptions.devShimmerDemo}
-                />
-                <Stack.Screen
-                    name="dev/multi-text-input"
-                    options={rootStackRouteOptions.devMultiTextInput}
                 />
                 <Stack.Screen
                     name="new/pick/machine"

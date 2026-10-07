@@ -20,7 +20,7 @@ import { useVoiceSurfaceE2eFixtureComposition } from '@/dev/testkit/harness/useV
 import { isPersonalHomeBootstrapRuntimeHost } from '@/components/personalHome/bootstrap/personalHomeBootstrapHost';
 import { PersonalHomeBootstrapContent } from '@/components/personalHome/bootstrap/PersonalHomeBootstrapGate';
 import { buildMachineAddHref } from '@/components/settings/machines/collection/machineCollectionModel';
-import { shouldKeepDesktopPersonalHomeShell } from './personalHomeIndexRoutePolicy';
+import { shouldKeepDesktopPersonalHomeShell } from '@/components/personalHome/bootstrap/personalHomeIndexRoutePolicy';
 
 const stylesheet = StyleSheet.create({
     root: {

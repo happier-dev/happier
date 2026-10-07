@@ -95,7 +95,7 @@ import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { filterUserFacingMachineDetailSessions } from './machineDetailSessionQueries';
+import { filterUserFacingMachineDetailSessions } from '@/components/machines/machineDetailSessionQueries';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useHappierCollectionLayout } from '@happier-dev/plugin-ui/presentation';
 
