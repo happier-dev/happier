@@ -153,6 +153,25 @@ binding, and an account that has left the authorized set fails closed.
 
 The host owns credential storage, refresh, scoping, selection UX, and log redaction. Do not persist returned credentials in plugin storage or emit them in events, diagnostics, artifacts, or messages. The public service has no failure-reporting, refresh, receipt, generation, or scheduler API.
 
+### Machine-native materialization in development
+
+In 0.3 development, a Connected Service may declare
+`authentication.native: { systemTool: 'gh' }`. An authorized consumer can pass
+that qualified service as `nativeService` in the ordinary `materialize()`
+options. The host uses it only for an unbound purpose; an explicit account
+selection, even if invalid or unavailable, never falls back to the native login.
+The service and materialization scope must be declared by the consumer.
+
+GitHub's adapter obtains authorization from the executing machine's GitHub CLI,
+including the admitted Enterprise host. The returned credential is ephemeral;
+the native service choice is not a Connected Account and must not be replaced
+with a fabricated account id. A lost login returns a typed authentication
+failure requiring sign-in with `gh` on that machine.
+
+An Action's Connected Account purpose declaration can pair `path` with
+`nativeServicePath` so its schema admits exactly one configured-account or native
+selection. Both UI and agent invocations use that same canonical admission.
+
 ## Observe invalidation
 
 `watch(purpose, listener)` installs an occurrence-local subscription and then schedules an initial opaque `{ kind: 'resync' }` event. Binding, current group member, credential, revocation, configured-origin, or producer changes may coalesce into another resync. On every resync, discard reliance on the previous snapshot and call `getBinding()`, `listAccounts()`, or a materialization again.

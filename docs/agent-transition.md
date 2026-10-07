@@ -323,12 +323,24 @@ The brief is built by the existing replay owner: `resolveReplaySeedDraft` →
 `recent_messages`. `summary_plus_recent` is deliberately excluded — it would start an LLM summary run
 in a window where the source is already stopped and the user is waiting.
 
-One true total cap: `configuration.replaySeedMaxChars`, from `HAPPIER_REPLAY_MAX_SEED_CHARS`
-(default 120 000, bounded 1 024–200 000). No local maximum competes with it. The seed's own framing is
-subtracted from the cap, and the Happier Session-reference block appended at dispatch is reserved
-inside the **same** total by `fitHappierReplaySeedWithinTotalBudget` — the block is never truncated,
-the transcript tail gives way, and an empty fit leaves the seed unsettled for the next dispatch.
-Unlike fork, the transition does not honour a per-request `maxSeedChars` override.
+The current development Replay budget owner accepts positive integers without a separate rendering
+floor or provider-sized ceiling. The transition composes its seed using the Account's
+`sessionReplayMaxSeedChars`, falling back to `configuration.replaySeedMaxChars` when no usable Account
+budget is available; unlike fork, its request carries no `maxSeedChars` override. A legacy explicit
+`recentMessagesCount` bounds the aggregate dialog independently of the transcript API's 500-row page.
+
+The machine's operator cap remains authoritative at dispatch:
+`configuration.replaySeedMaxChars`, from `HAPPIER_REPLAY_MAX_SEED_CHARS` (default 120 000). Its configured
+positive integer is kept unchanged. The seed's own framing and the Happier Session-reference block
+count inside the **same** total; `fitHappierReplaySeedWithinTotalBudget` refits a sealed seed to the cap
+in force at dispatch. The reference block is never truncated, the transcript tail gives way, and an
+empty dispatch fit leaves the seed unsettled for the next dispatch. During composition, a nonempty
+source whose frame and reservation cannot fit returns `unavailable`; only a genuinely empty source
+returns `no_source_dialog`. No fixed minimum can establish feasibility for every frame and reservation.
+
+The strict owner-metadata envelope carries the sealed seed without a separate `seedText` size clamp.
+The containing ciphertext and HTTP request admissions still apply; neither Account mode nor key
+ownership changes. These are development source contracts, not released or loaded-daemon certification.
 
 That total is counted in **UTF-16 code units**, and `packages/agents/.../happierReplayPrompt.ts` owns
 the unit: every length it measures and every slice it takes is `String.prototype.length`. The

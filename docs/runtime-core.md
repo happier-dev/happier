@@ -33,16 +33,35 @@ catalog. Before the live loop takes ownership, the construction owner projects
 this prerequisite failure through the canonical turn lifecycle and drains its
 durable mutation admission before releasing Session custody. The issue uses
 `dependency_failure` and static daemon-connection remediation; it does not imply
-missing Agent credentials. Daemonless runtimes retain their explicitly supplied
-registry lease. These are development-source contracts, not completed live proof.
+missing Agent credentials. Once startup is admitted, the standalone GET
+notification stream uses the startup registrations without a fresh catalog read:
+the MCP transport cannot dispatch tools from GET. POST requests and native tool
+RPCs still require the current executable catalog and fail closed when it is
+unavailable. Daemonless runtimes retain their explicitly supplied registry lease.
+These are development-source contracts, not completed live proof.
+
+Accepted spawn nonce observation uses the daemon Session startup budget by default. Explicit finite observation durations are not reduced by phase-local caps; detached abandoned-spawn stop/archive observation retains its separate ten-minute default. The CLI nonce observer, daemon nonce endpoint, target RPC handler and shared acknowledgement race re-arm long deadlines in Node-supported timer chunks. Relay forwarding retains Socket.IO's native signed-timer boundary (about 24.8 days), so these local owners do not establish unbounded end-to-end relay observation.
+
+`SessionHandle.watch` follows committed retained transcript rows through the shared socket source and delivers complete text before advancing its reconnect frontier. Provisional stream deltas do not become retained message events. Cancellation ends the watcher; credential and plugin-occurrence checks prevent further delivery after retirement.
 
 For cold native history catch-up, a Session factory may declare `transcriptIdentity`, its pure provider-owned identity codec. The bound `transcripts.reconcileSourceIdentities` operation uses the canonical paginated transcript reader and encryption/semantic decoder, filters conversation rows to the selected Agent, and supplies only the codec's declared correlation fields. It checks the current Session, plugin occurrence and native Session identity before and after the read. Unsupported, failed or malformed reads reject rather than becoming empty coverage. OpenCode hydrates its existing authored-ID tracker from exact committed identities, including witnessed 0.2 predecessor mappings and import IDs. Its current percent-encoded import IDs preserve opaque identity tuples; the predecessor codec compares complete constructed legacy or JSON-tuple IDs only after checking a separate exact native-session witness, never by splitting opaque IDs. Unprovable legacy coverage is reported through the existing informational Session-event and default log owners; only that historical snapshot is suppressed, so subsequent settled native turns can still sync. No new identity registry or transcript writer is introduced. These current-source contracts are distinct from full authenticated live validation of the composed 0.3 runtime.
+
+Normal input and in-flight steer use the shared [host dispatch preparation](../apps/cli/src/agent/runtime/turns/prepareSessionInputForProviderDispatch.ts). It delegates selected skills, plugin references, attachments and media to the canonical structured-input resolver immediately before provider effect. The resolved envelope reaches the Agent through the same typed turn metadata, and its JSON projection counts toward required context before optional Follow context is fitted. Native slash commands retain their leading grammar with resolved context after it. Resolution failure is rejected before provider effect with its existing diagnostic and retryability; an undispatched replay-seed association is released. Steering rechecks Session binding, turn availability and admission after asynchronous preparation. This describes 0.3 development source, not completed loaded-runtime validation.
+
+The [Session prompt-plan producer](../apps/cli/src/agent/prompting/coding/sessionPromptPlan.ts) prepares coding policy through the canonical Launch Profile reader, including authorized published-profile Artifacts. Prompt rendering, title-tool advertisement and permission admission consume that same prepared fact. Session-owned retained Runs read it through the existing internal runtime-control binding; their Run intent id is not a Launch Profile id. A missing or retired producer, or failed preparation, withholds title-tool advertisement and admission until the policy is available again. An unresolved profile retains the canonical Account-default policy. No new policy wire field or persisted policy copy is introduced.
 
 The host fits retained WorkerUpdates against the current optional context allowance before dispatch. A still-deliverable wake that cannot fit stays with the input consumer until context/source, metadata, admission or user input changes; parking neither commits a transcript event nor acknowledges provider acceptance. Source admission is rechecked before parking, so a withdrawn wake releases custody even if it still cannot fit. User input keeps priority, and the retained wake is reconsidered afterward without selecting its producer again.
 
 Native interaction lifetime is separate from causal turn identity. Ordinary requests default to turn lifetime and retire with the matching terminal turn (including ordinary requests without a turn witness); native Codex asynchronous questions explicitly use occurrence lifetime. Those questions keep their causal turn id after completion and retire when their Session/plugin occurrence retires. The permission coordinator owns this distinction; terminal callbacks do not cancel every request owned by the plugin.
 
 Whole-Session permission reset reaches the existing Session request store even when the current coordinator has no local waiters, including after handler replacement. The store cancels pending requests and delivers their response targets. Cancellation waits for in-flight coordinator completion persistence before writing the terminal result; plugin-scoped cancellation retains its owner filter and performs no write for an empty local scope.
+
+In development source, a `message-delta` can supply the same stable `messageId` as its
+`transcript-message-committed` event. The host stream bridge uses that identity for live and
+durable rows and separates distinct messages within a turn; Agents without a witness retain
+the existing generated stream identity. OpenCode derives its stable ID through the same
+provider-session/message helper used by history import, so cold reconciliation recognizes
+streamed rows without a second persisted format or native-ID parser.
 
 Agent-specific protocol leaves live in `packages/plugins/<agentId>/src/agent/**`. Shared ACP composition, process/terminal transport and host lifecycle stay generic in the CLI. Detection, installation and process launch follow [binary runtime](binary-runtime.md); model-source selection and materialization follow [Providers](providers.md).
 
@@ -64,11 +83,20 @@ and replays the same unaccepted input. The pool coordinator owns the model
 cooldown and selection. A rejected start is exempt from turn/hour switch limits;
 accepted turns, partial output, unknown custody and native resume failures do
 not authorize replay. Pool exhaustion names the requested model in a typed
-error. This is an unreleased recovery corridor, not verified production
-availability: the current detached Codex host lacks the Run-scoped auth refresh
-hook required by its refresh-free authentication guard. The canonical Run auth
-services must supply that seam before composed loaded-daemon validation can
-exercise recovery. The corridor does not restart the parent Session.
+error. The canonical detached Run host supplies descriptor-bounded native-home
+reads and Run-scoped authentication refresh. Session and Run adapters share the
+host refresh core and daemon refresh authority; the Run control channel retains
+the exact runner and materialization activation, without inventing a Session id.
+Session-owned Runs keep their genuine parent Session projections while binding
+authentication refresh to the Run's own materialized account.
+Refresh distribution notifies only current genuine Session targets; a Run's
+shared runner PID or retained parent Session id does not authorize a Session update.
+Refresh and acknowledgment continuation require exact member/generation and
+persisted revision proof. Only the same live occurrence can accept its own
+settled credential-revision transition; process replacement or reselection
+invalidates that authority.
+This is an unreleased source corridor, not a claim of loaded-daemon validation
+or released availability. The corridor does not restart the parent Session.
 
 The execution host bridge retains private Run control state through the existing
 device-local execution registry, sealed separately from disposable visibility
