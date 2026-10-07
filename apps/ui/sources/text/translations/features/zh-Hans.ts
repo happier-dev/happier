@@ -1577,6 +1577,7 @@ const en = Shared_connectedServicesCollectionTranslations.en;
 
 const zhHans: ConnectedServicesCollectionCopy = {
     accountLabel: ({ service }) => `${service} 账户`,
+    accountLabelNumbered: ({ service, number }) => `${service} 账户 ${number}`,
     meterResetsIn: ({ time }) => `${time}后`,
     meterNextResetIn: ({ time }) => `下次在${time}后`,
     meterResetsAt: ({ countdown, time }) => `${countdown} · ${time}`,
@@ -10767,9 +10768,6 @@ type WidgetAddTranslation = Shared_widgetAddTranslations.WidgetAddTranslation;
 const inSentence = Shared_widgetAddTranslations.inSentence;
 
 const widgetAddTranslations = { 'zh-Hans': {
-        viewGallery: '图库',
-        viewList: '列表',
-        viewLabel: '视图',
         added: '已添加',
         boardTitle: '添加到看板',
         boardHint: '这里的每个人都能看到你添加的内容',
@@ -10777,8 +10775,6 @@ const widgetAddTranslations = { 'zh-Hans': {
         companionHint: '只有你能看到你的伴随栏',
         searchWidgets: '搜索小组件',
         searchCompanion: '搜索速览和面板',
-        fromPlugins: '来自插件',
-        fromPluginsHint: '实时，使用此会话的数据',
         makeOne: '新建一个',
         noteSubtitle: 'Markdown',
         interactiveViewSubtitle: 'HTML',
@@ -10800,14 +10796,27 @@ const widgetAddTranslations = { 'zh-Hans': {
             local_services: '打开所选会话运行的本地服务。',
         },
         noMatch: ({ query }) => `没有与“${query}”匹配的小组件`,
-        setupTitle: ({ widget }) => `设置 ${widget}`,
+        pickTitle: '选择一个小组件，在这里查看',
+        pickHint: '在添加之前，按你选择的尺寸显示你自己的数据。',
+        pickNote: '选择一个小组件来添加',
+        askAction: '起草请求',
+        pluginTag: '插件',
+        pluginProvenance: ({ plugin }) => `${plugin} 插件`,
+        readsChosenSession: '在会话运行的位置读取你选择的会话',
+        readsFrom: ({ source }) => `读取 ${source}`,
+        savedQueryOn: ({ source }) => `${source} 上的已保存查询`,
+        madeByYou: ({ date }) => `由你于 ${date} 创建`,
+        madeByAgent: ({ date }) => `由你的代理于 ${date} 创建`,
+        madeByPlugin: ({ date }) => `由插件于 ${date} 创建`,
+        previewLiveData: '实时，使用你的数据',
+        addsAtSize: ({ size }) => `以${size}尺寸添加。之后可以更改尺寸。`,
+        backToWidgets: '小组件',
         editTitle: ({ widget }) => `${widget} · 输入`,
         editHint: '只有这个副本会改变。其他副本保留各自的输入。',
         preview: '预览',
         previewLive: '预览 · 实时',
         previewWaiting: ({ field }) => `选择${field}后会在这里显示`,
         previewAfterAdd: '添加后会在这里显示',
-        backToGallery: '返回图库',
         needed: '必填',
         stillNeeded: ({ field }) => `仍需要 ${field}`,
         followGroup: '跟随',
@@ -10835,7 +10844,6 @@ const widgetAddTranslations = { 'zh-Hans': {
         saveFailed: '无法保存。请重试。',
         homeTitle: '添加到首页',
         homeHint: '只有你能看到你的首页 · 在所有设备上',
-        homeFromPluginsHint: '实时，使用你的数据',
         addWidgets: '添加小组件',
         addToHome: '添加到首页',
         addToBoard: '添加到看板',
@@ -10976,8 +10984,6 @@ const widgetFrameTranslations = { 'zh-Hans': {
         appearanceDescription: '此设备上小组件的边框样式。要单独更改某个小组件，请使用它的 ⋯ 菜单。',
         previewLabel: ({ surface, style }) => `${surface} · ${style}`,
         noticeChanged: '边框已更改',
-        addViewTitle: '添加小组件',
-        addViewDescription: '“添加”弹窗的显示方式。在弹窗中切换也会更改此处。',
         newChip: '新',
     } } satisfies Pick<Readonly<Record<string, WidgetFrameTranslation>>, "zh-Hans">;
 
@@ -11039,6 +11045,9 @@ const en = Shared_workflowActionTranslations.en;
 const workflowActionTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy>, "zhHans"> = { zhHans: {
         host: "Happier",
         structure: "结构",
+        callWebhook: "调用 Webhook",
+        runCommand: "运行命令",
+        commandValuesInEnv: "通过环境变量传递工作流的值。命令文本按原样执行。",
         artifactCreate: "创建文档",
         artifactGet: "读取文档",
         artifactList: "列出文档",
@@ -11150,6 +11159,10 @@ const workflowFieldTranslations = { zhHans: {
         secondOpinion: "第二意见",
         useJudge: "评判者",
         diffFingerprint: "已审查的更改",
+        url: "URL",
+        body: "JSON 正文",
+        command: "命令",
+        env: "环境变量",
     } };
 
 return { workflowFieldTranslations };

@@ -6,7 +6,7 @@ import { en } from '@/text/translations/en';
 /**
  * The one reader of Home feature labels (`homeFeatures.<featureId>.title|description`, and
  * `homeFeatures.<family>.group` for Advanced sections). The labels live in
- * `homeFeatureTranslations.ts`; a label is looked up in the English tree, which defines the shape
+ * `en.homeFeatures`; a label is looked up in the English tree, which defines the shape
  * every locale matches, and then translated through `t`. The console never shows a raw id: an id
  * without a label (a feature newer than this app) reads as its humanised last segment.
  */

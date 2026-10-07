@@ -1582,6 +1582,7 @@ const en = Shared_connectedServicesCollectionTranslations.en;
 
 const ja: ConnectedServicesCollectionCopy = {
     accountLabel: ({ service }) => `${service} アカウント`,
+    accountLabelNumbered: ({ service, number }) => `${service} アカウント ${number}`,
     meterResetsIn: ({ time }) => `${time}後`,
     meterNextResetIn: ({ time }) => `次は${time}後`,
     meterResetsAt: ({ countdown, time }) => `${countdown} · ${time}`,
@@ -10771,9 +10772,6 @@ type WidgetAddTranslation = Shared_widgetAddTranslations.WidgetAddTranslation;
 const inSentence = Shared_widgetAddTranslations.inSentence;
 
 const widgetAddTranslations = { ja: {
-        viewGallery: 'ギャラリー',
-        viewList: 'リスト',
-        viewLabel: '表示',
         added: '追加済み',
         boardTitle: 'ボードに追加',
         boardHint: 'ここにいる全員に表示されます',
@@ -10781,8 +10779,6 @@ const widgetAddTranslations = { ja: {
         companionHint: 'コンパニオンはあなただけに表示されます',
         searchWidgets: 'ウィジェットを検索',
         searchCompanion: '概要とペインを検索',
-        fromPlugins: 'プラグインから',
-        fromPluginsHint: 'このセッションのデータでライブ表示',
         makeOne: '作成する',
         noteSubtitle: 'Markdown',
         interactiveViewSubtitle: 'HTML',
@@ -10804,14 +10800,27 @@ const widgetAddTranslations = { ja: {
             local_services: '選んだセッションのローカルサービスを開きます。',
         },
         noMatch: ({ query }) => `「${query}」に一致するウィジェットはありません`,
-        setupTitle: ({ widget }) => `${widget} を設定`,
+        pickTitle: 'ウィジェットを選ぶとここに表示されます',
+        pickHint: '追加する前に、選んだサイズであなた自身のデータを表示します。',
+        pickNote: '追加するウィジェットを選んでください',
+        askAction: '依頼を下書き',
+        pluginTag: 'プラグイン',
+        pluginProvenance: ({ plugin }) => `${plugin} プラグイン`,
+        readsChosenSession: '選んだセッションを実行場所で読み取ります',
+        readsFrom: ({ source }) => `${source} を読み取ります`,
+        savedQueryOn: ({ source }) => `${source} の保存済みクエリ`,
+        madeByYou: ({ date }) => `${date} にあなたが作成`,
+        madeByAgent: ({ date }) => `${date} にあなたのエージェントが作成`,
+        madeByPlugin: ({ date }) => `${date} にプラグインが作成`,
+        previewLiveData: 'ライブ、あなたのデータで',
+        addsAtSize: ({ size }) => `${size} で追加します。サイズは後で変更できます。`,
+        backToWidgets: 'ウィジェット',
         editTitle: ({ widget }) => `${widget} · 入力`,
         editHint: 'このコピーだけが変わります。ほかのコピーは入力を保ちます。',
         preview: 'プレビュー',
         previewLive: 'プレビュー · ライブ',
         previewWaiting: ({ field }) => `${field}を選ぶとここに表示されます`,
         previewAfterAdd: '追加するとここに表示されます',
-        backToGallery: 'ギャラリーに戻る',
         needed: '必須',
         stillNeeded: ({ field }) => `${field} がまだ必要です`,
         followGroup: 'フォロー',
@@ -10839,7 +10848,6 @@ const widgetAddTranslations = { ja: {
         saveFailed: '保存できませんでした。もう一度お試しください。',
         homeTitle: 'ホームに追加',
         homeHint: 'ホームはあなただけに表示されます · すべてのデバイスで',
-        homeFromPluginsHint: 'ライブ、あなたのデータで',
         addWidgets: 'ウィジェットを追加',
         addToHome: 'ホームに追加',
         addToBoard: 'ボードに追加',
@@ -10980,8 +10988,6 @@ const widgetFrameTranslations = { ja: {
         appearanceDescription: 'このデバイスでのウィジェットの枠の表示方法です。個別に変えるには、そのウィジェットの ⋯ メニューを使います。',
         previewLabel: ({ surface, style }) => `${surface} · ${style}`,
         noticeChanged: '枠を変更しました',
-        addViewTitle: 'ウィジェットの追加',
-        addViewDescription: '「追加」メニューの表示方法です。メニュー側で切り替えると、ここも変わります。',
         newChip: '新着',
     } } satisfies Pick<Readonly<Record<string, WidgetFrameTranslation>>, "ja">;
 
@@ -11043,6 +11049,9 @@ const en = Shared_workflowActionTranslations.en;
 const workflowActionTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy>, "ja"> = { ja: {
         host: "Happier",
         structure: "構造",
+        callWebhook: "Webhook を呼び出す",
+        runCommand: "コマンドを実行",
+        commandValuesInEnv: "ワークフローの値は環境変数で渡します。コマンドのテキストは記述したまま実行されます。",
         artifactCreate: "ドキュメントを作成",
         artifactGet: "ドキュメントを読む",
         artifactList: "ドキュメント一覧",
@@ -11154,6 +11163,10 @@ const workflowFieldTranslations = { ja: {
         secondOpinion: "セカンドオピニオン",
         useJudge: "判定役",
         diffFingerprint: "確認済みの変更",
+        url: "URL",
+        body: "JSON 本文",
+        command: "コマンド",
+        env: "環境変数",
     } };
 
 return { workflowFieldTranslations };

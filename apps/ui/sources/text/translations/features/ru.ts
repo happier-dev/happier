@@ -1604,6 +1604,7 @@ const en = Shared_connectedServicesCollectionTranslations.en;
 
 const ru: ConnectedServicesCollectionCopy = {
     accountLabel: ({ service }) => `Аккаунт ${service}`,
+    accountLabelNumbered: ({ service, number }) => `Аккаунт ${service} ${number}`,
     meterResetsIn: ({ time }) => `через ${time}`,
     meterNextResetIn: ({ time }) => `следующий через ${time}`,
     meterResetsAt: ({ countdown, time }) => `${countdown} · ${time}`,
@@ -10807,9 +10808,6 @@ type WidgetAddTranslation = Shared_widgetAddTranslations.WidgetAddTranslation;
 const inSentence = Shared_widgetAddTranslations.inSentence;
 
 const widgetAddTranslations = { ru: {
-        viewGallery: 'Галерея',
-        viewList: 'Список',
-        viewLabel: 'Вид',
         added: 'Добавлено',
         boardTitle: 'Добавить на доску',
         boardHint: 'Все здесь увидят то, что вы добавите',
@@ -10817,8 +10815,6 @@ const widgetAddTranslations = { ru: {
         companionHint: 'Ваш компаньон видите только вы',
         searchWidgets: 'Поиск виджетов',
         searchCompanion: 'Поиск сводок и панелей',
-        fromPlugins: 'Из плагинов',
-        fromPluginsHint: 'вживую, с данными этой сессии',
         makeOne: 'Создать',
         noteSubtitle: 'Markdown',
         interactiveViewSubtitle: 'HTML',
@@ -10840,14 +10836,27 @@ const widgetAddTranslations = { ru: {
             local_services: 'Открывайте локальные сервисы выбранной сессии.',
         },
         noMatch: ({ query }) => `Нет виджетов по запросу «${query}»`,
-        setupTitle: ({ widget }) => `Настроить: ${widget}`,
+        pickTitle: 'Выберите виджет, чтобы увидеть его здесь',
+        pickHint: 'Он показывает ваши собственные данные в выбранном размере ещё до добавления.',
+        pickNote: 'Выберите виджет, чтобы добавить его',
+        askAction: 'Написать запрос',
+        pluginTag: 'плагин',
+        pluginProvenance: ({ plugin }) => `Плагин ${plugin}`,
+        readsChosenSession: 'читает выбранную сессию там, где она запущена',
+        readsFrom: ({ source }) => `читает ${source}`,
+        savedQueryOn: ({ source }) => `сохранённый запрос к ${source}`,
+        madeByYou: ({ date }) => `создано вами ${date}`,
+        madeByAgent: ({ date }) => `создано вашим агентом ${date}`,
+        madeByPlugin: ({ date }) => `создано плагином ${date}`,
+        previewLiveData: 'Вживую, с вашими данными',
+        addsAtSize: ({ size }) => `Добавляется в размере «${size}». Размер можно изменить позже.`,
+        backToWidgets: 'Виджеты',
         editTitle: ({ widget }) => `${widget} · входные данные`,
         editHint: 'Изменится только эта копия. Остальные сохранят свои данные.',
         preview: 'Предпросмотр',
         previewLive: 'Предпросмотр · вживую',
         previewWaiting: ({ field }) => `Выберите «${field}», чтобы увидеть здесь`,
         previewAfterAdd: 'Появится здесь после добавления',
-        backToGallery: 'Назад в галерею',
         needed: 'Нужно',
         stillNeeded: ({ field }) => `Ещё нужно: ${field}`,
         followGroup: 'Следовать',
@@ -10875,7 +10884,6 @@ const widgetAddTranslations = { ru: {
         saveFailed: 'Не удалось сохранить. Попробуйте ещё раз.',
         homeTitle: 'Добавить на главную',
         homeHint: 'Только вы видите свою главную · на всех устройствах',
-        homeFromPluginsHint: 'вживую, с вашими данными',
         addWidgets: 'Добавить виджеты',
         addToHome: 'Добавить на главную',
         addToBoard: 'Добавить на доску',
@@ -11016,8 +11024,6 @@ const widgetFrameTranslations = { ru: {
         appearanceDescription: 'Как виджеты оформлены на этом устройстве. Чтобы изменить один виджет, откройте его меню ⋯.',
         previewLabel: ({ surface, style }) => `${surface} · ${style}`,
         noticeChanged: 'Рамка изменена',
-        addViewTitle: 'Добавление виджетов',
-        addViewDescription: 'Как открывается меню «Добавить». Если переключить его там, изменится и здесь.',
         newChip: 'Новое',
     } } satisfies Pick<Readonly<Record<string, WidgetFrameTranslation>>, "ru">;
 
@@ -11079,6 +11085,9 @@ const en = Shared_workflowActionTranslations.en;
 const workflowActionTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy>, "ru"> = { ru: {
         host: "Happier",
         structure: "Структура",
+        callWebhook: "Вызвать вебхук",
+        runCommand: "Выполнить команду",
+        commandValuesInEnv: "Передавайте значения процесса через переменные окружения. Текст команды выполняется в том виде, в котором вы его написали.",
         artifactCreate: "Создать документ",
         artifactGet: "Прочитать документ",
         artifactList: "Список документов",
@@ -11190,6 +11199,10 @@ const workflowFieldTranslations = { ru: {
         secondOpinion: "Второе мнение",
         useJudge: "Арбитр",
         diffFingerprint: "Проверенные изменения",
+        url: "URL",
+        body: "Тело JSON",
+        command: "Команда",
+        env: "Переменные окружения",
     } };
 
 return { workflowFieldTranslations };
