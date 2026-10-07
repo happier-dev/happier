@@ -691,7 +691,8 @@ describe('production workflow coordinator', () => {
     expect(store.read(key)?.lifecycle).toBe('admitting');
   });
 
-  it.each(['session', 'action'] as const)('merges late %s acceptance into refreshed cancellation custody without losing row content', async (kind) => {
+  it.each(['session', 'action', 'command', 'foreign_command', 'terminal_command', 'different_attempt'] as const)('merges late %s acceptance into refreshed cancellation custody without losing row content', async (kind) => {
+    const command = kind !== 'session' && kind !== 'action';
     const rootId = 'root-origin-cancel-race';
     const rootEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({
       mode: 'plain', binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: rootId,
@@ -711,12 +712,12 @@ describe('production workflow coordinator', () => {
     const key = workflowInvocationKey({ runId, blockId: 'work', scope: [], attempt: 0 });
     const correspondence: WorkflowExecutionCorrespondenceV1 = kind === 'session'
       ? { kind: 'session', sessionId: 'origin', localInputId: 'origin-input' }
-      : { kind: 'action', actionId: 'review.start', actionRequestId: 'action-request', localInputId: 'action-request', input: {} };
-    const acknowledgement: WorkflowExecutionCorrespondenceV1 = correspondence.kind === 'action'
+      : { kind: 'action', actionId: command ? 'machines.command.run' : 'review.start', actionRequestId: 'action-request', localInputId: 'action-request', input: {} };
+    const acknowledgement: WorkflowExecutionCorrespondenceV1 = correspondence.kind === 'action' && !command
       ? { ...correspondence, output: { results: [{ key: 'codex', ok: true, result: { runId: 'native-review' } }] },
         awaitedRuns: [{ key: 'codex', runId: 'native-review' }] } : correspondence;
     const intent = await store.ensureIntent({ key, recordId: 'origin-leaf', runId, blockId: 'work', path: { blockId: 'work', scope: [] },
-      blockKind: kind === 'action' ? 'action' : 'step', memberOrdinal: '0', attempt: 0, acceptedAtMs: Date.now(), lifecycle: 'pending' });
+      blockKind: kind === 'session' ? 'step' : 'action', memberOrdinal: '0', attempt: 0, acceptedAtMs: Date.now(), lifecycle: 'pending' });
     await store.commitFact({ key, lifecycle: 'admitting', execution: correspondence,
       input: { document: onlyStep.document, input: [] }, resultContract: onlyStep.result });
     boundary.requestControl('cancel_requested');
@@ -733,9 +734,47 @@ describe('production workflow coordinator', () => {
       invocationId: swept.index.id, invocationAttempt: swept.index.attempt,
       expectedContentRevision: swept.index.contentRevision, expectedLifecycle: 'cancel_requested', lifecycle: 'cancel_requested',
       contentEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({
-        mode: 'plain', binding, progress: { ...current.content, result: 'published before acknowledgement' },
+        mode: 'plain', binding, progress: { ...current.content,
+          ...(command ? { interaction: { permission: 'published before acknowledgement' } } : { result: 'published before acknowledgement' }),
+          ...(kind === 'foreign_command' && correspondence.kind === 'action'
+            ? { execution: { ...correspondence, actionRequestId: 'another-action-request' } } : {}) },
       })),
     });
+    if (command) {
+      if (kind === 'terminal_command') {
+        const row = boundary.rowById(intent.recordId)!;
+        await boundary.execute({ operation: 'invocations.fact', runId, parentAttempt: 0,
+          accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null },
+          invocationId: row.index.id, invocationAttempt: row.index.attempt,
+          expectedContentRevision: row.index.contentRevision, expectedLifecycle: 'cancel_requested', lifecycle: 'cancelled',
+          contentEnvelope: row.contentEnvelope });
+      }
+      if (kind === 'different_attempt') {
+        // Seed a newer stored attempt at the opaque HTTP/database boundary.
+        // Its content binding no longer grants the old attempt write authority.
+        const row = boundary.rowById(intent.recordId)!;
+        row.index.attempt = '1';
+        row.contentEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({
+          mode: 'plain', binding: { ...binding, attempt: '1' }, progress: { ...current.content, attempt: '1', previousAttemptRecordId: 'prior-command-attempt' },
+        }));
+      }
+      const result = { exitCode: -1, stdout: 'printed before Stop', stderr: '' };
+      const retained = store.commitFact({ key, lifecycle: 'cancelled', reason: 'command_cancelled', result });
+      if (kind !== 'command') {
+        await expect(retained).rejects.toThrow();
+        expect(boundary.rowById(intent.recordId)!.index.lifecycle).toBe(kind === 'terminal_command' ? 'cancelled' : 'cancel_requested');
+        expect(store.read(key)?.result).not.toEqual(result);
+        return;
+      }
+      await expect(retained).resolves.toMatchObject({ lifecycle: 'cancelled', reason: 'command_cancelled', result });
+      const committed = boundary.rowById(intent.recordId)!;
+      expect(openWorkflowProgressStoredEnvelopeV1({ mode: 'plain', binding,
+        envelope: parseWorkflowStoredContentEnvelopeV1(committed.contentEnvelope) }))
+        .toMatchObject({ kind: 'available', content: { execution: correspondence, result,
+          reason: { code: 'command_cancelled' }, input: { document: onlyStep.document, input: [] }, resultContract: onlyStep.result,
+          interaction: { permission: 'published before acknowledgement' } } });
+      return;
+    }
     const observationDeadline = { kind: 'at' as const, expiresAt: '2026-01-01T00:00:10.000Z' };
     await expect(store.commitFact({ key, lifecycle: 'running', execution: acknowledgement, observationDeadline }))
       .resolves.toMatchObject({ lifecycle: 'cancel_requested', execution: acknowledgement, observationDeadline,

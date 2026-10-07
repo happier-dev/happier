@@ -555,6 +555,16 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
         // without releasing input or reopening cancellation custody.
         return await this.commitFactNow({ ...fact, lifecycle: 'cancel_requested' });
       }
+      if (current.lifecycle === 'admitting' && fact.lifecycle === 'cancelled'
+        && fact.reason === 'command_cancelled' && fact.result !== undefined
+        && current.execution?.kind === 'action' && current.execution.actionId === 'machines.command.run'
+        && refreshed?.lifecycle === 'cancel_requested'
+        && refreshed.recordId === current.recordId && refreshed.attempt === current.attempt
+        && sameStrictJsonValue(refreshed.execution, current.execution)) {
+        // Stop swept this exact command while its terminal response was in flight.
+        // Merge into the refreshed opaque content under the existing custody CAS.
+        return await this.commitFactNow(fact);
+      }
       if (refreshed?.lifecycle === 'cancel_requested' || refreshed?.lifecycle === 'cancelled') {
         throw new WorkflowControlBoundary('cancelled');
       }
