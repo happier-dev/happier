@@ -792,7 +792,11 @@ describe('SessionView (direct sessions)', () => {
       homes.answer(canonicalDraftScope.serverId, '/v1/features', { body: features });
       homes.answer(canonicalDraftScope.serverId, '/v1/features/authenticated', { body: features });
       const { directSessionV1: _direct, ...metadata } = storageState.sessions.s1.metadata;
-      storageState.sessions.s1 = { ...storageState.sessions.s1, metadata };
+      storageState.sessions.s1 = {
+        ...storageState.sessions.s1, metadata,
+        accessLevel: 'owner',
+        access: createSessionAccessFixture('owner', { approveRuntimePermissions: false }),
+      };
       storageState.machines['machine-1'] = createMachineFixture({ activeAt: Date.now() });
       applyDirectSessionFixtures();
       const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
