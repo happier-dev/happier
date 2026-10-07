@@ -118,7 +118,6 @@ function composerReferenceHost(): ComposerReferenceSearchHost {
                     qualifiedId: 'acme.issues/issues',
                     localId: 'issues',
                 },
-                occurrenceId: '7',
                 progression: { declared: true, normalized: true, merged: true },
                 registration: { requirement: 'required', state: 'bound', occurrenceId: '7' },
                 activation: { state: 'active', occurrenceId: '7' },
