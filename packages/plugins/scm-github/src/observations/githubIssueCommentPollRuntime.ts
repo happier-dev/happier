@@ -27,7 +27,8 @@ import type {
 import { GITHUB_API_ORIGIN, readGithubPositiveDecimal } from './githubProviderContracts.js';
 import { parseGithubChannelEndpoint } from './githubChannelEndpoint.js';
 import { readGithubPullRequestChecks } from '../triage/checks.js';
-import { readGithubCheckOutcomeV1 } from '../triage/checkOutcome.js';
+import { projectGithubChecksSourceEvents } from './githubChecksSource.js';
+import { GITHUB_AUTOMATION_EVENT_LOCAL_IDS } from '../githubAutomationEvents.js';
 
 const MAX_GITHUB_ISSUE_COMMENT_PAGES_PER_POLL = 10;
 const MAX_GITHUB_ISSUE_COMMENT_SCOPE_LENGTH = 512;
@@ -705,28 +706,28 @@ export async function pollGithubIssueCommentsForChannels(input: GithubChannelPol
       observation: { pullRequestNumber: parsed.issueNumber, selection: 'all' },
     }, { client: input.client, now: () => input.nowMs ?? Date.now(), signal });
     signal.throwIfAborted();
-    if (!surface.observation || ['unknown', 'superseded'].includes(surface.observation.state)) continue;
+    const source = projectGithubChecksSourceEvents({ repositoryId: input.config.repository.repositoryId,
+      nameWithOwner: input.config.repository.nameWithOwner }, surface);
+    if (source.snapshot.state === 'unknown' || source.snapshot.state === 'superseded') continue;
     const prior = new Set(checks[endpoint.id] ?? []);
     const observed: string[] = [];
-    for (const check of surface.observations) {
-      if (readGithubCheckOutcomeV1(check) !== 'failed') continue;
-      const evidenceKey = createHash('sha256').update(JSON.stringify([
-        head.sha, check.key, check.status, check.conclusion, check.completedAtMs,
-      ])).digest('base64url');
+    for (const event of source.events) {
+      if (event.eventRef.localId !== GITHUB_AUTOMATION_EVENT_LOCAL_IDS.checksFailed) continue;
+      const evidenceKey = source.evidenceKey;
       if (prior.has(evidenceKey) || result.kind === 'checkpointOnly') { observed.push(evidenceKey); continue; }
       if (observations.length >= input.limit) continue;
       if (repositoryWriteAccess === undefined) {
         repositoryWriteAccess = await readCommenterRepositoryWriteAccess(input.client, input.config.repository, input.config.integrationPrincipal);
       }
       signal.throwIfAborted();
-      const occurrenceId = `github:repository:${input.config.repository.repositoryId}:pull-request:${parsed.issueId}:ci:${evidenceKey}`;
-      const occurredAt = check.completedAtMs ?? check.startedAtMs ?? check.checkSuiteCreatedAtMs;
-      if (occurredAt === undefined) continue;
+      const occurrenceId = event.occurrenceId;
+      const occurredAt = event.providerOccurredAtMs;
+      if (occurredAt === null) continue;
       const observation: ConversationObservationV1 = {
         v: 1, occurrenceId, occurredAt, scopedTriggerKind: 'ciFailed', transport: { kind: 'poll' }, endpoint,
         actor: { principalId: input.config.integrationPrincipal.id, label: input.config.integrationPrincipal.label,
           kind: 'integration', isIntegrationSelf: true, repositoryWriteAccess },
-        message: { id: occurrenceId, revision: evidenceKey, text: `CI check ${check.name} failed on ${input.config.repository.nameWithOwner}#${parsed.issueNumber} (${head.sha}).`,
+        message: { id: occurrenceId, revision: evidenceKey, text: `CI checks ${event.failedCheckNames.join(', ')} failed on ${input.config.repository.nameWithOwner}#${parsed.issueNumber} (${head.sha}).`,
           addressingEvidence: 'none', contentProvenance: 'original', providerTimestamp: occurredAt },
       };
       observations.push({ observation: { kind: 'fullText', observation }, eventCandidate: null });

@@ -20,6 +20,7 @@ describe('GitHub Channel CI observations', () => {
     ['unknown', 'unexpected', 99, null, true, '2026-08-10T11:59:59Z'], ['identity mismatch', 'write', 123, null, true, '2026-08-10T11:59:59Z'],
     ['missing provider timestamps', 'write', 99, true, false, '2026-08-10T11:59:59Z'],
     ['missing suite timestamp', 'write', 99, true, false, null], ['invalid suite timestamp', 'write', 99, true, false, 'invalid'],
+    ['multiple failed checks', 'write', 99, true, true, '2026-08-10T11:59:59Z'],
   ] as const)('observes failed checks with authenticated principal evidence: %s', async (_name, permission, id, access, hasTimestamps, suiteCreatedAt) => {
     const nowMs = Date.parse('2026-08-10T12:00:02Z');
     const urls: string[] = [];
@@ -31,9 +32,9 @@ describe('GitHub Channel CI observations', () => {
       if (input.url.endsWith('/permission')) return response({ permission, user: { id, login: 'happier-bot' } });
       if (input.url.endsWith('/graphql')) return response({ data: { repository: { pullRequest: {
         headRefOid: 'abc123', commits: { nodes: [{ commit: { oid: 'abc123', statusCheckRollup: {
-          contexts: { nodes: [{ __typename: 'CheckRun', id: 'check-1', name: 'Tests', status: 'COMPLETED',
+          contexts: { nodes: (_name === 'multiple failed checks' ? ['check-1', 'check-2'] : ['check-1']).map((checkId) => ({ __typename: 'CheckRun', id: checkId, name: checkId === 'check-1' ? 'Tests' : 'Lint', status: 'COMPLETED',
             conclusion: 'FAILURE', detailsUrl: null, checkSuite: { createdAt: suiteCreatedAt }, startedAt: hasTimestamps ? '2026-08-10T12:00:00Z' : null,
-            completedAt: hasTimestamps ? '2026-08-10T12:00:01Z' : null, isRequired: false }], pageInfo: { hasNextPage: false } },
+            completedAt: hasTimestamps ? '2026-08-10T12:00:01Z' : null, isRequired: false })), pageInfo: { hasNextPage: false } },
         } } }] },
       } } } });
       throw new Error(`Unexpected request ${input.url}`);
@@ -53,7 +54,8 @@ describe('GitHub Channel CI observations', () => {
     expect(first.observations[0]).toMatchObject({ eventCandidate: null, observation: { kind: 'fullText', observation: {
       endpoint, scopedTriggerKind: 'ciFailed', occurredAt: Date.parse(hasTimestamps ? '2026-08-10T12:00:01Z' : '2026-08-10T11:59:59Z'),
       actor: { principalId: '99', kind: 'integration', repositoryWriteAccess: access },
-      message: { providerTimestamp: Date.parse(hasTimestamps ? '2026-08-10T12:00:01Z' : '2026-08-10T11:59:59Z') },
+      message: { providerTimestamp: Date.parse(hasTimestamps ? '2026-08-10T12:00:01Z' : '2026-08-10T11:59:59Z'),
+        text: expect.stringContaining(_name === 'multiple failed checks' ? 'Tests, Lint' : 'Tests') },
     } } });
     expect(urls).toContain('https://api.github.com/repos/acme/widgets/collaborators/happier-bot/permission');
     const replay = await pollGithubIssueCommentsForChannels({ ...input, checkpoint: first.checkpointAfterBatch });

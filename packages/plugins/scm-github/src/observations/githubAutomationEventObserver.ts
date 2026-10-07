@@ -72,7 +72,7 @@ import {
 import { GithubObservationRequestCoalescer } from './githubRequestCoalescer.js';
 import { requireGithubAccountStorage } from '../requiredAccountStorage.js';
 import { classifyGithubAutomationAdmissionTelemetry } from './githubAutomationAdmissionAccounting.js';
-import { githubChecksEventMatches, githubChecksSourceInstanceId, isGithubChecksEvent, parseGithubChecksSource } from './githubChecksSource.js';
+import { projectGithubChecksSourceEvents, githubChecksSourceInstanceId, isGithubChecksEvent, parseGithubChecksSource } from './githubChecksSource.js';
 import { readGithubPullRequestChecks } from '../triage/checks.js';
 
 const REPOSITORY_EVENTS_ENDPOINT_KIND = 'repositoryEvents' as const;
@@ -1441,21 +1441,22 @@ async function runObservedSource(input: Readonly<{
       const surface = await readGithubPullRequestChecks({ route: source.repository, headSha: checks.headSha,
         observation: { pullRequestNumber: checks.pullRequestNumber, selection: checks.selection },
       }, { client: coalescedClient, now: input.now, signal: input.context.signal });
-      const snapshot = surface.observation;
-      if (!snapshot) throw new GithubRepositoryEventsSourceContractError('GitHub checks observation is unavailable');
+      const { snapshot, evidenceKey, events } = projectGithubChecksSourceEvents({
+        repositoryId: source.repository.repositoryId, nameWithOwner: source.repository.nameWithOwner,
+      }, surface);
       const observedAtMs = readObserverNow(input.now);
-      const evidenceKey = createHash('sha256').update(JSON.stringify([snapshot, surface.observations])).digest('base64url');
       const previous = row ? isRecord(row.value.payload) && isRecord(row.value.payload.cursor) ? row.value.payload.cursor : null : null;
       if (row && (!previous || previous.kind !== 'pullRequestChecks' || previous.v !== 1)) {
         throw new GithubRepositoryEventsSourceContractError('GitHub checks checkpoint cursor is incompatible');
       }
       let lastOccurrence = row && isGithubAutomationEventCheckpointRowV1(row.value) ? row.value.payload.lastContiguousOccurrenceId : null;
       const changed = previous?.evidenceKey !== evidenceKey;
-      if (row && changed && githubChecksEventMatches(source.definition.eventRef.localId, snapshot)) {
-        const occurrenceId = `${source.definition.sourceInstanceId}:${evidenceKey}`;
+      const event = events.find((candidate) => candidate.eventRef.localId === source.definition.eventRef.localId);
+      if (row && changed && event) {
+        const occurrenceId = event.occurrenceId;
         const admitted = await input.context.services.actions.execute('automation.event.admit', {
           eventRef: source.definition.eventRef, occurrenceId, occurredAt: observedAtMs, observationReceivedAt: observedAtMs,
-          payload: { repository: { repositoryId: source.repository.repositoryId, nameWithOwner: source.repository.nameWithOwner }, checks: snapshot },
+          payload: event.payload,
           definitions: [{ automationId: source.definition.automationId, triggerId: source.definition.triggerId,
             triggerRevision: source.definition.triggerRevision, sourceSelectorId: source.definition.sourceSelectorId }],
         }, { signal: input.context.signal });
