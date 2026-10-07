@@ -48,7 +48,7 @@ function alignToDocumentClock(element: HTMLElement | null): void {
 
 /**
  * The web dots: a strip of pre-drawn frames clipped by the host box and stepped by one transform
- * animation, or the still H (breathing under reduced motion).
+ * animation, or the still chosen mark (breathing under reduced motion).
  */
 export function DotSpinnerWeb(props: Readonly<{
   styleId: DotSpinnerStyleId;

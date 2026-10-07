@@ -18,6 +18,8 @@ import { toAwarenessRuntimeInput } from '../attention/runtimePresentation';
 import { readSessionContentAvailability } from '../encryptedContentAvailability';
 
 export type UiSessionAwarenessOptions = Readonly<{
+    /** Status/count consumers need the same classification without constructing the display title. */
+    includeTitle?: boolean;
     hasPendingUserMessages?: boolean;
     optimisticPendingUserMessageAt?: number | null;
     hasPendingPermissionRequests?: boolean;
@@ -92,7 +94,7 @@ export function createUiSessionAwarenessInput(
         sessionId: session.id,
         origin: session.origin,
         nowMs,
-        title: readSessionDisplayTitleField({ metadata }).value ?? metadata?.name,
+        title: options.includeTitle === false ? undefined : readSessionDisplayTitleField({ metadata }).value ?? metadata?.name,
         ...components,
         content: readUiSessionContentAvailability(session),
         work: hydrated ? metadata ? readSessionWorkStateV1FromMetadata(metadata) : null : session.workState,

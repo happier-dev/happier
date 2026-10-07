@@ -23,7 +23,7 @@ import {
 } from '@happier-dev/protocol/workflows/workflowV1';
 
 import type { WorkflowBlockAction } from './WorkflowBlockActionsMenu';
-import { WorkflowBlockHeading } from './WorkflowBlockHeading';
+import { WorkflowBlockHeading, type WorkflowBlockNameEditor } from './WorkflowBlockHeading';
 import { formatWorkflowConditionLead, formatWorkflowConditionSentence, WorkflowConditionArmLines, WorkflowConditionEditor } from './WorkflowConditionEditor';
 import { WorkflowContainerSummary } from './WorkflowContainerSummary';
 import { WorkflowFailurePolicyControl, WorkflowMaxConcurrentControl } from './WorkflowGroupEditor';
@@ -324,6 +324,7 @@ export function WorkflowLoopEditor(props: Readonly<{
     draft: WorkflowEditorDraft;
     block: LoopBlock;
     ordinal: number;
+    nameEditor?: WorkflowBlockNameEditor;
     actions: readonly WorkflowBlockAction[];
     /** A reader's occurrence selector or state, in the heading line (04 §4.11). */
     headingAccessory?: React.ReactNode;
@@ -342,6 +343,7 @@ export function WorkflowLoopEditor(props: Readonly<{
     return (
         <View testID={idPrefix} style={workflowEditorStyles.blockBody}>
             <WorkflowBlockHeading
+                nameEditor={props.nameEditor}
                 ordinal={props.ordinal}
                 displayName={displayName}
                 actions={props.actions}

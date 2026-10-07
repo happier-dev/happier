@@ -619,7 +619,6 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                     ...capabilityRequest,
                     bypassCache: true,
                 },
-                timeoutMs: 12_000,
             });
         } catch {
             if (params.isAuthorityCurrent()) {
@@ -787,7 +786,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         installationReview: PendingPluginChangeReview;
     }>): Promise<MachinePluginInstallDecisionResult> => await machinePluginInstallDecision(params.target.machine.id, {
         serverId: params.target.serverId,
-        timeoutMs: 5 * 60_000,
+        timeoutMs: null,
         isAuthorityCurrent: params.isAuthorityCurrent,
         decision: {
             pendingChangeId: params.installationReview.pendingChangeId,
@@ -831,7 +830,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         projectTrustReview: PendingPluginDevelopmentProjectTrustReview;
     }>): Promise<MachinePluginInstallDecisionResult> => await machinePluginInstallDecision(params.target.machine.id, {
         serverId: params.target.serverId,
-        timeoutMs: 10 * 60_000,
+        timeoutMs: null,
         isAuthorityCurrent: params.isAuthorityCurrent,
         decision: {
             pendingChangeId: params.projectTrustReview.pendingChangeId,
@@ -1075,7 +1074,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                             ...(exactInstallEntry ? { packageName: exactInstallEntry.packageName } : {}),
                         },
                     },
-                    timeoutMs: 5 * 60_000,
+                    timeoutMs: null,
                     isAuthorityCurrent,
                     alerts: {
                         errorTitle: t('common.error'),
@@ -1308,7 +1307,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                             ? { sourceRootPath: development.sourceRootPath }
                             : { pluginId },
                     },
-                    timeoutMs: 5 * 60_000,
+                    timeoutMs: null,
                     isAuthorityCurrent: () => (
                         mutationAuthorityKeyRef.current === mutationAuthorityKey
                         && resolveCurrentExecutionTarget(initialTarget) !== null
@@ -1439,7 +1438,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                             ...(params.ui ? { ui: params.ui } : {}),
                         },
                     },
-                    timeoutMs: 5 * 60_000,
+                    timeoutMs: null,
                     isAuthorityCurrent,
                     alerts: {
                         errorTitle: t('common.error'),
@@ -1509,7 +1508,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                         method: 'develop',
                         params: { sourceRootPath: trimmedSourceRootPath },
                     },
-                    timeoutMs: 5 * 60_000,
+                    timeoutMs: null,
                     isAuthorityCurrent,
                     alerts: {
                         errorTitle: t('common.error'),
@@ -1598,7 +1597,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                         method: 'changeStatus',
                         params: { pendingChangeId: trimmedPendingChangeId },
                     },
-                    timeoutMs: 60_000,
+                    timeoutMs: null,
                     isAuthorityCurrent,
                     alerts: {
                         errorTitle: t('common.error'),
@@ -1693,7 +1692,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                     if (!confirmed || !isAuthorityCurrent()) return;
                     const rejection = await machinePluginInstallDecision(initialTarget.machine.id, {
                         serverId: initialTarget.serverId,
-                        timeoutMs: 60_000,
+                        timeoutMs: null,
                         isAuthorityCurrent,
                         decision: {
                             pendingChangeId: readPendingPluginChangeDecisionId(status),
@@ -1785,7 +1784,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                 filters: buildDiscoverQueryFilters(params),
             }, {
                 serverId: initialTarget.serverId,
-                timeoutMs: 130_000,
+                timeoutMs: null,
             });
             if (
                 discoverRequestIdRef.current !== requestId

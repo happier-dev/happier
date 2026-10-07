@@ -12,8 +12,10 @@ import {
     AccountApiTokenEncryptionAccessV1Schema,
     AuthTokenAuthenticationEvidenceSnapshotV1Schema,
     ApiTokenGrantV1Schema,
+    StoredApiTokenGrantV1Schema,
     API_TOKEN_FULL_GRANT_V1,
     EmbedConfigV1Schema,
+    StoredEmbedConfigV1Schema,
     evaluateApiTokenGrantV1,
     isApiTokenGrantWithinV1,
     type ApiTokenGrantV1,
@@ -310,12 +312,13 @@ const API_TOKEN_CURRENT_FIELDS = {
 } as const;
 
 function readApiTokenGrant(value: unknown): ApiTokenGrantV1 {
-    // The sole upgrade reader for pre-grant rows. All current mints write an explicit V1 grant.
-    return value == null ? API_TOKEN_FULL_GRANT_V1 : ApiTokenGrantV1Schema.parse(value);
+    const parsed = StoredApiTokenGrantV1Schema.safeParse(value);
+    if (!parsed.success) throw new ApiTokenOperationError("invalid_token");
+    return parsed.data;
 }
 
 function readApiTokenEmbedConfig(value: unknown): EmbedConfigV1 | null {
-    return value == null ? null : EmbedConfigV1Schema.parse(value);
+    return value == null ? null : StoredEmbedConfigV1Schema.parse(value);
 }
 
 type CreateApiTokenParams = Readonly<{

@@ -86,6 +86,28 @@ describe('WorkflowsGate', () => {
     });
 
     /**
+     * Showing last-known data while refreshing: a decision that re-resolves (its snapshot reloading
+     * under a slow or briefly offline server) must not unmount an open editor or Run, which would
+     * drop its document, pane and tab for a full-page loading state.
+     */
+    it('keeps an admitted destination mounted while its decision re-resolves', async () => {
+        decisions.workflows = { state: 'enabled', blockedBy: null };
+        decisions.automations = { state: 'enabled', blockedBy: null };
+        const { WorkflowsGate } = await import('./WorkflowsGate');
+        const tree = await renderGate();
+        const child = tree.root.findByProps({ testID: 'workflows-allowed-child' });
+
+        decisions.workflows = null;
+        decisions.automations = null;
+        const { act } = await import('react-test-renderer');
+        await act(async () => { tree.update(<WorkflowsGate><Allowed /></WorkflowsGate>); });
+
+        expect(tree.root.findAllByProps({ testID: 'workflows-gate-loading' })).toHaveLength(0);
+        // The same mounted child, not a remount.
+        expect(tree.root.findByProps({ testID: 'workflows-allowed-child' })).toBe(child);
+    });
+
+    /**
      * An unavailable capability is not a failed read: the canonical Workflow problem mapping owns the
      * copy and its (absent) repair, so no retry is offered that could never succeed.
      */

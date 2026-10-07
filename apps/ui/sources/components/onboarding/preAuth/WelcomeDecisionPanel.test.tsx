@@ -161,6 +161,29 @@ function readyAccountServiceEntry(
 }
 
 describe('WelcomeDecisionPanel', () => {
+    it('leaves the heading to its authentication parent while keeping sign-in actions usable', async () => {
+        const onAuthenticate = vi.fn();
+        const screen = await renderScreen(
+            <WelcomeDecisionPanel
+                authEntryOptions={baseOptions}
+                showGreeting={false}
+                onContinueWithHomeAuthentication={onAuthenticate}
+                onOpenRestore={vi.fn()}
+                onChangeRelay={vi.fn()}
+            />,
+        );
+
+        const greetings = screen.findAll(node => typeof node.type === 'string'
+            && node.props.accessibilityRole === 'header'
+            && (node.props.children === t('welcome.welcomeQuestionTitle')
+                || node.props.children === t('welcome.welcomeQuestionSubtitle')));
+        expect(greetings).toHaveLength(0);
+        await screen.pressByTestIdAsync('welcome-primary-start');
+        expect(onAuthenticate).toHaveBeenCalledWith(expect.objectContaining({
+            authority: { purpose: 'home', target: baseOptions.homeTarget },
+        }));
+    });
+
     it.each(['ready', 'unavailable'] as const)('shows only the chosen service methods when the unrelated Home is %s', async (availability) => {
         const baseService = readyAccountServiceEntry(['github'], { oauthAction: 'provision' });
         const url = 'https://signin.example.test';

@@ -18,7 +18,7 @@ import type {
 import { loadSyncTuning } from '@/sync/runtime/syncTuning';
 import { createAutomationRunFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 
-import { createAutomationsDomain, createWorkflowTriggerSetSelector } from './automations';
+import { createAutomationsDomain, createWorkflowTriggerChangeSelector, createWorkflowTriggerSetSelector } from './automations';
 import type { WorkflowTriggerSetV1 } from '@happier-dev/protocol';
 import {
     createWorkflowRunsDomain,
@@ -118,6 +118,24 @@ describe('Automation attention retention', () => {
 });
 
 describe('shared workflow trigger observations', () => {
+    it('invalidates only the requested workflow rather than Account inline triggers', () => {
+        const h = createHarness();
+        const workflowDefinitionId = '00000000-0000-4000-8000-000000000001';
+        const saved = createAutomationDefinitionSummary(AutomationDefinitionListItemSchema.parse({
+            ...eventDefinitionSummary, id: 'saved-trigger', scopeSessionId: null, workflowDefinitionId,
+        }));
+        h.get().upsertAutomation(saved);
+        const select = createWorkflowTriggerChangeSelector(null, workflowDefinitionId);
+        const before = select(h.get());
+        h.get().upsertAutomation(createAutomationDefinitionSummary(AutomationDefinitionListItemSchema.parse({
+            ...eventDefinitionSummary, id: 'inline-trigger', scopeSessionId: null, workflowDefinitionId: null,
+        })));
+        expect(select(h.get())).toBe(before);
+        h.get().upsertAutomation({ ...saved, lastRunAt: 10, updatedAt: saved.updatedAt + 1 });
+        expect(select(h.get())).not.toBe(before);
+        h.get().removeAutomation(saved.id);
+        expect(select(h.get())).toBe('');
+    });
     it('keeps a newer write when a delayed list returns and leaves other queries untouched', () => {
         const h = createHarness();
         const set: WorkflowTriggerSetV1 = { automationId: '11111111-1111-4111-8111-111111111111', revision: 1, enabled: true, health: 'available', triggers: [] };

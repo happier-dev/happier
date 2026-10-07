@@ -101,6 +101,7 @@ export async function machinePluginInstallDecision(
             machineId,
             serverId: opts.serverId ?? undefined,
             timeoutMs: opts.timeoutMs ?? undefined,
+            ...(opts.timeoutMs === null ? { operationTimeoutMs: null } : {}),
             method,
             payload,
         });
@@ -123,6 +124,7 @@ export async function machinePluginInstallDecision(
                 machineId,
                 serverId: opts.serverId ?? undefined,
                 timeoutMs: opts.timeoutMs ?? undefined,
+                ...(opts.timeoutMs === null ? { operationTimeoutMs: null } : {}),
                 method: HOST_PRIVATE_PLUGIN_INSTALL_DECISION_RPC_METHOD,
                 payload,
             });

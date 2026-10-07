@@ -315,6 +315,8 @@ pub enum DesktopBrowserCaptureErrorCode {
     ViewUnavailable,
     #[serde(rename = "staleNavigation")]
     StaleNavigation,
+    #[serde(rename = "sensitiveFieldsPresent")]
+    SensitiveFieldsPresent,
     #[serde(rename = "captureFailed")]
     CaptureFailed,
     /// The captured frame exceeded the recording byte cap the daemon negotiated. The native side

@@ -14,6 +14,7 @@ import { DotSpinnerWeb } from './DotSpinnerWeb.js';
 import type { DotSpinnerInk } from './dotSpinnerFrames.js';
 import { HAPPIER_SPINNER_SPIN_ANIMATION, useHappierSpinnerKeyframes } from './spinnerKeyframes.js';
 import {
+  DOT_SPINNER_STYLES,
   normalizeHappierSpinnerStyleId,
   normalizeHappierSpinnerTiming,
   type DotSpinnerStyleId,
@@ -24,15 +25,15 @@ import {
 /**
  * The single implementation owner for Happier's activity spinner (UI-T27).
  *
- * The default mark is the H of Happier drawn in dots with light moving through it; the style, its
+ * The default mark is the Happier mark drawn in dots with light moving through it; the style, its
  * speed and its pause between loops are chosen by the host (Happier core reads its Settings →
  * Appearance choices; plugin surfaces draw the default wave at the default timing). The original rotating ring stays available as the `classicRing` style: on web a
  * CSS-transform ring (stepped below the small-spinner threshold), on native the platform indicator
  * with a still ring overlay on Android, whose platform widget hides when stopped.
  *
- * Paused spinners stay VISIBLE — dot styles hold the full H still and the ring stops turning —
+ * Paused spinners stay VISIBLE — dot styles hold the full chosen mark still and the ring stops turning —
  * because a missing spinner says the work ended. Reduced motion replaces the travelling light with a
- * gentle fade of the still H, and stops the ring.
+ * gentle fade of the still chosen mark, and stops the ring.
  *
  * Host facts — colour, reduced motion, style, accents — are injected (§3.10.2). Happier core
  * supplies them from Unistyles, its app-wide preference watch and its local setting; a plugin
@@ -76,7 +77,7 @@ export type HappierWebSpinnerPresentation = Readonly<{
   style: HappierWebSpinnerStyle;
 }>;
 
-/** How a dot spinner moves: the style plays, the full H is held still, or (reduced motion) it breathes. */
+/** How a dot spinner moves: the style plays, the full chosen mark is held still, or (reduced motion) it breathes. */
 export type HappierDotSpinnerMotion = 'animate' | 'still' | 'breathe';
 
 export type HappierDotSpinnerModel = Readonly<{
@@ -124,7 +125,7 @@ export type HappierSpinnerPresentation =
 
 export type HappierSpinnerProps = HappierActivityIndicatorHostProps & Readonly<{
   size?: HappierActivityIndicatorHostProps['size'];
-  /** Keep the spinner visible but hold it still: the full H at rest, or a ring that stops turning. */
+  /** Keep the spinner visible but hold it still: the full chosen mark at rest, or a ring that stops turning. */
   animationEnabled?: boolean;
   /**
    * The resolved reduced-motion preference.
@@ -262,7 +263,7 @@ export function resolveHappierSpinnerPresentation(
   const motion: HappierDotSpinnerMotion = paused ? 'still' : reducedMotion ? 'breathe' : 'animate';
   // Aurora uses the theme accents only when the caller left the colour to the host: an explicit
   // colour usually means a tinted surface (a filled button) where accents would not read.
-  const ink: DotSpinnerInk = styleId === 'aurora' && color == null && auroraAccents
+  const ink: DotSpinnerInk = DOT_SPINNER_STYLES[styleId].ink === 'aurora' && color == null && auroraAccents
     ? { aurora: auroraAccents }
     : { color: resolvedColor ?? FALLBACK_DOT_INK };
   const { speed, pause } = normalizeHappierSpinnerTiming(input.indicatorSpeed, input.indicatorPause);
@@ -372,6 +373,7 @@ export function HappierSpinnerHost<HostProps extends Readonly<{
     return (
       <ReactNativeActivityIndicator
         {...hostProps}
+        accessibilityRole={hostProps.accessibilityRole ?? 'progressbar'}
         style={style}
         size={size}
         color={resolvedColor}

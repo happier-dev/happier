@@ -135,9 +135,9 @@ export { parseEphemeralUpdate, parseUpdateContainer } from './socketParse';
 
 type ApplySessions = (sessions: Array<Omit<Session, 'presence'> & { presence?: 'online' | number }>) => void;
 
-function clampInt(value: unknown, fallback: number, min: number, max: number): number {
+function normalizeNonnegativeInt(value: unknown, fallback: number): number {
     if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
-    return Math.max(min, Math.min(max, Math.trunc(value)));
+    return Math.max(0, Math.trunc(value));
 }
 
 type SocketMessageApplyHandlers = Readonly<{
@@ -284,17 +284,13 @@ function getSocketMessageApplyConfig() {
     const settings = storage.getState().settings;
     return {
         enabled: settings.transcriptStreamingCoalesceEnabled === true,
-        windowMs: clampInt(
+        windowMs: normalizeNonnegativeInt(
             settings.transcriptStreamingCoalesceWindowMs,
             settingsDefaults.transcriptStreamingCoalesceWindowMs,
-            0,
-            200,
         ),
-        maxBatchSize: clampInt(
+        maxBatchSize: normalizeNonnegativeInt(
             settings.transcriptStreamingCoalesceMaxBatchSize,
             settingsDefaults.transcriptStreamingCoalesceMaxBatchSize,
-            1,
-            2000,
         ),
     };
 }

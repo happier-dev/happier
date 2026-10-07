@@ -1,8 +1,9 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BUILT_IN_ROLES_V1, renderSessionRoleBlockV1 } from '@happier-dev/protocol';
 
-import { renderScreen } from '@/dev/testkit';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -33,13 +34,6 @@ vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({
     },
 }));
 
-// The applied connection is the runtime boundary; the real account lifetime and store stay active.
-vi.mock('@/sync/runtime/orchestration/connectionManager', async (importOriginal) => ({
-    ...(await importOriginal<typeof import('@/sync/runtime/orchestration/connectionManager')>()),
-    getAppliedActiveServerSnapshot: () => ({ serverId: 'server-1', serverUrl: 'https://roles.test', generation: 0 }),
-    isAppliedActiveServerRuntimeAvailable: () => true,
-}));
-
 // The modal host is the presentation boundary: the test captures what the page asked it to show.
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
@@ -66,7 +60,6 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
                     return undefined;
                 },
             }),
-            useActiveServerAccountScope: () => ({ serverId: 'server-1', accountId: 'account-1' }),
         },
     });
 });
@@ -86,7 +79,10 @@ const { RoleDetailScreen } = await import('./RoleDetailScreen');
 const { invalidateRoleCatalog } = await import('@/components/roles/catalog/useRoleCatalog');
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
 let previousStorageState = storage.getState();
+let previousSnapshot = getAppliedActiveServerSnapshot();
+let previousAvailable = isAppliedActiveServerRuntimeAvailable();
 
 async function renderRole(roleId: string) {
     const screen = await renderScreen(<RoleDetailScreen target={{ kind: 'role', roleId }} />);
@@ -100,8 +96,59 @@ function writes() {
 }
 
 describe('Settings › Roles detail', () => {
-    beforeEach(() => {
+    it('updates only the Orchestrator preview when a consumed cross-role fact changes', async () => {
+        let commits = 0;
+        const screen = await renderScreen(<React.Profiler id="orchestrator" onRender={() => { commits += 1; }}>
+            <RoleDetailScreen target={{ kind: 'role', roleId: 'orchestrator' }} />
+        </React.Profiler>);
+        await vi.waitFor(() => expect(screen.findByTestId('settings.roles.detail.orchestrator')).toBeTruthy());
+        const settled = commits;
+        const { roleId: _id, ...other } = ownRole;
+        shared.items[1] = { roleId: 'ui-builder', role: { ...other, instructions: 'Unconsumed instructions' },
+            revision: { headerVersion: 3, bodyVersion: 8 }, shared: false, viewOnly: false, migratedFromV0_2: false };
+        await act(async () => { invalidateRoleCatalog(); });
+        expect(commits).toBe(settled);
+        shared.items[1] = { roleId: 'ui-builder', role: { ...other, name: 'Renamed builder' },
+            revision: { headerVersion: 3, bodyVersion: 9 }, shared: false, viewOnly: false, migratedFromV0_2: false };
+        await act(async () => { invalidateRoleCatalog(); });
+        expect(commits).toBeGreaterThan(settled);
+        expect(screen.findByTestId('settings.roles.detail.preview.block')!.props.value).toContain('Renamed builder');
+    });
+
+    it('retires the previous Account Role detail when the next Account has no matching Role', async () => {
+        const screen = await renderRole('ui-builder');
+        shared.items = [];
+        await act(async () => { storage.setState({ profileScope: { serverId: 'server-1', accountId: 'account-2' } }); });
+        expect(screen.findByTestId('settings.roles.detail.ui-builder')).toBeNull();
+        expect(screen.findByTestId('settings.roles.detail.unavailable')).toBeTruthy();
+    });
+    it('does not recommit role detail for equal refreshes or another role change; preview stays current', async () => {
+        let commits = 0;
+        const screen = await renderScreen(<React.Profiler id="detail" onRender={() => { commits += 1; }}>
+            <RoleDetailScreen target={{ kind: 'role', roleId: 'ui-builder' }} />
+        </React.Profiler>);
+        await vi.waitFor(() => expect(screen.findByTestId('settings.roles.detail.ui-builder')).toBeTruthy());
+        const settled = commits;
+        shared.items = structuredClone(shared.items);
+        await act(async () => { invalidateRoleCatalog(); });
+        expect(commits).toBe(settled);
+        const { roleId: _id, ...other } = orchestrator;
+        shared.items[0] = { roleId: 'orchestrator', role: { ...other, instructions: 'Updated unrelated instructions' },
+            shared: false, viewOnly: false, migratedFromV0_2: false };
+        await act(async () => { invalidateRoleCatalog(); });
+        expect(commits).toBe(settled);
+        const { roleId: _ownId, ...selected } = ownRole;
+        shared.items[1] = { roleId: 'ui-builder', role: { ...selected, instructions: 'Updated selected instructions' },
+            revision: { headerVersion: 3, bodyVersion: 8 }, shared: false, viewOnly: false, migratedFromV0_2: false };
+        await act(async () => { invalidateRoleCatalog(); });
+        expect(commits).toBeGreaterThan(settled);
+        expect(screen.findByTestId('settings.roles.detail.preview.block')!.props.value).toContain('Updated selected instructions');
+    });
+    beforeEach(async () => { await act(async () => {
         previousStorageState = storage.getState();
+        previousSnapshot = getAppliedActiveServerSnapshot();
+        previousAvailable = isAppliedActiveServerRuntimeAvailable();
+        publishAppliedActiveServerSnapshot({ serverId: 'server-1', serverUrl: 'https://roles.test', generation: 0 });
         storage.setState({ profileScope: { serverId: 'server-1', accountId: 'account-1' } });
         shared.calls = [];
         shared.shown = [];
@@ -114,11 +161,15 @@ describe('Settings › Roles detail', () => {
         ];
         shared.rolesV1 = { overrides: { orchestrator: { roleId: 'orchestrator', secondOpinion: 'encouraged' } } };
         invalidateRoleCatalog();
-    });
+    }); });
 
-    afterEach(() => {
+    afterEach(async () => {
+        standardCleanup();
+        await act(async () => {
         retireActiveServerAccountScopeLifetime();
         storage.setState(previousStorageState);
+        publishAppliedActiveServerSnapshot(previousSnapshot, previousAvailable);
+        });
     });
 
     it('saves a built-in change as the reader\'s override, keeping the fields already overridden', async () => {

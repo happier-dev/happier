@@ -155,8 +155,7 @@ function WorkspaceCanvas(props: Readonly<{
         } : undefined}
         controlsRef={workspace.canvasControlsRef}
         state={{ root: workspace.state.root, focusedLeafId: workspace.state.focusedGroupId,
-            maximizedLeafId: workspace.phone ? workspace.state.focusedGroupId : workspace.state.maximizedGroupId,
-            maxLeaves: Number.POSITIVE_INFINITY }}
+            maximizedLeafId: workspace.phone ? workspace.state.focusedGroupId : workspace.state.maximizedGroupId }}
         dispatch={dispatchCanvas}
         renderLeafHeader={renderLeafHeader}
         retainedLeafContents={retainedLeafContents}

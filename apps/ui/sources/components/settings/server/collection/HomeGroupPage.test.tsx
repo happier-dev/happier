@@ -24,8 +24,13 @@ vi.mock('@/modal', async () => {
     return createModalModuleMock().module;
 });
 
+// Collect the real UI graph before the behavior deadline; reset only its canonical
+// profile caches so each seeded storage scope remains isolated without reloading it.
+await import('./HomeGroupPage');
+await import('./HomesCollection');
+const { resetServerProfilesRuntimeForTests } = await import('@/sync/domains/server/serverProfiles');
+
 beforeEach(() => {
-    vi.resetModules();
     routes.resetParams();
     const scope = `home-group-draft-${crypto.randomUUID()}`;
     vi.stubEnv('EXPO_PUBLIC_HAPPY_STORAGE_SCOPE', scope);
@@ -41,6 +46,7 @@ beforeEach(() => {
         homeViewStateInitialized: true,
         homeViewState: { version: 1, groups: [], activeTargetKind: 'server', activeTargetId: 'home-a' },
     }));
+    resetServerProfilesRuntimeForTests();
 });
 
 afterEach(() => {
@@ -48,13 +54,30 @@ afterEach(() => {
     vi.unstubAllEnvs();
 });
 
-async function renderDraft() {
+async function renderDraft(chromeShowsTitle = false) {
     const { HomeGroupPage } = await import('./HomeGroupPage');
     const { HomesCollectionProvider } = await import('./HomesCollection');
-    return renderScreen(<HomesCollectionProvider><HomeGroupPage groupId={null} /></HomesCollectionProvider>);
+    const { NavigationTitleChromeProvider } = await import('@/components/ui/layout/PageHeader');
+    const draft = <HomesCollectionProvider><HomeGroupPage groupId={null} /></HomesCollectionProvider>;
+    return renderScreen(chromeShowsTitle
+        ? <NavigationTitleChromeProvider showsTitle>{draft}</NavigationTitleChromeProvider>
+        : draft);
 }
 
 describe('Home group draft', () => {
+    it('leaves the generic creation title to phone navigation and retains a named draft identity', async () => {
+        const screen = await renderDraft(true);
+        const headingTexts = () => screen.root.findAll((node) =>
+            typeof node.type === 'string' && node.props.accessibilityRole === 'header',
+        ).map((node) => node.props.children);
+        expect(headingTexts()).not.toContain('addFlows.newGroup');
+        expect(screen.findAllByProps({ children: 'server.addServerGroupSubtitle' }).length).toBeGreaterThan(0);
+        await act(async () => screen.changeTextByTestId('settings.homes.groupDraft.name', 'Build fleet'));
+        expect(headingTexts()).toContain('Build fleet');
+        await act(async () => screen.changeTextByTestId('settings.homes.groupDraft.name', '   '));
+        expect(headingTexts()).not.toContain('addFlows.newGroup');
+    });
+
     it('renames an existing group inline, keeping a cancelled draft out of persistence', async () => {
         const profiles = new MMKV({ id: scopedStorageId('server-profiles', process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE!) });
         const state = JSON.parse(profiles.getString('server-state-v1')!);

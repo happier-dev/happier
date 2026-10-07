@@ -25,8 +25,8 @@ function MountedSessionComputerPresenceLine(props: Readonly<{
         () => ({ sessionId: props.sessionId, machineId: props.machineId, serverId: props.serverId }),
         [props.machineId, props.serverId, props.sessionId],
     );
-    // The owner's status is pull-only (W7): it is re-read whenever the Session's turn starts or ends
-    // (its canonical activity), after each press, and on mount — never on a timer.
+    // Share Action answers and, while the viewer is open, source-owned status metadata. Without a
+    // viewer stream, refresh at turn boundaries and presses; do not open hidden image subscriptions.
     const control = useComputerSessionControl({ scope, refreshKey: identity.turnActive });
     const open = useOpenSessionComputerScreen({ sessionId: props.sessionId, serverId: props.serverId, machineId: props.machineId });
     const agent = React.useMemo(() => ({ agentId: identity.agentId, name: identity.name }), [identity.agentId, identity.name]);
@@ -44,7 +44,10 @@ function MountedSessionComputerPresenceLine(props: Readonly<{
                     compact={compact}
                     presence={control.presence}
                     agent={agent}
-                    agentTitle={control.presence.kind === 'agent' && control.agentActing ? t('computerUse.strip.using', { target }) : undefined}
+                    agentTitle={control.agentActing
+                        ? t('computerUse.strip.using', { target })
+                        : t((control.selection.access ?? control.selection.approvalDisplay.access) === 'see'
+                            ? 'computerUse.viewer.agentCanSee' : 'computerUse.viewer.agentCanUse', { agent: agent.name, target })}
                     agentDetail={machine ? t('computerUse.strip.on', { machine }) : undefined}
                     humanTitle={t('computerUse.strip.paused', { agent: agent.name })}
                     humanDetail={t('computerUse.strip.pausedDetail', { target })}

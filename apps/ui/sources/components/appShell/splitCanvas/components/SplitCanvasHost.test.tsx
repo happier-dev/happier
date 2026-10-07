@@ -43,7 +43,6 @@ function createNestedState(): SplitCanvasState<string> {
         } satisfies SplitCanvasNode<string>,
         focusedLeafId: 'leaf-a',
         maximizedLeafId: null,
-        maxLeaves: 4,
     };
 }
 
@@ -135,7 +134,7 @@ describe('SplitCanvasHost', () => {
         }
         const leaf = createLeaf('leaf-a');
         const renderLeaf = ({ leaf: current }: Readonly<{ leaf: SplitCanvasLeafNode<string> }>) => <LeafProbe leafId={current.id} />;
-        const state = { root: leaf, focusedLeafId: leaf.id, maximizedLeafId: null, maxLeaves: Infinity };
+        const state = { root: leaf, focusedLeafId: leaf.id, maximizedLeafId: null };
         const screen = await renderScreen(<SplitCanvasHost state={state} dispatch={() => {}} renderLeaf={renderLeaf} />);
         const original = screen.root.findByType('LeafMount').props.mount;
         await act(async () => { screen.tree.update(<SplitCanvasHost state={{ ...state, root: {
@@ -263,7 +262,6 @@ describe('SplitCanvasHost', () => {
                 } satisfies SplitCanvasNode<string>,
                 focusedLeafId: 'leaf-a',
                 maximizedLeafId: null,
-                maxLeaves: 4,
             });
 
             const dispatch = React.useCallback((action: any) => {
@@ -303,7 +301,6 @@ describe('SplitCanvasHost', () => {
         const state = createSplitCanvasState({
             root: createLeaf('leaf-a'),
             focusedLeafId: 'leaf-a',
-            maxLeaves: 4,
         });
 
         const screen = await renderScreen(
@@ -343,7 +340,6 @@ describe('SplitCanvasHost', () => {
             } satisfies SplitCanvasNode<string>,
             focusedLeafId: 'leaf-a',
             maximizedLeafId: null,
-            maxLeaves: 4,
         };
 
         const screen = await renderScreen(
@@ -396,7 +392,6 @@ describe('SplitCanvasHost', () => {
             root,
             focusedLeafId: 'leaf-a',
             maximizedLeafId: null,
-            maxLeaves: 4,
         };
 
         const screen = await renderScreen(
@@ -474,7 +469,6 @@ describe('SplitCanvasHost', () => {
             } satisfies SplitCanvasNode<string>,
             focusedLeafId: 'leaf-a',
             maximizedLeafId: null,
-            maxLeaves: 4,
         };
 
         const screen = await renderScreen(
@@ -512,7 +506,7 @@ describe('SplitCanvasHost', () => {
                 id: 'split-measured', kind: 'split', axis: 'row', ratio: 0.6,
                 first: createLeaf('leaf-a'), second: createLeaf('leaf-b'),
             },
-            focusedLeafId: 'leaf-a', maximizedLeafId: null, maxLeaves: 4,
+            focusedLeafId: 'leaf-a', maximizedLeafId: null,
         };
         const screen = await renderScreen(
             <SplitCanvasHost
@@ -564,7 +558,6 @@ describe('SplitCanvasHost', () => {
             } satisfies SplitCanvasNode<string>,
             focusedLeafId: 'leaf-a',
             maximizedLeafId: null,
-            maxLeaves: 4,
         };
 
         const screen = await renderScreen(

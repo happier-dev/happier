@@ -38,6 +38,7 @@ import { resolveAuthorText } from './resolveAuthorText.js';
  * `destructive` keeps the secondary surface and uses the theme's danger tone.
  */
 export type ButtonVariant = 'primary' | 'secondary' | 'plain' | 'destructive';
+export type ButtonSize = 'normal' | 'small';
 
 type ButtonCommonProps = Readonly<{
   /** Literal label. It provides the accessible name when no override is supplied. */
@@ -47,6 +48,11 @@ type ButtonCommonProps = Readonly<{
   /** A translation key for an explicit accessible-name override. */
   accessibilityLabelKey?: string;
   variant?: ButtonVariant;
+  /**
+   * `small` for an action inside a dense layout (a row's peek, a card, a detail header): the host's
+   * desktop control height on a pointer, never under the touch floor on a phone. Defaults to `normal`.
+   */
+  size?: ButtonSize;
   disabled?: boolean;
   /**
    * Declare the pending state for work this button did not start. An `onPress`
@@ -97,6 +103,7 @@ export function Button({
   titleKey,
   accessibilityLabelKey,
   variant = 'primary',
+  size = 'normal',
   disabled,
   busy,
   icon,
@@ -118,9 +125,12 @@ export function Button({
   const focusBinding = usePluginUiFocusTargetBindingInternal(focusTarget);
 
   const reducedMotion = useOptionalHappierUiAccessibility()?.reducedMotion ?? false;
+  const nativeMinimumTarget = useHappierNativeMinimumInteractiveTargetSize();
   const { foreground } = resolveHappierButtonChrome({ theme, variant, disabled: disabled === true, focused: false });
   const resolveStyle = (state: HappierPressableStyleState): HappierPortableStyle => ({
-    ...resolveHappierButtonChrome({ theme, variant, disabled: disabled === true, focused: state.focused }).style,
+    ...resolveHappierButtonChrome({
+      theme, variant, size, nativeMinimumTarget, disabled: disabled === true, focused: state.focused,
+    }).style,
     opacity: state.disabled && !state.busy ? HAPPIER_BUTTON_DISABLED_OPACITY : 1,
     // The shared press vocabulary: a discrete control scales under the finger
     // (an opacity dip under reduced motion), eased on web.

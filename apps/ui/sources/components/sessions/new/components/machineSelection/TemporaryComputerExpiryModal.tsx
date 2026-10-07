@@ -45,7 +45,7 @@ export function TemporaryComputerExpiryModal(props: Readonly<{
     }, [props]);
 
     const footer = React.useMemo(() => (
-        <View style={{ paddingHorizontal: 16, paddingVertical: 12, flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
             <RoundButton display="inverted" title={t('common.cancel')} onPress={() => finish(null)} />
             <RoundButton
                 testID="temporary-computer-expiry-confirm"

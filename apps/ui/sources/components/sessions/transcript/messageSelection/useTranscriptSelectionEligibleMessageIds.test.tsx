@@ -38,6 +38,7 @@ function writeSessionMessages(
 }
 
 function streamingMeta(state: 'streaming' | 'complete' | 'interrupted' | null | 'unknown') {
+    // Stored-message boundary fixture also exercises malformed stream states.
     return {
         happierStreamSegmentV1: {
             v: 1,
@@ -46,7 +47,7 @@ function streamingMeta(state: 'streaming' | 'complete' | 'interrupted' | null | 
             segmentLocalId: 'seg-1',
             updatedAtMs: 1,
         },
-    };
+    } as unknown as Message['meta'];
 }
 
 afterEach(() => {

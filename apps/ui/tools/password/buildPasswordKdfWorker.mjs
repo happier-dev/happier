@@ -9,6 +9,12 @@ const uiDir = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 export async function buildPasswordKdfWorker({ outputFile = resolve(uiDir, 'public/happier-password-kdf-worker.js') } = {}) {
     const result = await build({
         entryPoints: [resolve(uiDir, 'sources/auth/password/passwordKdf.worker.ts')],
+        // Postinstall precedes workspace dist on a cold/scriptless checkout.
+        // Compile the canonical codec source, not a missing or stale dist copy.
+        alias: {
+            '@happier-dev/protocol/auth/accountPasswordCredential':
+                resolve(uiDir, '../../packages/protocol/src/auth/accountPasswordCredential.ts'),
+        },
         bundle: true,
         platform: 'browser',
         format: 'iife',

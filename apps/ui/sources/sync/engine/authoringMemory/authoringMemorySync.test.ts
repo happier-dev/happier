@@ -38,6 +38,16 @@ function harness() {
 }
 
 describe('Account authoring memory owner', () => {
+    it('projects persisted engine rows with additive carrier fields and keeps opaque selection values', async () => {
+        const h = harness();
+        const scope = 'home:agent:happier.agent.codex/codex';
+        const selection = { v: 9, futureSelection: { extra: true } };
+        h.rows.set(`engineSelection:${scope}`, { revision: 0, content: { t: 'plain', v: {
+            v: 1, selectionsByScope: { [scope]: selection }, futureCarrierField: true,
+        } } });
+        await h.owner.bootstrap();
+        expect(h.projection().lastEngineSelectionsByScopeV1).toEqual({ [scope]: selection });
+    });
     it('refreshes one hinted row without fetching or replacing neighboring memory', async () => {
         const h = harness();
         h.rows.set('lastUsedProfile', { revision: 0, content: { t: 'plain', v: 'p1' } });

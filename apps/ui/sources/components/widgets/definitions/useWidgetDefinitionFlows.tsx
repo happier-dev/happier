@@ -8,7 +8,8 @@ import { describeAuthoredWidgetDefinitionV1, readWidgetDescriptor, type WidgetCa
 import { useConfiguredWidgetTarget } from '@/sync/domains/widgets/useConfiguredWidgetTarget';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
-import { readMountedComposerPresentationSnapshot, requestRegisteredComposerFocus } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
+import { readMountedComposerPresentationSnapshot } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
+import { appendMountedComposerDraft } from '@/sync/ops/actions/appendMountedComposerDraft';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { randomUUID } from '@/platform/randomUUID';
 import { t } from '@/text';
@@ -221,7 +222,8 @@ function AboutPanelContent(props: Parameters<typeof AboutBoundFlow>[0] & Readonl
             onRefresh={async () => (await runWidgetDefinitionCommand('widgets.instance.refresh',
                 { ref: { surface: props.scope, instanceId: props.instance.id } }, account)).kind === 'applied'}
             {...(draftTarget ? { onChangeWithAgent: () => {
-                void draftWidgetChange({ scope: props.scope, sessionId: draftTarget.sessionId, name: props.name }).then((drafted) => {
+                void appendMountedComposerDraft({ scope: account, ref: { kind: 'session', sessionId: draftTarget.sessionId },
+                    text: t('widgetDefinition.changeDraft', { widget: props.name }) }).then((drafted) => {
                     if (drafted) props.onClose();
                 });
             } } : {})}
@@ -232,23 +234,4 @@ function AboutPanelContent(props: Parameters<typeof AboutBoundFlow>[0] & Readonl
             testID={props.testID}
         />
     );
-}
-
-/**
- * Change with the agent: drafts the request into that Session's mounted composer through
- * `composer.transaction.apply` and focuses it. It never sends; the person finishes the sentence.
- */
-async function draftWidgetChange(input: Readonly<{ scope: WidgetSurfaceRefV1; sessionId: string; name: string }>): Promise<boolean> {
-    const ref = { kind: 'session' as const, sessionId: input.sessionId };
-    const scope = { serverId: input.scope.serverId, accountId: input.scope.accountId };
-    const snapshot = readMountedComposerPresentationSnapshot({ ref, scope });
-    if (!snapshot?.state.editable) return false;
-    const draft = t('widgetDefinition.changeDraft', { widget: input.name });
-    const text = snapshot.text.length > 0 && !snapshot.text.endsWith('\n') ? `\n${draft}` : draft;
-    const outcome = await runWidgetDefinitionCommand('composer.transaction.apply', { scope, ref, transaction: {
-        expectedRevision: snapshot.revision, operations: [{ kind: 'text.insert', position: { offset: snapshot.text.length }, text }],
-    } }, scope);
-    if (outcome.kind !== 'applied' || outcome.result.status !== 'applied') return false;
-    requestRegisteredComposerFocus(ref);
-    return true;
 }

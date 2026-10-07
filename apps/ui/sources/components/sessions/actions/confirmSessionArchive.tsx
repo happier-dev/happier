@@ -9,7 +9,7 @@ import { Typography } from '@/constants/Typography';
 import { Modal, type CustomModalInjectedProps } from '@/modal';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { getStorage } from '@/sync/domains/state/storage';
-import type { Session } from '@/sync/domains/state/storageTypes';
+import { selectSessionReportSubtree } from '@/components/sessions/work/reportSubtree';
 import { t } from '@/text';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 
@@ -56,9 +56,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         justifyContent: 'flex-end',
         gap: 8,
-        paddingHorizontal: 16,
-        paddingTop: 12,
-        paddingBottom: 16,
     },
 }));
 
@@ -151,13 +148,12 @@ export async function archiveSessionReports(params: Readonly<{
     serverId: string | null;
     context?: SessionActionExecutionContext;
 }>): Promise<void> {
-    const sessions = Object.values(getStorage().getState().sessions) as Session[];
-    const reports = sessions.filter((session) => (
+    const reports = selectSessionReportSubtree(getStorage().getState().sessions, params.leadSessionId, params.serverId).filter((session) => (
         session.reportsTo?.sessionId === params.leadSessionId && session.archivedAt == null
     ));
     const notArchived: string[] = [];
     for (const report of reports) {
-        const serverId = report.serverId ?? params.serverId;
+        const serverId = params.serverId;
         try {
             await executeSessionAction({
                 actionId: SESSION_ACTION_ARCHIVE_ID,

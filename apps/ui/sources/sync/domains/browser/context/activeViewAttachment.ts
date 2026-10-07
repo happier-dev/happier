@@ -7,10 +7,12 @@ import {
     captureBrowserPageReference,
     cancelBrowserAnnotationMode,
     startBrowserAnnotationMode,
+    resolveBrowserContextKindAvailability,
 } from './actions';
 import { attachBrowserContextToComposer } from './state';
 import type {
     BrowserAnnotationDraftInput,
+    BrowserAnnotationEditorDraft,
     BrowserAnnotationCaptureProvider,
     BrowserAnnotationCaptureProviderResult,
     BrowserAnnotationModeResult,
@@ -18,6 +20,55 @@ import type {
     BrowserContextState,
     BrowserContextUnavailableReason,
 } from './types';
+
+export type ActiveBrowserAnnotationBinding = Readonly<{
+    state: BrowserContextState;
+    browserContextEnabled: boolean;
+    browserDiagnosticsEnabled?: boolean;
+    attachmentsUploadsEnabled?: boolean;
+    contextCapabilities: BrowserContextCapabilities;
+    view: BrowserControlViewState | null;
+}>;
+
+/** One live admission owner for single captures and grouped draft captures. */
+export function createActiveBrowserAnnotationCaptureAdmission(params: Readonly<{
+    binding: ActiveBrowserAnnotationBinding;
+    resolveBinding: () => ActiveBrowserAnnotationBinding;
+    draft?: BrowserAnnotationEditorDraft;
+}>): () => BrowserContextUnavailableReason | null {
+    const originalView = params.binding.view;
+    const originalMode = originalView ? params.binding.state.activeAnnotationByViewId[originalView.viewId] : undefined;
+    return () => {
+        const current = params.resolveBinding();
+        const view = current.view;
+        if (!view || !originalView) {
+            return createUnavailableReason('browser_context_view_unavailable', 'adapterUnavailable', 'No active browser view is available to annotate.');
+        }
+        if (view.browserSessionId !== originalView.browserSessionId || view.viewId !== originalView.viewId
+            || view.navigationGeneration !== originalView.navigationGeneration
+            || (current.state.navigationGenerationByViewId[view.viewId] ?? view.navigationGeneration) !== view.navigationGeneration) {
+            return createAnnotationStaleReason();
+        }
+        const policyDenial = resolveBrowserContextKindAvailability({
+            ...current,
+            kind: 'browserAnnotation',
+            adapterCapabilities: view.adapterCapabilities,
+        });
+        if (policyDenial) return policyDenial;
+        const activeDenial = resolveActiveAnnotationBindingUnavailable({ state: current.state, view });
+        if (activeDenial) return activeDenial;
+        if (current.state.activeAnnotationByViewId[view.viewId] !== originalMode) return createAnnotationStaleReason();
+        if (params.draft) {
+            const draft = current.state.annotationDraftByViewId[view.viewId];
+            if (!draft || draft.annotationId !== params.draft.annotationId
+                || draft.browserSessionId !== view.browserSessionId || draft.navigationGeneration !== view.navigationGeneration
+                || draft.targets !== params.draft.targets || draft.regions !== params.draft.regions || draft.strokes !== params.draft.strokes) {
+                return createAnnotationStaleReason();
+            }
+        }
+        return null;
+    };
+}
 
 function createUnavailableReason(
     reasonCode: BrowserContextUnavailableReason['reasonCode'],
@@ -73,7 +124,7 @@ function resolveActiveAnnotationBindingUnavailable(params: Readonly<{
     return null;
 }
 
-function resolveProviderCaptureBindingUnavailable(params: Readonly<{
+export function resolveProviderCaptureBindingUnavailable(params: Readonly<{
     result: Extract<BrowserAnnotationCaptureProviderResult, { status: 'captured' }>;
     view: BrowserControlViewState;
 }>): BrowserContextUnavailableReason | null {
@@ -249,6 +300,7 @@ export async function attachActiveBrowserAnnotationFromCaptureProvider(params: R
     view: BrowserControlViewState | null;
     captureProvider: BrowserAnnotationCaptureProvider | null | undefined;
     capturedAtMs: number;
+    resolveBinding: () => ActiveBrowserAnnotationBinding;
 }>): Promise<BrowserContextAttachResult> {
     if (!params.view) {
         return {
@@ -262,10 +314,8 @@ export async function attachActiveBrowserAnnotationFromCaptureProvider(params: R
         };
     }
 
-    const activeUnavailable = resolveActiveAnnotationBindingUnavailable({
-        state: params.state,
-        view: params.view,
-    });
+    const resolveAdmission = createActiveBrowserAnnotationCaptureAdmission({ binding: params, resolveBinding: params.resolveBinding });
+    const activeUnavailable = resolveAdmission();
     if (activeUnavailable) {
         return {
             status: 'unavailable',
@@ -294,43 +344,45 @@ export async function attachActiveBrowserAnnotationFromCaptureProvider(params: R
             currentUrl: params.view.currentUrl,
             title: params.view.title,
             securityOrigin: params.view.securityOrigin,
+            resolveAdmission,
         });
     } catch {
+        const current = params.resolveBinding();
         return {
             status: 'unavailable',
-            state: params.state,
-            reason: createAnnotationCaptureFailedReason(),
+            state: current.state,
+            reason: resolveAdmission() ?? createAnnotationCaptureFailedReason(),
         };
     }
 
+    const current = params.resolveBinding();
+    const resultDenial = resolveAdmission();
+    if (resultDenial || !current.view) {
+        return { status: 'unavailable', state: current.state, reason: resultDenial ?? createAnnotationStaleReason() };
+    }
     if (providerResult.status === 'unavailable') {
         return {
             status: 'unavailable',
-            state: params.state,
+            state: current.state,
             reason: providerResult.reason ?? createAnnotationCaptureUnavailableReason(),
         };
     }
 
     const staleReason = resolveProviderCaptureBindingUnavailable({
         result: providerResult,
-        view: params.view,
+        view: current.view,
     });
     if (staleReason) {
         return {
             status: 'unavailable',
-            state: params.state,
+            state: current.state,
             reason: staleReason,
         };
     }
 
     try {
         return attachActiveBrowserAnnotation({
-            state: params.state,
-            browserContextEnabled: params.browserContextEnabled,
-            browserDiagnosticsEnabled: params.browserDiagnosticsEnabled,
-            attachmentsUploadsEnabled: params.attachmentsUploadsEnabled,
-            contextCapabilities: params.contextCapabilities,
-            view: params.view,
+            ...current,
             draft: {
                 media: providerResult.media,
                 target: providerResult.target,
@@ -345,7 +397,7 @@ export async function attachActiveBrowserAnnotationFromCaptureProvider(params: R
     } catch {
         return {
             status: 'unavailable',
-            state: params.state,
+            state: current.state,
             reason: createAnnotationCaptureFailedReason(),
         };
     }

@@ -24,6 +24,28 @@ describe("Account authoring-memory reserved rows", () => {
     }, 120_000);
     afterAll(async () => { await harness?.close(); });
 
+    it("reads additive stored envelope fields without admitting them in new mutations", async () => {
+        const account = await db.account.create({ data: { id: randomUUID(), encryptionMode: "plain" } });
+        const key = "@happier/account/authoring-memory/v1/lastUsedProfile";
+        const bytes = new TextEncoder().encode(JSON.stringify({ t: "plain", v: "profile", futureEnvelopeField: true }));
+        await db.userKVStore.create({ data: { accountId: account.id, key, version: 0, value: bytes } });
+        const app = createTestApp();
+        try {
+            const headers = { "x-test-user-id": account.id };
+            const url = "/v1/account/authoring-memory/lastUsedProfile";
+            expect((await app.inject({ method: "GET", url, headers })).json()).toEqual({
+                status: "present", revision: 0, content: { t: "plain", v: "profile" },
+            });
+            expect((await app.inject({ method: "GET", url: "/v1/account/authoring-memory", headers })).json()).toEqual({
+                rows: [{ key: "lastUsedProfile", revision: 0, content: { t: "plain", v: "profile" } }],
+            });
+            expect((await app.inject({ method: "POST", url, headers, payload: {
+                expectedRevision: 0, content: { t: "plain", v: "new-profile", futureEnvelopeField: true },
+            } })).statusCode).toBe(400);
+            expect((await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: account.id, key } } })).value).toEqual(bytes);
+        } finally { await app.close(); }
+    });
+
     it("reads, lists and CAS-mutates plain rows without losing opaque values, isolating Accounts and tombstones", async () => {
         const owner = await db.account.create({ data: { id: randomUUID(), encryptionMode: "plain" } });
         const other = await db.account.create({ data: { id: randomUUID(), encryptionMode: "plain" } });

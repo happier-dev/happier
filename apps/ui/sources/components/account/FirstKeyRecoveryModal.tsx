@@ -95,7 +95,7 @@ export function FirstKeyRecoveryModal(
         await run(props.abandon, 'abandon');
     }, [busy, props.abandon, run]);
     const footer = React.useMemo(() => (
-        <View style={styles.body}>
+        <View style={{ gap: 12 }}>
             <RoundButton
                 title={tLoose(
                     'settingsAccount.firstKeyRecovery.finish',

@@ -16,6 +16,8 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { promptCollectionItemHref } from '@/components/settings/prompts/collection/promptCollectionModel';
+import { useWorkflowMakeRepeatable } from '@/components/workflows/authoring/useWorkflowMakeRepeatable';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 
 type Props = Omit<CommittedMessageActionInput, 'openSavePrompt'> & Readonly<{
     showActions: boolean;
@@ -31,6 +33,25 @@ type Props = Omit<CommittedMessageActionInput, 'openSavePrompt'> & Readonly<{
     children: (row: React.ReactNode) => React.ReactNode;
 }>;
 
+/** Only an eligible committed action mounts workflow availability subscriptions. */
+function MakeRepeatableSubscription(props: Readonly<{
+    source: NonNullable<ReturnType<typeof useCommittedMessageActions>['makeRepeatableSource']>;
+    text: string;
+    onChange: ReturnType<typeof useCommittedMessageActions>['setMakeRepeatableCapability'];
+}>) {
+    const repeatable = useWorkflowMakeRepeatable({
+        sessionId: props.source.sessionId, serverId: props.source.serverId,
+        message: { id: props.source.messageId, text: props.text },
+    });
+    // Refresh the committed text closure without a publication/render wave for each text delta.
+    const openRepeatable = useEventCallback(async () => { await repeatable.openRepeatable(); });
+    React.useLayoutEffect(() => {
+        props.onChange(repeatable.available ? { source: props.source, available: true, openRepeatable } : null);
+        return () => props.onChange(null);
+    }, [props.onChange, props.source, repeatable.available, openRepeatable]);
+    return null;
+}
+
 /** The committed row and its native long-press menu share the same admitted actions. */
 export function CommittedMessageActions(props: Props) {
     const { theme } = useUnistyles();
@@ -40,7 +61,7 @@ export function CommittedMessageActions(props: Props) {
     const [menuOpen, setMenuOpen] = React.useState(false);
     const [saveOpen, setSaveOpen] = React.useState(false);
     const [savedArtifactId, setSavedArtifactId] = React.useState<string | null>(null);
-    const { actions, pinAvailability, pluginActions } = useCommittedMessageActions({
+    const { actions, pinAvailability, pluginActions, makeRepeatableSource, setMakeRepeatableCapability } = useCommittedMessageActions({
         ...props, openSavePrompt: () => setSaveOpen(true),
     });
     React.useEffect(() => { setSaveOpen(false); setMenuOpen(false); setSavedArtifactId(null); }, [props.message.id]);
@@ -104,7 +125,11 @@ export function CommittedMessageActions(props: Props) {
             /></View>;
         })}
     </MessageActionRow>;
-    return <Pressable ref={anchorRef} collapsable={false}
+    return <>
+        {makeRepeatableSource ? <MakeRepeatableSubscription
+            source={makeRepeatableSource} text={props.selectableText!.text} onChange={setMakeRepeatableCapability}
+        /> : null}
+        <Pressable ref={anchorRef} collapsable={false}
         onHoverIn={props.onHoverIn} onHoverOut={props.onHoverOut}
         onLongPress={Platform.OS !== 'web' && items.length > 0 ? () => setMenuOpen(true) : undefined}>
         {props.children(row)}
@@ -116,7 +141,8 @@ export function CommittedMessageActions(props: Props) {
             messageId={props.message.id} text={props.selectableText!.text} serverId={props.serverId ?? source.serverId}
             anchorRef={saveAnchorRef} onClose={() => setSaveOpen(false)}
             onSaved={(artifactId) => { setSavedArtifactId(artifactId); setSaveOpen(false); }} /> : null}
-    </Pressable>;
+        </Pressable>
+    </>;
 }
 
 const styles = StyleSheet.create((theme) => ({

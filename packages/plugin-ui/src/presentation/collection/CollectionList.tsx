@@ -159,6 +159,29 @@ export function useHappierCollectionListRow(): boolean {
   return useContext(HappierCollectionListRowContext);
 }
 
+/**
+ * Present around a Collection's table or list row: the row draws the dense collection anatomy — full
+ * bleed with a hairline under it, the pointer's hover fill and the open row's fill with its leading
+ * edge across the whole row (accessory included), so selection never reads as a floating chip and
+ * stays distinct from the keyboard focus ring. None of it takes layout: the row keeps the exact
+ * height the Collection planned.
+ */
+export const HappierCollectionTableRowContext = createContext(false);
+
+export function useHappierCollectionTableRow(): boolean {
+  return useContext(HappierCollectionTableRowContext);
+}
+
+/**
+ * Whether this List row is the one whose detail is open, provided by the List row owner. With a
+ * multi-selection store mounted a row's `selected` means "in the bulk set", so the open row needs its own
+ * fact to keep its mark (`HappierCollectionTableRowContext`'s edge).
+ */
+export const HappierListRowOpenContext = createContext(false);
+
+/** The open row's leading edge in a Collection's table or list (lab `.br.on::before`). */
+export const HAPPIER_COLLECTION_SELECTED_EDGE_WIDTH = 2.5;
+
 const railStyle: ViewStyle = { flex: 1, minHeight: 0 };
 const M = HAPPIER_COLLECTION_LIST_METRICS;
 const headerStyle: ViewStyle = {

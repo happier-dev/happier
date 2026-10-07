@@ -32,6 +32,7 @@ Declaration: `dist/index.d.ts`
 - type `BrandMarkProps` from `dist/index.d.ts`
 - value `Button` from `dist/index.d.ts`
 - type `ButtonProps` from `dist/index.d.ts`
+- type `ButtonSize` from `dist/index.d.ts`
 - type `ButtonVariant` from `dist/index.d.ts`
 - value `Card` from `dist/index.d.ts`
 - type `CardProps` from `dist/index.d.ts`
@@ -956,11 +957,15 @@ Declaration: `dist/advanced/index.d.ts`
 - type `PluginUiScrollActivityTracker` from `dist/advanced/index.d.ts`
 - type `PluginUiSessionPartPresentation` from `dist/advanced/index.d.ts`
 - type `PluginUiWidgetAreaPresentation` from `dist/advanced/index.d.ts`
+- type `SessionPartClaims` from `dist/advanced/index.d.ts`
+- type `SessionPartKind` from `dist/advanced/index.d.ts`
 - value `createPluginUiHostApiResourceClient` from `dist/advanced/index.d.ts`
 - value `createPluginUiResourceStore` from `dist/advanced/index.d.ts`
+- value `createSessionPartClaims` from `dist/advanced/index.d.ts`
 - value `isPluginUiResourceReadAuthorityLost` from `dist/advanced/index.d.ts`
 - value `materializeHappierRenderableImage` from `dist/advanced/index.d.ts`
 - value `useOptionalPluginUiScrollActivityTracker` from `dist/advanced/index.d.ts`
+- value `useSessionPartClaim` from `dist/advanced/index.d.ts`
 
 ### `./components`
 
@@ -989,6 +994,7 @@ Declaration: `dist/components/index.d.ts`
 - type `BrandMarkProps` from `dist/components/index.d.ts`
 - value `Button` from `dist/components/index.d.ts`
 - type `ButtonProps` from `dist/components/index.d.ts`
+- type `ButtonSize` from `dist/components/index.d.ts`
 - type `ButtonVariant` from `dist/components/index.d.ts`
 - value `Card` from `dist/components/index.d.ts`
 - type `CardProps` from `dist/components/index.d.ts`

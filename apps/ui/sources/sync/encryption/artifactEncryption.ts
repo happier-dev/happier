@@ -3,7 +3,7 @@ import { ArtifactHeader, ArtifactBody } from '../domains/artifacts/artifactTypes
 import { AES256Encryption } from './encryptor';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { syncPerformanceTelemetry } from '../runtime/syncPerformanceTelemetry';
-import { ArtifactBodyEnvelopeV1Schema, ArtifactBodyEnvelopeV1StoredSchema } from '@happier-dev/protocol';
+import { ArtifactBodyEnvelopeV1Schema, ArtifactBodyEnvelopeV1StoredSchema, WorkflowDefinitionArtifactHeaderV1ReadSchema } from '@happier-dev/protocol';
 
 const ARTIFACT_HEADER_DEFAULT_VERSION = 1;
 const ARTIFACT_HEADER_MAX_VERSION = 1;
@@ -34,7 +34,13 @@ function sanitizeArtifactHeaderVersion(value: unknown): number {
 
 /** Presentation projection only. Strict readers and storage writers consume the raw header. */
 export function projectArtifactHeaderForDisplay(header: Readonly<Record<string, unknown>>): ArtifactHeader {
-    const title = typeof header.title === 'string' ? header.title : null;
+    // Workflow titles are public authored content, under the kind owner's metadata.
+    // Project them without changing the raw header that strict readers and writes consume.
+    const workflow = header.kind === 'workflow-definition.v1'
+        ? WorkflowDefinitionArtifactHeaderV1ReadSchema.safeParse(header)
+        : null;
+    const title = workflow?.success ? workflow.data.metadata.title
+        : typeof header.title === 'string' ? header.title : null;
     const v = sanitizeArtifactHeaderVersion(header.v);
     const kindRaw = typeof header.kind === 'string' ? header.kind.trim() : '';
     const sessions = Array.isArray(header.sessions)

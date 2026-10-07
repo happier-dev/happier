@@ -134,21 +134,25 @@ const overlayOrigins = new WeakMap<object, HomeConfigEnvOrigin>();
 
 /**
  * Builds the overlay from its origin and remembers the origin for that overlay object. An overlay
- * identical to its base is not registered: nothing in it came from the Home. `register: false`
+ * identical to its base is not registered unless a resolved request/job snapshot was requested.
+ * That snapshot keeps the deployment origin even when no Home value applies. `register: false`
  * builds an env the decision owner must treat as a plain deployment env (the console's ceiling).
  */
 export function composeHomeConfigEnv(
     origin: HomeConfigEnvOrigin,
-    options: Readonly<{ register?: boolean; registry?: ServerConfigRegistry }> = {},
+    options: Readonly<{ register?: boolean; registry?: ServerConfigRegistry; snapshot?: boolean }> = {},
 ): ServerConfigEnv {
-    const env = buildHomeConfigEnv(
+    let env = buildHomeConfigEnv(
         origin.base,
         { ...origin.settingsValues, ...origin.policyValues },
         options.registry ?? SERVER_CONFIG_REGISTRY,
         origin.openedSecrets,
         origin.inferred ?? {},
     );
-    if (env === origin.base) return env;
+    if (env === origin.base) {
+        if (!options.snapshot) return env;
+        env = Object.freeze({ ...env });
+    }
     if (options.register !== false) overlayOrigins.set(env, origin);
     return env;
 }

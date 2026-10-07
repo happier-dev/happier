@@ -196,10 +196,6 @@ vi.mock('@/hooks/server/useFeatureDecision', () => ({
     },
 }));
 
-vi.mock('@/utils/platform/responsive', () => ({
-    useIsLandscape: () => false,
-}));
-
 vi.mock('@/sync/store/hooks', () => ({
     useLocalSetting: (key: string) => (localSettingsState as Record<string, unknown>)[key],
 }));
@@ -448,12 +444,13 @@ describe('PreAuthOnboardingWizardEntry', () => {
     it('hands a supplied Home address to the connection step without consuming the URL first', async () => {
         onboardingTourFeatureState.state = 'enabled';
         const replaceState = vi.fn();
+        const retainedEntry = { id: 'onboarding-entry' };
         vi.stubGlobal('window', {
             location: {
                 href: 'https://app.example.test/?server=https%3A%2F%2Fhome.example.test',
                 search: '?server=https%3A%2F%2Fhome.example.test',
             },
-            history: { replaceState },
+            history: { state: retainedEntry, replaceState },
         });
         vi.stubGlobal('document', {});
 
@@ -465,7 +462,7 @@ describe('PreAuthOnboardingWizardEntry', () => {
         expect(screen.findAllByType('OnboardingWizardSurfacePresentation' as never)).toHaveLength(1);
         expect(replaceState).not.toHaveBeenCalled();
         (wizardControllerMock.lastProps?.onInitialServerUrlConnected as (() => void) | undefined)?.();
-        expect(replaceState).toHaveBeenCalledWith(null, '', '/');
+        expect(replaceState).toHaveBeenCalledWith(retainedEntry, '', '/');
     });
 
     it('does not flash the current wizard while the enabled journey chunk is loading', async () => {

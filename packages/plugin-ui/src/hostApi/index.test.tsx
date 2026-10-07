@@ -549,7 +549,7 @@ describe('plugin host API hooks', () => {
     }
   });
 
-  it('reads canonical bytes when a terminal live watch admission fails', async () => {
+  it('reads canonical bytes when the live watch transport fails terminally', async () => {
     const value: ResourceContent = {
       contentType: 'application/json',
       digest: `sha256:${'c'.repeat(64)}`,
@@ -558,8 +558,8 @@ describe('plugin host API hooks', () => {
     const client: PluginUiResourceClient = {
       readResource: vi.fn(async () => value),
       watchResource: vi.fn(async () => {
-        throw Object.assign(new Error('generation is stale'), {
-          code: 'plugin_generation_stale',
+        throw Object.assign(new Error('watch transport is unavailable'), {
+          code: 'unavailable',
           retryable: false,
         });
       }),
@@ -572,8 +572,9 @@ describe('plugin host API hooks', () => {
       expect(entry.getSnapshot().subscription).toBe('ended');
     });
 
-    // A watch carries invalidations only. Even a settled admission failure
-    // cannot suppress the canonical snapshot read for this mounted store.
+    // A transport refusal ends watching without withdrawing read authority.
+    // The independent baseline can still admit canonical bytes; a stale
+    // generation refusal instead aborts reads started under that authority.
     expect(client.readResource).toHaveBeenCalledTimes(1);
     expect(entry.getSnapshot()).toMatchObject({
       value,
@@ -873,7 +874,7 @@ describe('plugin host API hooks', () => {
     expect(digests.at(-1)).toBe(`sha256:${'2'.repeat(64)}`);
   });
 
-  it('surfaces a failed initial read without fabricating a value', async () => {
+  it('ends a missing Resource read without fabricating a value', async () => {
     const host = createHostApiStub({
       readResource: vi.fn(async () => {
         throw Object.assign(new Error('plugin_resource_not_found'), { code: 'plugin_resource_not_found' });
@@ -899,8 +900,10 @@ describe('plugin host API hooks', () => {
       freshness: 'unknown',
       pending: 'idle',
       error: { code: 'plugin_resource_not_found' },
-      subscription: 'unsupported',
+      subscription: 'ended',
     });
+    expect(snapshots.at(-1)?.value).toBeUndefined();
+    expect(snapshots.at(-1)?.digest).toBeUndefined();
   });
 
   it('keeps last-known-good bytes and publishes stale/error facts when an explicit refresh fails', async () => {

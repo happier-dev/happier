@@ -119,6 +119,7 @@ export const ScopedAuthoringComposer = React.forwardRef<
         attachmentsEnabled: boolean;
         editable?: boolean;
         placeholder: string;
+        voiceAffordance?: React.ComponentProps<typeof AgentInput>['voiceAffordance'];
         /**
          * The accessible name of the actual text input, for a host that mounts
          * several composers (a workflow names each by its step). The input
@@ -483,6 +484,7 @@ export const ScopedAuthoringComposer = React.forwardRef<
                 onAgentClick={context?.onAgentClick}
                 contentPaddingHorizontal={0}
                 panelPresentation="document"
+                voiceAffordance={props.voiceAffordance}
             />
             {pluginPresentation.afterComposer}
         </PluginContextualResourceStoreProvider>

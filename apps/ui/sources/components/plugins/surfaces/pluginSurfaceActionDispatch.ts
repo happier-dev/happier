@@ -1388,8 +1388,6 @@ export type CreatePluginSurfaceActionDispatchHandlerInput = Readonly<{
     resolveContributedAction?: PluginSurfaceContributedActionDescriptorResolver;
     isContributedActionAvailable?: () => boolean;
     isCurrent?: () => boolean;
-    /** Observes only successfully delivered results, irrespective of execution placement. */
-    onActionResult?: (result: PluginUiJsonValueV1) => void;
 }>;
 
 /**
@@ -1470,7 +1468,6 @@ export function createPluginSurfaceActionDispatchHandler(
             ...(input.isCurrent ? { isCurrent: input.isCurrent } : {}),
         });
         if (!outcome.ok) return createPluginSurfaceHostApiError(outcome.code, [outcome.reason]);
-        input.onActionResult?.(outcome.result);
         return outcome.result;
     };
 }
@@ -1544,8 +1541,6 @@ export function createPluginSurfaceActionHostApi(input: Readonly<{
     /** Retires effects owned by `mountedHostApiHandlers` with this same mount. */
     disposeMountedHostApiHandlers?: () => void;
     isCurrent?: () => boolean;
-    /** The mount's custody owner observes successfully delivered Action results. */
-    onActionResult?: (result: PluginUiJsonValueV1) => void;
 }>): PluginSurfaceHostApiV1 {
     // Workspace-file viewers are a distinct semantic role. The concrete
     // openable binding is its authority, so install exactly its context/stat/read
@@ -1607,7 +1602,6 @@ export function createPluginSurfaceActionHostApi(input: Readonly<{
     const resourceDisposeHostResource = resourceWatch?.disposeHostResource;
     const executeAction = createPluginSurfaceActionDispatchHandler({
         pluginId: input.surfaceContext.pluginId,
-        ...(input.onActionResult ? { onActionResult: input.onActionResult } : {}),
         ...(input.callerSourceCustody
             ? { callerSourceCustody: input.callerSourceCustody }
             : {}),

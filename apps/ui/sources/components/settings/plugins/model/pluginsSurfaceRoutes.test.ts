@@ -1,4 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import * as React from 'react';
+import { act } from 'react-test-renderer';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { resolveHref } from 'expo-router/build/link/href';
+
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { DestinationInstanceHost, type DestinationNavigation } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { createWorkspaceNavigationAdapter } from '@/components/appShell/workspace/workspaceNavigationAdapter';
+import { createWorkspaceState, reduceWorkspaceState } from '@/components/appShell/workspace/workspaceState';
+import { hrefForDestinationRef, resolveCompactAppDestinations, resolveDestinationRefFromHref } from '@/components/appShell/destinations/compactAppDestinationCatalog';
+import { useDetailsPaneAvailable } from '@/components/appShell/panes/details/detailsPaneAvailability';
+import { usePluginsOpenItem } from './usePluginsOpenItem';
 
 import {
     buildPluginDetailRoute,
@@ -10,7 +21,82 @@ import {
     readPluginsOpenItem,
     readPluginListingRouteParams,
     resolvePluginsSurfaceHost,
+    type PluginsOpenItem,
+    type PluginsSurfaceHost,
 } from './pluginsSurfaceRoutes';
+
+const boundary = vi.hoisted(() => ({ width: 1440, height: 1000 }));
+// Dimensions, native composition and Expo URL transport are platform boundaries. The route
+// selection hook, form-factor policy, destination catalog, workspace reducer and history stay real.
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    const dimensions = () => ({ ...boundary, scale: 1, fontScale: 1 });
+    return createReactNativeWebMock({
+        Dimensions: { get: dimensions },
+        useWindowDimensions: dimensions,
+    });
+});
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+vi.mock('@react-navigation/native', async () => (await import('@/dev/testkit/mocks/reactNavigation')).createReactNavigationNativeMock());
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
+
+afterEach(() => {
+    boundary.width = 1440;
+    boundary.height = 1000;
+    standardCleanup();
+});
+
+function PluginSelectionProbe() {
+    const selection = usePluginsOpenItem();
+    const available = useDetailsPaneAvailable();
+    return React.createElement('PluginSelectionProbe', { selection, available });
+}
+
+function pluginSelectionHarness(host: PluginsSurfaceHost, item: PluginsOpenItem) {
+    const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+        externalSessions: false, inbox: false, workflows: false, friends: false,
+    } });
+    const home = buildPluginsHomeRoute(host, { view: item.kind === 'listing' ? 'browse' : 'installed' });
+    const target = resolveDestinationRefFromHref(catalog, `${home}&anchor=kept`);
+    if (!target) throw new Error('Plugins home is not registered in the real destination catalog');
+    let state = createWorkspaceState({ id: 'plugins', target, pinned: false, preview: false });
+    let nextTabId = 0;
+    const adapter = createWorkspaceNavigationAdapter({
+        getState: () => state,
+        getCatalog: () => catalog,
+        dispatch: (action) => { state = reduceWorkspaceState(state, action); },
+        transport: { commit: () => {} },
+        createId: () => `plugin-detail:${++nextTabId}`,
+        onChange: () => {},
+    });
+    adapter.initialize(`${home}&anchor=kept`);
+    const navigationForTab = (tabId: string): DestinationNavigation => ({
+        push: (href) => { adapter.openHref(resolveHref(href), { tabId }); },
+        pushRetainingCurrent: (href) => {
+            adapter.dispatch({ type: 'promoteTab', tabId });
+            adapter.openHref(resolveHref(href), { mode: 'newTab' });
+        },
+        replace: (href) => { adapter.openHref(resolveHref(href), { tabId, replace: true }); },
+        back: () => adapter.step(-1),
+        setParams: (values) => adapter.setParams(tabId, values),
+    });
+    const active = () => state.tabs[state.groups[state.focusedGroupId].activeTabId];
+    const current = () => active().target;
+    const href = () => hrefForDestinationRef(catalog, current());
+    const tree = () => React.createElement(DestinationInstanceHost, {
+        tabId: active().id, ref: current(), pathname: href()?.split('?')[0] ?? '',
+        focused: true, visible: true, navigation: navigationForTab(active().id),
+        children: React.createElement(PluginSelectionProbe),
+    });
+    return { adapter, current, href, tree, catalog, parent: () => state.tabs.plugins };
+}
+
+function readSelection(screen: Awaited<ReturnType<typeof renderScreen>>) {
+    return screen.root.findByType('PluginSelectionProbe').props as {
+        selection: ReturnType<typeof usePluginsOpenItem>;
+        available: boolean;
+    };
+}
 
 describe('plugins surface routes', () => {
     it('keeps the user in the host they are in: Settings or the app page', () => {
@@ -74,5 +160,39 @@ describe('plugins surface routes', () => {
     it('rejects a deep link that does not name both the source and the plugin', () => {
         expect(readPluginListingRouteParams({ pluginId: 'acme.tools' })).toBeNull();
         expect(readPluginListingRouteParams({ sourceId: ['s1'], pluginId: ['  '] })).toBeNull();
+    });
+
+    it.each([
+        ['settings', { kind: 'installed', pluginId: 'acme.tools' }],
+        ['app', { kind: 'listing', sourceId: 'marketplace:curated', pluginId: 'acme.notes' }],
+    ] satisfies Array<[PluginsSurfaceHost, PluginsOpenItem]>)('retains the route-selected %s plugin across width changes and clears it without losing the collection location', async (host, item) => {
+        const h = pluginSelectionHarness(host, item);
+        const screen = await renderScreen(h.tree());
+        expect(readSelection(screen).available).toBe(true);
+        await act(async () => { readSelection(screen).selection.open(item); });
+        await screen.update(h.tree());
+        expect(readSelection(screen).selection.openItem).toEqual(item);
+
+        boundary.width = 390;
+        boundary.height = 844;
+        await screen.update(h.tree());
+        expect(readSelection(screen).available).toBe(false);
+        // Presentation changes belong to the pane layout owner. Selection and the collection's
+        // location remain in the same route rather than navigating to a newly mounted editor.
+        expect(readSelection(screen).selection.openItem).toEqual(item);
+        expect(h.current().params).toMatchObject({ view: item.kind === 'listing' ? 'browse' : 'installed', anchor: 'kept' });
+        boundary.width = 1440;
+        boundary.height = 1000;
+        await screen.update(h.tree());
+        expect(readSelection(screen).selection.openItem).toEqual(item);
+        expect(readSelection(screen).available).toBe(true);
+
+        await act(async () => { readSelection(screen).selection.close(); });
+        await screen.update(h.tree());
+        expect(h.current().params).toMatchObject({ view: item.kind === 'listing' ? 'browse' : 'installed', anchor: 'kept' });
+        expect(readSelection(screen).selection.openItem).toBeNull();
+        await screen.update(h.tree());
+        expect(readSelection(screen).selection.openItem).toBeNull();
+        expect(h.href()?.split('?')[0]).toBe(host === 'settings' ? '/settings/plugins' : '/plugins');
     });
 });

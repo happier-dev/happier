@@ -158,11 +158,11 @@ stay with host-approved Actions. Where no host renderer is supplied, `fallback`
 renders; caller-hosted HTML does not acquire the app's stream renderer.
 
 `StoredImage` takes a `StoredImageRefV1` from `@happier-dev/plugin-sdk/ui`:
-`{ sessionId, mediaId }`. Derive these identities from a file-backed native
-Session-image artifact returned by a successful Action in this mounted surface,
-including capture, attachment, snapshot or Session-event results. The host retains the
-exact media reference; supplying ids does not authorize another image or a
-filesystem path. The read additionally requires the plugin's declared
+the complete file-backed native Session-image reference, including `mediaId`,
+`mediaKind`, dimensions, `sizeBytes` and `file` storage/path/digest facts. Pass
+the reference from a capture, attachment, snapshot or Session event directly.
+It may be reused after remounting or handed to another plugin; no per-mount
+Action-result allowlist grants permission. Each read requires the plugin's declared
 `sessions` HostAccess **read** scope, including the selected scope for optional
 access. It does not inherit the Account-wide linked-Session UI scope. Account
 mode and the media's encoding must agree; unavailable encryption material and

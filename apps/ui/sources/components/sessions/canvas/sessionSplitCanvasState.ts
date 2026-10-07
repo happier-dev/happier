@@ -156,8 +156,8 @@ export function resolveSessionSplitCanvasState(input: Readonly<{
 }>): SessionSplitCanvasState {
     const snapshot = input.persistedSnapshot && entityDragScopesEqualV1(input.persistedSnapshot.scope, input.scope)
         ? input.persistedSnapshot : createInitialSessionSplitCanvasSnapshot(input);
-    const state: SessionSplitCanvasState = { ...snapshot, maxLeaves: Number.POSITIVE_INFINITY };
-    if (!state.root) return { ...createInitialSessionSplitCanvasSnapshot(input), maxLeaves: Number.POSITIVE_INFINITY };
+    const state: SessionSplitCanvasState = snapshot;
+    if (!state.root) return createInitialSessionSplitCanvasSnapshot(input);
     // Reload restores the selected tab; a missing route member is added without displacing work.
     return findSessionLeafIdBySessionId(state, input.sessionId) ? state : reconcileSessionSplitCanvasRouteAnchor(state, input.sessionId);
 }

@@ -314,7 +314,8 @@ function resolveInternalWorkspaceWatchFolders() {
 
 const internalWorkspacePackages = collectInternalWorkspacePackages(path.resolve(monorepoRoot, "packages"));
 const internalWorkspaceSourceRoots = [...internalWorkspacePackages.values()]
-  .map((packageRoot) => path.resolve(packageRoot, "src"));
+  // Public authoring examples also supply live UI modules with NodeNext .js imports.
+  .flatMap((packageRoot) => ["src", "examples"].map((folder) => path.resolve(packageRoot, folder)));
 const internalWorkspaceWatchFolders = resolveInternalWorkspaceWatchFolders();
 const internalWorkspaceBundledPluginUiArtifactRoots = internalWorkspaceWatchFolders.flatMap((packageRoot) => {
   const packageJson = safeReadJson(path.resolve(packageRoot, "package.json"));
@@ -857,6 +858,12 @@ function resolvePackageNameShadowedByArtifactAssetExt(context, moduleName) {
 
 const defaultResolveRequest = config.resolver.resolveRequest;
 config.resolver.resolveRequest = (context, moduleName, platform) => {
+  // Mermaid imports KaTeX as ESM while enriched Markdown requires it. Both
+  // consume its default renderer; selecting the public ESM build once avoids
+  // retaining two copies of the same parser, fonts and symbol tables on web.
+  if (platform === "web" && moduleName === "katex") {
+    return { type: "sourceFile", filePath: require.resolve("katex/dist/katex.mjs") };
+  }
   // Resolve runtime peers from the app, preserving Metro platform/export rules.
   // Hoisted dependencies must not introduce their own React or native renderers.
   if (/^(react|react-dom|react-native)(?:\/|$)/u.test(moduleName)) {

@@ -103,6 +103,7 @@ describe('resolveSelectableMessageText', () => {
         for (const segmentState of [null, 'unknown'] as const) {
             const message = createAgentMessage({
                 text: 'Partial assistant output',
+                // Stored-message boundary fixture intentionally carries an invalid state.
                 meta: {
                     happierStreamSegmentV1: {
                         v: 1,
@@ -112,7 +113,7 @@ describe('resolveSelectableMessageText', () => {
                         startedAtMs: 1,
                         updatedAtMs: 2,
                     },
-                },
+                } as unknown as AgentTextMessage['meta'],
             });
 
             expect(resolveSelectableMessageText({

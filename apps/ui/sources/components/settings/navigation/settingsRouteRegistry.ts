@@ -15,8 +15,8 @@ export type SettingsStackScreenDefinition = Readonly<{
     options: NativeStackNavigationOptions;
 }>;
 
-/** Settings sections that own a nested stack (collection + detail); their screens resolve under `/settings/<navigator>`. */
-export type SettingsNestedNavigator = 'account/api-tokens' | 'connected-services' | 'providers' | 'agents' | 'teams' | 'mcp' | 'prompts/docs' | 'prompts/skills' | 'prompts/templates' | 'machines' | 'embeds' | 'profiles' | 'roles' | 'remote-hosts' | 'home/[serverId]' | 'server';
+/** Settings sections that own a nested layout; their screens resolve under `/settings/<navigator>`. */
+export type SettingsNestedNavigator = 'account/api-tokens' | 'connected-services' | 'providers' | 'agents' | 'teams' | 'mcp' | 'prompts' | 'prompts/docs' | 'prompts/skills' | 'prompts/templates' | 'machines' | 'embeds' | 'profiles' | 'roles' | 'remote-hosts' | 'home/[serverId]' | 'server';
 
 type SettingsRouteChromeDefinition = Readonly<{
     navigator?: SettingsNestedNavigator;
@@ -145,31 +145,31 @@ const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefinition[
     { name: 'delegation', titleKey: 'roles.delegation.title' },
     // `prompts` has its own layout (it waits for the library to load), so the stack sees one `prompts` screen.
     { name: 'prompts', titleKey: 'settings.prompts' },
-    { name: 'prompts/index', titleKey: 'settings.prompts' },
-    { name: 'prompts/assets', titleKey: 'promptLibrary.externalAssets' },
+    { name: 'index', navigator: 'prompts', titleKey: 'settings.prompts' },
+    { name: 'assets', navigator: 'prompts', titleKey: 'promptLibrary.externalAssets' },
     { name: 'index', navigator: 'prompts/docs', titleKey: 'promptLibrary.prompts' },
     { name: '[id]', navigator: 'prompts/docs', titleKey: 'promptLibrary.editPrompt' },
     { name: '[id]/export', navigator: 'prompts/docs', titleKey: 'promptLibrary.externalAssetsExportTitle' },
     { name: 'new', navigator: 'prompts/docs', titleKey: 'promptLibrary.newPrompt' },
-    { name: 'prompts/docs', titleKey: 'promptLibrary.prompts' },
-    { name: 'prompts/skills', titleKey: 'promptLibrary.skills' },
-    { name: 'prompts/templates', titleKey: 'promptLibrary.templates' },
-    { name: 'prompts/folders', titleKey: 'promptLibrary.folders' },
-    { name: 'prompts/library', headerShown: false },
-    { name: 'prompts/registries', titleKey: 'promptLibrary.registries' },
-    { name: 'prompts/registries/item', titleKey: 'promptLibrary.registries' },
+    { name: 'docs', navigator: 'prompts', titleKey: 'promptLibrary.prompts' },
+    { name: 'skills', navigator: 'prompts', titleKey: 'promptLibrary.skills' },
+    { name: 'templates', navigator: 'prompts', titleKey: 'promptLibrary.templates' },
+    { name: 'folders', navigator: 'prompts', titleKey: 'promptLibrary.folders' },
+    { name: 'library', navigator: 'prompts', headerShown: false },
+    { name: 'registries', navigator: 'prompts', titleKey: 'promptLibrary.registries' },
+    { name: 'registries/item', navigator: 'prompts', titleKey: 'promptLibrary.registries' },
     { name: 'index', navigator: 'prompts/skills', titleKey: 'promptLibrary.skills' },
     { name: '[id]', navigator: 'prompts/skills', titleKey: 'promptLibrary.editSkill' },
     { name: '[id]/export', navigator: 'prompts/skills', titleKey: 'promptLibrary.externalAssetsExportTitle' },
     { name: '[id]/files/edit', navigator: 'prompts/skills', titleKey: 'promptLibrary.editSupportingFile' },
     { name: '[id]/files/new', navigator: 'prompts/skills', titleKey: 'promptLibrary.newSupportingFile' },
     { name: 'new', navigator: 'prompts/skills', titleKey: 'promptLibrary.newSkill' },
-    { name: 'prompts/stacks', titleKey: 'promptLibrary.stacks' },
-    { name: 'prompts/stacks/coding', titleKey: 'promptLibrary.codingStack' },
-    { name: 'prompts/stacks/pick', titleKey: 'promptLibrary.addToStack' },
-    { name: 'prompts/stacks/profiles/index', titleKey: 'promptLibrary.profileStacks' },
-    { name: 'prompts/stacks/profiles/[id]', titleKey: 'promptLibrary.profileStacks' },
-    { name: 'prompts/stacks/voice', titleKey: 'promptLibrary.voiceStack' },
+    { name: 'stacks', navigator: 'prompts', titleKey: 'promptLibrary.stacks' },
+    { name: 'stacks/coding', navigator: 'prompts', titleKey: 'promptLibrary.codingStack' },
+    { name: 'stacks/pick', navigator: 'prompts', titleKey: 'promptLibrary.addToStack' },
+    { name: 'stacks/profiles/index', navigator: 'prompts', titleKey: 'promptLibrary.profileStacks' },
+    { name: 'stacks/profiles/[id]', navigator: 'prompts', titleKey: 'promptLibrary.profileStacks' },
+    { name: 'stacks/voice', navigator: 'prompts', titleKey: 'promptLibrary.voiceStack' },
     { name: 'index', navigator: 'prompts/templates', titleKey: 'promptLibrary.templates' },
     { name: '[id]', navigator: 'prompts/templates', titleKey: 'promptLibrary.editTemplate' },
     { name: 'new', navigator: 'prompts/templates', titleKey: 'promptLibrary.newTemplate' },

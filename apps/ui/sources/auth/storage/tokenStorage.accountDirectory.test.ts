@@ -3,6 +3,7 @@ import { installTokenStorageWebPlatformMocks } from './tokenStorage.testHelpers'
 import {
     installLocalStorageMock,
     installWebLockManagerMock,
+    type LocalStorageMockHandle,
     type WebLockManagerMockHandle,
 } from './tokenStorage.web.testHelpers';
 
@@ -35,9 +36,11 @@ describe('TokenStorage Account Directory namespaces', () => {
     let restoreLocalStorage: (() => void) | null = null;
     let restoreWebLocks: (() => void) | null = null;
     let webLocks: WebLockManagerMockHandle | null = null;
+    let localStorageHandle: LocalStorageMockHandle | null = null;
 
     beforeEach(() => {
-        restoreLocalStorage = installLocalStorageMock().restore;
+        localStorageHandle = installLocalStorageMock();
+        restoreLocalStorage = localStorageHandle.restore;
         webLocks = installWebLockManagerMock();
         restoreWebLocks = webLocks.restore;
         vi.resetModules();
@@ -46,6 +49,7 @@ describe('TokenStorage Account Directory namespaces', () => {
     afterEach(() => {
         restoreLocalStorage?.();
         restoreLocalStorage = null;
+        localStorageHandle = null;
         restoreWebLocks?.();
         restoreWebLocks = null;
         webLocks = null;
@@ -273,6 +277,89 @@ describe('TokenStorage Account Directory namespaces', () => {
         });
         expect(parseAuthCredentials({ token: 'home-token', outcome: 'authorized' })).toBeNull();
         expect(parseAuthCredentials({ token: 'home-token', secret: 'legacy', encryption: { publicKey: 'p', machineKey: 'm' } })).toBeNull();
+    });
+
+    it('reads additive stored Home credential fields while keeping enrollment credential inputs strict', async () => {
+        const { TokenStorage, parseAuthCredentials } = await import('./tokenStorage');
+        const target = { serverId: 'home-a' };
+        const url = 'https://home-a.example.test';
+        const credentials = { token: 'home-token', encryption: { publicKey: 'public-key', machineKey: 'machine-key' } };
+        expect(await TokenStorage.setCredentialsForServerUrl(url, target, credentials)).toBe(true);
+        if (!localStorageHandle) throw new Error('Expected storage boundary');
+        const key = [...localStorageHandle.store.keys()].find((key) => key.startsWith('auth_credentials'));
+        if (!key) throw new Error('Expected persisted Home credential');
+        const stored = { ...credentials, futureCredentialField: true,
+            encryption: { ...credentials.encryption, futureEncryptionField: true } };
+        localStorageHandle.store.set(key, JSON.stringify(stored));
+        expect(await TokenStorage.getCredentialsForServerUrl(url, target)).toEqual(credentials);
+        expect(parseAuthCredentials(stored)).toBeNull();
+    });
+
+    it('reads additive stored Account-service credential fields without granting Home key material', async () => {
+        const { TokenStorage, ACCOUNT_DIRECTORY_AUTH_CREDENTIALS_STORAGE_KEY } = await import('./tokenStorage');
+        const target = { endpoint: 'https://directory.example.test', serverIdentityId: 'directory-a' };
+        expect(await TokenStorage.accountDirectoryAuthCredentials.set(target, { token: 'directory-token' })).toBe(true);
+        if (!localStorageHandle) throw new Error('Expected storage boundary');
+        const key = [...localStorageHandle.store.keys()].find((key) => key.includes(ACCOUNT_DIRECTORY_AUTH_CREDENTIALS_STORAGE_KEY));
+        if (!key) throw new Error('Expected persisted Account-service credential');
+        const rows = JSON.parse(localStorageHandle.store.get(key)!) as Array<Record<string, unknown>>;
+        rows[0] = { ...rows[0], futureRecordField: true,
+            credentials: { token: 'directory-token', futureCredentialField: true } };
+        localStorageHandle.store.set(key, JSON.stringify(rows));
+        expect(await TokenStorage.accountDirectoryAuthCredentials.get(target)).toEqual({ token: 'directory-token' });
+        rows[0] = { ...rows[0], credentials: { token: 'directory-token', secret: 'must-not-be-admitted' } };
+        localStorageHandle.store.set(key, JSON.stringify(rows));
+        await expect(TokenStorage.accountDirectoryAuthCredentials.get(target)).rejects.toMatchObject({
+            name: 'AccountDirectoryStorageReadError', reason: 'corrupt',
+        });
+    });
+
+    it('reads additive stored Home continuation fields while preserving its exact Home and credential binding', async () => {
+        const { TokenStorage } = await import('./tokenStorage');
+        const homeUrl = 'https://home-a.example.test';
+        const continuation = {
+            endpoint: 'https://directory.example.test', canonicalServerUrl: 'https://directory.example.test',
+            serverIdentityId: 'directory-a', homeServerIdentityId: 'home-a',
+            entryIntent: { kind: 'enter' as const, target: { kind: 'explicit' as const, homeServerIdentityId: 'home-a' } },
+            returnTo: '/', credentialTokenDigest: 'A'.repeat(43),
+        };
+        const pending = { provider: 'mtls', serverId: 'home-a', serverUrl: homeUrl, returnTo: '/', accountContinuation: continuation };
+        expect(await TokenStorage.setPendingExternalAuth(pending, { serverUrl: homeUrl, serverId: 'home-a' })).toBe(true);
+        if (!localStorageHandle) throw new Error('Expected storage boundary');
+        for (const [key, raw] of localStorageHandle.store) {
+            if (!key.includes('pending_external_auth')) continue;
+            const row = JSON.parse(raw) as Record<string, unknown>;
+            localStorageHandle.store.set(key, JSON.stringify({ ...row, futurePendingField: true,
+                accountContinuation: { ...continuation, futureContinuationField: true,
+                    entryIntent: { ...continuation.entryIntent, futureIntentField: true,
+                        target: { ...continuation.entryIntent.target, futureTargetField: true } } } }));
+        }
+        const state = await TokenStorage.readPendingExternalAuthStateForServerUrl(homeUrl, { serverId: 'home-a' });
+        expect(state).toEqual({ serverMismatch: false, value: pending });
+    });
+
+    it('reads additive stored Account-service pending fields while keeping strict custody inputs and exact targets', async () => {
+        const { TokenStorage, PENDING_ACCOUNT_DIRECTORY_AUTH_STORAGE_KEY } = await import('./tokenStorage');
+        const now = Date.now();
+        const pending = {
+            endpoint: 'https://directory.example.test', canonicalServerUrl: 'https://directory.example.test',
+            serverIdentityId: 'directory-a', credentialTarget: 'account_directory' as const,
+            purpose: 'account_directory' as const, provider: 'github', pending: 'oauth-pending',
+            createdAt: now, expiresAt: now + 60_000,
+            entryIntent: { kind: 'enter' as const, target: { kind: 'explicit' as const, homeServerIdentityId: 'home-a' } },
+            explicitHomeServerIdentityId: 'home-a',
+        };
+        expect(await TokenStorage.setPendingAccountDirectoryAuth(pending)).toBe(true);
+        if (!localStorageHandle) throw new Error('Expected storage boundary');
+        const key = [...localStorageHandle.store.keys()].find((key) => key.includes(PENDING_ACCOUNT_DIRECTORY_AUTH_STORAGE_KEY));
+        if (!key) throw new Error('Expected persisted Account-service pending auth');
+        const stored = { ...pending, futurePendingField: true,
+            entryIntent: { ...pending.entryIntent, futureIntentField: true,
+                target: { ...pending.entryIntent.target, futureTargetField: true } } };
+        localStorageHandle.store.set(key, JSON.stringify([stored]));
+        expect(await TokenStorage.getPendingAccountDirectoryAuth(pending)).toEqual(pending);
+        expect(await TokenStorage.getPendingAccountDirectoryAuth({ ...pending, serverIdentityId: 'other-directory' })).toBeNull();
+        expect(await TokenStorage.setPendingAccountDirectoryAuth(stored)).toBe(false);
     });
 
     it('rejects Account Service endpoints that contain credentials, a query, or a fragment', async () => {

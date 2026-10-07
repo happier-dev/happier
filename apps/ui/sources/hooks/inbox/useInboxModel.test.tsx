@@ -106,7 +106,7 @@ describe('useInboxModel work groups (ORC R-10)', () => {
             describeProgress: ({ completed, total }) => `${completed} of ${total}`,
         });
         function WorkProbe() {
-            workRead = useSessionManagedWorkflowRuns({ sessionId: 'session-1' });
+            workRead = useSessionManagedWorkflowRuns({ sessionId: 'session-1', serverId: appliedSnapshot().serverId });
             return null;
         }
         function currentRead(): SessionManagedWorkflowRunsState | null { return workRead; }

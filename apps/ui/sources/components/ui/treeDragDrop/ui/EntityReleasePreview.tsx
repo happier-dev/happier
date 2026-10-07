@@ -17,6 +17,7 @@ import * as React from 'react';
 import { I18nManager, Platform, type View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { Text } from '@/components/ui/text/Text';
@@ -27,7 +28,7 @@ import { t } from '@/text';
  * Happier core's binding of the ONE release preview, grip and staged-move dock
  * (`@happier-dev/plugin-ui/presentation`, the same owners a plugin target draws through). It supplies
  * only what the runtime owns: app Text (font scale), the icon pack, theme colours and the
- * reduced-motion preference. What the preview says comes from the drag owner's admission.
+ * reduced-motion preference and the canonical app spinner. What the preview says comes from the drag owner's admission.
  */
 
 const GLYPH_ICONS: Readonly<Record<HappierReleaseGlyph, IconName>> = {
@@ -62,6 +63,7 @@ function CorePreviewText(props: React.ComponentProps<HappierReleasePreviewHost['
 const CORE_RELEASE_PREVIEW_HOST: HappierReleasePreviewHost = {
     Text: CorePreviewText,
     renderGlyph: (glyph, color, size) => <Icon name={GLYPH_ICONS[glyph]} size={size} color={color} />,
+    renderPendingSpinner: (size, color) => <ActivitySpinner size={size} color={color} />,
 };
 
 export function useEntityReleasePreviewColors(): HappierReleasePreviewColors {

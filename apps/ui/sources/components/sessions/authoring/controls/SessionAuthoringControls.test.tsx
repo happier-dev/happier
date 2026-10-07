@@ -39,6 +39,7 @@ installAgentInputCommonModuleMocks({
         const readSettings = (): Settings => accountSettings.current ?? settingsDefaults;
         return createStorageModuleStub({
             useSettings: () => readSettings(),
+            useSettingsSelector: <T,>(selector: (settings: Settings) => T): T => selector(readSettings()),
             useSetting: createUseSettingMock({ fallback: (key) => readSettings()[key] }),
         });
     },
@@ -247,6 +248,22 @@ beforeAll(async () => {
 }, 300_000);
 
 describe('SessionAuthoringControls', () => {
+    it('uses the same honest empty engine summary in chips and fields', async () => {
+        const { useSessionAuthoringEngineSummary, SessionAuthoringControls } = await import('./SessionAuthoringControls');
+        const summaries: string[] = [];
+        function Host({ presentation }: { presentation: 'chips' | 'fields' }) {
+            summaries.push(useSessionAuthoringEngineSummary({ values: {} }));
+            return <SessionAuthoringControls fields={['agentTarget', 'modelSelection']} values={{}}
+                presentation={presentation} onChangeField={() => {}} onChangeFields={() => {}} />;
+        }
+        const screen = await renderScreen(<Host presentation="chips" />);
+        expect(summaries.at(-1)).toBe('agentInput.agent.unselected');
+        expect(screen.getTextContent()).toContain(summaries.at(-1));
+        await screen.update(<Host presentation="fields" />);
+        expect(summaries.at(-1)).toBe('agentInput.agent.unselected');
+        expect(screen.getTextContent()).toContain(summaries.at(-1));
+        await screen.unmount();
+    });
     beforeEach(() => {
         accountSettings.current = null;
         connectedServicesContentProps.value = null;

@@ -472,6 +472,53 @@ describe('apps/ui/metro.config.js (Expo resolution fallbacks)', () => {
         });
     });
 
+    it.each(['web', 'android'])('resolves the actual public-authoring example ESM source imports on %s', (platform) => {
+        delete process.env.CI;
+        delete process.env.HAPPIER_STACK_STACK;
+        delete process.env.HAPPIER_STACK_TUI;
+
+        const config = requireFreshMetroConfig();
+        const exampleUiRoot = path.resolve(__dirname, '../../../../packages/plugin-sdk/examples/public-authoring/ui');
+        // Exercise Metro's real resolver below the config, with filesystem access as the boundary.
+        // These source imports do not have package-level browser redirects.
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const metroResolver = require('metro-resolver');
+        const context = {
+            originModulePath: path.join(exampleUiRoot, 'reviewPanel.native.tsx'),
+            resolveRequest: metroResolver.resolve,
+            fileSystemLookup: (candidate: string) => {
+                try {
+                    const stat = fs.statSync(candidate);
+                    return { exists: true, type: stat.isDirectory() ? 'd' : 'f', realPath: fs.realpathSync(candidate) };
+                } catch {
+                    return { exists: false };
+                }
+            },
+            doesFileExist: fs.existsSync,
+            getPackageForModule: () => null,
+            getPackage: (candidate: string) => JSON.parse(fs.readFileSync(candidate, 'utf8')),
+            redirectModulePath: (candidate: string) => candidate,
+            assetExts: new Set(config.resolver.assetExts),
+            sourceExts: config.resolver.sourceExts,
+            mainFields: config.resolver.resolverMainFields,
+            nodeModulesPaths: config.resolver.nodeModulesPaths,
+            customResolverOptions: {},
+            resolveAsset: () => null,
+            preferNativePlatform: platform !== 'web',
+            unstable_conditionNames: [],
+            unstable_conditionsByPlatform: {},
+            unstable_enablePackageExports: false,
+        };
+
+        for (const leaf of ['reviewClientActions', 'reviewOpenableContent']) {
+            expect(config.resolver.resolveRequest(context, `./${leaf}.js`, platform)).toEqual({
+                type: 'sourceFile',
+                filePath: path.join(exampleUiRoot, `${leaf}.ts`),
+            });
+        }
+        expect(() => config.resolver.resolveRequest(context, './missingExampleLeaf.js', platform)).toThrow();
+    });
+
     it('does not apply the CI browser .node.js rewrite during local native development', () => {
         delete process.env.CI;
         delete process.env.HAPPIER_STACK_STACK;

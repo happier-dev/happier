@@ -149,9 +149,9 @@ export function useSessionWorkSourcesOwner(params: Readonly<{
         metadata: params.ownerMetadata,
         enabled,
     });
-    const managedRuns = useSessionManagedWorkflowRuns({ sessionId: params.sessionId, enabled });
+    const managedRuns = useSessionManagedWorkflowRuns({ sessionId: params.sessionId, serverId: params.serverId, enabled });
     const reportSessions = getStorage()(useShallow((state) => (
-        enabled ? selectSessionReportSubtree(state.sessions, params.sessionId) : EMPTY_SESSIONS
+        enabled ? selectSessionReportSubtree(state.sessions, params.sessionId, params.serverId) : EMPTY_SESSIONS
     )));
     // The Account's Automation record is stable between Automation changes; only those re-derive.
     const automations = getStorage()((state) => (enabled ? state.automations : EMPTY_AUTOMATIONS));

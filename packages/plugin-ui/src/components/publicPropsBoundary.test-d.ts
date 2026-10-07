@@ -100,6 +100,8 @@ type _AuthorDiffViewerKeysStayReadOnlyAndCurated = Assert<IsEqual<keyof DiffView
 
 type _AuthorButtonFocusTarget = Assert<IsEqual<ButtonProps['focusTarget'], PluginUiFocusTarget | undefined>>;
 type _AuthorIconButtonFocusTarget = Assert<IsEqual<IconButtonProps['focusTarget'], PluginUiFocusTarget | undefined>>;
+// A dense layout's action (peek, card, detail header) asks for the desktop control height; the touch floor still holds.
+type _AuthorButtonSize = Assert<IsEqual<ButtonProps['size'], 'normal' | 'small' | undefined>>;
 
 type _UnnamedIconOnlyButtonIsRejected = Assert<(
   Readonly<{ icon: string; onPress: () => void }> extends ButtonProps ? false : true

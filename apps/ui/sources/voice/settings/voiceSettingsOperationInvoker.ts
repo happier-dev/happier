@@ -178,7 +178,7 @@ export async function invokeVoiceSettingsOperation(operation: VoiceSettingsOpera
             if (!packId) return unavailable('model_pack_unselected');
             const { invokeVoiceDeviceModelPackOperation } = await import('./voiceDeviceModelPackOperation');
             return invokeVoiceDeviceModelPackOperation({ operation: operation.endsWith('_remove') ? 'remove' : operation.endsWith('_update') ? 'update' : 'prepare',
-                packId, role, networkTimeoutMs: cfg.networkTimeoutMs, signal: context.signal, isCurrent: operationCurrent });
+                packId, role, signal: context.signal, isCurrent: operationCurrent });
         }
         if (operation === 'readiness_inspect' && purpose === 'dictation') {
             const registry = createDefaultVoiceProviderRegistry();

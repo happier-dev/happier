@@ -2,6 +2,7 @@ import type { Profile } from '../../domains/profiles/profile';
 import { profileDefaults } from '../../domains/profiles/profile';
 import type { ServerAccountScope } from '../../domains/scope/serverAccountScope';
 import { areServerAccountScopesEqual } from '../../domains/scope/serverAccountScope';
+import { retireActiveServerAccountScopeLifetime } from '../../domains/scope/activeServerAccountScope';
 import {
     loadAccountProfile,
     prepareAccountProfileScopeForActivation,
@@ -22,6 +23,7 @@ export type ProfileDomain = {
 
 export function createProfileDomain<S extends ProfileDomain>({
     set,
+    get,
 }: {
     set: StoreSet<S>;
     get: StoreGet<S>;
@@ -31,21 +33,26 @@ export function createProfileDomain<S extends ProfileDomain>({
     return {
         profile,
         profileScope: null,
-        activateProfileScope: (scope, legacyScopes = []) =>
-            set((state) => {
-                prepareAccountProfileScopeForActivation(scope, legacyScopes);
-                return {
-                    ...state,
-                    profile: loadAccountProfile(scope),
-                    profileScope: scope,
-                };
-            }),
-        clearProfileScope: () =>
+        activateProfileScope: (scope, legacyScopes = []) => {
+            prepareAccountProfileScopeForActivation(scope, legacyScopes);
+            const profile = loadAccountProfile(scope);
+            if (!areServerAccountScopesEqual(get().profileScope, scope)) {
+                retireActiveServerAccountScopeLifetime();
+            }
+            set((state) => ({
+                ...state,
+                profile,
+                profileScope: scope,
+            }));
+        },
+        clearProfileScope: () => {
+            if (get().profileScope) retireActiveServerAccountScopeLifetime();
             set((state) => ({
                 ...state,
                 profile: { ...profileDefaults },
                 profileScope: null,
-            })),
+            }));
+        },
         applyProfile: (nextProfile) =>
             set((state) => {
                 if (state.profileScope) {

@@ -130,20 +130,20 @@ export function getPendingSetupIntent(): PendingSetupIntent | null {
     if (!legacy) return null;
     if (legacy.relayUrl && !isPendingServerUrlActive(legacy.relayUrl)) return null;
 
-    // Migrate forward so future reads can be single-key.
-    const next = toRecord(legacy);
-    if (next) {
-        try {
+    // Adoption is not a new intent: preserve its expiry and the serialized-record snapshot.
+    try {
+        const raw = storage.getItem(STORAGE_KEY) || storage.getItem(LEGACY_MMKV_STORAGE_KEY);
+        if (raw) {
             if (activeScope) {
-                storage.setItem(serverAccountScopedStorageKey(STORAGE_KEY_PREFIX, activeScope), JSON.stringify(next));
+                storage.setItem(serverAccountScopedStorageKey(STORAGE_KEY_PREFIX, activeScope), raw);
             } else if (serverScopedKey) {
-                storage.setItem(serverScopedKey, JSON.stringify(next));
+                storage.setItem(serverScopedKey, raw);
             }
             storage.removeItem(STORAGE_KEY);
             storage.removeItem(LEGACY_MMKV_STORAGE_KEY);
-        } catch {
-            // ignore storage failures
         }
+    } catch {
+        // ignore storage failures
     }
     return legacy;
 }

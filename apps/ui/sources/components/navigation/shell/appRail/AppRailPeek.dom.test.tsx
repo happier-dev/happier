@@ -116,7 +116,7 @@ describe('AppShellPeek', () => {
         vi.useRealTimers();
     });
 
-    it("shows another destination's column in the open column's place, size and plane, and the current one again on leave", async () => {
+    it("shows another destination's column in the open column's place and size, and the current one again on leave", async () => {
         vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
         const item = await renderShell({ currentId: 'plugins', columnShown: true });
 

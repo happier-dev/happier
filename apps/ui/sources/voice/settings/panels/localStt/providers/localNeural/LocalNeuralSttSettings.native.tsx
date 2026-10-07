@@ -67,7 +67,6 @@ export function LocalNeuralSttSettings(props: {
     prepareModel, cancelPrepare, clearAssets, checkForUpdates } = useLocalNeuralModelPackState({
     packId: effectivePackId ?? '',
     manifestUrl: resolveModelPackManifestUrl({ packId: effectivePackId }),
-    networkTimeoutMs: 0,
     role: 'stt_sherpa',
     enabled: !usesDaemonExecution && props.cfg.provider === 'local_neural' && Boolean(effectivePackId),
   });

@@ -531,7 +531,7 @@ describe('useAuthEntryOptions', () => {
         expect(getServerFeaturesSnapshotMock).toHaveBeenCalledTimes(2);
     });
 
-    it('re-checks an unavailable relay when the same active URL is restored with a new generation', async () => {
+    it('does not restart a Home check for a generation-only publication', async () => {
         getServerFeaturesSnapshotMock.mockResolvedValue({ status: 'error', reason: 'network' });
 
         const { useAuthEntryOptions } = await import('./useAuthEntryOptions');
@@ -559,10 +559,8 @@ describe('useAuthEntryOptions', () => {
         });
         await flushHookEffects({ cycles: 2, turns: 2 });
 
-        expect(getServerFeaturesSnapshotMock).toHaveBeenCalledTimes(3);
-        expect(hook.getCurrent().serverAvailability).toBe('ready');
-        expect(hook.getCurrent().showAuthActions).toBe(true);
-        expect(hook.getCurrent().authenticationActions).toEqual([]);
+        expect(getServerFeaturesSnapshotMock).toHaveBeenCalledTimes(2);
+        expect(hook.getCurrent().serverAvailability).toBe('unavailable');
     });
 
     it('does not schedule an automatic retry and reconciles only when the canonical feature cache reports recovery', async () => {
@@ -619,37 +617,34 @@ describe('useAuthEntryOptions', () => {
         }
     });
 
-    it('bounds the auth-entry request with the same Welcome attempt timeout', async () => {
+    it('keeps a slow valid auth-entry read alive until its response arrives', async () => {
         vi.useFakeTimers();
         try {
             getServerFeaturesSnapshotMock.mockResolvedValue({
                 status: 'ready',
                 features: { capabilities: { auth: { methods: [] } } },
             });
-            fetchHomeAuthEntryMock.mockImplementationOnce(async (input?: { signal?: AbortSignal }) => {
-                if (!input?.signal) return { kind: 'unavailable' } as const;
-                return await new Promise<{ kind: 'unavailable' }>((resolve) => {
-                    input.signal!.addEventListener('abort', () => resolve({ kind: 'unavailable' }), { once: true });
-                });
-            });
+            const entry = createDeferred<{ kind: 'unsupported' }>();
+            fetchHomeAuthEntryMock.mockReturnValueOnce(entry.promise);
 
             const { useAuthEntryOptions } = await import('./useAuthEntryOptions');
             const hook = await renderHook(() => useAuthEntryOptions());
             await flushHookEffects({ cycles: 1, turns: 2 });
 
-            expect(fetchHomeAuthEntryMock).toHaveBeenCalledWith({ signal: expect.any(AbortSignal) });
-            expect(getServerFeaturesSnapshotMock).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: 6_000 }));
+            expect(fetchHomeAuthEntryMock).toHaveBeenCalledWith(expect.objectContaining({ signal: expect.any(AbortSignal) }));
             expect(hook.getCurrent().serverAvailability).toBe('loading');
 
             await act(async () => {
-                await vi.advanceTimersByTimeAsync(6_000);
+                await vi.advanceTimersByTimeAsync(7_000);
             });
             await flushHookEffects({ cycles: 2, turns: 2 });
-            // A timed-out auth-entry probe degrades to the observed feature
-            // catalog with a notice; it never hides the usable Home.
+            expect(fetchHomeAuthEntryMock.mock.calls[0][0].signal.aborted).toBe(false);
+            expect(hook.getCurrent().serverAvailability).toBe('loading');
+            entry.resolve({ kind: 'unsupported' });
+            await flushHookEffects({ cycles: 2, turns: 2 });
             expect(hook.getCurrent().serverAvailability).toBe('ready');
             expect(hook.getCurrent().showAuthActions).toBe(true);
-            expect(hook.getCurrent().authEntryUnavailable).toBe(true);
+            expect(hook.getCurrent().authEntryUnavailable).toBe(false);
         } finally {
             vi.useRealTimers();
         }
@@ -747,12 +742,11 @@ describe('useAuthEntryOptions', () => {
         expect(hook.getCurrent().serverAvailability).toBe('ready');
         expect(hook.getCurrent().showAuthActions).toBe(true);
         expect(hook.getCurrent().authenticationActions).toEqual([]);
-        expect(getServerFeaturesSnapshotMock).toHaveBeenCalledTimes(4);
+        expect(getServerFeaturesSnapshotMock).toHaveBeenCalledTimes(3);
         expect(getServerFeaturesSnapshotMock.mock.calls.map(([params]) => params?.force)).toEqual([
             false,
             true,
             true,
-            false,
         ]);
         expect(identityGenerationBumpsRemaining).toBe(2);
     });

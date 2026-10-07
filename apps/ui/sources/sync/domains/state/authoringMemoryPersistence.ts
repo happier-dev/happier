@@ -3,6 +3,7 @@ import {
     LegacyRecentMachinePathSchema,
     LegacyRememberedEngineSelectionsByScopeV1Schema,
 } from '@happier-dev/protocol';
+import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { z } from 'zod';
 
 import {
@@ -18,11 +19,12 @@ const AuthoringMemoryProjectionSchema: z.ZodObject<{
     lastEngineSelectionsByScopeV1: typeof LegacyRememberedEngineSelectionsByScopeV1Schema;
 }, z.core.$strict> = z.object({
     // A persisted projection is admitted as a whole, unlike legacy import's
-    // malformed-sibling recovery and truncation.
+    // malformed-sibling recovery.
     recentMachinePaths: z.array(LegacyRecentMachinePathSchema),
     lastUsedProfile: LegacyLastUsedProfileSchema,
     lastEngineSelectionsByScopeV1: LegacyRememberedEngineSelectionsByScopeV1Schema,
 }).strict();
+const StoredAuthoringMemoryProjectionSchema = createStoredReadSchema(AuthoringMemoryProjectionSchema);
 
 type AuthoringMemoryProjection = Readonly<z.output<typeof AuthoringMemoryProjectionSchema>>;
 
@@ -35,7 +37,7 @@ export function loadAuthoringMemoryProjection(scope: AccountSettingsScope): Auth
     const raw = getPersistenceStorage().getString(projectionKey(scope));
     if (typeof raw !== 'string') return null;
     try {
-        const parsed = AuthoringMemoryProjectionSchema.safeParse(JSON.parse(raw) as unknown);
+        const parsed = StoredAuthoringMemoryProjectionSchema.safeParse(JSON.parse(raw) as unknown);
         return parsed.success ? parsed.data : null;
     } catch {
         return null;

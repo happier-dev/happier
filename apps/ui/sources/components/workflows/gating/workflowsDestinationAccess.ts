@@ -1,5 +1,7 @@
+import * as React from 'react';
 import type { FeatureDecision } from '@happier-dev/protocol';
 
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 
 /**
@@ -58,6 +60,19 @@ export function resolveWorkflowsDestinationAccess(input: Readonly<{
 export function useWorkflowsDestinationAccess(): WorkflowsDestinationAccess {
     const workflows = useFeatureDecision('workflows', { scopeKind: 'runtime' });
     const automations = useFeatureDecision('automations');
+    const serverId = useActiveServerSnapshot().serverId;
     // Each arm is a frozen constant, so the result keeps its identity while the arm holds.
-    return resolveWorkflowsDestinationAccess({ workflows, automations });
+    const access = resolveWorkflowsDestinationAccess({ workflows, automations });
+    // A decision that re-resolves for the same server (its snapshot reloading under a slow or
+    // briefly offline server) keeps its last settled arm: refreshing never unmounts an open editor
+    // or Run for a full-page loading state. A different server, or a first resolution, still
+    // resolves from nothing, so nothing is admitted before its own decision arrives.
+    const settledRef = React.useRef<Readonly<{ serverId: string; access: WorkflowsDestinationAccess }> | null>(null);
+    if (access.kind !== 'resolving') {
+        if (settledRef.current?.serverId !== serverId || settledRef.current.access !== access) {
+            settledRef.current = { serverId, access };
+        }
+        return access;
+    }
+    return settledRef.current?.serverId === serverId ? settledRef.current.access : access;
 }

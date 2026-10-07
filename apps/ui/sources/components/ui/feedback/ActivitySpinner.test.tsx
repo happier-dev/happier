@@ -109,7 +109,7 @@ describe('ActivitySpinner (web)', () => {
         }
     });
 
-    it('draws the H wave by default as a frame strip stepped by one transform animation', async () => {
+    it('draws the mark wave by default as a frame strip stepped by one transform animation', async () => {
         const { screen, spinner, strip } = await renderSpinner({ size: 12, color: 'red' });
 
         expect(screen.findAllByType('ActivityIndicator' as never)).toHaveLength(0);
@@ -122,6 +122,7 @@ describe('ActivitySpinner (web)', () => {
         expect(stripStyle.animationName).toBe('happierActivitySpinnerFilmstrip');
         expect(stripStyle.animationDuration).toBe('1004ms');
         expect(frameSheetFor(strip)).toContain('fill="red"');
+        expect(frameSheetFor(strip).match(/<circle /g)).toHaveLength(30 * 8);
     });
 
     it('draws the style chosen in settings, and a caller preview overrides it', async () => {
@@ -160,8 +161,8 @@ describe('ActivitySpinner (web)', () => {
         expect(flattenStyle(strip?.props.style).animationDuration).toBe('1004ms');
     });
 
-    it('colors aurora with the theme accents, but an explicit color wins so the mark stays legible on tinted buttons', async () => {
-        localSettingValues.loadingIndicatorStyle = 'aurora';
+    it.each(['aurora', 'hAurora'])('colors %s with the theme accents, but an explicit color wins so the mark stays legible on tinted buttons', async (styleId) => {
+        localSettingValues.loadingIndicatorStyle = styleId;
         const themed = frameSheetFor((await renderSpinner({ size: 16 })).strip);
         expect(themed).toContain('fill="accent-indigo"');
         expect(themed).toContain('fill="accent-orange"');

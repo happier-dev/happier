@@ -543,6 +543,7 @@ const ConnectedAccountServiceController = React.memo(
         ));
         setDescription(result);
         setErrorCode(null);
+        return result;
     }, [
         exactRoute,
         machineId,
@@ -573,11 +574,11 @@ const ConnectedAccountServiceController = React.memo(
             machineId,
             ...(expectedActiveServer ? { expectedActiveServer } : {}),
             command: { operation: 'cancel', attemptId: attemptIdToCancel },
-            signal: lifecycleSignal,
         }).catch(() => {
-            // Best effort: the daemon expires an attempt nobody completes.
+            // The captured Home/machine transport still owns authentication.
+            // This release outlives the setup view that just closed.
         });
-    }, [expectedActiveServer, lifecycleSignal, machineId, serverId]);
+    }, [expectedActiveServer, machineId, serverId]);
 
     const readConfiguration = React.useCallback(async (
         target: ConnectedAccountConfigurationTarget,
@@ -632,7 +633,7 @@ const ConnectedAccountServiceController = React.memo(
     ) => {
         if (!isControllerCurrent()) return;
         if (requestEpoch !== setupAttemptEpochRef.current) {
-            if (!isTerminalAttempt(response) && 'attemptId' in response && response.attemptId) {
+            if ('attemptId' in response && response.attemptId) {
                 cancelDiscardedAttempt(response.attemptId);
             }
             return;
@@ -654,6 +655,7 @@ const ConnectedAccountServiceController = React.memo(
             return;
         }
         if (response.status === 'connected') {
+            cancelDiscardedAttempt(response.attemptId);
             if (draftDisplayNameRef.current) {
                 applySettings({ connectedServicesProfileLabelByKey: updateQualifiedConnectedAccountLabel({
                     service: response.account.service, legacyServiceId, accountId: response.account.accountId,
@@ -814,6 +816,9 @@ const ConnectedAccountServiceController = React.memo(
             // A known rejection is finished. Retry starts the same intent with a fresh form;
             // uncertain transport outcomes still recover the exact existing attempt below.
             if (pendingIntent && attempt && (isTerminalAttempt(attempt) || attempt.status === 'reconnectRequired')) {
+                if ('attemptId' in attempt && attempt.attemptId) cancelDiscardedAttempt(attempt.attemptId);
+                const refreshed = await refreshDescription();
+                if (!refreshed) return;
                 await beginIntent(pendingIntent);
                 return;
             }
@@ -842,7 +847,7 @@ const ConnectedAccountServiceController = React.memo(
         } finally {
             if (isControllerCurrent()) setRetryingDescription(false);
         }
-    }, [acceptAttemptResponse, attempt, beginIntent, expectedActiveServer, isControllerCurrent, lifecycleSignal,
+    }, [acceptAttemptResponse, attempt, beginIntent, cancelDiscardedAttempt, expectedActiveServer, isControllerCurrent, lifecycleSignal,
         machineId, pendingIntent, refreshDescription, retryingDescription, serverId]);
 
     const activeMode: PluginConnectedAccountAuthenticationModeV2 | null =
@@ -1187,7 +1192,7 @@ const ConnectedAccountServiceController = React.memo(
         deviceCodeRef.current = null;
         draftDisplayNameRef.current = null;
         setBusy(false);
-        if (attemptId && attempt && !isTerminalAttempt(attempt)) {
+        if (attemptId && attempt) {
             cancelDiscardedAttempt(attemptId);
         }
     };

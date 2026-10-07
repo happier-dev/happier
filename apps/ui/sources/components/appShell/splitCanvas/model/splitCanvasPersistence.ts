@@ -13,7 +13,6 @@ export function createSplitCanvasPersistenceSnapshot<TLeafPayload>(
         root: state.root,
         focusedLeafId: state.focusedLeafId,
         maximizedLeafId: state.maximizedLeafId,
-        maxLeaves: state.maxLeaves,
     };
 }
 

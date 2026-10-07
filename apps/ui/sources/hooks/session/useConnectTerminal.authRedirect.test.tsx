@@ -11,6 +11,7 @@ import {
 } from '@happier-dev/protocol';
 import { renderScreen } from '@/dev/testkit';
 import { installSessionHooksCommonModuleMocks } from './sessionHooksTestHelpers';
+import { buildTerminalConnectAuthRedirectHref } from '@/utils/path/terminalConnectUrl';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -1129,15 +1130,15 @@ describe('useConnectTerminal unauthenticated flow', () => {
         expect(opened).not.toEqual(contentPrivateKey);
     });
 
-    it('approves a loopback pairing link whose Home identity matches the signed-in profile at another host', async () => {
+    it('keeps an unverified explicit loopback target pending without approving the saved Home at another host', async () => {
         authApproveSpy.mockClear();
         authApproveSpy.mockResolvedValue('approved');
         modalAlertSpy.mockClear();
         modalConfirmSpy.mockClear();
         upsertActivateAndSwitchServerSpy.mockClear();
 
-        // The daemon runs on this machine and advertises its loopback address, while the app
-        // knows the same Home by its stack hostname. Identity is what makes them one Home.
+        // Matching Home identity selects the saved profile, but does not prove that this
+        // explicit alternate origin is its authenticated transport.
         activeServerUrl = 'https://stack-host.example.test:53288';
         const descriptor: HomeConnectionDescriptorV1 = {
             v: 1,
@@ -1162,8 +1163,6 @@ describe('useConnectTerminal unauthenticated flow', () => {
         const { useConnectTerminal } = await import('./useConnectTerminal');
         let hookApi: ReturnType<typeof useConnectTerminal> | null = null;
         function Probe() {
-            // The `/terminal/connect` route allows loopback link targets, which is the exact
-            // configuration in which URL comparison rejected the signed-in Home.
             hookApi = useConnectTerminal({ allowLoopbackServerOverride: true });
             return null;
         }
@@ -1184,17 +1183,20 @@ describe('useConnectTerminal unauthenticated flow', () => {
             }));
         });
 
-        expect(result).toBe(true);
-        expect(modalAlertSpy).not.toHaveBeenCalledWith(
-            expect.anything(),
-            'modals.pleaseSignInFirst',
-            expect.anything(),
-        );
+        expect(result).toBe(false);
         expect(getCredentialsForServerUrlSpy).toHaveBeenCalledWith(
             'https://stack-host.example.test:53288',
             { serverId: 'srv_stack_home' },
         );
-        expect(authApproveSpy).toHaveBeenCalledTimes(1);
+        expect(authApproveSpy).not.toHaveBeenCalled();
+        expect(setPendingTerminalConnectSpy).toHaveBeenCalledWith(expect.objectContaining({
+            serverUrl: 'http://localhost:53288',
+            serverIdentityId: 'srv_stack_home',
+        }));
+        expect(routerReplaceSpy).toHaveBeenCalledWith(
+            buildTerminalConnectAuthRedirectHref({ serverUrl: 'http://localhost:53288' }),
+        );
+        expect(activeServerUrl).toBe('https://stack-host.example.test:53288');
     });
 
     it('approves an identity-bearing URL-only link for a Home that publishes no connection descriptor', async () => {

@@ -489,13 +489,16 @@ import {
     fetchArtifactWithBodyFromApi,
     fetchArtifactBinaryFromApi,
     fetchArtifactHtmlPreviewFromApi,
+    fetchArtifactForViewFromApi,
     handleDeleteArtifactSocketUpdate,
     handleNewArtifactSocketUpdate,
     handleUpdateArtifactSocketUpdate,
     updateArtifactViaApi,
     updateArtifactWithHeaderViaApi,
     type ArtifactDataKeyCache,
+    type ArtifactViewRead,
 } from './engine/artifacts/syncArtifacts';
+import { runWithServerAccountScopeRequestGuard } from './runtime/orchestration/serverScopedRpc/serverAccountScopeRequestGuard';
 import { fetchAndApplyFeed, handleNewFeedPostUpdate, handleRelationshipUpdatedSocketUpdate, handleTodoKvBatchUpdate } from './engine/social/syncFeed';
 import { fetchAndApplyFriends } from './engine/social/syncFriends';
 import {
@@ -7934,62 +7937,70 @@ class Sync {
 
     // Artifact methods
     public fetchArtifactsList = async (): Promise<void> => {
+        if (!this.credentials) return;
         const shouldContinue = this.createServerScopeGuard();
-        await fetchAndApplyArtifactsList({
-            credentials: this.credentials,
-            encryption: this.encryption,
-            artifactDataKeys: this.artifactDataKeys,
-            shouldContinue,
+        await this.withArtifactReadAuthority(undefined, params => fetchAndApplyArtifactsList({
+            ...params,
+            shouldContinue: () => shouldContinue() && !params.signal?.aborted,
             applyArtifacts: (artifacts) => storage.getState().applyArtifacts(artifacts),
-        });
+        }));
     }
 
     public async fetchArtifactWithBody(artifactId: string): Promise<DecryptedArtifact | null> {
         if (!this.credentials) return null;
+        return this.withArtifactReadAuthority(undefined, params => fetchArtifactWithBodyFromApi({ ...params, artifactId }));
+    }
 
-        return await fetchArtifactWithBodyFromApi({
-            credentials: this.credentials,
-            artifactId,
-            encryption: this.encryption,
-            artifactDataKeys: this.artifactDataKeys,
+    private async withArtifactReadAuthority<TResult>(signal: AbortSignal | undefined,
+        operation: (params: Omit<Parameters<typeof fetchArtifactForViewFromApi>[0], 'artifactId' | 'includePdfPreview'>) => Promise<TResult>,
+    ): Promise<TResult> {
+        if (!this.credentials) throw new Error('Not authenticated');
+        const scope = getActiveServerAccountScope();
+        if (!scope) throw new Error('Artifact Account scope is unavailable');
+        const serverIsCurrent = this.createServerScopeGuard();
+        const credentials = this.credentials;
+        const encryption = this.encryption;
+        const staleError = () => new Error('Artifact Account scope changed');
+        return runWithServerAccountScopeRequestGuard({ scope, signal, staleError,
+            isCurrent: () => serverIsCurrent() && this.credentials === credentials && this.encryption === encryption
+                && areServerAccountScopesEqual(scope, getActiveServerAccountScope()),
+        }, async guard => {
+            guard.check();
+            const authority = await captureServerRequestAuthorityForServerAccountScope({ scope, activeRequest: this.requestViaConfiguredSocket });
+            let result: TResult;
+            try {
+                guard.check();
+                if (authority.context.token !== credentials.token) throw staleError();
+                result = await operation({ credentials, encryption, artifactDataKeys: this.artifactDataKeys,
+                    signal: guard.signal,
+                    forbiddenOrigins: [authority.context.targetServerUrl,
+                        ...(authority.context.runtimeOrigin ? [authority.context.runtimeOrigin] : [])],
+                    request: async (path, init) => {
+                        guard.check();
+                        const response = await authority.request(path, { ...init, signal: guard.signal });
+                        guard.check();
+                        return response;
+                    },
+                });
+            } finally { await authority.release(); }
+            // Releasing a scoped carrier can await: retirement during that release still
+            // invalidates the result before it is disclosed or published by the caller.
+            guard.check();
+            return result;
         });
     }
 
+    public fetchArtifactForView = async (artifactId: string, options: Readonly<{ includePdfPreview: boolean; signal: AbortSignal }>): Promise<ArtifactViewRead | null> => {
+        return this.withArtifactReadAuthority(options.signal,
+            params => fetchArtifactForViewFromApi({ ...params, artifactId, includePdfPreview: options.includePdfPreview }));
+    };
+
     public fetchArtifactBinary = async (artifactId: string, reference: Parameters<typeof fetchArtifactBinaryFromApi>[0]['reference'], signal?: AbortSignal): Promise<Uint8Array> => {
-        if (!this.credentials) throw new Error('Not authenticated');
-        const scope = getActiveServerAccountScope();
-        if (!scope) throw new Error('Artifact Account scope is unavailable');
-        const isCurrent = this.createServerScopeGuard();
-        const credentials = this.credentials;
-        const encryption = this.encryption;
-        const authority = await captureServerRequestAuthorityForServerAccountScope({ scope, activeRequest: this.requestViaConfiguredSocket });
-        try {
-            if (!isCurrent() || authority.context.token !== credentials.token) throw new Error('Artifact Account scope changed');
-            const bytes = await fetchArtifactBinaryFromApi({ credentials, artifactId, reference, encryption,
-                artifactDataKeys: this.artifactDataKeys, signal, request: (path, init) => authority.request(path, init) });
-            if (!isCurrent()) throw new Error('Artifact Account scope changed');
-            return bytes;
-        } finally { await authority.release(); }
+        return this.withArtifactReadAuthority(signal, params => fetchArtifactBinaryFromApi({ ...params, artifactId, reference }));
     };
 
     public fetchArtifactHtmlPreview = async (artifactId: string, signal?: AbortSignal): Promise<string> => {
-        if (!this.credentials) throw new Error('Not authenticated');
-        const scope = getActiveServerAccountScope();
-        if (!scope) throw new Error('Artifact Account scope is unavailable');
-        const isCurrent = this.createServerScopeGuard();
-        const credentials = this.credentials;
-        const encryption = this.encryption;
-        const authority = await captureServerRequestAuthorityForServerAccountScope({ scope, activeRequest: this.requestViaConfiguredSocket });
-        try {
-            if (!isCurrent() || authority.context.token !== credentials.token) throw new Error('Artifact Account scope changed');
-            const url = await fetchArtifactHtmlPreviewFromApi({ credentials, artifactId, encryption,
-                artifactDataKeys: this.artifactDataKeys, signal,
-                forbiddenOrigins: [authority.context.targetServerUrl,
-                    ...(authority.context.runtimeOrigin ? [authority.context.runtimeOrigin] : [])],
-                request: (path, init) => authority.request(path, init) });
-            if (!isCurrent()) throw new Error('Artifact Account scope changed');
-            return url;
-        } finally { await authority.release(); }
+        return this.withArtifactReadAuthority(signal, params => fetchArtifactHtmlPreviewFromApi({ ...params, artifactId }));
     };
 
     public async createArtifact(
@@ -8257,9 +8268,11 @@ class Sync {
                     randomBytes: getRandomBytes }),
                 isCurrent,
                 apply: (delta) => {
+                    const previous = storage.getState().authoringMemory;
                     storage.getState().applyAuthoringMemory(delta);
                     if (!isCurrent()) throw new Error('Authoring memory Account/Home retired');
-                    saveAuthoringMemoryProjection(scope, storage.getState().authoringMemory);
+                    const current = storage.getState().authoringMemory;
+                    if (current !== previous) saveAuthoringMemoryProjection(scope, current);
                 },
             });
             await owner.bootstrap();
@@ -8280,6 +8293,14 @@ class Sync {
                 },
             } });
             return owner;
+        }).catch((error: unknown) => {
+            // Retired Account/Home work is cancellation, including owner-local scope checks.
+            // Preserve failures from the current authority rather than hiding unavailable storage.
+            if (this.authoringMemoryRuntime !== task || !guard()
+                || this.credentials !== credentials || !areAccountSettingsScopesEqual(this.pendingSettingsScope, scope)) {
+                throw new StaleServerGenerationError();
+            }
+            throw error;
         });
         this.authoringMemoryRuntime = task;
         void task.catch(() => { if (this.authoringMemoryRuntime === task) this.authoringMemoryRuntime = null; });
@@ -8307,7 +8328,11 @@ class Sync {
     private syncSettings = async () => {
         if (!this.credentials) return;
         if (!this.embedSessionScope && !isEmbedWindowContext()) {
-            fireAndForget(this.ensureAuthoringMemoryRuntime(), { tag: 'Sync.authoringMemory.bootstrap' });
+            fireAndForget(this.ensureAuthoringMemoryRuntime().catch((error: unknown) => {
+                if (!(error instanceof StaleServerGenerationError)) throw error;
+                // The failed runtime is cleared by its owner. The next current-generation
+                // settings lifecycle bootstraps it again through this same entry point.
+            }), { tag: 'Sync.authoringMemory.bootstrap' });
         }
         const settingsScope = this.pendingSettingsScope;
         const requestContext = this.createAppliedSettingsRequestContext(settingsScope);

@@ -49,7 +49,7 @@ async function collectProcessTreePids(rootPid, { env }) {
     if (result.exitCode !== 0 && result.exitCode !== 1) break;
     for (const line of String(result.out ?? '').split(/\r?\n/)) {
       const pid = Number(line.trim());
-      if (!Number.isFinite(pid) || selected.has(pid)) continue;
+      if (!Number.isInteger(pid) || pid <= 0 || selected.has(pid)) continue;
       selected.add(pid);
       pending.push(pid);
     }

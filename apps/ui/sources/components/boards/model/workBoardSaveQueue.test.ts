@@ -126,6 +126,51 @@ describe('WorkBoard Account Artifact save queue', () => {
         expect(persistence.rows.get('b1')).toBe(invalid);
     });
 
+    it('publishes a delayed Board body despite a write acknowledgement to another Board', async () => {
+        const persistence = createWorkBoardArtifactBoundary(WorkBoardsV1Schema.parse({ v: 1, boards: [...base.boards, createWorkBoardV1({ id: 'b2', name: 'Other' })] }));
+        let resolveBody!: (value: WorkBoardArtifactV1) => void;
+        let markReading!: () => void;
+        const reading = new Promise<void>(resolve => { markReading = resolve; });
+        const store = createWorkBoardAccountStore({ ...persistence.transport, read: async (id, options) => {
+            if (id === 'b2') { markReading(); return await new Promise(resolve => { resolveBody = resolve; }); }
+            return persistence.transport.read(id, options);
+        } }, () => true);
+        const release = store.retainView(() => () => {}, 'all');
+        try {
+            const refresh = store.refresh();
+            await reading;
+            await store.queue.dispatch({ kind: 'update', boardId: 'b1', patch: { name: 'Newer' } });
+            resolveBody(persistence.rows.get('b2')!);
+            await refresh;
+            expect(store.getBoards().boards.map(board => [board.id, board.name])).toEqual([['b1', 'Newer'], ['b2', 'Other']]);
+        } finally { release(); }
+    });
+
+    it('consumes a new exact invalidation received while that Board body is already loading', async () => {
+        const persistence = createWorkBoardArtifactBoundary(base);
+        let resolveBody!: (value: WorkBoardArtifactV1) => void;
+        let markReading!: () => void;
+        const reading = new Promise<void>(resolve => { markReading = resolve; });
+        const old = persistence.rows.get('b1')!;
+        let reads = 0;
+        const store = createWorkBoardAccountStore({ ...persistence.transport, read: async (id, options) => {
+            if (reads++ === 0) { markReading(); return await new Promise(resolve => { resolveBody = resolve; }); }
+            return persistence.transport.read(id, options);
+        } }, () => true);
+        const release = store.retainView(() => () => {}, 'board:b1');
+        try {
+            const first = store.refresh();
+            await reading;
+            persistence.rows.set('b1', { ...old, body: JSON.stringify({ ...base.boards[0], name: 'Fresh' }), revision: { headerVersion: 2, bodyVersion: 2 } });
+            store.invalidateBodies(['b1']);
+            const second = store.refresh();
+            resolveBody(old);
+            await Promise.all([first, second]);
+            expect(store.getBoard('b1')?.name).toBe('Fresh');
+            expect(reads).toBe(2);
+        } finally { release(); }
+    });
+
     it('keeps a newer write acknowledgement when an older refresh returns later', async () => {
         const persistence = createWorkBoardArtifactBoundary(base);
         const original = persistence.rows.get('b1')!;
@@ -204,9 +249,48 @@ describe('WorkBoard Account Artifact save queue', () => {
         const refresh = store.refresh(); await firstRequest;
         // Flush the other independent response; the first remains held at the persistence boundary.
         await new Promise<void>(resolve => { setTimeout(resolve, 0); });
-        try { expect(peak).toBe(2); }
+        try {
+            expect(peak).toBe(2);
+            expect(store.getBoards().boards.map(board => board.id)).toEqual(['b2']);
+        }
         finally { releaseFirst(); await refresh; }
         expect(store.getBoards().boards.map(board => board.id)).toEqual(['b1', 'b2']);
+    });
+
+    it('joins demanded reads and refetches only the invalidated Board', async () => {
+        const persistence = createWorkBoardArtifactBoundary({ v: 1, boards: [...base.boards, createWorkBoardV1({ id: 'b2', name: 'Other' })] });
+        const store = createWorkBoardAccountStore(persistence.transport, () => true);
+        const release = store.retainView(() => () => {}, 'all');
+        await Promise.all([store.refresh(), store.refresh()]);
+        expect(persistence.reads).toEqual(['b1', 'b2']);
+        await store.refresh();
+        expect(persistence.reads).toEqual(['b1', 'b2']);
+        const row = persistence.rows.get('b1')!;
+        persistence.rows.set('b1', { ...row, body: JSON.stringify({ ...base.boards[0], name: 'Remote edit' }), revision: { ...row.revision, bodyVersion: 2 } });
+        store.invalidateBodies(['b1']);
+        await store.refresh();
+        expect(persistence.reads).toEqual(['b1', 'b2', 'b1']);
+        expect(store.getBoards().boards[0]?.name).toBe('Remote edit');
+        release();
+    });
+
+    it('refreshes a recreated id and explicitly retries unreadable demanded content', async () => {
+        const persistence = createWorkBoardArtifactBoundary(base);
+        const store = createWorkBoardAccountStore(persistence.transport, () => true);
+        const release = store.retainView(() => () => {}, 'all');
+        await store.refresh();
+        const original = persistence.rows.get('b1')!;
+        persistence.rows.delete('b1');
+        await store.refresh();
+        expect(store.getBoards().boards).toEqual([]);
+        persistence.rows.set('b1', { ...original, body: '{ bad' });
+        await store.refresh();
+        expect(store.getBoards().boards).toEqual([]);
+        persistence.rows.set('b1', original);
+        store.invalidateBodies();
+        await store.refresh();
+        expect(store.getBoards().boards).toEqual(base.boards);
+        release();
     });
 
     it('projects an edit immediately and keeps it once the dedicated record acknowledges it', async () => {

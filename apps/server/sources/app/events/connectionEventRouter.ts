@@ -16,7 +16,8 @@ import {
     type SocketRoomEmitter,
     type SocketRoomEventName,
 } from "./socketRoomEmitter";
-import { resolveSessionAccessForOperation } from "@/app/session/access/sessionAccess";
+import { buildSessionAccessProjectionSelect, resolveSessionAccessForOperation } from "@/app/session/access/sessionAccess";
+import type { Socket } from "socket.io";
 import { readSessionAccessAuthenticationFromSocket } from "@/app/session/access/sessionAccessAuthentication";
 import { inTx } from "@/storage/inTx";
 import { db } from "@/storage/db";
@@ -34,6 +35,8 @@ import {
 const MAX_EVENT_FANOUT_METRIC_LABEL_LENGTH = 80;
 const SAFE_EVENT_FANOUT_METRIC_LABEL_PATTERN = /^[a-zA-Z0-9_.:-]+$/;
 const EVENT_FANOUT_PAYLOAD_BYTES_SAMPLE_RATE = 0.01;
+
+type SessionDeliverySocket = Pick<Socket, "id" | "data">;
 
 function normalizeEventFanoutMetricLabel(value: unknown): string {
     if (typeof value !== "string" || value.length === 0 || value.length > MAX_EVENT_FANOUT_METRIC_LABEL_LENGTH) {
@@ -444,28 +447,19 @@ class EventRouter {
                     `session:${params.sessionId}:${params.userId}`,
                     `user-scoped:${params.userId}`,
                 ]).fetchSockets();
-                let deliveredCount = 0;
-                await inTx(async tx => {
-                    for (const socket of sockets) {
-                        if (socket.id === skipSocketId || socket.data.userId !== params.userId) continue;
-                        if (socket.data.clientType === "machine-scoped") continue;
-                        if (socket.data.clientType === "session-scoped"
-                            && socket.data.sessionId !== params.sessionId
-                            && socket.data.sessionScopedBinding?.sessionId !== params.sessionId) continue;
-                        let decision: Awaited<ReturnType<typeof resolveSessionAccessForOperation>>;
-                        try {
-                            decision = await resolveSessionAccessForOperation(tx, {
-                                accountId: params.userId,
-                                sessionId: params.sessionId,
-                                authentication: readSessionAccessAuthenticationFromSocket(socket),
-                            });
-                        } catch {
-                            continue;
-                        }
-                        if (decision.status !== "allowed" || !decision.access.capabilities.readTranscript) continue;
+                const deliveredCount = await this.emitToQualifiedSessionSockets({
+                    accountId: params.userId,
+                    sessionId: params.sessionId,
+                    sockets: sockets.filter(socket => socket.id !== skipSocketId
+                        && socket.data.userId === params.userId
+                        && socket.data.clientType !== "machine-scoped"
+                        && (socket.data.clientType !== "session-scoped"
+                            || socket.data.sessionId === params.sessionId
+                            || socket.data.sessionScopedBinding?.sessionId === params.sessionId)),
+                    emit: socket => {
                         this.io!.to(socket.id).emit(params.eventName, projectPayloadForSocket(socket.data, params.payload));
-                        deliveredCount += 1;
-                    }
+                        return true;
+                    },
                 });
                 recordEventFanoutEmit({
                     eventName: params.eventName,
@@ -479,27 +473,18 @@ class EventRouter {
                 return;
             }
 
-            let deliveredCount = 0;
-            await inTx(async tx => {
-                for (const connection of this.userConnections.get(params.userId) ?? []) {
-                    if (connection === params.skipSenderConnection || !this.shouldSendToConnection(connection, {
-                        type: "all-interested-in-session",
-                        sessionId: params.sessionId,
-                    })) continue;
-                    let decision: Awaited<ReturnType<typeof resolveSessionAccessForOperation>>;
-                    try {
-                        decision = await resolveSessionAccessForOperation(tx, {
-                            accountId: params.userId,
-                            sessionId: params.sessionId,
-                            authentication: readSessionAccessAuthenticationFromSocket(connection.socket),
-                        });
-                    } catch {
-                        continue;
-                    }
-                    if (decision.status !== "allowed" || !decision.access.capabilities.readTranscript) continue;
-                    connection.socket.emit(params.eventName, projectPayloadForSocket(connection.socket.data, params.payload));
-                    deliveredCount += 1;
-                }
+            const deliveredCount = await this.emitToQualifiedSessionSockets({
+                accountId: params.userId,
+                sessionId: params.sessionId,
+                sockets: [...this.userConnections.get(params.userId) ?? []]
+                    .filter(connection => connection !== params.skipSenderConnection && this.shouldSendToConnection(connection, {
+                        type: "all-interested-in-session", sessionId: params.sessionId,
+                    }))
+                    .map(connection => connection.socket),
+                emit: socket => {
+                    socket.emit(params.eventName, projectPayloadForSocket(socket.data, params.payload));
+                    return true;
+                },
             });
             recordEventFanoutEmit({
                 eventName: params.eventName,
@@ -549,27 +534,23 @@ class EventRouter {
             `session:${delivery.sessionId}:${delivery.accountId}`,
             `user-scoped:${delivery.accountId}`,
         ]).fetchSockets();
-        let deliveredCount = 0;
-        await inTx(async tx => {
-            for (const socket of sockets) {
-                if (socket.id === delivery.skipSocketId || socket.data.userId !== delivery.accountId) continue;
-                if (socket.data.clientType === "machine-scoped") continue;
-                if (socket.data.clientType === "session-scoped"
-                    && socket.data.sessionId !== delivery.sessionId
-                    && socket.data.sessionScopedBinding?.sessionId !== delivery.sessionId) continue;
+        const deliveredCount = await this.emitToQualifiedSessionSockets({
+            accountId: delivery.accountId,
+            sessionId: delivery.sessionId,
+            sockets: sockets.filter(socket => socket.id !== delivery.skipSocketId
+                && socket.data.userId === delivery.accountId
+                && socket.data.clientType !== "machine-scoped"
+                && (socket.data.clientType !== "session-scoped"
+                    || socket.data.sessionId === delivery.sessionId
+                    || socket.data.sessionScopedBinding?.sessionId === delivery.sessionId)),
+            emit: socket => {
                 try {
-                    const decision = await resolveSessionAccessForOperation(tx, {
-                        accountId: delivery.accountId,
-                        sessionId: delivery.sessionId,
-                        authentication: readSessionAccessAuthenticationFromSocket(socket),
-                    });
-                    if (decision.status !== "allowed" || !decision.access.capabilities.readTranscript) continue;
                     localIo.to(socket.id).emit(delivery.eventName, projectPayloadForSocket(socket.data, delivery.payload));
-                    deliveredCount += 1;
+                    return true;
                 } catch {
-                    // One malformed or stale socket cannot suppress another socket's delivery.
+                    return false;
                 }
-            }
+            },
         });
         recordEventFanoutEmit({
             eventName: delivery.eventName,
@@ -579,6 +560,46 @@ class EventRouter {
             targetCount: deliveredCount,
             payloadType: resolveEventFanoutPayloadType(delivery.payload),
         });
+    }
+
+    /** One delivery snapshot shares structural facts, never a credential's access decision. */
+    private async emitToQualifiedSessionSockets<S extends SessionDeliverySocket>(params: Readonly<{
+        accountId: string;
+        sessionId: string;
+        sockets: readonly S[];
+        emit: (socket: S) => boolean;
+    }>): Promise<number> {
+        if (params.sockets.length === 0) return 0;
+        const qualifiedSockets = await inTx(async tx => {
+            const row = await tx.session.findUnique({
+                where: { id: params.sessionId },
+                select: buildSessionAccessProjectionSelect(params.accountId),
+            });
+            const qualified: S[] = [];
+            if (!row) return qualified;
+            for (const socket of params.sockets) {
+                let decision: Awaited<ReturnType<typeof resolveSessionAccessForOperation>>;
+                try {
+                    decision = await resolveSessionAccessForOperation(tx, {
+                        accountId: params.accountId,
+                        sessionId: params.sessionId,
+                        authentication: readSessionAccessAuthenticationFromSocket(socket),
+                        row,
+                    });
+                } catch {
+                    // One malformed or stale credential cannot suppress another socket's delivery.
+                    continue;
+                }
+                if (decision.status !== "allowed" || !decision.access.capabilities.readTranscript) continue;
+                qualified.push(socket);
+            }
+            return qualified;
+        });
+        let deliveredCount = 0;
+        for (const socket of qualifiedSockets) {
+            if (params.emit(socket)) deliveredCount += 1;
+        }
+        return deliveredCount;
     }
 
     private getEmitterTargetForFilter(userId: string, filter: RecipientFilter): string | string[] {

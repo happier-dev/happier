@@ -1,18 +1,11 @@
 import {
     DIRECT_ROUTE_GRANT_TTL_MS,
     MachineLiveStreamRelayAuthorizationV1Schema,
-    PEER_MACHINE_LIVE_STREAM_DIRECT_START_PATH_V2,
-    PEER_MEDIATION_RECEIPTS,
     PeerLoopbackEndpointCandidateV1Schema,
     SignedDirectRouteGrantV2Schema,
     DirectRouteGrantRequestV2Schema,
-    PeerMachineLiveStreamDirectStartResponseV2Schema,
-    type MachineLiveStreamCapsV1,
     type MachineLiveStreamRelayAuthorizationV1,
-    type MachineLiveStreamStartRequestV1,
     type PeerLoopbackEndpointCandidateV1,
-    type PeerMachineLiveStreamDirectStartResponseV2,
-    type PeerRouteEphemeralProofV2,
     type SignedDirectRouteGrantV2,
 } from '@happier-dev/protocol';
 
@@ -32,12 +25,6 @@ import {
 import { readPeerEndpointForServerScope } from '../readPeerEndpointForServerScope';
 import type { MachineLiveStreamUnsignedStartRequest } from './startRequest';
 export { createBaseStartRequest, createLiveStreamStartRequest, type MachineLiveStreamUnsignedStartRequest } from './startRequest';
-
-export const MACHINE_LIVE_STREAM_DIRECT_FETCH_TIMEOUT_MS = 5_000;
-
-
-export type MachineLiveStreamDirectStartResponse = PeerMachineLiveStreamDirectStartResponseV2;
-
 
 export type TargetServer = Readonly<{
     serverId: string;
@@ -110,131 +97,6 @@ export function readEndpointFromMachineState(input: Readonly<{
     });
     const parsed = PeerLoopbackEndpointCandidateV1Schema.safeParse(endpoint);
     return parsed.success ? parsed.data : null;
-}
-
-async function fetchJson(params: Readonly<{
-    url: string;
-    init: RequestInit;
-    timeoutMs?: number;
-}>): Promise<Readonly<{ ok: boolean; status: number; body: unknown }>> {
-    const timeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0
-        ? params.timeoutMs
-        : MACHINE_LIVE_STREAM_DIRECT_FETCH_TIMEOUT_MS;
-    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
-    try {
-        const response = await fetch(params.url, {
-            ...params.init,
-            ...(controller ? { signal: controller.signal } : {}),
-        });
-        return {
-            ok: response.ok,
-            status: response.status,
-            body: await response.json().catch(() => null),
-        };
-    } finally {
-        if (timeoutId) clearTimeout(timeoutId);
-    }
-}
-
-
-export async function requestLiveStreamRouteGrantV2(input: Readonly<{
-    server: TargetServer;
-    credentials: AuthCredentials;
-    sourceMachineId: string;
-    endpointFingerprint: string;
-    streamId: string;
-    streamFamily: string;
-    sourceId?: string;
-    caps: MachineLiveStreamCapsV1;
-    ephemeralPublicKeyBase64Url: string;
-    timeoutMs?: number;
-}>): Promise<OperationResult<SignedDirectRouteGrantV2>> {
-    try {
-        const response = await requestPeerMediationServerJsonForCredential({
-            serverId: input.server.serverId,
-            token: input.credentials.token,
-            path: '/v1/machines/peer/mediation/route-grants',
-            timeoutMs: input.timeoutMs,
-            init: {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    v: 2,
-                    kind: 'ephemeral_ed25519',
-                    ephemeralPublicKeyBase64Url: input.ephemeralPublicKeyBase64Url,
-                    machineId: input.sourceMachineId,
-                    flowKind: 'live_stream',
-                    routeKind: 'loopback_direct',
-                    endpointFingerprint: input.endpointFingerprint,
-                    ttlMs: DIRECT_ROUTE_GRANT_TTL_MS.directLiveStream,
-                    scope: {
-                        kind: 'live_stream',
-                        streamId: input.streamId,
-                        streamFamily: input.streamFamily,
-                        ...(input.sourceId ? { sourceId: input.sourceId } : {}),
-                        maxBitrateBps: input.caps.maxBitrateBps,
-                        maxDurationMs: input.caps.maxDurationMs,
-                        ...(input.caps.maxTotalBytes ? { maxTotalBytes: input.caps.maxTotalBytes } : {}),
-                    },
-                }),
-            },
-        });
-        if (!response.ok) return { ok: false, reasonCode: 'grant_missing' };
-        const body = response.body as { ok?: unknown; reasonCode?: unknown; grant?: unknown } | null;
-        if (body?.ok !== true) return { ok: false, reasonCode: typeof body?.reasonCode === 'string' ? body.reasonCode : 'grant_missing' };
-        const parsed = SignedDirectRouteGrantV2Schema.safeParse(body.grant);
-        return parsed.success ? { ok: true, value: parsed.data } : { ok: false, reasonCode: 'grant_invalid' };
-    } catch {
-        return { ok: false, reasonCode: 'grant_missing' };
-    }
-}
-
-
-
-function resolveDirectStreamStartUrlV2(endpointUrl: string): string {
-    const parsed = new URL(endpointUrl);
-    parsed.pathname = PEER_MACHINE_LIVE_STREAM_DIRECT_START_PATH_V2;
-    parsed.search = '';
-    parsed.hash = '';
-    return parsed.toString();
-}
-
-
-export async function postLiveStreamDirectStartV2(input: Readonly<{
-    endpoint: PeerLoopbackEndpointCandidateV1;
-    grant: SignedDirectRouteGrantV2;
-    proof: PeerRouteEphemeralProofV2;
-    startRequest: MachineLiveStreamStartRequestV1;
-    timeoutMs?: number;
-}>): Promise<OperationResult<MachineLiveStreamDirectStartResponse>> {
-    try {
-        const response = await fetchJson({
-            url: resolveDirectStreamStartUrlV2(input.endpoint.url),
-            timeoutMs: input.timeoutMs,
-            init: {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    v: 2,
-                    streamId: input.startRequest.streamId,
-                    streamFamily: input.startRequest.streamFamily,
-                    routeKind: 'loopback_direct',
-                    flowKind: 'live_stream',
-                    endpointFingerprint: input.endpoint.endpointFingerprint,
-                    grant: input.grant,
-                    proof: input.proof,
-                    startRequest: input.startRequest,
-                }),
-            },
-        });
-        if (!response.ok) return { ok: false, reasonCode: 'topology_unavailable' };
-        const parsed = PeerMachineLiveStreamDirectStartResponseV2Schema.safeParse(response.body);
-        if (!parsed.success) return { ok: false, reasonCode: 'invalid_request' };
-        return parsed.data.ok ? { ok: true, value: parsed.data } : { ok: false, reasonCode: parsed.data.reasonCode };
-    } catch {
-        return { ok: false, reasonCode: 'topology_unavailable' };
-    }
 }
 
 export async function requestLiveStreamRelayAuthorization(input: Readonly<{

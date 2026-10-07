@@ -29,8 +29,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         justifyContent: 'flex-end',
         gap: 10,
-        paddingHorizontal: 16,
-        paddingBottom: 16,
     },
 }));
 

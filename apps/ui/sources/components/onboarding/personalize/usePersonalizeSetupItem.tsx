@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
-import { useOptionalWorkspaceNavigation } from '@/components/appShell/workspace/WorkspaceNavigationContext';
+import { useDeviceType } from '@/utils/platform/responsive';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -39,7 +39,7 @@ export function usePersonalizeSetupItem(input: Readonly<{
 }>): SetupBlockItem | null {
     const progress = usePersonalizeProgress();
     const openFlow = useOpenPersonalize();
-    const phone = Boolean(useOptionalWorkspaceNavigation()?.phone);
+    const phone = useDeviceType() === 'phone';
     if (input.hidden.has(PERSONALIZE_SETUP_ENTRY_ID)) return null;
     const card = resolvePersonalizeCardProgress(progress);
     const total = PERSONALIZE_STEPS.length;

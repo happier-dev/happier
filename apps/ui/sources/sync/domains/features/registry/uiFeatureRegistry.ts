@@ -448,8 +448,8 @@ export const UI_FEATURE_REGISTRY = {
     'scm.writeOperations': {
         settingsToggle: {
             showInSettings: true,
-            isExperimental: true,
-            defaultEnabled: false,
+            isExperimental: false,
+            defaultEnabled: true,
             titleKey: 'settingsFeatures.expScmOperations',
             subtitleKey: 'settingsFeatures.expScmOperationsSubtitle',
         },

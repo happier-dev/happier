@@ -1,5 +1,5 @@
 import type { LocalServiceLaunchTarget } from '@/sync/domains/local/services/launch';
-import type { LocalServiceInventoryRow } from '@/sync/domains/local/services/inventory/store';
+import type { LocalServiceInventoryPresentationRow as LocalServiceInventoryRow } from '@/sync/domains/local/services/inventory/store';
 
 import {
     isLocalServiceRowAttributedToSession,

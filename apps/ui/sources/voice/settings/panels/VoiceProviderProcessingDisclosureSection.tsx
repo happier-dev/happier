@@ -1,9 +1,15 @@
 import * as React from 'react';
+import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
+import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
+import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
 import { voiceSettingsParse, type VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { t, tLoose } from '@/text';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
@@ -47,9 +53,21 @@ export function VoiceProviderProcessingDisclosureSection(props: Readonly<{ voice
         ] : [];
         const details = [entry.disclosure, facts?.details].filter((value) => value != null).map(localizedText).join('\n\n');
         return <React.Fragment key={entry.id}>
-          <Item mode="info" title={tLoose(entry.titleKey)} showChevron={false} />
-          {rows.map((row) => <Item key={row.key} testID={`${id}.${row.key}`} mode="info" title={row.title}
-            showChevron={false} accessoryLayout="adaptive" rightElement={<Text>{localizedText(row.value)}</Text>} />)}
+          <SectionContentRow>
+            <View style={styles.service}>
+              <Text accessibilityRole="header" style={styles.serviceTitle}>{tLoose(entry.titleKey)}</Text>
+              {rows.length > 0 ? <View testID={`${id}.facts`} role="list" accessibilityLabel={tLoose(entry.titleKey)} style={styles.facts}>
+                {rows.map((row) => {
+                  const value = localizedText(row.value);
+                  return <View key={row.key} testID={`${id}.${row.key}`} role="listitem" accessible
+                    accessibilityLabel={`${row.title}: ${value}`} style={styles.fact}>
+                    <Text style={styles.factLabel}>{row.title}</Text>
+                    <Text style={styles.factValue}>{value}</Text>
+                  </View>;
+                })}
+              </View> : null}
+            </View>
+          </SectionContentRow>
           {details ? <ExpandableItem expanded={expanded} onExpandedChange={(next) => setExpandedIds((current) => {
             const ids = new Set(current);
             if (next) ids.add(entry.id); else ids.delete(entry.id);
@@ -64,3 +82,12 @@ export function VoiceProviderProcessingDisclosureSection(props: Readonly<{ voice
     </ItemGroup>
   );
 }
+
+const styles = StyleSheet.create((theme) => ({
+  service: { gap: PAGE_LIST_METRICS.groupHeadingGapPx },
+  serviceTitle: { ...Typography.default('semiBold'), ...happierPageTextMetrics('rowTitle'), color: theme.colors.text.primary },
+  facts: { gap: PAGE_LIST_METRICS.groupHeadingGapPx },
+  fact: { flexDirection: 'row', alignItems: 'flex-start', columnGap: PAGE_LIST_METRICS.rowLeadingGapPx },
+  factLabel: { ...Typography.default('medium'), ...happierPageTextMetrics('rowDescription'), color: theme.colors.text.primary, flex: 1 },
+  factValue: { ...Typography.default(), ...happierPageTextMetrics('rowDescription'), color: theme.colors.text.secondary, flex: 3 },
+}));

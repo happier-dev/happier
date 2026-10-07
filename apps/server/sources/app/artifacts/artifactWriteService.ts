@@ -18,6 +18,7 @@ import { checkArtifactStorageBudgetInTx, retainArtifactBodyRevisionInTx, type Ar
 import {
     artifactDataKeyMatchesAccountMode,
     artifactProvenanceMatchesAccountMode,
+    artifactStoredProvenanceMatchesAccountMode,
     artifactStoredContentMatchesAccountMode,
     artifactUpdateMatchesStoredMode,
     isPlainArtifactDataKeyBytes,
@@ -238,7 +239,7 @@ export async function matchArtifactAccountEncryptionMigrationPostStateInTx(
         if ((row.provenance && !openedProvenance)
             || !nullableArtifactBytesEqual(openedProvenance, privateDirectiveBytes(item.provenance))
             || !nullableArtifactBytesEqual(row.provenanceDataEncryptionKey, privateDirectiveBytes(item.provenanceDataEncryptionKey))) return { status: 'mismatch' };
-        if (!artifactProvenanceMatchesAccountMode({ mode: params.toMode, artifactId: row.id, bodyVersion: row.bodyVersion,
+        if (!artifactStoredProvenanceMatchesAccountMode({ mode: params.toMode, artifactId: row.id, bodyVersion: row.bodyVersion,
             provenance: openedProvenance, provenanceDataEncryptionKey: row.provenanceDataEncryptionKey })) return { status: 'mismatch' };
         const opened = openArtifactStoredContentPair({
             accountId: params.accountId,
@@ -349,7 +350,7 @@ export async function migrateArtifactAccountEncryptionInTx(params: Readonly<{
         if ((row.provenance && !sourceProvenance)
             || !nullableArtifactBytesEqual(sourceProvenance, privateDirectiveBytes(item.expectedProvenance))
             || !nullableArtifactBytesEqual(row.provenanceDataEncryptionKey, privateDirectiveBytes(item.expectedProvenanceDataEncryptionKey))) return { status: 'migration_incomplete' };
-        if (!artifactProvenanceMatchesAccountMode({ mode: params.fromMode, artifactId: row.id, bodyVersion: row.bodyVersion,
+        if (!artifactStoredProvenanceMatchesAccountMode({ mode: params.fromMode, artifactId: row.id, bodyVersion: row.bodyVersion,
             provenance: sourceProvenance, provenanceDataEncryptionKey: row.provenanceDataEncryptionKey })) return { status: 'invalid_content' };
         const provenance = privateDirectiveBytes(item.provenance);
         const provenanceDataEncryptionKey = privateDirectiveBytes(item.provenanceDataEncryptionKey);

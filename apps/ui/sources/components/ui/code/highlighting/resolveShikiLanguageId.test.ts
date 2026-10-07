@@ -1,24 +1,13 @@
-import { describe, expect, it, vi } from 'vitest';
-
-vi.mock('shiki', () => ({
-    bundledLanguages: {
-        ts: {},
-        js: {},
-        python: {},
-        bash: {},
-        makefile: {},
-        cmake: {},
-        dotenv: {},
-        json: {},
-        jsonc: {},
-        yaml: {},
-        markdown: {},
-        mdx: {},
-        graphql: {},
-    },
-}));
+import { describe, expect, it } from 'vitest';
+import { bundledLanguages } from 'shiki/langs';
 
 describe('resolveShikiLanguageId', () => {
+    it('preserves every package-owned language and alias', async () => {
+        const { resolveShikiLanguageId } = await import('./resolveShikiLanguageId');
+        for (const language of Object.keys(bundledLanguages)) {
+            expect(resolveShikiLanguageId(language)).not.toBe('text');
+        }
+    });
     it('maps common language aliases to Shiki bundled language ids', async () => {
         const { resolveShikiLanguageId } = await import('./resolveShikiLanguageId');
         expect(resolveShikiLanguageId('typescript')).toBe('ts');

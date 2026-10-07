@@ -6,7 +6,8 @@ import type { BrowserControlViewState } from '@/sync/domains/browser/control';
 import { buildBrowserContextMessageMetaOverrides } from '@/sync/domains/session/input/browserContext';
 
 import { createBrowserContextAnnotationAdapter } from './annotationAdapter';
-import { createBrowserContextState } from './state';
+import { createBrowserContextState, markBrowserContextViewNavigation } from './state';
+import { createBrowserAnnotationCaptureProvider } from './captureProvider';
 import type { BrowserAnnotationCaptureProvider, BrowserContextState } from './types';
 
 const annotationCapabilities = {
@@ -78,6 +79,141 @@ function buildProvider(): BrowserAnnotationCaptureProvider {
 }
 
 describe('browser context annotation adapter', () => {
+    it.each(['captureRegion', 'attachDraft'] as const)('admits %s before pixels and rechecks before upload', async (kind) => {
+        let state = createBrowserContextState();
+        let uploadsEnabled = true;
+        let deferPixels = false;
+        let finishPixels!: () => void;
+        const pixelsReady = new Promise<void>((resolve) => { finishPixels = resolve; });
+        const registerMedia = vi.fn(() => ({ mediaId: 'media', mediaKind: 'image' as const, width: 20, height: 20, sizeBytes: 1 }));
+        const captureScreenshot = vi.fn(async () => {
+            if (deferPixels) await pixelsReady;
+            return { ok: true as const, snapshot: { bytes: new Uint8Array([1]), mimeType: 'image/png' as const, width: 20, height: 20, sizeBytes: 1 } };
+        });
+        const adapter = createBrowserContextAnnotationAdapter({
+            resolveBinding: () => ({ state, view: buildView(), browserContextEnabled: true,
+                browserDiagnosticsEnabled: true, attachmentsUploadsEnabled: uploadsEnabled,
+                contextCapabilities: annotationCapabilities,
+                captureProvider: createBrowserAnnotationCaptureProvider({ captureScreenshot, registerMedia }) }),
+            onStateChange: (next) => { state = next; },
+        });
+        await adapter.dispatch({ kind: 'start' });
+        await adapter.dispatch({ kind: 'addDraftRegion', rect: { x: 0, y: 0, width: 20, height: 20 } });
+        uploadsEnabled = false;
+        expect(await adapter.dispatch({ kind })).toMatchObject({ status: 'unavailable', reason: { reasonCode: 'browser_context_attachment_uploads_disabled' } });
+        expect(captureScreenshot).not.toHaveBeenCalled();
+        uploadsEnabled = true;
+        deferPixels = true;
+        const pending = adapter.dispatch({ kind });
+        await Promise.resolve();
+        uploadsEnabled = false;
+        finishPixels();
+        expect(await pending).toMatchObject({ status: 'unavailable', reason: { reasonCode: 'browser_context_attachment_uploads_disabled' } });
+        expect(registerMedia).not.toHaveBeenCalled();
+        expect(state.attachmentOrder).toEqual([]);
+    });
+
+    it.each(['captureRegion', 'attachDraft'] as const)('rejects %s after navigation during upload without restoring old state', async (kind) => {
+        let state = createBrowserContextState();
+        let view = buildView();
+        let finishUpload!: () => void;
+        const uploaded = new Promise<void>((resolve) => { finishUpload = resolve; });
+        const provider = createBrowserAnnotationCaptureProvider({
+            captureScreenshot: () => ({ ok: true, snapshot: { bytes: new Uint8Array([1]), mimeType: 'image/png', width: 20, height: 20, sizeBytes: 1 } }),
+            registerMedia: async () => { await uploaded; return { mediaId: 'media', mediaKind: 'image', width: 20, height: 20, sizeBytes: 1 }; },
+        });
+        const adapter = createBrowserContextAnnotationAdapter({
+            resolveBinding: () => ({ state, view, browserContextEnabled: true, browserDiagnosticsEnabled: true,
+                attachmentsUploadsEnabled: true, contextCapabilities: annotationCapabilities, captureProvider: provider }),
+            onStateChange: (next) => { state = next; },
+        });
+        await adapter.dispatch({ kind: 'start' });
+        await adapter.dispatch({ kind: 'addDraftRegion', rect: { x: 0, y: 0, width: 20, height: 20 } });
+        const pending = adapter.dispatch({ kind });
+        await Promise.resolve();
+        view = { ...view, navigationGeneration: 5 };
+        state = markBrowserContextViewNavigation(state, { viewId: view.viewId, navigationGeneration: 5 });
+        const afterNavigation = state;
+        finishUpload();
+        expect(await pending).toMatchObject({ status: 'unavailable', reason: { reasonCode: 'browser_context_annotation_stale' } });
+        expect(state).toBe(afterNavigation);
+        expect(state.attachmentOrder).toEqual([]);
+    });
+
+    it.each(['captureRegion', 'attachDraft'] as const)('does not attach %s into a replacement annotation mode on the same page', async (kind) => {
+        let state = createBrowserContextState();
+        let finishUpload!: () => void;
+        const uploaded = new Promise<void>((resolve) => { finishUpload = resolve; });
+        const provider = createBrowserAnnotationCaptureProvider({
+            captureScreenshot: () => ({ ok: true, snapshot: { bytes: new Uint8Array([1]), mimeType: 'image/png', width: 20, height: 20, sizeBytes: 1 } }),
+            registerMedia: async () => { await uploaded; return { mediaId: 'media', mediaKind: 'image', width: 20, height: 20, sizeBytes: 1 }; },
+        });
+        const adapter = createBrowserContextAnnotationAdapter({
+            resolveBinding: () => ({ state, view: buildView(), browserContextEnabled: true,
+                attachmentsUploadsEnabled: true, contextCapabilities: annotationCapabilities, captureProvider: provider, nowMs: () => 1_000 }),
+            onStateChange: (next) => { state = next; },
+        });
+        await adapter.dispatch({ kind: 'start' });
+        await adapter.dispatch({ kind: 'addDraftRegion', rect: { x: 0, y: 0, width: 20, height: 20 } });
+        const pending = adapter.dispatch({ kind });
+        await adapter.dispatch({ kind: 'cancel' });
+        await adapter.dispatch({ kind: 'start' });
+        const replacement = state;
+        finishUpload();
+        expect(await pending).toMatchObject({ status: 'unavailable', reason: { reasonCode: 'browser_context_annotation_stale' } });
+        expect(state).toBe(replacement);
+        expect(state.attachmentOrder).toEqual([]);
+    });
+
+    it('preserves a comment edited while the grouped upload is pending', async () => {
+        let state = createBrowserContextState();
+        let finishUpload!: () => void;
+        const uploaded = new Promise<void>((resolve) => { finishUpload = resolve; });
+        const adapter = createBrowserContextAnnotationAdapter({
+            resolveBinding: () => ({ state, view: buildView(), browserContextEnabled: true,
+                browserDiagnosticsEnabled: true, attachmentsUploadsEnabled: true, contextCapabilities: annotationCapabilities,
+                captureProvider: createBrowserAnnotationCaptureProvider({
+                    captureScreenshot: () => ({ ok: true, snapshot: { bytes: new Uint8Array([1]), mimeType: 'image/png', width: 20, height: 20, sizeBytes: 1 } }),
+                    registerMedia: async () => { await uploaded; return { mediaId: 'media', mediaKind: 'image', width: 20, height: 20, sizeBytes: 1 }; },
+                }) }),
+            onStateChange: (next) => { state = next; },
+        });
+        await adapter.dispatch({ kind: 'start' });
+        await adapter.dispatch({ kind: 'addDraftRegion', rect: { x: 0, y: 0, width: 20, height: 20 } });
+        const pending = adapter.dispatch({ kind: 'attachDraft' });
+        await adapter.dispatch({ kind: 'setDraftComment', comment: 'Edited during upload' });
+        finishUpload();
+        const result = await pending;
+        expect(result.status).toBe('committed');
+        if (result.status !== 'committed') throw new Error('Expected commit');
+        expect(state.itemsById[result.itemIds[0]]).toMatchObject({ comment: 'Edited during upload' });
+    });
+
+    it('preserves changed geometry instead of committing an earlier grouped crop', async () => {
+        let state = createBrowserContextState();
+        let finishUpload!: () => void;
+        const uploaded = new Promise<void>((resolve) => { finishUpload = resolve; });
+        const provider = createBrowserAnnotationCaptureProvider({
+            captureScreenshot: () => ({ ok: true, snapshot: { bytes: new Uint8Array([1]), mimeType: 'image/png', width: 20, height: 20, sizeBytes: 1 } }),
+            registerMedia: async () => { await uploaded; return { mediaId: 'media', mediaKind: 'image', width: 20, height: 20, sizeBytes: 1 }; },
+        });
+        const adapter = createBrowserContextAnnotationAdapter({
+            resolveBinding: () => ({ state, view: buildView(), browserContextEnabled: true,
+                attachmentsUploadsEnabled: true, contextCapabilities: annotationCapabilities, captureProvider: provider }),
+            onStateChange: (next) => { state = next; },
+        });
+        await adapter.dispatch({ kind: 'start' });
+        await adapter.dispatch({ kind: 'addDraftRegion', rect: { x: 0, y: 0, width: 20, height: 20 } });
+        const pending = adapter.dispatch({ kind: 'attachDraft' });
+        await adapter.dispatch({ kind: 'addDraftRegion', rect: { x: 30, y: 0, width: 20, height: 20 } });
+        const edited = state;
+        finishUpload();
+        expect(await pending).toMatchObject({ status: 'unavailable', reason: { reasonCode: 'browser_context_annotation_stale' } });
+        expect(state).toBe(edited);
+        expect(state.annotationDraftByViewId.view_1?.regions).toHaveLength(2);
+        expect(state.attachmentOrder).toEqual([]);
+    });
+
     it('drives start → captureRegion → comment/stroke/style through the canonical reducers', async () => {
         let state = createBrowserContextState();
         const onStateChange = vi.fn((next: BrowserContextState) => { state = next; });

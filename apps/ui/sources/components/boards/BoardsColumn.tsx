@@ -11,8 +11,8 @@ import { t } from '@/text';
 
 import { BoardsInboxBoundary } from './BoardsInboxBoundary';
 import { BOARDS_ROUTE, createBoardRoute, readOpenBoardId } from './boardsRoutes';
-import { describeBoardColumnLine, hasWorkBoardContent } from './model/boardCards';
-import { useBoardLiveCards } from './model/useBoardContent';
+import { describeBoardSummaryLine, hasWorkBoardContent } from './model/boardCards';
+import { useBoardLiveSummary } from './model/useBoardContent';
 import { useDispatchWorkBoardIntent, useWorkBoardSaveState, useWorkBoards } from './model/useWorkBoards';
 import { resolveCollectionSaveFailure } from './model/boardSaveFailure';
 import { BoardSaveFailureLine } from './BoardSaveFailureLine';
@@ -22,14 +22,14 @@ import { BoardReadState } from './BoardReadState';
  * The Boards destination's column (lab `boards-B1`): your boards, the open one selected, with one live
  * line each — who needs you and how many items it holds ("3 need you · 9 items"); search finds a board
  * by name, and the last row makes a new board. Only the open destination's column is mounted. A board with no source reads
- * nothing; the others read their own live cards, sharing one Inbox model only while one of them shows
+ * nothing; the others read their own membership/status summaries, sharing one Inbox model only while one of them shows
  * Needs you.
  */
 
 /** A board's row while it has a source: its live line, with the collection's trouble dot while it needs you. */
 const LiveBoardRow = React.memo(function LiveBoardRow(props: Readonly<{ board: WorkBoardV1; selected: boolean; onPress: () => void }>) {
-    const { cards, widgets } = useBoardLiveCards(props.board);
-    const line = describeBoardColumnLine(cards, widgets.length);
+    const summary = useBoardLiveSummary(props.board);
+    const line = describeBoardSummaryLine(summary);
     return (
         <CollectionNavigationRow
             testID={`boards-column:board:${props.board.id}`}

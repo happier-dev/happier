@@ -65,7 +65,7 @@ describe('SemanticEndpointDetector', () => {
         expect(resolved).toBe(0);
     });
 
-    it('an "incomplete" semantic verdict extends the wait toward the hard-max ceiling', () => {
+    it('an "incomplete" semantic verdict extends the wait by the silence preference', () => {
         const patientDetector: SemanticEndpointDetector = {
             evaluate: () => ({ kind: 'incomplete', reason: 'model_incomplete', confidence: 0.8 }),
         };
@@ -75,13 +75,11 @@ describe('SemanticEndpointDetector', () => {
             baseDelayMs: 700,
             transcript: 'and then i also need',
             speechElapsedMs: 1_500,
-            maxDelayMs: 3_000,
         });
-        expect(resolved).toBeGreaterThan(700);
-        expect(resolved).toBeLessThanOrEqual(3_000);
+        expect(resolved).toBe(1_400);
     });
 
-    it('never returns a delay above the hard-max ceiling even for the base policy delay', () => {
+    it('preserves a valid base policy delay beyond the former heuristic ceiling', () => {
         const detector = createNoopSemanticEndpointDetector();
         const resolved = resolveSemanticEndpointDelayMs({
             detector,
@@ -89,8 +87,7 @@ describe('SemanticEndpointDetector', () => {
             baseDelayMs: 9_999,
             transcript: 'something',
             speechElapsedMs: 100,
-            maxDelayMs: 3_000,
         });
-        expect(resolved).toBe(3_000);
+        expect(resolved).toBe(9_999);
     });
 });

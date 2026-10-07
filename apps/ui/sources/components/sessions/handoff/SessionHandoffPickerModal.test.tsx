@@ -27,6 +27,7 @@ let sessionsState: any[] = [];
 let sessionsByIdState: Record<string, any> = {};
 let resetWorkspaceSyncStatusStoreForTests: typeof import('@/sync/domains/sessionHandoff/workspaceSyncStatusStore')['resetWorkspaceSyncStatusStoreForTests'];
 let setWorkspaceSyncStatus: typeof import('@/sync/domains/sessionHandoff/workspaceSyncStatusStore')['setWorkspaceSyncStatus'];
+let realStorage: typeof import('@/sync/domains/state/storageStore')['storage'];
 
 type CardChrome = Extract<CustomModalChromeConfig, { kind: 'card' }>;
 
@@ -210,7 +211,7 @@ describe('SessionHandoffPickerModal', () => {
         ];
         settingsState.favoriteMachines = [];
         settingsState.favoriteDirectories = [];
-        settingsState.recentMachinePaths = [];
+        realStorage.getState().resetAuthoringMemory();
         settingsState.workspaceRefsV1 = [];
         settingsState.workspaceSyncRelationshipsV1 = [];
         settingsState.sessionHandoffDefaultsV1 = {
@@ -774,10 +775,10 @@ describe('SessionHandoffPickerModal', () => {
 
         machineListByServerIdState[homeA.id][0]!.metadata.homeDir = '/home/target';
         allMachinesState[0]!.metadata.homeDir = '/home/target';
-        settingsState.recentMachinePaths = [{
+        realStorage.getState().applyAuthoringMemory({ recentMachinePaths: [{
             machineId: 'machine_target',
             path: '/home/target/recent-project',
-        }];
+        }] });
 
         const screen = await renderScreen(<SessionHandoffPickerModal
             onClose={vi.fn()}

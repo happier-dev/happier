@@ -27,6 +27,8 @@ import {
 
 export type WelcomeDecisionPanelProps = Readonly<{
     authEntryOptions: AuthEntryOptions;
+    /** A setup/authentication parent can supply the task's heading. */
+    showGreeting?: boolean;
     /**
      * Advertised methods of the exact effective sign-in service. These remain additive to any
      * usable Home methods and never retarget the Home authority.
@@ -216,6 +218,7 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                     <View testID="welcome-auth-loading" style={styles.statusBlock}>
                         <ActivitySpinner color={theme.colors.text.primary} />
                         <Text style={styles.statusText}>{t('common.loading')}</Text>
+                        <WelcomeActionCard testID="welcome-auth-loading-retry" title={t('common.retry')} onPress={options.retryServerCheck} />
                     </View>
                 ) : null}
                 {model.showHomeStatus && showBlocked ? (
@@ -285,14 +288,14 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
               * — same coordinates as the brand hero's wordmark so users see
               * the same logo position across both mobile screens.
               */}
-            <View style={styles.headingBlock}>
+            {props.showGreeting !== false ? <View style={styles.headingBlock}>
                 <Text accessibilityRole="header" style={styles.title}>
                     {isReturningUser ? returningGreeting.title : t('welcome.welcomeQuestionTitle')}
                 </Text>
                 <Text accessibilityRole="header" style={styles.subtitleTitle}>
                     {isReturningUser ? returningGreeting.subtitle : t('welcome.welcomeQuestionSubtitle')}
                 </Text>
-            </View>
+            </View> : null}
             {model.showHomeStatus && options.showAuthActions
                 && (options.serverAvailability === 'ready' || options.serverAvailability === 'legacy')
                 && options.authenticationActions !== undefined

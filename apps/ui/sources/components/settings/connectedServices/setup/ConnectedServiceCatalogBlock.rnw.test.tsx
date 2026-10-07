@@ -30,6 +30,27 @@ const entry: ConnectedServiceSetupCatalogEntry = {
 };
 
 describe('ConnectedServiceCatalogBlock web activation', () => {
+    it('does not activate a non-addable known service from its tile or Connect control', async () => {
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const root = createRoot(container);
+        const connected = vi.fn();
+        try {
+            await act(async () => { root.render(<ConnectedServiceCatalogBlock
+                entry={{ ...entry, canAdd: false }} layout="card" showCount={false} onConnect={connected}
+            />); });
+            const tile = container.querySelector<HTMLElement>(`[data-testid="connected-service-setup:tile:${entry.serviceKey}"]`);
+            const connect = container.querySelector<HTMLElement>(`[data-testid="connected-service-setup:connect:${entry.serviceKey}"]`);
+            expect(tile).not.toBeNull();
+            expect(connect).not.toBeNull();
+            await act(async () => { tile!.click(); connect!.click(); });
+            expect(connected).not.toHaveBeenCalled();
+        } finally {
+            await act(async () => { root.unmount(); });
+            container.remove();
+        }
+    });
+
     it.each(['card', 'row'] as const)('keeps %s tile and Connect activation valid without nested controls', async (layout) => {
         const container = document.createElement('div');
         document.body.appendChild(container);

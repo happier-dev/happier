@@ -92,7 +92,8 @@ async function loadHarness() {
     const custody = await import('@/components/sessions/authoring/authoringComposerCustody');
     const loop = await import('./WorkflowLoopEditor');
     const group = await import('./WorkflowGroupEditor');
-    return { ...editor, ...draftModule, ...edits, ...authoring, ...custody, ...loop, ...group };
+    const heading = await import('./WorkflowBlockHeading');
+    return { ...editor, ...draftModule, ...edits, ...authoring, ...custody, ...loop, ...group, ...heading };
 }
 
 type Harness = Awaited<ReturnType<typeof loadHarness>>;
@@ -162,6 +163,52 @@ async function renderList(harness: Harness, options: Readonly<{
     });
     return renderScreen(element);
 }
+
+it('shows editable names on every kind and evaluator without replacing catalog Action identity', async () => {
+    const harness = await loadHarness();
+    const agent = { kind: 'step' as const, id: 'inspect', name: 'Inspect', document: { text: 'Read the diff', references: [], attachments: [] }, input: [], result: { kind: 'text' as const } };
+    const draft = buildDraft(harness, [agent,
+        { kind: 'action', id: 'notify', name: 'Announce it', actionId: 'notifications.notify_me', input: {} },
+        { kind: 'wait', id: 'approve', name: 'Approve release', document: { text: 'Confirm', references: [], attachments: [] } },
+        { kind: 'workflow', id: 'child', name: 'Review release', workflowRef: 'builtin:plan-with-a-panel', input: {} },
+        { kind: 'parallel', id: 'panel', name: 'Panel', failurePolicy: 'fail_stop', branches: [{ id: 'lane', blocks: [] }] },
+        { kind: 'if', id: 'decision', name: 'Check readiness', when: { kind: 'exists', value: { kind: 'literal', value: true } }, then: [], otherwise: [] },
+        { kind: 'loop', id: 'keep', name: 'Keep going', body: [], repetition: { kind: 'evaluate', maxIterations: 2, history: 'latest', evaluator: { ...agent, id: 'judge', name: 'Judge progress', result: { kind: 'decision', decisions: ['continue', 'done'] } } } },
+    ]);
+    const screen = await renderList(harness, { draft });
+    for (const [kind, id, name] of [['step', 'inspect', 'Inspect'], ['action', 'notify', 'Announce it'], ['wait', 'approve', 'Approve release'], ['workflow', 'child', 'Review release'], ['parallel', 'panel', 'Panel'], ['if', 'decision', 'Check readiness'], ['loop', 'keep', 'Keep going'], ['step', 'judge', 'Judge progress']]) {
+        expect(screen.findByTestId(`workflow-editor-${kind}-${id}-label`)?.props.value).toBe(name);
+    }
+});
+
+it('keeps repair hints and source facts available while editing a heading', async () => {
+    const harness = await loadHarness();
+    const screen = await renderScreen(<harness.WorkflowBlockHeading ordinal={1} displayName="Inspect" sourceLabel="Plugin source"
+        issue="Repair required" actions={[]} onSelect={() => {}} testID="heading" actionsTestID="heading-actions"
+        nameEditor={{ value: 'Inspect', placeholder: 'Agent step', accessibilityLabel: 'Rename Inspect', onChangeText: () => {} }} />);
+    expect(screen.findByTestId('heading')?.props.accessibilityHint).toBe('Repair required');
+    expect(screen.getTextContent()).toContain('Plugin source');
+});
+
+it('edits authored step names through draft history and keeps readonly headings selectable', async () => {
+    const harness = await loadHarness();
+    const draft = buildDraft(harness, [{ kind: 'step', id: 'inspect', name: 'Inspect', document: { text: 'Read the diff', references: [], attachments: [] }, input: [], result: { kind: 'text' } }]);
+    const onChange = vi.fn();
+    const screen = await renderList(harness, { draft, onChange });
+    const field = screen.findByTestId('workflow-editor-step-inspect-label')!;
+    expect(field.props.value).toBe('Inspect');
+    await act(async () => { field.props.onFocus(); field.props.onChangeText('  Inspect carefully  '); });
+    expect(onChange.mock.calls.at(-1)?.[0].blocks[0].name).toBe('Inspect carefully');
+    expect(onChange.mock.calls.at(-1)?.[2]).toBe(false);
+    await act(async () => { field.props.onKeyPress({ nativeEvent: { key: 'Escape' }, preventDefault: () => {} }); });
+    expect(onChange.mock.calls.at(-1)?.[0].blocks[0].name).toBe('Inspect');
+    await screen.unmount();
+    const onSelect = vi.fn();
+    const reading = await renderList(harness, { draft, onChange, onSelect, presentation: { editable: false } });
+    await reading.pressByTestIdAsync('workflow-editor-step-inspect-label');
+    expect(onSelect).toHaveBeenCalledWith('inspect');
+    expect(reading.getTextContent()).toContain('Inspect');
+});
 
 it('renders a read-only document note through Text, never as a raw View child', async () => {
     const harness = await loadHarness();
@@ -356,9 +403,9 @@ describe('workflow block list editor', () => {
      * The block list is an ordered list a screen reader can count: every block
      * is a real item carrying its position in the set, its prompt field is named
      * for the step it belongs to on the input itself, and the heading that
-     * selects the block is a real button rather than pressable text.
+     * selects the block through focus on its editable name.
      */
-    it('exposes ordered list items, a step-named prompt input and a real heading button', async () => {
+    it('exposes ordered list items, a step-named prompt input and an editable heading', async () => {
         const harness = await loadHarness();
         const draft = buildDraft(harness, [
             { kind: 'step', id: 'analyze', document: { text: 'Analyze', references: [], attachments: [] }, input: [], result: { kind: 'text' } },
@@ -380,11 +427,10 @@ describe('workflow block list editor', () => {
             .toBe(implementContext);
 
         const heading = screen.findByTestId('workflow-editor-step-implement-label');
-        // The canonical pressable announces its role (web `role`, native `accessibilityRole`).
-        expect(heading?.props.role ?? heading?.props.accessibilityRole).toBe('button');
+        expect(typeof heading?.props.onChangeText).toBe('function');
         expect(heading?.props.accessibilityLabel).toBe(implementContext);
         await act(async () => {
-            heading?.props.onPress();
+            heading?.props.onFocus();
         });
         expect(onSelect).toHaveBeenCalledWith('implement');
     });
@@ -460,6 +506,10 @@ describe('workflow block list editor', () => {
         for (const slot of ['slot-state', 'slot-reviewed', 'slot-footer']) {
             expect(analyze?.findAll((node) => node.props?.testID === slot).length, slot).toBeGreaterThan(0);
         }
+        // The footer fact ends the "Returns …" line (run-A_steps), not a row of its own.
+        let returnsLine = screen.findByTestId('workflow-editor-step-analyze-returns')?.parent ?? null;
+        while (returnsLine !== null && (returnsLine.type as unknown) !== 'View') returnsLine = returnsLine.parent;
+        expect(returnsLine?.findAll((node) => node.props?.testID === 'slot-footer').length).toBeGreaterThan(0);
         const implement = screen.findByTestId('workflow-editor-step-implement');
         expect(implement?.findAll((node) => node.props?.testID === 'slot-state')).toHaveLength(0);
         expect(changes).toHaveLength(0);

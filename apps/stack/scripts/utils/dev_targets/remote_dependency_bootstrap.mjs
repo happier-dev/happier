@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 
 import { execYarn } from '../../../../../scripts/workspaces/execYarnCommand.mjs';
 import { SCRIPTLESS_DEPENDENCY_INSTALL_MODE, withDependencyRefresh } from '../proc/dependency_refresh.mjs';
+import { ensureUiPostinstallOutputs } from '../proc/ui_postinstall.mjs';
 
 export const REMOTE_INITIAL_DEPENDENCY_INSTALL_ARGS = [
   'install',
@@ -51,9 +52,20 @@ async function installInitialDependencies({ repoDir, env }) {
   });
 }
 
+async function prepareInitialUiOutputs({ repoDir, env }) {
+  const installEnv = resolveInitialInstallEnv(env);
+  const runYarn = args => execYarn(args, { cwd: repoDir, env: installEnv, preferCorepack: true, stdio: 'inherit' });
+  await ensureUiPostinstallOutputs(join(repoDir, 'apps', 'ui'), repoDir, {
+    force: true,
+    runPostinstall: async () => runYarn(['-s', 'workspace', '@happier-dev/app', 'postinstall:real']),
+    restoreDependencies: async () => runYarn(['install', '--force', ...REMOTE_INITIAL_DEPENDENCY_INSTALL_ARGS.slice(1)]),
+  });
+}
+
 export async function bootstrapRemoteDependencies({
   repoDir = resolve(process.cwd()),
   validationKind = 'runtime',
+  toolsOnly = false,
   componentRelativeDir = '.',
   env = process.env,
   packageExists = existsSync,
@@ -64,12 +76,22 @@ export async function bootstrapRemoteDependencies({
 } = {}) {
   const componentDir = join(repoDir, 'apps', 'stack');
   const componentPath = posix.normalize(String(componentRelativeDir).replaceAll('\\', '/'));
-  if (validationKind === 'source-test') {
+  const sourceToolsOnly = toolsOnly || validationKind === 'source-test';
+  const needsUiSchemaPreparation = sourceToolsOnly && /^apps\/ui(?:\/|$)/u.test(componentPath);
+  let refreshed = false;
+  const installAndPrepare = async () => {
+    await installInitialDependenciesImpl({ repoDir, env });
+    refreshed = true;
+    // UI source tooling prepares Protocol before postinstall under the same
+    // freshness lock. Other installs still complete shared UI outputs before
+    // releasing their stage-zero dependency admission.
+    if (!needsUiSchemaPreparation) await prepareInitialUiOutputs({ repoDir, env });
+  };
+  if (sourceToolsOnly) {
     // Source tests do not consume the Stack dependency owner's compiled closure.
     // UI patch readiness imports Protocol's public UI schemas, so prepare that
     // prerequisite under the same lock without admitting the full runtime closure.
-    let refreshed = false;
-    const onDependenciesReady = /^apps\/ui(?:\/|$)/u.test(componentPath)
+    const onDependenciesReady = needsUiSchemaPreparation
       ? async () => {
           const { ensureWorkspacePackagesBuiltByName } = await loadWorkspaceBuildOwner();
           await ensureWorkspacePackagesBuiltByName(repoDir, ['@happier-dev/protocol'], {
@@ -82,10 +104,7 @@ export async function bootstrapRemoteDependencies({
       : null;
     return await withDependencyRefreshImpl(
       { installDir: repoDir, componentDir, env, installMode: SCRIPTLESS_DEPENDENCY_INSTALL_MODE, onDependenciesReady },
-      async () => {
-        await installInitialDependenciesImpl({ repoDir, env });
-        refreshed = true;
-      },
+      installAndPrepare,
     );
   }
   const dependencyOwnerEntrypoints = ['workspaces', 'process'].map((domain) => join(
@@ -100,7 +119,7 @@ export async function bootstrapRemoteDependencies({
   if (!dependencyOwnerReady) {
     await withDependencyRefreshImpl(
       { installDir: repoDir, componentDir, env, installMode: SCRIPTLESS_DEPENDENCY_INSTALL_MODE },
-      async () => await installInitialDependenciesImpl({ repoDir, env }),
+      installAndPrepare,
     );
     const { ensureWorkspacePackagesBuiltByName } = await loadWorkspaceBuildOwner();
     await ensureWorkspacePackagesBuiltByName(
@@ -133,7 +152,10 @@ const entryPath = String(process.argv[1] ?? '').trim();
 if (entryPath && pathToFileURL(resolve(entryPath)).href === import.meta.url) {
   const kind = process.argv.slice(2).find(value => value.startsWith('--validation-kind='));
   const component = process.argv.slice(2).find(value => value.startsWith('--component-relative-dir='));
+  const repo = process.argv.slice(2).find(value => value.startsWith('--repo-dir='));
   await bootstrapRemoteDependencies({
+    ...(repo ? { repoDir: resolve(repo.slice('--repo-dir='.length)) } : {}),
+    toolsOnly: process.argv.includes('--tools-only'),
     validationKind: kind?.slice('--validation-kind='.length) ?? 'runtime',
     componentRelativeDir: component?.slice('--component-relative-dir='.length) ?? '.',
   });

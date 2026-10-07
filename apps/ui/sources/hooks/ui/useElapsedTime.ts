@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-export function useElapsedTime(date: Date | number | null | undefined): number {
+export function useElapsedTime(date: Date | number | null | undefined, ticking = true): number {
     const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
     useEffect(() => {
@@ -23,6 +23,10 @@ export function useElapsedTime(date: Date | number | null | undefined): number {
         // Initial update
         updateElapsed();
 
+        // Retained presentation keeps its last value without a clock. Resuming
+        // samples the admitted timestamp again, so hidden time is never lost.
+        if (!ticking) return;
+
         // Set up interval to update every second
         const interval = setInterval(updateElapsed, 1000);
 
@@ -30,7 +34,7 @@ export function useElapsedTime(date: Date | number | null | undefined): number {
         return () => {
             clearInterval(interval);
         };
-    }, [date]);
+    }, [date, ticking]);
 
     return elapsedSeconds;
 }

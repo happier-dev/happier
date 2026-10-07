@@ -18,10 +18,6 @@ import { workStatusSurfaceStyle, workStatusWordStyle } from '@/components/work/s
 import { Typography } from '@/constants/Typography';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { useSessionDisplayNameSource } from '@/sync/domains/state/storage';
-import { storage } from '@/sync/domains/state/storage';
-import type { Session } from '@/sync/domains/state/storageTypes';
-import { isSessionContentReadable, readSessionContentAvailability } from '@/sync/domains/session/encryptedContentAvailability';
-import { resolveWorkspaceTargetForSessionFromState } from '@/sync/domains/session/resolveWorkspaceTargetForSessionFromState';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { t } from '@/text';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
@@ -93,7 +89,7 @@ const WorkerMark = React.memo(function WorkerMark(props: Readonly<{ update: Work
     return <Icon name={KIND_GLYPHS[props.update.workerKind]} size={MARK_SIZE} color={theme.colors.text.secondary} />;
 });
 
-/** Closed rows do no reads. Opening rechecks the exact Home and the incumbent reader's access. */
+/** Closed rows do no reads. File destinations own their reads; inline Artifacts recheck access. */
 function WorkerDeliverable(props: Readonly<{
     reference: WorkerDeliverableReferenceV1;
     index: number;
@@ -121,56 +117,26 @@ function WorkerDeliverable(props: Readonly<{
         let keepPreview = false;
         try {
             if (!props.enabled || !props.serverId) throw new Error('content_unavailable');
+            if (props.reference.kind === 'workspace_file') {
+                if (!transcriptSource.navigate) throw new Error('content_unavailable');
+                // The existing Home-qualified file route owns hydration, access and file failures.
+                transcriptSource.navigate(buildScopedSessionRouteHref({
+                    sessionId: props.reference.sessionId, serverId: props.serverId,
+                    suffix: '/file', query: { path: props.reference.path },
+                }));
+                return;
+            }
             const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
             context = await captureLazyActionAccountContext(props.serverId, controller.signal);
             const retirement = context.accountLifetime.onRetire(() => {
                 if (!controller.signal.aborted) { setPreview(null); setUnavailable(true); }
             });
             operation.current = { controller, dispose: () => { retirement.dispose(); context?.dispose(); } };
-            if (props.reference.kind === 'artifact') {
-                const artifact = await context.fetchArtifact(props.reference.artifactId);
-                if (!artifact?.isDecrypted || (artifact.body !== null && typeof artifact.body !== 'string')) throw new Error('content_unavailable');
-                context.assertCurrent();
-                setPreview({ title: artifact.title ?? t('artifacts.untitled'), body: artifact.body ?? '' });
-                keepPreview = true;
-            } else {
-                if (!transcriptSource.navigate) throw new Error('content_unavailable');
-                const [{ fetchSessionByIdWithServerScope }, { callDaemonWorkspaceStatFileRpc }, { buildSessionListRenderableFromSession }] = await Promise.all([
-                    import('@/sync/runtime/orchestration/serverScopedRpc/fetchSessionByIdWithServerScope'),
-                    import('@/sync/domains/transfers/runtime/transferRuntime'),
-                    import('@/sync/domains/session/listing/sessionListRenderable'),
-                ]);
-                const account = await context.resolveAccountEncryption();
-                // Hydrate in this invocation only, not into the focused Account's Session store.
-                const sessions: Omit<Session, 'presence'>[] = [];
-                const read = await fetchSessionByIdWithServerScope({
-                    sessionId: props.reference.sessionId, serverId: context.serverId,
-                    activeCredentials: context.credentials, accountMode: account.accountMode,
-                    activeEncryption: account.encryption,
-                    sessionDataKeys: new Map(), activeRequest: context.request,
-                    applySessions: rows => { sessions.push(...rows); },
-                    includeTurnsProjection: false, isCurrent: context.accountLifetime.isCurrent,
-                    log: { log: () => {} },
-                });
-                const source = sessions[0];
-                if (!read.ok || !source || !isSessionContentReadable(readSessionContentAvailability(source))) throw new Error('content_unavailable');
-                context.assertCurrent();
-                // Publish metadata through the existing Home-qualified row owner so the file
-                // route reads this workspace, without replacing the focused same-id Session.
-                storage.getState().applyServerScopedSessionListRows(context.serverId,
-                    [buildSessionListRenderableFromSession({ ...source, presence: 0 })],
-                    { source: 'rowOnly', mode: 'append' });
-                const identity = { sessionId: props.reference.sessionId, serverId: context.serverId };
-                const scope = resolveWorkspaceTargetForSessionFromState(storage.getState(), identity);
-                if (!scope) throw new Error('content_unavailable');
-                const stat = await callDaemonWorkspaceStatFileRpc({ ...scope, request: { path: props.reference.path }, signal: controller.signal });
-                context.assertCurrent();
-                if (!stat.success || !stat.exists || stat.kind !== 'file') throw new Error('content_unavailable');
-                // The existing Session file route owns binary/large previews and subsequent reads.
-                transcriptSource.navigate(buildScopedSessionRouteHref({
-                    ...identity, suffix: '/file', query: { path: props.reference.path },
-                }));
-            }
+            const artifact = await context.fetchArtifact(props.reference.artifactId);
+            if (!artifact?.isDecrypted || (artifact.body !== null && typeof artifact.body !== 'string')) throw new Error('content_unavailable');
+            context.assertCurrent();
+            setPreview({ title: artifact.title ?? t('artifacts.untitled'), body: artifact.body ?? '' });
+            keepPreview = true;
         } catch {
             if (!controller.signal.aborted) { setPreview(null); setUnavailable(true); }
         } finally {

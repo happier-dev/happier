@@ -42,18 +42,15 @@ export function safeRouterBack(params: { router: RouterLike; navigation?: Naviga
 
     try {
         const isWeb = Platform.OS === 'web';
-        const startHref = isWeb && typeof (globalThis as any)?.location?.href === 'string'
-            ? String((globalThis as any).location.href)
-            : null;
-        const historyBack = isWeb && typeof (globalThis as any)?.history?.back === 'function'
-            ? (globalThis as any).history.back.bind((globalThis as any).history)
+        const startHref = isWeb && typeof globalThis.location?.href === 'string'
+            ? globalThis.location.href
             : null;
         if (typeof params.navigation?.goBack === 'function' && (navigationCanGoBack === true || navigationStateCanGoBack === true)) {
             params.navigation.goBack();
             return;
-        } else if (historyBack) {
-            historyBack();
         } else {
+            // The caller's router owns its destination history. Browser history
+            // may contain entries from a different route owner (including Expo).
             params.router.back();
         }
 
@@ -61,8 +58,8 @@ export function safeRouterBack(params: { router: RouterLike; navigation?: Naviga
         // If the URL doesn't change shortly after, fall back to a deterministic replace.
         if (startHref) {
             setTimeout(() => {
-                const currentHref = typeof (globalThis as any)?.location?.href === 'string'
-                    ? String((globalThis as any).location.href)
+                const currentHref = typeof globalThis.location?.href === 'string'
+                    ? globalThis.location.href
                     : null;
                 if (currentHref && currentHref === startHref) {
                     params.router.replace(params.fallbackHref);

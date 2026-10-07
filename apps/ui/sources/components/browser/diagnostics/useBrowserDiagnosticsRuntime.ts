@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { createStore, type StoreApi } from 'zustand/vanilla';
 
 import type {
     BrowserDiagnosticsElementPickerRequestV1,
@@ -19,6 +20,7 @@ import type {
 import {
     applyBrowserDiagnosticEvents,
     createBrowserDiagnosticsUiStore,
+    selectBrowserDiagnosticsEventCount,
     type BrowserDiagnosticsSnapshotClient,
     type BrowserDiagnosticsUiStore,
     useBrowserDiagnosticsDaemonSnapshot,
@@ -65,6 +67,8 @@ export type BrowserDiagnosticsReleaseObjectGroupCommandInput = Readonly<{
 
 export type BrowserDiagnosticsRuntimeProjection = Readonly<{
     state: BrowserDiagnosticsUiStore;
+    eventSource?: Pick<StoreApi<BrowserDiagnosticsUiStore>, 'getState' | 'subscribe'>;
+    hasRenderableDiagnostics?: boolean;
     bridge?: BrowserDiagnosticsEngineBridgeConfig | null;
     interaction?: BrowserDiagnosticsInteractionControls;
     requestEval: (input: BrowserDiagnosticsEvalCommandInput) => boolean;
@@ -165,7 +169,7 @@ function runtimeViewKey(view: BrowserControlViewState | null): string | null {
 export function useBrowserDiagnosticsRuntime(
     input: UseBrowserDiagnosticsRuntimeInput,
 ): BrowserDiagnosticsRuntimeProjection | null {
-    const [state, setState] = React.useState<BrowserDiagnosticsUiStore>(() => createBrowserDiagnosticsUiStore());
+    const [eventSource] = React.useState(() => createStore<BrowserDiagnosticsUiStore>(createBrowserDiagnosticsUiStore));
     const [interactionEnabled, setInteractionEnabled] = React.useState(false);
     const [pickerActive, setPickerActive] = React.useState(false);
     const [pendingRequests, setPendingRequests] = React.useState<BrowserDiagnosticsPendingRequests>({});
@@ -184,12 +188,12 @@ export function useBrowserDiagnosticsRuntime(
 
     const onEvents = React.useCallback<BrowserDiagnosticsEngineBridgeConfig['onEvents']>((events) => {
         if (input.enabled !== true) return;
-        setState((current) => applyBrowserDiagnosticEvents(current, {
+        eventSource.setState((current) => applyBrowserDiagnosticEvents(current, {
             events,
             consoleValueCapture: valueCapture,
             valueCapture,
-        }));
-    }, [input.enabled, valueCapture]);
+        }), true);
+    }, [eventSource, input.enabled, valueCapture]);
 
     useBrowserDiagnosticsDaemonSnapshot({
         view: input.view,
@@ -555,16 +559,22 @@ export function useBrowserDiagnosticsRuntime(
         startElementPicker,
     ]);
 
-    if ((input.enabled !== true && input.automationEnabled !== true) || !input.view) {
-        return null;
-    }
-
-    return {
-        state,
-        bridge,
-        interaction,
-        requestEval,
-        requestGetProperties,
-        requestReleaseObjectGroup,
-    };
+    const readAvailability = React.useCallback(() => !!bridge || !!(browserSessionId && viewId
+        && selectBrowserDiagnosticsEventCount(eventSource.getState(), { browserSessionId, viewId })),
+    [bridge, browserSessionId, eventSource, viewId]);
+    const hasRenderableDiagnostics = React.useSyncExternalStore(eventSource.subscribe, readAvailability, readAvailability);
+    return React.useMemo(() => {
+        if ((input.enabled !== true && input.automationEnabled !== true) || !input.view) return null;
+        return {
+            get state() { return eventSource.getState(); },
+            eventSource,
+            hasRenderableDiagnostics,
+            bridge,
+            interaction,
+            requestEval,
+            requestGetProperties,
+            requestReleaseObjectGroup,
+        };
+    }, [input.enabled, input.automationEnabled, input.view, eventSource, hasRenderableDiagnostics, bridge, interaction,
+        requestEval, requestGetProperties, requestReleaseObjectGroup]);
 }

@@ -51,6 +51,29 @@ describe('safeRouterBack', () => {
         expect(replaceSpy).toHaveBeenCalledWith('/fallback');
     });
 
+    it('uses the destination router on web even when browser history points to another route owner', () => {
+        vi.useFakeTimers();
+        const previous = Object.getOwnPropertyDescriptor(globalThis, 'history');
+        const browserBack = vi.fn(() => {
+            Object.assign(globalThis.location, { href: 'http://localhost/session/document-a', pathname: '/session/document-a' });
+        });
+        Object.defineProperty(globalThis, 'history', { value: { back: browserBack }, configurable: true });
+        const back = vi.fn(() => {
+            Object.assign(globalThis.location, { href: 'http://localhost/artifacts/document-a', pathname: '/artifacts/document-a' });
+        });
+        const replace = vi.fn();
+        try {
+            safeRouterBack({ router: { back, replace, canGoBack: () => true }, fallbackHref: '/artifacts' });
+            vi.runAllTimers();
+            expect(globalThis.location.pathname).toBe('/artifacts/document-a');
+            expect(browserBack).not.toHaveBeenCalled();
+            expect(replace).not.toHaveBeenCalled();
+        } finally {
+            if (previous) Object.defineProperty(globalThis, 'history', previous);
+            else Reflect.deleteProperty(globalThis, 'history');
+        }
+    });
+
     it('replaces with the fallback when back does not change the URL on web', () => {
         vi.useFakeTimers();
 

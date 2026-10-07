@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import tweetnacl from "tweetnacl";
 import {
@@ -97,6 +97,59 @@ describe("Account Directory Home login assertion signer", () => {
         expect(metadata.keyId).toMatch(/^[0-9a-f]{64}$/);
         expect(metadata.publicKeyBase64Url).not.toMatch(/[+/=]/);
         expect(decodeBase64(metadata.publicKeyBase64Url, "base64url")).toEqual(first.publicKey);
+    });
+
+    it("preserves the established signing bytes across master-secret changes and rejects an empty secret", () => {
+        const env = { HANDY_MASTER_SECRET: "  existing-master-secret  " };
+        for (const masterSecret of ["existing-master-secret", "rotated-master-secret", "existing-master-secret"]) {
+            env.HANDY_MASTER_SECRET = `  ${masterSecret}  `;
+            const seed = createHmac("sha512", `${ACCOUNT_DIRECTORY_SIGNING_DOMAIN} Master Seed`)
+                .update(masterSecret, "utf8").digest().subarray(0, 32);
+            const established = tweetnacl.sign.keyPair.fromSeed(seed);
+            const resolved = resolveAccountDirectorySigningKeyPair(env);
+            expect(resolved).toEqual(established);
+        }
+        env.HANDY_MASTER_SECRET = "   ";
+        expect(() => resolveAccountDirectorySigningKeyPair(env)).toThrow("HANDY_MASTER_SECRET is required");
+    });
+
+    it("uses less CPU for repeated signing-key reads than JavaScript scalar multiplication", () => {
+        const inputs = Array.from({ length: 32 }, (_, index) => ({
+            HANDY_MASTER_SECRET: `signing-key-read-performance-${index}`,
+        }));
+        const seeds = inputs.map((env) => createHmac("sha512", `${ACCOUNT_DIRECTORY_SIGNING_DOMAIN} Master Seed`)
+            .update(env.HANDY_MASTER_SECRET, "utf8").digest().subarray(0, 32));
+        const measureCpu = (read: () => void) => {
+            const start = process.cpuUsage();
+            read();
+            const used = process.cpuUsage(start);
+            return used.user + used.system;
+        };
+        const readEstablished = () => {
+            for (const seed of seeds) tweetnacl.sign.keyPair.fromSeed(seed);
+        };
+        const readCurrent = () => {
+            for (const env of inputs) resolveAccountDirectorySigningKeyPair(env);
+        };
+        readEstablished();
+        readCurrent();
+        const establishedCpu: number[] = [];
+        const currentCpu: number[] = [];
+        // Interleave warmed batches, reversing their order, so startup and
+        // scheduling variation cannot masquerade as the measured improvement.
+        for (let sample = 0; sample < 7; sample++) {
+            if (sample % 2 === 0) {
+                establishedCpu.push(measureCpu(readEstablished));
+                currentCpu.push(measureCpu(readCurrent));
+            } else {
+                currentCpu.push(measureCpu(readCurrent));
+                establishedCpu.push(measureCpu(readEstablished));
+            }
+        }
+        // This compares real implementations on the same host, not a guessed
+        // elapsed-time ceiling. Even the slowest current read must beat the
+        // fastest established batch.
+        expect(Math.max(...currentCpu)).toBeLessThan(Math.min(...establishedCpu));
     });
 
     it("sources the signing domain from the canonical protocol constant", () => {

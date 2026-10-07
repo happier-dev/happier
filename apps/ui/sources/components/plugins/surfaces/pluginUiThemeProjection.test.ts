@@ -88,7 +88,7 @@ describe('plugin UI semantic theme projection (§3.3, UI-D12)', () => {
         expect(projected.radii.control).toBe(theme.borderRadius.md);
         expect(projected.radii.panel).toBe(theme.borderRadius.xl);
         expect(projected.radii.pill).toBeGreaterThan(projected.radii.panel);
-        for (const style of ['body', 'label', 'title', 'caption', 'code'] as const) {
+        for (const style of ['body', 'reading', 'label', 'title', 'caption', 'code'] as const) {
             const entry = projected.typography[style];
             expect(entry.fontSize, `${style} font size`).toBeGreaterThan(0);
             expect(entry.lineHeight, `${style} line height`).toBeGreaterThanOrEqual(entry.fontSize);

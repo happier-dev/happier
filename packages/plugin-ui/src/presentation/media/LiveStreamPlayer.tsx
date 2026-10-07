@@ -2,8 +2,6 @@ import * as React from 'react';
 
 import type { HappierLiveStreamAvccInput, HappierLiveStreamPlayerDiagnostic, HappierLiveStreamPlayerDisplayState, HappierLiveStreamPlayerHost, HappierLiveStreamPlayerRendererEvent, HappierLiveStreamPlayerRenderEvent } from './liveStreamPlayerTypes.js';
 
-const DEFAULT_WEB_CODECS_STARTUP_TIMEOUT_MS = 3_000;
-
 const WEB_CODECS_FATAL_DIAGNOSTIC_REASON_CODES = new Set([
     'webcodecs_unavailable',
     'webcodecs_decoder_unavailable',
@@ -13,11 +11,8 @@ const WEB_CODECS_FATAL_DIAGNOSTIC_REASON_CODES = new Set([
 ]);
 
 function rendererDiagnosticToPlayerEvent(diagnostic: HappierLiveStreamPlayerDiagnostic): HappierLiveStreamPlayerRendererEvent | null {
-    if (diagnostic.reasonCode === 'decoder_startup_timeout') {
-        return { type: 'startup_timeout', reasonCode: diagnostic.reasonCode };
-    }
     if (WEB_CODECS_FATAL_DIAGNOSTIC_REASON_CODES.has(diagnostic.reasonCode)) {
-        return { type: 'error', reasonCode: diagnostic.reasonCode };
+        return { type: 'decoder_error', reasonCode: diagnostic.reasonCode };
     }
     return null;
 }
@@ -51,7 +46,6 @@ export function HappierLiveStreamPlayer<State extends HappierLiveStreamPlayerDis
     const avccOnDiagnostic = props.avcc?.onDiagnostic;
     const avccOnDecoded = props.avcc?.onDecoded;
     const avccOnReconfigured = props.avcc?.onReconfigured;
-    const avccOnStartupTimeout = props.avcc?.onStartupTimeout;
     const handleRendererDecoded = React.useCallback(() => {
         if (avccOnDecoded) avccOnDecoded();
         else applyRendererEvent({ type: 'frame_decoded' });
@@ -61,10 +55,6 @@ export function HappierLiveStreamPlayer<State extends HappierLiveStreamPlayerDis
         if (event) applyRendererEvent(event);
         avccOnDiagnostic?.(diagnostic);
     }, [applyRendererEvent, avccOnDiagnostic]);
-    const handleRendererStartupTimeout = React.useCallback((diagnostic: HappierLiveStreamPlayerDiagnostic) => {
-        applyRendererEvent({ type: 'startup_timeout', reasonCode: diagnostic.reasonCode });
-        avccOnStartupTimeout?.(diagnostic);
-    }, [applyRendererEvent, avccOnStartupTimeout]);
     const handleRendererReconfigured = React.useCallback((event: HappierLiveStreamPlayerRenderEvent) => {
         applyRendererEvent({
             type: 'decoder_reconfigured',
@@ -109,8 +99,6 @@ export function HappierLiveStreamPlayer<State extends HappierLiveStreamPlayerDis
                     onDiagnostic: handleRendererDiagnostic,
                     onDecoded: handleRendererDecoded,
                     onReconfigured: handleRendererReconfigured,
-                    onStartupTimeout: handleRendererStartupTimeout,
-                    startupTimeoutMs: props.avcc.startupTimeoutMs ?? DEFAULT_WEB_CODECS_STARTUP_TIMEOUT_MS,
                     testID: props.testID,
                 }) : showFallback ? props.host.renderFallback({
                     reasonCode: state.diagnostic?.reasonCode, testID: props.testID,

@@ -13,6 +13,7 @@ import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import type { IModal } from '@/modal';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { useWorkflowEditorHistory } from '../editor/useWorkflowEditorHistory';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 
 vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', async () => (await import('@/dev/testkit/mocks/sessionEnvelopeTransport')).sessionEnvelopeTransportMock);
 vi.mock('@/sync/api/teams/membershipSessionDataKeyEnvelopesApi', async () => (await import('@/dev/testkit/mocks/sessionEnvelopeTransport')).sessionEnvelopeTransportMock);
@@ -1095,6 +1096,18 @@ describe('workflow editor body', () => {
         expect(bar?.findAll((node) => node.props?.testID === 'workflow-editor-phone-save').length).toBeGreaterThan(0);
         await screen.pressByTestIdAsync('workflow-editor-where-row');
         expect(modalShowSpy).toHaveBeenCalled();
+        // One Add: the bar's. The document ends without a second, identical Add (lab P1).
+        expect(bar?.findAll((node) => node.props?.testID === 'workflow-editor-phone-add').length).toBeGreaterThan(0);
+        expect(screen.findHostByTestId('workflow-editor-add-root')).toBeNull();
+        // Agent and model is a value row like Where and Triggers (04 §4.10), not a chip inside a row.
+        const agentRow = screen.findByTestId('workflow-editor-agent-row');
+        expect(agentRow?.findAll((node) => node.props?.testID === 'workflow-editor-header-engine')).toHaveLength(0);
+        await screen.unmount();
+        // Pressed on a fresh page, it opens the settings where its field is, as Where does.
+        modalShowSpy.mockClear();
+        const fresh = await renderBody(harness, { onRunNow: () => {}, onSave: () => {}, saveStatus: { kind: 'unsaved' } });
+        await fresh.pressByTestIdAsync('workflow-editor-agent-row');
+        expect(modalShowSpy).toHaveBeenCalled();
     });
 
     it('lets a wrapper host keep one page scroll by composing the body without its own', async () => {
@@ -1994,16 +2007,14 @@ describe('workflow editor body', () => {
         expect(restoredRef.instanceId).not.toBe(originalRef.instanceId);
     });
 
-    it('says no final output is selected until one is authored', async () => {
+    it('says no final output is selected until one is authored', async ({ onTestFinished }) => {
+        vi.useFakeTimers();
+        onTestFinished(() => { vi.useRealTimers(); });
         const harness = await loadHarness();
-        // Selection is the contract, not the presence of the copy: both options
-        // are always rendered, so only the exclusive selected state can tell an
-        // unauthored final output from an authored one.
+        // Selection is the contract, not copy or the presence of a menu option.
         const none = await renderBody(harness);
-        expect(none.tree.findHostByTestId('workflow-editor-final-output-clear')?.props.accessibilityState?.checked)
-            .toBe(true);
-        expect(none.tree.findHostByTestId('workflow-editor-final-output-option-analyze')?.props.accessibilityState?.checked)
-            .toBe(false);
+        expect(none.root.findAllByType(DropdownMenu).find(node => node.props.testID === 'workflow-editor-final-output-select')?.props.selectedId)
+            .toBe('none');
         expect(none.findByTestId('workflow-editor-final-output-path')).toBeNull();
         await none.unmount();
 
@@ -2014,26 +2025,46 @@ describe('workflow editor body', () => {
                 path: [],
             }),
         });
-        expect(bound.tree.findHostByTestId('workflow-editor-final-output-clear')?.props.accessibilityState?.checked)
-            .toBe(false);
-        expect(bound.tree.findHostByTestId('workflow-editor-final-output-option-analyze')?.props.accessibilityState?.checked)
-            .toBe(true);
+        expect(bound.root.findAllByType(DropdownMenu).find(node => node.props.testID === 'workflow-editor-final-output-select')?.props.selectedId)
+            .toBe('result:analyze');
         // The producer uses the document vocabulary, never a clipped prompt or internal id.
         expect(bound.getTextContent()).toContain('workflows.editor.addStep');
+        await bound.pressByTestIdAsync('workflow-editor-final-output-trigger');
+        await act(async () => { await vi.runOnlyPendingTimersAsync(); });
         expect(bound.findByTestId('workflow-editor-final-output-path')).not.toBeNull();
     });
 
-    it('authors and clears the deterministic final output through the shared draft owner', async () => {
+    it('authors and clears the deterministic final output through the shared draft owner', async ({ onTestFinished }) => {
+        vi.useFakeTimers();
+        onTestFinished(() => { vi.useRealTimers(); });
         const harness = await loadHarness();
         const changed = vi.fn();
-        const screen = await renderBody(harness, { onChange: changed });
+        let current = buildDraft(harness);
+        function ControlledBody() {
+            const [draft, setDraft] = React.useState(current);
+            return <harness.WorkflowEditorBody draft={draft} onChange={(next) => {
+                current = next; changed(next); setDraft(next);
+            }} machineName="Mac Studio" composerScope={MACHINE_COMPOSER_SCOPE}
+                inspectorGroupDisclosure={OPEN_SETTINGS_GROUPS} selectedBlockId={null}
+                onSelectBlock={() => {}} onCustomizeBlock={() => {}} view="steps" onChangeView={() => {}} />;
+        }
+        const screen = await renderScreen(<ControlledBody />);
 
+        await screen.pressByTestIdAsync('workflow-editor-final-output-trigger');
+        await act(async () => { await vi.runOnlyPendingTimersAsync(); });
         await screen.pressByTestIdAsync('workflow-editor-final-output-option-analyze');
+        await act(async () => { await vi.runOnlyPendingTimersAsync(); });
         expect(changed.mock.calls[0]?.[0].finalOutput).toEqual({
             kind: 'result',
             producer: { blockId: 'analyze', scope: { kind: 'current' } },
             path: [],
         });
+        await screen.pressByTestIdAsync('workflow-editor-final-output-trigger');
+        await act(async () => { await vi.runOnlyPendingTimersAsync(); });
+        await screen.pressByTestIdAsync('workflow-editor-final-output-clear');
+        await act(async () => { await vi.runOnlyPendingTimersAsync(); });
+        expect(current.finalOutput).toBeUndefined();
+        expect(changed).toHaveBeenCalledTimes(2);
     });
 
     it('refuses Export through its gate on a draft the canonical codec cannot serialize', async () => {
@@ -2069,7 +2100,50 @@ describe('workflow editor body', () => {
         expect(screen.findByTestId('workflow-editor-validity')).toBeNull();
     });
 
-    it('offers labelled Undo/Redo from the host history and clears Redo after a new edit', async () => {
+    it('commits a name edit as one undoable draft transaction, with cancellation leaving no history', async () => {
+        const harness = await loadHarness();
+        let draft = buildDraft(harness);
+        function ControlledBody() {
+            const [current, setCurrent] = React.useState(draft);
+            const history = useWorkflowEditorHistory<WorkflowEditorDraft>('step-name-history', (snapshot) => {
+                draft = snapshot;
+                setCurrent(snapshot);
+            });
+            return React.createElement(harness.WorkflowEditorBody, {
+                draft: current, history: history.controls, onCommitChange: history.commit,
+                onChange: (next: WorkflowEditorDraft, label?: string, committed?: boolean) => {
+                    history.record(current, next, label ?? 'Edit workflow', committed);
+                    draft = next;
+                    setCurrent(next);
+                },
+                machineName: 'Mac Studio', composerScope: MACHINE_COMPOSER_SCOPE,
+                selectedBlockId: null, onSelectBlock: () => {}, onCustomizeBlock: () => {},
+                view: 'steps', onChangeView: () => {},
+            });
+        }
+        const screen = await renderScreen(React.createElement(ControlledBody));
+        const field = () => screen.findByTestId('workflow-editor-step-analyze-label')!;
+        expect(field().props.value).toBe('');
+        await act(async () => { field().props.onFocus(); field().props.onChangeText('Inspect '); });
+        // The trailing space stays in the field while canonical draft values are normalized.
+        expect(field().props.value).toBe('Inspect ');
+        await act(async () => field().props.onChangeText('Inspect the change'));
+        await act(async () => field().props.onBlur());
+        expect(draft.blocks[0]?.name).toBe('Inspect the change');
+        await screen.pressByTestIdAsync('workflow-editor-undo');
+        expect(draft.blocks[0]?.name).toBeUndefined();
+        await screen.pressByTestIdAsync('workflow-editor-redo');
+        expect(draft.blocks[0]?.name).toBe('Inspect the change');
+        await act(async () => { field().props.onFocus(); field().props.onChangeText('Cancelled edit'); });
+        await act(async () => { field().props.onKeyPress({ nativeEvent: { key: 'Escape' }, preventDefault: () => {} }); field().props.onBlur(); });
+        expect(draft.blocks[0]?.name).toBe('Inspect the change');
+        await screen.pressByTestIdAsync('workflow-editor-undo');
+        expect(draft.blocks[0]?.name).toBeUndefined();
+    });
+
+    it('offers labelled Undo/Redo from the host history and clears Redo after a new edit', async ({ onTestFinished }) => {
+        vi.useFakeTimers();
+        onTestFinished(() => { vi.useRealTimers(); });
         const harness = await loadHarness();
         let draft = harness.setWorkflowDefaultField(
             harness.createWorkflowEditorDraft({
@@ -2129,7 +2203,10 @@ describe('workflow editor body', () => {
         await screen.pressByTestIdAsync('workflow-editor-redo');
         expect(draft.blocks.map((block) => block.id)).toEqual(['implement']);
         await screen.pressByTestIdAsync('workflow-editor-undo');
+        await screen.pressByTestIdAsync('workflow-editor-final-output-trigger');
+        await act(async () => { await vi.runOnlyPendingTimersAsync(); });
         await screen.pressByTestIdAsync('workflow-editor-final-output-option-implement');
+        await act(async () => { await vi.runOnlyPendingTimersAsync(); });
         expect(redoLabel).toBeNull();
         expect(draft.finalOutput).toMatchObject({ producer: { blockId: 'implement' } });
     });

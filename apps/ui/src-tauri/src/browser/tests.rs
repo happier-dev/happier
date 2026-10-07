@@ -1,7 +1,6 @@
 use super::platform::{
-    child_embedding_supported_for, native_devtools_supported,
-    resolve_desktop_browser_strategy, resolve_desktop_browser_strategy_for_runtime,
-    DesktopBrowserRuntimeSupport,
+    child_embedding_supported_for, native_devtools_supported, resolve_desktop_browser_strategy,
+    resolve_desktop_browser_strategy_for_runtime, DesktopBrowserRuntimeSupport,
 };
 use super::types::{
     DesktopBrowserAvailability, DesktopBrowserBoundsPayload, DesktopBrowserBoundsRect,
@@ -350,6 +349,10 @@ struct FakeWebViewHost {
     devtools_supported: bool,
     capture_result: Arc<Mutex<Result<DesktopBrowserCapturedSnapshot, String>>>,
     on_capture: Option<Arc<dyn Fn() + Send + Sync>>,
+    deferred_capture: Option<Arc<Mutex<Option<super::NativeSnapshotCompletion>>>>,
+    privacy_result: Arc<Mutex<String>>,
+    on_privacy_probe: Option<Arc<dyn Fn() + Send + Sync>>,
+    deferred_privacy: Option<Arc<Mutex<Option<super::NativeScriptCompletion>>>>,
     page_info_by_view_id: Arc<Mutex<HashMap<String, super::DesktopBrowserPageInfoSink>>>,
     diagnostics_by_view_id: Arc<Mutex<HashMap<String, super::DesktopBrowserDiagnosticsSink>>>,
     /// Last script each view received via `eval_script`, recorded by the fake handle so an eval
@@ -375,6 +378,10 @@ impl FakeWebViewHost {
                 bytes_base64: "AQIDBA==".to_string(),
             }))),
             on_capture: None,
+            deferred_capture: None,
+            privacy_result: Arc::new(Mutex::new("false".to_string())),
+            on_privacy_probe: None,
+            deferred_privacy: None,
             page_info_by_view_id: Arc::new(Mutex::new(HashMap::new())),
             diagnostics_by_view_id: Arc::new(Mutex::new(HashMap::new())),
             last_script_by_view_id: Arc::new(Mutex::new(HashMap::new())),
@@ -471,6 +478,10 @@ impl DesktopBrowserWebViewHost for FakeWebViewHost {
             page_info,
             capture_result: self.capture_result.clone(),
             on_capture: self.on_capture.clone(),
+            deferred_capture: self.deferred_capture.clone(),
+            privacy_result: self.privacy_result.clone(),
+            on_privacy_probe: self.on_privacy_probe.clone(),
+            deferred_privacy: self.deferred_privacy.clone(),
             last_script_by_view_id: self.last_script_by_view_id.clone(),
         }))
     }
@@ -488,6 +499,10 @@ struct FakeWebViewHandle {
     page_info: super::DesktopBrowserPageInfoSink,
     capture_result: Arc<Mutex<Result<DesktopBrowserCapturedSnapshot, String>>>,
     on_capture: Option<Arc<dyn Fn() + Send + Sync>>,
+    deferred_capture: Option<Arc<Mutex<Option<super::NativeSnapshotCompletion>>>>,
+    privacy_result: Arc<Mutex<String>>,
+    on_privacy_probe: Option<Arc<dyn Fn() + Send + Sync>>,
+    deferred_privacy: Option<Arc<Mutex<Option<super::NativeScriptCompletion>>>>,
     last_script_by_view_id: Arc<Mutex<HashMap<String, String>>>,
 }
 
@@ -559,17 +574,24 @@ impl DesktopBrowserWebViewHandle for FakeWebViewHandle {
         Ok(())
     }
 
-    fn capture_snapshot(&self) -> Result<DesktopBrowserCapturedSnapshot, String> {
+    fn capture_snapshot(&self, completion: super::NativeSnapshotCompletion) -> Result<(), String> {
         self.log.push(FakeWebViewEvent::Captured {
             view_id: self.view_id.clone(),
         });
         if let Some(on_capture) = &self.on_capture {
             on_capture();
         }
-        self.capture_result
-            .lock()
-            .expect("fake capture lock poisoned")
-            .clone()
+        if let Some(deferred) = &self.deferred_capture {
+            *deferred.lock().expect("deferred capture lock") = Some(completion);
+        } else {
+            completion(
+                self.capture_result
+                    .lock()
+                    .expect("fake capture lock poisoned")
+                    .clone(),
+            );
+        }
+        Ok(())
     }
 
     fn eval_script(&self, script: &str) -> Result<(), String> {
@@ -583,6 +605,27 @@ impl DesktopBrowserWebViewHandle for FakeWebViewHandle {
             .insert(self.view_id.clone(), script.to_string());
         Ok(())
     }
+
+    fn eval_script_with_callback(
+        &self,
+        _script: &str,
+        completion: super::NativeScriptCompletion,
+    ) -> Result<(), String> {
+        if let Some(on_probe) = &self.on_privacy_probe {
+            on_probe();
+        }
+        if let Some(deferred) = &self.deferred_privacy {
+            *deferred.lock().expect("deferred privacy lock") = Some(completion);
+        } else {
+            completion(
+                self.privacy_result
+                    .lock()
+                    .expect("fake privacy lock")
+                    .clone(),
+            );
+        }
+        Ok(())
+    }
 }
 
 impl FakeWebViewHandle {
@@ -591,8 +634,10 @@ impl FakeWebViewHandle {
             let history = self.history.borrow();
             history.0[history.1].clone()
         };
-        self.page_info.record_page_load(DesktopBrowserPageLoadEvent::Started, url.clone());
-        self.page_info.record_page_load(DesktopBrowserPageLoadEvent::Finished, url);
+        self.page_info
+            .record_page_load(DesktopBrowserPageLoadEvent::Started, url.clone());
+        self.page_info
+            .record_page_load(DesktopBrowserPageLoadEvent::Finished, url);
     }
 }
 
@@ -1210,17 +1255,34 @@ fn native_history_dispatch_and_page_info_follow_the_engine_history() {
         temp_dir.path().to_path_buf(),
         Box::new(host),
     );
-    assert!(state.open_view(open_request("view_1", "profile_1", "https://example.test/first")).ok);
+    assert!(
+        state
+            .open_view(open_request(
+                "view_1",
+                "profile_1",
+                "https://example.test/first"
+            ))
+            .ok
+    );
     let info = serde_json::to_value(state.get_page_info(view_request("view_1"))).unwrap();
     assert_eq!(info["pageInfo"]["canGoBack"], false);
     assert_eq!(info["pageInfo"]["canGoForward"], false);
-    assert!(!state.dispatch_view_navigation(dispatch_navigation_request(
-        "view_1", DesktopBrowserNavigationDispatchKind::GoBack,
-    )).ok);
-    assert!(state.navigate(DesktopBrowserViewCommandRequest {
-        url: Some("https://example.test/second".to_string()),
-        ..view_request("view_1")
-    }).ok);
+    assert!(
+        !state
+            .dispatch_view_navigation(dispatch_navigation_request(
+                "view_1",
+                DesktopBrowserNavigationDispatchKind::GoBack,
+            ))
+            .ok
+    );
+    assert!(
+        state
+            .navigate(DesktopBrowserViewCommandRequest {
+                url: Some("https://example.test/second".to_string()),
+                ..view_request("view_1")
+            })
+            .ok
+    );
     let info = serde_json::to_value(state.get_page_info(view_request("view_1"))).unwrap();
     assert_eq!(info["pageInfo"]["canGoBack"], true);
     assert_eq!(info["pageInfo"]["canGoForward"], false);
@@ -1231,23 +1293,38 @@ fn native_history_dispatch_and_page_info_follow_the_engine_history() {
     ] {
         let request = serde_json::from_value(serde_json::json!({
             "browserSessionId": "browser_session_1", "viewId": "view_1", "kind": kind,
-        })).expect("native history command");
+        }))
+        .expect("native history command");
         assert!(state.dispatch_view_navigation(request).ok);
         let info = serde_json::to_value(state.get_page_info(view_request("view_1"))).unwrap();
         assert_eq!(info["pageInfo"]["currentUrl"], url);
         assert_eq!(info["pageInfo"]["canGoBack"], back);
         assert_eq!(info["pageInfo"]["canGoForward"], forward);
     }
-    assert!(!state.dispatch_view_navigation(dispatch_navigation_request(
-        "view_1", DesktopBrowserNavigationDispatchKind::GoForward,
-    )).ok);
-    assert!(state.dispatch_view_navigation(dispatch_navigation_request(
-        "view_1", DesktopBrowserNavigationDispatchKind::GoBack,
-    )).ok);
-    assert!(state.navigate(DesktopBrowserViewCommandRequest {
-        url: Some("https://example.test/third".to_string()),
-        ..view_request("view_1")
-    }).ok);
+    assert!(
+        !state
+            .dispatch_view_navigation(dispatch_navigation_request(
+                "view_1",
+                DesktopBrowserNavigationDispatchKind::GoForward,
+            ))
+            .ok
+    );
+    assert!(
+        state
+            .dispatch_view_navigation(dispatch_navigation_request(
+                "view_1",
+                DesktopBrowserNavigationDispatchKind::GoBack,
+            ))
+            .ok
+    );
+    assert!(
+        state
+            .navigate(DesktopBrowserViewCommandRequest {
+                url: Some("https://example.test/third".to_string()),
+                ..view_request("view_1")
+            })
+            .ok
+    );
     let info = serde_json::to_value(state.get_page_info(view_request("view_1"))).unwrap();
     assert_eq!(info["pageInfo"]["canGoBack"], true);
     assert_eq!(info["pageInfo"]["canGoForward"], false);
@@ -1399,6 +1476,96 @@ fn native_state_captures_snapshot_for_matching_view_generation() {
     assert!(result.error_code.is_none());
     assert!(host.log.events().contains(&FakeWebViewEvent::Captured {
         view_id: "view_1".to_string(),
+    }));
+}
+
+#[test]
+fn native_state_refuses_sensitive_or_unknown_source_privacy_before_pixels() {
+    for privacy in ["true", "null", "\"false\"", "not-json", ""] {
+        let temp_dir = tempfile::tempdir().expect("temp directory");
+        let host = FakeWebViewHost::new(false);
+        *host.privacy_result.lock().expect("privacy lock") = privacy.to_string();
+        let state = DesktopBrowserState::for_test(
+            DesktopBrowserAvailability::available(
+                DesktopBrowserPlatform::MacOs,
+                DesktopBrowserPrimitive::MacOsNsViewWebKit,
+                DesktopBrowserSupport {
+                    navigation: true,
+                    capture: true,
+                    ..DesktopBrowserSupport::default()
+                },
+            ),
+            temp_dir.path().to_path_buf(),
+            Box::new(host.clone()),
+        );
+        assert!(
+            state
+                .open_view(open_request("view_1", "profile_1", "https://example.test"))
+                .ok
+        );
+        let result = state.capture_snapshot(capture_request("view_1", 0));
+        assert!(!result.ok, "source privacy {privacy} must refuse capture");
+        let expected_error = if privacy == "true" {
+            DesktopBrowserCaptureErrorCode::SensitiveFieldsPresent
+        } else {
+            DesktopBrowserCaptureErrorCode::CaptureFailed
+        };
+        assert_eq!(result.error_code, Some(expected_error));
+        let recording = state.capture_recording_frame(recording_frame_request(
+            "view_1",
+            0,
+            "recordings/private.png",
+            16_000_000,
+        ));
+        assert!(
+            !recording.ok,
+            "source privacy {privacy} must refuse recording pixels"
+        );
+        assert_eq!(recording.error_code, Some(expected_error));
+        assert!(!temp_dir
+            .path()
+            .join(".happier/tmp/browser-recordings/recordings/private.png")
+            .exists());
+        assert!(!host.log.events().contains(&FakeWebViewEvent::Captured {
+            view_id: "view_1".to_string()
+        }));
+    }
+}
+
+#[test]
+fn native_state_rejects_navigation_during_source_privacy_probe_before_pixels() {
+    let temp_dir = tempfile::tempdir().expect("temp directory");
+    let mut host = FakeWebViewHost::new(false);
+    let navigation_host = host.clone();
+    host.on_privacy_probe = Some(Arc::new(move || {
+        navigation_host.simulate_native_navigation("view_1", "https://example.test/next");
+    }));
+    let state = DesktopBrowserState::for_test(
+        DesktopBrowserAvailability::available(
+            DesktopBrowserPlatform::MacOs,
+            DesktopBrowserPrimitive::MacOsNsViewWebKit,
+            DesktopBrowserSupport {
+                navigation: true,
+                capture: true,
+                ..DesktopBrowserSupport::default()
+            },
+        ),
+        temp_dir.path().to_path_buf(),
+        Box::new(host.clone()),
+    );
+    assert!(
+        state
+            .open_view(open_request("view_1", "profile_1", "https://example.test"))
+            .ok
+    );
+    let result = state.capture_snapshot(capture_request("view_1", 0));
+    assert!(!result.ok);
+    assert_eq!(
+        result.error_code,
+        Some(DesktopBrowserCaptureErrorCode::StaleNavigation)
+    );
+    assert!(!host.log.events().contains(&FakeWebViewEvent::Captured {
+        view_id: "view_1".to_string()
     }));
 }
 
@@ -2477,4 +2644,274 @@ fn native_state_eval_script_gated_off_when_diagnostics_unsupported() {
     let result = state.eval_script(eval_request("view_1", "window.noop();"));
     assert!(!result.ok);
     assert!(host.last_script("view_1").is_none());
+}
+
+#[test]
+fn native_snapshot_completion_accepts_callback_after_one_second() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let pending = Arc::new(Mutex::new(None));
+    let host = FakeWebViewHost {
+        deferred_capture: Some(pending.clone()),
+        ..FakeWebViewHost::new(false)
+    };
+    let mut availability = available_test_availability();
+    availability.supports.capture = true;
+    let state = DesktopBrowserState::for_test(
+        availability,
+        temp_dir.path().to_path_buf(),
+        Box::new(host.clone()),
+    );
+    assert!(
+        state
+            .open_view(open_request("view_1", "profile_1", "https://example.test"))
+            .ok
+    );
+    let mut receiver = state
+        .start_view_capture(super::view_key("browser_session_1", "view_1"), 0)
+        .expect("scheduled capture");
+    assert!(matches!(
+        receiver.try_recv(),
+        Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+    ));
+    // The owner returns while native completion is pending, allowing other view commands.
+    assert!(state.set_view_bounds(bounds_request("view_1", true)).ok);
+    std::thread::sleep(std::time::Duration::from_secs(3));
+    pending
+        .lock()
+        .expect("pending callback")
+        .take()
+        .expect("native completion")(
+        host.capture_result.lock().expect("capture result").clone()
+    );
+    let capture = tauri::async_runtime::block_on(super::await_native_capture(Ok(receiver)));
+    let result = state.finish_view_snapshot(capture_request("view_1", 0), capture);
+    assert!(result.ok);
+    assert_eq!(
+        result
+            .snapshot
+            .expect("completed snapshot")
+            .capture_request_id,
+        "capture_request_1"
+    );
+}
+
+#[test]
+fn native_snapshot_pending_completion_preserves_navigation_and_channel_errors() {
+    for action in ["navigate", "close", "drop"] {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let pending = Arc::new(Mutex::new(None));
+        let host = FakeWebViewHost {
+            deferred_capture: Some(pending.clone()),
+            ..FakeWebViewHost::new(false)
+        };
+        let mut availability = available_test_availability();
+        availability.supports.capture = true;
+        let state = DesktopBrowserState::for_test(
+            availability,
+            temp_dir.path().to_path_buf(),
+            Box::new(host.clone()),
+        );
+        assert!(
+            state
+                .open_view(open_request("view_1", "profile_1", "https://example.test"))
+                .ok
+        );
+        let receiver = state
+            .start_view_capture(super::view_key("browser_session_1", "view_1"), 0)
+            .expect("scheduled capture");
+        let expected = match action {
+            "navigate" => {
+                assert!(
+                    state
+                        .navigate(navigate_request("view_1", "https://example.test/next"))
+                        .ok
+                );
+                DesktopBrowserCaptureErrorCode::StaleNavigation
+            }
+            "close" => {
+                assert!(state.close_view_by_id(view_request("view_1")).ok);
+                DesktopBrowserCaptureErrorCode::ViewUnavailable
+            }
+            _ => DesktopBrowserCaptureErrorCode::CaptureFailed,
+        };
+        let completion = pending
+            .lock()
+            .expect("pending callback")
+            .take()
+            .expect("native completion");
+        if action == "drop" {
+            drop(completion);
+        } else {
+            completion(host.capture_result.lock().expect("capture result").clone());
+        }
+        let capture = tauri::async_runtime::block_on(super::await_native_capture(Ok(receiver)));
+        let result = state.finish_view_snapshot(capture_request("view_1", 0), capture);
+        assert!(!result.ok);
+        assert!(result.snapshot.is_none());
+        assert_eq!(result.error_code, Some(expected));
+    }
+}
+
+#[test]
+fn native_state_pending_source_privacy_handles_closed_view_and_dropped_callback() {
+    for close_view in [true, false] {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let pending = Arc::new(Mutex::new(None));
+        let host = FakeWebViewHost {
+            deferred_privacy: Some(pending.clone()),
+            ..FakeWebViewHost::new(false)
+        };
+        let mut availability = available_test_availability();
+        availability.supports.capture = true;
+        let state = DesktopBrowserState::for_test(
+            availability,
+            temp_dir.path().to_path_buf(),
+            Box::new(host.clone()),
+        );
+        assert!(
+            state
+                .open_view(open_request("view_1", "profile_1", "https://example.test"))
+                .ok
+        );
+        let receiver = state
+            .start_view_capture(super::view_key("browser_session_1", "view_1"), 0)
+            .expect("scheduled probe");
+        let completion = pending
+            .lock()
+            .expect("pending probe")
+            .take()
+            .expect("native evaluation completion");
+        let expected = if close_view {
+            assert!(state.close_view_by_id(view_request("view_1")).ok);
+            completion("false".to_string());
+            DesktopBrowserCaptureErrorCode::ViewUnavailable
+        } else {
+            // Wry drops the evaluation callback when it queues a pending document's script.
+            drop(completion);
+            DesktopBrowserCaptureErrorCode::CaptureFailed
+        };
+        let capture = tauri::async_runtime::block_on(super::await_native_capture(Ok(receiver)));
+        let result = state.finish_view_snapshot(capture_request("view_1", 0), capture);
+        assert!(!result.ok);
+        assert_eq!(result.error_code, Some(expected));
+        assert!(host
+            .log
+            .events()
+            .iter()
+            .all(|event| !matches!(event, FakeWebViewEvent::Captured { .. })));
+    }
+}
+
+#[test]
+fn native_state_pending_source_privacy_cannot_admit_reopened_view_pixels() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let pending = Arc::new(Mutex::new(None));
+    let host = FakeWebViewHost {
+        deferred_privacy: Some(pending.clone()),
+        ..FakeWebViewHost::new(false)
+    };
+    let mut availability = available_test_availability();
+    availability.supports.capture = true;
+    let state = DesktopBrowserState::for_test(
+        availability,
+        temp_dir.path().to_path_buf(),
+        Box::new(host.clone()),
+    );
+    assert!(
+        state
+            .open_view(open_request("view_1", "profile_1", "https://example.test"))
+            .ok
+    );
+    let receiver = state
+        .start_view_capture(super::view_key("browser_session_1", "view_1"), 0)
+        .expect("scheduled original probe");
+    let completion = pending
+        .lock()
+        .expect("pending probe")
+        .take()
+        .expect("original evaluation completion");
+    assert!(state.close_view_by_id(view_request("view_1")).ok);
+    *host.privacy_result.lock().expect("source privacy") = "true".to_string();
+    assert!(
+        state
+            .open_view(open_request(
+                "view_1",
+                "profile_1",
+                "https://example.test/sensitive"
+            ))
+            .ok
+    );
+    completion("false".to_string());
+    let capture = tauri::async_runtime::block_on(super::await_native_capture(Ok(receiver)));
+    let result = state.finish_view_recording_frame(
+        recording_frame_request("view_1", 0, "recordings/replaced.png", 16_000_000),
+        capture,
+    );
+    assert!(
+        !result.ok,
+        "original page's privacy result cannot admit replacement pixels"
+    );
+    assert!(host
+        .log
+        .events()
+        .iter()
+        .all(|event| !matches!(event, FakeWebViewEvent::Captured { .. })));
+}
+
+#[test]
+fn native_snapshot_completion_cannot_survive_source_replacement() {
+    for replace_after_completion in [false, true] {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let pending = Arc::new(Mutex::new(None));
+        let host = FakeWebViewHost {
+            deferred_capture: Some(pending.clone()),
+            ..FakeWebViewHost::new(false)
+        };
+        let mut availability = available_test_availability();
+        availability.supports.capture = true;
+        let state = DesktopBrowserState::for_test(
+            availability,
+            temp_dir.path().to_path_buf(),
+            Box::new(host.clone()),
+        );
+        assert!(
+            state
+                .open_view(open_request("view_1", "profile_1", "https://example.test"))
+                .ok
+        );
+        let receiver = state
+            .start_view_capture(super::view_key("browser_session_1", "view_1"), 0)
+            .expect("scheduled capture");
+        let completion = pending
+            .lock()
+            .expect("pending capture")
+            .take()
+            .expect("native completion");
+        let replace = || {
+            assert!(state.close_view_by_id(view_request("view_1")).ok);
+            assert!(
+                state
+                    .open_view(open_request(
+                        "view_1",
+                        "profile_1",
+                        "https://example.test/replacement"
+                    ))
+                    .ok
+            );
+        };
+        if !replace_after_completion {
+            replace();
+        }
+        completion(host.capture_result.lock().expect("capture result").clone());
+        if replace_after_completion {
+            replace();
+        }
+        let capture = tauri::async_runtime::block_on(super::await_native_capture(Ok(receiver)));
+        let result = state.finish_view_snapshot(capture_request("view_1", 0), capture);
+        assert!(
+            !result.ok,
+            "a replacement cannot inherit the original capture"
+        );
+        assert!(result.snapshot.is_none());
+    }
 }

@@ -110,6 +110,7 @@ function composerReferenceHost(): ComposerReferenceSearchHost {
             generation: 7,
             contributions: [{
                 version: 1,
+                occurrenceId: '7',
                 contribution: {
                     kind: 'localId',
                     pluginId: 'acme.issues',

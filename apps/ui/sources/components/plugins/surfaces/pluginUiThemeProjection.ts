@@ -84,7 +84,8 @@ function readTextStyleMetric(
  * - `heading` — the page title step (`PageHeader`), for a plugin page heading;
  * - `title` — the host's primary item title, for pane and section headings;
  * - `label` — the host row title, for row titles, buttons and tabs;
- * - `body` — the host row meta line, for prose and secondary lines;
+ * - `body` — the host row meta line, for secondary lines;
+ * - `reading` — the host reading prose step, for a detail's prose and a story step's body;
  * - `caption` — the host timestamp role (tabular), for quiet metadata.
  *
  * Each is a descending step, so a heading always reads above a row title and a
@@ -101,6 +102,7 @@ const PLUGIN_UI_TYPE_ROLES: Readonly<Record<HappierTypeRole, Readonly<{
     },
     label: { style: () => Typography.rowTitle(), fontWeight: FontWeights.semiBold },
     body: { style: () => Typography.rowMeta(), fontWeight: FontWeights.regular },
+    reading: { style: () => Typography.reading(), fontWeight: FontWeights.regular },
     caption: { style: () => Typography.timestamp(), fontWeight: FontWeights.regular },
 });
 
@@ -150,6 +152,7 @@ export function readPluginUiHostTypography(): HappierUiTypography {
         title: projectTypeRoleStyle('title'),
         label: projectTypeRoleStyle('label'),
         body: projectTypeRoleStyle('body'),
+        reading: projectTypeRoleStyle('reading'),
         caption: projectTypeRoleStyle('caption'),
         // The face per weight of the configuration-page anatomy (`HAPPIER_PAGE_TEXT`).
         weights: Object.freeze({
@@ -208,6 +211,7 @@ export function projectPluginUiTheme(theme: Theme): PluginUiThemeV1 {
         }),
         typography: Object.freeze({
             body: projectTypeRoleMetric('body'),
+            reading: projectTypeRoleMetric('reading'),
             label: projectTypeRoleMetric('label'),
             title: projectTypeRoleMetric('title'),
             caption: projectTypeRoleMetric('caption'),
@@ -252,7 +256,7 @@ export function projectPluginUiHostPalette(theme: Theme): HappierUiPalette {
         // (`HAPPIER_COLLECTION_LIST_ROW_STYLE` over `Item`).
         navigationSelected: colors.surface.elevated,
         navigationHover: colors.surface.pressed,
-        freshnessBackground: colors.surface.inset,
+        inset: colors.surface.inset,
         searchFieldRadiusPx: theme.borderRadius.lg,
     });
     hostPalettes.set(theme, palette);

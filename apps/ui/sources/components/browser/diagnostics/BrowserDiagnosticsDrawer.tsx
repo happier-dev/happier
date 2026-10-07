@@ -19,7 +19,11 @@ import type {
     BrowserDiagnosticFamilyProjection,
     BrowserDiagnosticsPanelProjection,
     BrowserViewDiagnosticsProjection,
+    BrowserDiagnosticsUiStore,
 } from '@/sync/domains/browser/diagnostics';
+import { selectBrowserDiagnosticsForView } from '@/sync/domains/browser/diagnostics';
+import { browserViewKey } from '@happier-dev/protocol';
+import type { StoreApi } from 'zustand/vanilla';
 import { t } from '@/text';
 
 import { BROWSER_DRAWER_MAX_HEIGHT_FRACTION } from '../browserChromeDensity';
@@ -207,8 +211,40 @@ function projectionForSection(
     };
 }
 
+type DiagnosticsEventSource = Pick<StoreApi<BrowserDiagnosticsUiStore>, 'getState' | 'subscribe'>;
+const noSubscribe = () => () => {};
+
+/** Mounted only while the drawer is open; collection is owned by the surface runtime. */
+function BrowserDiagnosticsDrawerBody(props: Readonly<{
+    diagnostics: BrowserDiagnosticsPanelProjection;
+    state?: BrowserDiagnosticsUiStore;
+    eventSource?: DiagnosticsEventSource;
+    section: SectionKey | null;
+    interaction?: BrowserDiagnosticsInteractionControls;
+    interactionSurface?: BrowserDiagnosticsInteractionSurface;
+    testID: string;
+}>): React.ReactElement {
+    const viewKey = props.diagnostics.sourceKind === 'browserDiagnostics' ? browserViewKey(props.diagnostics) : null;
+    const readView = React.useCallback(() => viewKey
+        ? (props.eventSource?.getState() ?? props.state)?.viewsByKey[viewKey] ?? null
+        : null, [props.eventSource, props.state, viewKey]);
+    const view = React.useSyncExternalStore(props.eventSource?.subscribe ?? noSubscribe, readView, readView);
+    const diagnostics = React.useMemo(() => {
+        const projection = props.diagnostics.sourceKind === 'browserDiagnostics' && (props.eventSource || props.state)
+            ? selectBrowserDiagnosticsForView({ viewsByKey: view && viewKey ? { [viewKey]: view } : {} }, props.diagnostics)
+            : props.diagnostics;
+        return projection.sourceKind === 'browserDiagnostics' && props.section && props.section !== PREVIEW_PROXY_SECTION
+            ? projectionForSection(projection, props.section)
+            : projection;
+    }, [props.diagnostics, props.eventSource, props.state, props.section, view, viewKey]);
+    return <BrowserDiagnosticsPanel diagnostics={diagnostics} interaction={props.interaction}
+        interactionSurface={props.interactionSurface} testID={props.testID} />;
+}
+
 export function BrowserDiagnosticsDrawer(props: Readonly<{
     diagnostics: BrowserDiagnosticsPanelProjection;
+    state?: BrowserDiagnosticsUiStore;
+    eventSource?: DiagnosticsEventSource;
     /**
      * A second diagnostics source (the preview proxy). Rendered as an extra SECTION of this drawer,
      * never as a second drawer: two stacked panels with the same title is what the surface used to
@@ -360,7 +396,7 @@ export function BrowserDiagnosticsDrawer(props: Readonly<{
         if (!isHost || activeSection === null || activeSection === PREVIEW_PROXY_SECTION) {
             return props.diagnostics;
         }
-        return projectionForSection(props.diagnostics as BrowserViewDiagnosticsProjection, activeSection);
+        return props.diagnostics;
     }, [activeSection, isHost, props.diagnostics, props.supplemental, showingSupplemental]);
 
     const bodyInteractionSurface: BrowserDiagnosticsInteractionSurface | undefined = (
@@ -484,8 +520,11 @@ export function BrowserDiagnosticsDrawer(props: Readonly<{
             {bodyVisible ? (
                 <Animated.View style={[stylesheet.bodyClip, bodyAnimatedStyle]}>
                     <ScrollView style={stylesheet.bodyScroll} showsVerticalScrollIndicator={false}>
-                        <BrowserDiagnosticsPanel
+                        <BrowserDiagnosticsDrawerBody
                             diagnostics={bodyDiagnostics}
+                            state={showingSupplemental ? undefined : props.state}
+                            eventSource={showingSupplemental ? undefined : props.eventSource}
+                            section={activeSection}
                             interaction={bodyInteraction}
                             interactionSurface={bodyInteractionSurface}
                             testID={bodyTestID}

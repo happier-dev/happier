@@ -426,6 +426,11 @@ It never opens the Session to do this. A typical case is an issue that an Agent 
 fixing. Three mounted host methods provide this, and the `useSessionState` hook
 wraps the first two:
 
+In current development source, `useSessionState` and `useSessionStates` pause
+reads and release watches when the host marks their surface inactive. They keep
+the last ready snapshot, ignore late callbacks, and re-read when activity resumes.
+Providers without a host activity fact keep their existing live behavior.
+
 | Host method | What it does |
 |---|---|
 | `readSession(sessionId)` | Returns the Session's current state, or `null` when this Account cannot reach it. |

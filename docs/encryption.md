@@ -73,6 +73,12 @@ payload is the strict `{key,value}` record; clients verify its key against the
 requested row before returning the value. Opaque engine carriers remain strict
 JSON, without reinterpretation at the server boundary.
 
+Stored readers derive their known-field projections from those canonical schemas,
+dropping additive envelope, payload and engine-carrier fields while preserving opaque
+selection values. Mutation inputs stay strict. Authoring values do not inherit the
+retired whole-Settings document's generic collection, string and nesting budgets;
+the recent-path UI owner still keeps its existing ten most recent entries.
+
 The server checks persisted Account mode and cipher purpose for reads, lists, and
 mutations. It never opens E2EE content. Tombstones retain the CAS revision, and
 push hints carry only the row key and revision. These are development source
@@ -117,6 +123,20 @@ untagged-ciphertext fallback. Plaintext mutations keep their
 HTTP surface but use the same structural derivation and canonical record storage.
 The separate publication transport remains unchanged. This is 0.3 development
 source behavior, not a released availability or loaded-runtime certification claim.
+
+Review snapshot capture preserves complete selected lines and their surrounding
+context, without a separate file-size or line-byte cutoff. Protocol owns the
+snapshot hashes and BIDI/minified diagnostic facts used by CLI capture, UI draft
+promotion and plaintext server validation. Minified text is diagnostic metadata,
+not a reason to discard captured evidence. Review proposal batches have no
+separate count or aggregate-byte cutoff; their strict individual proposal and
+containing transport contracts still apply.
+
+Account-mode conversion reads the complete Review Comment and event inventory
+and checks exact source envelopes and currentness before rewriting it in the
+Account transition transaction. Comment and event counts have no separate
+ceiling; the containing Account transition retains its existing
+8,000,000-byte UTF-8 request boundary.
 
 ### Terminology and rollout status
 
@@ -1403,6 +1423,20 @@ same recipient-private envelope independently of whether document bodies are
 requested. The Artifacts browser opens this metadata on a cold list refresh;
 document bodies remain lazy. Public-link inventory/content paths do not gain
 this metadata or its key.
+
+In 0.3 development UI source, an unchanged header refresh retains an already
+opened body only when the header/body revisions, raw header, storage mode,
+owner and caller access match. E2EE retention also requires the exact content
+and private-metadata key envelopes that opened the row; missing custody or a
+locked incoming row discards the opened body. This is an in-memory presentation
+projection, not another persisted format or authorization source.
+When a view needs a body or binary/HTML preview, one finite captured Home/Account
+operation opens the head, performs the existing recipient preparation and reads
+the preview content. Only that operation's opened row is reused for its blob or
+isolated-shell read. Later downloads and retries obtain fresh authority; cached
+presentation rows never replace those reads or their mode, access and integrity
+checks. Account retirement and cancellation suppress unsettled results.
+
 Live Artifact create/update events carry the same private envelope and the
 recipient-qualified wrap projected by the existing access owner. An editing
 grant's wrap is not substituted for the owner's. An incomplete update without
@@ -2054,10 +2088,30 @@ canonical Protocol codec and reject a content-kind/mode mismatch before disclosu
 publication-use admission, or visit logging. A viewer's later decryption failure
 is not a server-side confidentiality guard.
 
+Artifact kinds use the single Protocol policy in `artifactSharingV1.ts` for browser
+listing, public-link admission and people/Team/group sharing. Approval kinds and
+the Home layout are excluded from all three; widget-area layouts are excluded
+from the browser and public links while retaining people sharing. Unknown and
+untyped ordinary documents retain generic document behavior. Both keyholding
+Action hosts reject disallowed public-link creation with
+`artifact_kind_not_shareable`, independently of UI visibility. The server also
+checks this policy for Plain Accounts after opening their stored header (including
+server at-rest sealing). E2EE headers remain opaque to the server; client enforcement
+does not add a server-readable kind field. Existing links and people grants remain
+listable and revocable through their access-authorized owners after a kind-policy change.
+
 Protocol owns the V0 SecretBox framing and its current serialized-JSON payload.
 The `fragment_v1` derivation marker distinguishes new links from
 `legacy_token_v1` publications, whose wrapping key came from the released
-server-visible path token. Readers retain the released plain-JSON payload and
+server-visible path token. New Session publication and rotation use the same
+fragment-only persistence owner as Artifacts and require the isolated origin and
+its rate-limit dependency. Both Session POST routes accept the current material
+without old-component negotiation; the Session-specific route rejects the former
+`token` input. Retained legacy links remain readable, listable, revocable and
+settings-editable without replacing their token or resetting usage. Rotating one
+upgrades it to `fragment_v1` and requires isolation; replacing only a legacy E2EE
+wrapped key is refused, while replaying the identical envelope remains valid.
+Readers retain the released plain-JSON payload and
 legacy Session route; they never substitute a lookup id for a missing or corrupt
 fragment secret. This retains old link keys and routes without claiming their
 confidentiality has improved. Released 0.2 Sessions also use flat layout-0 metadata;

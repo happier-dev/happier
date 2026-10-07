@@ -35,7 +35,7 @@ export function maskAccountEmail(email: string | null | undefined): string | nul
 }
 
 /** An account id keeps its prefix and last two characters when long enough to tell accounts apart. */
-function maskAccountIdHint(value: string | null | undefined): string | null {
+export function abbreviateConnectedAccountId(value: string | null | undefined): string | null {
     const chars = Array.from(value?.trim() ?? '');
     if (chars.length === 0) return null;
     if (chars.length < 10) return `${chars.slice(0, 2).join('')}${MASK}`;
@@ -63,9 +63,9 @@ export function presentConnectedAccountIdentity(input: Readonly<{
 }>): Readonly<{ label: string | null; email: string | null; accountId: string | null }> {
     if (!input.hidden) return { label: input.label, email: input.email, accountId: input.accountId };
     return {
-        label: input.labelKind === 'accountId' ? maskAccountIdHint(input.label) : maskIdentityLabel(input.label),
+        label: input.labelKind === 'accountId' ? abbreviateConnectedAccountId(input.label) : maskIdentityLabel(input.label),
         email: maskAccountEmail(input.email),
-        accountId: maskAccountIdHint(input.accountId),
+        accountId: abbreviateConnectedAccountId(input.accountId),
     };
 }
 

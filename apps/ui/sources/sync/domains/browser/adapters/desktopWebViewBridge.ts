@@ -127,6 +127,7 @@ export type DesktopBrowserCaptureErrorCode =
     | 'captureUnsupported'
     | 'viewUnavailable'
     | 'staleNavigation'
+    | 'sensitiveFieldsPresent'
     | 'captureFailed';
 
 /**
@@ -253,14 +254,12 @@ const DESKTOP_BROWSER_CAPTURE_ERROR_CODES = new Set<string>([
     'captureUnsupported',
     'viewUnavailable',
     'staleNavigation',
+    'sensitiveFieldsPresent',
     'captureFailed',
 ]);
 
 const DESKTOP_BROWSER_RECORDING_FRAME_ERROR_CODES = new Set<string>([
-    'captureUnsupported',
-    'viewUnavailable',
-    'staleNavigation',
-    'captureFailed',
+    ...DESKTOP_BROWSER_CAPTURE_ERROR_CODES,
     'captureTooLarge',
     'captureWriteFailed',
 ]);

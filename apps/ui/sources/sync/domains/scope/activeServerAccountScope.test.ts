@@ -72,6 +72,16 @@ describe('getActiveServerAccountScope', () => {
         });
     });
 
+    it('qualifies active-only content reads to the requested Home without inferring a missing Home', async () => {
+        const { selectActiveServerAccountScopeForServer } = await import('./activeServerAccountScope');
+        const scope = { serverId: 'srv_identity', accountId: 'account-a' };
+        expect(selectActiveServerAccountScopeForServer(scope, ' srv_identity ')).toBe(scope);
+        expect(selectActiveServerAccountScopeForServer(scope, 'other-home')).toBeNull();
+        expect(selectActiveServerAccountScopeForServer(scope, null)).toBeNull();
+        expect(selectActiveServerAccountScopeForServer(scope, '')).toBeNull();
+        expect(selectActiveServerAccountScopeForServer(null, 'srv_identity')).toBeNull();
+    });
+
     it('does not treat a legacy host-derived scope as active after the snapshot resolves to identity', async () => {
         storageState.profileScope = { serverId: 'localhost-18829', accountId: 'account-1' };
 

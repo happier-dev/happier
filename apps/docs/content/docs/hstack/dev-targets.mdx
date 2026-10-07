@@ -224,15 +224,12 @@ node ./apps/stack/scripts/repo_local.mjs dev-targets placement set server mac
 # Development-only: build named-stack artifacts in a separate worker workspace.
 node ./apps/stack/scripts/repo_local.mjs dev-targets placement set build linux
 
-# Development-only: try workers in order, then fall back locally.
+# Development-only: enable worker builds with local fallback only if workers are unavailable.
 node ./apps/stack/scripts/repo_local.mjs dev-targets placement set build ordered --targets=linux,mac --fallback=local
 
-# Development-only: build on one worker, run controlled QA on other workers.
-# Set the QA default on the checkout's existing producer stack.
+# Development-only: build on a worker; pin a QA Machine only when explicitly needed.
 node ./apps/stack/scripts/repo_local.mjs dev-targets placement set build mac2-linux --stack=<producer>
-node ./apps/stack/scripts/repo_local.mjs dev-targets placement set qa auto \
-  --targets=linux2,linux3,windows1-linux,windows2-linux,linux1 \
-  --fallback=local --stack=<producer>
+node ./apps/stack/scripts/repo_local.mjs dev-targets placement set daemon mac3-linux --stack=<qa>
 
 # Override only this consumer, or restore its local execution.
 node ./apps/stack/scripts/repo_local.mjs dev-targets placement set qa ordered --targets=linux3,linux2 --fallback=local --stack=<qa>
@@ -244,9 +241,12 @@ node ./apps/stack/scripts/repo_local.mjs dev-targets placement show
 Runtime surfaces accept `local` or one configured target name. `build` and `qa` also accept `ordered`
 with `--targets=NAME,...` and local fallback. `qa` additionally accepts `auto` over its configured
 pool, using the existing least-load command selector without competing local execution.
-QA placement is currently explicit per-stack opt-in: the producer QA default is stored but its
-automatic rollout remains inactive until the complete remote path has passed live verification.
-Existing stacks therefore retain local behavior. Retained local server data always requires the
+Fresh controlled QA stacks keep their daemon local. A daemon is the Machine identity for sessions,
+resume and writable workspaces; it cannot follow a command pool between starts. An explicit per-stack
+`daemon` pin selects one named host and fails closed if that host is unavailable. `qa` placement can
+select the server, but cannot override that Machine pin.
+Defaults are resolved on the next start; changing placement does not move running services.
+Retained local server data always requires the
 explicit data handoff, even when that consumer has an explicit QA policy.
 `commands` additionally accepts
 `auto`, optionally with `--targets`, `--include-local`, `--fallback=local|error`,
@@ -256,15 +256,29 @@ explicit data handoff, even when that consumer has an explicit QA policy.
 |---|---|---|
 | `commands` | Common test, Vitest, and typecheck script processes | Source edits and Git |
 | `expo` | Metro/Expo watch, bundle, and restart work | TUI, Mutagen, stable Expo port/tunnel |
-| `daemon` | CLI build/watch and daemon process | TUI, Mutagen, server tunnel |
+| `daemon` | CLI build/watch and daemon process; controlled QA requires an explicit single-host pin and target-matching snapshot | TUI, Mutagen, server tunnel; unpinned QA daemon |
 | `server` | Server watch/build/restart and its selected database | TUI, Mutagen, stable server port/tunnel |
 | `build` | Named-stack runtime preparation and component compilation | Producer admission, artifact store, snapshot publication and selection |
-| `qa` | Controlled snapshot server and daemon, with isolated mutable state and workspace | Controller, borrowed Expo ownership, stable server forwards |
+| `qa` | Controlled snapshot server; a shared-DB server stays on its data host | Machine daemon and session workspace unless explicitly pinned; controller, borrowed Expo ownership, stable server forwards |
 
 In current development source, `build` placement uses a dedicated workspace beneath the target's
 CLI home, separate from its continuously synchronized source mirror and live service outputs.
-Configure `build` on the producer stack: its target registry and ordered worker list govern every
-consumer request. Controlled QA ignores a consumer's `runtimePlacement.build` entry with a warning
+The workspace is partitioned by artifact platform and architecture, so different targets can build
+concurrently. Each artifact target has one running build and one merged pending build; covered
+requests join the completed work. Shared producer publication and selection are short transactions
+that do not hold the shared publication lock during preparation or compilation.
+Configure `build` on the producer stack. Native AUTO selects from its command-execution pool,
+using the runtime-build memory envelope and artifact-target/toolchain capability; the Metro host
+is excluded. The older build target list does not limit that pool. Healthy busy workers cause a wait,
+not local compilation. Waiting builds retain host-global demand to prevent endless small-job backfill,
+and re-evaluate alternatives on the existing pressure cadence. Local fallback requires no healthy,
+reachable capable worker. The target publication lock is acquired only after worker admission.
+Each alternative checks current worker health and load, including workers that recovered since the
+build began. A slow synchronization flush on one alternative leaves other workers selectable.
+Daemon builds prefer eligible workers matching the artifact's native OS and architecture; a busy
+native worker still permits a supported cross builder to admit the build on a later cadence.
+Explicit-local builds also wait for actual local admission before acquiring that lock.
+Controlled QA ignores a consumer's `runtimePlacement.build` entry with a warning
 pointing to the producer config; consumers can keep their own QA target registries.
 Each admitted producer flight captures its current source; later edits do not change that worker
 build, including its referenced TypeScript configs and manifest-declared native resources.
@@ -272,21 +286,30 @@ Dependencies and generated outputs remain target-local; preparation uses the sam
 last-green policy as a local named-stack build. Finished component and support
 artifacts return to the producer through the existing manifest and snapshot owners.
 
-By default the requested artifact retains the producer's operating system and architecture.
-An explicit `stack build <qa> --target=linux-x64` requests that target through the same producer
-publication path; it does not create a consumer publisher. Server and web
-builds can use a worker of another architecture on the same operating system. Server support
+Consumer builds derive each component's artifact target from its service placement: the server uses
+its server host, the daemon uses its daemon host, and local components use the local host. A server
+placed on macOS and a local Linux daemon therefore produce separate target snapshots. Explicit
+`--target` must match at least one selected placement; other components retain their own placement
+targets. Without remote service placement, it continues to request an explicit cross-target build.
+JSON reports each component's targets and separate target results for split builds. Mixed-target
+`--activate-runtime` fails before work starts; select each service's existing target subset separately.
+The source-development publisher retains its explicit producer target. All builds use the same
+producer publication path. Server and web builds can use a worker of another operating system or
+architecture. Server support
 installs target-native Sharp packages through npm's CPU/OS selection; cross-target server builds
 require npm with those options. Bun and Prisma retain their explicit build targets.
 Linux x64 workers can build Linux ARM64 daemon support with npm, Python, make and the
 `aarch64-linux-gnu` C/C++ toolchain installed. The support builder installs target dependencies
 separately from host build tools and cross-builds the terminal's `node-pty` addon. Other daemon
-cross-target pairs require a matching native worker. An ordered list tries the next worker when preflight finds a worker
-unavailable, incompatible with the requested components, or unable to admit the runtime build now,
-and reports the reason. It checks admission again without waiting when dispatching; a capacity change
-before dispatch tries the next worker. If none can run the build, the logged local fallback may wait
-for local admission. Compilation uses the existing memory-aware worker admission policy. Once
+cross-target pairs require a matching native worker. Native AUTO excludes unavailable or incompatible
+workers and reports the reason. Busy workers remain queued through the existing memory-aware
+admission owner while alternatives are checked without waiting; alternative admission releases the
+original request. Busy results never authorize local fallback. Once
 compilation starts, a failure propagates without replaying the build elsewhere.
+On Linux and WSL, `dev-targets status NAME` and admission waiting messages show each authenticated
+holder's class, PID, age and approximate recent process-tree CPU use. Status samples again on the
+existing admission cadence when holders exist. Unknown CPU evidence stays unknown; low CPU alone
+does not establish a hang. These diagnostics do not stop holders or impose an admission deadline.
 Native Windows worker placement is not supported by this build transport; matching WSL targets
 use the POSIX path. Build placement does not move running services or their databases.
 
@@ -395,14 +418,15 @@ authority. A network database does not remove the light-server/SQLite placement 
 ### Controlled runtime stacks (0.3 development)
 
 A [controlled QA stack](/hstack/stacks#controlled-stacks-for-agent-qa) started with
-`stack start --runtime` resolves an explicitly set `runtimePlacement.qa` from its own dev-targets
-config for a stack without retained local server data. The producer QA default is not activated
-yet; unplaced existing stacks stay local without probing workers, even if that default is invalid.
+`stack start --runtime` resolves `runtimePlacement.qa` from its own dev-targets
+config, defaulting to local. Its daemon defaults to local independently of QA and command pools.
+Only an explicit consumer `daemon` pin can select a different Machine host.
 Build placement belongs to the producer: changing a consumer's `qa` chooses its runtime host,
-while the producer's `build` setting chooses compilation workers. Changing `build` never moves
+while the producer's `build` setting chooses compilation workers. Neither `qa` nor `build` can
+override the consumer's Machine pin. Changing `build` never moves
 a running stack. Offline targets are skipped with an
 observable reason; ordered pools try the next worker and automatic pools use the existing
-least-load selector. Local execution is the final fallback. Once server data lives on a remote
+least-load selector for server placement. A pinned daemon never falls back to another Machine. Once server data lives on a remote
 target, that persisted server placement is authoritative: unavailability fails closed rather than
 opening a fresh local database. A local QA override cannot bypass it.
 
@@ -413,7 +437,16 @@ ARM64 bytes as x64. Windows WSL workers consume Linux snapshots, not native Wind
 The first complete target publication uses `stack build <qa> --all --activate-runtime --target=linux-x64`;
 later narrow component builds reuse that target's other published components. This initial shared
 publication is not a per-QA build, and borrowing Expo does not make a foreign snapshot portable.
-The existing supervisor transfers and validates the complete component/support closure, launches
+Shared-DB QA selects the server snapshot for its authoritative database host and independently selects
+a daemon snapshot matching its daemon placement host, including the controller for a local daemon.
+Start, select, activate and doctor share this component selection through the placement-owned build
+target groups; command-execution placement does not select the daemon architecture.
+CLI authentication remains controller-local and its
+credential is installed into this consumer's worker CLI home through the existing supervisor. The worker
+reaches the QA server through the existing reverse forward. Missing target-matching snapshots fail visibly;
+source synchronization must be healthy before dispatch. This split placement has focused source proof;
+its full browser-to-agent live proof remains pending.
+The existing supervisor transfers and validates each selected component/support closure, launches
 the snapshot lifecycle rather than source watch, and reuses the existing SSH forwards. Each stack
 has separate CLI state and a writable session workspace outside the one-way source replica.
 Observe the selected and remotely loaded snapshot identities before claiming remote QA success.
@@ -465,6 +498,28 @@ just before that request. Every command still checks the session's current healt
 before remote dispatch. Failed or canceled flushes cannot satisfy a queued request.
 On platforms without `flock`, each command performs its own flush.
 
+In current development, you can run commands from a sibling checkout through
+the 0.3 executor by putting `--repo=/absolute/path/to/checkout` before its other
+options. The sibling uses command-only mirrors on `mac2-linux` and
+`windows2-linux` by default. Both endpoints use `no-watch`; new mirrors need one
+initial synchronization, and each dispatch crosses the selected target's normal
+flush barrier. Dependencies and mandatory UI postinstall outputs are prepared
+from that checkout's own lockfile and source.
+
+Set a different subset from 0.3 through the existing placement command:
+
+```bash
+node apps/stack/scripts/repo_local.mjs dev-targets placement set commands auto \
+  --repo=/absolute/path/to/0.2 --targets=mac2-linux,windows2-linux --fallback=local
+```
+
+The optional 0.2 `./apps/stack/bin/hstack-exec -- <command> [args...]` wrapper
+delegates when its executable 0.3 sibling is present. A standalone 0.2 checkout
+runs locally, as does `HAPPIER_ROUTED_EXECUTOR=0 ./apps/stack/bin/hstack-exec -- ...`.
+Existing 0.2 package scripts still need to be invoked through this wrapper.
+This routing is POSIX-only development tooling; it does not require 0.3 for
+ordinary 0.2 users.
+
 The repository root and every internal workspace route their ordinary `test`, `test:unit`,
 `typecheck`, and `vitest` entry points when present. Their `*:local` counterparts are the canonical
 local implementations.
@@ -496,9 +551,20 @@ target before applying `fallback=local|error`. Once a command starts, its result
 and is never replayed elsewhere. `includeLocal` controls whether local load normally competes; it is
 independent from allowing local fallback.
 
+In current 0.3 development source, an admission-state registration failure before bootstrap or
+command execution also temporarily excludes the worker from automatic placement and tries another
+configured target. A pinned invocation reports that failure without switching hosts. A command's
+exit status, including 75, does not trigger replay after execution starts.
+
+In current development, automatic placement also checks actual worker admission without queuing
+there. A busy worker triggers re-evaluation of the remaining pool before any bootstrap or command
+starts, without marking that worker unavailable. If all usable workers are busy, automatic placement
+waits and rechecks the pool instead of falling back locally. An explicitly pinned command retains
+its observable wait on that worker. Already-running launchers are not moved by this change.
+
 Before the selected remote command starts, the launcher flushes that target's named Mutagen session.
-If the flush fails, it releases the dispatch reservation and applies `fallback=local|error` instead
-of running the remote command against an older checkout.
+If the flush fails, it releases the dispatch reservation and tries another configured target instead
+of running against an older checkout. Reachable synchronization failures do not permit local fallback.
 
 On Linux, recognized typecheck, Vitest, build-like, and direct dependency-install commands share a
 host-global admission queue without a fixed job-count ceiling. The launcher reports waiting
@@ -506,6 +572,22 @@ provenance and pauses new starts below the class's available-memory floor, below
 memory, or at memory PSI `avg10` of 10 or higher. It also pauses when the runnable count is at least
 twice the online CPU count and CPU PSI `avg10` is at least 50. An interrupted command releases its
 admission record. Searches and ordinary control commands keep their normal dispatch path.
+
+On the local controller, heavyweight admission also requires at least 8 GiB available memory,
+the observed floor below which browser and agent QA pauses. The local requirement is the larger
+of that floor and the workload's class envelope. Worker class reservations remain unchanged;
+the guard waits visibly and resumes through the same admission owner when memory recovers.
+
+Canonical Linux TypeScript invocations also enter this admission owner at the shared compiler
+selector, including ad-hoc callers whose `noEmit` is in their project config or which inherited a
+generic routing marker. The selector does not move their output location or selected execution host;
+it validates a live admitted ancestor or waits locally. This is not interception of arbitrary
+programs executing a vendor binary by absolute path. Ordinary CI keeps its existing capacity
+exemption; placed workers and admitted CI descendants keep the guard.
+
+QA/source-development package dist refreshes use incremental emit-only compilation. Their existing
+output records distinguish QA mode, so strict and release builds cannot reuse that output as proof
+of a completed full typecheck. Full semantic checks remain owned by the strict build/typecheck lanes.
 
 In 0.3 development, the shared command policy sizes admission by workload. Measured cli-common
 and Protocol dist builds use the 6 GiB package-dist envelope. Canonical runtime worker requests
@@ -515,9 +597,11 @@ spare headroom and rounding up to whole GiB gives 18 GiB. Full typechecks and un
 builds retain the conservative 21 GiB compilation envelope. Focused validation and dependency
 installation retain their existing 6 GiB envelope. Automatic routing excludes workers whose
 total RAM cannot hold the selected class, including cached samples and local candidates.
-Linux and WSL reserve each admitted job's full class envelope until exit or orphan reclamation and
-subtract those reservations from available memory before admitting more work. Authenticated nested
-commands share their parent's reservation. Memory-wait and capacity-exclusion diagnostics name the
+Linux and WSL keep each admitted job's class envelope until exit or orphan reclamation, but subtract
+only its unused part from available memory: the envelope minus authenticated process-tree resident
+memory, floored at zero. Resident pages are already absent from available memory; unavailable RSS
+observation retains the full envelope. Authenticated nested commands share their parent's reservation,
+and escalation credits its existing resident memory. Memory-wait and capacity-exclusion diagnostics name the
 class, required memory and existing reservations. These requirements reserve admission headroom;
 they do not limit the command's actual memory use.
 
@@ -551,7 +635,20 @@ background priority on Linux and macOS targets. Their Vitest, ripgrep, and nativ
 budgets share the target's CPU capacity with active dispatches; Linux also contributes runnable and
 pressure measurements. Explicit worker overrides are preserved. These are per-command hints, not a
 global memory limit: an unreserved macOS target can still give its first job the full CPU budget,
-and already-running jobs are not resized. Linux admission remains Linux-only.
+and already-running jobs are not resized. The reservation queue and PSI checks remain Linux-only.
+
+Current development admission observes the Darwin host and its controller VM as one physical CPU
+domain. Darwin checks host-wide load, including its hypervisor; local VM admission reads that same
+configured `mac-host` through the existing read-only SSH probe when available. At the existing severe
+two-runnable-tasks-per-CPU boundary, heavyweight work waits visibly before dispatch. An unavailable
+host observation does not fabricate pressure; the VM still applies its own memory and PSI guard.
+Independent Linux workers do not consume this host observation, and `mac-host` remains excluded from
+the automatic command pool.
+
+Stack port allocation, listener discovery, Metro status, daemon ping, HTTP health and credential
+readiness probes use the existing five-second observation budget. Containing readiness or lifecycle
+deadlines still own the operation; probes consume their remaining time instead of adding private
+sub-second cutoffs. This does not shorten cold Metro compilation or migration deadlines.
 
 When a Linux target has a ready systemd user manager and a loaded `happier-jobs.slice`, an admitted
 job runs in a transient user scope in that slice at nice level 10. The launcher does not create or
@@ -649,11 +746,20 @@ forced barrier before dispatch. Their source endpoints use Mutagen's `no-watch` 
 service hosts and configured QA service pools keep watching, even when they also run commands.
 Startup seeds a newly created unwatched session through that same flush barrier before command
 admission; resuming an already scanned session does not force another startup scan.
+If a connected idle command session has no completed cycle and both endpoints use `no-watch`,
+`status` and `doctor` report `needs-flush`. Automatic selection can use that worker; its mandatory
+dispatch flush completes a clean cycle before the command starts. An active first scan remains
+`synchronizing`, and errors or conflicts keep the worker unavailable.
 Synchronization includes the checkout by default, excluding the existing artifact, cache, and
 security paths. New packages, package-root files, and root files synchronize without regenerating
 the project. Keep unrelated clones outside the checkout to avoid synchronizing them.
 Dependencies and published plugin artifacts remain target-local. Service status uses current session
 health; the separately reported startup preparation history can retain an earlier, recovered error.
+Current development dispatch recovers scan-only problems on an otherwise connected, scanned session
+with a completed cycle by requesting a fresh rescan through the existing causal flush barrier.
+`status` reports the scan path/error and rescan eligibility. Dispatch admits only after fresh clean
+post-flush evidence; persistent scan problems, conflicts, transition problems and disconnected
+sessions remain unavailable. No mirror files are edited to recover a transient source rewrite.
 A one-way replica can occasionally retain ignored generated files after their local source root is
 deleted. On startup, the sync service repairs that narrow conflict only when the local root is still
 absent and the remote residue is limited to target-local generated artifacts. Source conflicts,
@@ -713,8 +819,9 @@ The TUI adds and reports:
 Stopping the TUI stops its remote workers and pauses only a Stack-owned Mutagen project. An
 independently owned project continues synchronizing. Target-local dependencies and build caches
 remain for the next run. `status`, `sync`, and `exec` work with either lifecycle owner; a paused,
-missing, conflicted, first-cycle-incomplete, or unhealthy session fails with a diagnostic instead
-of silently executing against an abandoned mirror.
+missing, conflicted, or otherwise unrecoverable session fails with a diagnostic instead
+of silently executing against an abandoned mirror. An active first scan must complete before
+execution; an idle unwatched first cycle enters through the mandatory dispatch flush.
 
 To run only the local Stack:
 

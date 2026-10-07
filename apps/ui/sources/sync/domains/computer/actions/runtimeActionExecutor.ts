@@ -1,6 +1,7 @@
 import { COMPUTER_PRESENT_USER_ACTION_IDS, type RuntimeActionExecute } from '@happier-dev/protocol';
 
 import { executeComputerActionViaMachineRpc } from './machineRpc';
+import { publishComputerActionAnswer } from '../computerControlClient';
 
 export type ComputerMachineRpc = (input: Readonly<{
     serverId?: string;
@@ -44,7 +45,7 @@ export function createComputerRuntimeActionExecutor(input: Readonly<{
         if (!sessionId) return refuse('computer_session_required');
         const machineId = readMachineId(args.input);
         if (!machineId) return refuse('invalid_parameters');
-        return await executeOnMachine({
+        const result = await executeOnMachine({
             ...(args.context.serverId ? { serverId: args.context.serverId } : {}),
             machineId,
             sessionId,
@@ -52,5 +53,7 @@ export function createComputerRuntimeActionExecutor(input: Readonly<{
             input: args.input,
             ...(args.context.signal ? { signal: args.context.signal } : {}),
         });
+        publishComputerActionAnswer({ sessionId, machineId, serverId: args.context.serverId ?? null }, args.actionId, result);
+        return result;
     };
 }

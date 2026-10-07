@@ -2,7 +2,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { PluginContributesV2Schema } from '@happier-dev/protocol';
 import { vi } from 'vitest';
-import { afterEach, describe, expect, it, onTestFinished } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished } from 'vitest';
 import type {
     MachineCapabilitiesCacheState,
     MachineCapabilitiesSnapshot,
@@ -10,7 +10,10 @@ import type {
 
 import { findTestInstanceByTypeWithProps, renderScreen } from '@/dev/testkit';
 import { installConnectedAccountDescriptorProjection } from '@/sync/domains/connectedServices/connectedServiceRegistry';
-import { settingsParse } from '@/sync/domains/settings/settings';
+import { settingsDefaults, settingsParse, type Settings } from '@/sync/domains/settings/settings';
+import { storage } from '@/sync/domains/state/storageStore';
+import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
+import { sealSecretsDeep } from '@/sync/encryption/secretSettings';
 import {
     ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS,
 } from '../../../../../../packages/plugins/elevenlabs/src/protocol/voice/index';
@@ -29,9 +32,20 @@ vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () =
 }));
 
 
-const storageBoundary = vi.hoisted(() => ({
-    settings: null as unknown,
-}));
+// Synthetic device-local secret encryption, not Account E2EE material.
+const deviceSecretFixtureKey = new Uint8Array(32).fill(7);
+const storageBoundary = {
+    get settings(): Settings { return storage.getState().settings; },
+    set settings(settings: Settings | null) {
+        storage.getState().applySettings(sealSecretsDeep(settings ?? settingsDefaults, deviceSecretFixtureKey),
+            (storage.getState().settingsVersion ?? 0) + 1);
+    },
+};
+beforeEach(async () => {
+    getPersistenceStorage().clearAll();
+    await storage.getState().activateSettingsScope({ serverId: 'voice-provider-section', accountId: 'voice-account' });
+    storageBoundary.settings = settingsDefaults;
+});
 const passiveSetupBoundary = vi.hoisted(() => ({
     profile: null as unknown,
     machineTarget: { daemonStateVersion: 0, isOnline: false },
@@ -101,13 +115,7 @@ installVoiceSettingsPanelCommonModuleMocks({
     icons: async () => ({
         Ionicons: (props: any) => React.createElement('Ionicons', props),
     }),
-    storage: async () => {
-        const { settingsParse } = await import('@/sync/domains/settings/settings');
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            useSettings: () => storageBoundary.settings ?? settingsParse({}),
-        });
-    },
+    storage: () => vi.importActual<typeof import('@/sync/domains/state/storage')>('@/sync/domains/state/storage'),
 });
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
@@ -155,12 +163,8 @@ vi.mock('@/sync/ops/capabilities', () => ({
     machineCapabilitiesInvoke: (...args: unknown[]) => passiveSetupBoundary.invoke(...args),
 }));
 
-vi.mock('@/sync/store/hooks', () => ({
-    useSettings: () => storageBoundary.settings ?? settingsParse({}),
-    useSetting: (key: string) => (
-        (storageBoundary.settings ?? settingsParse({})) as Record<string, unknown>
-    )[key],
-    useSettingsVersion: () => 1,
+vi.mock('@/sync/store/hooks', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/store/hooks')>(),
     useMachineCliDetectionTarget: () => passiveSetupBoundary.machineTarget,
     useProfile: () => passiveSetupBoundary.profile ?? { connectedServicesV2: [] },
     useLocalSetting: (key: string) => key === 'uiFontScale' ? 1 : null,
@@ -1513,7 +1517,7 @@ describe('VoiceProviderSection', () => {
             testID: 'voice-credential-source-api_key',
         });
         expect(sourceField?.props.items).toContainEqual(expect.objectContaining({
-            title: 'Codex',
+            id: JSON.stringify(['account', 'happier.agent.codex', 'openai-codex', 'codex-work']),
             disabled: false,
         }));
         expect(sourceField?.props.items).not.toContainEqual(expect.objectContaining({

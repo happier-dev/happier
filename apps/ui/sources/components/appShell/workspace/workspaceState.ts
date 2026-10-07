@@ -19,8 +19,6 @@ export type ClosedWorkspaceTab = Readonly<{
     fallbackTitle?: string;
     placement?: Readonly<{ siblingId: string; splitId: string; axis: SplitCanvasAxis; ratio: number; side: 'first' | 'second' }>;
 }>;
-// The requested bounded undo list is window-lifetime state, owned here rather than a persisted store.
-export const WORKSPACE_RECENTLY_CLOSED_LIMIT = 20;
 export type WorkspaceState = Readonly<{
     v: 1;
     tabs: Readonly<Record<string, WorkspaceTab>>;
@@ -72,8 +70,6 @@ function canvasFor(state: WorkspaceState): WorkspaceCanvas {
         root: state.root,
         focusedLeafId: state.focusedGroupId,
         maximizedLeafId: state.maximizedGroupId,
-        // Unmeasured legacy consumers retain the old ceiling. Workspace splits supply measured minimums.
-        maxLeaves: 8,
     };
 }
 
@@ -212,7 +208,7 @@ export function reduceWorkspaceState(state: WorkspaceState, action: WorkspaceAct
                     ...(nextGroup.tabIds.length === 0 ? { placement: closedPanePlacement(state.root, group.id) } : {}),
                 },
                 ...state.recentlyClosed.filter(entry => entry.tab.id !== tab.id),
-            ].slice(0, WORKSPACE_RECENTLY_CLOSED_LIMIT);
+            ];
             if (nextGroup.tabIds.length > 0) {
                 return { ...state, recentlyClosed, tabs, fallbackTitlesByTabId: titles, groups: { ...state.groups, [group.id]: nextGroup as WorkspaceGroup }, tabPairs: removePairMembers(state, [action.tabId]) };
             }

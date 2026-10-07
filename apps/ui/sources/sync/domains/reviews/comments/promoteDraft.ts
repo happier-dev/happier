@@ -1,5 +1,8 @@
-import { sha256 } from '@noble/hashes/sha2';
-import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
+import {
+    buildReviewCommentTextSnapshotHashes,
+    reviewCommentTextSnapshotHasBidiControlsV1,
+    reviewCommentTextSnapshotIsLikelyMinifiedV1,
+} from '@happier-dev/protocol/reviews/comments/snapshots';
 import type {
     ReviewCommentCreateRequestV1,
     ReviewCommentCreateResponseV1,
@@ -7,23 +10,6 @@ import type {
 
 import { mapReviewCommentDraftAnchorToDurableV1Target } from '@/sync/domains/input/reviewComments/anchors/reviewCommentDraftAnchor';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
-
-const BIDI_CONTROL_RE = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/u;
-
-function sha256Json(value: unknown): string {
-    return `sha256:${bytesToHex(sha256(utf8ToBytes(JSON.stringify(value))))}`;
-}
-
-function hasBidiControls(lines: readonly string[]): boolean {
-    return lines.some((line) => BIDI_CONTROL_RE.test(line));
-}
-
-function isLikelyMinified(lines: readonly string[]): boolean {
-    if (lines.length === 0) return false;
-    const joined = lines.join('\n');
-    if (joined.length < 2000) return false;
-    return joined.length / lines.length > 500 && lines.length / Math.max(joined.length, 1) < 0.003;
-}
 
 export function buildDurableReviewCommentCreateRequestFromDraft(params: Readonly<{
     projectId: string;
@@ -62,20 +48,15 @@ export function buildDurableReviewCommentCreateRequestFromDraft(params: Readonly
             selectedLines: [...params.draft.snapshot.selectedLines],
             beforeContext: [...params.draft.snapshot.beforeContext],
             afterContext: [...params.draft.snapshot.afterContext],
-            selectedLinesHash: sha256Json(params.draft.snapshot.selectedLines),
-            contextWindowHash: sha256Json({
-                beforeContext: params.draft.snapshot.beforeContext,
-                selectedLines: params.draft.snapshot.selectedLines,
-                afterContext: params.draft.snapshot.afterContext,
-            }),
+            ...buildReviewCommentTextSnapshotHashes(params.draft.snapshot),
             capturedAt: params.draft.createdAt,
             fileLength: allLines.length,
             source: params.draft.source === 'diff' ? 'diffSide' : 'workingTree',
             isUncommitted: true,
             isUntracked: false,
             truncated: false,
-            hasBidiControls: hasBidiControls(allLines),
-            likelyMinified: isLikelyMinified(allLines),
+            hasBidiControls: reviewCommentTextSnapshotHasBidiControlsV1(allLines),
+            likelyMinified: reviewCommentTextSnapshotIsLikelyMinifiedV1(allLines),
         },
         body: params.draft.body,
         authorIntent: 'propose',

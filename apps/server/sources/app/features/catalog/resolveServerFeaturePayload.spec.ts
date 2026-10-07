@@ -9,7 +9,7 @@ import { resolveSessionHandoffFeature } from "../sessionHandoffFeature";
 import { resolveServerUsageAnalyticsCapabilitiesFeature } from "../serverUsageAnalyticsCapabilitiesFeature";
 import { resolveSharingFeature } from "../sharingFeature";
 import { resolveTerminalFeature } from "../terminalFeature";
-import { resolveServerFeaturePayload } from "./resolveServerFeaturePayload";
+import { resolveServerFeatureGate, resolveServerFeaturePayload } from "./resolveServerFeaturePayload";
 import { resolveServerFeatureBuildPolicy } from "./serverFeatureBuildPolicy";
 import { serverFeatureRegistry, type ServerFeatureResolver } from "./serverFeatureRegistry";
 import type { FeaturesPayloadDelta } from "../types";
@@ -153,6 +153,26 @@ describe("resolveServerFeaturePayload", () => {
 
     it("throws when resolvers list is empty", () => {
         expect(() => resolveServerFeaturePayload({} as NodeJS.ProcessEnv, [])).toThrow(/resolvers/i);
+    });
+
+    it("keeps missing and malformed relevant bits fail-closed in bit-only decisions", () => {
+        for (const enabled of [undefined, "malformed", true]) {
+            const resolvers = [fromPartial({ features: {
+                automations: { enabled: true },
+                ...(enabled === undefined ? {} : {
+                    // Untrusted producer fixture: both paths must validate it at their schema boundary.
+                    workflows: { enabled: enabled as boolean },
+                }),
+            } })];
+            expect(resolveServerFeatureGate({}, resolvers, "workflows"))
+                .toBe(readServerEnabledBit(resolveServerFeaturePayload({}, resolvers), "workflows") === true);
+        }
+        const invalid = [fromPartial({ features: {
+            // Unlike Workflow's catch-to-disabled schema, this malformed gate must be refused.
+            teams: { enabled: "malformed" as unknown as boolean },
+        } })];
+        expect(() => resolveServerFeaturePayload({}, invalid)).toThrow(/Invalid.*feature gates/);
+        expect(() => resolveServerFeatureGate({}, invalid, "teams")).toThrow(/Invalid.*feature gates/);
     });
 
     it("does not apply build policy to the compatibility-only Connected Accounts master bit", () => {

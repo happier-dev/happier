@@ -24,43 +24,6 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 describe('useMachineCapabilitiesCache (hook)', () => {
     const newSessionRequest = (): CapabilitiesDetectRequest => ({ checklistId: CHECKLIST_IDS.NEW_SESSION });
 
-    it('extends the detect timeout when cli login status overrides are requested', async () => {
-        vi.resetModules();
-
-        const { resolveMachineCapabilitiesTimeoutMs } = await import('./useMachineCapabilitiesCache');
-
-        expect(resolveMachineCapabilitiesTimeoutMs({
-            checklistId: CHECKLIST_IDS.NEW_SESSION,
-            overrides: {
-                'cli.codex': {
-                    params: {
-                        includeLoginStatus: true,
-                    },
-                },
-            },
-        }, 2_500)).toBe(20_000);
-    });
-
-    it('uses a slower default timeout for the new-session checklist (CLI detection can be slow)', async () => {
-        vi.resetModules();
-
-        const { resolveMachineCapabilitiesTimeoutMs } = await import('./useMachineCapabilitiesCache');
-
-        expect(resolveMachineCapabilitiesTimeoutMs({
-            checklistId: CHECKLIST_IDS.NEW_SESSION,
-        }, 2_500)).toBe(12_000);
-    });
-
-    it('treats any resume.* checklist as a slow checklist without a built-in agent-id inventory', async () => {
-        vi.resetModules();
-
-        const { resolveMachineCapabilitiesTimeoutMs } = await import('./useMachineCapabilitiesCache');
-
-        expect(resolveMachineCapabilitiesTimeoutMs({
-            checklistId: 'resume.delta',
-        }, 2_500)).toBe(12_000);
-    });
-
     it('scopes cache entries by active server when serverId is omitted', async () => {
         vi.resetModules();
 

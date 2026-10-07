@@ -167,13 +167,15 @@ describe('Appearance settings item density', () => {
         expect(picker.props.value).toBe('wave');
         expect(picker.props.options.map((option: { id: string }) => option.id)).toEqual([
             'wave', 'handwritten', 'buildAndRelease', 'relay', 'twinStems', 'slowBreath',
-            'starfield', 'sweep', 'radar', 'ripple', 'aurora', 'classicRing',
+            'starfield', 'sweep', 'radar', 'ripple', 'aurora',
+            'hWave', 'hHandwritten', 'hBuildAndRelease', 'hRelay', 'hTwinStems', 'hSlowBreath',
+            'hStarfield', 'hSweep', 'hRadar', 'hRipple', 'hAurora', 'classicRing',
         ]);
         expect(picker.props.options.find((option: { id: string }) => option.id === 'radar')?.preview.props.styleId).toBe('radar');
         await act(async () => { picker.props.onChange('notAStyle'); });
         expect(shared.settingsState.loadingIndicatorStyle).toBeUndefined();
-        await act(async () => { picker.props.onChange('radar'); });
-        expect(shared.settingsState.loadingIndicatorStyle).toBe('radar');
+        await act(async () => { picker.props.onChange('hWave'); });
+        expect(shared.settingsState.loadingIndicatorStyle).toBe('hWave');
         delete shared.settingsState.loadingIndicatorStyle;
     });
 
@@ -200,6 +202,7 @@ describe('Appearance settings item density', () => {
 
     it.each([
         ['radar', { speed: false, pause: true }],
+        ['hRadar', { speed: false, pause: true }],
         ['classicRing', { speed: true, pause: true }],
     ] as const)('says when the %s style ignores a timing choice instead of offering it', async (styleId, disabled) => {
         shared.settingsState.loadingIndicatorStyle = styleId;

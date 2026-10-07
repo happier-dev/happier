@@ -5,6 +5,7 @@ import {
     applyLocalServiceInventorySnapshot,
     createLocalServiceInventoryState,
     selectLocalServiceInventoryRows,
+    selectLocalServiceInventoryPresentationRows,
 } from './store';
 
 function entry(overrides: Partial<ReturnType<typeof selectLocalServiceInventoryRows>[number]> = {}) {
@@ -28,6 +29,26 @@ function entry(overrides: Partial<ReturnType<typeof selectLocalServiceInventoryR
 }
 
 describe('local service inventory store', () => {
+    it('keeps identical collections and material presentation stable while publishing fresh scan facts', () => {
+        const endpoint = { scheme: 'http', host: 'localhost', port: 5173, probeState: 'ready', probedAt: 1_000 } as const;
+        const snapshot = { v: 1 as const, machineId: 'machine-a', generatedAt: 1_000,
+            refreshState: 'idle' as const, entries: [entry({ endpoint })], diagnostics: [] };
+        const loaded = applyLocalServiceInventorySnapshot(createLocalServiceInventoryState(), snapshot);
+        const rows = selectLocalServiceInventoryRows(loaded);
+        const repeated = applyLocalServiceInventorySnapshot(loaded, { ...snapshot, entries: [entry({ endpoint })] });
+        expect(repeated).toBe(loaded);
+        expect(selectLocalServiceInventoryRows(repeated)).toBe(rows);
+        const presentation = selectLocalServiceInventoryPresentationRows(loaded);
+        const tick = applyLocalServiceInventorySnapshot(loaded, { ...snapshot, generatedAt: 2_000,
+            entries: [entry({ lastSeenAt: 2_000, endpoint: { ...endpoint, probedAt: 2_000 } })] });
+        expect(tick.rowIds).toBe(loaded.rowIds);
+        expect(selectLocalServiceInventoryRows(tick)[0]?.lastSeenAt).toBe(2_000);
+        expect(selectLocalServiceInventoryRows(tick)[0]?.endpoint?.probedAt).toBe(2_000);
+        expect(selectLocalServiceInventoryPresentationRows(tick)).toBe(presentation);
+        const changed = applyLocalServiceInventorySnapshot(tick, { ...snapshot, entries: [entry({ state: 'gone' })] });
+        expect(selectLocalServiceInventoryPresentationRows(changed)).not.toBe(presentation);
+        expect(selectLocalServiceInventoryPresentationRows(changed)[0]?.state).toBe('gone');
+    });
     it('keeps last-known rows visible while a refresh is in flight', () => {
         const initial = createLocalServiceInventoryState();
         const hydrated = applyLocalServiceInventorySnapshot(initial, {

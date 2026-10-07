@@ -12,9 +12,9 @@ import { t } from '@/text';
  */
 export const SessionWorkMoreMenu = React.memo(function SessionWorkMoreMenu(props: Readonly<{
     sessionId: string;
+    serverId?: string | null;
     /** The session has sessions under it, so its roles can be applied to them. */
     hasReports: boolean;
-    copiedAtSpawn?: boolean;
 }>) {
     const [open, setOpen] = React.useState(false);
     const actions = useSessionRolesMenuActions(props);

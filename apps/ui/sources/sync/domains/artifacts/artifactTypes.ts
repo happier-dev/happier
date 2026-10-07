@@ -14,7 +14,7 @@ export interface Artifact {
     header: string;  // Base64 encoded encrypted JSON { "title": string | null }
     headerVersion: number;
     body?: string;  // Base64 encoded encrypted JSON { "body": string | null } - only in full fetch
-    bodyVersion?: number;  // Only in full fetch
+    bodyVersion?: number;  // Current head revision, also projected by header-only HTTP lists
     dataEncryptionKey: string;  // Base64 encoded encryption key (encrypted with user key)
     provenance?: string | null;
     provenanceDataEncryptionKey?: string | null;
@@ -83,6 +83,8 @@ export interface DecryptedArtifactBase {
      * It is derived from the persisted data-key marker, never from the current account mode.
      */
     storageMode?: 'plain' | 'e2ee';
+    /** Exact HTTP key envelopes used to open this row; never persisted or inferred from a cached key. */
+    storageIdentity?: Readonly<{ contentKeyEnvelope: string; provenanceKeyEnvelope: string | null }>;
 }
 
 /**

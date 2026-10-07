@@ -1,5 +1,26 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+export function verifyUiPatchedDependencies({
+    uiPackageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..'),
+} = {}) {
+    const packageDirs = findReactNativeEnrichedMarkdownPackageDirs({
+        repoRootDir: path.resolve(uiPackageDir, '../..'),
+        expoAppDir: uiPackageDir,
+    });
+    if (packageDirs.length === 0) {
+        throw new Error(
+            '[ui] react-native-enriched-markdown is not installed. Run the canonical UI dependency preparation: '
+            + 'yarn --cwd apps/ui postinstall:real',
+        );
+    }
+    const failures = packageDirs.flatMap(packageDir => {
+        const result = verifyReactNativeEnrichedMarkdownWebStreamingPatch({ packageDir });
+        return result.status === 'ok' ? [] : [`${packageDir}\n${formatReactNativeEnrichedMarkdownWebStreamingPatchFailure(result)}`];
+    });
+    if (failures.length > 0) throw new Error(`[ui] patched dependency preflight failed:\n${failures.join('\n\n')}`);
+}
 
 // AttributedRenderer owns the factory; cached child renderers must not retain it.
 const WEAK_FACTORY_RENDERERS = [

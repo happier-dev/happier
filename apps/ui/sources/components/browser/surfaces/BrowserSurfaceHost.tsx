@@ -38,8 +38,8 @@ import { evaluateBrowserTargetPolicy } from '@/sync/domains/browser/policy/evalu
 import { resolveLocalBrowserProfile } from '@/sync/domains/browser/profiles/localBrowserProfile';
 import { selectActiveBrowserView } from '@/sync/domains/browser/shell';
 import { resolveBrowserViewIdForTarget } from '@/sync/domains/browser/store';
-import { useSession, useSessionMessages } from '@/sync/domains/state/storage';
-import { resolveTranscriptBrowserActionReference } from '@/components/sessions/transcript/references/transcriptBrowserActionReference';
+import { useSession } from '@/sync/domains/state/storage';
+import { useSessionCompletedBrowserActionKey } from '@/sync/store/hooks';
 import type { DesktopWebViewNativeAvailability } from '@/sync/domains/browser/adapters/desktopWebView';
 import { useDesktopWebViewNativeAvailability } from '@/sync/domains/browser/adapters/useDesktopWebViewNativeAvailability';
 import { useDesktopBrowserRecordingReverseCaptureHandler } from '@/sync/domains/browser/recording/reverseCaptureAvailability';
@@ -63,7 +63,7 @@ import {
     type PluginUiPolicyEvaluationContext,
 } from '@/sync/domains/plugins/ui/policy';
 import type { BrowserLaunchpadRow } from '@/sync/domains/browser/targets';
-import { selectBrowserDiagnosticsForView } from '@/sync/domains/browser/diagnostics';
+import { selectBrowserDiagnosticsEventCount } from '@/sync/domains/browser/diagnostics';
 import type { SimulatorPreviewSurfaceRuntime } from '@/sync/domains/devices/simulator/useSimulatorPreviewRuntime';
 import type {
     BrowserPresentationSlotState,
@@ -218,10 +218,10 @@ function hasRenderableBrowserDiagnostics(
     if (diagnostics.bridge) {
         return true;
     }
-    return selectBrowserDiagnosticsForView(diagnostics.state, {
+    return diagnostics.hasRenderableDiagnostics ?? selectBrowserDiagnosticsEventCount(diagnostics.state, {
         browserSessionId: focusedView.browserSessionId,
         viewId: focusedView.viewId,
-    }).eventCount > 0;
+    }) > 0;
 }
 
 export function BrowserSurfaceHost(props: Readonly<{
@@ -328,15 +328,9 @@ export function BrowserSurfaceHost(props: Readonly<{
     const presenceSessionId = props.pluginBrowserActionContext?.sessionId ?? null;
     const presenceServerId = props.pluginBrowserActionContext?.serverId ?? null;
     const session = useSession(presenceSessionId ?? '', presenceServerId);
-    const { messages } = useSessionMessages(presenceSessionId ?? '', {
+    const discoveryRefreshKey = useSessionCompletedBrowserActionKey(presenceSessionId ?? '', {
         enabled: Boolean(presenceSessionId && session && props.visible !== false && policy.viewTargetsEnabled),
     });
-    // Transcript completion is the existing Session Action notification. Text/streaming updates do
-    // not change this key and therefore do not trigger another machine discovery request.
-    const discoveryRefreshKey = React.useMemo(() => messages.filter(message => message.kind === 'tool-call'
-        && message.tool.state === 'completed' && resolveTranscriptBrowserActionReference({
-            toolName: message.tool.name, state: message.tool.state, input: message.tool.input, result: message.tool.result,
-        }) !== null).map(message => message.id).join('\n'), [messages]);
     const focusedView = selectActiveBrowserView(surfaceState.browserState, props.browserSessionId)
         ?? (presenceSessionId ? selectActiveBrowserView(surfaceState.browserState, presenceSessionId) : null);
     const applyDaemonEvents = React.useCallback((events: readonly BrowserEventV1[]) => {

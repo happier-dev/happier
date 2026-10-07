@@ -116,7 +116,7 @@ The shared-database workflow is not yet live-certified. Confirm that its source 
 node ./apps/stack/scripts/repo_local.mjs stack env <qa-stack> shared-db <dev-stack> --json
 ```
 
-The preset pins the QA server to the dev database's explicitly configured remote host and leaves the QA daemon on this VM. The server reads the dev stack's existing SQLite URL, at-rest secret, and blob roots on that host. Never print or transport the secret. QA keeps its own data/runtime directory, ports, CLI home, daemon state, and logs. Metrics are disabled, automatic migration is off, and Stack migration is skipped. Never migrate, reset, reconcile, or restart the dev database/server to recover QA.
+The preset pins the QA server to the dev database's explicitly configured remote host. The QA daemon defaults to local: it is the Machine identity that owns sessions, resume and workspaces. Only an explicit per-stack daemon pin can select one named host; QA and command pools cannot override it, and an unavailable pin fails closed. The server reads the dev stack's existing SQLite URL, at-rest secret, and blob roots on that host. Never print or transport the secret. QA keeps its own data/runtime directory, ports, CLI home, daemon state, and logs. Metrics are disabled, automatic migration is off, and Stack migration is skipped. Never migrate, reset, reconcile, or restart the dev database/server to recover QA.
 
 All Accounts and sessions live in the same database, with normal Account authorization unchanged. A new QA Account does not inherit the dev Account's connected services: sign into the dev Account only when authorized and needed to test those services. Separate servers do not share their in-memory socket/RPC relay; do not assume live cross-server delivery to a daemon connected to the other server.
 
@@ -127,7 +127,7 @@ node ./apps/stack/scripts/repo_local.mjs stack build <qa-stack> --server --targe
 node ./apps/stack/scripts/repo_local.mjs stack runtime <qa-stack> select --json
 ```
 
-The shared preset selects the Darwin server component. CLI/auth/daemon use the authority's native daemon component without replacing the server selection. Borrow the existing Expo endpoint as below; no Darwin daemon or web artifact is required. If the schema advances beyond the loaded QA snapshot, P2021/P2022 report `shared_qa_schema_mismatch`; build/select a newer server snapshot and explicitly restart only this QA stack.
+The shared preset selects the Darwin server component. CLI/auth and the default local QA daemon use the authority's controller-native daemon component, without replacing the server selection. An explicit consumer daemon pin selects a snapshot matching that one named host; QA policy cannot override it. Fresh presets leave the daemon unpinned and local. Start/select/activate/doctor share the launch-context selector and placement-owned build target groups, never command-execution placement. Borrow the existing Expo endpoint as below; no Darwin daemon or web artifact is required when the daemon runs on Linux. If the schema advances beyond the loaded QA snapshot, P2021/P2022 report `shared_qa_schema_mismatch`; build/select a newer server snapshot and explicitly restart only this QA stack.
 
 ## Select the UI provider
 
@@ -261,16 +261,16 @@ node ./apps/stack/scripts/repo_local.mjs tui stack start <qa-stack> --runtime
 
 ## Remote placement boundary (0.3 development)
 
-`stack start --runtime` resolves explicitly configured consumer `runtimePlacement.qa` through the existing dev-targets config and service-placement owners. Automatic rollout of the producer QA default is not active until the full remote path is live-proven: existing/unplaced stacks stay local without probing targets, even if the producer default is invalid. Retained local server data always stays local until explicit data handoff, regardless of a QA placement write. Configure build and runtime placement separately in the same config:
+`stack start --runtime` resolves consumer `runtimePlacement.qa` through the existing dev-targets config and service-placement owners. Fresh controlled QA keeps its daemon local. Only an explicit consumer `daemon` pin can move its Machine to one named host; never select a Machine from a pool. Retained local server data always stays local until explicit data handoff, regardless of a QA placement write. Shared-DB QA keeps its server on the data host and independently selects the local daemon snapshot. Missing matching snapshots or unhealthy synchronization prevent remote dispatch. The complete split-host browser journey is not yet live-certified. Configure build and runtime placement separately in the same config:
 
 ```bash
 node ./apps/stack/scripts/repo_local.mjs dev-targets placement set build mac2-linux --stack=<producer-stack>
-node ./apps/stack/scripts/repo_local.mjs dev-targets placement set qa auto --targets=linux2,linux3,windows1-linux,windows2-linux,linux1 --fallback=local --stack=<producer-stack>
-node ./apps/stack/scripts/repo_local.mjs dev-targets placement set qa auto --targets=linux2,linux3,windows1-linux,windows2-linux,linux1 --fallback=local --stack=<fresh-qa-stack>
+node ./apps/stack/scripts/repo_local.mjs dev-targets placement set daemon mac3-linux --stack=<qa-stack>
+node ./apps/stack/scripts/repo_local.mjs dev-targets placement set daemon local --stack=<qa-stack>
 node ./apps/stack/scripts/repo_local.mjs dev-targets placement set qa local --stack=<qa-stack>
 ```
 
-The automatic QA pool uses the existing commands least-load owner. An ordered override uses `placement set qa ordered --targets=NAME,... --fallback=local --stack=<qa-stack>`. Unavailable hosts are skipped observably, with local execution last. Persisted remote server data is the exception: its host remains authoritative even with a local QA override, and an unavailable host fails closed. Do not alter the producer's existing placement merely to run one QA session without the necessary authority.
+An explicit QA server override can use the existing least-load or ordered selector. It never overrides Machine placement. A pinned daemon host fails closed when unavailable, preserving session/workspace identity. Persisted remote server data also remains authoritative even with a local QA override. Do not alter the producer's existing placement merely to run one QA session without the necessary authority.
 
 The existing supervisor transfers and validates the selected snapshot's complete component/support closure and launches `stack start --runtime --no-dev-targets`, not source watch. CLI state and writable session workspaces are per-stack outside the one-way source replica. Existing forwards preserve the consumer's canonical server origin. Observe selected == loaded for the actual remote server and daemon before claiming the pin is running there.
 

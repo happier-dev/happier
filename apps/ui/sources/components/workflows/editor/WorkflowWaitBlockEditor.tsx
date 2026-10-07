@@ -13,9 +13,10 @@ import type { WorkflowAuthoringComposerCustody } from '@/components/sessions/aut
 import { Text } from '@/components/ui/text/Text';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { t } from '@/text';
+import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 
 import type { WorkflowBlockAction } from './WorkflowBlockActionsMenu';
-import { WorkflowBlockHeading } from './WorkflowBlockHeading';
+import { WorkflowBlockHeading, type WorkflowBlockNameEditor } from './WorkflowBlockHeading';
 import { Icon } from '@/components/ui/icons/Icon';
 import { formatWorkflowConditionSentence } from './WorkflowConditionEditor';
 import { useWorkflowStepOptionsChip } from './WorkflowStepOptionsChip';
@@ -33,6 +34,7 @@ export function WorkflowWaitBlockEditor(props: Readonly<{
     /** The draft the Step options summary reads references from. */
     draft: WorkflowEditorDraft;
     ordinal: number;
+    nameEditor?: WorkflowBlockNameEditor;
     total: number;
     actions: readonly WorkflowBlockAction[];
     composerScope: AuthoringComposerScope;
@@ -65,7 +67,7 @@ export function WorkflowWaitBlockEditor(props: Readonly<{
         });
     }, []);
     const handleFocus = React.useCallback(() => latestRef.current.onSelect(), []);
-    const displayName = t('workflows.page.blocks.waitTitle');
+    const displayName = workflowBlockReferenceLabel(block);
     const rowPrefix = `${testIDPrefix}-wait-${block.id}`;
     // Step options is a chip in the composer's own chip row, as on every step (07 S7).
     const stepOptionsChip = useWorkflowStepOptionsChip({
@@ -88,6 +90,7 @@ export function WorkflowWaitBlockEditor(props: Readonly<{
     return (
         <View testID={rowPrefix} style={workflowEditorStyles.blockBody}>
             <WorkflowBlockHeading
+                nameEditor={props.nameEditor}
                 kindMark={<Icon name="person" size={16} />}
                 ordinal={props.ordinal}
                 displayName={displayName}

@@ -359,7 +359,7 @@ export async function initializeVoiceAgentHandle({
     const replayRecentMessagesCountRaw = Number(replayCfg?.recentMessagesCount ?? 16);
     const replayRecentMessagesCount =
         Number.isFinite(replayRecentMessagesCountRaw) && replayRecentMessagesCountRaw > 0
-            ? Math.max(1, Math.min(100, Math.floor(replayRecentMessagesCountRaw)))
+            ? Math.max(1, Math.floor(replayRecentMessagesCountRaw))
             : 16;
 
     const resumabilityMode =

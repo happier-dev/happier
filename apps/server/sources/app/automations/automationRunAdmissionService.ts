@@ -234,9 +234,12 @@ type PreparedAutomationRunAdmissionResult =
     | AutomationRunAdmissionResult
     | Readonly<{ kind: "prepared"; admission: PreparedAutomationRunAdmission }>;
 
-function consumesEventConversationCapacity(cause: AutomationRunCause): boolean {
-    return cause.kind === "conversation"
-        || (cause.kind === "trigger" && cause.triggerKind === "pluginEvent");
+function consumesEventConversationCapacity(admission: PreparedAutomationRunAdmission): boolean {
+    // Session-scoped work uses the trigger's existing active/pending owner,
+    // not the Account-wide Event/Conversation capacity pool.
+    if (admission.automation.scopeSessionId !== null) return false;
+    return admission.cause.kind === "conversation"
+        || (admission.cause.kind === "trigger" && admission.cause.triggerKind === "pluginEvent");
 }
 
 function isSessionLifecycleCause(cause: AutomationRunCause): boolean {
@@ -642,11 +645,12 @@ export async function admitAutomationRunsTx(params: Readonly<{
     // capacity owner, evaluated inside this request's fence/transaction.
     let remainingEventConversationCapacity = 0;
     if (prepared.some((result) => (
-        result.kind === "prepared" && consumesEventConversationCapacity(result.admission.cause)
+        result.kind === "prepared" && consumesEventConversationCapacity(result.admission)
     ))) {
         const occupied = await params.tx.automationRun.count({
             where: {
                 accountId: params.accountId,
+                automation: { is: { scopeSessionId: null } },
                 OR: [
                     { causeKind: "conversation" },
                     { causeKind: "trigger", causeTriggerKind: "pluginEvent" },
@@ -665,7 +669,7 @@ export async function admitAutomationRunsTx(params: Readonly<{
             results.push(result);
             continue;
         }
-        const consumesCapacity = consumesEventConversationCapacity(result.admission.cause);
+        const consumesCapacity = consumesEventConversationCapacity(result.admission);
         if (consumesCapacity && remainingEventConversationCapacity <= 0) {
             results.push({ kind: "ineligible", reason: "capacity" });
             continue;

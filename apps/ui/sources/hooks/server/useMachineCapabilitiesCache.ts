@@ -5,7 +5,6 @@ import {
     type MachineCapabilitiesDetectResult,
 } from '@/sync/ops';
 import type { CapabilitiesDetectRequest, CapabilitiesDetectResponse, CapabilityDetectResult, CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
-import { CHECKLIST_IDS } from '@happier-dev/protocol/checklists';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -31,10 +30,7 @@ const cache = new Map<string, CacheEntry>();
 const listeners = new Map<string, Set<(state: MachineCapabilitiesCacheState) => void>>();
 
 const DEFAULT_STALE_MS = 24 * 60 * 60 * 1000; // 24 hours
-const DEFAULT_FETCH_TIMEOUT_MS = 2500;
 const DEFAULT_ERROR_BACKOFF_MS = 60_000;
-const DEFAULT_SLOW_FETCH_TIMEOUT_MS = 12_000;
-const DEFAULT_CLI_LOGIN_STATUS_TIMEOUT_MS = 20_000;
 
 type ScheduledFetch = Readonly<{
     requestKey: string;
@@ -307,33 +303,6 @@ function mergeDetectResponses(prev: CapabilitiesDetectResponse | null, next: Cap
     };
 }
 
-function hasSlowLoginStatusProbe(request: CapabilitiesDetectRequest): boolean {
-    const requests = Array.isArray(request.requests) ? request.requests : [];
-    if (requests.some((entry) => Boolean((entry.params as any)?.includeLoginStatus))) {
-        return true;
-    }
-
-    const overrides = isPlainObject(request.overrides) ? Object.values(request.overrides) : [];
-    return overrides.some((entry) => Boolean((entry as any)?.params?.includeLoginStatus));
-}
-
-export function resolveMachineCapabilitiesTimeoutMs(request: CapabilitiesDetectRequest, fallback: number): number {
-    // Default fast timeout; opt into longer waits for release/version metadata checks.
-    const requests = Array.isArray(request.requests) ? request.requests : [];
-    const hasSlowVersionCheck = requests.some((r) => Boolean((r.params as any)?.includeLatestVersion) || Boolean((r.params as any)?.includeRegistry));
-    const hasExecutionRunsCheck = requests.some((r) => r?.id === 'tool.executionRuns');
-    const hasSlowLoginStatusCheck = hasSlowLoginStatusProbe(request);
-    const isResumeChecklist = typeof request.checklistId === 'string' && request.checklistId.startsWith('resume.');
-    const isMachineDetailsChecklist = request.checklistId === CHECKLIST_IDS.MACHINE_DETAILS;
-    const isNewSessionChecklist = request.checklistId === CHECKLIST_IDS.NEW_SESSION;
-    if (hasSlowLoginStatusCheck) return Math.max(fallback, DEFAULT_CLI_LOGIN_STATUS_TIMEOUT_MS);
-    if (hasExecutionRunsCheck) return Math.max(fallback, DEFAULT_SLOW_FETCH_TIMEOUT_MS);
-    if (hasSlowVersionCheck || isResumeChecklist) return Math.max(fallback, DEFAULT_SLOW_FETCH_TIMEOUT_MS);
-    if (isMachineDetailsChecklist) return Math.max(fallback, DEFAULT_SLOW_FETCH_TIMEOUT_MS);
-    if (isNewSessionChecklist) return Math.max(fallback, DEFAULT_SLOW_FETCH_TIMEOUT_MS);
-    return fallback;
-}
-
 function readMachineCapabilitiesErrorBackoffMsFromEnv(): number {
     const raw = String(process.env.EXPO_PUBLIC_HAPPIER_MACHINE_CAPABILITIES_ERROR_BACKOFF_MS ?? '').trim();
     if (!raw) return DEFAULT_ERROR_BACKOFF_MS;
@@ -509,14 +478,10 @@ async function fetchAndMerge(params: {
             inFlightToken: token,
         });
 
-        const timeoutMs = typeof params.timeoutMs === 'number'
-            ? params.timeoutMs
-            : resolveMachineCapabilitiesTimeoutMs(params.request, DEFAULT_FETCH_TIMEOUT_MS);
-
         let result: MachineCapabilitiesDetectResult;
         try {
             result = await machineCapabilitiesDetect(params.machineId, params.request, {
-                timeoutMs,
+                timeoutMs: params.timeoutMs,
                 serverId: params.serverId,
                 accountId: params.accountLifetime?.scope.accountId,
                 signal: controller?.signal,

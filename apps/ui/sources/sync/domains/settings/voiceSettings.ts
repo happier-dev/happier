@@ -60,7 +60,7 @@ const VoiceProviderSettingsRecordSchema = z.record(
 
 export const VOICE_LEGACY_CREDENTIAL_RECOVERY_MARKER = 'happierLegacyCredentialRecoveryV1' as const;
 
-const VoiceCredentialBindingsSchema = z.array(VoiceCredentialBindingV1Schema).max(64)
+const VoiceCredentialBindingsSchema = z.array(VoiceCredentialBindingV1Schema)
   .superRefine((bindings, ctx) => {
     const identities = new Set<string>();
     bindings.forEach((binding, index) => {
@@ -81,7 +81,7 @@ export type { VoiceCredentialBindingV1 };
 const VoicePrivacySchema = z.object({
   shareSessionSummary: z.boolean().default(true),
   shareRecentMessages: z.boolean().default(true),
-  recentMessagesCount: z.number().int().min(0).max(50).default(3),
+  recentMessagesCount: z.number().int().nonnegative().default(3),
   shareToolNames: z.boolean().default(true),
   sharePermissionRequests: z.boolean().default(true),
   // Allow voice tools to list non-sensitive device inventory (recent workspaces, machines, servers).
@@ -99,7 +99,7 @@ const VoicePrivacySchema = z.object({
 const VoiceUiUpdatesSchema = z.object({
   activeSession: z.enum(['none', 'activity', 'summaries', 'snippets']).default('summaries'),
   otherSessions: z.enum(['none', 'activity', 'summaries', 'snippets']).default('activity'),
-  snippetsMaxMessages: z.number().int().min(1).max(10).default(3),
+  snippetsMaxMessages: z.number().int().positive().default(3),
   includeUserMessagesInSnippets: z.boolean().default(false),
   otherSessionsSnippetsMode: z.enum(['never', 'on_demand_only', 'auto']).default('on_demand_only'),
 });
@@ -625,6 +625,19 @@ export function readVoiceSettingsInput(settings: unknown): unknown {
     : settings;
 }
 
+/** Machine-activity selectors need only this preference, not provider/dictation normalization. */
+export function readVoiceExecutionMachineSettings(input: unknown): VoiceSettings['executionMachine'] | null {
+  if (input && typeof input === 'object' && Object.hasOwn(input, 'executionMachine')) {
+    const parsed = VoiceExecutionMachineSettingsSchema.safeParse(
+      (input as Readonly<{ executionMachine: unknown }>).executionMachine,
+    );
+    return parsed.success ? parsed.data : null;
+  }
+  // Predecessor settings keep the target in a provider-owned legacy block.
+  // The canonical migration remains the authority when the current field is absent.
+  return voiceSettingsParse(input).executionMachine;
+}
+
 // Tolerant parsing: keep valid sub-fields, drop invalid ones to defaults.
 export function voiceSettingsParse(
   input: unknown,
@@ -721,7 +734,7 @@ export function voiceSettingsParse(
 
       const snippetsMaxMessages = z.number().int().safeParse(upd.snippetsMaxMessages);
       if (snippetsMaxMessages.success) {
-        base.ui.updates.snippetsMaxMessages = Math.max(1, Math.min(10, snippetsMaxMessages.data));
+        base.ui.updates.snippetsMaxMessages = Math.max(1, snippetsMaxMessages.data);
       }
 
       const includeUserMessagesInSnippets = z.boolean().safeParse(upd.includeUserMessagesInSnippets);
@@ -748,7 +761,7 @@ export function voiceSettingsParse(
     if (s2.success) base.privacy.shareRecentMessages = s2.data;
     const s3 = parseInt('recentMessagesCount');
     if (s3.success) {
-      const clamped = Math.max(0, Math.min(50, s3.data));
+      const clamped = Math.max(0, s3.data);
       base.privacy.recentMessagesCount = clamped;
     }
     const s4 = parseBool('shareToolNames');

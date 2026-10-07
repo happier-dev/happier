@@ -89,12 +89,17 @@ already stopped and you are waiting.
 Agent, and the picker says so before you commit. They remain in the transcript; the new Agent simply
 does not receive them as context.
 
-The recap has one true total budget, taken from the machine running the session
-(`HAPPIER_REPLAY_MAX_SEED_CHARS`, default `120000`). The per-fork **max seed characters** setting does
-not apply here. Everything counts against that one number, including the session-reference block
-Happier appends, and when the conversation does not fit, the omission is marked rather than silently
-dropped. The recap is delivered with your first message and retires only once the Agent has actually
-accepted it, so a rejected or cancelled first turn does not lose the context.
+The recap uses your Account's **max seed characters** setting, with the machine's configured budget
+as the fallback when that setting is unavailable. In the current development source, the selected
+budget is a positive whole number, not a number clamped to a fixed range. The machine's operator limit
+(`HAPPIER_REPLAY_MAX_SEED_CHARS`, default `120000`) also applies when the recap is sent, so a larger
+Account setting cannot override it.
+
+Everything counts against the total, including the framing and session-reference block Happier
+appends. Omitted conversation is marked; if a nonempty conversation cannot fit with its framing,
+context is unavailable rather than treated as an empty source. The recap is delivered with your first
+message and retires only once the Agent has actually accepted it, so a rejected or cancelled first
+turn does not lose the context.
 
 ## The transition divider
 

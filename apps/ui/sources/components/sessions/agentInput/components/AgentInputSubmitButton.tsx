@@ -89,7 +89,7 @@ function AgentInputSubmitShape(props: Readonly<{ children: React.ReactNode }>) {
         if (reducedMotion) return undefined;
         return LinearTransition
             .duration(reanimatedMotionTokens.durationMs.base)
-            .easing(reanimatedMotionTokens.easing.standard.factory())
+            .easing(reanimatedMotionTokens.layoutEasing.standard)
             .reduceMotion(ReduceMotion.Never);
     }, [reducedMotion]);
 

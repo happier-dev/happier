@@ -16,7 +16,7 @@ export type VoiceRawSpeechReadinessTarget = Readonly<{
 }>;
 
 /** Canonical selected speech credential targets, shared by page checks and Actions. */
-export function projectVoiceRawSpeechReadinessTargets(settings: Settings, registry: VoiceProviderRegistry, machineId: string | null, purpose: 'conversation' | 'dictation' = 'conversation'): readonly VoiceRawSpeechReadinessTarget[] {
+export function projectVoiceRawSpeechReadinessTargets(settings: Pick<Settings, 'voice' | 'voiceSettingsV1' | 'secrets' | 'connectedAccountPurposeBindingsV1'>, registry: VoiceProviderRegistry, machineId: string | null, purpose: 'conversation' | 'dictation' = 'conversation'): readonly VoiceRawSpeechReadinessTarget[] {
     const runtime = purpose === 'dictation' ? createVoiceDictationRuntimeSettingsSnapshot(settings) : settings;
     const config = resolveLocalVoiceAdapterSettings(runtime).config;
     const providerIds = purpose === 'dictation' ? [parseLocalVoiceSttSettings(config.stt).provider]

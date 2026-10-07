@@ -358,7 +358,7 @@ await import('./MessageView');
 describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
     it('renders every persisted composer attachment as host-only transcript context', async () => {
         const { MessageView } = await import('./MessageView');
-        const message = {
+        const message: UserTextMessage = {
             kind: 'user-text' as const,
             id: 'composer-attachments',
             localId: 'local-composer-attachments',
@@ -396,7 +396,7 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
                     ],
                 },
             },
-        } satisfies UserTextMessage;
+        };
 
         const screen = await renderScreen(
             <MessageView

@@ -5,7 +5,6 @@ import { encodeBase64 } from '@/encryption/base64';
 import { Encryption } from '@/sync/encryption/encryption';
 import sodium from '@/encryption/libsodium.lib';
 import {
-    FOREGROUND_FEATURE_PROBE_WAIT_BUDGET_MS,
     getServerFeaturesSnapshot,
     probeServerFeaturesAtUrl,
     type ServerFeaturesSnapshot,
@@ -26,6 +25,7 @@ import { HappyError } from '@/utils/errors/errors';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
+import { throwIfAborted } from '@/utils/runtime/abortSignals';
 
 type AuthRequest = (
     path: string,
@@ -299,26 +299,37 @@ async function authGetTokenCore(params: AuthTokenCoreParams): Promise<AuthCreden
 export async function authGetToken(
     secret: Uint8Array,
     options?: Readonly<{
-        expectedAccountId: string;
+        expectedAccountId?: string;
+        signal?: AbortSignal;
     }>,
 ): Promise<string> {
+    throwIfAborted(options?.signal);
     const addressAnchorUrl = getActiveServerSnapshot().serverUrl;
     const credentials = await authGetTokenCore({
         secret,
-        ...(options ? { expectedAccountId: options.expectedAccountId } : {}),
-        requireKeyChallengeV2: Boolean(options),
+        ...(options?.expectedAccountId ? { expectedAccountId: options.expectedAccountId } : {}),
+        requireKeyChallengeV2: Boolean(options?.expectedAccountId),
         credentialTarget: 'ordinary_home',
-        request: serverHttp.serverFetch,
-        probe: async () => await getServerFeaturesSnapshot({
-            // Always refresh the assertion scheme before login. A stale v1
-            // snapshot must not keep an upgraded server on replayable v1.
-            force: true,
-            // Only an unbound login can use the released v1 fallback. Account-
-            // bound login needs discovery and inherits the shared attempt bound.
-            ...(options ? {} : { timeoutMs: FOREGROUND_FEATURE_PROBE_WAIT_BUDGET_MS }),
-        }),
+        request: async (path, init, requestOptions) => {
+            throwIfAborted(options?.signal);
+            const response = await serverHttp.serverFetch(path, { ...init, signal: options?.signal }, requestOptions);
+            throwIfAborted(options?.signal);
+            return response;
+        },
+        probe: async () => {
+            const snapshot = await getServerFeaturesSnapshot({
+                // Always refresh the assertion scheme before login. A stale v1
+                // snapshot must not keep an upgraded server on replayable v1.
+                force: true,
+                signal: options?.signal,
+            });
+            // Cancellation must not become a released-v1 fallback observation.
+            throwIfAborted(options?.signal);
+            return snapshot;
+        },
         resolveAudience: () => resolveSelectedKeyChallengeV2Audience(addressAnchorUrl),
     });
+    throwIfAborted(options?.signal);
     return credentials.token;
 }
 

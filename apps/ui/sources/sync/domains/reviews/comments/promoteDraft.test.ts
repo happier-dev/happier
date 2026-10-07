@@ -4,6 +4,7 @@ import type {
     ReviewCommentCreateRequestV1,
     ReviewCommentCreateResponseV1,
 } from '@happier-dev/protocol';
+import { buildReviewCommentTextSnapshotHashes } from '@happier-dev/protocol/reviews/comments/snapshots';
 
 import { buildDurableReviewCommentCreateRequestFromDraft, submitDurableReviewCommentDraft } from './promoteDraft';
 
@@ -39,6 +40,19 @@ describe('buildDurableReviewCommentCreateRequestFromDraft', () => {
             clientMutationId: 'mutation-1',
         });
         expect('kind' in request.snapshot ? request.snapshot.kind : null).toBe('text');
+    });
+
+    it('preserves complete draft evidence and uses canonical snapshot facts', () => {
+        const localDraft = draft();
+        localDraft.snapshot.selectedLines = [`${'x'.repeat(5000)}\u202E`];
+        const request = buildDurableReviewCommentCreateRequestFromDraft({
+            projectId: 'project-1', clientMutationId: 'mutation-1', draft: localDraft,
+        });
+        expect(request.snapshot).toMatchObject({
+            ...localDraft.snapshot,
+            ...buildReviewCommentTextSnapshotHashes(localDraft.snapshot),
+            truncated: false, hasBidiControls: true, likelyMinified: true,
+        });
     });
 
     it('submits the durable create action only when explicitly invoked and clears the local draft after success', async () => {

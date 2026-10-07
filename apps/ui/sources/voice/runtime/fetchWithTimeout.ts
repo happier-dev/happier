@@ -1,4 +1,5 @@
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { MAX_VOICE_TIMER_DELAY_MS } from '@/voice/runtime/input/TurnEndpointDetector';
 
 function isAbortError(error: unknown): boolean {
   return Boolean(error && typeof error === 'object' && (error as any).name === 'AbortError');
@@ -6,7 +7,7 @@ function isAbortError(error: unknown): boolean {
 
 export function resolveVoiceNetworkTimeoutMs(raw: unknown, fallbackMs: number): number {
   const n = typeof raw === 'number' && Number.isFinite(raw) ? Math.floor(raw) : fallbackMs;
-  return Math.max(1_000, Math.min(60_000, n));
+  return Math.max(1, Math.min(MAX_VOICE_TIMER_DELAY_MS, n));
 }
 
 export async function fetchWithTimeout(

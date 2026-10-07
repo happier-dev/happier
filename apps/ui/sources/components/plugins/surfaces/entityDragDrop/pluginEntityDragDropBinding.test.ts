@@ -99,6 +99,12 @@ describe('mounted plugin entity bridge', () => {
         const source = f.binding.mountSource({ mountId: 'source', sourceId: 'issue', reference: { id: 'x' } })!;
         const parent = f.binding.mountTarget({ mountId: 'parent', targetId: 'board', getBounds: () => ({ x: 0, y: 0, width: 100, height: 100 }) })!;
         const child = f.binding.mountTarget({ mountId: 'child', targetId: 'board', parentId: parent.id, getBounds: () => ({ x: 10, y: 10, width: 20, height: 20 }) })!;
+        f.setAdmission({ status: 'allowed', effect: { ...effect.effect, actionId: '' } });
+        const invalidCarry = source.begin()!;
+        invalidCarry.move({ x: 20, y: 20 });
+        expect(f.runtime.getSnapshot().admission).toMatchObject({ status: 'refused', reason: { code: 'plugin-drop-admission-invalid' } });
+        await invalidCarry.release();
+        expect(f.writes).toEqual([]);
         f.setAdmission({ status: 'allowed', effect: { ...effect.effect, actionId: 'plugin:acme.board/erase' } });
         const carry = source.begin()!;
         carry.move({ x: 20, y: 20 });

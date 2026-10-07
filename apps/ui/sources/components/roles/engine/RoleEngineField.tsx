@@ -21,6 +21,7 @@ import { buildRolesRailPickerOption, type RolesRailPickerOptionParams } from '..
  * Nothing is asked of a machine until the popover opens on an Agent.
  */
 export const RoleEngineField = React.memo(function RoleEngineField(props: Readonly<{
+    serverId?: string | null;
     engine: RoleEngineV1 | undefined;
     label: string | null;
     leading?: React.ReactNode;
@@ -31,6 +32,8 @@ export const RoleEngineField = React.memo(function RoleEngineField(props: Readon
     testID?: string;
 }>) {
     const { theme } = useUnistyles();
+    const scope = useActiveServerAccountScope(props.serverId);
+    const unavailable = props.serverId !== undefined && scope === null;
     const anchorRef = React.useRef<View>(null);
     const [open, setOpen] = React.useState(false);
     const trigger = renderDropdownItemTriggerRightElement({
@@ -48,13 +51,14 @@ export const RoleEngineField = React.memo(function RoleEngineField(props: Readon
                 testID={props.testID}
                 accessibilityRole="button"
                 accessibilityLabel={`${t('roles.settings.engineTitle')}: ${props.label ?? t('roles.rail.defaultEngine')}`}
-                disabled={props.disabled}
-                onPress={() => setOpen(true)}
+                disabled={props.disabled || unavailable}
+                onPress={() => { if (!unavailable) setOpen(true); }}
             >
                 {trigger}
             </HappierPressable>
-            {open ? (
+            {open && !unavailable ? (
                 <RoleEnginePopover
+                    capabilityServerId={scope?.serverId ?? ''}
                     anchorRef={anchorRef}
                     engine={props.engine}
                     onChange={props.onChange}
@@ -68,6 +72,7 @@ export const RoleEngineField = React.memo(function RoleEngineField(props: Readon
 
 /** Mounted only while open: the Agent catalog and model probes belong to the open popover. */
 function RoleEnginePopover(props: Readonly<{
+    capabilityServerId: string;
     anchorRef: React.RefObject<View | null>;
     engine: RoleEngineV1 | undefined;
     onChange: (engine: RoleEngineV1) => void;
@@ -77,8 +82,7 @@ function RoleEnginePopover(props: Readonly<{
     const settings = useSettings();
     const acpCatalogSettingsV1 = useSetting('acpCatalogSettingsV1');
     const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
-    const scope = useActiveServerAccountScope();
-    const capabilityServerId = scope?.serverId ?? '';
+    const { capabilityServerId } = props;
     const { engine, onChange } = props;
     const entries = React.useMemo(() => getResolvedBackendCatalogEntries({
         enabledAgentIds: getEnabledAgentIds({ backendEnabledByTargetKey }),

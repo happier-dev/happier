@@ -50,7 +50,6 @@ import { resolveSessionMediaInlineRenderableImageMimeType } from '@/components/s
 import { readSessionMessageProvenance } from '@happier-dev/protocol';
 import type { TranscriptRollbackAction } from '@/sync/domains/sessionRollback/rollbackUiSupport';
 import { CommittedMessageActions } from '@/components/sessions/transcript/messageActions/CommittedMessageActions';
-import { useWorkflowMakeRepeatable } from '@/components/workflows/authoring/useWorkflowMakeRepeatable';
 import { RowActionRevealSlot } from '@/components/sessions/transcript/messageActions/RowActionRevealSlot';
 import { readCoarsePrimaryPointer, useRowActionHoverHost } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
 import { resolveMessagePinAvailability } from '@/components/sessions/transcript/messageActions/resolveMessagePinAvailability';
@@ -1008,11 +1007,6 @@ function AgentTextBlock(props: {
   })();
   const selectionEnabled = props.messageDisplayCommon.transcriptMessageSelectionEnabled === true && selectableMessage != null;
   const copyText = selectableMessage?.text ?? (isStructuredOnly ? props.message.text : markdown);
-  const makeRepeatable = useWorkflowMakeRepeatable({
-    sessionId: props.sessionId,
-    serverId: props.serverId ?? props.forkCommon.sessionForkSupportSource?.serverId,
-    ...(selectableMessage ? { message: { id: props.message.id, text: selectableMessage.text } } : {}),
-  });
   const handleOptionPress = React.useCallback((option: Option) => {
     fireAndForget((async () => {
       try {
@@ -1215,8 +1209,6 @@ function AgentTextBlock(props: {
       onActionHoverOut={isWeb ? () => setIsCopyButtonHovered(false) : undefined}
       onHoverIn={isWeb ? () => setIsMessageHovered(true) : undefined}
       onHoverOut={isWeb ? () => setIsMessageHovered(false) : undefined}
-
-      makeRepeatable={makeRepeatable}
     >
       {(actionsRow) => (
       <TranscriptJumpAttention

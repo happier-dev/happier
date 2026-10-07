@@ -145,7 +145,7 @@ describe('Session settings (prompt personalization)', () => {
         // `Item` is a host element here, so the inline field is the row's `rightElement`.
         const input = (inputRow as any)?.props?.rightElement;
         expect(input?.props?.placeholder).toBe('settingsSession.usageLimitRecovery.customResumePromptPlaceholder');
-        expect(input?.props?.maxLength).toBe(2000);
+        expect(input?.props?.maxLength).toBeUndefined();
 
         await act(async () => {
             input.props.onChangeText('  Resume exactly where you stopped.  ');

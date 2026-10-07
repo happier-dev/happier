@@ -104,6 +104,13 @@ Codex integrations use the OpenAI Responses protocol unless a separately tested 
 
 ## Credentials and endpoint safety
 
+GitHub forge credentials are Connected Service credentials, not model Provider
+connections. In 0.3 development, GitHub consumers may use the executing machine's
+GitHub CLI login through the existing native materialization path; an explicit
+Connected Account selection still takes precedence. This does not add a
+command-produced credential transport to custom model Providers. See
+[machine-native GitHub credentials](plugin-platform.md#machine-native-github-credentials-03-development).
+
 Version 1 supports unauthenticated and API-key credentials. Raw secrets remain in Saved Secrets and are resolved by the daemon only after all non-secret checks pass. Plugins receive credential descriptors/materialization inputs, not unrestricted access to the secret store.
 
 An unauthenticated Provider remains credential-free through managed-runtime authorization and Agent

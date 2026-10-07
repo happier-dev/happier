@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ReviewCommentV1 } from '@happier-dev/protocol';
+import { ReviewCommentCreateRequestV1Schema, ReviewCommentListRequestV1Schema, ReviewCommentWorkspaceV1Schema, matchesReviewCommentListFilters, type ReviewCommentV1, type PluginPermissionGrantV1, type WorkspaceRefV1 } from '@happier-dev/protocol';
 import { flushHookEffects, standardCleanup } from '@/dev/testkit';
 import { buildReviewCommentFixture, storePlainReviewCommentFixture } from '@/dev/testkit/fixtures/reviewComments';
 import { createSessionFilesViewFixture, fileViewSnapshot, installSessionFilesViewBoundaries, prepareSessionFilesViewTestkit } from './sessionFilesViewTestkit';
@@ -10,6 +10,8 @@ import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPa
 installSessionFilesViewBoundaries();
 let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>>;
 let servedReviewComments: readonly ReviewCommentV1[] = [];
+let servedGrants: PluginPermissionGrantV1[] = [];
+let homeRequests: Array<{ path: string; method: string; url: URL; body: unknown }> = [];
 let requests: Array<{ path: string; method: string; accountId: string | null }> = [];
 let pane: AppPaneScopeApi;
 let pendingSnapshotResponses: Array<() => void> = [];
@@ -18,6 +20,8 @@ beforeAll(prepareSessionFilesViewTestkit);
 beforeEach(async () => {
     standardCleanup();
     servedReviewComments = [];
+    servedGrants = [];
+    homeRequests = [];
     requests = [];
     pendingSnapshotResponses = [];
     fixture = await createSessionFilesViewFixture({ rootPath: '/tmp/repo',
@@ -26,12 +30,33 @@ beforeEach(async () => {
             pendingSnapshotResponses.push(() => resolve({ success: true, snapshot: fileViewSnapshot({ rootPath: '/tmp/repo' }) }));
         }) : undefined,
         request: async (url, init) => {
-            const path = new URL(String(url)).pathname;
+            const requestUrl = new URL(String(url));
+            const path = requestUrl.pathname;
+            const requestBody: unknown = init?.body ? JSON.parse(String(init.body)) : undefined;
+            homeRequests.push({ path, method: init?.method ?? 'GET', url: requestUrl, body: requestBody });
+            if (path === '/v1/plugins/permissions/grants/list') return Response.json({ grants: servedGrants, pendingRequests: [] });
             if (path === '/v1/reviews/comments') {
                 const bearer = new Headers(init?.headers).get('authorization')?.split(' ')[1];
                 const accountId = bearer ? (JSON.parse(Buffer.from(bearer.split('.')[1]!, 'base64url').toString()) as { sub: string }).sub : null;
                 requests.push({ path, method: init?.method ?? 'GET', accountId });
-                return Response.json({ items: servedReviewComments.map(storePlainReviewCommentFixture), cursor: null });
+                if (init?.method === 'POST') {
+                    const { eventEnvelope: _envelope, ...input } = requestBody as Record<string, unknown>;
+                    const created = ReviewCommentCreateRequestV1Schema.parse(input);
+                    const comment: ReviewCommentV1 = { ...buildReviewCommentFixture({
+                        accountId: 'alice', projectId: created.projectId, workspace: created.workspace, sessionId: created.sessionId,
+                        anchor: created.anchor, snapshot: created.snapshot, body: created.body,
+                        author: { kind: 'user', userId: 'alice' }, state: 'proposed',
+                    }), accountId: 'alice', projectId: created.projectId, workspace: created.workspace };
+                    servedReviewComments = [...servedReviewComments, comment];
+                    return Response.json({ comment });
+                }
+                const workspace = requestUrl.searchParams.get('workspace');
+                const filters = ReviewCommentListRequestV1Schema.parse({
+                    projectId: requestUrl.searchParams.get('projectId') ?? undefined,
+                    workspace: workspace ? ReviewCommentWorkspaceV1Schema.parse(JSON.parse(workspace)) : undefined,
+                    includeHistory: true,
+                });
+                return Response.json({ items: servedReviewComments.filter(comment => matchesReviewCommentListFilters(comment, filters)).map(storePlainReviewCommentFixture), cursor: null });
             }
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             return new Response('{}', { status: 404 });
@@ -67,6 +92,70 @@ function enableReviewComments() {
 function scrollTop() { return (pane.scopeState?.details.tabState[tabKey] as { scrollTop?: number } | undefined)?.scrollTop; }
 
 describe('SessionScmReviewDetailsView (snapshot SWR)', () => {
+    it('creates a Session-scoped comment without a counter and lists it from the Project workspace scope', async () => {
+        enableReviewComments();
+        const { ReviewCommentsSessionSurface } = await import('@/components/reviews/ReviewCommentsSessionSurface');
+        const screen = await render();
+        const surfaceProps = screen.tree.root.findByType(ReviewCommentsSessionSurface).props as React.ComponentProps<typeof ReviewCommentsSessionSurface>;
+        const response = await surfaceProps.execute('reviews.comments.create', {
+            projectId: surfaceProps.projectId, workspace: surfaceProps.workspace, sessionId: surfaceProps.sessionId,
+            anchor: { kind: 'file', filePath: 'src/a.ts' }, snapshot: { kind: 'none', capturedAt: 1 },
+            body: 'Visible from the Project host.', clientMutationId: 'session-create',
+        });
+        const createRequest = homeRequests.find(request => request.path === '/v1/reviews/comments' && request.method === 'POST');
+        expect(createRequest?.body).not.toHaveProperty('projectId');
+        expect(response).not.toHaveProperty('comment.projectId');
+        const projectPanel = await fixture.render(<ReviewCommentsSessionSurface
+            workspaceId="wr_stable" workspace={surfaceProps.workspace} execute={surfaceProps.execute}
+        />);
+        expect(projectPanel.getTextContent()).toContain('Visible from the Project host.');
+        const listRequest = homeRequests.filter(request => request.path === '/v1/reviews/comments' && request.method === 'GET').at(-1);
+        expect(listRequest?.url.searchParams.get('projectId')).toBeNull();
+        expect(JSON.parse(listRequest?.url.searchParams.get('workspace') ?? 'null')).toEqual({ machineId: 'm1', path: '/tmp/repo' });
+    });
+
+    it('finds a Project grant after counter reassignment and refuses another checkout or a missing ref', async () => {
+        enableReviewComments();
+        const { projectManager } = await import('@/sync/runtime/orchestration/projectManager');
+        const workspaceRef: WorkspaceRefV1 = {
+            id: 'wr_stable', serverId: fixture.home.id, machineId: 'm1', rootPath: '/tmp/repo',
+            label: null, createdAtMs: 1, lastOpenedAtMs: null,
+        };
+        fixture.storage.getState().applySettingsLocal({ workspaceRefsV1: [workspaceRef] });
+        servedGrants = [{
+            v: 1, id: 'grant-project', accountId: 'alice', grantedByUserId: 'alice',
+            pluginId: 'review-coderabbit', capability: 'reviews.comments.write.direct',
+            targetScope: { kind: 'project', projectId: workspaceRef.id }, authoritySource: { kind: 'bundled' },
+            subject: { kind: 'general' }, status: 'active', grantedAt: 1, createdAt: 1, updatedAt: 1,
+        }];
+        const firstCounter = projectManager.getProjectForSession('s1', fixture.home.id)?.id;
+        const { ReviewCommentsSessionSurface } = await import('@/components/reviews/ReviewCommentsSessionSurface');
+        const screen = await render();
+        expect(screen.tree.root.findByType(ReviewCommentsSessionSurface).props.permissionGrantError).toBeNull();
+        await screen.pressByTestIdAsync('review-comments-session-header');
+        expect(screen.findHostByTestId('review-comments-session-direct-write-grant-grant-project')).not.toBeNull();
+        expect(homeRequests.find(request => request.path === '/v1/plugins/permissions/grants/list')?.body).toMatchObject({
+            targetScope: { kind: 'project', projectId: 'wr_stable' },
+        });
+        projectManager.clear();
+        projectManager.addSession({ ...fixture.session, id: 'other', metadata: { ...fixture.session.metadata, path: '/tmp/other' } }, { serverId: fixture.home.id });
+        projectManager.addSession(fixture.session, { serverId: fixture.home.id });
+        expect(projectManager.getProjectForSession('s1', fixture.home.id)?.id).not.toBe(firstCounter);
+        await screen.update(1);
+        expect(screen.findHostByTestId('review-comments-session-direct-write-grant-grant-project')).not.toBeNull();
+        const otherRef = { ...workspaceRef, id: 'wr_other', rootPath: '/tmp/other' };
+        fixture.storage.getState().applySettingsLocal({ workspaceRefsV1: [workspaceRef, otherRef] });
+        const otherCheckoutSession = { ...fixture.session, metadata: { ...fixture.session.metadata, path: '/tmp/other' } };
+        await act(async () => { fixture.storage.getState().applySessions([otherCheckoutSession]); });
+        await screen.update(2);
+        expect(screen.findHostByTestId('review-comments-session-direct-write-grant-grant-project')).toBeNull();
+        fixture.storage.getState().applySettingsLocal({ workspaceRefsV1: [] });
+        const requestCount = homeRequests.filter(request => request.path === '/v1/plugins/permissions/grants/list').length;
+        await screen.update(3);
+        expect(screen.findHostByTestId('review-comments-session-direct-write-grant-grant-project')).toBeNull();
+        expect(homeRequests.filter(request => request.path === '/v1/plugins/permissions/grants/list')).toHaveLength(requestCount);
+    });
+
     it('registers the mounted review surface as a realtime SCM transcript consumer', async () => {
         await render();
         const { readMountedSessionRealtimeScmConsumerScopes } = await import('@/sync/runtime/sessionRealtimeScmConsumers');

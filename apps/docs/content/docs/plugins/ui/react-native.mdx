@@ -447,7 +447,11 @@ export function ItemsPage({ items, openKey, onOpenChange }: {
 ```
 
 The measurements above are this example's readable pane sizes, not platform
-breakpoints. The disclosure intentionally uses the public instant motion driver;
+breakpoints. An action inside a row's peek, a card or a detail header takes
+`Button size="small"`: the host's desktop control height under a pointer, and
+never less than the platform's touch target on a phone. Prose that is read rather
+than scanned — a detail's description, a story step's body — takes
+`Text variant="reading"`; `body` is the denser secondary line a row or a field uses. The disclosure intentionally uses the public instant motion driver;
 a custom animated composition may supply a public `HappierDisclosureMotionDriver`
 while honoring `reducedMotion`. Its header receives the toggle and expanded
 accessibility state together. Keep `defineUiSurface` as the provider boundary.
@@ -657,11 +661,13 @@ Without an app renderer, including a caller-hosted HTML realm, the supplied
 `fallback` renders instead.
 
 Use `StoredImage` with a `StoredImageRefV1` from
-`@happier-dev/plugin-sdk/ui`: `{ sessionId, mediaId }`, taken from file-backed
-native Session-image artifacts returned by a successful Action in this mounted
-surface, including capture, attachment, snapshot or Session-event results. The host
-retains that exact media reference; ids copied from another surface or plugin
-do not grant a read. No image path or daemon root is an author prop.
+`@happier-dev/plugin-sdk/ui`. Pass the complete file-backed native Session-image
+reference, including its media identity, dimensions, byte size and `file` facts
+(Session, storage, relative path, digest and MIME type). Capture, attachment,
+snapshot and Session-event Actions can return these references. You may retain
+a reference across surface remounts or pass it to another plugin; the receiving
+plugin's declared Session scope still decides access. A reference grants no read
+permission, and arbitrary file paths cannot replace native Session-image facts.
 
 ```tsx
 import { StoredImage } from '@happier-dev/plugin-ui';

@@ -12,6 +12,7 @@ import {
     attachActiveBrowserPageReference,
     countBrowserAnnotationDraftMarks,
     createBrowserContextAnnotationAdapter,
+    createBrowserContextState,
     createDesktopBrowserAnnotationCaptureProvider,
     markBrowserContextViewNavigation,
     readBrowserAnnotationDraft,
@@ -116,6 +117,8 @@ export type BrowserShellContextState = Readonly<{
         receiveBrowserEvent?: (event: BrowserEventV1) => void;
     }>;
     state: BrowserContextState;
+    /** Canonical Session state before React has published its next render projection. */
+    readState?: () => BrowserContextState;
     contextCapabilities: BrowserContextCapabilities;
     enabled?: boolean;
     attachmentsUploadsEnabled?: boolean;
@@ -201,7 +204,7 @@ export function useBrowserAnnotationController(input: Readonly<{
         if (!context) return;
 
         const result = attachActiveBrowserPageReference({
-            state: context.state,
+            state: context.readState?.() ?? context.state,
             browserContextEnabled: context.enabled !== false,
             contextCapabilities: context.contextCapabilities,
             view: activeView,
@@ -247,9 +250,9 @@ export function useBrowserAnnotationController(input: Readonly<{
         resolveBinding: () => {
             const context = browserContextRef.current;
             return {
-                state: context?.state ?? ({} as BrowserContextState),
-                view: activeViewRef.current,
-                browserContextEnabled: context?.enabled !== false,
+                state: context?.readState?.() ?? context?.state ?? createBrowserContextState(),
+                view: context ? activeViewRef.current : null,
+                browserContextEnabled: Boolean(context) && context?.enabled !== false,
                 browserDiagnosticsEnabled: context?.browserDiagnosticsEnabled,
                 attachmentsUploadsEnabled: context?.attachmentsUploadsEnabled,
                 contextCapabilities: context?.contextCapabilities ?? ({} as BrowserContextCapabilities),
@@ -359,11 +362,12 @@ export function useBrowserAnnotationController(input: Readonly<{
     React.useEffect(() => {
         if (!browserContext || !activeView) return;
 
-        const nextState = markBrowserContextViewNavigation(browserContext.state, {
+        const current = browserContext.readState?.() ?? browserContext.state;
+        const nextState = markBrowserContextViewNavigation(current, {
             viewId: activeView.viewId,
             navigationGeneration: activeView.navigationGeneration,
         });
-        if (nextState === browserContext.state) return;
+        if (nextState === current) return;
 
         browserContext.onStateChange(nextState);
         // `activeViewNavigationKey` is the navigation identity; re-running on every context object

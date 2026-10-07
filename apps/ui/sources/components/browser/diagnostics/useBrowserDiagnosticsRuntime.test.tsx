@@ -163,6 +163,23 @@ function createDaemonDiagnosticsSnapshot(
 }
 
 describe('useBrowserDiagnosticsRuntime', () => {
+    it('collects event updates without re-rendering the producer host after availability is established', async () => {
+        stubCryptoRandomUuid();
+        const view = createLocalPreviewView({ engineKind: 'nativeWebView' });
+        let renders = 0;
+        const hook = await renderHook(() => {
+            renders += 1;
+            return useBrowserDiagnosticsRuntime({ view, enabled: true });
+        });
+        const bridge = hook.getCurrent()?.bridge;
+        expect(bridge).toBeTruthy();
+        const before = renders;
+        for (let index = 0; index < 20; index += 1) {
+            await act(async () => { bridge?.onEvents?.([createDaemonConsoleEvent({ eventId: `event_${index}` })]); });
+        }
+        expect(selectBrowserDiagnosticsForView(hook.getCurrent()!.state, view).eventCount).toBe(20);
+        expect(renders - before).toBe(0);
+    });
     it.each(['webIframe', 'nativeWebView', 'desktopWebView'] as const)('provides the %s collector identity for automation while diagnostics presentation is disabled', async (engineKind) => {
         stubCryptoRandomUuid();
         const view: BrowserControlViewState = {

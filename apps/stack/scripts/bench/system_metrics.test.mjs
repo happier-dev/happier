@@ -1,7 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { parseDarwinHostMetrics, parseLinuxHostMetrics } from './system_metrics.mjs';
+import { collectSystemMetrics, parseDarwinHostMetrics, parseLinuxHostMetrics } from './system_metrics.mjs';
+
+test('live process-tree metrics retain the running owner across normal pgrep line endings', {
+  skip: process.platform !== 'linux' && process.platform !== 'darwin',
+}, async () => {
+  const metrics = await collectSystemMetrics({ rootPid: process.pid });
+  assert.ok(metrics.process, 'a live owner must have process metrics');
+  assert.ok(metrics.process.rssBytes > 0);
+  assert.ok(Number.isFinite(metrics.process.cpuPercent));
+  assert.ok(metrics.process.processCount >= 1);
+});
 
 test('Linux benchmark metrics distinguish capacity, pressure, paging, and runnable work', () => {
   const metrics = parseLinuxHostMetrics({

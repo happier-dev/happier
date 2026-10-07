@@ -45,13 +45,25 @@ export type CommittedMessageActionInput = Readonly<{
     messagePins?: readonly PersistedSessionMessagePinV1[];
     onToggleMessagePin?: (pin: PersistedSessionMessagePinV1) => void;
     openSavePrompt: () => void;
-    /** Workflow eligibility and execution stay with the workflow authoring owner. */
-    makeRepeatable?: Readonly<{ available: boolean; openRepeatable: () => void }>;
 }>;
 
 /** Eligibility and preferences drive BOTH presentations, including recycled rows. */
 export function useCommittedMessageActions(input: CommittedMessageActionInput) {
     const { message, settings } = input;
+    const makeRepeatableEligible = settings.transcriptMessageMakeRepeatableActionEnabled !== false
+        && message.kind === 'agent-text' && !message.isThinking && input.selectableText != null && !input.isStructuredOnly;
+    const repeatableServerId = input.serverId ?? input.forkCommon.sessionForkSupportSource?.serverId;
+    // Message identity controls capability lifetime; streamed text is read by the action at press time.
+    const makeRepeatableSource = React.useMemo(() => makeRepeatableEligible ? {
+        sessionId: input.sessionId, serverId: repeatableServerId, messageId: message.id,
+    } : null, [makeRepeatableEligible, input.sessionId, repeatableServerId, message.id]);
+    const [makeRepeatableCapability, setMakeRepeatableCapability] = React.useState<Readonly<{
+        source: NonNullable<typeof makeRepeatableSource>;
+        available: boolean;
+        openRepeatable: () => void | Promise<void>;
+    }> | null>(null);
+    const makeRepeatable = makeRepeatableSource && makeRepeatableCapability?.source === makeRepeatableSource
+        ? makeRepeatableCapability : null;
     const selectionActions = useOptionalTranscriptSelectionActions();
     const selectionRow = useOptionalTranscriptSelectionRow(message.id);
     const seq = typeof message.seq === 'number' && Number.isFinite(message.seq) ? Math.trunc(message.seq) : null;
@@ -118,15 +130,13 @@ export function useCommittedMessageActions(input: CommittedMessageActionInput) {
             icon: 'bookmark-plus', title: t('committedMessageActions.savePrompt'), onPress: input.openSavePrompt },
         { id: 'copy', available: settings.transcriptMessageCopyActionEnabled !== false && input.copyText.trim().length > 0,
             icon: copied ? 'check' : 'copy', title: t('common.copy'), onPress: copy },
-        { id: 'makeRepeatable', available: settings.transcriptMessageMakeRepeatableActionEnabled !== false
-            && message.kind === 'agent-text' && !message.isThinking && input.selectableText != null && !input.isStructuredOnly
-            && input.makeRepeatable?.available === true,
+        { id: 'makeRepeatable', available: makeRepeatable?.available === true,
             icon: 'arrows-clockwise', title: t('workflows.authoring.repeatable'),
-            accessibilityHint: t('workflows.authoring.repeatableDescription'), onPress: () => input.makeRepeatable?.openRepeatable() },
+            accessibilityHint: t('workflows.authoring.repeatableDescription'), onPress: () => makeRepeatable?.openRepeatable() },
         { id: 'pin', available: input.onToggleMessagePin != null && pinAvailability.status === 'available'
             && (settings.transcriptMessagePinActionEnabled !== false || pinned),
             icon: pinned ? 'push-pin-slash' : 'push-pin', title: pinned ? t('session.transcriptNavigation.unpinMessageA11y') : t('session.transcriptNavigation.pinMessageA11y'),
             onPress: () => { if (pinAvailability.status === 'available') input.onToggleMessagePin?.(buildSessionMessagePinAtPressTime(pinAvailability.pinTarget)); } },
     ];
-    return { actions, pinAvailability, pluginActions };
+    return { actions, pinAvailability, pluginActions, makeRepeatableSource, setMakeRepeatableCapability };
 }

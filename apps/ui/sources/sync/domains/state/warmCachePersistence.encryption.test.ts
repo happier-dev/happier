@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { runAppBootSequence, type AppBootReadyState } from '@/boot/runAppBootSequence';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 
 /**
  * The warm cache is the only store that holds session names, summaries, paths and hostnames after
@@ -276,6 +278,72 @@ describe('warmCachePersistence at-rest encryption', () => {
         const writingInstances = instances.filter((instance) => instance.writes.length > 0);
         expect(writingInstances.length).toBe(1);
         expect(writingInstances[0]?.config?.encryptionKey ?? '').not.toBe('');
+    });
+
+    it.each(['read', 'write'] as const)('boots cold while the native keystore %s is pending and never rehydrates the retired Account', async (phase) => {
+        const secureStore = await import('expo-secure-store');
+        const keystore = createDeferred<string | null>();
+        const entered = createDeferred<void>();
+        vi.doMock('expo-secure-store', () => ({
+            getItemAsync: async () => {
+                if (phase !== 'read') return null;
+                entered.resolve();
+                return keystore.promise;
+            },
+            setItemAsync: async () => {
+                if (phase !== 'write') return;
+                entered.resolve();
+                await keystore.promise;
+            },
+        }));
+        const persistence = await importWarmCachePersistence();
+        const keyOwner = await importWarmCacheEncryptionKey();
+        const credentials = { token: 'account-a-token', secret: 'account-a-secret' };
+        const ready: AppBootReadyState[] = [];
+        let currentAccount = 'account-a';
+        const restoredAccounts: string[] = [];
+        const restoredRows: ReturnType<typeof persistence.loadSessionListWarmCacheEntries>[] = [];
+        const run = runAppBootSequence({
+            loadFonts: async () => {},
+            sodiumReady: Promise.resolve(),
+            resolveCredentials: async () => credentials,
+            prepareWarmCache: persistence.prepareWarmCacheStorage,
+            prepareSessionDrafts: async () => {},
+            restoreSync: async () => {
+                restoredAccounts.push(currentAccount);
+                restoredRows.push(persistence.loadSessionListWarmCacheEntries('server-a', currentAccount));
+            },
+            onReady: (state) => ready.push(state),
+        });
+        try {
+            await entered.promise;
+            for (let index = 0; index < 8; index += 1) await Promise.resolve();
+            expect(ready).toEqual([{ credentials }]);
+            expect(restoredAccounts).toEqual(['account-a']);
+            expect(restoredRows).toEqual([{}]);
+            expect(keyOwner.readResolvedWarmCacheEncryptionKey()).toBeNull();
+            persistence.saveSessionListWarmCacheEntries('server-a', currentAccount, { s1: { ...SESSION_ENTRY } });
+            expect(instances.every((instance) => instance.writes.length === 0)).toBe(true);
+
+            // The mounted app can retire this Account while the optional OS operation is pending.
+            currentAccount = 'account-b';
+            persistence.setWarmCacheAccountScope(currentAccount);
+        } finally {
+            keystore.resolve('abcdefghijklmnop');
+            await persistence.prepareWarmCacheStorage();
+            await run;
+            // Restore the canonical test boundary; unmocking would expose the native module to Node.
+            vi.doMock('expo-secure-store', () => secureStore);
+        }
+        expect(restoredAccounts).toEqual(['account-a']);
+        expect(ready).toEqual([{ credentials }]);
+        expect(persistence.resolveWarmCacheAccountScope('account-a')).toBe('account-b');
+        persistence.saveSessionListWarmCacheEntries('server-a', currentAccount, { s1: { ...SESSION_ENTRY } });
+        expect(persistence.loadSessionListWarmCacheEntries('server-a', 'account-a')).toEqual({});
+        expect(persistence.loadSessionListWarmCacheEntries('server-a', 'account-b')).toMatchObject({ s1: SESSION_ENTRY });
+        const writingInstances = instances.filter((instance) => instance.writes.length > 0);
+        expect(writingInstances).toHaveLength(1);
+        expect(writingInstances[0]?.config?.encryptionKey).toBe(keyOwner.readResolvedWarmCacheEncryptionKey());
     });
 });
 

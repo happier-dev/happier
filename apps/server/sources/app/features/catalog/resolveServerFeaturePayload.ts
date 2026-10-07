@@ -5,10 +5,12 @@ import {
     evaluateFeatureBuildPolicy,
     evaluateServerFeatureDecisions,
     FEATURE_IDS,
+    FEATURE_CATALOG,
     FeatureGatesSchema,
     isFeatureServerRepresented,
     tryWriteServerEnabledBitInPlace,
     type FeatureDecision,
+    type FeatureId,
 } from '@happier-dev/protocol';
 
 import type { ServerFeatureResolver } from './serverFeatureRegistry';
@@ -150,6 +152,42 @@ export function resolveServerFeaturePayload(
     applyBrowserCapabilityFeatureGateClosure(payload);
 
     return payload;
+}
+
+/** A bit-only decision from the same producers and policy, without unrelated diagnostics. */
+export function resolveServerFeatureGate(
+    env: NodeJS.ProcessEnv,
+    resolvers: readonly ServerFeatureResolver[],
+    featureId: FeatureId,
+): boolean {
+    if (resolvers.length === 0) throw new Error('resolveServerFeaturePayload: resolvers list is empty');
+    const required = new Set<FeatureId>();
+    const include = (id: FeatureId): void => {
+        if (required.has(id)) return;
+        required.add(id);
+        for (const dependencyId of FEATURE_CATALOG[id].dependencies) include(dependencyId);
+    };
+    include(featureId);
+    const roots = new Set([...required].map(id => id.split('.')[0]));
+    let mergedFeatures: Record<string, unknown> = {
+        ...resolveSetupSurfacePolicyFeature().features,
+    };
+    for (const resolver of resolvers) {
+        // Plain externally composed resolvers have no declared projection, so preserve them.
+        if (resolver.featureRoots && !resolver.featureRoots.some(root => roots.has(root))) continue;
+        const partial = resolver(env);
+        if (partial.features) mergedFeatures = mergeDeep(mergedFeatures, partial.features as Record<string, unknown>);
+    }
+    const parsed = FeatureGatesSchema.safeParse(mergedFeatures);
+    if (!parsed.success) throw new Error(`Invalid /v1/features feature gates: ${parsed.error.message}`);
+    const projection: Pick<FeaturesResponse, 'features'> = { features: parsed.data };
+    const buildPolicy = resolveServerFeatureBuildPolicy(env);
+    const decisions = evaluateServerFeatureDecisions({
+        serverPayload: projection,
+        featureIds: [featureId],
+        buildPolicy: id => evaluateFeatureBuildPolicy(buildPolicy, id),
+    });
+    return decisions.get(featureId)?.state === 'enabled';
 }
 
 /**

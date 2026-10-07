@@ -40,6 +40,8 @@ export function renderDropdownItemTriggerRightElement(params: Readonly<{
     secondaryColor?: string;
     /** Field only: colour of a quiet value. */
     quietValueColor?: string;
+    /** Field only: `row` when the field is stacked under its label, so it spans the row. */
+    fieldSpan?: 'content' | 'row';
 }>) {
     const resolvedDensity = params.detailDensity ?? 'comfortable';
     const chevron = (
@@ -60,7 +62,8 @@ export function renderDropdownItemTriggerRightElement(params: Readonly<{
             colors: params.field,
         });
         return (
-            <HappierFieldBoxTrigger colors={params.field} leading={params.leading} trailing={chevron}>
+            <HappierFieldBoxTrigger colors={params.field} leading={params.leading} trailing={chevron}
+                {...(params.fieldSpan === undefined ? {} : { span: params.fieldSpan })}>
                 <Text
                     style={[label.style, params.secondary ? { flexGrow: 0, flexShrink: 1, flexBasis: 'auto' } : null, params.quietValue && !label.placeholder && params.quietValueColor ? { color: params.quietValueColor } : null]}
                     numberOfLines={1}

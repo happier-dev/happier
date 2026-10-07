@@ -1,8 +1,8 @@
 /**
  * The loading-indicator styles, as data.
  *
- * Every id except `classicRing` is a dot style: the H of Happier on a 3 × 3 grid, both stems plus
- * the centre dot as the crossbar (the top and bottom centre cells stay empty). A dot style is only a
+ * Every id except `classicRing` is a dot style: the Happier mark or H on a 3 × 3 grid.
+ * The mark adds a bottom-centre dot; the top-centre cell stays empty in both shapes. A dot style is only a
  * cycle length and a function that says how bright each dot is at a moment in that cycle.
  * `dotSpinnerFrames.ts` samples it into a frame table that both platforms render, so adding a style
  * never adds a renderer. `classicRing` keeps the original rotating ring.
@@ -19,6 +19,17 @@ export const HAPPIER_SPINNER_STYLE_IDS = [
   'radar',
   'ripple',
   'aurora',
+  'hWave',
+  'hHandwritten',
+  'hBuildAndRelease',
+  'hRelay',
+  'hTwinStems',
+  'hSlowBreath',
+  'hStarfield',
+  'hSweep',
+  'hRadar',
+  'hRipple',
+  'hAurora',
   'classicRing',
 ] as const;
 
@@ -39,12 +50,12 @@ export function normalizeHappierSpinnerStyleId(value: unknown): HappierSpinnerSt
 
 export type DotSpinnerStyleId = Exclude<HappierSpinnerStyleId, 'classicRing'>;
 
-export type HDotId = 'TL' | 'ML' | 'BL' | 'MC' | 'TR' | 'MR' | 'BR';
+export type SpinnerDotId = 'TL' | 'ML' | 'BL' | 'MC' | 'TR' | 'MR' | 'BR' | 'BC';
 
-export type HDot = Readonly<{ id: HDotId; col: 0 | 1 | 2; row: 0 | 1 | 2 }>;
+export type SpinnerDot = Readonly<{ id: SpinnerDotId; col: 0 | 1 | 2; row: 0 | 1 | 2 }>;
 
 /** Fixed order; a dot's index here is its column in every frame table. */
-export const H_DOTS: readonly HDot[] = [
+export const H_DOTS: readonly SpinnerDot[] = [
   { id: 'TL', col: 0, row: 0 },
   { id: 'ML', col: 0, row: 1 },
   { id: 'BL', col: 0, row: 2 },
@@ -62,15 +73,18 @@ export const H_DOTS: readonly HDot[] = [
  */
 export type DotSpinnerLoop = 'rests' | 'continuous';
 
+export const MARK_DOTS: readonly SpinnerDot[] = [...H_DOTS, { id: 'BC', col: 1, row: 2 }];
+
 export type DotSpinnerStyle = Readonly<{
+  dots: readonly SpinnerDot[];
   /** One loop's motion at Normal speed, in ms: for a `rests` style, the active phase before the pause. */
   motionMs: number;
   loop: DotSpinnerLoop;
   /** `aurora` dots also carry a hue position that renderers map onto theme accent colors. */
   ink: 'mono' | 'aurora';
   /** How bright a dot is `tMs` into the motion, `0 ≤ tMs < motionMs`. */
-  opacity: (dot: HDot, tMs: number) => number;
-  hue?: (dot: HDot, tMs: number) => number;
+  opacity: (dot: SpinnerDot, tMs: number) => number;
+  hue?: (dot: SpinnerDot, tMs: number) => number;
 }>;
 
 /**
@@ -159,7 +173,7 @@ function wrap01(x: number): number {
 }
 
 /** 0 at the bottom-left foot, 1 at the top-right corner. */
-function diagonal(dot: HDot): number {
+function diagonal(dot: SpinnerDot): number {
   return (dot.col + (2 - dot.row)) / 4;
 }
 
@@ -168,13 +182,15 @@ function diagonal(dot: HDot): number {
  * ends when the last dot is back at rest, so the pause that follows is the only gap between loops.
  */
 function staggered(params: Readonly<{
+  dots: readonly SpinnerDot[];
   stepMs: number;
   envelope: Envelope;
-  rank: (dot: HDot) => number | null;
+  rank: (dot: SpinnerDot) => number | null;
 }>): DotSpinnerStyle {
-  const { stepMs, envelope, rank } = params;
-  const lastRank = Math.max(...H_DOTS.map((dot) => rank(dot) ?? 0));
+  const { dots, stepMs, envelope, rank } = params;
+  const lastRank = Math.max(...dots.map((dot) => rank(dot) ?? 0));
   return {
+    dots,
     motionMs: lastRank * stepMs + envelopeLitMs(envelope),
     loop: 'rests',
     ink: 'mono',
@@ -186,11 +202,11 @@ function staggered(params: Readonly<{
   };
 }
 
-function byId(ranks: Partial<Record<HDotId, number>>): (dot: HDot) => number | null {
+function byId(ranks: Partial<Record<SpinnerDotId, number>>): (dot: SpinnerDot) => number | null {
   return (dot) => ranks[dot.id] ?? null;
 }
 
-const diagonalRank = (dot: HDot) => diagonal(dot) * 4;
+const diagonalRank = (dot: SpinnerDot) => diagonal(dot) * 4;
 
 /** A comet with a soft leading edge and a longer trailing tail, given how far a dot sits behind the head. */
 function comet(behindHead: number, tail: number, lead: number): number {
@@ -202,7 +218,7 @@ function comet(behindHead: number, tail: number, lead: number): number {
 
 /** Starfield loops every 2.4 s; each dot's own cycle divides it so the loop is seamless. */
 const STARFIELD_LOOP_MS = 2400;
-const STARFIELD_TRACKS: Readonly<Record<HDotId, readonly [cycleMs: number, delayMs: number]>> = {
+const STARFIELD_TRACKS: Readonly<Record<SpinnerDotId, readonly [cycleMs: number, delayMs: number]>> = {
   TL: [1200, 0],
   ML: [2400, 400],
   BL: [800, 300],
@@ -210,6 +226,7 @@ const STARFIELD_TRACKS: Readonly<Record<HDotId, readonly [cycleMs: number, delay
   TR: [2400, 1500],
   MR: [600, 100],
   BR: [800, 650],
+  BC: [1200, 500],
 };
 
 const SLOW_BREATH_LOOP_MS = 2400;
@@ -222,74 +239,103 @@ const SWEEP_MOTION_MS = 910;
 const RIPPLE_EXPANSION_MS = 1050;
 const RIPPLE_MOTION_MS = 710;
 
+function createDotSpinnerStyles(dots: readonly SpinnerDot[]) {
+  return {
+    wave: staggered({ dots, stepMs: 110, envelope: PULSE, rank: diagonalRank }),
+    handwritten: staggered({
+      dots,
+      stepMs: 90,
+      envelope: HOLD,
+      rank: byId({ TL: 0, ML: 1, BL: 2, BC: 2.7, MC: 3.4, TR: 4.8, MR: 5.8, BR: 6.8 }),
+    }),
+    buildAndRelease: staggered({ dots, stepMs: 95, envelope: BUILD, rank: diagonalRank }),
+    relay: staggered({
+      dots,
+      stepMs: 95,
+      envelope: TIGHT,
+      rank: byId({ BL: 0, BC: 0.5, ML: 1, MC: 2, MR: 3, TR: 4 }),
+    }),
+    twinStems: staggered({
+      dots,
+      stepMs: 130,
+      envelope: PULSE,
+      rank: byId({ BL: 0, BR: 0, BC: 0.5, ML: 1, MR: 1, MC: 1.5, TL: 2, TR: 2 }),
+    }),
+    slowBreath: {
+      dots,
+      motionMs: SLOW_BREATH_LOOP_MS,
+      loop: 'continuous',
+      ink: 'mono',
+      opacity: (dot, tMs) => sampleEnvelope(BREATHE, wrap01((tMs - diagonalRank(dot) * SLOW_BREATH_STEP_MS) / SLOW_BREATH_LOOP_MS)),
+    },
+    starfield: {
+      dots,
+      motionMs: STARFIELD_LOOP_MS,
+      loop: 'continuous',
+      ink: 'mono',
+      opacity: (dot, tMs) => {
+        const [cycleMs, delayMs] = STARFIELD_TRACKS[dot.id];
+        return sampleEnvelope(TWINKLE, wrap01((tMs - delayMs) / cycleMs));
+      },
+    },
+    sweep: {
+      dots,
+      motionMs: SWEEP_MOTION_MS,
+      loop: 'rests',
+      ink: 'mono',
+      opacity: (dot, tMs) => comet(-0.1 + (tMs / SWEEP_CROSSING_MS) * 1.7 - diagonal(dot), 0.55, 0.08),
+    },
+    radar: {
+      dots,
+      motionMs: 1100,
+      loop: 'continuous',
+      ink: 'mono',
+      opacity: (dot, tMs) => {
+        if (dot.col === 1 && dot.row === 1) return 0.55;
+        const angle = wrap01(Math.atan2(dot.col - 1, 1 - dot.row) / (2 * Math.PI));
+        const behind = wrap01(tMs / 1100 - angle);
+        return comet(behind > 0.96 ? behind - 1 : behind, 0.5, 0.04);
+      },
+    },
+    ripple: {
+      dots,
+      motionMs: RIPPLE_MOTION_MS,
+      loop: 'rests',
+      ink: 'mono',
+      opacity: (dot, tMs) => {
+        const p = Math.min(1, tMs / RIPPLE_EXPANSION_MS);
+        const ring = (1 - Math.pow(1 - p, 3)) * 1.45 - 0.1;
+        const radius = Math.hypot(dot.col - 1, dot.row - 1) / Math.SQRT2;
+        return R + (1 - R) * Math.max(0, 1 - Math.abs(radius - ring) / 0.3);
+      },
+    },
+    aurora: {
+      dots,
+      motionMs: 2600,
+      loop: 'continuous',
+      ink: 'aurora',
+      opacity: () => 0.92,
+      hue: (dot, tMs) => wrap01(diagonal(dot) * 0.6 - tMs / 2600),
+    },
+  } satisfies Record<string, DotSpinnerStyle>;
+}
+
+const markStyles = createDotSpinnerStyles(MARK_DOTS);
+const hStyles = createDotSpinnerStyles(H_DOTS);
+
 export const DOT_SPINNER_STYLES: Readonly<Record<DotSpinnerStyleId, DotSpinnerStyle>> = {
-  wave: staggered({ stepMs: 110, envelope: PULSE, rank: diagonalRank }),
-  handwritten: staggered({
-    stepMs: 90,
-    envelope: HOLD,
-    rank: byId({ TL: 0, ML: 1, BL: 2, MC: 3.4, TR: 4.8, MR: 5.8, BR: 6.8 }),
-  }),
-  buildAndRelease: staggered({ stepMs: 95, envelope: BUILD, rank: diagonalRank }),
-  relay: staggered({
-    stepMs: 95,
-    envelope: TIGHT,
-    rank: byId({ BL: 0, ML: 1, MC: 2, MR: 3, TR: 4 }),
-  }),
-  twinStems: staggered({
-    stepMs: 130,
-    envelope: PULSE,
-    rank: byId({ BL: 0, BR: 0, ML: 1, MR: 1, MC: 1.5, TL: 2, TR: 2 }),
-  }),
-  slowBreath: {
-    motionMs: SLOW_BREATH_LOOP_MS,
-    loop: 'continuous',
-    ink: 'mono',
-    opacity: (dot, tMs) => sampleEnvelope(BREATHE, wrap01((tMs - diagonalRank(dot) * SLOW_BREATH_STEP_MS) / SLOW_BREATH_LOOP_MS)),
-  },
-  starfield: {
-    motionMs: STARFIELD_LOOP_MS,
-    loop: 'continuous',
-    ink: 'mono',
-    opacity: (dot, tMs) => {
-      const [cycleMs, delayMs] = STARFIELD_TRACKS[dot.id];
-      return sampleEnvelope(TWINKLE, wrap01((tMs - delayMs) / cycleMs));
-    },
-  },
-  sweep: {
-    motionMs: SWEEP_MOTION_MS,
-    loop: 'rests',
-    ink: 'mono',
-    opacity: (dot, tMs) => comet(-0.1 + (tMs / SWEEP_CROSSING_MS) * 1.7 - diagonal(dot), 0.55, 0.08),
-  },
-  radar: {
-    motionMs: 1100,
-    loop: 'continuous',
-    ink: 'mono',
-    opacity: (dot, tMs) => {
-      if (dot.col === 1 && dot.row === 1) return 0.55;
-      const angle = wrap01(Math.atan2(dot.col - 1, 1 - dot.row) / (2 * Math.PI));
-      const behind = wrap01(tMs / 1100 - angle);
-      return comet(behind > 0.96 ? behind - 1 : behind, 0.5, 0.04);
-    },
-  },
-  ripple: {
-    motionMs: RIPPLE_MOTION_MS,
-    loop: 'rests',
-    ink: 'mono',
-    opacity: (dot, tMs) => {
-      const p = Math.min(1, tMs / RIPPLE_EXPANSION_MS);
-      const ring = (1 - Math.pow(1 - p, 3)) * 1.45 - 0.1;
-      const radius = Math.hypot(dot.col - 1, dot.row - 1) / Math.SQRT2;
-      return R + (1 - R) * Math.max(0, 1 - Math.abs(radius - ring) / 0.3);
-    },
-  },
-  aurora: {
-    motionMs: 2600,
-    loop: 'continuous',
-    ink: 'aurora',
-    opacity: () => 0.92,
-    hue: (dot, tMs) => wrap01(diagonal(dot) * 0.6 - tMs / 2600),
-  },
+  ...markStyles,
+  hWave: hStyles.wave,
+  hHandwritten: hStyles.handwritten,
+  hBuildAndRelease: hStyles.buildAndRelease,
+  hRelay: hStyles.relay,
+  hTwinStems: hStyles.twinStems,
+  hSlowBreath: hStyles.slowBreath,
+  hStarfield: hStyles.starfield,
+  hSweep: hStyles.sweep,
+  hRadar: hStyles.radar,
+  hRipple: hStyles.ripple,
+  hAurora: hStyles.aurora,
 };
 
 /**

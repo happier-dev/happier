@@ -110,6 +110,7 @@ function unionRunIds(general: readonly string[], attention: readonly string[]): 
 
 export function useSessionManagedWorkflowRuns(params: Readonly<{
     sessionId: string | null;
+    serverId: string | null;
     enabled?: boolean;
 }>): SessionManagedWorkflowRunsState {
     const sessionId = params.sessionId !== null && params.sessionId.trim().length > 0 ? params.sessionId : null;
@@ -119,12 +120,12 @@ export function useSessionManagedWorkflowRuns(params: Readonly<{
     // must not read or link a Workflow the Home does not offer.
     const workflows = useWorkflowsAvailability();
     const enabled = (params.enabled ?? true) && workflows.available;
-    const activeAccountScope = useActiveServerAccountScope();
-    const accountScopeKey = activeAccountScope === null ? null : serverAccountScopeKeySuffix(activeAccountScope);
+    const accountScope = useActiveServerAccountScope(params.serverId);
+    const accountScopeKey = accountScope === null ? null : serverAccountScopeKeySuffix(accountScope);
     const [listWindow, setWindow] = React.useState<SessionManagedWorkflowRunsWindow>(EMPTY_WINDOW);
     const [invalidationToken, setInvalidationToken] = React.useState(0);
     const retry = React.useCallback(() => setInvalidationToken((token) => token + 1), []);
-    const current = listWindow.accountScopeKey === accountScopeKey && listWindow.sessionId === sessionId;
+    const current = accountScopeKey !== null && listWindow.accountScopeKey === accountScopeKey && listWindow.sessionId === sessionId;
     // Only this Session's own window, never the Account's whole Run map: an
     // exact refresh of a Run this Session did not start must not rerender a
     // mounted transcript section.
@@ -133,13 +134,15 @@ export function useSessionManagedWorkflowRuns(params: Readonly<{
     windowRef.current = listWindow;
 
     React.useEffect(() => {
-        if (!enabled || sessionId === null) {
+        if (!enabled || sessionId === null || accountScopeKey === null) {
             setWindow(EMPTY_WINDOW);
             return;
         }
         // Decrypted Account content never survives a scope change: the lifetime
         // retires this read before another Account's rows could be applied.
         const lifetime = captureActiveServerAccountScopeLifetime();
+        if (lifetime === null
+            || serverAccountScopeKeySuffix(lifetime.scope) !== accountScopeKey) return;
         const requestScopeKey = accountScopeKey;
         const controller = new AbortController();
         let cancelled = false;
@@ -161,7 +164,7 @@ export function useSessionManagedWorkflowRuns(params: Readonly<{
                         signal: controller.signal,
                     }),
                 ]);
-                if (cancelled || (lifetime !== null && !lifetime.isCurrent())) return;
+                if (cancelled || !lifetime.isCurrent()) return;
                 // Both pages' bodies land in the one Account-scoped row owner,
                 // so an off-page actionable Run is the same body the exact Run
                 // route resolves rather than a second, thinner copy.
@@ -184,7 +187,7 @@ export function useSessionManagedWorkflowRuns(params: Readonly<{
                     refreshFailed: false,
                 });
             } catch {
-                if (cancelled || (lifetime !== null && !lifetime.isCurrent())) return;
+                if (cancelled || !lifetime.isCurrent()) return;
                 // A failed refresh is not evidence that the Session started
                 // nothing: the window keeps the membership it already proved
                 // and reports staleness beside it.
@@ -210,9 +213,9 @@ export function useSessionManagedWorkflowRuns(params: Readonly<{
     }, [accountScopeKey, enabled, invalidationToken, sessionId]);
 
     React.useEffect(() => {
-        if (!enabled || sessionId === null) return;
+        if (!enabled || sessionId === null || accountScopeKey === null) return;
         const lifetime = captureActiveServerAccountScopeLifetime();
-        if (lifetime === null) return;
+        if (lifetime === null || serverAccountScopeKeySuffix(lifetime.scope) !== accountScopeKey) return;
         return subscribeVisibleWorkflowRunListInvalidation({
             lifetime,
             isVisibleWindowLoaded: () => windowRef.current.phase === 'loaded'
@@ -230,11 +233,12 @@ export function useSessionManagedWorkflowRuns(params: Readonly<{
         return entries.length === 0 ? EMPTY_METADATA : Object.fromEntries(entries);
     }, [rows]);
 
-    const phase: SessionManagedWorkflowRunsState['phase'] = current
+    const unavailable = enabled && sessionId !== null && accountScopeKey === null;
+    const phase: SessionManagedWorkflowRunsState['phase'] = unavailable ? 'failed' : current
         ? listWindow.phase
         : sessionId === null || !enabled ? 'idle' : 'loading';
     const attentionRunIds = current ? listWindow.attentionRunIds : EMPTY_ATTENTION;
-    const refreshFailed = current ? listWindow.refreshFailed : false;
+    const refreshFailed = unavailable || (current ? listWindow.refreshFailed : false);
     // One stable state object per change, as the consumers that memoize on it expect.
     return React.useMemo(
         () => ({ phase, runs, metadataByRunId, attentionRunIds, refreshFailed, retry }),
@@ -259,9 +263,9 @@ const EMPTY_INVOCATIONS: readonly WorkflowRunInvocationIndexV1[] = Object.freeze
  * cannot disagree and nothing polls. The caller mounts this only while the row
  * is on screen: an off-screen row holds no read and no wake.
  */
-export function useSessionManagedWorkflowRunFlow(runId: string): SessionManagedWorkflowRunFlow | null {
-    const activeAccountScope = useActiveServerAccountScope();
-    const accountScopeKey = activeAccountScope === null ? null : serverAccountScopeKeySuffix(activeAccountScope);
+export function useSessionManagedWorkflowRunFlow(runId: string, serverId: string | null): SessionManagedWorkflowRunFlow | null {
+    const accountScope = useActiveServerAccountScope(serverId);
+    const accountScopeKey = accountScope === null ? null : serverAccountScopeKeySuffix(accountScope);
     const contentKey = accountScopeKey === null ? null : `${accountScopeKey}\u0000${runId}`;
     const [definition, setDefinition] = React.useState<Readonly<{ key: string; value: WorkflowDefinitionV1 }> | null>(null);
     const [invalidationToken, setInvalidationToken] = React.useState(0);
@@ -270,9 +274,12 @@ export function useSessionManagedWorkflowRunFlow(runId: string): SessionManagedW
     ));
 
     React.useEffect(() => {
-        if (contentKey === null) return;
+        if (contentKey === null) {
+            setDefinition(null);
+            return;
+        }
         const lifetime = captureActiveServerAccountScopeLifetime();
-        if (lifetime === null) return;
+        if (lifetime === null || serverAccountScopeKeySuffix(lifetime.scope) !== accountScopeKey) return;
         const controller = new AbortController();
         const retirement = lifetime.onRetire(() => controller.abort());
         void workflowRunDetailActions.getRun(runId, controller.signal).then(
@@ -292,7 +299,7 @@ export function useSessionManagedWorkflowRunFlow(runId: string): SessionManagedW
     React.useEffect(() => {
         if (contentKey === null) return;
         const lifetime = captureActiveServerAccountScopeLifetime();
-        if (lifetime === null) return;
+        if (lifetime === null || serverAccountScopeKeySuffix(lifetime.scope) !== accountScopeKey) return;
         const controller = new AbortController();
         const retirement = lifetime.onRetire(() => controller.abort());
         void workflowRunDetailActions.listInvocations({ runId }, controller.signal).then(
@@ -320,7 +327,7 @@ export function useSessionManagedWorkflowRunFlow(runId: string): SessionManagedW
     React.useEffect(() => {
         if (contentKey === null) return;
         const lifetime = captureActiveServerAccountScopeLifetime();
-        if (lifetime === null) return;
+        if (lifetime === null || serverAccountScopeKeySuffix(lifetime.scope) !== accountScopeKey) return;
         return subscribeVisibleWorkflowRunListInvalidation({
             lifetime,
             runId,

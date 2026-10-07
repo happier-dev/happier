@@ -50,15 +50,15 @@ function PreviewRows(props: Readonly<{ density: SessionListRowDensity; ids: read
 }
 
 /** Static props feed the same physical row presentation as the mounted list. */
-export function SessionListDensityPreview(props: Readonly<{
+export const SessionListDensityPreview = React.memo(function SessionListDensityPreview(props: Readonly<{
     density: 'detailed' | 'cozy' | 'narrow';
 }>) {
     const viewState = resolveSessionListDensityViewState(props.density);
     const rowDensity: SessionListRowDensity = viewState.compactMinimal ? 'minimal' : viewState.compact ? 'compact' : 'default';
     return <PreviewStage><PreviewRows density={rowDensity} ids={SAMPLE_IDS} /></PreviewStage>;
-}
+});
 
-export function SessionListLayoutPreview(props: Readonly<{
+export const SessionListLayoutPreview = React.memo(function SessionListLayoutPreview(props: Readonly<{
     layout: `layout:${SessionListLayoutChoice}`;
 }>) {
     // Representative groups, not a second arrangement policy: only the sample
@@ -74,7 +74,7 @@ export function SessionListLayoutPreview(props: Readonly<{
         </View>
         <PreviewRows density="minimal" ids={SAMPLE_IDS.slice(index * 2, index * 2 + 2)} project={heading} />
     </React.Fragment>)}</PreviewStage>;
-}
+});
 
 export type SessionListSampleRow = Readonly<{
     id: string;

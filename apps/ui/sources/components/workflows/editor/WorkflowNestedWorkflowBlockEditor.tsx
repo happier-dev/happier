@@ -12,9 +12,10 @@ import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback
 import { Text } from '@/components/ui/text/Text';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { t } from '@/text';
+import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 
 import type { WorkflowBlockAction } from './WorkflowBlockActionsMenu';
-import { WorkflowBlockHeading } from './WorkflowBlockHeading';
+import { WorkflowBlockHeading, type WorkflowBlockNameEditor } from './WorkflowBlockHeading';
 import { Icon } from '@/components/ui/icons/Icon';
 import { formatWorkflowConditionSentence } from './WorkflowConditionEditor';
 import { WorkflowContainerSummary } from './WorkflowContainerSummary';
@@ -37,6 +38,7 @@ export function WorkflowNestedWorkflowBlockEditor(props: Readonly<{
     block: WorkflowNestedLeafV1;
     draft: WorkflowEditorDraft;
     ordinal: number;
+    nameEditor?: WorkflowBlockNameEditor;
     total: number;
     actions: readonly WorkflowBlockAction[];
     onSelect: () => void;
@@ -55,7 +57,8 @@ export function WorkflowNestedWorkflowBlockEditor(props: Readonly<{
     const libraryOptions = library.options;
     const known = [...listBuiltinWorkflowReferenceOptions(), ...libraryOptions]
         .find((option) => option.ref === block.workflowRef) ?? null;
-    const displayName = known?.title ?? t('workflows.page.blocks.menuRun');
+    const childName = known?.title ?? t('workflows.page.blocks.menuRun');
+    const displayName = workflowBlockReferenceLabel(block, childName);
     const child = useWorkflowReferenceDefinition(frozen === undefined ? block.workflowRef : null, frozen === undefined);
     const definition = frozen === undefined ? child.definition : frozen;
     const declared = React.useMemo(() => definition === null ? null
@@ -75,9 +78,10 @@ export function WorkflowNestedWorkflowBlockEditor(props: Readonly<{
     return (
         <View testID={rowPrefix} style={workflowEditorStyles.blockBody}>
             <WorkflowBlockHeading
+                nameEditor={props.nameEditor}
                 kindMark={<Icon name="tree-structure" size={16} />}
                 ordinal={props.ordinal}
-                displayName={known?.origin === 'builtin' ? `${displayName} · ${t('workflows.page.blocks.builtin')}` : displayName}
+                displayName={displayName}
                 accessibilityLabel={t('workflows.a11y.stepContext', { block: displayName, position: props.ordinal, total: props.total })}
                 actions={editable ? props.actions : []}
                 accessory={props.slots?.state}
@@ -85,6 +89,7 @@ export function WorkflowNestedWorkflowBlockEditor(props: Readonly<{
                 testID={`${rowPrefix}-label`}
                 actionsTestID={`${rowPrefix}-actions`}
             />
+            <Text style={workflowEditorStyles.headingName}>{known?.origin === 'builtin' ? `${childName} · ${t('workflows.page.blocks.builtin')}` : childName}</Text>
             {props.slots?.occurrenceSelector ?? null}
             {props.onOpenOptions === undefined || props.editable === false ? null : (
                 <WorkflowContainerSummary

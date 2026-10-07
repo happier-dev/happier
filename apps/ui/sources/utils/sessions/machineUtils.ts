@@ -47,6 +47,19 @@ export function isMachineOnline(
     return ageMs <= graceMs;
 }
 
+/** Next presentation change from these presence facts, using the same grace owner as online status. */
+export function readMachineStatusNextRefreshAtMs(
+    machine: Parameters<typeof isMachineOnline>[0],
+    nowMs: number,
+): number | null {
+    if (!isMachineOnline(machine, nowMs)) return null;
+    const graceMs = readMachineOnlineGraceMsFromEnv();
+    const activeAt = machine.activeAt;
+    if (graceMs <= 0 || typeof activeAt !== 'number' || !Number.isFinite(activeAt) || activeAt === 0) return null;
+    const expiresAtMs = activeAt + graceMs + 1;
+    return expiresAtMs > nowMs ? expiresAtMs : null;
+}
+
 export type MachinePresenceCounts = Readonly<{ online: number; offline: number }>;
 
 /**

@@ -4,6 +4,11 @@ import tweetnacl from "tweetnacl";
 import * as privacyKit from "privacy-kit";
 import { buildAccountStoredContentCompatibilityHttpHeadersV1, sealEncryptedDataKeyEnvelopeV1 } from "@happier-dev/protocol";
 import {
+    AutomationTriggerIdSchema,
+    sealAutomationTriggerDefinitionStoredEnvelopeV1,
+    serializeAutomationStoredWorkflowDefinitionRecipeV2,
+} from "@happier-dev/protocol";
+import {
     materializeWorkflowAcceptedSnapshotV1,
     sealWorkflowAcceptedSnapshotStoredEnvelopeV1,
     sealWorkflowProgressStoredEnvelopeV1,
@@ -18,8 +23,11 @@ import { withAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { registerAccountEncryptionMigrateRoutes } from "@/app/api/routes/account/registerAccountEncryptionMigrateRoutes";
 import {
     AutomationAccountEncryptionMigrationConflictError,
+    applyAutomationAccountEncryptionTransitionStageInTx,
+    inspectAutomationAccountEncryptionTransitionInTx,
     matchAutomationAccountEncryptionMigrationPostStateInTx,
     migrateAutomationAccountEncryptionInTx,
+    readAutomationAccountEncryptionMigrationInventoryInTx,
 } from "./automationCrudService";
 
 describe("active Account migration of current Workflow content (real SQLite)", () => {
@@ -104,6 +112,110 @@ describe("active Account migration of current Workflow content (real SQLite)", (
         }] };
         return { account, runId, recordId, directive, targetAccepted, targetProgress, recipientKeyEnvelope, verifiedBinding };
     }
+
+    it.each([
+        ["prComment", "migration"], ["ciFailed", "migration"],
+        ["prComment", "staged"], ["ciFailed", "staged"],
+    ] as const)("transitions a bound scoped %s definition through the %s writer", async (triggerKind, writer) => {
+        const account = await db.account.create({ data: { encryptionMode: "plain" } });
+        const session = await db.session.create({ data: {
+            accountId: account.id, tag: randomUUID(), encryptionMode: "plain", metadata: "{}",
+        } });
+        const automationId = randomUUID();
+        const triggerId = AutomationTriggerIdSchema.parse(randomUUID());
+        const binding = { v: 1 as const, automationId, triggerId, triggerRevision: 0, triggerKind };
+        const definition = { kind: triggerKind, pullRequest: { repository: "happier-dev/happier", number: 42 } };
+        const sourceDefinition = JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
+            mode: "plain", binding, definition,
+        }));
+        const targetDefinition = JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
+            mode: "e2ee", binding, definition,
+            material: { type: "dataKey", machineKey: new Uint8Array(32).fill(9) },
+            randomBytes: (length) => new Uint8Array(length).fill(6),
+        }));
+        const sourceRecipe = serializeAutomationStoredWorkflowDefinitionRecipeV2({
+            v: 2, templateVersion: 1, triggerEvidence: null,
+            workflow: { t: "plain", v: { workspace: { directory: "/repo" }, executionTarget: { kind: "session" } } },
+        });
+        const targetRecipe = serializeAutomationStoredWorkflowDefinitionRecipeV2({
+            v: 2, templateVersion: 2, triggerEvidence: null,
+            // The server is ciphertext-blind for the Workflow definition; the
+            // purpose/binding-bearing trigger envelope above uses the real codec.
+            workflow: { t: "encrypted", c: "scoped-workflow-definition-target" },
+        });
+        if (sourceRecipe.kind !== "available" || targetRecipe.kind !== "available") {
+            throw new Error("Expected canonical scoped Workflow recipes");
+        }
+        await db.automation.create({ data: {
+            id: automationId, accountId: account.id, name: "Scoped PR transition", enabled: false,
+            targetType: null, scopeSessionId: session.id, templateVersion: 1, templateCiphertext: sourceRecipe.serialized,
+            triggers: { create: { id: triggerId, kind: triggerKind, sourceSessionId: session.id, definitionEnvelope: sourceDefinition } },
+        } });
+        const sourceDefinitions = [{ triggerId, triggerRevision: 0, envelope: sourceDefinition }];
+        const targetDefinitions = [{ triggerId, triggerRevision: 0, envelope: targetDefinition }];
+        const inventory = await inTx(tx => readAutomationAccountEncryptionMigrationInventoryInTx({ tx, accountId: account.id }));
+        expect(inventory.templates).toEqual([{ automationId, expectedTemplateVersion: 1,
+            templateCiphertext: sourceRecipe.serialized, triggerDefinitionEnvelopes: sourceDefinitions }]);
+        const inspected = await inTx(tx => inspectAutomationAccountEncryptionTransitionInTx({ tx, accountId: account.id, sourceMode: "plain" }));
+        if (inspected.status !== "complete") throw new Error("Expected a current Workflow source inventory");
+        const observed = inspected.page.items.find(item => item.kind === "definition" && item.automationId === automationId);
+        if (!observed || observed.kind !== "definition") throw new Error("Expected the scoped Workflow definition in the inventory");
+        expect(observed.source).toEqual({ templateCiphertext: sourceRecipe.serialized, triggerDefinitionEnvelopes: sourceDefinitions });
+        const stageItem = { kind: "definition" as const, automationId, expectedRevision: observed.revision,
+            source: observed.source, target: { templateCiphertext: targetRecipe.serialized, triggerDefinitionEnvelopes: targetDefinitions } };
+        if (writer === "staged" && triggerKind === "prComment") {
+            const wrongBinding = JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
+                mode: "plain", binding: { ...binding, triggerRevision: 1 }, definition,
+            }));
+            const wrongVersion = serializeAutomationStoredWorkflowDefinitionRecipeV2({ ...targetRecipe.recipe, templateVersion: 3 });
+            const wrongMode = serializeAutomationStoredWorkflowDefinitionRecipeV2({ ...sourceRecipe.recipe, templateVersion: 2 });
+            if (wrongVersion.kind !== "available" || wrongMode.kind !== "available") throw new Error("Expected valid neighboring recipe candidates");
+            for (const target of [
+                { ...stageItem.target, templateCiphertext: wrongVersion.serialized },
+                { ...stageItem.target, templateCiphertext: wrongMode.serialized },
+                { ...stageItem.target, templateCiphertext: JSON.stringify({ ...targetRecipe.recipe, v: 1 }) },
+            ]) {
+                expect(await inTx(tx => applyAutomationAccountEncryptionTransitionStageInTx({
+                    tx, accountId: account.id, fromMode: "plain", toMode: "e2ee", items: [{ ...stageItem, target }],
+                }))).toEqual({ status: "invalid_content" });
+            }
+            expect(await inTx(tx => applyAutomationAccountEncryptionTransitionStageInTx({
+                tx, accountId: account.id, fromMode: "plain", toMode: "e2ee", items: [{ ...stageItem,
+                    source: { ...stageItem.source, templateCiphertext: "stale source" } }],
+            }))).toEqual({ status: "migration_incomplete" });
+            // A server can check the visible plain source binding, never a
+            // private binding inside target ciphertext owned by the key-holder.
+            await db.automationTrigger.update({ where: { id: triggerId }, data: { definitionEnvelope: wrongBinding } });
+            expect(await inTx(tx => applyAutomationAccountEncryptionTransitionStageInTx({
+                tx, accountId: account.id, fromMode: "plain", toMode: "e2ee", items: [{ ...stageItem,
+                    source: { ...stageItem.source, triggerDefinitionEnvelopes: [{ ...sourceDefinitions[0]!, envelope: wrongBinding }] } }],
+            }))).toEqual({ status: "invalid_content" });
+            await db.automationTrigger.update({ where: { id: triggerId }, data: { definitionEnvelope: sourceDefinition } });
+            expect((await db.automation.findUniqueOrThrow({ where: { id: automationId } })).templateVersion).toBe(1);
+            expect((await db.automationTrigger.findUniqueOrThrow({ where: { id: triggerId } })).definitionEnvelope).toBe(sourceDefinition);
+        }
+        const result = await inTx(tx => writer === "migration"
+            ? migrateAutomationAccountEncryptionInTx({ tx, accountId: account.id, toMode: "e2ee", directive: {
+                action: "migrate", runs: [], templates: [{ automationId, expectedTemplateVersion: 1,
+                    templateCiphertext: targetRecipe.serialized, triggerDefinitionEnvelopes: targetDefinitions }],
+            } })
+            : applyAutomationAccountEncryptionTransitionStageInTx({ tx, accountId: account.id, fromMode: "plain", toMode: "e2ee", items: [stageItem] }));
+        expect(result).toEqual({ status: "applied" });
+        expect(await db.automation.findUniqueOrThrow({ where: { id: automationId }, select: {
+            templateVersion: true, templateCiphertext: true, triggers: { select: { kind: true, definitionEnvelope: true } },
+        } })).toEqual({ templateVersion: 2, templateCiphertext: targetRecipe.serialized,
+            triggers: [{ kind: triggerKind, definitionEnvelope: targetDefinition }] });
+        if (writer === "migration") {
+            await db.account.update({ where: { id: account.id }, data: { encryptionMode: "e2ee", ...createSignedAccountContentBinding() } });
+            expect(await inTx(tx => matchAutomationAccountEncryptionMigrationPostStateInTx({
+                tx, accountId: account.id, toMode: "e2ee", directive: { action: "migrate", runs: [], templates: [{
+                    automationId, expectedTemplateVersion: 1, templateCiphertext: targetRecipe.serialized,
+                    triggerDefinitionEnvelopes: targetDefinitions,
+                }] },
+            }))).toEqual({ status: "matched" });
+            expect((await db.automation.findUniqueOrThrow({ where: { id: automationId } })).templateVersion).toBe(2);
+        }
+    });
 
     it("transitions current run content and recipient keys atomically and advances the invocation token", async () => {
         const f = await fixture();

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { useOptionalWorkspaceNavigation } from '@/components/appShell/workspace/WorkspaceNavigationContext';
+import { useDeviceType } from '@/utils/platform/responsive';
 import { Modal } from '@/modal';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { t } from '@/text';
@@ -40,7 +40,7 @@ function PersonalizeSheetModal(props: CustomModalInjectedProps & Readonly<{ init
  */
 export function useOpenPersonalize(): (page?: PersonalizePageId) => void {
     const router = useRouter();
-    const phone = Boolean(useOptionalWorkspaceNavigation()?.phone);
+    const phone = useDeviceType() === 'phone';
     return React.useCallback((page?: PersonalizePageId) => {
         if (phone) {
             Modal.show({

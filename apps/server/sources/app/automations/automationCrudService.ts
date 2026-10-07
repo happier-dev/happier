@@ -1654,6 +1654,19 @@ function assertAutomationDefinitionStoredContentForAccountMode(params: Readonly<
         }
     }
 
+    const workflow = parseAutomationStoredWorkflowDefinitionRecipeV2(params.row.templateCiphertext);
+    if (workflow.kind === "available") {
+        if (params.row.targetType !== null || workflow.recipe.templateVersion !== params.row.templateVersion) {
+            throw new AutomationValidationError("Stored Workflow definition does not match its template version or target");
+        }
+        const outer = validateAutomationStoredContentEnvelopeOuterForMode({
+            raw: createCanonicalJsonSigningInput(workflow.recipe.workflow), mode: params.mode,
+        });
+        if (outer.kind !== "available") {
+            throw new AutomationValidationError("Stored Workflow definition does not match the Account mode");
+        }
+        return;
+    }
     const strict = parseAutomationStoredDefinitionExecutionRecipeV1(
         params.row.templateCiphertext,
     );
@@ -1857,6 +1870,7 @@ type AutomationAccountEncryptionTransitionValidatedDefinition = Readonly<{
     item: Extract<AutomationAccountEncryptionTransitionStageItem, { kind: "definition" }>;
     targetTriggerDefinitionEnvelopes: readonly Readonly<{
         triggerId: string;
+        triggerKind: "pluginEvent" | "prComment" | "ciFailed";
         triggerRevision: number;
         sourceEnvelope: string;
         targetEnvelope: string;
@@ -2019,6 +2033,7 @@ function validateAutomationTriggerDefinitionTransitionTargets(params: Readonly<{
         }
         return {
             triggerId: trigger.id,
+            triggerKind: binding.triggerKind,
             triggerRevision: trigger.revision,
             sourceEnvelope: trigger.definitionEnvelope,
             targetEnvelope: target.envelope,
@@ -2168,6 +2183,7 @@ async function validateAutomationAccountEncryptionTransitionStageBatchInTx(
             assertAutomationMigrationSourcePreserved({
                 row,
                 expectedTemplateVersion: item.expectedRevision,
+                sourceMode: params.fromMode,
                 target,
             });
             await validateExistingSessionAutomationTargetTx({
@@ -2177,11 +2193,11 @@ async function validateAutomationAccountEncryptionTransitionStageBatchInTx(
                 accountMode: params.toMode,
                 ...(target.kind === "strict"
                     ? { strictExistingSessionId: target.strictExistingSessionId }
-                    : {
+                    : target.kind === "legacy" ? {
                         templateCiphertext: item.target.templateCiphertext,
                         legacyExistingSessionId:
                             target.legacyTemplateEnvelopeAdmission?.existingSessionId,
-                    }),
+                    } : {}),
             });
             const targetTriggerDefinitionEnvelopes =
                 validateAutomationTriggerDefinitionTransitionTargets({
@@ -2312,7 +2328,7 @@ export async function applyAutomationAccountEncryptionTransitionStageInTx(
                 where: {
                     id: trigger.triggerId,
                     automationId: candidate.row.id,
-                    kind: "pluginEvent",
+                    kind: trigger.triggerKind,
                     revision: trigger.triggerRevision,
                     definitionEnvelope: trigger.sourceEnvelope,
                 },
@@ -2583,12 +2599,7 @@ function validateAutomationTriggerDefinitionMigrationCandidate(params: Readonly<
     item: AutomationAccountEncryptionMigrationTemplateItem;
     sourceMode: "plain" | "e2ee";
     toMode: "plain" | "e2ee";
-}>): readonly Readonly<{
-    triggerId: string;
-    triggerRevision: number;
-    sourceEnvelope: string;
-    targetEnvelope: string;
-}>[] {
+}>): AutomationAccountEncryptionTransitionValidatedDefinition["targetTriggerDefinitionEnvelopes"] {
     return validateAutomationTriggerDefinitionTransitionTargets({
         row: params.row,
         item: {
@@ -3155,6 +3166,10 @@ type AutomationMigrationTemplateClassification =
         strictExistingSessionId?: string;
     }>
     | Readonly<{
+        kind: "workflow";
+        recipe: AutomationStoredWorkflowDefinitionRecipeV2;
+    }>
+    | Readonly<{
         kind: "legacy";
         legacyTemplateEnvelopeAdmission?: AutomationLegacyTemplateEnvelopeAdmission;
     }>;
@@ -3199,6 +3214,21 @@ function classifyAutomationMigrationTemplate(params: Readonly<{
     expectedTemplateVersion: number;
     toMode: "plain" | "e2ee";
 }>): AutomationMigrationTemplateClassification {
+    const workflow = parseAutomationStoredWorkflowDefinitionRecipeV2(params.templateCiphertext);
+    if (workflow.kind === "available") {
+        const nextTemplateVersion = params.expectedTemplateVersion + 1;
+        if (params.row.targetType !== null || !Number.isSafeInteger(nextTemplateVersion)
+            || workflow.recipe.templateVersion !== nextTemplateVersion) {
+            throw new AutomationValidationError("Workflow migration recipe must preserve its target and next template version");
+        }
+        const outer = validateAutomationStoredContentEnvelopeOuterForMode({
+            raw: createCanonicalJsonSigningInput(workflow.recipe.workflow), mode: params.toMode,
+        });
+        if (outer.kind !== "available") {
+            throw new AutomationValidationError("Workflow migration recipe does not match the Account mode");
+        }
+        return { kind: "workflow", recipe: workflow.recipe };
+    }
     const strict = parseAutomationStoredDefinitionExecutionRecipeV1(params.templateCiphertext);
     if (strict.kind === "available") {
         assertStrictAutomationDefinitionMigrationRecipe(strict.recipe);
@@ -3253,13 +3283,33 @@ function classifyAutomationMigrationTemplate(params: Readonly<{
 function assertAutomationMigrationSourcePreserved(params: Readonly<{
     row: AutomationAccountEncryptionMigrationRow;
     expectedTemplateVersion: number;
+    sourceMode: "plain" | "e2ee";
     target: AutomationMigrationTemplateClassification;
 }>): void {
+    if (params.target.kind === "workflow") {
+        assertAutomationDefinitionStoredContentForAccountMode({ row: params.row, mode: params.sourceMode });
+        const source = parseAutomationStoredWorkflowDefinitionRecipeV2(params.row.templateCiphertext);
+        if (source.kind !== "available" || params.row.targetType !== null
+            || source.recipe.templateVersion !== params.expectedTemplateVersion) {
+            throw new AutomationValidationError("Workflow migration cannot replace a different Definition format or version");
+        }
+        const expectedTarget = serializeAutomationStoredWorkflowDefinitionRecipeV2({
+            ...source.recipe, templateVersion: params.target.recipe.templateVersion,
+            workflow: params.target.recipe.workflow,
+        });
+        const actualTarget = serializeAutomationStoredWorkflowDefinitionRecipeV2(params.target.recipe);
+        if (expectedTarget.kind !== "available" || actualTarget.kind !== "available"
+            || expectedTarget.serialized !== actualTarget.serialized) {
+            throw new AutomationValidationError("Workflow migration must preserve its recipe identity");
+        }
+        return;
+    }
     const source = parseAutomationStoredDefinitionExecutionRecipeV1(
         params.row.templateCiphertext,
     );
     if (params.target.kind === "legacy") {
-        if (source.kind === "available") {
+        if (source.kind === "available"
+            || parseAutomationStoredWorkflowDefinitionRecipeV2(params.row.templateCiphertext).kind === "available") {
             throw new AutomationValidationError(
                 "Strict Automation migration cannot be replaced with a legacy Definition",
             );
@@ -3539,6 +3589,7 @@ export async function migrateAutomationAccountEncryptionInTx(params: Readonly<{
             assertAutomationMigrationSourcePreserved({
                 row,
                 expectedTemplateVersion: item.expectedTemplateVersion,
+                sourceMode: accountFence.account.currentness.encryptionMode,
                 target: template,
             });
             await validateExistingSessionAutomationTargetTx({
@@ -3551,11 +3602,11 @@ export async function migrateAutomationAccountEncryptionInTx(params: Readonly<{
                         strictExistingSessionId:
                             template.strictExistingSessionId,
                     }
-                    : {
+                    : template.kind === "legacy" ? {
                         templateCiphertext: item.templateCiphertext,
                         legacyExistingSessionId:
                             template.legacyTemplateEnvelopeAdmission?.existingSessionId,
-                    }),
+                    } : {}),
             });
             targetTriggerDefinitionsById.set(
                 row.id,
@@ -3632,7 +3683,7 @@ export async function migrateAutomationAccountEncryptionInTx(params: Readonly<{
                 where: {
                     id: triggerDefinitionTarget.triggerId,
                     automationId: row.id,
-                    kind: "pluginEvent",
+                    kind: triggerDefinitionTarget.triggerKind,
                     revision: triggerDefinitionTarget.triggerRevision,
                     definitionEnvelope: triggerDefinitionTarget.sourceEnvelope,
                 },
@@ -3861,11 +3912,11 @@ export async function matchAutomationAccountEncryptionMigrationPostStateInTx(
                         strictExistingSessionId:
                             template.strictExistingSessionId,
                     }
-                    : {
+                    : template.kind === "legacy" ? {
                         templateCiphertext: row.templateCiphertext,
                         legacyExistingSessionId:
                             template.legacyTemplateEnvelopeAdmission?.existingSessionId,
-                    }),
+                    } : {}),
             });
             assertAutomationTriggerDefinitionMigrationPostState({
                 row,

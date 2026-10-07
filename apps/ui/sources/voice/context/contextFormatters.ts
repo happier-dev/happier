@@ -42,12 +42,10 @@ function asObject(value: unknown): Record<string, unknown> | null {
     return value as Record<string, unknown>;
 }
 
-function clampInt(value: unknown, { min, max, fallback }: { min: number; max: number; fallback: number }): number {
+function normalizeNonnegativeInt(value: unknown, fallback: number): number {
     if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
     const rounded = Math.floor(value);
-    if (rounded < min) return min;
-    if (rounded > max) return max;
-    return rounded;
+    return Math.max(0, rounded);
 }
 
 function maybeRedactVoiceString(value: string, shareFilePaths: boolean): string {
@@ -94,7 +92,7 @@ function resolvePrefs(prefs?: VoiceContextFormatterPrefs): ResolvedVoiceContextF
     return {
         voiceShareSessionSummary: prefs?.voiceShareSessionSummary === true,
         voiceShareRecentMessages: prefs?.voiceShareRecentMessages === true,
-        voiceRecentMessagesCount: clampInt(prefs?.voiceRecentMessagesCount, { min: 0, max: 50, fallback: 10 }),
+        voiceRecentMessagesCount: normalizeNonnegativeInt(prefs?.voiceRecentMessagesCount, 10),
         voiceShareToolNames: prefs?.voiceShareToolNames === true,
         voiceShareToolArgs: prefs?.voiceShareToolArgs === true,
         voiceShareFilePaths: prefs?.voiceShareFilePaths === true,

@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { useOptionalWorkspaceNavigation } from '@/components/appShell/workspace/WorkspaceNavigationContext';
+import { useDeviceType } from '@/utils/platform/responsive';
 
 import { PersonalizeFlowView } from './PersonalizeFlowView';
 import { PERSONALIZE_PAGES, type PersonalizePageId } from './personalizeFlowModel';
@@ -16,7 +16,7 @@ function readPageParam(value: string | string[] | undefined): PersonalizePageId 
 export function PersonalizeRouteScreen() {
     const router = useRouter();
     const params = useLocalSearchParams<Record<string, string | string[]>>();
-    const isPhone = Boolean(useOptionalWorkspaceNavigation()?.phone);
+    const isPhone = useDeviceType() === 'phone';
     const initialPage = readPageParam(params[PERSONALIZE_PAGE_PARAM]);
     const exit = React.useCallback(() => {
         if (router.canGoBack()) router.back();

@@ -93,6 +93,7 @@ const presentationTheme = Object.freeze({
     radii: Object.freeze({ small: 2, control: 4, panel: 8, pill: 999 }),
     typography: Object.freeze({
         body: Object.freeze({ fontSize: 14, lineHeight: 20, fontWeight: '400' }),
+        reading: Object.freeze({ fontSize: 15, lineHeight: 22, fontWeight: '400' }),
         label: Object.freeze({ fontSize: 14, lineHeight: 20, fontWeight: '600' }),
         title: Object.freeze({ fontSize: 18, lineHeight: 24, fontWeight: '600' }),
         caption: Object.freeze({ fontSize: 12, lineHeight: 16, fontWeight: '400' }),

@@ -24,9 +24,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 12,
     },
     footerContent: {
-        paddingHorizontal: 16,
-        paddingTop: 12,
-        paddingBottom: 16,
         alignItems: 'stretch',
     },
     description: {

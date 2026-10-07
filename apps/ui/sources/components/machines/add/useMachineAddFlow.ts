@@ -50,7 +50,7 @@ import { buildMachineAddCommand, detectClientCommandOs, MACHINE_ADD_COMMAND_OS, 
 import { cancelMachineAddFlowTasks, discardMachineAddFlowDraft, readMachineAddFlowDraft, updateMachineAddFlowDraft, useMachineAddFlowDraft, useMachineAddFlowDraftSelector, type MachineAddTaskHandle } from './machineAddFlowStore';
 import { beginMachineAddWatch, startMachineAddTask, hasRunningMachineAddTask as hasRunningTask } from './machineAddTaskLifetime';
 
-export type MachineAddDraftRow = Readonly<{ title: string; status: string | null; tone: 'waiting' | 'running' | 'failed' | 'arrived' }>;
+export type MachineAddDraftRow = Readonly<{ title: string; entityTitle: string | null; status: string | null; tone: 'waiting' | 'running' | 'failed' | 'arrived' }>;
 export type MachineAddStep = Readonly<{ id: string; label: string; state: 'done' | 'running' | 'pending' | 'failed'; elapsedMs: number | null }>;
 export type MachineAddThisComputer =
     | Readonly<{ kind: 'checking' }>
@@ -79,11 +79,12 @@ function useHomeProfile(serverId: string) {
 
 function makeDraftRow(path: MachineAddPathId | null, host: string, handle: MachineAddTaskHandle | null, snapshot: SystemTaskRunState | null, arrived: boolean): MachineAddDraftRow | null {
     if (path === null) return null;
-    const title = path === 'ssh' && host.trim() ? host.trim() : t('machineAdd.newMachine');
-    if (arrived) return { title, status: t('machineAdd.connected'), tone: 'arrived' };
-    if (handle?.startError || (snapshot?.result && !snapshot.result.ok)) return { title, status: snapshot?.status === 'canceled' ? t('machineAdd.cancelled') : t('machineAdd.failed'), tone: 'failed' };
-    if (handle?.starting || (snapshot && !snapshot.result)) return { title, status: snapshot?.currentStepId ? resolveSystemTaskStepLabel(snapshot.currentStepId) : t('machineAdd.waiting'), tone: 'running' };
-    return { title, status: t('machineAdd.waiting'), tone: 'waiting' };
+    const entityTitle = path === 'ssh' ? host.trim() || null : null;
+    const title = entityTitle ?? t('machineAdd.newMachine');
+    if (arrived) return { title, entityTitle, status: t('machineAdd.connected'), tone: 'arrived' };
+    if (handle?.startError || (snapshot?.result && !snapshot.result.ok)) return { title, entityTitle, status: snapshot?.status === 'canceled' ? t('machineAdd.cancelled') : t('machineAdd.failed'), tone: 'failed' };
+    if (handle?.starting || (snapshot && !snapshot.result)) return { title, entityTitle, status: snapshot?.currentStepId ? resolveSystemTaskStepLabel(snapshot.currentStepId) : t('machineAdd.waiting'), tone: 'running' };
+    return { title, entityTitle, status: t('machineAdd.waiting'), tone: 'waiting' };
 }
 
 /** Rail/title projections never mount preflight, task starters, discovery or prompt modals. */

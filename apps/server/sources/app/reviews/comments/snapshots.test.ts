@@ -2,16 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
     buildReviewCommentTextSnapshotHashes,
-    REVIEW_COMMENT_TEXT_SNAPSHOT_MAX_BYTES,
-    REVIEW_COMMENT_TEXT_SNAPSHOT_MAX_LINE_BYTES,
     validateReviewCommentSnapshot,
 } from "./snapshots";
 
 describe("review comment snapshot validation", () => {
-    it("uses the ratified 5 MiB text snapshot cap", () => {
-        expect(REVIEW_COMMENT_TEXT_SNAPSHOT_MAX_BYTES).toBe(5 * 1024 * 1024);
-    });
-
     it("accepts text snapshots only when hashes and bidi/minified metadata match the captured text", () => {
         const hashes = buildReviewCommentTextSnapshotHashes({
             selectedLines: ["if (value == null) return null;"],
@@ -56,8 +50,8 @@ describe("review comment snapshot validation", () => {
         })).toThrow(/hash|bidi/i);
     });
 
-    it("requires explicit truncation metadata for line and file caps", () => {
-        const longLine = "x".repeat(5000);
+    it("accepts complete valid snapshots above the former line and byte cutoffs", () => {
+        const longLine = "x".repeat(5 * 1024 * 1024 + 1);
         const hashes = buildReviewCommentTextSnapshotHashes({
             selectedLines: [longLine],
             beforeContext: [],
@@ -79,11 +73,11 @@ describe("review comment snapshot validation", () => {
             truncated: false,
             hasBidiControls: false,
             likelyMinified: true,
-        })).toThrow(/truncated/i);
+        })).not.toThrow();
     });
 
-    it("rejects text snapshots that still carry uncapped line content", () => {
-        const uncappedLine = "x".repeat(REVIEW_COMMENT_TEXT_SNAPSHOT_MAX_LINE_BYTES + 1);
+    it("accepts explicitly incomplete retained snapshots without imposing a capture cutoff", () => {
+        const uncappedLine = "x".repeat(4001);
         const hashes = buildReviewCommentTextSnapshotHashes({
             selectedLines: [uncappedLine],
             beforeContext: [],
@@ -106,6 +100,6 @@ describe("review comment snapshot validation", () => {
             truncationReason: "line_too_long",
             hasBidiControls: false,
             likelyMinified: true,
-        })).toThrow(/line cap/i);
+        })).not.toThrow();
     });
 });

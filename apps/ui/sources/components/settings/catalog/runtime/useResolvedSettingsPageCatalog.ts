@@ -93,20 +93,6 @@ function splitSearchWords(list: string): string[] {
     return list.split(',').map((word) => word.trim()).filter((word) => word.length > 0);
 }
 
-function flattenResolvedTree(nodes: readonly ResolvedSettingsPageNode[]): ResolvedSettingsPageNode[] {
-    const out: ResolvedSettingsPageNode[] = [];
-    const visit = (items: readonly ResolvedSettingsPageNode[]) => {
-        for (const item of items) {
-            out.push(item);
-            if (item.children) {
-                visit(item.children);
-            }
-        }
-    };
-    visit(nodes);
-    return out;
-}
-
 function buildSettingDocs(params: Readonly<{
     pageId: SettingsPageId;
     pageRoute: string;
@@ -211,7 +197,7 @@ function isQualifiedPluginSettingsPagePathname(pathname: string): boolean {
 
 function resolveActivePageIdFromPathname(
     pathname: string,
-    flat: readonly ResolvedSettingsPageNode[]
+    flat: readonly SettingsPageNode[]
 ): SettingsPageId | null {
     const exact = flat.find((node) => node.route && settingsRoutePathname(node.route) === pathname);
     if (exact) return exact.id;
@@ -224,7 +210,7 @@ function resolveActivePageIdFromPathname(
     // Fallback: choose the longest Settings route on a segment boundary. The
     // Settings overview is an exact-only index page, not an owner for every
     // unmatched /settings child route.
-    let best: ResolvedSettingsPageNode | null = null;
+    let best: SettingsPageNode | null = null;
     for (const node of flat) {
         if (!node.route || node.route === SETTINGS_ROUTES.general) continue;
         const route = settingsRoutePathname(node.route);
@@ -235,9 +221,6 @@ function resolveActivePageIdFromPathname(
     }
     return best?.id ?? null;
 }
-
-/** How many results one query returns, pages and rows together. */
-const SEARCH_RESULT_LIMIT = 20;
 
 const PAGE_SEARCH_OPTIONS: IFuseOptions<SettingsPageSearchDoc> = {
     includeScore: false,
@@ -317,12 +300,13 @@ export function useResolvedSettingsPageCatalog(): ResolvedSettingsPageCatalog {
     const featureSnapshot = useSettingsFeatureSnapshot();
     const locale = getPreferredLanguage();
 
+    const catalog = React.useMemo(() => mergeAdmittedPluginSettingsPages({
+        baseCatalog: SETTINGS_PAGE_CATALOG,
+        projection: appShellPluginUiProjection.pluginUiProjection,
+        locale,
+    }), [appShellPluginUiProjection.pluginUiProjection, locale]);
+
     const tree = React.useMemo(() => {
-        const catalog = mergeAdmittedPluginSettingsPages({
-            baseCatalog: SETTINGS_PAGE_CATALOG,
-            projection: appShellPluginUiProjection.pluginUiProjection,
-            locale,
-        });
         return resolveTree(catalog, {
             useProfiles,
             devModeEnabled,
@@ -332,7 +316,7 @@ export function useResolvedSettingsPageCatalog(): ResolvedSettingsPageCatalog {
             homeAdministrationAdmitted,
         });
     }, [
-        appShellPluginUiProjection.pluginUiProjection,
+        catalog,
         devModeEnabled,
         featureSnapshot,
         teamsAdmitted,
@@ -342,7 +326,9 @@ export function useResolvedSettingsPageCatalog(): ResolvedSettingsPageCatalog {
         useProfiles,
     ]);
 
-    const flat = React.useMemo(() => flattenResolvedTree(tree), [tree]);
+    // Navigation/search visibility does not retire a still-mounted route's identity.
+    // Plugin leaves remain lifecycle-owned by the merged projection above.
+    const flat = React.useMemo(() => flattenSettingsPageCatalog(catalog), [catalog]);
 
     const activePageId = React.useMemo(() => {
         return resolveActivePageIdFromPathname(pathname ?? '/', flat);
@@ -364,10 +350,9 @@ export function useResolvedSettingsPageCatalog(): ResolvedSettingsPageCatalog {
         const q = String(query ?? '').trim().toLowerCase();
         if (!q) return [];
 
-        // The pages a query names come first, then the rows, within one result budget.
-        const pages = fuses.pages.search(q, { limit: SEARCH_RESULT_LIMIT });
-        const remaining = SEARCH_RESULT_LIMIT - pages.length;
-        const settings = remaining > 0 ? fuses.settings.search(q, { limit: remaining }) : [];
+        // Pages stay first without hiding matching rows behind a shared result cap.
+        const pages = fuses.pages.search(q);
+        const settings = fuses.settings.search(q);
         return [
             ...pages.map((result) => ({ id: result.item.id, route: result.item.route })),
             ...settings.map((result) => ({ id: result.item.id, route: result.item.route, setting: result.item.setting! })),

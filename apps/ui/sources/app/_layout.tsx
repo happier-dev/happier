@@ -643,7 +643,7 @@ async function loadFonts() {
             return;
         }
 
-        // Native platforms: block startup until fonts are ready.
+        // Native platforms: register bundled fonts; boot can use platform fallback meanwhile.
         await Fonts.loadAsync(fontMap);
     });
 }
@@ -922,7 +922,7 @@ function AppBoot(props: {
                       * its boot deadline lands afterwards, which is how a recovered session is adopted
                       * instead of the user silently appearing signed out.
                       */}
-                    <AuthProvider key={initState.authGeneration} initialCredentials={initState.credentials}>
+                    <AuthProvider initialCredentials={initState.credentials}>
                         <ThemeProvider value={props.navigationTheme}>
                             <StatusBarProvider />
                             <AppPaneModalProvider>

@@ -90,9 +90,25 @@ let screen: RenderScreenResult | null = null;
 afterEach(async () => {
     await screen?.unmount();
     screen = null;
+    vi.useRealTimers();
 });
 
 describe('VoiceGlance', () => {
+    it.each(['connecting', 'permission_required', 'error'] as const)('does not show a running-call clock in the %s header', async (surfaceState) => {
+        vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+        vi.setSystemTime(200_000);
+        const control = resolveVoiceAttemptControl({
+            surfaceState, tone: surfaceState === 'connecting' ? 'pending' : 'error',
+            status: surfaceState === 'connecting' ? 'connecting' : 'error',
+            sessionId: 'voice-1', canStop: surfaceState !== 'error', muted: false,
+            capturing: false, startAdmitted: true, hasRecovery: surfaceState !== 'connecting',
+        });
+        const voice = { ...attempt(), ...control, elapsedStartedAt: 80_000 };
+        screen = await renderScreen(<VoiceGlance model={surface(voice, { canBargeIn: false })} presentation="companion" />);
+        expect(vi.getTimerCount()).toBe(0);
+        expect(screen.getTextContent()).not.toContain('2:00');
+    });
+
     it('routes Mute, Interrupt and End to three different handlers', async () => {
         const voice = attempt();
         const model = surface(voice);

@@ -4,6 +4,8 @@ import type {
     LocalServiceLaunchTarget,
 } from './types';
 
+const selectedTargets = new WeakMap<LocalServiceLauncherState['targetsById'], readonly LocalServiceLaunchTarget[]>();
+
 function targetKey(target: LocalServiceLaunchTarget): string {
     return JSON.stringify(target);
 }
@@ -70,14 +72,19 @@ export function applyLocalServiceLauncherSnapshot(
             : target);
     }
 
+    const sameIds = state.targetIds.length === targetIds.length && targetIds.every((id, index) => id === state.targetIds[index]);
+    const sameTargets = sameIds && targetIds.every(id => targetsById.get(id) === state.targetsById.get(id));
+    if (state.machineId === snapshot.machineId && state.sessionId === (snapshot.sessionId ?? null)
+        && state.updatedAt === snapshot.updatedAt && state.refreshStatus === 'idle' && state.refreshError === null && sameTargets) return state;
+
     return {
         machineId: snapshot.machineId,
         sessionId: snapshot.sessionId ?? null,
         updatedAt: snapshot.updatedAt,
         refreshStatus: 'idle',
         refreshError: null,
-        targetIds,
-        targetsById,
+        targetIds: sameIds ? state.targetIds : targetIds,
+        targetsById: sameTargets ? state.targetsById : targetsById,
     };
 }
 
@@ -113,9 +120,13 @@ export function failLocalServiceLauncherRefresh(
 export function selectLocalServiceLaunchTargets(
     state: LocalServiceLauncherState,
 ): readonly LocalServiceLaunchTarget[] {
-    return state.targetIds
+    const previous = selectedTargets.get(state.targetsById);
+    if (previous) return previous;
+    const targets = state.targetIds
         .map((id) => state.targetsById.get(id))
         .filter((target): target is LocalServiceLaunchTarget => Boolean(target));
+    selectedTargets.set(state.targetsById, targets);
+    return targets;
 }
 
 export function snapshotFromLocalServiceLauncherState(

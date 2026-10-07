@@ -288,7 +288,7 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
     }, [blockedReason, busy, confirmAndApprove, contentSelection, destinationIntent, existing, hub, includeIgnoredMode, inspectRequired, materializedSourceRefId, mode, patternsDraft, pendingApprovalId, phase, props, resolvedPath, selectedMachine]);
 
     const footer = React.useMemo(() => (
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 10, padding: 16 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 10 }}>
             <RoundButton display="inverted" title={t(phase === 'linked' ? 'common.done' : 'common.cancel')} onPress={props.onClose} />
             <RoundButton
                 testID="workspace-sync-add-machine-submit"

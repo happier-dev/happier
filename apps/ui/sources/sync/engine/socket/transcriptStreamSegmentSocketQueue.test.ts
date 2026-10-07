@@ -107,6 +107,31 @@ describe('createTranscriptStreamSegmentSocketQueueController', () => {
         vi.useRealTimers();
     });
 
+    it('preserves hidden queued segments beyond the native timer frontier until explicit flush', async () => {
+        vi.useRealTimers();
+        const sessionId = 'long-hidden-window';
+        let visible = false;
+        const applied: NormalizedMessage[] = [];
+        const coalescer = createSessionMessageApplyCoalescer({
+            getConfig: () => ({ enabled: false, windowMs: 0, maxBatchSize: 200 }),
+            applyBatch: (_sessionId, messages) => applied.push(...messages),
+        });
+        const controller = createTranscriptStreamSegmentSocketQueueController({
+            getConfig: () => ({ enabled: true, windowMs: 2_147_483_648, maxBatchSize: 200 }),
+            isSessionVisible: () => visible,
+            messageCoalescer: coalescer,
+        });
+        try {
+            await controller.handle(buildPlainEntry(sessionId, 'long-segment'));
+            await new Promise((resolve) => setTimeout(resolve, 25));
+            visible = true;
+            await controller.flush(sessionId);
+            expect(applied).toHaveLength(1);
+        } finally {
+            controller.drop(sessionId);
+        }
+    });
+
     it('drops a hidden encrypted segment at flush time without decrypting', async () => {
         const sessionId = 'hidden-encrypted-session';
         const decryptPayloads = vi.fn(async (payloads: Uint8Array[]) => payloads.map((payload) => {

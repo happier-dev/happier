@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-import { createActionExecutor, createUnavailableRuntimeActionExecutor, type ActionExecutorDeps, type ComputerControlStatusResponseV1 } from '@happier-dev/protocol';
+import { createActionExecutor, createUnavailableRuntimeActionExecutor, type ActionExecutorDeps, type ComputerControlStatusResponseV1, type MachineLiveStreamFrameV1 } from '@happier-dev/protocol';
 
 import { createDeferred, renderHook } from '@/dev/testkit';
 import { createComputerRuntimeActionExecutor, type ComputerMachineRpc } from '@/sync/domains/computer/actions/runtimeActionExecutor';
-import { createComputerControlClient } from '@/sync/domains/computer/computerControlClient';
+import { createComputerControlClient, getComputerSessionProjection, publishComputerStatusFrame } from '@/sync/domains/computer/computerControlClient';
+import { encodeBase64 } from '@/encryption/base64';
 
 import { useComputerSessionControl } from './useComputerSessionControl';
 
@@ -99,6 +100,115 @@ async function renderControl(machine: ComputerMachineRpc) {
 }
 
 describe('useComputerSessionControl', () => {
+    it('shares a retained reader with a reader mounted after the subscription replay', async () => {
+        const { machine, calls } = createMachine();
+        const executor = executorWith(machine);
+        const scope = { sessionId: 'strict-subscription-replay', machineId: 'machine_1' };
+        const retained = getComputerSessionProjection(scope, executor.execute);
+        // Exercise the actual external-store cleanup/re-subscribe sequence. The
+        // legacy test renderer does not replay subscriptions for a Strict wrapper.
+        const unsubscribe = retained.subscribe(() => {});
+        unsubscribe();
+        const stopRetained = retained.subscribe(() => {});
+        const later = await renderHook(() => useComputerSessionControl({ scope, execute: executor.execute }));
+        expect(later.getCurrent().presence.kind).toBe('agent');
+        expect(calls.filter(id => id === 'computer.target.get')).toHaveLength(1);
+        expect(calls.filter(id => id === 'computer.control.status')).toHaveLength(1);
+        await later.unmount();
+        stopRetained();
+    });
+    it('refreshes after a turn transition even when an earlier read is still pending', async () => {
+        const pendingStatus = createDeferred<ComputerControlStatusResponseV1>();
+        let statusReads = 0;
+        let current = status('agent');
+        let turnActive = false;
+        const machine: ComputerMachineRpc = async ({ actionId }) => {
+            if (actionId === 'computer.target.get') return selection;
+            return ++statusReads === 2 ? await pendingStatus.promise : current;
+        };
+        const executor = executorWith(machine);
+        const scope = { sessionId: 'turn-transition', machineId: 'machine_1' };
+        const hook = await renderHook(() => useComputerSessionControl({ scope, execute: executor.execute, refreshKey: turnActive }));
+        await act(async () => { hook.getCurrent().refresh(); });
+        expect(statusReads).toBe(2);
+        turnActive = true;
+        current = status('human', { controlEpoch: 2 });
+        await hook.rerender();
+        await act(async () => { pendingStatus.resolve(status('agent')); });
+        expect(hook.getCurrent().presence.kind).toBe('human');
+        expect(statusReads).toBe(3);
+    });
+    it('keeps a source transition newer than an already pending status read', async () => {
+        const pendingStatus = createDeferred<ComputerControlStatusResponseV1>();
+        let statusReads = 0;
+        const machine: ComputerMachineRpc = async ({ actionId }) => {
+            if (actionId === 'computer.target.get') return selection;
+            return ++statusReads === 1 ? status('agent') : await pendingStatus.promise;
+        };
+        const executor = executorWith(machine);
+        const scope = { sessionId: 'in-flight-metadata', machineId: 'machine_1' };
+        const hook = await renderHook(() => useComputerSessionControl({ scope, execute: executor.execute }));
+        await act(async () => { hook.getCurrent().refresh(); });
+        expect(statusReads).toBe(2);
+        const payload = new TextEncoder().encode(JSON.stringify(status('human', { controlEpoch: 2 })));
+        await act(async () => {
+            publishComputerStatusFrame(scope, 'computer:1', { v: 1, streamId: 'stream', sequence: 2, timestampMs: 2,
+                payloadKind: 'metadata', payloadEncoding: 'binary_base64', payloadBase64: encodeBase64(payload), payloadSizeBytes: payload.length });
+            pendingStatus.resolve(status('agent'));
+        });
+        expect(hook.getCurrent().presence.kind).toBe('human');
+    });
+    it('publishes only strict selected-source status to all readers, without image or identical-status renders', async () => {
+        const { machine, calls } = createMachine();
+        const executor = executorWith(machine);
+        const scope = { sessionId: 'metadata-session', machineId: 'machine_1' };
+        let renders = 0;
+        const hook = await renderHook(() => {
+            renders += 1;
+            return {
+                viewer: useComputerSessionControl({ scope, execute: executor.execute }),
+                strip: useComputerSessionControl({ scope, execute: executor.execute }),
+            };
+        });
+        function frame(value: unknown): MachineLiveStreamFrameV1 {
+            const payload = new TextEncoder().encode(JSON.stringify(value));
+            return { v: 1, streamId: 'stream', sequence: 1, timestampMs: 1, payloadKind: 'metadata', payloadEncoding: 'binary_base64',
+                payloadBase64: encodeBase64(payload), payloadSizeBytes: payload.length };
+        }
+        const acting = { ...status('agent'), activity: { kind: 'click', targetLabel: 'Sign in' }, activeTarget: { x: 0.1, y: 0.2, width: 0.1, height: 0.1 } };
+        await act(async () => { publishComputerStatusFrame({ ...scope, serverId: '' }, 'computer:1', frame(acting)); });
+        expect(hook.getCurrent().viewer.agentActing).toBe(true);
+        expect(hook.getCurrent().strip.presence).toMatchObject({ activity: 'click', target: { x: 0.1, y: 0.2 } });
+        const afterChange = renders;
+        await act(async () => {
+            publishComputerStatusFrame(scope, 'computer:1', frame(acting));
+            publishComputerStatusFrame(scope, 'computer:other', frame(status('human')));
+            publishComputerStatusFrame(scope, 'computer:1', frame({ ...status('human'), untrusted: true }));
+            publishComputerStatusFrame(scope, 'computer:1', { ...frame(status('human')), payloadKind: 'image_keyframe' });
+        });
+        expect(renders).toBe(afterChange);
+        expect(calls.filter(id => id === 'computer.control.status')).toHaveLength(1);
+        await act(async () => { publishComputerStatusFrame(scope, 'computer:1', frame(status('human'))); });
+        expect(hook.getCurrent().viewer.presence.kind).toBe('human');
+        expect(hook.getCurrent().strip.presence.kind).toBe('human');
+    });
+    it('shares mounted readers and publishes a control mutation to both consumers', async () => {
+        const { machine, interrupt, calls } = createMachine();
+        const executor = executorWith(machine);
+        const scope = { sessionId: 'shared-session', machineId: 'machine_1' };
+        const hook = await renderHook(() => ({
+            viewer: useComputerSessionControl({ scope, execute: executor.execute }),
+            strip: useComputerSessionControl({ scope, execute: executor.execute }),
+        }));
+        expect(calls.filter(id => id === 'computer.target.get')).toHaveLength(1);
+        expect(calls.filter(id => id === 'computer.control.status')).toHaveLength(1);
+        await act(async () => { interrupt.resolve('known'); await hook.getCurrent().viewer.takeControl(); });
+        expect(hook.getCurrent().viewer.presence.kind).toBe('human');
+        expect(hook.getCurrent().strip.presence.kind).toBe('human');
+        await act(async () => { hook.getCurrent().strip.handBack(); });
+        await hook.rerender();
+        expect(hook.getCurrent().viewer.presence.kind).toBe('agent');
+    });
     it.each(['refused', 'connection-lost'] as const)('returns a settled takeover result when the owner is unchanged after %s', async (outcome) => {
         let current = status('agent');
         const machine: ComputerMachineRpc = async ({ actionId }) => {

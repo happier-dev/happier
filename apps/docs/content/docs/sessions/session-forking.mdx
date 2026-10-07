@@ -63,7 +63,15 @@ does not copy its files. See [starting without a folder](/sessions/start-a-sessi
 
 You can adjust the replay seed budget in Settings (`max seed characters`) to trade context vs. size.
 
-The machine running the session supplies the default when no setting is chosen. Override it on that machine with `HAPPIER_REPLAY_MAX_SEED_CHARS`, which defaults to `120000` and is clamped to the range `1024`–`200000`. The seed's own framing counts against that budget, so the number is a true total rather than a transcript-only allowance. The minimum is not arbitrary: below roughly 800 characters the prompt builder correctly produces **no** seed at all rather than a frame with no conversation under it, so `1024` is the smallest value that can still deliver a usable seed.
+In the current 0.3 development source, **max seed characters** accepts a positive whole number without
+clamping it to a fixed range. The seed's framing and the session-reference block count against the
+total, so a very small budget may be unable to carry context; a nonempty conversation is then reported
+as unavailable, not as an empty source. This revised budget behavior is not yet a released-build claim.
+
+The machine running the session also imposes its operator limit through
+`HAPPIER_REPLAY_MAX_SEED_CHARS`, which defaults to `120000` and accepts a positive whole number.
+That limit still applies when your selected budget is larger, and is checked again when the seed is
+sent. Raising your Account setting does not override the machine's limit.
 
 ## Ancestor transcript rendering
 

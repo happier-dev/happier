@@ -3767,7 +3767,7 @@ function SessionViewLoadedContent({
     });
     // The Roles rail leads the engine popover: the session's role is a controlled value, and the
     // running Agent decides which roles "Start a new session" (S-5).
-    const sessionRolesRail = useSessionRolesRailParams({ sessionId, currentAgentTargetKey: providerAgentTargetKey });
+    const sessionRolesRail = useSessionRolesRailParams({ sessionId, serverId: sessionRouteServerId, currentAgentTargetKey: providerAgentTargetKey });
     const { composeAgentPickerOptions: composeInSessionAgentPickerOptions } = inSessionAgentPicker;
     const composeAgentPickerOptionsWithRoles = React.useCallback((
         currentAgentOptions: Parameters<typeof composeInSessionAgentPickerOptions>[0],

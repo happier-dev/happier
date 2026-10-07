@@ -3,11 +3,40 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { register } from "@/app/monitoring/metrics/registry";
 import { applyEnvValues, restoreEnv, snapshotEnv } from "@/testkit/env";
 import { eventRouter } from "./eventRouter";
+import type { SessionAccessProjectionRow } from "@/app/session/access/sessionAccess";
+import type { ClientConnection } from "./eventPayloadTypes";
+import type { LocalSocketRoomEmitter, SocketRoomEmitter } from "./socketRoomEmitter";
 
-const { findSession } = vi.hoisted(() => ({ findSession: vi.fn() }));
+const { findSession, transactionBoundary } = vi.hoisted(() => ({
+    findSession: vi.fn(),
+    transactionBoundary: {
+        failCommits: 0,
+        committed: false,
+        error: new Error("commit unavailable"),
+    },
+}));
 
 vi.mock("@/storage/db", () => ({
-    db: { session: { findUnique: findSession } },
+    // Persistence is the boundary; inTx and credential authorization remain real.
+    db: {
+        session: { findUnique: findSession },
+        $transaction: async (read: (tx: object) => Promise<unknown>) => {
+            transactionBoundary.committed = false;
+            const result = await read({
+            session: { findUnique: findSession, findFirst: async () => null },
+            account: { findUnique: async () => null },
+            ephemeralRunnerActivation: { findFirst: async () => null },
+            machine: { findFirst: async () => null },
+            accessKey: { findUnique: async () => null },
+            });
+            if (transactionBoundary.failCommits > 0) {
+                transactionBoundary.failCommits -= 1;
+                throw transactionBoundary.error;
+            }
+            transactionBoundary.committed = true;
+            return result;
+        },
+    },
 }));
 
 type MetricSample = {
@@ -30,6 +59,8 @@ async function readMetricSamples(name: string): Promise<MetricSample[]> {
 describe("eventRouter (rooms)", () => {
     beforeEach(() => {
         register.resetMetrics();
+        transactionBoundary.failCommits = 0;
+        transactionBoundary.committed = false;
     });
 
     afterEach(() => {
@@ -121,6 +152,117 @@ describe("eventRouter (rooms)", () => {
         expect(ioTo).not.toHaveBeenCalled();
         expect(emit).not.toHaveBeenCalled();
     });
+
+    it.each(["room", "local", "receiving-node"] as const)(
+        "reads one structural snapshot while independently qualifying every %s socket",
+        async (mode) => {
+            const row = {
+                id: "session", primaryTeamId: null, accountId: "owner", account: { status: "active" }, seq: 0,
+                currentStorageState: "hosted", acceptedThroughServerSeq: null, materializationPublicationId: null,
+                materializedThroughSourceAt: null, publishedThroughServerSeq: null,
+                shares: [], teamGrants: [], groupGrants: [],
+            } satisfies SessionAccessProjectionRow;
+            findSession.mockReset();
+            findSession.mockResolvedValue(row);
+            const delivered: string[] = [];
+            const emittedAfterCommit: boolean[] = [];
+            const emit = (socketId: string) => {
+                delivered.push(socketId);
+                emittedAfterCommit.push(transactionBoundary.committed);
+            };
+            const sockets = Array.from({ length: 12 }, (_, index) => ({
+                id: `qualified-${index}`,
+                data: { userId: "owner", clientType: "user-scoped", authAuthority: "present_user" },
+            }));
+            const tokenSocket = {
+                id: "restricted-token",
+                data: {
+                    userId: "owner", clientType: "user-scoped", authAuthority: "account_automation",
+                    apiTokenPrincipal: { grant: {
+                        v: 1, actions: { families: [], ids: ["session.goal.set"] }, targets: null,
+                        approve: false, origins: [], models: null, permissionModes: null, create: null,
+                    } },
+                },
+            };
+            const staleRuntimeSocket = {
+                id: "revoked-runtime",
+                data: {
+                    userId: "owner", clientType: "user-scoped", authAuthority: "account_automation",
+                    ephemeralRunnerAdmission: { kind: "session-runtime", principal: {
+                        kind: "ephemeral_session_runner", authority: "session_runtime", accountId: "owner",
+                        activationId: "activation", sessionId: "session", machineId: "machine",
+                        installationId: "installation", installationPublicKey: "public-key", creatorTokenEpoch: 0,
+                    } },
+                },
+            };
+            const candidates = [...sockets, tokenSocket, staleRuntimeSocket, {
+                id: "malformed", data: { userId: "owner", clientType: "user-scoped" },
+            }];
+            const io = {
+                in: () => ({ fetchSockets: async () => candidates }),
+                to: (room: string | string[]) => ({
+                    emit: () => emit(String(room)), disconnectSockets: () => {},
+                }),
+            } satisfies LocalSocketRoomEmitter;
+            const connections: ClientConnection[] = [];
+            if (mode === "local") {
+                for (const candidate of candidates) {
+                    const connection: ClientConnection = {
+                        connectionType: "user-scoped", userId: "owner",
+                        // Only the Socket.IO boundary is represented by this socket fixture.
+                        socket: { ...candidate, emit: () => emit(candidate.id) } as unknown as ClientConnection["socket"],
+                    };
+                    connections.push(connection);
+                    eventRouter.addConnection("owner", connection);
+                }
+            } else {
+                eventRouter.setIo(io satisfies SocketRoomEmitter);
+            }
+            const payload = { id: "delivery", seq: 1, createdAt: 0, body: { t: "delete-session" as const, sid: "session" } };
+            const deliver = () => mode === "receiving-node"
+                ? eventRouter.receiveCredentialQualifiedSessionDelivery(io, {
+                    v: 1, accountId: "owner", sessionId: "session", eventName: "update", payload,
+                })
+                : eventRouter.emitUpdate({ userId: "owner", payload,
+                    recipientFilter: { type: "all-interested-in-session", sessionId: "session" } });
+            try {
+                await deliver();
+                expect(delivered).toEqual([...sockets.map(socket => socket.id), tokenSocket.id]);
+                // Repeated structural reads are the measured fan-out cost, not incidental wiring.
+                const projectionReads = findSession.mock.calls.filter(([query]) => query.select.account);
+                expect(projectionReads).toHaveLength(1);
+
+                delivered.length = 0;
+                emittedAfterCommit.length = 0;
+                transactionBoundary.error = Object.assign(new Error("commit serialization conflict"), { code: "P2034" });
+                transactionBoundary.failCommits = 1;
+                await deliver();
+                expect(delivered).toEqual([...sockets.map(socket => socket.id), tokenSocket.id]);
+                expect(emittedAfterCommit).toEqual(Array.from({ length: 13 }, () => true));
+
+                delivered.length = 0;
+                transactionBoundary.error = new Error("commit unavailable");
+                transactionBoundary.failCommits = 1;
+                await expect(deliver()).resolves.toBeUndefined();
+                expect(delivered).toEqual([]);
+
+                findSession.mockImplementation(async query => {
+                    if (query.select.account) throw new Error("structural projection unavailable");
+                    return row;
+                });
+                await expect(deliver()).resolves.toBeUndefined();
+                expect(delivered).toEqual([]);
+
+                // The snapshot belongs to this delivery, so revocation is observed on the next one.
+                findSession.mockResolvedValue({ ...row, account: { status: "suspended" } });
+                delivered.length = 0;
+                await deliver();
+                expect(delivered).toEqual([]);
+            } finally {
+                for (const connection of connections) eventRouter.removeConnection("owner", connection);
+            }
+        },
+    );
 
     it("routes machine-scoped-only to machine + user-scoped rooms", () => {
         const ioTo = vi.fn();

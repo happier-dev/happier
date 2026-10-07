@@ -61,7 +61,7 @@ describe('shared web-spinner presentation', () => {
 describe('shared spinner presentation (dot styles)', () => {
   const base = { platform: 'web', defaultColor: 'theme-secondary' } as const;
 
-  it('draws the H wave by default in a self-centred square box', () => {
+  it('draws the mark wave by default in a self-centred square box', () => {
     const presentation = resolveHappierSpinnerPresentation({ ...base, size: 12 });
 
     expect(presentation?.kind).toBe('dots');
@@ -88,7 +88,7 @@ describe('shared spinner presentation (dot styles)', () => {
     expect(native).toEqual({ kind: 'nativeRing', color: 'theme-secondary', animating: false, hidesWhenStopped: false });
   });
 
-  it('holds the still H when paused, and breathes it under reduced motion', () => {
+  it('holds the still mark when paused, and breathes it under reduced motion', () => {
     const paused = resolveHappierSpinnerPresentation({ ...base, animationEnabled: false });
     const stoppedButShown = resolveHappierSpinnerPresentation({ ...base, animating: false, hidesWhenStopped: false });
     const reduced = resolveHappierSpinnerPresentation({ ...base, reducedMotion: true });
@@ -106,11 +106,11 @@ describe('shared spinner presentation (dot styles)', () => {
     expect(native?.style).toMatchObject({ width: 18, height: 18 });
   });
 
-  it('colors aurora with the theme accents, but an explicit color wins so the mark stays legible on tinted buttons', () => {
+  it.each(['aurora', 'hAurora'])('colors %s with the theme accents, but an explicit color wins so the mark stays legible on tinted buttons', (indicatorStyle) => {
     const accents = ['accent-indigo', 'accent-purple', 'accent-orange'] as const;
-    const themed = resolveHappierSpinnerPresentation({ ...base, indicatorStyle: 'aurora', auroraAccents: accents });
-    const tinted = resolveHappierSpinnerPresentation({ ...base, indicatorStyle: 'aurora', auroraAccents: accents, color: 'white' });
-    const noAccents = resolveHappierSpinnerPresentation({ ...base, indicatorStyle: 'aurora' });
+    const themed = resolveHappierSpinnerPresentation({ ...base, indicatorStyle, auroraAccents: accents });
+    const tinted = resolveHappierSpinnerPresentation({ ...base, indicatorStyle, auroraAccents: accents, color: 'white' });
+    const noAccents = resolveHappierSpinnerPresentation({ ...base, indicatorStyle });
 
     expect(themed?.kind === 'dots' ? themed.dots?.ink : null).toEqual({ aurora: accents });
     expect(tinted?.kind === 'dots' ? tinted.dots?.ink : null).toEqual({ color: 'white' });
@@ -189,6 +189,20 @@ describe('HappierSpinner on web (dot styles)', () => {
     expect(strips[0]!.style.animationTimingFunction).toBe('steps(30, end)');
     expect(strips[0]!.style.width).toBe('3000%');
     expect(frameSheetFor(strips[0]!)).toContain('fill="red"');
+    expect(frameSheetFor(strips[0]!).match(/<circle /g)).toHaveLength(30 * 8);
+  });
+
+  it('renders the H wave with seven dots and a frame sheet distinct from the default mark', async () => {
+    const h = resolveHappierSpinnerPresentation({ platform: 'web', indicatorStyle: 'hWave', size: 18 });
+    if (!h) throw new Error('Expected a visible H spinner');
+    mount = await mountThroughReactNativeWebAsync(<>
+      <HappierSpinner size={18} />
+      <HappierSpinnerHost presentation={h} hostProps={{ size: 18 }} />
+    </>);
+    const strips = [...mount.container.querySelectorAll<HTMLElement>('[data-happier-activity-spinner]')];
+    expect(frameSheetFor(strips[0]!).match(/<circle /g)).toHaveLength(30 * 8);
+    expect(frameSheetFor(strips[1]!).match(/<circle /g)).toHaveLength(30 * 7);
+    expect(strips[1]!.getAttribute('data-happier-activity-spinner')).not.toBe(strips[0]!.getAttribute('data-happier-activity-spinner'));
   });
 
   it('keeps distinct valid colors in distinct frame sheets even when their former 32-bit hashes collide', async () => {

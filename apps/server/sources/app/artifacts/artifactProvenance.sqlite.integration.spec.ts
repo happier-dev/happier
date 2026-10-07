@@ -7,6 +7,8 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, decod
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { migrateArtifactAccountEncryptionInTx, matchArtifactAccountEncryptionMigrationPostStateInTx } from './artifactWriteService';
+import { readArtifactAccountEncryptionMigrationInventoryInTx } from './artifactAccountEncryptionMigrationInventory';
+import { storePlainArtifactDbBytes } from './artifactStoredContent';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
@@ -26,6 +28,46 @@ describe('Artifact private provenance (real SQLite and HTTP)', () => {
     }, 180_000);
     afterAll(async () => { if (harness) await harness.close(); });
     afterEach(() => vi.restoreAllMocks());
+
+    it('reads additive persisted provenance through inventory and conversion without accepting it as new content', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const id = crypto.randomUUID();
+        const metadata = (bodyVersion: number) => ({ v: 1, artifactId: id, bodyVersion,
+            provenance: { savedBy: { kind: 'person', accountId: owner.id } } });
+        const additive = encodePlainArtifactStoredContent({ ...metadata(1), future: true,
+            provenance: { ...metadata(1).provenance, future: true } });
+        const header = encodePlainArtifactStoredContent({ title: 'Stored transition' });
+        const body = encodePlainArtifactStoredContent({ body: 'Stored body' });
+        const key = privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER);
+        const sealed = (value: string) => storePlainArtifactDbBytes({ accountId: owner.id, artifactId: id,
+            field: 'provenance', content: privacyKit.decodeBase64(value) })!;
+        await db.artifact.create({ data: { id, accountId: owner.id, header: privacyKit.decodeBase64(header),
+            body: privacyKit.decodeBase64(body), dataEncryptionKey: key, provenance: sealed(additive),
+            headerVersion: 1, bodyVersion: 1 } });
+        const inventory = await inTx(tx => readArtifactAccountEncryptionMigrationInventoryInTx({ tx, accountId: owner.id, limit: 10 }));
+        expect(inventory?.items).toMatchObject([{ id, provenance: additive, bodyVersion: 1 }]);
+        const item = { artifactId: id, expectedHeaderVersion: 1, expectedBodyVersion: 1,
+            expectedDataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, expectedProvenance: additive,
+            expectedProvenanceDataEncryptionKey: null, header, body, dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+            provenance: encodePlainArtifactStoredContent(metadata(2)), provenanceDataEncryptionKey: null,
+            revisions: [], recipientKeyEnvelopes: [], blobs: [] };
+        const directive = { action: 'migrate', items: [item] } satisfies AccountEncryptionMigrateArtifactsDirective;
+        const invalidDirective = { ...directive, items: [{ ...item,
+            provenance: encodePlainArtifactStoredContent({ ...metadata(2), future: true }) }] };
+        expect(await inTx(tx => migrateArtifactAccountEncryptionInTx({ tx, accountId: owner.id,
+            fromMode: 'plain', toMode: 'plain', directive: invalidDirective }))).toEqual({ status: 'invalid_content' });
+        expect((await db.artifact.findUniqueOrThrow({ where: { id } })).bodyVersion).toBe(1);
+        expect(await inTx(tx => migrateArtifactAccountEncryptionInTx({ tx, accountId: owner.id,
+            fromMode: 'plain', toMode: 'plain', directive }))).toEqual({ status: 'applied' });
+        expect(await inTx(tx => matchArtifactAccountEncryptionMigrationPostStateInTx({ tx, accountId: owner.id,
+            toMode: 'plain', directive }))).toEqual({ status: 'matched' });
+        const persisted = encodePlainArtifactStoredContent({ ...metadata(2), future: true });
+        await db.artifact.update({ where: { id }, data: { provenance: sealed(persisted) } });
+        expect(await inTx(tx => matchArtifactAccountEncryptionMigrationPostStateInTx({ tx, accountId: owner.id,
+            toMode: 'plain', directive }))).toEqual({ status: 'mismatch' });
+        expect(await inTx(tx => matchArtifactAccountEncryptionMigrationPostStateInTx({ tx, accountId: owner.id,
+            toMode: 'plain', directive: { ...directive, items: [{ ...item, provenance: persisted }] } }))).toEqual({ status: 'matched' });
+    });
 
     it('converts private head and retained metadata with independent transition keys and exact replay matching', async () => {
         const binding = createSignedAccountContentBinding();

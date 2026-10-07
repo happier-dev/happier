@@ -197,15 +197,16 @@ function pruneScratchTreeToPlan(
  */
 function createDownloadOpener(
   fetchImpl: typeof fetch,
-  timeoutMs: number,
+  timeoutMs: number | null,
 ): (request: ModelPackDownloadRequest) => Promise<ModelPackDownloadStream> {
   return async (request) => {
     const headers: Record<string, string> = {};
     if (request.rangeStart && request.rangeStart > 0) {
       headers.Range = `bytes=${request.rangeStart}-`;
     }
-    const response = await Promise.race([
-      fetchImpl(request.url, { signal: request.signal, headers }),
+    const requestPromise = fetchImpl(request.url, { signal: request.signal, headers });
+    const response = timeoutMs === null ? await requestPromise : await Promise.race([
+      requestPromise,
       new Promise<never>((_, reject) => {
         const timer = setTimeout(() => reject(new Error('timeout')), timeoutMs);
         (timer as unknown as { unref?: () => void })?.unref?.();
@@ -254,7 +255,7 @@ function createDownloadOpener(
 export function createExpoModelPackInstallerHost(opts: {
   fs: InstallerFs;
   fetchImpl: typeof fetch;
-  timeoutMs: number;
+  timeoutMs: number | null;
   /**
    * Awaited immediately before and again after this pack's live directory bytes
    * change. Native engines cache by that stable directory path: the first

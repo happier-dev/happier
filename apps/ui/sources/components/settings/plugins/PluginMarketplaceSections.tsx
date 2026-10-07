@@ -1,9 +1,10 @@
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import * as React from 'react';
 import { usePathname } from '@/components/appShell/workspace/destinationRoute';
 import { WorkspaceDestinationRow } from '@/components/appShell/workspace/WorkspaceDestinationRow';
 import { buildPluginsHomeRoute, resolvePluginsSurfaceHost } from './model/pluginsSurfaceRoutes';
 import { useHappierCollection, type CollectionAnatomy, type CollectionRowActions } from '@happier-dev/plugin-ui';
-import { ActivityIndicator, ScrollView, View } from 'react-native';
+import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { PluginProjectionDiagnostic } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
@@ -861,7 +862,7 @@ export function DiscoverStatusSummary(props: Readonly<{
                 accessibilityLiveRegion="polite"
                 accessibilityLabel={[message, ...qualifiers].join(' ')}
             >
-                {props.loading ? <ActivityIndicator size="small" color={theme.colors.text.secondary} /> : null}
+                {props.loading ? <ActivitySpinner size="small" color={theme.colors.text.secondary} /> : null}
                 <View style={styles.statusText}>
                     <Text
                         testID="settings.plugins.marketplace.discover.status.summary"

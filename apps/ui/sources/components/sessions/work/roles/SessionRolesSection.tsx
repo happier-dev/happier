@@ -30,6 +30,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type { RoleCatalogEntry } from '@/sync/domains/roles/roleCatalog';
 import { useSessionMetadata } from '@/sync/domains/state/storage';
+import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import { roleActions } from '@/sync/ops/roles/roleActions';
 import { t } from '@/text';
 
@@ -37,12 +38,13 @@ const EMPTY_SESSION_ROLES: SessionRolesV1 = { overrides: {}, sessionRoles: {}, n
 
 export type SessionRolesSectionProps = Readonly<{
     sessionId: string;
-    /** A cross-owner worker: its roles are the snapshot copied at spawn and are shown read-only. */
+    serverId?: string | null;
+    /** Explains where the worker's initial configuration came from, not a write restriction. */
     copiedAtSpawn?: boolean;
 }>;
 
-function useSessionRolesConfiguration(sessionId: string): SessionRolesV1 {
-    const metadata = useSessionMetadata(sessionId);
+function useSessionRolesConfiguration(sessionId: string, serverId?: string | null): SessionRolesV1 {
+    const metadata = useSessionMetadata(sessionId, serverId);
     return React.useMemo(() => readSessionRolesV1(metadata) ?? EMPTY_SESSION_ROLES, [metadata]);
 }
 
@@ -55,9 +57,13 @@ function useSessionRolesConfiguration(sessionId: string): SessionRolesV1 {
  * Work pane's ⋯ (`SessionWorkMoreMenu`). Mounted by the Work pane's roles slot, below Triggers.
  */
 export const SessionRolesSection = React.memo(function SessionRolesSection(props: SessionRolesSectionProps) {
-    const { sessionId } = props;
-    const sessionRoles = useSessionRolesConfiguration(sessionId);
-    const catalog = useRoleCatalog();
+    return <SessionRolesContent key={sessionAddressKey({ sessionId: props.sessionId, serverId: props.serverId ?? '' })} {...props} />;
+});
+
+function SessionRolesContent(props: SessionRolesSectionProps) {
+    const { sessionId, serverId } = props;
+    const sessionRoles = useSessionRolesConfiguration(sessionId, serverId);
+    const catalog = useRoleCatalog(serverId);
     const allRolesRef = React.useRef<View>(null);
     const [rolePopoverOpen, setRolePopoverOpen] = React.useState(false);
     const overrides = Object.values(sessionRoles.overrides);
@@ -74,31 +80,28 @@ export const SessionRolesSection = React.memo(function SessionRolesSection(props
             anatomy="page"
             title={t('roles.session.sectionTitle')}
             count={summary}
-            // A worker's roles are the copy made when it started: ⓘ says so, and nothing here edits them.
             info={props.copiedAtSpawn ? t('roles.session.crossOwnerNote') : t('roles.session.info')}
-            action={props.copiedAtSpawn ? null : (
-                <AddSessionRoleButton sessionId={sessionId} sessionRoles={sessionRoles} entries={catalog.entries} />
-            )}
+            action={<AddSessionRoleButton sessionId={sessionId} serverId={serverId} sessionRoles={sessionRoles} entries={catalog.entries} />}
         >
             {overrides.map((override) => (
                 <SessionRoleDifferenceRow
                     key={`override:${override.roleId}`}
                     sessionId={sessionId}
+                    serverId={serverId}
                     kind="changed"
                     roleId={override.roleId}
-                    readOnly={props.copiedAtSpawn === true}
-                    onEngineChange={(engine) => { void setSessionOverride(sessionId, { ...override, engine }); }}
+                    onEngineChange={(engine) => { void setSessionOverride(sessionId, { ...override, engine }, serverId); }}
                 />
             ))}
             {sessionOnly.map((role) => (
                 <SessionRoleDifferenceRow
                     key={`session:${role.roleId}`}
                     sessionId={sessionId}
+                    serverId={serverId}
                     kind="session"
                     roleId={role.roleId}
-                    readOnly={props.copiedAtSpawn === true}
                     onEngineChange={(engine) => {
-                        void roleActions.addSessionRole(sessionId, role.roleId, { ...toArtifact(role), engine }).then(settleSessionRoleWrite);
+                        void roleActions.addSessionRole(sessionId, role.roleId, { ...toArtifact(role), engine }, { serverId }).then(settleSessionRoleWrite);
                     }}
                 />
             ))}
@@ -107,26 +110,26 @@ export const SessionRolesSection = React.memo(function SessionRolesSection(props
                     testID="session-work-roles.all"
                     title={t('roles.session.allRoles')}
                     detail={t('roles.session.inUse', { count: enabledCount })}
-                    onPress={props.copiedAtSpawn ? undefined : () => setRolePopoverOpen(true)}
+                    onPress={() => setRolePopoverOpen(true)}
                 />
             </View>
-            {rolePopoverOpen && !props.copiedAtSpawn ? (
+            {rolePopoverOpen ? (
                 <SessionRolePopover
                     sessionId={sessionId}
+                    serverId={serverId}
                     anchorRef={allRolesRef}
                     onRequestClose={() => setRolePopoverOpen(false)}
                 />
             ) : null}
         </WorkSection>
     );
-});
+}
 
 /** "Use defaults" and "Apply to sessions under it", for the Work pane's ⋯ menu. */
-export function useSessionRolesMenuActions(input: Readonly<{ sessionId: string; hasReports: boolean; copiedAtSpawn?: boolean }>) {
-    const sessionRoles = useSessionRolesConfiguration(input.sessionId);
+export function useSessionRolesMenuActions(input: Readonly<{ sessionId: string; serverId?: string | null; hasReports: boolean }>) {
+    const sessionRoles = useSessionRolesConfiguration(input.sessionId, input.serverId);
     const hasChanges = Object.keys(sessionRoles.overrides).length > 0 || Object.keys(sessionRoles.sessionRoles).length > 0;
     return React.useMemo(() => {
-        if (input.copiedAtSpawn) return [];
         return [
             ...(hasChanges ? [{
                 id: 'roles.useDefaults',
@@ -134,20 +137,20 @@ export function useSessionRolesMenuActions(input: Readonly<{ sessionId: string; 
                 onSelect: async () => {
                     // Stop at the first refusal: it is reported once, and what is left stays as it was.
                     for (const roleId of Object.keys(sessionRoles.overrides)) {
-                        if (!await settleSessionRoleWrite(await roleActions.clearSessionOverride(input.sessionId, roleId))) return;
+                        if (!await settleSessionRoleWrite(await roleActions.clearSessionOverride(input.sessionId, roleId, { serverId: input.serverId }))) return;
                     }
                     for (const roleId of Object.keys(sessionRoles.sessionRoles)) {
-                        if (!await settleSessionRoleWrite(await roleActions.removeSessionRole(input.sessionId, roleId))) return;
+                        if (!await settleSessionRoleWrite(await roleActions.removeSessionRole(input.sessionId, roleId, { serverId: input.serverId }))) return;
                     }
                 },
             }] : []),
             ...(input.hasReports ? [{
                 id: 'roles.applyToReports',
                 title: t('roles.session.applyToReports'),
-                onSelect: async () => { await settleSessionRoleWrite(await roleActions.applyToReports(input.sessionId)); },
+                onSelect: async () => { await settleSessionRoleWrite(await roleActions.applyToReports(input.sessionId, { serverId: input.serverId })); },
             }] : []),
         ];
-    }, [hasChanges, input.copiedAtSpawn, input.hasReports, input.sessionId, sessionRoles.overrides, sessionRoles.sessionRoles]);
+    }, [hasChanges, input.serverId, input.hasReports, input.sessionId, sessionRoles.overrides, sessionRoles.sessionRoles]);
 }
 
 function toArtifact(role: ResolvedRoleV1): RoleArtifactV1 {
@@ -155,9 +158,9 @@ function toArtifact(role: ResolvedRoleV1): RoleArtifactV1 {
     return artifact;
 }
 
-async function setSessionOverride(sessionId: string, override: RoleInstructionsOverrideV1): Promise<void> {
+async function setSessionOverride(sessionId: string, override: RoleInstructionsOverrideV1, serverId?: string | null): Promise<void> {
     const { instructionsOverride: _instructions, ...fields } = override;
-    await settleSessionRoleWrite(await roleActions.setSessionOverride(sessionId, fields));
+    await settleSessionRoleWrite(await roleActions.setSessionOverride(sessionId, fields, { serverId }));
 }
 
 /**
@@ -167,16 +170,16 @@ async function setSessionOverride(sessionId: string, override: RoleInstructionsO
  */
 function SessionRoleDifferenceRow(props: Readonly<{
     sessionId: string;
+    serverId?: string | null;
     kind: 'changed' | 'session';
     roleId: string;
-    readOnly: boolean;
     onEngineChange: (engine: RoleEngineV1) => void;
 }>) {
     const { theme } = useUnistyles();
-    const { selection } = useSessionRoleSelection(props.sessionId, props.roleId);
+    const { selection } = useSessionRoleSelection(props.sessionId, props.roleId, props.serverId);
     const engine = selection?.engine;
     const runsAs = selection?.runsAs.kind ?? 'session';
-    const presentEngine = useRoleEnginePresentation();
+    const presentEngine = useRoleEnginePresentation(props.serverId);
     const presentation = presentEngine(engine);
     const [hovered, setHovered] = React.useState(false);
     const [focused, setFocused] = React.useState(false);
@@ -184,11 +187,11 @@ function SessionRoleDifferenceRow(props: Readonly<{
     const revealed = Platform.OS !== 'web' || hovered || focused;
     const reset = () => {
         const write = props.kind === 'changed'
-            ? roleActions.clearSessionOverride(props.sessionId, props.roleId)
-            : roleActions.removeSessionRole(props.sessionId, props.roleId);
+            ? roleActions.clearSessionOverride(props.sessionId, props.roleId, { serverId: props.serverId })
+            : roleActions.removeSessionRole(props.sessionId, props.roleId, { serverId: props.serverId });
         void write.then(settleSessionRoleWrite);
     };
-    const marker = props.kind === 'changed' && !props.readOnly ? (
+    const marker = props.kind === 'changed' ? (
         // Reset stays in the tree and the tab order; its slot reveals it on keyboard focus as well as
         // hover, and reserves its width so "changed" turning into Reset moves nothing.
         <View style={styles.markerSlot}>
@@ -213,7 +216,7 @@ function SessionRoleDifferenceRow(props: Readonly<{
             )}
         </View>
     ) : (
-        <Text style={styles.marker}>{props.kind === 'changed' ? t('roles.session.changed') : t('roles.session.thisSession')}</Text>
+        <Text style={styles.marker}>{t('roles.session.thisSession')}</Text>
     );
     return (
         <Item
@@ -228,10 +231,10 @@ function SessionRoleDifferenceRow(props: Readonly<{
             rightElement={(
                 <View style={styles.rowControls}>
                     <RoleEngineField
+                        serverId={props.serverId}
                         engine={engine}
                         label={presentation.label}
                         leading={presentation.icon}
-                        disabled={props.readOnly}
                         onChange={props.onEngineChange}
                     />
                     <View
@@ -253,6 +256,7 @@ function SessionRoleDifferenceRow(props: Readonly<{
 /** "+": a new role for this session, or change a Settings role for this session only. */
 function AddSessionRoleButton(props: Readonly<{
     sessionId: string;
+    serverId?: string | null;
     sessionRoles: SessionRolesV1;
     entries: ReadonlyArray<RoleCatalogEntry>;
 }>) {
@@ -284,7 +288,7 @@ function AddSessionRoleButton(props: Readonly<{
                     {({ maxHeight }) => (
                         <FloatingOverlay maxHeight={maxHeight} scrollEnabled>
                             {mode === 'new' ? (
-                                <AddSessionRoleForm sessionId={props.sessionId} onDone={close} />
+                                <AddSessionRoleForm sessionId={props.sessionId} serverId={props.serverId} onDone={close} />
                             ) : (
                                 <>
                                     <ActionListSection
@@ -308,7 +312,7 @@ function AddSessionRoleButton(props: Readonly<{
                                                     void setSessionOverride(props.sessionId, {
                                                         roleId: entry.roleId,
                                                         ...(entry.role.engine ? { engine: entry.role.engine } : {}),
-                                                    });
+                                                    }, props.serverId);
                                                 },
                                             }))}
                                         />
@@ -324,8 +328,8 @@ function AddSessionRoleButton(props: Readonly<{
 }
 
 /** A role that exists only in this session (and the sessions under it). */
-function AddSessionRoleForm(props: Readonly<{ sessionId: string; onDone: () => void }>) {
-    const presentEngine = useRoleEnginePresentation();
+function AddSessionRoleForm(props: Readonly<{ sessionId: string; serverId?: string | null; onDone: () => void }>) {
+    const presentEngine = useRoleEnginePresentation(props.serverId);
     const [name, setName] = React.useState('');
     const [instructions, setInstructions] = React.useState('');
     const [engine, setEngine] = React.useState<RoleEngineV1 | undefined>(undefined);
@@ -347,6 +351,7 @@ function AddSessionRoleForm(props: Readonly<{ sessionId: string; onDone: () => v
                 secondOpinion: 'off',
                 enabled: true,
             },
+            { serverId: props.serverId },
         ));
         if (added) props.onDone();
     };
@@ -371,7 +376,7 @@ function AddSessionRoleForm(props: Readonly<{ sessionId: string; onDone: () => v
             />
             <View style={styles.formRow}>
                 <Text style={styles.formLabel}>{t('roles.settings.engineTitle')}</Text>
-                <RoleEngineField engine={engine} label={presentation.label} leading={presentation.icon} onChange={setEngine} />
+                <RoleEngineField serverId={props.serverId} engine={engine} label={presentation.label} leading={presentation.icon} onChange={setEngine} />
             </View>
             <View style={styles.formRow}>
                 <Text style={styles.formLabel}>{t('roles.settings.runsAsTitle')}</Text>

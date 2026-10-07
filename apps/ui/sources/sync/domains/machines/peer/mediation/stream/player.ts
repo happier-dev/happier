@@ -60,7 +60,7 @@ export type LiveStreamPlayerEvent =
     }>
     | Readonly<{ type: 'frame_dropped'; count: number; bufferedBytes: number; reasonCode: string }>
     | Readonly<{ type: 'frame_decoded' }>
-    | Readonly<{ type: 'startup_timeout'; reasonCode: string }>
+    | Readonly<{ type: 'decoder_error'; reasonCode: string }>
     | Readonly<{ type: 'decoder_reconfigured'; width?: number; height?: number; orientation?: SimulatorOrientationV1 }>
     | Readonly<{ type: 'reconnecting'; reasonCode: string }>
     | Readonly<{ type: 'error'; reasonCode: string; message?: string }>
@@ -182,7 +182,7 @@ function resolveFallbackImageCodec(state: LiveStreamPlayerState): MachineLiveStr
 function shouldRetainDegradedDiagnostic(reasonCode: string | undefined): boolean {
     return reasonCode === 'preferred_codec_unavailable'
         || reasonCode === 'h264_renderer_unavailable'
-        || reasonCode === 'decoder_startup_timeout'
+        || reasonCode?.startsWith('webcodecs_') === true
         || reasonCode === 'slow_consumer';
 }
 
@@ -274,7 +274,7 @@ export function reduceLiveStreamPlayerState(
                 diagnostic: createLiveStreamPlayerDiagnostic({ reasonCode: event.reasonCode }),
                 renderEvent: undefined,
             };
-        case 'startup_timeout':
+        case 'decoder_error':
             if (state.selectedCodec === 'h264.avcc') {
                 const fallbackCodec = resolveFallbackImageCodec(state);
                 if (fallbackCodec) {

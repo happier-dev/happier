@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Component, Path, PathBuf};
 #[cfg(test)]
 use std::sync::Arc;
-use std::sync::{Arc as StdArc, Mutex};
+use std::sync::{Arc as StdArc, Mutex, Weak};
 use tauri::{Manager, Runtime, State, Window};
 use types::{
     DesktopBrowserAvailability, DesktopBrowserBoundsPayload, DesktopBrowserCaptureClipRect,
@@ -44,6 +44,16 @@ const DESKTOP_BROWSER_DIAGNOSTICS_BYTES_CAP: usize = 8 * 1024 * 1024;
 /// reader enforces on the daemon side.
 const DESKTOP_BROWSER_DIAGNOSTICS_MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 
+type NativeSnapshotCompletion =
+    Box<dyn FnOnce(Result<DesktopBrowserCapturedSnapshot, String>) + Send>;
+type NativeScriptCompletion = Box<dyn FnOnce(String) + Send>;
+struct NativeCapturedSnapshot {
+    snapshot: DesktopBrowserCapturedSnapshot,
+    source: Weak<DesktopBrowserViewKey>,
+}
+type PendingNativeCapture =
+    tokio::sync::oneshot::Receiver<Result<NativeCapturedSnapshot, DesktopBrowserCaptureErrorCode>>;
+
 pub(crate) trait DesktopBrowserWebViewHandle {
     fn load_url(&self, url: &str) -> Result<(), String>;
     fn navigation_state(&self) -> Result<(bool, bool), String>;
@@ -60,7 +70,7 @@ pub(crate) trait DesktopBrowserWebViewHandle {
     /// compositing/hit-testing — it grants the page no IPC, script, or automation.
     fn set_pointer_passthrough(&self, ignore: bool) -> Result<(), String>;
     fn open_devtools(&self) -> Result<(), String>;
-    fn capture_snapshot(&self) -> Result<DesktopBrowserCapturedSnapshot, String>;
+    fn capture_snapshot(&self, completion: NativeSnapshotCompletion) -> Result<(), String>;
     /// Push a script into the child webview for evaluation. Fire-and-forget: in the vendored Wry,
     /// `WebView::evaluate_script` returns no JS value, so any result the page wants to surface is
     /// posted back out-of-band via `window.ipc.postMessage(...)` and drained by
@@ -68,6 +78,11 @@ pub(crate) trait DesktopBrowserWebViewHandle {
     /// (eval REPL + element picker); it grants the host no privileged IPC beyond the existing
     /// diagnostics collector channel.
     fn eval_script(&self, script: &str) -> Result<(), String>;
+    fn eval_script_with_callback(
+        &self,
+        script: &str,
+        completion: NativeScriptCompletion,
+    ) -> Result<(), String>;
 }
 
 pub(crate) trait DesktopBrowserWebViewHost: Send + Sync {
@@ -228,7 +243,14 @@ impl DesktopBrowserState {
         &self,
         request: DesktopBrowserCaptureSnapshotRequest,
     ) -> DesktopBrowserCaptureSnapshotResult {
-        self.capture_view_snapshot(request)
+        let capture = self.start_view_capture(
+            view_key(&request.browser_session_id, &request.view_id),
+            request.navigation_generation,
+        );
+        self.finish_view_snapshot(
+            request,
+            tauri::async_runtime::block_on(await_native_capture(capture)),
+        )
     }
 
     #[cfg(test)]
@@ -236,7 +258,14 @@ impl DesktopBrowserState {
         &self,
         request: DesktopBrowserCaptureRecordingFrameRequest,
     ) -> DesktopBrowserCaptureRecordingFrameResult {
-        self.capture_view_recording_frame(request)
+        let capture = self.start_view_capture(
+            view_key(&request.browser_session_id, &request.view_id),
+            request.navigation_generation,
+        );
+        self.finish_view_recording_frame(
+            request,
+            tauri::async_runtime::block_on(await_native_capture(capture)),
+        )
     }
 
     #[cfg(test)]
@@ -306,6 +335,9 @@ impl DesktopBrowserState {
             .as_ref()
             .map(|_| DesktopBrowserDiagnosticsBuffer::default());
 
+        // Retire the original source before publishing replacement logical facts. Async capture
+        // projection must not observe new generation-zero facts with the old native entry alive.
+        remove_native_handle(&key);
         {
             let mut inner = self.inner.lock().expect("browser state lock poisoned");
             remove_view_from_state(&mut inner, &key);
@@ -340,8 +372,6 @@ impl DesktopBrowserState {
                 inner.diagnostics.insert(key.clone(), buffer.clone());
             }
         }
-        remove_native_handle(&key);
-
         let page_info = DesktopBrowserPageInfoSink::new(key.clone(), self.inner.clone());
         let diagnostics =
             DesktopBrowserDiagnosticsSink::new(diagnostics_init_script, diagnostics_buffer);
@@ -411,35 +441,97 @@ impl DesktopBrowserState {
         self.success_result()
     }
 
-    fn capture_view_snapshot(
+    fn start_view_capture(
         &self,
-        request: DesktopBrowserCaptureSnapshotRequest,
-    ) -> DesktopBrowserCaptureSnapshotResult {
+        key: DesktopBrowserViewKey,
+        navigation_generation: u64,
+    ) -> Result<PendingNativeCapture, DesktopBrowserCaptureErrorCode> {
         if !self.availability.supports.capture {
-            return self
-                .unavailable_capture_result(DesktopBrowserCaptureErrorCode::CaptureUnsupported);
+            return Err(DesktopBrowserCaptureErrorCode::CaptureUnsupported);
         }
-
-        let key = view_key(&request.browser_session_id, &request.view_id);
-        match self.capture_generation_status(&key, request.navigation_generation) {
+        match self.capture_generation_status(&key, navigation_generation) {
             CaptureGenerationStatus::Current => {}
             CaptureGenerationStatus::Missing => {
-                return self
-                    .unavailable_capture_result(DesktopBrowserCaptureErrorCode::ViewUnavailable);
+                return Err(DesktopBrowserCaptureErrorCode::ViewUnavailable);
             }
             CaptureGenerationStatus::Stale => {
-                return self
-                    .unavailable_capture_result(DesktopBrowserCaptureErrorCode::StaleNavigation);
+                return Err(DesktopBrowserCaptureErrorCode::StaleNavigation);
             }
         }
+        // The source owns this probe, not the capture caller: caller-supplied JavaScript could
+        // claim `false` and bypass admission. Annotation and recording share the same policy.
+        let privacy_script: String = serde_json::from_str(include_str!(
+            "../../../../../packages/protocol/src/browser/context/sensitiveFieldsExpression.json"
+        ))
+        .map_err(|_| DesktopBrowserCaptureErrorCode::CaptureFailed)?;
+        let source = native_capture_source(&key)
+            .map_err(|_| DesktopBrowserCaptureErrorCode::CaptureFailed)?;
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let inner = self.inner.clone();
+        let callback_key = key.clone();
+        with_native_handle(&key, |handle| {
+            handle.eval_script_with_callback(
+                &privacy_script,
+                Box::new(move |value| {
+                    let error = match serde_json::from_str::<bool>(&value) {
+                        Ok(false) if source.upgrade().is_none() => {
+                            Some(DesktopBrowserCaptureErrorCode::ViewUnavailable)
+                        }
+                        Ok(false) => match capture_generation_status(
+                            &inner,
+                            &callback_key,
+                            navigation_generation,
+                        ) {
+                            CaptureGenerationStatus::Current => None,
+                            CaptureGenerationStatus::Missing => {
+                                Some(DesktopBrowserCaptureErrorCode::ViewUnavailable)
+                            }
+                            CaptureGenerationStatus::Stale => {
+                                Some(DesktopBrowserCaptureErrorCode::StaleNavigation)
+                            }
+                        },
+                        Ok(true) => Some(DesktopBrowserCaptureErrorCode::SensitiveFieldsPresent),
+                        Err(_) => Some(DesktopBrowserCaptureErrorCode::CaptureFailed),
+                    };
+                    if let Some(error) = error {
+                        let _ = sender.send(Err(error));
+                        return;
+                    }
+                    // WebKit invokes evaluation completion on the main thread. Re-check the existing
+                    // navigation authority immediately before pixels, then let its callback settle the
+                    // command. Failed scheduling or a dropped platform callback closes the sender.
+                    let _ = with_native_handle(&callback_key, |handle| {
+                        handle.capture_snapshot(Box::new(move |result| {
+                            let result = if source.upgrade().is_none() {
+                                Err(DesktopBrowserCaptureErrorCode::ViewUnavailable)
+                            } else {
+                                result
+                                    .map(|snapshot| NativeCapturedSnapshot { snapshot, source })
+                                    .map_err(|_| DesktopBrowserCaptureErrorCode::CaptureFailed)
+                            };
+                            let _ = sender.send(result);
+                        }))
+                    });
+                }),
+            )
+        })
+        .map_err(|_| DesktopBrowserCaptureErrorCode::CaptureFailed)?;
+        Ok(receiver)
+    }
 
-        let mut snapshot = match with_native_handle(&key, |handle| handle.capture_snapshot()) {
-            Ok(snapshot) => snapshot,
-            Err(_) => {
-                return self
-                    .unavailable_capture_result(DesktopBrowserCaptureErrorCode::CaptureFailed);
+    fn finish_view_snapshot(
+        &self,
+        request: DesktopBrowserCaptureSnapshotRequest,
+        capture: Result<NativeCapturedSnapshot, DesktopBrowserCaptureErrorCode>,
+    ) -> DesktopBrowserCaptureSnapshotResult {
+        let key = view_key(&request.browser_session_id, &request.view_id);
+        let captured = match capture {
+            Ok(captured) => captured,
+            Err(error) => {
+                return self.unavailable_capture_result(error);
             }
         };
+        let mut snapshot = captured.snapshot;
 
         if !is_valid_native_snapshot(&snapshot) {
             return self.unavailable_capture_result(DesktopBrowserCaptureErrorCode::CaptureFailed);
@@ -455,6 +547,13 @@ impl DesktopBrowserState {
                 return self
                     .unavailable_capture_result(DesktopBrowserCaptureErrorCode::StaleNavigation);
             }
+        }
+
+        // Check source liveness after the logical generation: a concurrent same-key replacement
+        // may publish generation zero between those observations, but cannot revive this entry.
+        if captured.source.upgrade().is_none() {
+            return self
+                .unavailable_capture_result(DesktopBrowserCaptureErrorCode::ViewUnavailable);
         }
 
         // ANNO-3: crop the full-frame capture to the union-of-targets clip (device px) when the
@@ -483,47 +582,26 @@ impl DesktopBrowserState {
     }
 
     /// Reference-only recording-frame capture (BA-4 `nativeViewCapture` producer). Reuses the same
-    /// native snapshot machinery + generation guards as `capture_view_snapshot`, but instead of
+    /// native snapshot machinery + generation guards as annotation capture, but instead of
     /// returning inline base64 to the UI it enforces the daemon's recording byte cap and writes the
     /// PNG to the app-owned recording root using the daemon-provided root-relative artifact path.
     /// The daemon never receives the pixel buffer and cannot choose an arbitrary filesystem path.
-    fn capture_view_recording_frame(
+    fn finish_view_recording_frame(
         &self,
         request: DesktopBrowserCaptureRecordingFrameRequest,
+        capture: Result<NativeCapturedSnapshot, DesktopBrowserCaptureErrorCode>,
     ) -> DesktopBrowserCaptureRecordingFrameResult {
-        if !self.availability.supports.capture {
-            return DesktopBrowserCaptureRecordingFrameResult::unavailable(
-                self.availability(),
-                DesktopBrowserCaptureErrorCode::CaptureUnsupported,
-            );
-        }
-
         let key = view_key(&request.browser_session_id, &request.view_id);
-        match self.capture_generation_status(&key, request.navigation_generation) {
-            CaptureGenerationStatus::Current => {}
-            CaptureGenerationStatus::Missing => {
+        let captured = match capture {
+            Ok(captured) => captured,
+            Err(error) => {
                 return DesktopBrowserCaptureRecordingFrameResult::unavailable(
                     self.availability(),
-                    DesktopBrowserCaptureErrorCode::ViewUnavailable,
-                );
-            }
-            CaptureGenerationStatus::Stale => {
-                return DesktopBrowserCaptureRecordingFrameResult::unavailable(
-                    self.availability(),
-                    DesktopBrowserCaptureErrorCode::StaleNavigation,
-                );
-            }
-        }
-
-        let snapshot = match with_native_handle(&key, |handle| handle.capture_snapshot()) {
-            Ok(snapshot) => snapshot,
-            Err(_) => {
-                return DesktopBrowserCaptureRecordingFrameResult::unavailable(
-                    self.availability(),
-                    DesktopBrowserCaptureErrorCode::CaptureFailed,
+                    error,
                 );
             }
         };
+        let snapshot = captured.snapshot;
 
         if !is_valid_native_snapshot(&snapshot) {
             return DesktopBrowserCaptureRecordingFrameResult::unavailable(
@@ -532,7 +610,7 @@ impl DesktopBrowserState {
             );
         }
 
-        // Re-check the generation AFTER the (async) snapshot, mirroring capture_view_snapshot — the
+        // Re-check the generation AFTER the async snapshot, mirroring annotation capture — the
         // page may have navigated while the capture was in flight.
         match self.capture_generation_status(&key, request.navigation_generation) {
             CaptureGenerationStatus::Current => {}
@@ -548,6 +626,13 @@ impl DesktopBrowserState {
                     DesktopBrowserCaptureErrorCode::StaleNavigation,
                 );
             }
+        }
+
+        if captured.source.upgrade().is_none() {
+            return DesktopBrowserCaptureRecordingFrameResult::unavailable(
+                self.availability(),
+                DesktopBrowserCaptureErrorCode::ViewUnavailable,
+            );
         }
 
         if snapshot.size_bytes > request.max_bytes {
@@ -623,15 +708,7 @@ impl DesktopBrowserState {
         key: &DesktopBrowserViewKey,
         navigation_generation: u64,
     ) -> CaptureGenerationStatus {
-        let inner = self.inner.lock().expect("browser state lock poisoned");
-        let Some(view) = inner.views.get(key) else {
-            return CaptureGenerationStatus::Missing;
-        };
-        if view.navigation_generation == navigation_generation {
-            CaptureGenerationStatus::Current
-        } else {
-            CaptureGenerationStatus::Stale
-        }
+        capture_generation_status(&self.inner, key, navigation_generation)
     }
 
     fn set_view_bounds(&self, request: DesktopBrowserBoundsPayload) -> DesktopBrowserCommandResult {
@@ -913,19 +990,62 @@ pub fn desktop_browser_get_page_info(
 }
 
 #[tauri::command]
-pub fn desktop_browser_capture_snapshot(
+pub async fn desktop_browser_capture_snapshot<R: Runtime>(
+    window: Window<R>,
     state: State<'_, DesktopBrowserState>,
     request: DesktopBrowserCaptureSnapshotRequest,
-) -> DesktopBrowserCaptureSnapshotResult {
-    state.capture_view_snapshot(request)
+) -> Result<DesktopBrowserCaptureSnapshotResult, String> {
+    let capture = capture_native_view_pixels(
+        window,
+        view_key(&request.browser_session_id, &request.view_id),
+        request.navigation_generation,
+    )
+    .await;
+    Ok(state.finish_view_snapshot(request, capture))
 }
 
 #[tauri::command]
-pub fn desktop_browser_capture_recording_frame(
+pub async fn desktop_browser_capture_recording_frame<R: Runtime>(
+    window: Window<R>,
     state: State<'_, DesktopBrowserState>,
     request: DesktopBrowserCaptureRecordingFrameRequest,
-) -> DesktopBrowserCaptureRecordingFrameResult {
-    state.capture_view_recording_frame(request)
+) -> Result<DesktopBrowserCaptureRecordingFrameResult, String> {
+    let capture = capture_native_view_pixels(
+        window,
+        view_key(&request.browser_session_id, &request.view_id),
+        request.navigation_generation,
+    )
+    .await;
+    Ok(state.finish_view_recording_frame(request, capture))
+}
+
+async fn await_native_capture(
+    capture: Result<PendingNativeCapture, DesktopBrowserCaptureErrorCode>,
+) -> Result<NativeCapturedSnapshot, DesktopBrowserCaptureErrorCode> {
+    capture?
+        .await
+        .map_err(|_| DesktopBrowserCaptureErrorCode::CaptureFailed)?
+}
+
+async fn capture_native_view_pixels<R: Runtime>(
+    window: Window<R>,
+    key: DesktopBrowserViewKey,
+    navigation_generation: u64,
+) -> Result<NativeCapturedSnapshot, DesktopBrowserCaptureErrorCode> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let app = window.app_handle().clone();
+    // Native webviews are main-thread-owned. Only scheduling runs there: neither the command nor
+    // the event loop waits synchronously for WebKit's eventual completion callback.
+    window
+        .run_on_main_thread(move || {
+            let state = app.state::<DesktopBrowserState>();
+            let _ = sender.send(state.start_view_capture(key, navigation_generation));
+        })
+        .map_err(|_| DesktopBrowserCaptureErrorCode::CaptureFailed)?;
+    let capture = receiver
+        .await
+        .map_err(|_| DesktopBrowserCaptureErrorCode::CaptureFailed)?;
+    await_native_capture(capture).await
 }
 
 #[tauri::command]
@@ -985,6 +1105,22 @@ enum CaptureGenerationStatus {
     Current,
     Missing,
     Stale,
+}
+
+fn capture_generation_status(
+    inner: &Mutex<DesktopBrowserStateInner>,
+    key: &DesktopBrowserViewKey,
+    navigation_generation: u64,
+) -> CaptureGenerationStatus {
+    let inner = inner.lock().expect("browser state lock poisoned");
+    let Some(view) = inner.views.get(key) else {
+        return CaptureGenerationStatus::Missing;
+    };
+    if view.navigation_generation == navigation_generation {
+        CaptureGenerationStatus::Current
+    } else {
+        CaptureGenerationStatus::Stale
+    }
 }
 
 fn decode_snapshot_png_bytes(bytes_base64: &str) -> Option<Vec<u8>> {
@@ -1345,13 +1481,17 @@ fn finish_document_navigation(view: &mut DesktopBrowserViewState, url: &str) {
 }
 
 thread_local! {
-    static NATIVE_WEBVIEWS: RefCell<HashMap<DesktopBrowserViewKey, Box<dyn DesktopBrowserWebViewHandle>>> =
+    static NATIVE_WEBVIEWS: RefCell<HashMap<StdArc<DesktopBrowserViewKey>, Box<dyn DesktopBrowserWebViewHandle>>> =
         RefCell::new(HashMap::new());
 }
 
 fn replace_native_handle(key: DesktopBrowserViewKey, handle: Box<dyn DesktopBrowserWebViewHandle>) {
     NATIVE_WEBVIEWS.with(|views| {
-        views.borrow_mut().insert(key, handle);
+        let mut views = views.borrow_mut();
+        // Equal-key insertion retains HashMap's old key. Retire it first so callbacks bound to
+        // that original native entry cannot authorize a replacement with the same public ids.
+        views.remove(&key);
+        views.insert(StdArc::new(key), handle);
     });
 }
 
@@ -1359,6 +1499,20 @@ fn remove_native_handle(key: &DesktopBrowserViewKey) {
     NATIVE_WEBVIEWS.with(|views| {
         views.borrow_mut().remove(key);
     });
+}
+
+fn native_capture_source(
+    key: &DesktopBrowserViewKey,
+) -> Result<Weak<DesktopBrowserViewKey>, String> {
+    NATIVE_WEBVIEWS.with(|views| {
+        let views = views.borrow();
+        let Some((source, _)) = views.get_key_value(key) else {
+            return Err("desktop browser native view is missing".to_string());
+        };
+        // Only the canonical native entry owns this key strongly. Pending work never extends
+        // its lifetime: close/replacement invalidates the original source, even with reused ids.
+        Ok(StdArc::downgrade(source))
+    })
 }
 
 fn with_native_handle<T>(
@@ -1564,7 +1718,9 @@ impl WryDesktopBrowserView {
 impl DesktopBrowserWebViewHandle for WryDesktopBrowserView {
     fn navigation_state(&self) -> Result<(bool, bool), String> {
         Ok((
-            self.webview.can_go_back().map_err(|error| error.to_string())?,
+            self.webview
+                .can_go_back()
+                .map_err(|error| error.to_string())?,
             self.webview
                 .can_go_forward()
                 .map_err(|error| error.to_string())?,
@@ -1628,8 +1784,8 @@ impl DesktopBrowserWebViewHandle for WryDesktopBrowserView {
         }
     }
 
-    fn capture_snapshot(&self) -> Result<DesktopBrowserCapturedSnapshot, String> {
-        capture_wry_webview_snapshot(&self.webview)
+    fn capture_snapshot(&self, completion: NativeSnapshotCompletion) -> Result<(), String> {
+        capture_wry_webview_snapshot(&self.webview, completion)
     }
 
     fn eval_script(&self, script: &str) -> Result<(), String> {
@@ -1640,18 +1796,38 @@ impl DesktopBrowserWebViewHandle for WryDesktopBrowserView {
             .evaluate_script(script)
             .map_err(|error| error.to_string())
     }
+
+    fn eval_script_with_callback(
+        &self,
+        script: &str,
+        completion: NativeScriptCompletion,
+    ) -> Result<(), String> {
+        // Wry exposes an Fn callback although a JavaScript evaluation completes once.
+        let completion = Mutex::new(Some(completion));
+        self.webview
+            .evaluate_script_with_callback(script, move |value| {
+                if let Some(completion) = completion
+                    .lock()
+                    .expect("evaluation completion lock")
+                    .take()
+                {
+                    completion(value);
+                }
+            })
+            .map_err(|error| error.to_string())
+    }
 }
 
 #[cfg(target_os = "macos")]
 fn capture_wry_webview_snapshot(
     webview: &wry::WebView,
-) -> Result<DesktopBrowserCapturedSnapshot, String> {
+    completion: NativeSnapshotCompletion,
+) -> Result<(), String> {
     use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
     use objc2::{rc::Retained, ClassType, MainThreadMarker};
     use objc2_app_kit::NSImage;
     use objc2_foundation::NSError;
     use objc2_web_kit::WKSnapshotConfiguration;
-    use std::sync::mpsc;
     use std::time::{SystemTime, UNIX_EPOCH};
     use wry::WebViewExtMacOS;
 
@@ -1663,11 +1839,41 @@ fn capture_wry_webview_snapshot(
     }
 
     let native_webview = webview.webview();
-    let (sender, receiver) = mpsc::channel::<Result<Retained<NSImage>, String>>();
-    let completion = block2::RcBlock::new(move |image: *mut NSImage, _error: *mut NSError| {
-        let result = unsafe { Retained::retain(image) }
-            .ok_or_else(|| "native WKWebView snapshot did not return an image".to_string());
-        let _ = sender.send(result);
+    let completion = RefCell::new(Some(completion));
+    let completion = block2::RcBlock::new(move |image: *mut NSImage, error: *mut NSError| {
+        let Some(completion) = completion.borrow_mut().take() else {
+            return;
+        };
+        let result = (|| {
+            if let Some(error) = unsafe { error.as_ref() } {
+                return Err(format!("native WKWebView snapshot failed: {}", error));
+            }
+            let image = unsafe { Retained::retain(image) }
+                .ok_or_else(|| "native WKWebView snapshot did not return an image".to_string())?;
+            let size = unsafe { image.size() };
+            if size.width <= 0.0 || size.height <= 0.0 {
+                return Err("native WKWebView snapshot returned an empty image".to_string());
+            }
+            let encoded = encode_macos_snapshot_image_as_png(&image)?;
+            let size_bytes = encoded.bytes.len();
+            let captured_at_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_millis() as u64;
+            Ok(DesktopBrowserCapturedSnapshot {
+                browser_session_id: String::new(),
+                view_id: String::new(),
+                navigation_generation: 0,
+                capture_request_id: String::new(),
+                captured_at_ms,
+                mime_type: "image/png".to_string(),
+                width: encoded.width,
+                height: encoded.height,
+                size_bytes,
+                bytes_base64: BASE64_STANDARD.encode(encoded.bytes),
+            })
+        })();
+        completion(result);
     });
 
     unsafe {
@@ -1676,31 +1882,7 @@ fn capture_wry_webview_snapshot(
             .takeSnapshotWithConfiguration_completionHandler(Some(&configuration), &completion);
     }
 
-    let image = wait_for_macos_capture_snapshot(receiver)??;
-    let size = unsafe { image.size() };
-    if size.width <= 0.0 || size.height <= 0.0 {
-        return Err("native WKWebView snapshot returned an empty image".to_string());
-    }
-
-    let encoded = encode_macos_snapshot_image_as_png(&image)?;
-    let size_bytes = encoded.bytes.len();
-    let captured_at_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| error.to_string())?
-        .as_millis() as u64;
-
-    Ok(DesktopBrowserCapturedSnapshot {
-        browser_session_id: String::new(),
-        view_id: String::new(),
-        navigation_generation: 0,
-        capture_request_id: String::new(),
-        captured_at_ms,
-        mime_type: "image/png".to_string(),
-        width: encoded.width,
-        height: encoded.height,
-        size_bytes,
-        bytes_base64: BASE64_STANDARD.encode(encoded.bytes),
-    })
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
@@ -1801,44 +1983,11 @@ fn png_dimension(value: usize, label: &str) -> Result<u32, String> {
     u32::try_from(value).map_err(|_| format!("native WKWebView snapshot PNG {label} exceeded u32"))
 }
 
-#[cfg(target_os = "macos")]
-fn wait_for_macos_capture_snapshot<T>(receiver: std::sync::mpsc::Receiver<T>) -> Result<T, String> {
-    use objc2_foundation::{NSDate, NSRunLoop, NSString};
-    use std::sync::mpsc::RecvTimeoutError;
-    use std::time::Duration;
-
-    let interval = Duration::from_millis(2);
-    let interval_seconds = interval.as_secs_f64();
-    let timeout_seconds = 1.0;
-    let mut elapsed_seconds = 0.0;
-
-    loop {
-        match receiver.recv_timeout(interval) {
-            Ok(result) => return Ok(result),
-            Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => {
-                return Err("native WKWebView snapshot channel closed".to_string());
-            }
-        }
-
-        elapsed_seconds += interval_seconds;
-        if elapsed_seconds >= timeout_seconds {
-            return Err("timed out waiting for native WKWebView snapshot".to_string());
-        }
-
-        let run_loop = unsafe { NSRunLoop::mainRunLoop() };
-        let limit_date = unsafe { NSDate::dateWithTimeIntervalSinceNow(interval_seconds) };
-        let mode = NSString::from_str("NSDefaultRunLoopMode");
-        unsafe {
-            run_loop.acceptInputForMode_beforeDate(&mode, &limit_date);
-        }
-    }
-}
-
 #[cfg(not(target_os = "macos"))]
 fn capture_wry_webview_snapshot(
     _webview: &wry::WebView,
-) -> Result<DesktopBrowserCapturedSnapshot, String> {
+    _completion: NativeSnapshotCompletion,
+) -> Result<(), String> {
     Err("desktop browser capture is unsupported on this platform".to_string())
 }
 

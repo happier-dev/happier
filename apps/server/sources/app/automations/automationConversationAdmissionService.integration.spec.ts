@@ -582,6 +582,44 @@ describe("Automation Conversation admission database boundary", () => {
         expect(runs.filter((run) => run.state === 'queued')).toHaveLength(1);
     });
 
+    it('keeps scoped Conversation work outside Account capacity while retaining its newest pending occurrence', async () => {
+        const unscopedAutomationId = 'automation-unscoped-capacity';
+        await db.automation.create({ data: { id: unscopedAutomationId, accountId: ACCOUNT_ID, name: 'Unscoped capacity',
+            targetType: 'execution_run', templateCiphertext: strictConversationRunRecipe(), templateVersion: 3,
+            assignments: { create: { machineId: MACHINE_ID, enabled: true } } } });
+        const now = new Date();
+        await db.automationRun.createMany({ data: Array.from(
+            { length: MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT - 1 },
+            (_, index) => ({ ...conversationCapacityRunSeed({ id: `unscoped-capacity-${index}`, index, now }),
+                automationId: unscopedAutomationId }),
+        ) });
+        const scopedTrigger: AutomationConversationScopedTriggerEvidenceV1 = {
+            bindingId: BINDING_ID, sessionId: 'session-scoped-capacity', triggerId: AutomationTriggerIdSchema.parse('trigger-scoped-capacity'),
+            triggerRevision: 0, triggerKind: 'prComment', pullRequest: { repository: 'happier-dev/happier', number: 42 },
+            observationActorPrincipalId: 'github:user:7', actor: { principalId: 'github:user:7', repositoryWriteAccess: true },
+        };
+        await db.automation.update({ where: { id: AUTOMATION_ID }, data: { scopeSessionId: scopedTrigger.sessionId } });
+        await db.automationTrigger.create({ data: { id: scopedTrigger.triggerId, automationId: AUTOMATION_ID,
+            kind: 'prComment', sourceSessionId: scopedTrigger.sessionId, definitionEnvelope: JSON.stringify(
+                sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
+                    binding: { v: 1, automationId: AUTOMATION_ID, triggerId: scopedTrigger.triggerId, triggerRevision: 0, triggerKind: 'prComment' },
+                    definition: { kind: 'prComment', pullRequest: scopedTrigger.pullRequest } }),
+            ) } });
+        const admitScoped = (occurrenceId: string) => admitPlainAutomationConversationV1({ accountId: ACCOUNT_ID, caller,
+            input: { ...conversationInput({ resultDelivery: { kind: 'none' } }), occurrenceId,
+                sender: { principalId: scopedTrigger.observationActorPrincipalId }, hostEvidence: scopedTrigger } });
+        const first = await admitScoped('scoped-capacity-first');
+        expect(first).toMatchObject({ kind: 'admitted' });
+        if (first.kind !== 'admitted') throw new Error('Expected scoped admission');
+        await expect(admitPlainAutomationConversationV1({ accountId: ACCOUNT_ID, caller,
+            input: { ...conversationInput({ resultDelivery: { kind: 'none' } }), automationId: unscopedAutomationId } }))
+            .resolves.toMatchObject({ kind: 'admitted' });
+        await expect(admitScoped('scoped-capacity-second')).resolves.toMatchObject({ kind: 'admitted' });
+        await expect(db.automationRun.findUniqueOrThrow({ where: { id: first.runId }, select: { state: true, errorCode: true } }))
+            .resolves.toEqual({ state: 'skipped', errorCode: 'superseded_by_newer_occurrence' });
+        expect(await db.automationRun.count({ where: { triggerId: scopedTrigger.triggerId, state: 'queued' } })).toBe(1);
+    });
+
     beforeAll(async () => {
         harness = await createLightSqliteHarness({
             tempDirPrefix: "happier-conversation-admission-",

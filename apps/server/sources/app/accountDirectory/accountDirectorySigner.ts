@@ -11,6 +11,7 @@ import {
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
 import {
     createEd25519PublicKeyId,
+    createEd25519SigningKeyPairFromSeed,
     deriveEd25519SigningSeed,
 } from "@/app/crypto/derivedEd25519SigningKey";
 import type { HomeLoginAssertionV1 } from "./accountDirectorySchemas";
@@ -21,7 +22,7 @@ const ASSERTION_TTL_MS = 3 * 60_000;
 export function resolveAccountDirectorySigningKeyPair(env: NodeJS.ProcessEnv = process.env): tweetnacl.SignKeyPair {
     const masterSecret = (env.HANDY_MASTER_SECRET ?? "").trim();
     if (!masterSecret) throw new Error("HANDY_MASTER_SECRET is required");
-    return tweetnacl.sign.keyPair.fromSeed(deriveEd25519SigningSeed(masterSecret, ACCOUNT_DIRECTORY_SIGNING_DOMAIN));
+    return createEd25519SigningKeyPairFromSeed(deriveEd25519SigningSeed(masterSecret, ACCOUNT_DIRECTORY_SIGNING_DOMAIN));
 }
 
 export function accountDirectorySigningKeyMetadata(env: NodeJS.ProcessEnv = process.env): Readonly<{

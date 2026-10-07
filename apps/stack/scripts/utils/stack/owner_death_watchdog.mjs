@@ -38,6 +38,7 @@ export function spawnStackOwnerDeathWatchdog({
   }
 
   const effectivePollMs = parsePositiveInt(pollMs, 1000);
+  const watchesParent = ownerPidNum === process.pid;
   const effectiveLogMaxBytes = parsePositiveInt(logMaxBytes);
   const effectiveLogFile =
     typeof logFile === 'string' && logFile.trim()
@@ -61,6 +62,7 @@ export function spawnStackOwnerDeathWatchdog({
       `--owner-pid=${ownerPidNum}`,
       `--owner-started-at=${ownerStartedAtValue}`,
       `--poll-ms=${effectivePollMs}`,
+      ...(watchesParent ? ['--owner-ipc=true'] : []),
       ...(envPathValue ? [`--env-path=${envPathValue}`] : []),
       ...(effectiveLogFile ? [`--log-file=${effectiveLogFile}`] : []),
       ...(effectiveLogMaxBytes ? [`--log-max-bytes=${effectiveLogMaxBytes}`] : []),
@@ -71,11 +73,12 @@ export function spawnStackOwnerDeathWatchdog({
         ...(stackNameValue ? { HAPPIER_STACK_STACK: stackNameValue } : {}),
         ...(envPathValue ? { HAPPIER_STACK_ENV_FILE: envPathValue } : {}),
       },
-      stdio: 'ignore',
+      stdio: watchesParent ? ['ignore', 'ignore', 'ignore', 'ipc'] : 'ignore',
       shell: false,
       detached: process.platform !== 'win32',
     },
   );
+  child.channel?.unref();
   child.unref?.();
   return child;
 }

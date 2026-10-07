@@ -32,7 +32,7 @@ export type InvokeMachineCapabilityWithAlertsParams = Readonly<{
     machineId: string;
     request: CapabilitiesInvokeRequest;
     serverId?: string | null;
-    timeoutMs?: number;
+    timeoutMs?: number | null;
     isAuthorityCurrent?: () => boolean;
     alerts: CapabilityInvokeAlerts;
 }>;

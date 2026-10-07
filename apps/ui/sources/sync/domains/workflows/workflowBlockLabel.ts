@@ -5,7 +5,10 @@ import { t } from '@/text';
 import { resolveWorkflowActionTitle } from './workflowActionPresentation';
 
 /** Document headings and reference tokens share human names; ids stay in bindings only. */
-export function workflowBlockReferenceLabel(block: WorkflowBlock): string {
+export function workflowBlockReferenceLabel(block: WorkflowBlock, fallbackLabel?: string): string {
+  const authoredName = block.name?.trim();
+  if (authoredName) return authoredName;
+  if (fallbackLabel !== undefined) return fallbackLabel;
   switch (block.kind) {
     case 'step': return t('workflows.editor.addStep');
     case 'wait': return t('workflows.page.blocks.waitTitle');

@@ -77,7 +77,6 @@ export function LocalNeuralTtsSettings(props: {
     useLocalNeuralModelPackState({
       packId: effectiveAssetSetId,
       manifestUrl,
-      networkTimeoutMs: props.networkTimeoutMs,
       enabled: !usesDaemonExecution && publicationAvailable,
     });
 

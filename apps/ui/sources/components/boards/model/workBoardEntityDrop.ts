@@ -2,7 +2,7 @@ import {
     BoardItemRefV1Schema, WorkBoardActionInputSchemasV1, WorkBoardMutationErrorV1,
     WorkBoardPositionV1Schema, buildWorkBoardItemKeyV1,
     buildWorkBoardWidgetKeyV1, resolveWorkBoardItemOrderV1,
-    type BoardItemRefV1, type WorkBoardArtifactPortV1, type WorkBoardV1,
+    type BoardItemRefV1, type WorkBoardArtifactPortV1, type WorkBoardV1, type WorkBoardsV1,
 } from '@happier-dev/protocol';
 import type { WidgetInstanceRefV1, WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import { entityDragScopesEqualV1, type EntityDragItemV1, type EntityDragScopeV1, type EntityDropAdmissionV1 } from '@happier-dev/protocol/plugins/ui';
@@ -107,23 +107,31 @@ export function workBoardWidgetRef(scope: EntityDragScopeV1, boardId: string, in
 
 /** Bound present-user Action port: policy stays in the executor; replay/CAS/retry stay in the Account queue. */
 export function createWorkBoardUiActionPort(
-    getContext: () => WorkBoardEntityContext | null,
+    getContext: (boardId?: string) => WorkBoardEntityContext | null,
     queue: WorkBoardSaveQueue,
+    getBoards?: () => WorkBoardsV1 | null,
 ): Pick<WorkBoardArtifactPortV1, 'read' | 'apply'> {
     return {
-        read: async () => { const context = getContext(); if (!context) throw new WorkBoardMutationErrorV1('board_scope_retired'); return { v: 1, boards: [context.board] }; },
+        read: async () => {
+            if (getBoards) { const boards = getBoards(); if (!boards) throw new WorkBoardMutationErrorV1('board_scope_retired'); return boards; }
+            const context = getContext(); if (!context) throw new WorkBoardMutationErrorV1('board_scope_retired'); return { v: 1, boards: [context.board] };
+        },
         apply: async (intent, signal) => {
             signal?.throwIfAborted();
-            const context = getContext();
-            if (!context) throw new WorkBoardMutationErrorV1('board_scope_retired');
+            if (getBoards && !getBoards()) throw new WorkBoardMutationErrorV1('board_scope_retired');
             const parsed = WorkBoardActionInputSchemasV1['boards.apply'].parse({ intent });
-            if (parsed.intent.kind === 'create' || parsed.intent.boardId !== context.board.id) throw new WorkBoardMutationErrorV1('board_not_found');
-            if (parsed.intent.kind === 'set_positions') {
+            const context = getContext(parsed.intent.kind === 'create' ? parsed.intent.board.id : parsed.intent.boardId);
+            if (!getBoards) {
+                if (!context) throw new WorkBoardMutationErrorV1('board_scope_retired');
+                if (parsed.intent.kind === 'create' || parsed.intent.boardId !== context.board.id) throw new WorkBoardMutationErrorV1('board_not_found');
+            }
+            if (parsed.intent.kind === 'set_positions' && !context) throw new WorkBoardUiAdmissionError('board_context_unavailable');
+            if (context && parsed.intent.kind === 'set_positions') {
                 const keys = new Set([...context.membership.members.map(member => member.key),
                     ...(context.board.widgets ?? []).map(item => buildWorkBoardWidgetKeyV1(item.ref))]);
                 if (Object.keys(parsed.intent.positionsByItemRef).some(key => !keys.has(key))) throw new WorkBoardUiAdmissionError('board-item-gone');
             }
-            const currentIntent = parsed.intent.kind === 'set_positions' || parsed.intent.kind === 'remove_item'
+            const currentIntent = context && (parsed.intent.kind === 'set_positions' || parsed.intent.kind === 'remove_item')
                 ? { ...parsed.intent, membership: resolveBoardPruneMembership(context.board, context.membership, context.isHomeMounted) } : parsed.intent;
             const outcome = await queue.dispatch(currentIntent);
             if (outcome.status === 'applied') return outcome.boards;

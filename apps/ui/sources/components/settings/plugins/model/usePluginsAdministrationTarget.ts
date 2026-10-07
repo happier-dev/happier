@@ -58,7 +58,6 @@ export function usePluginsAdministrationTarget() {
         cacheKeySalt: daemonCacheFreshnessKey,
         enabled: executionTarget !== null,
         request: MARKETPLACE_CAPABILITY_REQUEST,
-        timeoutMs: 12_000,
     });
     return {
         administration,

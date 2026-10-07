@@ -4,7 +4,9 @@
 import * as React from 'react';
 import { createExpoRouterRuntime } from './testkit/runtime/routerRuntime';
 
-export const Redirect = createExpoRouterRuntime().module.Redirect;
+const runtime = createExpoRouterRuntime();
+
+export const Redirect = runtime.module.Redirect;
 
 export const Link = 'Link' as any;
 
@@ -15,12 +17,7 @@ export function Stack(props: { children?: React.ReactNode }) {
 Stack.Screen = 'StackScreen' as any;
 
 export function useRouter() {
-    return {
-        push: () => {},
-        back: () => {},
-        replace: () => {},
-        setParams: () => {},
-    };
+    return runtime.module.useRouter();
 }
 
 export function useSegments(): string[] {
@@ -44,4 +41,4 @@ export function useGlobalSearchParams<
     return useLocalSearchParams<TParams>();
 }
 
-export const router = useRouter();
+export const router = runtime.module.router;

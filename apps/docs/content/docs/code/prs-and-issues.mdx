@@ -14,8 +14,8 @@ reviewable list, and lets you turn any entry into a session.
 </Callout>
 
 To load entries and use source actions, you need a reachable machine running
-the Happier daemon, the relevant source plugin, and a configured source account
-and instance.
+the Happier daemon, the relevant source plugin, and a configured source instance
+with a usable credential.
 
 ## Where entries come from
 
@@ -31,13 +31,31 @@ point the PRs & Issues plugin declares. The development implementation includes:
 | Sentry | Error issues, with their own detail body |
 | PostHog | Error issues, with their own detail body |
 
-Each source is configured as an *instance* — an account, a service base, and
+Each source is configured as an *instance* — a credential choice, a service base, and
 what to watch. Self-managed GitLab and Azure DevOps Server keep that configured
 base explicit, including any path prefix, rather than silently treating another
 deployment as the same source.
 
 Because sources are a contribution point, a plugin you write can add one. See
 [SCM plugins](/plugins/guides/scm).
+
+## Use a machine's GitHub CLI login
+
+In 0.3 development, GitHub source settings offer **Use this machine's GitHub CLI
+login** when the selected machine is authenticated with `gh`. Select that choice
+and configure the repositories or search you want to watch. An Agent configuring
+the source through its administration Action can use the same native choice.
+
+Authentication belongs to the machine running the source operation, not the
+phone or browser viewing it. If that login becomes unavailable, sign in with
+`gh auth login` on that machine and retry. An explicitly selected Happier
+Connected Account takes precedence; a broken account selection does not silently
+switch to the CLI login.
+
+Only the native service choice syncs with the source configuration. Happier
+obtains the token when needed on the executing machine and does not save or sync
+that token as a Connected Account. Switching execution to another machine
+requires a usable GitHub CLI login there too.
 
 ## What an entry is
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { computeTurnEndpointDelayMs, normalizeTurnEndpointPolicy } from './TurnEndpointDetector';
+import { computeTurnEndpointDelayMs, MAX_VOICE_TIMER_DELAY_MS, normalizeTurnEndpointPolicy } from './TurnEndpointDetector';
 
 describe('TurnEndpointDetector', () => {
     it('computes delay as max(silenceMs, minSpeechMs - elapsedMs, 0)', () => {
@@ -23,7 +23,14 @@ describe('TurnEndpointDetector', () => {
         expect(low.minSpeechMs).toBe(0);
 
         const high = normalizeTurnEndpointPolicy({ silenceMs: 99_999, minSpeechMs: 99_999 });
-        expect(high.silenceMs).toBe(5_000);
-        expect(high.minSpeechMs).toBe(5_000);
+        expect(high.silenceMs).toBe(99_999);
+        expect(high.minSpeechMs).toBe(99_999);
+
+        const platformMaximum = normalizeTurnEndpointPolicy({
+            silenceMs: MAX_VOICE_TIMER_DELAY_MS,
+            minSpeechMs: MAX_VOICE_TIMER_DELAY_MS + 1,
+        });
+        expect(platformMaximum.silenceMs).toBe(MAX_VOICE_TIMER_DELAY_MS);
+        expect(platformMaximum.minSpeechMs).toBe(MAX_VOICE_TIMER_DELAY_MS);
     });
 });

@@ -1,97 +1,65 @@
-import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
-import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { WorkflowAuthoredResultReference } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 
-import { Text, TextInput } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
+import { FieldItem } from '@/components/ui/forms/FieldItem';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { listWorkflowFinalOutputOptions } from '@/sync/domains/workflows/workflowAuthoring';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { t } from '@/text';
 
-import { workflowEditorStyles } from './workflowEditorStyles';
-
-const styles = StyleSheet.create((theme) => ({
-    root: { gap: theme.margins.sm },
-    title: { ...Typography.default('semiBold'), color: theme.colors.text.primary },
-    help: { ...Typography.default('regular'), color: theme.colors.text.secondary },
-    options: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.margins.sm },
-    option: { ...Typography.default('regular'), color: theme.colors.text.secondary },
-    selected: { ...Typography.default('semiBold'), color: theme.colors.text.link },
-    path: { ...Typography.default('regular'), color: theme.colors.text.primary, minWidth: 180 },
-}));
-
-function formatPath(path: WorkflowAuthoredResultReference['path']): string {
-    return path.join('.');
-}
-
-function parsePath(value: string): WorkflowAuthoredResultReference['path'] {
-    if (value.trim().length === 0) return [];
-    return value.split('.').filter(Boolean).map((part) => (/^(0|[1-9][0-9]*)$/u.test(part) ? Number(part) : part));
-}
+import { formatWorkflowValueReference, WorkflowResultFieldPathInput } from './WorkflowStepDataEditor';
 
 export function WorkflowFinalOutputEditor(props: Readonly<{
     draft: WorkflowEditorDraft;
     onChange: (value: WorkflowAuthoredResultReference | null) => void;
     testIDPrefix: string;
 }>): React.ReactElement {
-    const { theme } = useUnistyles();
+    const [open, setOpen] = React.useState(false);
     const options = React.useMemo(() => listWorkflowFinalOutputOptions(props.draft), [props.draft]);
     const selected = props.draft.finalOutput;
+    const unavailable = selected !== undefined && !options.some(option => option.blockId === selected.producer.blockId);
     return (
-        <View testID={`${props.testIDPrefix}-final-output-editor`} style={styles.root}>
-            <Text style={styles.title}>{t('workflows.finalOutput.title')}</Text>
-            <Text style={styles.help}>{t('workflows.finalOutput.explain')}</Text>
-            <View
-                style={styles.options}
-                accessibilityRole="radiogroup"
-                accessibilityLabel={t('workflows.finalOutput.title')}
-            >
-                <HappierPressable
-                    testID={`${props.testIDPrefix}-final-output-clear`}
-                    accessibilityRole="radio"
-                    checked={selected === undefined}
-                    onPress={() => props.onChange(null)}
-                    style={(state) => [workflowEditorStyles.actionTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
-                >
-                    <Text style={selected === undefined ? styles.selected : styles.option}>
-                        {t('workflows.finalOutput.none')}
-                    </Text>
-                </HappierPressable>
-                {options.map((option) => (
-                    <HappierPressable
-                        key={option.blockId}
-                        testID={`${props.testIDPrefix}-final-output-option-${option.blockId}`}
-                        accessibilityRole="radio"
-                        checked={selected?.producer.blockId === option.blockId}
-                        onPress={() => props.onChange({
+        <View testID={`${props.testIDPrefix}-final-output-editor`}>
+            <DropdownMenu
+                testID={`${props.testIDPrefix}-final-output-select`}
+                open={open}
+                onOpenChange={setOpen}
+                selectedId={selected === undefined ? 'none' : `result:${selected.producer.blockId}`}
+                items={[
+                    { id: 'none', title: t('workflows.finalOutput.none'), testID: `${props.testIDPrefix}-final-output-clear` },
+                    ...options.map(option => ({ id: `result:${option.blockId}`, title: option.label,
+                        testID: `${props.testIDPrefix}-final-output-option-${option.blockId}` })),
+                    ...(unavailable && selected ? [{ id: `result:${selected.producer.blockId}`, title: t('workflows.contentUnavailable'), disabled: true }] : []),
+                ]}
+                itemTrigger={{
+                    title: t('workflows.finalOutput.title'), subtitle: t('workflows.finalOutput.explain'),
+                    showSelectedSubtitle: false, field: { invalid: unavailable },
+                    detailFormatter: () => selected === undefined ? t('workflows.finalOutput.none') : formatWorkflowValueReference(props.draft, selected),
+                    itemProps: { accessoryLayout: 'stacked', testID: `${props.testIDPrefix}-final-output-trigger` },
+                }}
+                onSelect={(id) => {
+                    setOpen(false);
+                    if (id === 'none') props.onChange(null);
+                    else {
+                        const option = options.find(option => `result:${option.blockId}` === id);
+                        if (option === undefined) return;
+                        props.onChange({
                             kind: 'result',
-                            producer: { blockId: option.blockId, scope: { kind: 'current' } },
+                            producer: { blockId: option.blockId, scope: option.scope },
                             path: selected?.producer.blockId === option.blockId ? selected.path : [],
-                        })}
-                        style={(state) => [workflowEditorStyles.actionTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
-                    >
-                        <Text style={selected?.producer.blockId === option.blockId ? styles.selected : styles.option}>
-                            {option.label}
-                        </Text>
-                    </HappierPressable>
-                ))}
-            </View>
-            {selected === undefined ? null : (
-                <TextInput
-                    testID={`${props.testIDPrefix}-final-output-path`}
-                    style={styles.path}
-                    value={formatPath(selected.path)}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    placeholder={t('workflows.finalOutput.fieldPath')}
-                    accessibilityLabel={t('workflows.finalOutput.fieldPath')}
-                    onChangeText={(value) => props.onChange({ ...selected, path: parsePath(value) })}
-                />
-            )}
+                        });
+                    }
+                }}
+                footer={selected === undefined ? null : <FieldItem label={t('workflows.finalOutput.fieldPath')}>
+                    <WorkflowResultFieldPathInput
+                        testID={`${props.testIDPrefix}-final-output-path`}
+                        reference={selected}
+                        onChange={props.onChange}
+                    />
+                </FieldItem>}
+            />
         </View>
     );
 }

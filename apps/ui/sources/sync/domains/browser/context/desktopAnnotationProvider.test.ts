@@ -24,6 +24,18 @@ const storedSnapshotMedia = ({ snapshot }: { snapshot: { width: number; height: 
 vi.mock('@/sync/domains/browser/adapters/desktopWebViewBridge', () => ({ captureDesktopBrowserSnapshot: vi.fn() }));
 
 describe('desktop browser annotation capture provider', () => {
+    it('returns the source privacy refusal without registering pixels as media', async () => {
+        const registerMedia = vi.fn(storedSnapshotMedia);
+        const provider = createDesktopBrowserAnnotationCaptureProvider({
+            available: true,
+            captureSnapshot: async () => ({ ok: false, availability: { available: true } as never,
+                errorCode: 'sensitiveFieldsPresent' }),
+            registerMedia,
+        });
+        expect(await provider.captureAnnotation(request)).toMatchObject({ status: 'unavailable',
+            reason: { reasonCode: 'browser_context_sensitive_fields_present', lifecycleState: 'sensitiveFieldsPresent' } });
+        expect(registerMedia).not.toHaveBeenCalled();
+    });
     it('captures the native snapshot and returns only the persisted media reference', async () => {
         const captureSnapshot = vi.fn(async () => ({
             ok: true as const,

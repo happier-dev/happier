@@ -278,6 +278,7 @@ function WhereField(props: Readonly<{
                         detailColor: theme.colors.text.secondary,
                         chevronColor: theme.colors.text.secondary,
                         field: fieldColors,
+                        fieldSpan: 'row',
                         placeholder: t('common.choose'),
                         placeholderColor: theme.colors.input.placeholder,
                     }),

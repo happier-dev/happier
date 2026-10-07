@@ -189,6 +189,7 @@ const theme: PluginUiThemeV1 = {
     radii: { small: 4, control: 8, panel: 12, pill: 999 },
     typography: {
         body: { fontSize: 13, lineHeight: 17, fontWeight: '400' },
+        reading: { fontSize: 14, lineHeight: 21, fontWeight: '400' },
         label: { fontSize: 11, lineHeight: 14, fontWeight: '500' },
         title: { fontSize: 15, lineHeight: 20, fontWeight: '500' },
         caption: { fontSize: 12, lineHeight: 16, fontWeight: '400' },

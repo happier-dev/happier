@@ -101,9 +101,10 @@ export interface ItemProps {
     titleAccessory?: React.ReactNode;
     /** An inline mark before a string subtitle, such as a status dot that flags trouble. */
     subtitleLeading?: React.ReactNode;
-    /** Override the primitive title line allowance; defaults to one with a subtitle, two otherwise. */
+    /** Override the primitive title allowance; page labels grow, grouped labels keep their compact allowance. */
     titleLines?: number;
-    subtitleLines?: number; // set 0 or undefined for auto/multiline
+    /** Override the primitive subtitle allowance; 0 permits multiline, page descriptions grow by default. */
+    subtitleLines?: number;
     detail?: string;
     detailTestID?: string;
     icon?: React.ReactNode;
@@ -146,6 +147,8 @@ export interface ItemProps {
      */
     accessibilityActions?: ViewProps['accessibilityActions'];
     onAccessibilityAction?: ViewProps['onAccessibilityAction'];
+    /** Standard disclosure header state; other accessibility facts keep their existing owners. */
+    accessibilityState?: Pick<NonNullable<ViewProps['accessibilityState']>, 'expanded'>;
     accessibilityExpanded?: boolean;
     webRole?: ViewProps['role'];
     /** Explicit web Tab-order override for a parent-owned composite widget. */
@@ -538,7 +541,8 @@ export const Item = React.memo<ItemProps>((props) => {
         accessibilityLiveRegion,
         accessibilityActions,
         onAccessibilityAction,
-        accessibilityExpanded,
+        accessibilityExpanded: explicitAccessibilityExpanded,
+        accessibilityState,
         webRole,
         webTabIndex,
         accessibilityLevel,
@@ -572,6 +576,7 @@ export const Item = React.memo<ItemProps>((props) => {
         copy,
         itemGroupRadioIndex,
     } = props;
+    const accessibilityExpanded = explicitAccessibilityExpanded ?? accessibilityState?.expanded;
     const webTestIdProps = isWeb && testID
         ? ({ 'data-testid': testID } as const)
         : undefined;
@@ -866,8 +871,8 @@ export const Item = React.memo<ItemProps>((props) => {
             marginRight: PAGE_LIST_METRICS.rowLeadingGapPx,
         } as const
         : null;
-    const leadingMarkFitStyle = leftElement != null && iconBoxSize == null
-        ? { width: 'auto', height: 'auto', minWidth: isPageRow ? PAGE_LIST_METRICS.rowLeadingColumnPx : resolvedIconBoxSize, minHeight: isPageRow ? PAGE_LIST_METRICS.rowLeadingColumnPx : resolvedIconBoxSize } as const
+    const leadingMarkFitStyle = isPageRow && leftElement != null && iconBoxSize == null
+        ? { width: 'auto', height: 'auto', minWidth: PAGE_LIST_METRICS.rowLeadingColumnPx, minHeight: PAGE_LIST_METRICS.rowLeadingColumnPx } as const
         : null;
     const iconContainerStyle = isTight
         ? [styles.iconContainer, styles.iconContainerTight, menuIconBoxStyle, pageLeadingColumnStyle, leadingMarkFitStyle, iconBoxSizeOverride]
@@ -1026,7 +1031,7 @@ export const Item = React.memo<ItemProps>((props) => {
                             {renderPrimitiveText({
                                 value: title,
                                 style: [styles.title, titleSizeStyle, titleColor, titleStyle],
-                                numberOfLines: 1,
+                                numberOfLines: titleLines ?? resolveItemTitleMaxLines(Boolean(subtitle), { page: isPageRow, hasAccessory: true }) ?? undefined,
                                 ellipsizeMode: titleEllipsizeMode,
                             })}
                         </View>
@@ -1036,7 +1041,7 @@ export const Item = React.memo<ItemProps>((props) => {
                     renderPrimitiveText({
                         value: title,
                         style: [styles.title, titleSizeStyle, titleColor, titleStyle],
-                        numberOfLines: titleLines ?? resolveItemTitleMaxLines(Boolean(subtitle)),
+                        numberOfLines: titleLines ?? resolveItemTitleMaxLines(Boolean(subtitle), { page: isPageRow }) ?? undefined,
                         ellipsizeMode: titleEllipsizeMode,
                     })
                 ) : (
@@ -1048,7 +1053,7 @@ export const Item = React.memo<ItemProps>((props) => {
                     if (typeof subtitle !== 'string') {
                         const wrapPrimitive = (value: string | number) => {
                             const asText = String(value);
-                            const effectiveLines = resolveItemSubtitleMaxLines({ text: asText, subtitleLines }) ?? undefined;
+                            const effectiveLines = resolveItemSubtitleMaxLines({ text: asText, subtitleLines, page: isPageRow }) ?? undefined;
 
                             return renderPrimitiveText({
                                 value: asText,
@@ -1077,11 +1082,12 @@ export const Item = React.memo<ItemProps>((props) => {
                         );
                     }
 
-                    // Allow multiline when requested or when content contains line breaks
+                    // Page descriptions grow; grouped rows keep their compact allowance unless overridden.
                     const effectiveLines = resolveItemSubtitleMaxLines({
                         text: subtitle,
                         subtitleLines,
                         status: subtitleLeading != null,
+                        page: isPageRow,
                     }) ?? undefined;
 
                     if (subtitleLeading) {

@@ -510,9 +510,9 @@ function executeActionRequest(payload: PluginUiJsonValueV1): PluginUiHostApiRequ
     };
 }
 
-describe('stored image custody from delivered Actions', () => {
+describe('native image references delivered by Actions', () => {
     it.each(['raw Session events', 'contributed result'] as const)(
-        'admits a native image from a successful %s, never before delivery or after failure',
+        'delivers a native image from a successful %s without making Action delivery read authority',
         async (source) => {
             const media = { mediaId: 'image-delivered', mediaKind: 'image', width: 100, height: 60, sizeBytes: 24,
                 file: { sessionId: 'session-1', storage: 'daemon', path: '.happier/uploads/artifacts/session-1/image.png',
@@ -524,14 +524,13 @@ describe('stored image custody from delivered Actions', () => {
                 diagnostics: { rawRowsScanned: 1, pagesFetched: 1, scanLimitReached: false, payloadTruncations: 0 } };
             const image = { bytesBase64: 'cG5n', mimeType: 'image/png' as const, width: 100, height: 60 };
             const readRequest = { ...executeActionRequest({}), method: 'readStoredImage' as const,
-                payload: { image: { sessionId: 'session-1', mediaId: media.mediaId } } };
+                payload: { image: media } };
             const readInputs: unknown[] = [];
             const owner = createPluginSurfaceStoredImageOwner({ pluginId: CALLER_PLUGIN_ID, occurrenceId: 'occ-1',
                 machineId: 'machine-1', serverId: null, isCurrent: () => true, lifetimeSignal: new AbortController().signal,
-                // The daemon read transport is the boundary; real result admission and custody stay intact.
+                // The daemon read transport is the boundary; real Action result admission stays intact.
                 read: async (_machineId, input) => { readInputs.push(input); return { ok: true, image }; } });
             let succeeds = false;
-            const delivered: PluginUiJsonValueV1[] = [];
             const deps = {
                 // Session event retrieval is the authenticated network/data port; Action execution remains real.
                 sessionEventsGet: async () => succeeds ? result
@@ -543,22 +542,19 @@ describe('stored image custody from delivered Actions', () => {
                 hostAction: { execute: executor.execute },
                 contributedAction: { ...mountedActionBinding(), execute: async () => ({ supported: true,
                     result: succeeds ? { ok: true, result } : { ok: false, code: 'media_unavailable' } }) },
-                onActionResult: (value) => { delivered.push(value); owner.retainActionResult(value); },
                 mountedHostApiHandlers: { readStoredImage: owner.readStoredImage },
             });
             const action = source === 'raw Session events' ? 'session.events.get' : { pluginId: 'acme.media', localId: 'read' };
             const actionRequest = executeActionRequest({ action, input: { sessionId: 'session-1', includeRaw: true } });
             try {
-                expect(await api.handleRequest(readRequest)).toMatchObject({ code: 'unavailable' });
+                expect(await api.handleRequest(readRequest)).toEqual(image);
                 expect(await api.handleRequest(actionRequest)).toMatchObject({ code: 'unavailable' });
-                expect(await api.handleRequest(readRequest)).toMatchObject({ code: 'unavailable' });
-                expect(readInputs).toEqual([]);
-                expect(delivered).toEqual([]);
+                expect(await api.handleRequest(readRequest)).toEqual(image);
                 succeeds = true;
                 expect(await api.handleRequest(actionRequest)).toEqual(result);
                 expect(await api.handleRequest(readRequest)).toEqual(image);
-                expect(readInputs).toEqual([{ callerPluginId: CALLER_PLUGIN_ID, expectedCallerOccurrenceId: 'occ-1', media }]);
-                expect(delivered).toEqual([result]);
+                expect(readInputs).toEqual(Array.from({ length: 3 }, () =>
+                    ({ callerPluginId: CALLER_PLUGIN_ID, expectedCallerOccurrenceId: 'occ-1', media })));
             } finally {
                 api.dispose?.();
                 owner.dispose();

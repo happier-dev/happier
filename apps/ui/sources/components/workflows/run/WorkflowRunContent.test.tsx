@@ -193,7 +193,10 @@ describe('WorkflowRunContent', () => {
             ...createWorkflowDefinitionFixture().blocks,
             { kind: 'workflow', id: 'call', workflowRef: 'builtin:review', input: {} },
         ] });
-        const frozenChildren = { 'builtin:review': createWorkflowDefinitionFixture() };
+        const childDefinition = createWorkflowDefinitionFixture();
+        const frozenChildren = { 'builtin:review': { ...childDefinition,
+            blocks: childDefinition.blocks.map((block) => ({ ...block, name: 'Frozen inspection' })),
+        } };
         const invocation = createWorkflowInvocationIndexFixture({ id: 'retry', attempt: '1' });
         const progress = {
             kind: 'happier.workflow-progress.v1' as const,
@@ -225,7 +228,9 @@ describe('WorkflowRunContent', () => {
             const header = screen.findAllByTestId(width === 390 ? 'workflow-run-selected-header' : 'details-pane.header')
                 .find((node) => typeof node.props.title === 'string');
             expect(header).toBeDefined();
-            expect(header?.props.title).toBe('workflows.editor.addStep');
+            expect(header?.props.title).toBe('Frozen inspection');
+            // Frozen authored identity survives Map, Steps and Activity; the role is separate context.
+            expect(screen.getTextContent()).toContain('Frozen inspection');
             expect(header?.props.subtitle).toEqual(expect.stringContaining('Frozen reviewer'));
             expect(header?.props.subtitle).not.toContain('Root reviewer');
             expect(header?.props.subtitle).toContain('workflows.input.iteration 3');

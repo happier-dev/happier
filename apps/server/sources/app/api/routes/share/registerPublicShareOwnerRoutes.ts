@@ -4,7 +4,6 @@ import { z } from "zod";
 import { resolveSessionAccessForOperation } from "@/app/session/access/sessionAccess";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { createSessionMetadataPrivacyUpgradeRequiredResponse } from "@/app/session/metadata/sessionMetadataRecipientProjection";
-import { enforceCurrentAccountStoredContentCompatibilityForHttpRequest, readAccountStoredContentCompatibilityForHttpRequest } from "@/app/clientCompatibility/accountStoredContentCompatibility";
 import { readSessionAccessAuthenticationFromRequest } from "@/app/session/access/sessionAccessAuthentication";
 import { writeSessionPublicShare, deleteSessionPublicShare } from "@/app/share/storedContentPublicShare";
 import { resolveStoredContentPublicShareOrigin } from "@/app/share/storedContentPublicShareOrigin";
@@ -25,21 +24,19 @@ export function registerPublicShareOwnerRoutes(app: Fastify): void {
                 sessionId: z.string()
             }),
             body: z.object({
-                token: z.string().optional(), // client-generated token (required when creating or rotating)
+                lookupId: z.string().min(1).optional(), // fragment-link lookup capability (required when creating or rotating)
+                keyDerivation: z.literal("fragment_v1").optional(),
                 encryptedDataKey: z.string().optional(), // base64 encoded (required when creating or rotating)
                 expiresAt: z.number().optional(), // timestamp
                 maxUses: z.number().int().positive().optional(),
                 isConsentRequired: z.boolean().optional() // require consent for detailed logging
-            })
+            }).strict()
         }
     }, async (request, reply) => {
         const userId = request.userId;
         const { sessionId } = request.params;
         const authentication = readSessionAccessAuthenticationFromRequest(request);
-        const { token, encryptedDataKey, expiresAt, maxUses, isConsentRequired } = request.body;
-        const supportsCurrentProtocol =
-            readAccountStoredContentCompatibilityForHttpRequest(request)
-                .supportsCurrentProtocol;
+        const { lookupId, encryptedDataKey, expiresAt, maxUses, isConsentRequired } = request.body;
 
         // Only owner can create public shares
         const admission = await resolveSessionAccessForOperation(db, {
@@ -52,7 +49,7 @@ export function registerPublicShareOwnerRoutes(app: Fastify): void {
             return reply.code(403).send({ error: 'session_access_forbidden' });
         }
 
-        const result = await writeSessionPublicShare({ userId, sessionId, authentication, supportsCurrentProtocol, token, encryptedDataKey, expiresAt, maxUses, isConsentRequired });
+        const result = await writeSessionPublicShare({ userId, sessionId, authentication, lookupId, encryptedDataKey, expiresAt, maxUses, isConsentRequired });
 
         if (result.type === "forbidden") {
             return reply.code(403).send({ error: "session_access_forbidden" });
@@ -72,18 +69,11 @@ export function registerPublicShareOwnerRoutes(app: Fastify): void {
             )
                 .send({ error: result.error });
         }
-        if (result.type === "client-upgrade-required") {
-            await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(
-                request,
-                reply,
-            );
-            return;
-        }
         if (result.type === "privacy-error") {
             return reply.code(409).send(createSessionMetadataPrivacyUpgradeRequiredResponse());
         }
         if (result.type === 'error') {
-            return reply.code(400).send({ error: result.error });
+            return reply.code(result.error === "public_share_isolation_unavailable" ? 503 : 400).send({ error: result.error });
         }
         const publicShare = result.publicShare;
 
@@ -92,7 +82,7 @@ export function registerPublicShareOwnerRoutes(app: Fastify): void {
             publicShare: {
                 id: publicShare.id,
                 keyDerivation: publicShare.keyDerivation,
-                token: token ?? null,
+                token: lookupId ?? null,
                 expiresAt: publicShare.expiresAt?.getTime() ?? null,
                 maxUses: publicShare.maxUses,
                 useCount: publicShare.useCount,

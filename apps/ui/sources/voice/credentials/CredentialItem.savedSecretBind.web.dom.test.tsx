@@ -359,12 +359,13 @@ async function renderRow(options: Readonly<{
  * The first render pulls in the modal host, the protocol package and the Voice
  * registry. Warmed once so a single test is not charged for the whole graph.
  */
-await Promise.all([
-    import('@/modal'),
-    import('./CredentialItem'),
-    import('@happier-dev/protocol'),
-    import('@/sync/domains/settings/settings'),
-]);
+// Modal and CredentialItem share the modal/storage graph. Loading both roots
+// concurrently stalled collection in Vitest's asynchronous mock/module graph;
+// finish the shared root before its consumer.
+await import('@/modal');
+await import('./CredentialItem');
+await import('@happier-dev/protocol');
+await import('@/sync/domains/settings/settings');
 
 const CASE_TIMEOUT_MS = 180_000;
 

@@ -13,26 +13,19 @@ const settingsRouteFiles = Object.fromEntries([...settingsRouteNames]
 type WorkspaceRouteRegistration = Readonly<{
     moduleKey: string;
     destinationId: string;
-    retainOnMobileWeb: boolean;
     catalogEntry?: Readonly<{ titleKey: TranslationKeyNoParams; icon: IconName; visibility: 'hidden' }>;
 }>;
 
-/** Configuration destinations declare their module, admission and responsive ownership together. */
+/** Configuration destinations declare their module and admission together. */
 export const registeredWorkspaceRoutes: Readonly<Record<string, WorkspaceRouteRegistration>> = {
     ...Object.fromEntries(Object.entries(settingsRouteFiles).map(([routeKey, moduleKey]) => (
-        [routeKey, { moduleKey, destinationId: 'settings', retainOnMobileWeb: true }]
+        [routeKey, { moduleKey, destinationId: 'settings' }]
     ))),
     personalize: {
-        moduleKey: './(app)/personalize.tsx', destinationId: 'personalize', retainOnMobileWeb: true,
+        moduleKey: './(app)/personalize.tsx', destinationId: 'personalize',
         catalogEntry: { titleKey: 'personalize.flowTitle', icon: 'gear', visibility: 'hidden' },
     },
 };
-
-export function retainsWorkspaceDestinationOnMobileWeb(destinationId: string): boolean {
-    return Object.values(registeredWorkspaceRoutes).some(route => (
-        route.destinationId === destinationId && route.retainOnMobileWeb
-    ));
-}
 
 /** Workspace-eligible Expo modules; registered configuration routes are a projection, not another inventory. */
 export const workspaceRouteFiles: Readonly<Record<string, string>> = {

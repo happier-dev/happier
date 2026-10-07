@@ -314,11 +314,11 @@ describe('voiceConversationSession', () => {
         agentTarget: expect.objectContaining({ kind: 'agent' }),
         transcriptStorage: 'persisted',
       }),
-      {
+      expect.objectContaining({
         surface: 'voice',
         serverId: 'server-a',
         actionRequestId: expect.stringMatching(/^voice-session-attempt:/),
-      },
+      }),
     );
     expect(spawnSession).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -421,11 +421,11 @@ describe('voiceConversationSession', () => {
           revision: GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION,
         }),
       }),
-      {
+      expect.objectContaining({
         surface: 'voice',
         serverId: 'server-a',
         actionRequestId: expect.stringMatching(/^voice-session-attempt:/),
-      },
+      }),
     );
 
     expect(isReusableSession).not.toHaveBeenCalled();
@@ -1046,11 +1046,11 @@ describe('voiceConversationSession', () => {
         agentTarget: expect.objectContaining({ kind: 'agent' }),
         transcriptStorage: 'persisted',
       }),
-      {
+      expect.objectContaining({
         surface: 'voice',
         serverId: 'server-a',
         actionRequestId: expect.stringMatching(/^voice-session-attempt:/),
-      },
+      }),
     );
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'm1',

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { browserViewKey } from '@happier-dev/protocol';
+import { applyBrowserDiagnosticEvents, createBrowserDiagnosticsUiStore } from './store';
 
 const TEST_BROWSER_VIEW_KEY = browserViewKey({
     browserSessionId: 'browser_session_1',
@@ -83,6 +84,30 @@ function nativePageInfoEvent(overrides: Record<string, unknown> = {}): Record<st
 }
 
 describe('browser diagnostics UI store', () => {
+    it('compares accepted data without serializing unknown values or depending on object key order', () => {
+        const state = applyBrowserDiagnosticEvents(createBrowserDiagnosticsUiStore(), {
+            events: [nativePageInfoEvent({ data: { url: 'https://example.test/', loading: false, custom: 1n } })],
+        });
+        expect(applyBrowserDiagnosticEvents(state, {
+            events: [nativePageInfoEvent({ data: { custom: 1n, loading: false, url: 'https://example.test/' } })],
+        })).toBe(state);
+    });
+    it('retains accepted event and view identities when a snapshot repeats, but publishes changed data', () => {
+        const event = nativePageInfoEvent();
+        const state = applyBrowserDiagnosticEvents(createBrowserDiagnosticsUiStore(), { events: [event] });
+        let publications = 0;
+        let current = state;
+        for (let index = 0; index < 20; index += 1) {
+            const next = applyBrowserDiagnosticEvents(current, { events: [{ ...event, data: { url: 'https://example.test/', loading: false } }] });
+            if (next !== current) publications += 1;
+            current = next;
+        }
+        expect(publications).toBe(0);
+        expect(current).toBe(state);
+        const changed = applyBrowserDiagnosticEvents(current, { events: [nativePageInfoEvent({ data: { url: 'https://example.test/next', loading: false } })] });
+        expect(changed).not.toBe(state);
+        expect(changed.viewsByKey[TEST_BROWSER_VIEW_KEY]?.events).toHaveLength(1);
+    });
     it('normalizes injected and native callback diagnostics per browser view', async () => {
         const mod = await loadStoreModule();
 

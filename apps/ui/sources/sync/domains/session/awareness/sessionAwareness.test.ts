@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createSessionFixture } from '@/dev/testkit';
+import { createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit';
 import { buildSessionListRenderableFromSession } from '../listing/sessionListRenderable';
 import { projectUiSessionAwareness } from './sessionAwareness';
 
@@ -12,6 +12,23 @@ describe('UI Session awareness acquisition adapter', () => {
         const row = projectUiSessionAwareness(buildSessionListRenderableFromSession(session, undefined, []), 1_000);
         expect(detail.title).toBe('Current summary');
         expect(row.title).toBe(detail.title);
+    });
+
+    it('projects the same status facts without reading a title for summary consumers', () => {
+        let titleReads = 0;
+        const session = createSessionListRenderableSessionFixture({ active: true, activeAt: 1_000,
+            hasPendingPermissionRequests: true, pendingRequestObservedAt: 1_000,
+            metadata: { path: '/work', host: 'host', get name() { titleReads += 1; return 'Visible title'; } },
+        });
+        const full = projectUiSessionAwareness(session, 1_000);
+        expect(full.title).toBe('Visible title');
+        titleReads = 0;
+        const status = projectUiSessionAwareness(session, 1_000, { includeTitle: false });
+        expect(status.operational).toEqual(full.operational);
+        expect(status.runtime).toEqual(full.runtime);
+        expect(status.encryption).toEqual(full.encryption);
+        expect(status).not.toHaveProperty('title');
+        expect(titleReads).toBe(0);
     });
 
     it('preserves public step origin across locked detail and list projections', () => {

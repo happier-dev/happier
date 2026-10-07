@@ -32,10 +32,6 @@ import type {
     ReviewCommentAccountEncryptionMigrationStoredComment,
     ReviewCommentAccountEncryptionMigrationStoredEvent,
 } from "./accountEncryptionMigration";
-import {
-    REVIEW_COMMENT_ACCOUNT_ENCRYPTION_MIGRATION_MAX_COMMENTS,
-    REVIEW_COMMENT_ACCOUNT_ENCRYPTION_MIGRATION_MAX_EVENTS,
-} from "./accountEncryptionMigration";
 
 export const REVIEW_COMMENT_CANONICAL_SENSITIVE_LAYOUT_MARKER_JSON =
     '{"v":1,"layout":"review_comment_sensitive_in_body_v1"}';
@@ -576,14 +572,12 @@ export function createReviewCommentAccountEncryptionMigrationPersistenceInTx(
                 FROM review_comments
                 WHERE account_id = ${accountId}
                 ORDER BY id ASC
-                LIMIT ${REVIEW_COMMENT_ACCOUNT_ENCRYPTION_MIGRATION_MAX_COMMENTS + 1}
             `);
             const eventRows = await tx.$queryRaw<ReviewCommentMigrationStorageEventRow[]>(Prisma.sql`
                 SELECT ${EVENT_MIGRATION_SELECT_COLUMNS}
                 FROM review_comment_events
                 WHERE account_id = ${accountId}
                 ORDER BY comment_id ASC, server_revision ASC, event_id ASC
-                LIMIT ${REVIEW_COMMENT_ACCOUNT_ENCRYPTION_MIGRATION_MAX_EVENTS + 1}
             `);
             return buildReviewCommentAccountEncryptionMigrationInventory({
                 accountId,

@@ -44,8 +44,27 @@ describe('remembered engine selections', () => {
         });
     });
 
-    it('fails closed when a current remembered selection carries an unknown field', () => {
+    it('reads known remembered selection fields while dropping additive stored fields recursively', () => {
         const raw = {
+            'server-a:agent:happier.agent.codex/codex': {
+                v: 1,
+                modelSelection: {
+                    v: 1,
+                    updatedAt: 42,
+                    ref: {
+                        agentTargetKey: 'agent:happier.agent.codex/codex',
+                        providerConnectionId: null,
+                        modelId: 'gpt-5.5',
+                        futureReferenceField: true,
+                    },
+                    futureModelField: true,
+                },
+                updatedAt: 42,
+                futureWriterField: true,
+            },
+        };
+
+        expect(RememberedEngineSelectionsByScopeV1Schema.parse(raw)).toEqual({
             'server-a:agent:happier.agent.codex/codex': {
                 v: 1,
                 modelSelection: {
@@ -58,11 +77,8 @@ describe('remembered engine selections', () => {
                     },
                 },
                 updatedAt: 42,
-                futureWriterField: true,
             },
-        };
-
-        expect(RememberedEngineSelectionsByScopeV1Schema.parse(raw)).toEqual({});
+        });
         expect(raw['server-a:agent:happier.agent.codex/codex']).toHaveProperty('futureWriterField', true);
     });
 

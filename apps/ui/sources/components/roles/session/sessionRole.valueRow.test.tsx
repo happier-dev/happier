@@ -1,15 +1,13 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BUILT_IN_ROLES_V1 } from '@happier-dev/protocol';
 
-import { renderScreen } from '@/dev/testkit';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+import type { Metadata } from '@happier-dev/session-core/state';
 import { createSessionFixture, createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-/** The Action front door is the boundary the role catalog reads through (`roles.list`). */
-const shared = vi.hoisted(() => ({ metadata: null as unknown }));
 
 vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({
     createFrontDoorActionExecute: () => async (actionId: string) => {
@@ -28,30 +26,18 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key: string) => key });
 });
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createLiveStorageStoreMock, createStorageModuleMock, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            storage: createLiveStorageStoreMock(() => ({
-                sessions: { lead: { id: 'lead', metadata: shared.metadata } } as never,
-            })),
-            useSetting: createUseSettingMock({
-                fallback: (key: string) => {
-                    if (key === 'rolesV1') return { overrides: {} };
-                    if (key === 'acpCatalogSettingsV1') return { v: 2, backends: [] };
-                    if (key === 'backendEnabledByTargetKey') return {};
-                    return undefined;
-                },
-            }),
-            useSessionMetadata: () => shared.metadata as never,
-            useActiveServerAccountScope: () => ({ serverId: 'server-1', accountId: 'account-1' }),
-        },
-    });
-});
-
 const { SessionRoleValueRow, isSessionRoleSnapshotCopiedAcrossOwners } = await import('./sessionRole');
 const { invalidateRoleCatalog } = await import('@/components/roles/catalog/useRoleCatalog');
+const { storage } = await import('@/sync/domains/state/storageStore');
+const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+const { retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+let previousState = storage.getState();
+let previousSnapshot = getAppliedActiveServerSnapshot();
+let previousAvailable = isAppliedActiveServerRuntimeAvailable();
+
+function setMetadata(work: Partial<Metadata>) {
+    storage.setState({ sessions: { lead: createSessionFixture({ id: 'lead', serverId: 'server-1', metadata: { path: '/repo', host: 'test', ...work } }) } });
+}
 
 /** The composite that declared a testID (not the host it painted), for reading its declared props. */
 function declared(screen: { findAll: (predicate: (node: any) => boolean) => any[] }, testID: string, prop: string) {
@@ -63,8 +49,21 @@ function sessionRoles(roleId: string | null, overrides: Record<string, unknown> 
 }
 
 describe('Session Role value row (Work tab top row)', () => {
-    beforeEach(() => {
+    beforeEach(async () => { await act(async () => {
+        previousState = storage.getState();
+        previousSnapshot = getAppliedActiveServerSnapshot();
+        previousAvailable = isAppliedActiveServerRuntimeAvailable();
+        publishAppliedActiveServerSnapshot({ serverId: 'server-1', serverUrl: 'https://roles.test', generation: 0 });
+        storage.setState({ profileScope: { serverId: 'server-1', accountId: 'account-1' } });
         invalidateRoleCatalog();
+    }); });
+    afterEach(async () => {
+        standardCleanup();
+        await act(async () => {
+            retireActiveServerAccountScopeLifetime();
+            storage.setState(previousState);
+            publishAppliedActiveServerSnapshot(previousSnapshot, previousAvailable);
+        });
     });
 
     it('compares the inherited lead and worker owners rather than treating all inheritance as cross-owner', () => {
@@ -87,7 +86,7 @@ describe('Session Role value row (Work tab top row)', () => {
     });
 
     it('names the session\'s role with hands-off as its attribute, and opens the Role popover', async () => {
-        shared.metadata = sessionRoles('orchestrator');
+        setMetadata(sessionRoles('orchestrator'));
         const screen = await renderScreen(<SessionRoleValueRow sessionId="lead" testID="session-work-role" />);
 
         expect(declared(screen, 'session-work-role', 'detail')!.props.detail).toBe('Orchestrator · sessionWork.role.handsOff');
@@ -100,19 +99,19 @@ describe('Session Role value row (Work tab top row)', () => {
     });
 
     it('drops hands-off when the session relaxed it, and says None without a role', async () => {
-        shared.metadata = sessionRoles('orchestrator', { orchestrator: { roleId: 'orchestrator', workspaceWrites: 'allow' } });
+        setMetadata(sessionRoles('orchestrator', { orchestrator: { roleId: 'orchestrator', workspaceWrites: 'allow' } }));
         const relaxed = await renderScreen(<SessionRoleValueRow sessionId="lead" testID="session-work-role" />);
         expect(declared(relaxed, 'session-work-role', 'detail')!.props.detail).toBe('Orchestrator');
 
-        shared.metadata = sessionRoles(null);
+        await act(async () => { setMetadata(sessionRoles(null)); });
         const none = await renderScreen(<SessionRoleValueRow sessionId="lead" testID="session-work-role" />);
         expect(declared(none, 'session-work-role', 'detail')!.props.detail).toBe('sessionWork.role.none');
     });
 
-    it('keeps a copied Role inspectable as text without opening a mutation popover', async () => {
-        shared.metadata = sessionRoles('orchestrator');
-        const screen = await renderScreen(<SessionRoleValueRow sessionId="lead" copiedAtSpawn testID="session-work-role" />);
+    it('lets the person edit the worker\'s copied Role', async () => {
+        setMetadata(sessionRoles('orchestrator'));
+        const screen = await renderScreen(<SessionRoleValueRow sessionId="lead" serverId="server-1" testID="session-work-role" />);
         expect(declared(screen, 'session-work-role', 'detail')!.props.detail).toBe('Orchestrator · sessionWork.role.handsOff');
-        expect(declared(screen, 'session-work-role', 'onPress')).toBeNull();
+        expect(declared(screen, 'session-work-role', 'onPress')).toBeTruthy();
     });
 });

@@ -277,6 +277,16 @@ Definitions have four leaf kinds:
 - **Wait for you** waits for a human response without starting an Agent. If it
   declares a result contract, the response must satisfy it.
 
+In unreleased 0.3 development source, each block can have its own optional name,
+separate from its prompt, Role or selected Action. Rename it inline in the block
+heading; **Undo** and **Redo** use the same draft history as other edits. Blank
+names use the existing derived label. The authored name appears in the editor,
+read-only cards, Flow/Map and Run rows. A fresh Session for a named step starts
+with the title `{ordinal} · {step name}`, with ` · {item}` added for per-item
+work; the ordinal matches the step heading. Unnamed steps use normal Session
+naming. Changing a step name does not rename existing Sessions, and a later
+Session rename by you is preserved.
+
 Parallel groups, conditions, and loops arrange those leaves. References select
 declared inputs and earlier invocation
 results structurally. Happier does not interpolate `${...}`-style text or parse

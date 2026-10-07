@@ -4,6 +4,10 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 
 installSettingsViewCommonModuleMocks();
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({ View: 'View' });
+});
 vi.mock('react-native-reanimated', async () => (await import('@/dev/testkit/mocks/reanimated')).createReanimatedModuleMock());
 
 /**
@@ -12,6 +16,17 @@ vi.mock('react-native-reanimated', async () => (await import('@/dev/testkit/mock
  */
 describe('Plugins page without a chosen machine', () => {
     afterEach(standardCleanup);
+
+    it('shows the shared loading mark while catalog discovery is active and removes it when loading ends', async () => {
+        const { DiscoverStatusSummary } = await import('./PluginMarketplaceSections');
+        const props = { error: null, stale: false, entryCount: 0, sourceStatuses: [], diagnostics: [], nonInstallable: [], selectedSourceTitle: null };
+        const screen = await renderScreen(<DiscoverStatusSummary {...props} loading />);
+        const marks = () => screen.findAll((node) => node.type === 'span' && node.props?.['data-happier-activity-spinner'] !== undefined);
+        expect(marks()).toHaveLength(1);
+        await screen.update(<DiscoverStatusSummary {...props} loading={false} />);
+        expect(marks()).toHaveLength(0);
+    });
+
 
     it('asks for a machine instead of claiming Browse found nothing', async () => {
         const { DiscoverStatusSummary } = await import('./PluginMarketplaceSections');

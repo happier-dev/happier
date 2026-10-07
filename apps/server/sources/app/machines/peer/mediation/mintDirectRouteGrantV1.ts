@@ -25,6 +25,7 @@ import { FEATURE_ENV_KEYS } from "@/app/features/catalog/featureEnvSchema";
 import { isPersonalHomeRuntimePurpose } from '@/app/runtime/personalHomeRuntimePurpose';
 import {
     createEd25519PublicKeyId,
+    createEd25519SigningKeyPairFromSeed,
     deriveEd25519SigningSeed,
 } from "@/app/crypto/derivedEd25519SigningKey";
 
@@ -130,7 +131,7 @@ function normalizeSigningSecretKey(privateKeyBase64Url: string): Uint8Array | nu
     const decoded = decodeBase64Url(privateKeyBase64Url);
     if (!decoded) return null;
     if (decoded.length === tweetnacl.sign.seedLength) {
-        return tweetnacl.sign.keyPair.fromSeed(decoded).secretKey;
+        return createEd25519SigningKeyPairFromSeed(decoded).secretKey;
     }
     if (decoded.length === tweetnacl.sign.secretKeyLength) {
         return decoded;
@@ -161,7 +162,7 @@ export function resolvePeerMediationGrantSigningConfig(
         && isPersonalHomeRuntimePurpose(env.HAPPIER_MANAGED_RELAY_PURPOSE)) {
         const masterSecret = (env.HANDY_MASTER_SECRET ?? "").trim();
         if (masterSecret) {
-            const keyPair = tweetnacl.sign.keyPair.fromSeed(
+            const keyPair = createEd25519SigningKeyPairFromSeed(
                 deriveEd25519SigningSeed(masterSecret, PEER_MEDIATION_ROUTE_GRANT_SIGNING_DOMAIN),
             );
             const keyId = createEd25519PublicKeyId(keyPair.publicKey);

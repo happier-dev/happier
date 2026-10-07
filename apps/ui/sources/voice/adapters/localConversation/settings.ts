@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { VoiceLocalSttSchema } from '@/sync/domains/settings/voiceLocalSttSettings';
 import { VoiceLocalTtsSchema } from '@/sync/domains/settings/voiceLocalTtsSettings';
 import { VoiceHandsFreeSchema } from '@/voice/adapters/local/settings';
+import { MAX_VOICE_TIMER_DELAY_MS } from '@/voice/runtime/input/TurnEndpointDetector';
 
 const VoiceLocalConversationProviderChatConfigurationSchema = z.object({
   temperature: z.number().min(0).max(2).nullable().default(null),
@@ -72,7 +73,7 @@ export const VoiceLocalConversationSchema = z.object({
   conversationMode: z.enum(['direct_session', 'agent']).default('direct_session'),
   stt: VoiceLocalSttSchema.prefault({}),
   tts: VoiceLocalTtsSchema.prefault({}),
-  networkTimeoutMs: z.number().int().min(1000).max(60000).default(15000),
+  networkTimeoutMs: z.number().int().positive().max(MAX_VOICE_TIMER_DELAY_MS).default(15000),
   handsFree: VoiceHandsFreeSchema.prefault({}),
   agent: z
     .object({
@@ -99,11 +100,11 @@ export const VoiceLocalConversationSchema = z.object({
       stayInVoiceHome: z.boolean().default(false),
       teleportEnabled: z.boolean().default(true),
       rootSessionPolicy: z.enum(['single', 'keep_warm']).default('single'),
-      maxWarmRoots: z.number().int().min(1).max(10).default(3),
+      maxWarmRoots: z.number().int().positive().default(3),
       voiceHomeSubdirName: z.string().default('voice-agent'),
       permissionIntent: z.enum(PERMISSION_INTENTS).default('read-only'),
-      idleTtlSeconds: z.number().int().min(60).max(21600).default(1800),
-      bootstrapTimeoutMs: z.number().int().min(1000).max(300000).default(60000),
+      idleTtlSeconds: z.number().int().positive().default(1800),
+      bootstrapTimeoutMs: z.number().int().positive().default(60000),
       prewarmOnConnect: z.boolean().default(true),
       resumabilityMode: z.enum(['replay', 'provider_resume']).default('replay'),
       providerResume: z
@@ -112,7 +113,7 @@ export const VoiceLocalConversationSchema = z.object({
       replay: z
         .object({
           strategy: z.enum(['recent_messages', 'summary_plus_recent']).default('recent_messages'),
-          recentMessagesCount: z.number().int().min(1).max(100).default(16),
+          recentMessagesCount: z.number().int().positive().default(16),
         })
         .default({ strategy: 'recent_messages', recentMessagesCount: 16 }),
       // Read-only legacy migration input. Canonical welcome is root-owned.
@@ -142,10 +143,10 @@ export const VoiceLocalConversationSchema = z.object({
     .object({
       enabled: z.boolean().default(true),
       ttsEnabled: z.boolean().default(true),
-      ttsChunkChars: z.number().int().min(32).max(2000).default(200),
-      turnReadPollIntervalMs: z.number().int().min(10).max(500).default(25),
-      turnReadMaxEvents: z.number().int().min(1).max(256).default(64),
-      turnStreamTimeoutMs: z.number().int().min(1000).max(3600000).nullable().default(1800000),
+      ttsChunkChars: z.number().int().positive().default(200),
+      turnReadPollIntervalMs: z.number().int().positive().max(MAX_VOICE_TIMER_DELAY_MS).default(25),
+      turnReadMaxEvents: z.number().int().positive().default(64),
+      turnStreamTimeoutMs: z.number().int().positive().nullable().default(1800000),
     })
     .default({
       enabled: true,
@@ -194,7 +195,7 @@ export function normalizeLegacyLocalConversationInput(input: unknown): unknown {
   return {
     ...value,
     ...(Number.isFinite(networkTimeout)
-      ? { networkTimeoutMs: Math.max(1000, Math.min(60000, Math.floor(networkTimeout))) }
+      ? { networkTimeoutMs: Math.max(1, Math.min(MAX_VOICE_TIMER_DELAY_MS, Math.floor(networkTimeout))) }
       : {}),
     ...(agent
       ? {

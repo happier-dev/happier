@@ -344,9 +344,6 @@ async function verifyAccountDirectoryEndpoint(input: Readonly<{
         ...(input.homeCarrier ? { homeCarrier: input.homeCarrier } : {}),
         ...(input.signal ? { signal: input.signal } : {}),
         force: true,
-        // Account-service discovery needs the shared attempt result, like the
-        // default probe contract. Keep the explicit no-cutoff spelling here.
-        timeoutMs: 0,
     });
     if (snapshot.status !== 'ready') {
         return { kind: 'endpoint_unavailable', endpointUrl, reason: 'probe_failed', snapshot };

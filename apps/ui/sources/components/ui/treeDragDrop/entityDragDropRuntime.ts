@@ -1,6 +1,6 @@
 import { sameStrictJsonValue } from '@happier-dev/protocol';
 import {
-    EntityDragItemV1Schema, EntityDropAdmissionV1Schema, EntityDropOutcomeV1Schema,
+    EntityDragItemV1Schema, EntityDropOutcomeV1Schema,
     entityDragKindV1, entityDragScopesEqualV1,
     type EntityDragItemV1, type EntityDropAdmissionV1, type EntityDropOutcomeV1,
 } from '@happier-dev/protocol/plugins/ui/entityDragDrop';
@@ -101,11 +101,10 @@ export function createEntityDragDropRuntime(options: Readonly<{
         if (!entityDragScopesEqualV1(active.item.scope, target.scope)) return refused('scope-mismatch');
         if (!accepts(target, active.item)) return refused('kind-not-accepted');
         try {
-            const parsed = EntityDropAdmissionV1Schema.safeParse(target.resolve({
+            return target.resolve({
                 item: active.item, pointer: active.input === 'pointer' ? pointer : null,
                 destination: active.destination, input: active.input,
-            }));
-            return parsed.success ? parsed.data : refused('admission-unavailable');
+            });
         } catch { return refused('admission-unavailable'); }
     };
     const depth = (target: EntityDropTarget) => {

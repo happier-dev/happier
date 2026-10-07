@@ -3,9 +3,11 @@ import {
     isPlainArtifactStoredContent,
     decodePlainArtifactStoredContent,
     ArtifactPrivateRevisionMetadataV1Schema,
+    ArtifactPrivateRevisionMetadataV1StoredSchema,
     parseEncryptedDataKeyEnvelopeV1,
     readSessionDataKeyBundleV0,
 } from "@happier-dev/protocol";
+import { createStoredReadSchema } from "@happier-dev/protocol/json/storedReadSchema";
 import * as privacyKit from "privacy-kit";
 import { z } from "zod";
 
@@ -13,22 +15,34 @@ import type { EffectiveAccountEncryptionMode } from "@/app/encryption/accountEnc
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { decryptString, encryptString } from "@/modules/encrypt";
 
-const ArtifactDbSealedContentV1Schema = z.object({
+const ArtifactDbSealedContentV1Schema = createStoredReadSchema(z.object({
     t: z.literal("sealed_v1"),
     c: z.string().min(1),
-}).strict();
+}).strict());
 
 type ArtifactContentField = "header" | "body" | "provenance";
 
 /** Private metadata follows Account mode and its independent key, never the public content key. */
-export function artifactProvenanceMatchesAccountMode(params: Readonly<{
+type ArtifactProvenanceModeParams = Readonly<{
     mode: EffectiveAccountEncryptionMode; artifactId: string; bodyVersion: number;
     provenance: Uint8Array | null | undefined; provenanceDataEncryptionKey: Uint8Array | null | undefined;
-}>): boolean {
+}>;
+
+export function artifactProvenanceMatchesAccountMode(params: ArtifactProvenanceModeParams): boolean {
+    return provenanceMatchesAccountMode(params, ArtifactPrivateRevisionMetadataV1Schema);
+}
+
+/** Persisted metadata projects known fields, but keeps the same mode and revision checks. */
+export function artifactStoredProvenanceMatchesAccountMode(params: ArtifactProvenanceModeParams): boolean {
+    return provenanceMatchesAccountMode(params, ArtifactPrivateRevisionMetadataV1StoredSchema);
+}
+
+function provenanceMatchesAccountMode(params: ArtifactProvenanceModeParams,
+    schema: typeof ArtifactPrivateRevisionMetadataV1Schema): boolean {
     if (params.mode === "plain") {
         if (params.provenanceDataEncryptionKey != null) return false;
         if (params.provenance == null) return true;
-        const parsed = ArtifactPrivateRevisionMetadataV1Schema.safeParse(
+        const parsed = schema.safeParse(
             decodePlainArtifactStoredContent(privacyKit.encodeBase64(copyBytes(params.provenance))));
         return parsed.success && parsed.data.artifactId === params.artifactId && parsed.data.bodyVersion === params.bodyVersion;
     }
@@ -188,5 +202,5 @@ export function openArtifactProvenanceBytes(params: Readonly<{
     dataEncryptionKey: Uint8Array; provenanceDataEncryptionKey: Uint8Array | null; content: Uint8Array;
 }>): Uint8Array<ArrayBuffer> | null {
     const opened = openArtifactStoredContentBytes({ ...params, field: 'provenance' });
-    return opened && artifactProvenanceMatchesAccountMode({ ...params, provenance: opened }) ? opened : null;
+    return opened && artifactStoredProvenanceMatchesAccountMode({ ...params, provenance: opened }) ? opened : null;
 }

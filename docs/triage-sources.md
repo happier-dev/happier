@@ -16,17 +16,71 @@ Schemas use the public SDK `/protocol` composition algebra and `/contributions` 
 
 The public [source conformance check](../packages/triage-protocol/src/testing/v1/conformance.ts) reads requiredness from those canonical declarations. An optional role may be omitted; when supplied, its binding must still satisfy the declared Action or surface contract. Conformance maintains no separate list of optional role names.
 
+Account-only sources declare their Action inputs with the shared
+`TriageSourceConnectedAccountInputsV1` schemas from the same protocol owner.
+These preserve each role's fields while requiring a configured-account instance.
+Conformance accepts exactly that specialization or the generic role schema,
+not an independently authored variant. Account-purpose declarations still have
+to address an exact credential selection in every input arm; native-capable
+sources use the generic schema and declare the native-service selection path.
+
 [`sources/administer-v1`](../packages/triage-protocol/src/v1/sourceAdministration.ts) is the one caller-bound lifecycle mutation ABI: create, reconfigure, remove and reactivate. [`sources/read-configured-v1`](../packages/triage-protocol/src/v1/configuredInstances.ts) is its read half. An optional `source` names an admitted contribution address, never caller provenance. The host stamps provenance, and the target's [`callerSource.ts`](../packages/plugins/triage/src/actions/callerSource.ts) resolves the admitted source before either Action exposes or changes rows. Plugin callers stay within their own source. Host agent/MCP/CLI callers can read all admitted configured sources or filter by that address; create requires an exact admitted source address, while lifecycle operations resolve the source from their stored instance and reject an inconsistent supplied address.
 
 Triage's [`administerConfiguredSourceInstance.ts`](../packages/plugins/triage/src/corpus/configuration/administerConfiguredSourceInstance.ts) owns configured-instance writes and the exact source-ownership comparison. [`readConfiguredSourceRows.ts`](../packages/plugins/triage/src/corpus/configuration/readConfiguredSourceRows.ts) supplies the shared active-row read and cursor handling. Discovery produces candidates, not automatic durable creation; mounted source Settings uses the administration Action rather than a direct Collection writer. The read ABI distinguishes complete from truncated results and refuses invalid or changed caller authority.
 
 The source plugin retains its private configuration-token encoding and provider-specific behavior. Triage business behavior stays in `packages/plugins/triage`; shared host code stays source-neutral. Do not use this schema package as a new source service, credential store or corpus persistence owner.
 
+### Native GitHub source bindings (0.3 development)
+
+The canonical instance binding preserves the configured-account arm and adds
+`{ purpose, source: 'native', service }`, where `service` is the qualified
+Connected Service identity. GitHub discovery offers this candidate when the
+executing machine's CLI login is usable and no explicit account is selected.
+The shared source settings owner labels it **Use this machine's GitHub CLI
+login** and persists it through `administerSourceInstanceAction`, exactly as
+agent callers do. Neither configuration path contains a token.
+When no account is selected and the machine login is unavailable, discovery
+retains the native service identity with the authentication failure
+`plugin_connected_account_native_unavailable`, exposing the sign-in remedy
+instead of silently returning an empty candidate list.
+
+Instance identity and currentness use the canonical binding components; native
+bindings are distinct from configured accounts without a synthetic account id.
+Session preparation, formal-review scope and comment publication carry that
+same service identity through their existing owners. GitHub reads and writes
+materialize the current credential on the executing daemon. Losing that login
+requires signing in with `gh` on that machine, not creating a Connected Account.
+Other first-party sources retain their account-only admission and reject native
+bindings. Native selection does not weaken explicit-account precedence or
+retired-subject checks; see [plugin platform ownership](plugin-platform.md#machine-native-github-credentials-03-development).
+
 ## Mounted page actions (0.3 development)
 
 The client-target [`ui/mounted-v1`](../packages/plugins/triage/src/actions/mountedUiProtocol.ts) Action accepts finite semantic operations against a `mountId` from the current UI context. It opens/closes detail through the existing reducer and route settlement, controls the same detail Tabs and List/Board preference as the UI, applies a lens or saved view through the existing lens/view owners, sets bulk selection through the public Collection selection store, and refreshes/pages through the mounted window and continuation owners. `focusRow` requests the Collection's physical row focus without activation; `peekRow` expands that row's table peek without opening detail (`expanded: false` closes it). Repeating the same peek intent is idempotent. Both require a key in the current Collection. `retryRun` and `cancelRun` reach the mounted bulk controller's existing Try again and Stop operations, preserving its retained identities and completed outcomes. The local-state Collection APIs are unchanged.
 
 The existing Account/plugin/generation ephemeral scope leases only the addressed page's callback. No React state, provider rows, or mount address is persisted. Choosing a saved view here applies its route lens, just like a shared view link; it does not write the Account's durable selected-view preference. Durable saved-view changes remain separately admitted Actions. An absent/inactive page or unavailable tab/selection/continuation returns `unavailable`; refused route settlement returns `rejected`. Agent/MCP callers require an answering mounted client; a headless CLI cannot operate another client's UI. Opaque current-context commands remain subject to the host's existing retirement and Action admission.
+
+The same mounted dispatcher now reaches source-panel intents in development:
+`selectSourceOccurrence` calls the source's incumbent selection controller, and
+Sentry's `setSourceOrdering` changes its existing retained-event ordering.
+Concealing already revealed user details is an ordinary mounted intent. Revealing
+them uses `ui/reveal-source-user-v1`; adding the selected evidence uses
+`ui/insert-selected-evidence-v1`. Both named Actions apply the shared manifest
+default, per-surface Ask-first setting and explicit waiver. Sensitive operations
+cannot be submitted through the ordinary `ui/mounted-v1` input.
+
+Commands are published only by active source panels and carry the selected
+occurrence identity. A changed selection, hidden/retired panel or absent mounted
+owner returns `unavailable`, rather than selecting a substitute or rereading the
+provider. Source controllers retain selection; the existing Triage disclosure
+bridge issues the same identity-only candidate to the bound, revision-checked
+Composer transaction. Sentry's evidence counts and exclusions remain visible
+beside Add; approval itself belongs to the named Action, not a second local
+confirmation. The admitted Action's cancellation signal reaches that same
+transaction, so cancellation during its Composer read prevents the later apply.
+PostHog's existing purpose-bound configuration-directory reader is
+also admitted on UI, agent, MCP and CLI without changing its schema or account
+authority.
 
 ## Configured Session actions (0.3 development)
 
@@ -107,8 +161,21 @@ that authority boundary, before rendering evidence for the replacement account.
 
 The six first-party sources compose Overview through
 [`TriageDetailStory`](../packages/triage-sources/src/ui/detailStory.tsx): the
-source's ask or report, then changed-file evidence and a checks marker where
-that entry kind supplies them. The shared composition uses public Plugin UI
+source's ask, report or (for an error group, `kind: 'error'`) "What happened",
+then changed-file evidence and a checks marker where that entry kind supplies
+them. Sentry and PostHog put their selected occurrence (exception and top
+application frame) in ① and their reach in ②
+[`TriageDetailSpread`](../packages/triage-sources/src/ui/detailStory.tsx):
+count tiles (events or occurrences, users affected, first release or first seen)
+and the provider's own occurrence series — Sentry's `stats["24h"]` from the
+existing issue read, PostHog's `sparkline` from the existing `query/issue/` read
+(`includeSparkline`, provider-chosen buckets across the detail window). A fact
+the provider did not state is absent, and those counts are not repeated in the
+Facts list. A source control that points at a sibling panel ("Open the stack
+trace") selects it through
+[`useTriageDetailPanelOpener`](../packages/triage-sources/src/ui/detailPanelNavigation.tsx),
+which the tabbed detail body backs with its own tab selection and offers only
+for panels it shows. The shared composition uses public Plugin UI
 `Step`; it does not own provider reads, selection, paging, or mutations. Host
 stories are static content in Triage's rail, while the whole-detail source path
 keeps its own scroller. Shared story copy enters each source's existing
@@ -118,8 +185,16 @@ consume canonical provider rollups, never counts inferred from the loaded page;
 missing, partial, unknown, and inapplicable evidence never becomes a passing
 marker. Source-only evidence tabs and header write controls remain source-owned.
 
-All six host Activity bodies use the shared `TriageDetailActivity` Step while
-keeping native discussions, events, commits and controls. Azure's Overview
+All six host Activity bodies render one chronological stream through
+[`TriageActivityTimeline`](../packages/triage-sources/src/ui/activityTimeline.tsx).
+Each source maps its provider records (remarks, reviews, threads, pushes,
+state/label changes) into `TriageActivityEventV1` and hands them over unsorted;
+the owner orders them (by instant, undated last, ties in source order) and draws
+the marker rail, the sentence, any quoted remark and the time. Sources keep their
+reads, dedupe and controls: thread replies and resolve/publication writes ride in
+an event's `inset`, and every paged collection keeps its own continuation
+(`reads: 'earlier'` above the stream for newest-first walks). Triage appends its
+own `activityTail` after the panel. Azure's Overview
 policy marker uses only its complete, untruncated evaluation result with known
 approved/rejected/running/queued statuses; partial, unknown and empty evaluation
 evidence yields no aggregate state. Commit statuses never establish policy

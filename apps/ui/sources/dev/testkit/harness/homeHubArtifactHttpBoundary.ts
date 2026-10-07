@@ -36,6 +36,7 @@ export function createLayoutArtifactHttpBoundary<T>(accountId: string, definitio
         if (path === '/health' || path === '/v1/auth/ping') return Response.json({});
         if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
         if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+        if (path === AUTHORING_MEMORY_ROUTE_V1) return Response.json({ rows: [] });
         if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
         if (path === AUTHORING_MEMORY_ROUTE_V1 && (!init?.method || init.method === 'GET')) return Response.json(AuthoringMemoryListResponseV1Schema.parse({ rows: [] }));
         if (path === '/v1/artifacts' && init?.method !== 'POST') return Response.json(artifact ? [artifact] : []);

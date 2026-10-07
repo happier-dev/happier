@@ -15,7 +15,8 @@ import { tryParseEncryptedDataKeyV0 } from "@/app/api/routes/share/encryptedData
 import { resolvePublicShareUseLimit } from "@/app/api/routes/share/publicShareMessageAccessGrant";
 import { isSessionTranscriptShareable, SESSION_TRANSCRIPT_PUBLICATION_SELECT, } from "@/app/session/sessionTranscriptPublicationPolicy";
 import { isSessionMetadataPrivacyUpgradeRequiredError, projectSessionMetadataForRecipient, readSessionMetadataOwnerAccountMode, } from "@/app/session/metadata/sessionMetadataRecipientProjection";
-import { SESSION_METADATA_LAYOUT_VERSION_V1 } from "@happier-dev/protocol";
+import { decodePlainArtifactStoredContent, getArtifactKindPolicyV1, SESSION_METADATA_LAYOUT_VERSION_V1 } from "@happier-dev/protocol";
+import * as privacyKit from "privacy-kit";
 import { enforceSessionPublicLinkExternalSharingPolicyInTx } from "@/app/session/access/sessionAccessExternalSharingPolicy";
 import { isPublicSessionShareActive } from "@/app/share/publicSessionSharePublication";
 import { removeUnsafeSessionFollowEdgesForAccessChangeInTx } from "@/app/session/follow/sessionFollowEdgeService";
@@ -77,8 +78,6 @@ export type SessionPublicShareWrite = Readonly<{
     userId: string;
     sessionId: string;
     authentication: Parameters<typeof assertSessionCapabilityInTx>[0]["authentication"];
-    supportsCurrentProtocol: boolean;
-    token?: string;
     lookupId?: string;
     keyDerivation?: "fragment_v1";
     encryptedDataKey?: string;
@@ -87,8 +86,8 @@ export type SessionPublicShareWrite = Readonly<{
     isConsentRequired?: boolean;
 }>;
 export async function writeSessionPublicShare(input: SessionPublicShareWrite) {
-    const { userId, sessionId, authentication, supportsCurrentProtocol, encryptedDataKey, expiresAt, maxUses, isConsentRequired } = input;
-    const token = input.lookupId ?? input.token;
+    const { userId, sessionId, authentication, encryptedDataKey, expiresAt, maxUses, isConsentRequired } = input;
+    const token = input.lookupId;
     // Only owner can create public shares
     const admission = await resolveSessionAccessForOperation(db, {
         accountId: userId,
@@ -119,11 +118,6 @@ export async function writeSessionPublicShare(input: SessionPublicShareWrite) {
         });
         if (!session) {
             return { type: 'error' as const, error: 'session not found' as const };
-        }
-        if (session.metadataLayoutVersion
-            === SESSION_METADATA_LAYOUT_VERSION_V1
-            && !supportsCurrentProtocol) {
-            return { type: "client-upgrade-required" as const };
         }
         if (!isSessionTranscriptShareable(session)) {
             return {
@@ -161,7 +155,7 @@ export async function writeSessionPublicShare(input: SessionPublicShareWrite) {
         const suppliedTokenHash = typeof token === 'string' && token.length > 0
             ? createHash('sha256').update(token, 'utf8').digest()
             : null;
-        const nextKeyDerivation = input.lookupId ? "fragment_v1" : input.token ? "legacy_token_v1" : existing?.keyDerivation ?? "legacy_token_v1";
+        const nextKeyDerivation = input.lookupId ? "fragment_v1" : existing?.keyDerivation ?? "fragment_v1";
         const shouldRotateToken = publicShareMaterialRotates(existing, suppliedTokenHash, nextKeyDerivation);
         const externalPolicyError = await enforceSessionPublicLinkExternalSharingPolicyInTx(tx, {
             actorAccountId: userId,
@@ -236,13 +230,15 @@ async function persistStoredContentPublicShare(tx: Tx, input: Readonly<{
 }>) {
     const { existing } = input;
     const id = existing?.id ?? randomUUID();
-    if (input.keyDerivation === "fragment_v1" && (!resolveStoredContentPublicShareSubjectOrigin({ id, artifactId: input.subject.kind === 'artifact' ? input.subject.id : null })
-        || !createLocalServicePublicRateLimitChecker(readLocalServicesFeatureEnv(process.env).publicRateLimitDependency)))
-        return { type: "error" as const, error: "public_share_isolation_unavailable" as const };
     const hash = input.material ? createHash("sha256").update(input.material, "utf8").digest() : null;
     const rotates = publicShareMaterialRotates(existing, hash, input.keyDerivation);
     if (!existing && !hash)
-        return { type: "error" as const, error: "token required" as const };
+        return { type: "error" as const, error: "lookupId required" as const };
+    if ((!existing || rotates) && input.keyDerivation !== "fragment_v1")
+        return { type: "error" as const, error: "lookupId required" as const };
+    if (input.keyDerivation === "fragment_v1" && (!resolveStoredContentPublicShareSubjectOrigin({ id, artifactId: input.subject.kind === 'artifact' ? input.subject.id : null })
+        || !createLocalServicePublicRateLimitChecker(readLocalServicesFeatureEnv(process.env).publicRateLimitDependency)))
+        return { type: "error" as const, error: "public_share_isolation_unavailable" as const };
     if (input.mode === "e2ee" && ((!existing || rotates) && !input.encryptedDataKey)) {
         return { type: "error" as const, error: "encryptedDataKey required" as const };
     }
@@ -255,6 +251,8 @@ async function persistStoredContentPublicShare(tx: Tx, input: Readonly<{
     }
     if (input.mode === "e2ee" && encryptedDataKey === null)
         return { type: "error" as const, error: "encryptedDataKey required" as const };
+    if (input.mode === "e2ee" && existing && input.keyDerivation !== "fragment_v1" && !equalBytes(encryptedDataKey, existing.encryptedDataKey))
+        return { type: "error" as const, error: "lookupId required" as const };
     const expiresAt = input.expiresAt === undefined ? null : new Date(input.expiresAt);
     const maxUses = input.maxUses ?? null;
     const isConsentRequired = input.isConsentRequired ?? false;
@@ -307,7 +305,7 @@ export async function resolveStoredContentPublicShareShell(lookupId: string, hos
         return { error: "rate_limited" as const };
     return { origin, shareId: row.id };
 }
-export async function writeArtifactPublicShare(input: Omit<SessionPublicShareWrite, "sessionId" | "supportsCurrentProtocol"> & {
+export async function writeArtifactPublicShare(input: Omit<SessionPublicShareWrite, "sessionId"> & {
     artifactId: string;
 }) {
     return inTx(async (tx) => {
@@ -315,8 +313,22 @@ export async function writeArtifactPublicShare(input: Omit<SessionPublicShareWri
         if (!artifact)
             return { type: "forbidden" as const };
         const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(artifact.account);
-        if (mode.status !== "ready" || !openArtifactStoredContentPair({ ...artifact, artifactId: artifact.id, mode: mode.mode })) {
+        if (mode.status !== "ready") {
             return { type: "error" as const, error: "account_content_encryption_mismatch" as const };
+        }
+        const opened = openArtifactStoredContentPair({ ...artifact, artifactId: artifact.id, mode: mode.mode });
+        if (!opened) {
+            return { type: "error" as const, error: "account_content_encryption_mismatch" as const };
+        }
+        // Only Plain Account headers are server-readable, including sealed-at-rest storage.
+        // E2EE admission belongs to the clients that can open the header.
+        if (mode.mode === "plain") {
+            const header = decodePlainArtifactStoredContent(privacyKit.encodeBase64(opened.header));
+            const kind = header && typeof header === "object" && !Array.isArray(header) && "kind" in header
+                ? header.kind : undefined;
+            if (!getArtifactKindPolicyV1(kind).publicLinkAllowed) {
+                return { type: "error" as const, error: "artifact_kind_not_shareable" as const };
+            }
         }
         const existing = await tx.publicSessionShare.findUnique({ where: { artifactId: artifact.id } });
         const result = await persistStoredContentPublicShare(tx, { ...input, subject: { kind: "artifact", id: artifact.id }, mode: mode.mode,

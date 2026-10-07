@@ -83,8 +83,6 @@ const stylesheet = StyleSheet.create(() => ({
         flex: 1,
     },
     footer: {
-        paddingHorizontal: 16,
-        paddingVertical: 14,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'flex-end',
