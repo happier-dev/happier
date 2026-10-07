@@ -221,6 +221,9 @@ references through the launch secret owner rather than receiving GUI-decrypted p
 Explicit Connected Account selections require a declared native credential destination and usable
 materialized credentials; unsupported selections fail before native discovery. Native-only and empty
 bindings continue to use native authentication without account materialization.
+Catalog cancellation waits for native cleanup and already-started host filesystem work before
+returning, removing acquired temporary authentication artifacts. Pending credential retrieval is
+not joined; cancelled preparation cannot start further host artifact work.
 Selected native skills retain any agent-supplied identifier and source reference through structured
 input. Catalog reference identifiers synthesized for lookup are not native invocation identifiers;
 entries without a native identifier retain name/source-path resolution. An older daemon without
