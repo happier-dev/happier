@@ -53,6 +53,21 @@ export function extractOpenAiAccountIdFromIdToken(idToken: string): string {
   return '';
 }
 
+/** Optional human identity; older stored tokens need not contain these claims. */
+export function readOpenAiIdentityFromIdToken(idToken: string): Readonly<{ name: string | null; email: string | null }> {
+  try {
+    const payload = parseJwtPayload(idToken);
+    const text = (value: unknown) => typeof value === 'string' ? value.trim() || null : null;
+    const profile = isRecord(payload['https://api.openai.com/profile']) ? payload['https://api.openai.com/profile'] : null;
+    return {
+      name: text(payload.name),
+      email: text(payload.email) ?? text(profile?.email) ?? text(profile?.profile_email) ?? text(profile?.account_email),
+    };
+  } catch {
+    return { name: null, email: null };
+  }
+}
+
 function readProviderErrorCode(body: string): string {
   try {
     const parsed: unknown = JSON.parse(body);

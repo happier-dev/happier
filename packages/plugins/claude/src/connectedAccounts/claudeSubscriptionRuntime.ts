@@ -8,6 +8,7 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 import {
   CLAUDE_DEFAULT_SUBSCRIPTION_USAGE_URL,
   parseClaudeSubscriptionUsageMeters,
+  resolveClaudeSubscriptionPlanLabelFromMetadata,
 } from '../agent/auth/services/quota/subscriptionFetcher.js';
 import {
   CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPES,
@@ -23,6 +24,8 @@ const PROVIDER_ACCOUNT_ID_KEY = 'providerAccountId';
 const PROVIDER_EMAIL_KEY = 'providerEmail';
 const EXPIRES_AT_MS_KEY = 'expiresAtMs';
 const SCOPES_KEY = 'scopes';
+const SUBSCRIPTION_TYPE_KEY = 'subscriptionType';
+const RATE_LIMIT_TIER_KEY = 'rateLimitTier';
 const ANTHROPIC_API_ORIGIN = 'https://api.anthropic.com';
 
 type ClaudeTokens = Readonly<{
@@ -82,6 +85,17 @@ async function readCredential(
   options?: Readonly<{ signal?: AbortSignal }>,
 ): Promise<string> {
   return (await credentials.get(key, options))?.trim() ?? '';
+}
+
+async function readPlanMetadata(credentials: ConnectedAccountCredentialReader, options?: Readonly<{ signal?: AbortSignal }>) {
+  const [subscriptionType, rateLimitTier] = await Promise.all([
+    readCredential(credentials, SUBSCRIPTION_TYPE_KEY, options),
+    readCredential(credentials, RATE_LIMIT_TIER_KEY, options),
+  ]);
+  return {
+    ...(subscriptionType ? { subscriptionType } : {}),
+    ...(rateLimitTier ? { rateLimitTier } : {}),
+  };
 }
 
 async function writeOptionalCredential(
@@ -403,6 +417,9 @@ const claudeSubscriptionRuntimeDefinition: PluginConnectedAccountRuntime = {
     }
     if (exchanged.status !== 'success') return exchanged;
     await writeTokens(context.stagedCredentials, exchanged.tokens, options);
+    const plan = await readPlanMetadata(context.credentials, options);
+    await writeOptionalCredential(context.stagedCredentials, SUBSCRIPTION_TYPE_KEY, plan.subscriptionType ?? '', options);
+    await writeOptionalCredential(context.stagedCredentials, RATE_LIMIT_TIER_KEY, plan.rateLimitTier ?? '', options);
     return {
       status: 'connected',
       displayName: exchanged.tokens.providerEmail
@@ -476,7 +493,8 @@ const claudeSubscriptionRuntimeDefinition: PluginConnectedAccountRuntime = {
           : {}),
       };
     });
-    return { observedAtMs: Date.now(), limits };
+    const planLabel = resolveClaudeSubscriptionPlanLabelFromMetadata(await readPlanMetadata(context.credentials, options));
+    return { observedAtMs: Date.now(), limits, ...(planLabel ? { planLabel } : {}) };
   },
   async materialize(request, context, options) {
     const authenticationModeId = modeId(context);
@@ -561,6 +579,7 @@ const claudeSubscriptionRuntimeDefinition: PluginConnectedAccountRuntime = {
     const payload = {
       claudeAiOauth: {
         accessToken,
+        ...await readPlanMetadata(context.credentials, options),
         ...(Number.isFinite(expiresAt) && expiresAt > 0 ? { expiresAt } : {}),
         scopes: await readScopes(context.credentials, options),
       },
