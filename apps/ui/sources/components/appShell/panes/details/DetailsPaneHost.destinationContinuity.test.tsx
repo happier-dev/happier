@@ -25,6 +25,21 @@ vi.mock('@/sync/domains/state/storage', async () => {
 });
 
 describe('destination details presentation continuity', () => {
+    it('preserves an ordinary host explicit focus mode and action rail without destination-owned content', async () => {
+        const { PaneColumnsHost } = await import('../PaneColumnsHost');
+        host.enabled = false;
+        const screen = await renderScreen(<PaneColumnsHost
+            main={<div />}
+            detailsPane={<div />}
+            rightPane={<div />}
+            paneFocusModeActive
+            actionRail={React.createElement('StandaloneRail')}
+        />);
+        expect(screen.findByTestId('multi-pane-details-docked')).not.toBeNull();
+        expect(screen.findByTestId('multi-pane-right-docked')).not.toBeNull();
+        expect(screen.root.findAllByType('StandaloneRail')).toHaveLength(1);
+    });
+
     it('keeps the same visible draft across native tablet, phone geometry, and disabled side panes', async () => {
         const { DetailsPaneHost } = await import('./DetailsPaneHost');
         const { AppPaneProvider } = await import('../AppPaneProvider');
