@@ -120,6 +120,73 @@ describe('apps/ui/metro.config.js (Expo resolution fallbacks)', () => {
         }
     });
 
+    it.each([
+        {
+            moduleName: 'react-native-enriched-markdown/lib/module/web/streamingReveal.js',
+            bundleMode: false,
+            diagnostic: 'react-native-enriched-markdown patch is installed',
+        },
+        {
+            moduleName: 'react-native-worklets/__generatedWorklets/987654321.js',
+            bundleMode: true,
+            diagnostic: 'Generated Worklets Bundle Mode module',
+        },
+    ])('keeps the missing $moduleName error formattable after Expo reports its import stack', ({ moduleName, bundleMode, diagnostic }) => {
+        process.env.HAPPIER_UI_WORKLETS_BUNDLE_MODE = bundleMode ? '1' : '0';
+        delete process.env.EXPO_DEBUG;
+
+        // Only the filesystem is simulated. Keep the actual config, Expo stack mutation,
+        // and Metro formatter so the second formatting observes the same reported error.
+        const realExistsSync = fs.existsSync.bind(fs);
+        const existsSpy = vi.spyOn(fs, 'existsSync').mockImplementation((candidate) => (
+            String(candidate).replaceAll('\\', '/').endsWith(`/${moduleName}`)
+                ? false
+                : realExistsSync(candidate)
+        ));
+        const mkdirSpy = vi.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined);
+
+        try {
+            const config = requireFreshMetroConfig();
+            const originModulePath = path.resolve(__dirname, '../../index.ts');
+            let resolutionError: unknown;
+            try {
+                config.resolver.resolveRequest({ originModulePath }, moduleName, 'web');
+            } catch (error) {
+                resolutionError = error;
+            }
+            if (!(resolutionError instanceof Error)) {
+                throw new Error('The missing runtime module must fail resolution');
+            }
+            expect(resolutionError.message).toContain(diagnostic);
+
+            // Expo 55 reports a dependency import stack by deleting the original JS stack.
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
+            const expoErrorInterface = require(path.join(
+                path.dirname(require.resolve('@expo/cli/package.json')),
+                'build/src/start/server/metro/metroErrorInterface.js',
+            ));
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
+            const formatBundlingError = require('@expo/metro/metro/lib/formatBundlingError').default;
+            expect(() => formatBundlingError(resolutionError)).not.toThrow();
+
+            const importStack = `Import stack:\n${originModulePath}\n | import "${moduleName}"`;
+            expoErrorInterface.attachImportStackToRootMessage(resolutionError, importStack);
+            expect(resolutionError.stack).toBeUndefined();
+            expect(() => formatBundlingError(resolutionError)).not.toThrow();
+            expect(formatBundlingError(resolutionError)).toMatchObject({
+                type: 'NotFoundError',
+                message: expect.stringContaining(diagnostic),
+                errors: [{
+                    filename: originModulePath,
+                    description: expect.stringContaining(importStack),
+                }],
+            });
+        } finally {
+            existsSpy.mockRestore();
+            mkdirSpy.mockRestore();
+        }
+    });
+
     it('rewrites @noble/hashes/crypto.js to an exported subpath', () => {
         const config = requireFreshMetroConfig();
 

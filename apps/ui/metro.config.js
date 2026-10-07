@@ -78,14 +78,24 @@ function isReservedGeneratedWorkletModuleId(moduleId) {
   return Number.isSafeInteger(moduleId) && moduleId >= generatedWorkletModuleIdNamespaceBase;
 }
 
-function resolveGeneratedWorkletModule(moduleName) {
+function createModuleNotFoundError(message, originModulePath) {
+  // Expo removes the JavaScript stack after reporting an import stack. Metro
+  // can format this resolution error again without trying to parse that stack.
+  return Object.assign(new Error(message), {
+    type: "NotFoundError",
+    filename: originModulePath,
+  });
+}
+
+function resolveGeneratedWorkletModule(moduleName, originModulePath) {
   if (!workletsBundleModeEnabled || !workletsPackageParentDir || !isGeneratedWorkletImport(moduleName)) return null;
   const filePath = path.join(workletsPackageParentDir, moduleName);
   if (!fs.existsSync(filePath)) {
-    throw new Error(
+    throw createModuleNotFoundError(
       `[Worklets] Generated Worklets Bundle Mode module "${moduleName}" does not exist at "${filePath}". `
       + "This usually means Metro is serving stale worklet transforms or Bundle Mode was toggled without clearing the cache; clear Metro cache before restarting. "
       + "Restart Metro with a cleared cache and keep HAPPIER_UI_WORKLETS_BUNDLE_MODE consistent between Babel and Metro.",
+      originModulePath,
     );
   }
   return {
@@ -448,7 +458,7 @@ const reactNativePrivateNodeModules = path.resolve(appNodeModules, "react-native
 const patchedEnrichedMarkdownStreamingRevealModule =
   "react-native-enriched-markdown/lib/module/web/streamingReveal.js";
 
-function resolvePatchedEnrichedMarkdownModule(moduleName) {
+function resolvePatchedEnrichedMarkdownModule(moduleName, originModulePath) {
   if (moduleName !== patchedEnrichedMarkdownStreamingRevealModule) return null;
   for (const nodeModulesRoot of [appNodeModules, rootNodeModules]) {
     const candidate = path.resolve(nodeModulesRoot, ...moduleName.split("/"));
@@ -456,8 +466,9 @@ function resolvePatchedEnrichedMarkdownModule(moduleName) {
       return { type: "sourceFile", filePath: candidate };
     }
   }
-  throw new Error(
+  throw createModuleNotFoundError(
     `[Metro] Patched module "${moduleName}" is missing. Run the repository postinstall so the react-native-enriched-markdown patch is installed.`,
+    originModulePath,
   );
 }
 const generatedWorkletsWatchFolders = resolveGeneratedWorkletsWatchFolders() || [];
@@ -879,12 +890,12 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   if (platform === "web" && context?.preferNativePlatform !== false) {
     context = { ...context, preferNativePlatform: false };
   }
-  const generatedWorkletResolution = resolveGeneratedWorkletModule(moduleName);
+  const generatedWorkletResolution = resolveGeneratedWorkletModule(moduleName, context?.originModulePath);
   if (generatedWorkletResolution) return generatedWorkletResolution;
 
   // This is an intentionally patched private file, not a package export. Resolve it by its
   // verified install path before Metro applies package-export validation (which fails on Windows).
-  const patchedEnrichedMarkdownResolution = resolvePatchedEnrichedMarkdownModule(moduleName);
+  const patchedEnrichedMarkdownResolution = resolvePatchedEnrichedMarkdownModule(moduleName, context?.originModulePath);
   if (patchedEnrichedMarkdownResolution) return patchedEnrichedMarkdownResolution;
 
   // Fix event-target-shim/index import - exports define "." not "./index"
@@ -1120,7 +1131,10 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     throw lastResolutionError;
   }
 
-  throw new Error(`Unable to resolve module "${resolvedModuleName}" for platform "${platform ?? "unknown"}".`);
+  throw createModuleNotFoundError(
+    `Unable to resolve module "${resolvedModuleName}" for platform "${platform ?? "unknown"}".`,
+    context?.originModulePath,
+  );
 };
 
 module.exports = config;
