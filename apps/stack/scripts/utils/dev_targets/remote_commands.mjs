@@ -79,6 +79,7 @@ const COMMAND_RULES = [
   { when: { script: ['check:first-party-plugins:finite', 'check:first-party-plugins:finite:local', 'plugins:aggregate:finite', 'test:migration:bundled-plugin-projections', 'test:migration:governance'] }, set: { ...validation, generatorCheck: '1', componentOverride: 'apps/cli' } },
 ];
 const FINAL_COMMAND_RULES = [
+  { when: { bootstrap: ['1'], heavyClass: [''] }, set: { heavyClass: 'dependency-install' } },
   { when: { entry: ['remote_runtime_build.mjs'] }, set: { heavyClass: 'compilation' } },
   { when: { validation: ['1'] }, set: { commandClass: 'targeted-validation' } },
   { when: { validation: ['1'], component: ['.'] }, set: { commandClass: 'full-validation' } },
@@ -507,7 +508,7 @@ export function buildRemoteExecCommand(
     body.push(`cd -- ${posixQuote(workingDirectory)}`, `exec ${args.map(posixQuote).join(' ')}`);
     args = ['bash', '-c', body.join('; ')];
     if (admissionClass) {
-      args = [`${repoDir}/apps/stack/bin/hstack-exec`, '--heavyweight-admission',
+      args = ['env', `HAPPIER_STACK_PM_CACHE_BASE_DIR=${String(target.cliHomeDir).replace(/[\\/]+$/, '')}/cache`, `${repoDir}/apps/stack/bin/hstack-exec`, '--heavyweight-admission',
         `--class=${admissionClass}`, `--machine=${target.name}`, `--failure-id=${normalizedExecutionId}`, ...(admissionMode === 'try' ? ['--no-wait'] : []), '--', ...args];
     }
   }

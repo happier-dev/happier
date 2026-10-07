@@ -55,7 +55,18 @@ Runtime builds prepare and upload captured source before creating a native runti
 
 Every native admission resource check reclaims owner and waiter records whose process generation is proven dead, including pressure-denied readiness probes and inherited escalation. Live records remain queued; reclamation adds no age deadline and never signals a process.
 
-Linux/WSL waiting messages and `dev-targets status NAME` expose authenticated admission holders' class, PID, process age and approximate recent process-tree CPU use. The existing service-memory observer owns this read-only projection. Waiters reuse their preceding cadence sample; status takes a second sample at that cadence when holders exist. CPU counters have one-second resolution, unavailable evidence is reported as unknown, and zero recent CPU is not a hung verdict. Observation never imposes a holder deadline or kills work.
+Linux worker disk admission uses `worker_disk_budget.mjs` to measure the allocated dependency,
+shared-cache and largest retained-target closure on each worker. The containing filesystems'
+available bytes and authenticated peers' disk envelopes determine admission under the existing
+native lock. These resident closure measurements are not temporal class peaks. Unobserved growth
+and filesystem quotas remain separate validation obligations. Low disk triggers ordered custody
+reclamation (oldest stale staging across stacks, unneeded Yarn entries, stale lane scratch); a
+worker still short is excluded for the current command class before bootstrap/payload. The
+execution-qualified disk marker never authorizes replay of a started command. `dev-targets status`
+exposes free bytes and the measured runtime envelope. Pins report insufficient disk rather than
+waiting indefinitely for capacity that cleanup could not establish.
+
+Linux/WSL waiting messages and `dev-targets status NAME` expose authenticated admission holders' class, PID, process age, phase and approximate recent process-tree CPU use. Newly created native owners start at `admitted`; a runtime worker reports `awaiting-runtime-request` before its build ACK and `building-runtime` after it. The awaiting phase includes producer publication-flight waits after actual admission; `building-runtime` does not imply CPU activity or rule out internal lock waits. Phase is diagnostic only and never changes the reservation. Older loaded owners without the optional field report unknown; their record lifecycle is unchanged. The existing service-memory observer owns this read-only projection. Waiters reuse their preceding cadence sample; status takes a second sample at that cadence when holders exist. CPU counters have one-second resolution, unavailable evidence is reported as unknown, and zero recent CPU is not a hung verdict. Observation never imposes a holder deadline or kills work.
 
 An explicit routed `hstack-exec --heavyweight-admission --class=... -- ...` carries its class into this same placement policy before committing to a worker. Payload flags after the delimiter do not change the envelope. Native memory observation uses the existing native process-identity owner without installed workspace dependencies, so fresh mirrors can enter admission before their first dependency bootstrap.
 

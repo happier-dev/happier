@@ -28,6 +28,8 @@ export async function installNativeAdmissionFixture({ root, admissionRoot = join
   // Replace only OS enumeration; real RSS/ancestry for explicitly included
   // fixture processes and the production observer's domain logic stay real.
   const observer = pathToFileURL(join(sourceRoot, 'apps/stack/scripts/utils/proc/service_memory.mjs')).href;
+  const diskObserver = pathToFileURL(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/worker_disk_budget.mjs')).href;
+  await writeFile(join(targets, 'worker_disk_budget.mjs'), `import { runWorkerDiskBudgetCommand } from ${JSON.stringify(diskObserver)}; await runWorkerDiskBudgetCommand();\n`);
   await writeFile(join(proc, 'service_memory.mjs'), `
 import { readFileSync } from 'node:fs';
 import { readLinuxWorkerProcesses, readWorkerMemoryReservations, renderWorkerMemoryReservationRows } from ${JSON.stringify(observer)};

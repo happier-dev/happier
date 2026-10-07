@@ -1,10 +1,11 @@
-import { chmod, cp, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rm, rmdir, writeFile } from 'node:fs/promises';
+import { chmod, cp, lstat, mkdir, mkdtemp, readFile, readdir, readlink, realpath, rm, rmdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, posix, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { getCliBinaryArtifactSupportTargetUnavailableReason, getComponentArtifactBuildTargetUnavailableReason } from '../../../../packages/cli-common/componentArtifactTarget.mjs';
 import { isGeneratedPluginArtifactPath } from '../utils/fs/workspaceBuildInputs.mjs';
 import { readCachedFileDigest } from '../utils/fs/cached_file_digest.mjs';
+import { writeRuntimeAdmissionPhase } from '../utils/proc/service_memory.mjs';
 
 const WORKER_ENTRY = 'apps/stack/scripts/build/remote_runtime_build.mjs';
 const BUILD_ENV_KEYS = ['HAPPIER_CLI_BUN_EXTERNALS', 'HAPPIER_SERVER_BUN_EXTERNALS', 'HAPPIER_BUILD_DB_PROVIDERS', 'HAPPY_BUILD_DB_PROVIDERS', 'HAPPIER_SERVER_REQUIRE_IROH_NATIVE', 'HAPPIER_STACK_EXPO_CLEAR_CACHE'];
@@ -60,8 +61,12 @@ async function captureBuildSource({ rootDir, selection, captureSelection = selec
     }
     return [...sourcePaths].sort();
   };
-  const captureDir = join(directory, 'source');
-  const { files, rereadPaths } = await captureBuildInputFiles({ sourceDir: sourceMetadata.repoDir, captureDir, readPaths });
+  const capturePath = join(directory, 'source');
+  const { files, rereadPaths } = await captureBuildInputFiles({ sourceDir: sourceMetadata.repoDir, captureDir: capturePath, readPaths });
+  // Runtime input descriptors resolve the CLI root physically. Use that same
+  // root for the private capture so temporary-directory aliases retain the
+  // producer's repository-relative labels after transfer.
+  const captureDir = await realpath(capturePath);
   const expectedInputEntries = {};
   const expectedInputs = await collectRuntimeComponentSourceFingerprints({ selection,
     sourceMetadata: { ...sourceMetadata, repoDir: captureDir }, identityRepoDir: sourceMetadata.repoDir,
@@ -123,6 +128,7 @@ export async function withAdmittedRuntimeBuildPlacement({
       const worker = workerName === 'local' ? null : config.targets.find(candidate => candidate.name === workerName);
       if (workerName !== 'local' && !worker) throw new Error('[build] source transfer worker is not in the configured pool.');
       capture ??= (async () => {
+        process.stderr.write('[build] capturing source before runtime admission.\n');
         directory = await mkdtemp(join(tmpdir(), 'happier-runtime-build-'));
         // A target flight can merge another component demand after admission.
         // Capture its possible source closure now; fingerprint the actual
@@ -140,6 +146,7 @@ export async function withAdmittedRuntimeBuildPlacement({
       incomingSources.push({ incoming, command });
       const prepared = await command(['node', '-e', 'require("node:fs").mkdirSync(process.argv[1],{recursive:true})', incoming]);
       if (prepared.code !== 0) throw new Error('[build] worker transfer preparation failed (exit ' + prepared.code + ').');
+      process.stderr.write('[build] uploading captured source before runtime admission on ' + workerName + '.\n');
       await (transport.transfer ?? transferRuntimeFile)({ target: worker, direction: 'upload',
         localPath: captured.archivePath, remotePath: posix.join(incoming, 'source.tar') });
       return { captured, incoming };
@@ -379,14 +386,9 @@ async function executeWorkerRequest(requestPath) {
   if (reason) throw new Error(reason);
   const workspaceDir = resolve(request.workspaceDir);
   if (!request.localBuild && process.platform === 'linux') {
-    const { reapHistoricalTempRoots } = await import('../utils/dev_targets/historical_temp_roots.mjs');
-    // Reuse custody's approved 24-hour/no-live-holder rule. The current target
-    // is retained even before its captured child process starts.
-    const parent = dirname(workspaceDir);
-    const candidates = (await readdir(parent)).filter(name => name !== posix.basename(workspaceDir)
-      && (name === 'repo' || name === 'cache' || /^(linux|darwin|win32)-(x64|arm64)$/.test(name)));
-    reapHistoricalTempRoots(parent, '/proc', { candidateNames: candidates });
-    reapHistoricalTempRoots(tmpdir());
+    const { pruneWorkerRuntimeStaging } = await import('../utils/dev_targets/worker_disk_budget.mjs');
+    pruneWorkerRuntimeStaging({ runtimeBuildRoot: dirname(dirname(workspaceDir)),
+      target: posix.basename(workspaceDir), workspaceDir });
   }
   const repoDir = request.localBuild ? request.captureDir
     : await extractCapturedBuildSource({ workspaceDir, files: request.files });
@@ -481,6 +483,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
       });
       input.once('close', () => resolveRequest(null));
     });
+    writeRuntimeAdmissionPhase('awaiting-runtime-request');
     process.stdout.write('HAPPIER_RUNTIME_BUILD_READY=' + JSON.stringify({
       worker: process.env.HAPPIER_RUNTIME_BUILD_WORKER_NAME,
       runtimeTarget: { platform: process.platform, arch: process.arch },
@@ -490,6 +493,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     input.close();
     if (admitted) {
       if (typeof admitted.requestPath !== 'string' || !admitted.requestPath) throw new Error('[build] invalid runtime control request.');
+      writeRuntimeAdmissionPhase('building-runtime');
       await executeWorkerRequest(admitted.requestPath);
     }
   }

@@ -101,6 +101,7 @@ export async function inspectDevTargetAdmission({ target, env = process.env },
   if (target.platform === 'windows') return { state: 'unsupported', owners: [] };
   const remoteCommand = buildRemoteExecCommand(target, {
     executionId: randomUUID(), commandArgs: ['node', './apps/stack/scripts/utils/proc/service_memory.mjs', '--admission-status'],
+    environment: { HAPPIER_STACK_PM_CACHE_BASE_DIR: `${target.cliHomeDir.replace(/[\\/]+$/, '')}/cache` },
   });
   try {
     const result = await capture({ command: 'ssh', args: buildSshWorkerArgs(target, {
@@ -345,7 +346,9 @@ export async function runDevTargetCommand(
     tty,
     lifetimeStdin,
     onLine: ({ stream, line }) => {
-      if (stream === 'stderr' && line === `HSTACK_ADMISSION_BUSY:${executionId}`) admissionDeclined = true;
+      if (stream === 'stderr' && [
+        `HSTACK_ADMISSION_BUSY:${executionId}`, `HSTACK_ADMISSION_DISK:${executionId}`,
+      ].includes(line)) admissionDeclined = true;
     },
   });
   const recordProvenance = async (record) => {

@@ -147,6 +147,9 @@ native_command_policy_base() {
   fi
 }
 native_command_policy_finish() {
+  if { [ "$policy_bootstrap" = '1' ]; } && { [ "$policy_heavyClass" = '' ]; }; then
+    policy_heavyClass='dependency-install'
+  fi
   if { [ "$policy_entry" = 'remote_runtime_build.mjs' ]; }; then
     policy_heavyClass='compilation'
   fi

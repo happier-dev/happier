@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -359,7 +359,7 @@ for await (const line of createInterface({input:process.stdin})) await writeFile
 });
 
 test('reused captured workspace reconciles authored sources while preserving generated plugin artifacts', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'runtime-build-membership-'));
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'runtime-build-membership-')));
   try {
     const source = join(root, 'source');
     const workspaceDir = join(root, 'worker');
@@ -458,7 +458,7 @@ test('remote source delta preserves unchanged inputs and retained compiler state
 });
 
 test('capture rejection identifies changed input keys through the real fingerprint owner', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'runtime-build-diagnostics-'));
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'runtime-build-diagnostics-')));
   try {
     await mkdir(join(root, 'apps/cli/src'), { recursive: true });
     await writeFile(join(root, 'apps/cli/package.json'), JSON.stringify({ name: '@happier-dev/cli' }));
@@ -697,7 +697,7 @@ for await (const line of input) {
 });
 
 test('merged daemon and server demand admits the captured server closure in a reused worker', async t => {
-  const root = await mkdtemp(join(tmpdir(), 'runtime-merged-capture-'));
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'runtime-merged-capture-')));
   t.after(() => rm(root, { recursive: true, force: true }));
   const repoDir = join(root, 'producer');
   const stackBaseDir = join(root, 'stack');
