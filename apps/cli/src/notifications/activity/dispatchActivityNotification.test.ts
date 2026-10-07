@@ -21,6 +21,7 @@ import {
 import type { ActivityNotificationEvent } from './activityNotificationEvent';
 import { createSessionNotificationContextFixture } from '@/testkit/backends/sessionFixtures';
 import { createStablePluginNotificationsOwner } from '@/plugins/runtime/invocation/services/notifications';
+import { createWorkflowRunReviewEntryNotificationHandler } from './dispatchWorkflowRunUpdateNotification';
 
 const fetchSessionNotificationContext = async (sessionId: string) => createSessionNotificationContextFixture(sessionId);
 
@@ -31,6 +32,21 @@ vi.mock('@/ui/logger', () => ({
 }));
 
 describe('dispatchActivityNotificationAsync', () => {
+  it('delivers each newly committed review hold in one Run without a time veto', async () => {
+    const sendToAllDevicesAsync = vi.fn(async () => true);
+    const notify = createWorkflowRunReviewEntryNotificationHandler({
+      getSettingsSnapshot: () => ({ settings: accountSettingsParse({}) }),
+      expoPushSender: { sendToAllDevicesAsync },
+    });
+    // Each callback denotes a different post-commit invocation hold; the producer
+    // owns replay admission, so Activity must not conflate them by Run/update kind.
+    await notify({ runId: 'two-review-holds' });
+    await notify({ runId: 'two-review-holds' });
+    expect(sendToAllDevicesAsync.mock.calls).toHaveLength(2);
+    expect(sendToAllDevicesAsync).toHaveBeenLastCalledWith(expect.any(String), expect.any(String),
+      expect.objectContaining({ runId: 'two-review-holds', updateKind: 'review_required' }), expect.anything());
+  });
+
   it('marks push unavailable until a token is registered and preserves configured webhook availability in quiet hours', async () => {
     const settings = accountSettingsParse({ notificationChannelsV1: [
       { id: 'configured-hook', kind: 'webhook', enabled: true, url: 'https://hooks.example.test/happier' },

@@ -28,18 +28,7 @@ import {
 
 import type { PluginInvocationServicesSeed } from './types';
 
-const MAX_NOTIFICATION_OPERATIONS = 16_384;
-const MAX_CLIENT_REQUEST_ID_CODE_UNITS = 128;
-const MAX_NOTIFICATION_TITLE_CODE_UNITS = 512;
-const MAX_NOTIFICATION_BODY_CODE_UNITS = 8_000;
-const MAX_NOTIFICATION_DATA_BYTES = 64 * 1024;
-const MAX_NOTIFICATION_CHANNELS = 32;
-const MAX_NOTIFICATION_PAGE_SIZE = 100;
-const MAX_NOTIFICATION_CURSOR_CODE_UNITS = 256;
-const MAX_NOTIFICATION_RESULT_CODE_UNITS = 128;
 const NOTIFICATION_SENDER_RETIRED = Symbol('notification-sender-retired');
-
-export const PLUGIN_NOTIFICATION_IDEMPOTENCY_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 
 type QualifiedRef = Readonly<{ pluginId: string; localId: string }>;
 type NotificationContributionReference = NonNullable<
@@ -88,7 +77,6 @@ export type StablePluginNotificationsHost = Readonly<{
         categoryId: string;
         listener(preferences: PluginNotificationPreferences): void;
     }>): Disposable;
-    now?: () => number;
 }>;
 
 type OperationRecord = Readonly<{
@@ -165,16 +153,16 @@ async function waitForOperationResult<T>(result: Promise<T>, signal: AbortSignal
     });
 }
 
-function readPageOptions(options: { cursor?: string; limit?: number; signal?: AbortSignal } | undefined): Readonly<{
+function readPageOptions(options: { cursor?: string; limit?: number; signal?: AbortSignal } | undefined, itemCount: number): Readonly<{
     offset: number;
     limit: number;
 }> {
-    const limit = options?.limit ?? MAX_NOTIFICATION_PAGE_SIZE;
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_NOTIFICATION_PAGE_SIZE) {
+    const limit = options?.limit ?? Math.max(1, itemCount);
+    if (!Number.isSafeInteger(limit) || limit < 1) {
         throw notificationError('plugin_notification_invalid_page', 'Notification page limit is invalid');
     }
     if (options?.cursor === undefined) return { offset: 0, limit };
-    if (typeof options.cursor !== 'string' || options.cursor.length > MAX_NOTIFICATION_CURSOR_CODE_UNITS) {
+    if (typeof options.cursor !== 'string') {
         throw notificationError('plugin_notification_invalid_page', 'Notification page cursor is invalid');
     }
     const match = /^notification:(\d+)$/u.exec(options.cursor);
@@ -190,7 +178,7 @@ function page<T>(items: readonly T[], options?: { cursor?: string; limit?: numbe
     items: readonly T[];
     nextCursor?: string;
 }> {
-    const { offset, limit } = readPageOptions(options);
+    const { offset, limit } = readPageOptions(options, items.length);
     const selected = Object.freeze(items.slice(offset, offset + limit));
     const nextOffset = offset + selected.length;
     return Object.freeze({
@@ -204,27 +192,10 @@ function readChannelIds(value: unknown): readonly string[] | undefined {
     if (!Array.isArray(value)) {
         throw notificationError('plugin_notification_invalid_request', 'Notification channel ids are invalid');
     }
-    const lengthDescriptor = Object.getOwnPropertyDescriptor(value, 'length');
-    const length = lengthDescriptor && 'value' in lengthDescriptor ? lengthDescriptor.value : undefined;
-    if (typeof length !== 'number'
-        || !Number.isSafeInteger(length)
-        || length < 1
-        || length > MAX_NOTIFICATION_CHANNELS) {
+    if (!value.every((item): item is string => typeof item === 'string')) {
         throw notificationError('plugin_notification_invalid_request', 'Notification channel ids are invalid');
     }
-    const allowedKeys = new Set(['length', ...Array.from({ length }, (_, index) => String(index))]);
-    if (Reflect.ownKeys(value).some((key) => typeof key !== 'string' || !allowedKeys.has(key))) {
-        throw notificationError('plugin_notification_invalid_request', 'Notification channel ids must be plain data');
-    }
-    const result: string[] = [];
-    for (let index = 0; index < length; index += 1) {
-        const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
-        if (!descriptor?.enumerable || !('value' in descriptor) || typeof descriptor.value !== 'string') {
-            throw notificationError('plugin_notification_invalid_request', 'Notification channel ids must be plain strings');
-        }
-        result.push(descriptor.value);
-    }
-    return Object.freeze(result);
+    return Object.freeze([...value]);
 }
 
 function readRequest(request: Parameters<PluginNotificationsService['send']>[0]): Readonly<{
@@ -236,39 +207,22 @@ function readRequest(request: Parameters<PluginNotificationsService['send']>[0])
     data?: JsonValue;
 }> {
     try {
-        if (!request || typeof request !== 'object' || Array.isArray(request)
-            || (Object.getPrototypeOf(request) !== Object.prototype && Object.getPrototypeOf(request) !== null)) {
+        if (!request || typeof request !== 'object' || Array.isArray(request)) {
             throw notificationError('plugin_notification_invalid_request', 'Notification request is invalid');
         }
         const allowedKeys = new Set(['clientRequestId', 'categoryId', 'title', 'body', 'channelIds', 'data']);
-        const ownKeys = Reflect.ownKeys(request);
-        if (ownKeys.some((key) => typeof key !== 'string' || !allowedKeys.has(key))) {
+        if (Object.keys(request).some((key) => !allowedKeys.has(key))) {
             throw notificationError('plugin_notification_invalid_request', 'Notification request contains unknown fields');
         }
-        const readField = (key: string): unknown => {
-            const descriptor = Object.getOwnPropertyDescriptor(request, key);
-            if (!descriptor) return undefined;
-            if (!descriptor.enumerable || !('value' in descriptor)) {
-                throw notificationError('plugin_notification_invalid_request', 'Notification request fields must be plain data');
-            }
-            return descriptor.value;
-        };
-        const clientRequestId = readField('clientRequestId');
-        const categoryId = readField('categoryId');
-        const title = readField('title');
-        const body = readField('body');
-        const channelIds = readChannelIds(readField('channelIds'));
-        const rawData = readField('data');
+        const { clientRequestId, categoryId, title, body } = request;
+        const channelIds = readChannelIds(request.channelIds);
+        const rawData = request.data;
         if (typeof clientRequestId !== 'string'
             || clientRequestId.length < 1
-            || clientRequestId.length > MAX_CLIENT_REQUEST_ID_CODE_UNITS
-            || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u.test(clientRequestId)
             || typeof categoryId !== 'string'
             || typeof title !== 'string'
             || title.length < 1
-            || title.length > MAX_NOTIFICATION_TITLE_CODE_UNITS
-            || (body !== undefined && (typeof body !== 'string' || body.length > MAX_NOTIFICATION_BODY_CODE_UNITS))
-            || (channelIds !== undefined && channelIds.some((id) => typeof id !== 'string'))) {
+            || (body !== undefined && typeof body !== 'string')) {
             throw notificationError('plugin_notification_invalid_request', 'Notification request is invalid');
         }
         const data = rawData === undefined
@@ -277,9 +231,6 @@ function readRequest(request: Parameters<PluginNotificationsService['send']>[0])
                 path: 'notification data',
                 invalid: (message) => notificationError('plugin_notification_invalid_request', message),
             }) as JsonValue;
-        if (data !== undefined && Buffer.byteLength(canonicalJson(data), 'utf8') > MAX_NOTIFICATION_DATA_BYTES) {
-            throw notificationError('plugin_notification_invalid_request', 'Notification data exceeds the encoded byte limit');
-        }
         return Object.freeze({
             clientRequestId,
             categoryId,
@@ -308,20 +259,10 @@ function readSenderResult(
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
         return outcomeUnknown();
     }
-    try {
-        const prototype = Object.getPrototypeOf(value);
-        if (prototype !== Object.prototype && prototype !== null) return outcomeUnknown();
-    } catch {
-        return outcomeUnknown();
-    }
+    const record = value as Readonly<Record<string, unknown>>;
     const allowedKeys = new Set(['deliveryId', 'channelId', 'status', 'evidence', 'code', 'retryable']);
-    const fields = new Map<string, unknown>();
-    for (const key of Reflect.ownKeys(value)) {
-        if (typeof key !== 'string' || !allowedKeys.has(key)) return outcomeUnknown();
-        const descriptor = Object.getOwnPropertyDescriptor(value, key);
-        if (!descriptor?.enumerable || !('value' in descriptor)) return outcomeUnknown();
-        fields.set(key, descriptor.value);
-    }
+    const fields = new Map(Object.keys(record).map((key) => [key, record[key]]));
+    if ([...fields.keys()].some((key) => !allowedKeys.has(key))) return outcomeUnknown();
     if (fields.get('deliveryId') !== deliveryId || fields.get('channelId') !== channelId) {
         return outcomeUnknown();
     }
@@ -340,8 +281,7 @@ function readSenderResult(
     const code = fields.get('code');
     if ((status === 'suppressed' || status === 'failed')
         && typeof code === 'string'
-        && code.length >= 1
-        && code.length <= MAX_NOTIFICATION_RESULT_CODE_UNITS) {
+        && code.length >= 1) {
         const retryable = fields.get('retryable');
         if (status === 'suppressed' && fields.size !== 4) return outcomeUnknown();
         if (status === 'failed' && fields.size !== (retryable === undefined ? 4 : 5)) return outcomeUnknown();
@@ -430,9 +370,7 @@ export type NotificationCategoryDeclaration = Readonly<Pick<
 >>;
 
 export function createStablePluginNotificationsOwner(host: StablePluginNotificationsHost): StablePluginNotificationsOwner {
-    const now = host.now ?? Date.now;
     const operations = new Map<string, OperationRecord>();
-    const settledAtByResult = new WeakMap<Promise<PluginNotificationBatchResult>, number>();
     const hostPolicyFacts = resolveInvocationContributionPolicyFacts();
 
     function hostChannelRef(channel: ResolvedNotificationChannelContribution) {
@@ -457,32 +395,6 @@ export function createStablePluginNotificationsOwner(host: StablePluginNotificat
         } catch {
             return null;
         }
-    }
-
-    function operationExpiry(record: OperationRecord): number | null {
-        // Retention begins only after terminal evidence exists. Expiring an
-        // in-flight sender would let the same request id dispatch twice.
-        const settledAt = settledAtByResult.get(record.result);
-        return settledAt === undefined
-            ? null
-            : settledAt + PLUGIN_NOTIFICATION_IDEMPOTENCY_RETENTION_MS;
-    }
-
-    function purgeOperations(timestamp: number): void {
-        for (const [key, record] of operations) {
-            const expiry = operationExpiry(record);
-            if (expiry !== null && timestamp >= expiry) operations.delete(key);
-        }
-    }
-
-    function capacityRetryAfterMs(timestamp: number): number | null {
-        let earliestExpiry = Number.POSITIVE_INFINITY;
-        for (const record of operations.values()) {
-            const expiry = operationExpiry(record);
-            if (expiry !== null) earliestExpiry = Math.min(earliestExpiry, expiry);
-        }
-        if (!Number.isFinite(earliestExpiry)) return null;
-        return Math.max(1, Math.min(Number.MAX_SAFE_INTEGER, Math.ceil(earliestExpiry - timestamp)));
     }
 
     return Object.freeze({
@@ -690,15 +602,7 @@ export function createStablePluginNotificationsOwner(host: StablePluginNotificat
                 });
                 const requestFingerprint = fingerprint(normalizedRequest);
                 const key = operationKey(seed, request.categoryId, request.clientRequestId);
-                const timestamp = now();
-                let existing = operations.get(key);
-                if (existing) {
-                    const expiry = operationExpiry(existing);
-                    if (expiry !== null && timestamp >= expiry) {
-                        operations.delete(key);
-                        existing = undefined;
-                    }
-                }
+                const existing = operations.get(key);
                 if (existing) {
                     if (existing.fingerprint !== requestFingerprint) {
                         throw notificationError('plugin_notification_request_conflict', 'Notification request id was already bound to different content');
@@ -707,18 +611,6 @@ export function createStablePluginNotificationsOwner(host: StablePluginNotificat
                     return Object.freeze({ deliveries: result.deliveries, replayed: true });
                 }
                 if (options?.signal?.aborted) throw notificationWaitAborted(false);
-                if (operations.size >= MAX_NOTIFICATION_OPERATIONS) {
-                    purgeOperations(timestamp);
-                    if (operations.size >= MAX_NOTIFICATION_OPERATIONS) {
-                        const retryAfterMs = capacityRetryAfterMs(timestamp);
-                        throw new PluginError({
-                            code: 'plugin_notification_capacity_unavailable',
-                            message: 'Notification idempotency capacity is unavailable',
-                            retryable: true,
-                            ...(retryAfterMs === null ? {} : { details: { retryAfterMs } }),
-                        });
-                    }
-                }
 
                 const operationSignal = options?.signal
                     ? AbortSignal.any([seed.signal, options.signal])
@@ -809,16 +701,12 @@ export function createStablePluginNotificationsOwner(host: StablePluginNotificat
                     return Object.freeze({ deliveries: Object.freeze(deliveries), replayed: false });
                 })();
                 operations.set(key, Object.freeze({ fingerprint: requestFingerprint, result }));
-                void result.then(
-                    () => settledAtByResult.set(result, now()),
-                    () => settledAtByResult.set(result, now()),
-                );
                 return await waitForOperationResult(result, options?.signal);
             };
 
             const listChannels: PluginNotificationsService['listChannels'] = async (options) => {
                 ensureCurrent(seed, options?.signal);
-                const { offset, limit } = readPageOptions(options);
+                const { offset, limit } = readPageOptions(options, sortedChannels.length);
                 const selected = sortedChannels.slice(offset, offset + limit);
                 const items = [];
                 for (const [id, channel] of selected) {
