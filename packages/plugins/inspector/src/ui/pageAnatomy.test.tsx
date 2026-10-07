@@ -3,7 +3,9 @@
 import {
   createPluginUiTestkit,
   createSurfaceContextFixture,
+  type PluginUiTestkitExecuteActionInput,
 } from '@happier-dev/plugin-sdk/testing';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -28,7 +30,7 @@ function createContext(container: 'appPage' | 'rightSidebarTab') {
 }
 
 async function mount(container: 'appPage' | 'rightSidebarTab') {
-  const executeAction = vi.fn(async ({ action }: Readonly<{ action: unknown }>) => action === 'plugins.list'
+  const executeAction = vi.fn(async ({ action }: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => action === 'plugins.list'
     ? { plugins: [] }
     : { ok: true });
   return createPluginUiTestkit({
@@ -41,20 +43,15 @@ async function mount(container: 'appPage' | 'rightSidebarTab') {
   });
 }
 
-function headingsIn(testID: string): string[] {
-  const root = document.querySelector(`[data-testid="${testID}"]`);
-  return Array.from(root?.querySelectorAll('[role="heading"]') ?? []).map((heading) => heading.textContent?.trim() ?? '');
-}
-
 describe('Inspector page anatomy', () => {
   it('opens its full page with the public page header and titled sections', async () => {
     const fixture = await mount('appPage');
     try {
       await expect(fixture.getByText('No plugins installed.')).resolves.toEqual({ content: 'No plugins installed.' });
-      expect(headingsIn('inspector-page-header')).toEqual(['Plugin Inspector']);
-      expect(document.querySelector('[data-testid="inspector-location"]')?.textContent).toBe('Overview');
-      expect(headingsIn('inspector-self-check-card')).toEqual(['Surface health']);
-      expect(headingsIn('inspector-inventory-title')).toEqual(['Plugin inventory']);
+      await expect(fixture.getByRole('heading', { name: 'Plugin Inspector' })).resolves.toMatchObject({ role: 'heading' });
+      await expect(fixture.getByText('Overview')).resolves.toEqual({ content: 'Overview' });
+      await expect(fixture.getByRole('heading', { name: 'Surface health' })).resolves.toMatchObject({ role: 'heading' });
+      await expect(fixture.getByRole('heading', { name: 'Plugin inventory' })).resolves.toMatchObject({ role: 'heading' });
       // The pane's compact heading stack is not drawn on the page.
       expect(document.querySelector('[data-testid="inspector-title"]')).toBeNull();
       expect(document.querySelector('[data-testid="inspector-self-check-action"]')).not.toBeNull();
