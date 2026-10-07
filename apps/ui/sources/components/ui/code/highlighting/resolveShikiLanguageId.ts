@@ -1,5 +1,5 @@
 import type { BundledLanguage } from 'shiki';
-import { bundledLanguages } from 'shiki';
+import { bundledLanguages } from 'shiki/langs';
 
 export type ResolvedShikiLanguageId = BundledLanguage | 'text';
 
@@ -15,7 +15,7 @@ const SHIKI_LANGUAGE_ALIASES: Record<string, string> = {
 
 function isSupportedBundledLanguage(lang: string): boolean {
     if (lang === 'text') return true;
-    return Object.prototype.hasOwnProperty.call(bundledLanguages as any, lang);
+    return Object.prototype.hasOwnProperty.call(bundledLanguages, lang);
 }
 
 export function resolveShikiLanguageId(language: string): ResolvedShikiLanguageId {
