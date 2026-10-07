@@ -265,6 +265,7 @@ describe('activate', () => {
             { path: 'AGENTS.override.md', mode: 'linked_or_copied' },
             { path: 'instructions.md', mode: 'linked_or_copied' },
             { path: 'prompts', mode: 'linked_or_copied' },
+            { path: 'plugins', mode: 'linked_or_copied' },
             { path: 'agents', mode: 'linked_or_copied' },
             { path: 'skills', mode: 'linked_or_copied' },
             { path: 'rules', mode: 'linked_or_copied' },

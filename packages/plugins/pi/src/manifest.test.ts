@@ -65,6 +65,7 @@ describe('Pi plugin manifest', () => {
             },
             sources: [{
               sourceKind: 'piAgentDir',
+              contentSearch: false,
               schema: {
                 fields: [
                   { kind: 'literal', name: 'kind', value: 'piAgentDir' },

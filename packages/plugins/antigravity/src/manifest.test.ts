@@ -69,6 +69,7 @@ describe('Antigravity plugin manifest', () => {
             },
             sources: [{
               sourceKind: 'antigravityCliPrint',
+              contentSearch: false,
               schema: {
                 fields: [
                   { kind: 'literal', name: 'kind', value: 'antigravityCliPrint' },

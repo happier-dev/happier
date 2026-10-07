@@ -278,6 +278,7 @@ describe('activate', () => {
                         supported: true,
                         modes: ['linked', 'copied', 'isolated'],
                         entries: [
+                            { path: 'CLAUDE.md', mode: 'linked_or_copied' },
                             { path: 'settings.json', mode: 'linked_or_copied' },
                             { path: 'settings.local.json', mode: 'linked_or_copied' },
                             { path: 'agents', mode: 'linked_or_copied' },

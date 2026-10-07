@@ -125,6 +125,7 @@ describe('Codex plugin manifest', () => {
     expect(PLUGIN_MANIFEST.contributes.voiceProviders).toEqual([{
       id: 'realtime-codex',
       title: 'Codex Realtime Voice — Experimental',
+      mark: { kind: 'agent', agentId: 'codex' },
       kind: 'conversation',
       roles: [
         'conversation_stt',
@@ -144,6 +145,14 @@ describe('Codex plugin manifest', () => {
       settings: {
         schemaVersion: 2,
         fields: [],
+        privacyFacts: {
+          processor: 'Codex Live · OpenAI',
+          audioDestination: 'OpenAI',
+          retention: {
+            key: 'settingsVoice.pages.privacy.servicePolicy',
+            fallback: 'Follows your service account settings and terms.',
+          },
+        },
         privacyDisclosure: {
           key: 'settingsVoice.realtimeProviders.codex.privacyDisclosure',
           fallback: 'Audio and the Codex Live conversation are sent from this device to OpenAI using WebRTC. The selected Codex session and Connected Services account run through the selected machine. OpenAI may receive bounded startup and session context and delegated Codex results so the conversation can continue and responses can be spoken. Happier’s server and relay do not carry Codex Live audio; the Happier daemon/app-server still carries signaling, session lifecycle, delegation, tools, and permission control. Provider-operated network relays may participate. Codex or OpenAI may retain developer instructions, realtime conversation material, and related diagnostics in provider-native runtime storage according to the selected account and provider policies; Happier does not delete or rewrite that provider-native data.',

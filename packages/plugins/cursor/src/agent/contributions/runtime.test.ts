@@ -9,6 +9,18 @@ describe('Cursor Agent preflight declaration', () => {
       toolId: 'cursor-agent',
       args: ['models'],
       ci: 'omit',
+      prepareCommand: expect.any(Function),
+    });
+    expect(models.command.prepareCommand({
+      accountSettings: null,
+      environment: {},
+      pluginSettings: { daemon: {
+        cursorBinaryPath: '/opt/cursor-agent',
+        cursorApiEndpoint: 'https://cursor.example.test',
+      } },
+    })).toEqual({
+      args: ['-e', 'https://cursor.example.test', 'models'],
+      preferredPath: '/opt/cursor-agent',
     });
     const parsed = await models?.parseOutput?.({
       ok: true,
