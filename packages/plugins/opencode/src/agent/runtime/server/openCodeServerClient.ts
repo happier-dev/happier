@@ -768,7 +768,7 @@ export function createOpenCodeServerClient(input: Readonly<{
   const readV2Catalog = async (
     path: '/api/command' | '/api/skill',
     directory?: string | null,
-  ): Promise<unknown[]> => {
+  ): Promise<readonly unknown[]> => {
     const query = locationQuery(directory);
     const operation = path === '/api/command' ? 'command_catalog' : 'skill_catalog';
     // OpenCode 2.0.15/2.0.20 integration.list awaits Plugin.awaitActivation;
