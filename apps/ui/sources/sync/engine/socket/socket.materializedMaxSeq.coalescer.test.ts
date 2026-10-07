@@ -1,10 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts', async () => {
-    const { emptyBundledPluginUiAssetsModule } = await import('@/dev/testkit/mocks/bundledPluginUiAssets');
-    return emptyBundledPluginUiAssetsModule;
-});
-
 import type { ApiUpdateContainer } from '@/sync/api/types/apiTypes';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
@@ -15,6 +10,7 @@ import {
 import { handleUpdateContainer } from './socket';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { Encryption } from '@/sync/encryption/encryption';
 
 const initialStorageState = storage.getState();
 
@@ -204,11 +200,11 @@ describe('socket new-message + coalescer: materialized max seq', () => {
         markSessionSurfaceVisible('s1');
         storage.setState((prev) => ({
             ...prev,
-            sessions: { ...prev.sessions, s1: buildSession('s1') },
+            sessions: { ...prev.sessions, s1: { ...buildSession('s1'), encryptionMode: 'plain' } },
             settings: {
                 ...prev.settings,
                 transcriptStreamingCoalesceEnabled: true,
-                transcriptStreamingCoalesceWindowMs: 50,
+                transcriptStreamingCoalesceWindowMs: 900,
                 transcriptStreamingCoalesceMaxBatchSize: 1_000,
             },
         }));
@@ -225,20 +221,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
         });
 
         const baseParams: Omit<Parameters<typeof handleUpdateContainer>[0], 'updateData'> = {
-            encryption: {
-                getSessionEncryption: () => ({
-                    decryptMessage: async (msg: any) => ({
-                        id: msg.id,
-                        localId: null,
-                        createdAt: 1_000,
-                        content: { role: 'user', content: { type: 'text', text: 'hi' } },
-                    }),
-                }),
-                getMachineEncryption: () => null,
-                removeSessionEncryption: () => {},
-                decryptEncryptionKey: async () => null as Uint8Array | null,
-                initializeMachines: async () => {},
-            } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
+            encryption: await Encryption.create(new Uint8Array(32)),
             artifactDataKeys: new Map(),
             applySessions,
             fetchSessions: vi.fn(),
@@ -261,14 +244,16 @@ describe('socket new-message + coalescer: materialized max seq', () => {
             log: { log: vi.fn() },
         };
 
-        await handleUpdateContainer({ ...baseParams, updateData: buildNewMessageUpdate({ sessionId: 's1', messageId: 'm2', messageSeq: 2 }) });
-        await handleUpdateContainer({ ...baseParams, updateData: buildNewMessageUpdate({ sessionId: 's1', messageId: 'm3', messageSeq: 3 }) });
+        await handleUpdateContainer({ ...baseParams, updateData: buildPlainNewMessageUpdate({ sessionId: 's1', messageId: 'm2', messageSeq: 2, text: 'first' }) });
+        await handleUpdateContainer({ ...baseParams, updateData: buildPlainNewMessageUpdate({ sessionId: 's1', messageId: 'm3', messageSeq: 3, text: 'second' }) });
 
         expect(applyMessages).toHaveBeenCalledTimes(1);
         expect(markSessionMaterializedMaxSeq).toHaveBeenCalledWith('s1', 2);
         expect(onMessageGapDetected).not.toHaveBeenCalled();
 
-        await vi.runAllTimersAsync();
+        await vi.advanceTimersByTimeAsync(899);
+        expect(materializedMaxSeq).toBe(2);
+        await vi.advanceTimersByTimeAsync(1);
 
         expect(applyMessages).toHaveBeenCalledTimes(2);
         expect(markSessionMaterializedMaxSeq).toHaveBeenCalledWith('s1', 3);

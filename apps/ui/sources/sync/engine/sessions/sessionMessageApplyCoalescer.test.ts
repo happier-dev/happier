@@ -34,6 +34,24 @@ describe('createSessionMessageApplyCoalescer', () => {
         syncPerformanceTelemetry.reset();
     });
 
+    it('preserves a coalescing delay beyond the native timer frontier', async () => {
+        vi.useRealTimers();
+        const applied: string[] = [];
+        const coalescer = createSessionMessageApplyCoalescer({
+            getConfig: () => ({ enabled: true, windowMs: 2_147_483_648, maxBatchSize: 200 }),
+            applyBatch: (_sessionId, messages) => applied.push(...messages.map((message) => message.id)),
+        });
+        try {
+            coalescer.enqueue('long-window', [buildUserTextMessage('deferred', 1)], { deferLeadingBatch: true });
+            await new Promise((resolve) => setTimeout(resolve, 25));
+            expect(applied).toEqual([]);
+            coalescer.flush('long-window');
+            expect(applied).toEqual(['deferred']);
+        } finally {
+            coalescer.dropSessionIds(['long-window']);
+        }
+    });
+
     it('applies the first enqueue immediately and coalesces trailing enqueues per session', async () => {
         const applied: Array<{ sessionId: string; messageIds: string[] }> = [];
         const applyBatch = vi.fn((sessionId: string, messages: NormalizedMessage[]) => {

@@ -12,45 +12,31 @@ import { SettingAnchor, SettingRow } from '@/components/settings/shell/SettingRo
 import type { SettingRef } from '@/components/settings/catalog/settingDeclarations';
 import { TRANSCRIPT_ADVANCED_SETTINGS } from '@/components/settings/session/transcriptAdvancedSettings';
 
-/** Each number's accepted range; a typed value outside it is saved as the nearest bound. */
-const BOUNDS = {
-    COALESCE_WINDOW_MS: { min: 0, max: 200 },
-    COALESCE_MAX_BATCH: { min: 1, max: 2000 },
-    THINKING_STALE_MS: { min: 5000, max: 600_000 },
-    MOTION_FRESHNESS_MS: { min: 0, max: 600_000 },
-    PIN_OFFSET_PX: { min: 0, max: 400 },
-    JUMP_MIN_NEW_COUNT: { min: 1, max: 999 },
-} as const;
-
-function clampInt(value: number, bounds: Readonly<{ min: number; max: number }>): number {
-    if (!Number.isFinite(value)) return bounds.min;
-    return Math.min(bounds.max, Math.max(bounds.min, Math.trunc(value)));
-}
-
 function formatInteger(value: unknown): string {
     return typeof value === 'number' && Number.isFinite(value) ? String(Math.trunc(value)) : '';
 }
 
 /**
  * A declared whole-number setting on this page: the shared inline field (`FieldValueItem`), with the
- * typed number moved to the setting's bounds before it is saved.
+ * nonnegative whole-number preference saved without a separate page-local ceiling.
  */
-function BoundedIntegerSettingRow(props: Readonly<{
+function IntegerSettingRow(props: Readonly<{
     setting: SettingRef;
     value: unknown;
-    bounds: Readonly<{ min: number; max: number }>;
     onCommit: (next: number) => void;
     disabled?: boolean;
     testID?: string;
     showDivider?: boolean;
 }>) {
     const saved = formatInteger(props.value);
-    const { bounds, onCommit } = props;
+    const { onCommit } = props;
     const commit = React.useCallback((draft: string) => {
-        const next = clampInt(Number(draft), bounds);
+        const value = Number(draft);
+        if (!Number.isFinite(value)) return saved;
+        const next = Math.max(0, Math.trunc(value));
         if (String(next) !== saved) onCommit(next);
         return String(next);
-    }, [bounds, onCommit, saved]);
+    }, [onCommit, saved]);
     return (
         <SettingAnchor setting={props.setting} showDivider={props.showDivider}>
             <FieldValueItem
@@ -110,18 +96,16 @@ export const TranscriptRenderingAdvancedSettingsView = React.memo(function Trans
                     showChevron={false}
                     onPress={() => setTranscriptStreamingCoalesceEnabled((transcriptStreamingCoalesceEnabled !== true) as any)}
                 />
-                <BoundedIntegerSettingRow
+                <IntegerSettingRow
                     setting={settings.coalesceWindow}
                     testID="settings-transcript-advanced-coalesce-window"
                     value={transcriptStreamingCoalesceWindowMs}
-                    bounds={BOUNDS.COALESCE_WINDOW_MS}
                     onCommit={(next) => setTranscriptStreamingCoalesceWindowMs(next as any)}
                 />
-                <BoundedIntegerSettingRow
+                <IntegerSettingRow
                     setting={settings.coalesceMaxBatch}
                     testID="settings-transcript-advanced-coalesce-max-batch"
                     value={transcriptStreamingCoalesceMaxBatchSize}
-                    bounds={BOUNDS.COALESCE_MAX_BATCH}
                     onCommit={(next) => setTranscriptStreamingCoalesceMaxBatchSize(next as any)}
                 />
                 <SettingRow
@@ -135,11 +119,10 @@ export const TranscriptRenderingAdvancedSettingsView = React.memo(function Trans
                     showChevron={false}
                     onPress={() => setTranscriptStreamingPartialOutputEnabled((transcriptStreamingPartialOutputEnabled === false) as any)}
                 />
-                <BoundedIntegerSettingRow
+                <IntegerSettingRow
                     setting={settings.thinkingPulseStale}
                     testID="settings-transcript-advanced-thinking-stale"
                     value={transcriptThinkingPulseStaleMs}
-                    bounds={BOUNDS.THINKING_STALE_MS}
                     onCommit={(next) => setTranscriptThinkingPulseStaleMs(next as any)}
                 />
             </ItemGroup>
@@ -150,11 +133,10 @@ export const TranscriptRenderingAdvancedSettingsView = React.memo(function Trans
                     ? t('settingsSession.transcript.advanced.motionFooter')
                     : t('settingsSessionPages.transcript.advancedMotionOff')}
             >
-                <BoundedIntegerSettingRow
+                <IntegerSettingRow
                     setting={settings.freshness}
                     testID="settings-transcript-advanced-freshness"
                     value={transcriptMotionFreshnessMs}
-                    bounds={BOUNDS.MOTION_FRESHNESS_MS}
                     disabled={!canAdjustMotion}
                     onCommit={(next) => setTranscriptMotionFreshnessMs(next as any)}
                 />
@@ -229,11 +211,10 @@ export const TranscriptRenderingAdvancedSettingsView = React.memo(function Trans
                 title={t('settingsSession.transcript.scrollTitle')}
                 description={t('settingsSession.transcript.advanced.scrollFooter')}
             >
-                <BoundedIntegerSettingRow
+                <IntegerSettingRow
                     setting={settings.pinOffset}
                     testID="settings-transcript-advanced-pin-offset"
                     value={transcriptScrollPinOffsetThresholdPx}
-                    bounds={BOUNDS.PIN_OFFSET_PX}
                     onCommit={(next) => setTranscriptScrollPinOffsetThresholdPx(next as any)}
                 />
                 <SettingRow
@@ -247,11 +228,10 @@ export const TranscriptRenderingAdvancedSettingsView = React.memo(function Trans
                     showChevron={false}
                     onPress={() => setTranscriptScrollAutoFollowWhenPinned((transcriptScrollAutoFollowWhenPinned !== true) as any)}
                 />
-                <BoundedIntegerSettingRow
+                <IntegerSettingRow
                     setting={settings.jumpMinNewCount}
                     testID="settings-transcript-advanced-jump-min-count"
                     value={transcriptScrollJumpToBottomMinNewCount}
-                    bounds={BOUNDS.JUMP_MIN_NEW_COUNT}
                     onCommit={(next) => setTranscriptScrollJumpToBottomMinNewCount(next as any)}
                 />
                 <SettingRow

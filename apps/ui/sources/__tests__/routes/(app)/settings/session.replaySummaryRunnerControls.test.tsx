@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { HAPPIER_REPLAY_SEED_MAX_CHARS, HAPPIER_REPLAY_SEED_MIN_CHARS } from '@happier-dev/protocol';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import {
     installSessionSettingsEntryModuleMocks,
@@ -111,15 +110,11 @@ describe('Session resume settings (Replay summary runner controls)', () => {
         expect(summaryRunnerPickers).toHaveLength(0);
     });
 
-    // The entering half of the defect. A budget below the floor was accepted
-    // verbatim and produced no seed at all, so the screen must refuse to
-    // produce one rather than storing what was typed.
     it.each([
-        { typed: '500', stored: HAPPIER_REPLAY_SEED_MIN_CHARS },
-        { typed: String(HAPPIER_REPLAY_SEED_MIN_CHARS - 1), stored: HAPPIER_REPLAY_SEED_MIN_CHARS },
-        { typed: String(HAPPIER_REPLAY_SEED_MIN_CHARS), stored: HAPPIER_REPLAY_SEED_MIN_CHARS },
-        { typed: '999999', stored: HAPPIER_REPLAY_SEED_MAX_CHARS },
-    ])('commits a typed budget of $typed as $stored', async ({ typed, stored }) => {
+        { typed: '1', stored: 1 },
+        { typed: '500', stored: 500 },
+        { typed: '524288', stored: 524288 },
+    ])('retains the selected positive integer budget $typed', async ({ typed, stored }) => {
         sessionSettingsEntryState.settingsState.sessionReplayEnabled = true;
 
         const mod = await import('@/app/(app)/settings/session/resume');
@@ -135,26 +130,33 @@ describe('Session resume settings (Replay summary runner controls)', () => {
         expect(sessionSettingsEntryState.settingsState.sessionReplayMaxSeedChars).toBe(stored);
     });
 
+    // Integer draft filtering and the mobile numeric keyboard remain the
+    // shared field owner's contract; empty/non-number drafts return to saved.
+    it.each(['0', 'NaN', 'Infinity', 'invalid'])(
+        'leaves the saved budget unchanged for invalid draft %s', async (typed) => {
+            const mod = await import('@/app/(app)/settings/session/resume');
+            const screen = await renderScreen(React.createElement(mod.default));
+            await act(async () => { maxSeedCharsField(screen).onChangeText(typed); });
+            await act(async () => { maxSeedCharsField(screen).onBlur(); });
+            expect(sessionSettingsEntryState.settingsState.sessionReplayMaxSeedChars).toBe(50_000);
+            expect(maxSeedCharsField(screen).value).toBe('50000');
+        },
+    );
+
     // Both live replay routes pass `recentMessagesCount: null` on purpose: the
     // seed is bounded by CHARACTERS. Only the compatibility-only
     // `continueWithReplay` ingress reads the count, so the control could not
     // change any outcome a user can reach. The stored key stays.
-    it('states the budget bounds it will clamp to, and names the field programmatically', async () => {
+    it('names the field programmatically and connects its description', async () => {
         sessionSettingsEntryState.settingsState.sessionReplayEnabled = true;
 
         const mod = await import('@/app/(app)/settings/session/resume');
         const screen = await renderScreen(React.createElement(mod.default));
 
-        const expectedRange =
-            `settingsSession.replayResume.maxSeedCharsRange(min=${HAPPIER_REPLAY_SEED_MIN_CHARS},max=${HAPPIER_REPLAY_SEED_MAX_CHARS})`;
         const [row] = maxSeedCharsRows(screen);
-        // A field that silently moves an out-of-range number to the nearest
-        // limit has to name its bounds, visibly (the row's description) and
-        // on the field itself, because the visible label is not attached to it.
         expect(row?.props.title).toBe('settingsSessionPages.resume.maxSeedCharsTitle');
-        expect(row?.props.subtitle).toBe(expectedRange);
         expect(maxSeedCharsField(screen).accessibilityLabel).toBe('settingsSessionPages.resume.maxSeedCharsTitle');
-        expect(maxSeedCharsField(screen).accessibilityHint).toBe(expectedRange);
+        expect(maxSeedCharsField(screen).accessibilityHint).toBe(row?.props.subtitle);
     });
 
     it('does not render the recent-messages control that cannot affect any outcome', async () => {
