@@ -235,7 +235,7 @@ describe('executeSessionAction', () => {
             target: createTarget(),
             context: { operations: { setSessionRole } },
         });
-        expect(setSessionRole).toHaveBeenCalledWith('session_1', 'orchestrator');
+        expect(setSessionRole).toHaveBeenCalledWith('session_1', 'orchestrator', { serverId: 'server_1' });
 
         await expect(executeSessionAction({
             actionId: SESSION_ACTION_MAKE_ORCHESTRATOR_ID,

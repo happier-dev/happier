@@ -19,7 +19,7 @@ import {
   MachineAgentInventoryUnavailableError,
   approvalArtifactBodyMatchesHeaderV1,
   buildApprovalRequestArtifactHeaderV1,
-  ApprovalRequestSchema,
+  StoredApprovalRequestSchema,
   normalizeActionsSettingsV1,
   buildBackendTargetKeyV2,
   createActionExecutor,
@@ -2048,8 +2048,8 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
       return written;
     },
 
-    approvalsResolveBlockingDecision: async ({ artifactId, request, decision }) =>
-      await approvalCoordinator.resolveBlockingDecision({ artifactId, request, decision }),
+    approvalsResolveBlockingDecision: async ({ artifactId, request, decision, decisionAuthority }) =>
+      await approvalCoordinator.resolveBlockingDecision({ artifactId, request, decision, decisionAuthority }),
 
     approvalsWaitForDecision: async ({ artifactId, request, serverId, signal }) => {
       const accountLifetime = accountContext?.accountLifetime ?? captureActiveServerAccountScopeLifetime();
@@ -2086,7 +2086,7 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
           return parsed?.family === 'built_in' ? parsed.request : null;
         },
       });
-      return { ...decision, request: ApprovalRequestSchema.parse(decision.request) };
+      return { ...decision, request: StoredApprovalRequestSchema.parse(decision.request) };
     },
 
     promptDocGet: async (args) => readPromptDocInLibrary({ store: promptLibraryStore, ...args }),

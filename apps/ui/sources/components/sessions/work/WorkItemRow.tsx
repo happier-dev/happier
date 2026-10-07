@@ -306,7 +306,7 @@ const WorkRunMiniMap = React.memo(function WorkRunMiniMap(props: Readonly<{
         return <ObservedRunMiniMap snapshot={snapshot} testIDPrefix={props.testIDPrefix} onOpen={props.onOpen} />;
     }
     const managed = sources?.managedRuns.runs.some((run) => run.id === props.runId) === true;
-    return managed ? <ManagedRunMiniMap runId={props.runId} testIDPrefix={props.testIDPrefix} onOpen={props.onOpen} /> : null;
+    return managed ? <ManagedRunMiniMap runId={props.runId} serverId={sources?.serverId ?? null} testIDPrefix={props.testIDPrefix} onOpen={props.onOpen} /> : null;
 });
 
 const ObservedRunMiniMap = React.memo(function ObservedRunMiniMap(props: Readonly<{
@@ -330,10 +330,11 @@ const ObservedRunMiniMap = React.memo(function ObservedRunMiniMap(props: Readonl
 
 const ManagedRunMiniMap = React.memo(function ManagedRunMiniMap(props: Readonly<{
     runId: string;
+    serverId: string | null;
     testIDPrefix: string;
     onOpen: () => void;
 }>) {
-    const flow = useSessionManagedWorkflowRunFlow(props.runId);
+    const flow = useSessionManagedWorkflowRunFlow(props.runId, props.serverId);
     if (flow === null) return null;
     return (
         <View style={stylesheet.miniMap}>

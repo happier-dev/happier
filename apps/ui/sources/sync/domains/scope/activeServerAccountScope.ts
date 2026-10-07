@@ -21,6 +21,16 @@ let activeLifetime: MutableActiveServerAccountScopeLifetime | null = null;
 
 const NOOP_DISPOSABLE = Object.freeze({ dispose(): void {} });
 
+/** An active-only content source may serve only the requested, proven Home. */
+export function selectActiveServerAccountScopeForServer(
+    activeScope: ServerAccountScope | null,
+    serverId: string | null,
+): ServerAccountScope | null {
+    if (!activeScope) return null;
+    if (!serverId?.trim()) return null;
+    return areServerProfileIdentifiersEquivalent(activeScope.serverId, serverId) ? activeScope : null;
+}
+
 export function getActiveServerAccountScope(): ServerAccountScope | null {
     if (!isAppliedActiveServerRuntimeAvailable()) return null;
     const activeServerId = String(getAppliedActiveServerSnapshot().serverId ?? '').trim();
@@ -39,8 +49,9 @@ function retireLifetime(lifetime: MutableActiveServerAccountScopeLifetime): void
  *
  * This is intentionally a small extension of the existing active-scope owner,
  * not a second epoch or reset bus. `sync.resetServerScopedRuntimeState()`
- * retires it as part of the incumbent generation reset, while a direct scope
- * change is also fenced here before a new capture can be returned.
+ * retires it as part of the incumbent generation reset. Profile scope and
+ * applied-runtime producers also retire it before notifying UI subscribers;
+ * this capture retains a final fence for a direct scope change.
  */
 export function captureActiveServerAccountScopeLifetime(): ActiveServerAccountScopeLifetime | null {
     const scope = getActiveServerAccountScope();

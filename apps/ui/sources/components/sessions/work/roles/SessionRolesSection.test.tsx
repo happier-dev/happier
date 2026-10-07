@@ -1,17 +1,16 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BUILT_IN_ROLES_V1 } from '@happier-dev/protocol';
 import type { Metadata } from '@happier-dev/session-core/state';
 
-import { renderScreen } from '@/dev/testkit';
+import { createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 /** The Action front door is the boundary: every change is a `session.roles.*` / `session.notes.set` Action. */
 const shared = vi.hoisted(() => ({
-    calls: [] as Array<{ actionId: string; input: any }>,
-    metadata: null as Partial<Metadata> | null,
+    calls: [] as Array<{ actionId: string; input: unknown; context: Readonly<{ serverId?: string | null }> }>,
     /** Writes the host refuses (a typed `{ ok: false }`), for the keep-the-draft contract. */
     refused: new Set<string>(),
     alerts: [] as unknown[][],
@@ -31,8 +30,8 @@ vi.mock('@/modal', async () => {
 });
 
 vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({
-    createFrontDoorActionExecute: () => async (actionId: string, input: unknown) => {
-        shared.calls.push({ actionId, input });
+    createFrontDoorActionExecute: () => async (actionId: string, input: unknown, context: Readonly<{ serverId?: string | null }>) => {
+        shared.calls.push({ actionId, input, context });
         if (shared.refused.has(actionId)) return { ok: false, errorCode: 'action_failed', error: 'refused' };
         if (actionId === 'roles.list') {
             return { ok: true, result: { items: [
@@ -54,29 +53,25 @@ vi.mock('@/text', async () => {
     });
 });
 
-// A stub, not the real module plus overrides: the real storage graph reaches the Work pane, which
-// mounts these sections, so importing it here would load them against the unmocked module.
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        useSetting: createUseSettingMock({
-            fallback: (key: string) => {
-                if (key === 'rolesV1') return { overrides: {} };
-                if (key === 'acpCatalogSettingsV1') return { v: 2, backends: [] };
-                if (key === 'backendEnabledByTargetKey') return {};
-                return undefined;
-            },
-        }),
-        useSessionMetadata: () => shared.metadata ? { path: '/repo', host: 'test-machine', ...shared.metadata } : null,
-        useActiveServerAccountScope: () => ({ serverId: 'server-1', accountId: 'account-1' }),
-    });
-});
-
 const { SessionRolesSection } = await import('./SessionRolesSection');
 const { SessionNotesSection } = await import('./SessionNotesSection');
 const { SessionWorkMoreMenu } = await import('../SessionWorkMoreMenu');
 const { SessionHandsOffRow } = await import('@/components/roles/session/sessionRole');
 const { invalidateRoleCatalog } = await import('@/components/roles/catalog/useRoleCatalog');
+const { storage } = await import('@/sync/domains/state/storageStore');
+const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+const { retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+let previousState = storage.getState();
+let previousSnapshot = getAppliedActiveServerSnapshot();
+let previousAvailable = isAppliedActiveServerRuntimeAvailable();
+
+function setMetadata(metadata: Partial<Metadata> | null) {
+    const sessionMetadata = metadata ? { path: '/repo', host: 'test-machine', ...metadata } : null;
+    storage.setState({ sessions: {
+        lead: createSessionFixture({ id: 'lead', serverId: 'server-1', metadata: sessionMetadata }),
+        worker: createSessionFixture({ id: 'worker', serverId: 'server-1', metadata: sessionMetadata }),
+    } });
+}
 
 /** The composite that declared a testID (not the host it painted), for reading its declared props. */
 function declared(screen: { findAll: (predicate: (node: any) => boolean) => any[] }, testID: string, prop: string) {
@@ -84,7 +79,7 @@ function declared(screen: { findAll: (predicate: (node: any) => boolean) => any[
 }
 
 function writes() {
-    return shared.calls.filter((call) => call.actionId !== 'roles.list');
+    return shared.calls.filter((call) => call.actionId !== 'roles.list').map(({ actionId, input }) => ({ actionId, input }));
 }
 
 const researchRole = {
@@ -98,12 +93,17 @@ const researchRole = {
 };
 
 describe('Work › Roles and Notes', () => {
-    beforeEach(() => {
+    beforeEach(async () => { await act(async () => {
+        previousState = storage.getState();
+        previousSnapshot = getAppliedActiveServerSnapshot();
+        previousAvailable = isAppliedActiveServerRuntimeAvailable();
+        publishAppliedActiveServerSnapshot({ serverId: 'server-1', serverUrl: 'https://roles.test', generation: 0 });
+        storage.setState({ profileScope: { serverId: 'server-1', accountId: 'account-1' } });
         shared.calls = [];
         shared.refused = new Set();
         shared.alerts = [];
         shared.platformOS = 'node';
-        shared.metadata = {
+        setMetadata({
             work: {
                 sessionRolesV1: {
                     roleId: 'orchestrator',
@@ -115,8 +115,17 @@ describe('Work › Roles and Notes', () => {
                     notes: 'Keep the ledger backfill inside the API session.',
                 },
             },
-        };
+        });
         invalidateRoleCatalog();
+    }); });
+
+    afterEach(async () => {
+        standardCleanup();
+        await act(async () => {
+            retireActiveServerAccountScopeLifetime();
+            storage.setState(previousState);
+            publishAppliedActiveServerSnapshot(previousSnapshot, previousAvailable);
+        });
     });
 
     it('shows only this session\'s differences on the flat page section, then All roles', async () => {
@@ -142,7 +151,7 @@ describe('Work › Roles and Notes', () => {
     });
 
     it('summarises only what exists: no changes means no count and just All roles', async () => {
-        shared.metadata = { work: { sessionRolesV1: { roleId: 'orchestrator', overrides: {}, sessionRoles: {}, notes: '' } } };
+        setMetadata({ work: { sessionRolesV1: { roleId: 'orchestrator', overrides: {}, sessionRoles: {}, notes: '' } } });
         const screen = await renderScreen(<SessionRolesSection sessionId="lead" />);
         expect(screen.findByTestId('session-agents-section-count:session-work-roles')).toBeNull();
         expect(screen.findByTestId('session-work-roles.row.builder')).toBeNull();
@@ -162,7 +171,7 @@ describe('Work › Roles and Notes', () => {
     });
 
     it('has no ⋯ menu when there is nothing to reset and no sessions under it', async () => {
-        shared.metadata = { work: { sessionRolesV1: { roleId: 'orchestrator', overrides: {}, sessionRoles: {}, notes: '' } } };
+        setMetadata({ work: { sessionRolesV1: { roleId: 'orchestrator', overrides: {}, sessionRoles: {}, notes: '' } } });
         const screen = await renderScreen(<SessionWorkMoreMenu sessionId="lead" hasReports={false} />);
         expect(screen.findByTestId('session-work-more.menu')).toBeNull();
     });
@@ -211,7 +220,7 @@ describe('Work › Roles and Notes', () => {
     });
 
     it('shows one row that starts the notes when there are none', async () => {
-        shared.metadata = { work: { sessionRolesV1: { roleId: 'orchestrator', overrides: {}, sessionRoles: {}, notes: '' } } };
+        setMetadata({ work: { sessionRolesV1: { roleId: 'orchestrator', overrides: {}, sessionRoles: {}, notes: '' } } });
         const screen = await renderScreen(<SessionNotesSection sessionId="lead" />);
         expect(screen.findByTestId('session-work-notes.text')).toBeNull();
         await act(async () => { screen.findByTestId('session-work-notes.add')!.props.onPress(); });
@@ -261,19 +270,34 @@ describe('Work › Roles and Notes', () => {
         expect(screen.findByTestId('session-work-roles.addForm.name')!.props.value).toBe('Reviewer');
     });
 
-    it('keeps a cross-owner worker\'s copied roles and notes read-only', async () => {
-        const roles = await renderScreen(<SessionRolesSection sessionId="worker" copiedAtSpawn />);
-        expect(declared(roles, 'session-work-roles.all', 'onPress')).toBeNull();
-        expect(roles.findByTestId('session-work-roles.add')).toBeNull();
-        const notes = await renderScreen(<SessionNotesSection sessionId="worker" copiedAtSpawn />);
-        expect(notes.findByTestId('session-work-notes.edit')).toBeNull();
+    it('allows changing a worker\'s own copied roles and notes', async () => {
+        const roles = await renderScreen(<SessionRolesSection sessionId="worker" serverId="server-1" copiedAtSpawn />);
+        expect(declared(roles, 'session-work-roles.all', 'onPress')).toBeTruthy();
+        expect(roles.findByTestId('session-work-roles.add')).toBeTruthy();
+        const notes = await renderScreen(<SessionNotesSection sessionId="worker" serverId="server-1" />);
+        expect(notes.findByTestId('session-work-notes.edit')).toBeTruthy();
+        await act(async () => { roles.findByTestId('session-work-roles.row.builder.reset')!.props.onPress(); });
+        await act(async () => { notes.findByTestId('session-work-notes.edit')!.props.onPress(); });
+        await act(async () => { notes.findByTestId('session-work-notes.field')!.props.onChangeText('Worker notes'); });
+        await act(async () => { notes.findByTestId('session-work-notes.save')!.props.onPress(); });
+        expect(shared.calls.filter((call) => call.actionId.startsWith('session.')).map(({ actionId, context }) => ({ actionId, serverId: context.serverId }))).toEqual([
+            { actionId: 'session.roles.override.clear', serverId: 'server-1' },
+            { actionId: 'session.notes.set', serverId: 'server-1' },
+        ]);
     });
 
-    it('withdraws an open notes editor when copied ownership becomes known', async () => {
-        const notes = await renderScreen(<SessionNotesSection sessionId="worker" />);
+    it('does not offer an empty notes form for an unavailable exact-Home Session', async () => {
+        const notes = await renderScreen(<SessionNotesSection sessionId="worker" serverId="other-home" />);
+        expect(Boolean(notes.findByTestId('session-work-notes.add'))).toBe(false);
+        expect(Boolean(notes.findByTestId('session-work-notes.edit'))).toBe(false);
+        expect(writes()).toEqual([]);
+    });
+
+    it('withdraws an open notes editor when its Home changes', async () => {
+        const notes = await renderScreen(<SessionNotesSection sessionId="worker" serverId="server-1" />);
         await act(async () => { notes.findByTestId('session-work-notes.edit')!.props.onPress(); });
         expect(notes.findByTestId('session-work-notes.field')).toBeTruthy();
-        await act(async () => { notes.update(<SessionNotesSection sessionId="worker" copiedAtSpawn />); });
+        await act(async () => { notes.update(<SessionNotesSection sessionId="worker" serverId="home-b" />); });
         expect(notes.findByTestId('session-work-notes.field')).toBeNull();
         expect(notes.findByTestId('session-work-notes.save')).toBeNull();
         expect(writes()).toEqual([]);

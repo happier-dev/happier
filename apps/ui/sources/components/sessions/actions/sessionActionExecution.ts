@@ -200,7 +200,7 @@ export async function executeSessionAction(params: Readonly<{
             return;
         }
         case SESSION_ACTION_MAKE_ORCHESTRATOR_ID: {
-            const result = await resolveSetSessionRole(params.context)(params.target.sessionId, ORCHESTRATOR_ROLE_ID);
+            const result = await resolveSetSessionRole(params.context)(params.target.sessionId, ORCHESTRATOR_ROLE_ID, { serverId: params.target.serverId });
             if (!result.ok) throw new HappyError(t('sessionWork.actions.makeOrchestratorFailed'), false);
             return;
         }

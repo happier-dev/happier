@@ -23,7 +23,7 @@ import {
     resolveSessionActionDefaultBackend,
     resolveSessionActionDefaultTarget,
 } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
-import { getStorage, useSessionMetadata } from '@/sync/domains/state/storage';
+import { useSessionSelector, useSessionMetadata } from '@/sync/domains/state/storage';
 import { roleActions } from '@/sync/ops/roles/roleActions';
 import { t } from '@/text';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -42,8 +42,8 @@ export function isSessionRoleSnapshotCopiedAcrossOwners(session: Session | null,
 }
 
 /** The session's own role id, as a primitive: closed chrome re-renders only when the role changes. */
-export function useSessionRoleId(sessionId: string): string | null {
-    return getStorage()((state) => readSessionRoleIdV1(state.sessions[sessionId]?.metadata ?? null));
+export function useSessionRoleId(sessionId: string, serverId?: string | null): string | null {
+    return useSessionSelector(sessionId, serverId, (session) => readSessionRoleIdV1(session?.metadata ?? null));
 }
 
 /**
@@ -52,10 +52,10 @@ export function useSessionRoleId(sessionId: string): string | null {
  * explains that its engine applies when starting the role. The session already runs on its Agent,
  * so no enabled-Agents filter.
  */
-function useSessionAgentTargetKey(sessionId: string): string | null {
-    return getStorage()((state) => {
+function useSessionAgentTargetKey(sessionId: string, serverId?: string | null): string | null {
+    return useSessionSelector(sessionId, serverId, (session) => {
         const target = resolveSessionActionDefaultTarget(resolveSessionActionDefaultBackend({
-            session: state.sessions[sessionId] ?? null,
+            session,
         }));
         return target ? resolveBackendTargetKeyV2(target) : null;
     });
@@ -81,13 +81,13 @@ function toArtifact(role: ResolvedRoleV1): RoleArtifactV1 {
  * hands-off. Null while the role is unknown or unresolvable here. The Work tab's Role row and the
  * popover's Hands-off switch read the same answer.
  */
-export function useSessionRoleSelection(sessionId: string, roleId: string | null): Readonly<{
+export function useSessionRoleSelection(sessionId: string, roleId: string | null, serverId?: string | null): Readonly<{
     sessionRoles: ReturnType<typeof readSessionRolesV1>;
     selection: ResolvedRoleV1 | null;
 }> {
-    const metadata = useSessionMetadata(sessionId);
+    const metadata = useSessionMetadata(sessionId, serverId);
     const sessionRoles = React.useMemo(() => readSessionRolesV1(metadata), [metadata]);
-    const catalog = useRoleCatalog();
+    const catalog = useRoleCatalog(serverId);
     const entry = roleId ? catalog.entries.find((candidate) => candidate.roleId === roleId) : undefined;
     const selection = React.useMemo(() => {
         if (!roleId) return null;
@@ -107,8 +107,8 @@ export function useSessionRoleSelection(sessionId: string, roleId: string | null
  * (Settings → session); switching writes the session override. A user may relax an agent-set deny;
  * an agent that tries is refused by the Action host (`workspace_write_escalation_denied`).
  */
-export function SessionHandsOffRow(props: Readonly<{ sessionId: string; roleId: string }>) {
-    const { sessionRoles, selection } = useSessionRoleSelection(props.sessionId, props.roleId);
+export function SessionHandsOffRow(props: Readonly<{ sessionId: string; serverId?: string | null; roleId: string }>) {
+    const { sessionRoles, selection } = useSessionRoleSelection(props.sessionId, props.roleId, props.serverId);
     if (!selection) return null;
     const handsOff = selection.workspaceWrites === 'deny';
     return (
@@ -128,7 +128,7 @@ export function SessionHandsOffRow(props: Readonly<{ sessionId: string; roleId: 
                             ...fields,
                             roleId: props.roleId,
                             workspaceWrites: on ? 'deny' : 'allow',
-                        }).then(settleSessionRoleWrite);
+                        }, { serverId: props.serverId }).then(settleSessionRoleWrite);
                     }}
                 />
             )}
@@ -143,14 +143,15 @@ export function SessionHandsOffRow(props: Readonly<{ sessionId: string; roleId: 
  */
 export function useSessionRolesRailParams(input: Readonly<{
     sessionId: string;
+    serverId?: string | null;
     currentAgentTargetKey: string | null;
 }>): RolesRailPickerOptionParams {
-    const { sessionId, currentAgentTargetKey } = input;
+    const { sessionId, serverId, currentAgentTargetKey } = input;
     const router = useRouter();
-    const value = useSessionRoleId(sessionId);
+    const value = useSessionRoleId(sessionId, serverId);
     const onChange = React.useCallback((roleId: string) => {
-        void roleActions.setSessionRole(sessionId, roleId).then(settleSessionRoleWrite);
-    }, [sessionId]);
+        void roleActions.setSessionRole(sessionId, roleId, { serverId }).then(settleSessionRoleWrite);
+    }, [sessionId, serverId]);
     const describeConsequence = React.useCallback((item: RoleRailItem) => (
         item.agentTargetKey && currentAgentTargetKey && item.agentTargetKey !== currentAgentTargetKey
             ? t('roles.rail.engineAppliesOnStart')
@@ -158,12 +159,13 @@ export function useSessionRolesRailParams(input: Readonly<{
     ), [currentAgentTargetKey]);
     const onManageRoles = React.useCallback(() => { router.push('/settings/roles' as never); }, [router]);
     return React.useMemo(() => ({
+        serverId,
         value,
         onChange,
         describeConsequence,
         onManageRoles,
-        footer: value ? <SessionHandsOffRow sessionId={sessionId} roleId={value} /> : undefined,
-    }), [describeConsequence, onChange, onManageRoles, sessionId, value]);
+        footer: value ? <SessionHandsOffRow sessionId={sessionId} serverId={serverId} roleId={value} /> : undefined,
+    }), [describeConsequence, onChange, onManageRoles, sessionId, serverId, value]);
 }
 
 /**
@@ -172,11 +174,12 @@ export function useSessionRolesRailParams(input: Readonly<{
  */
 export function SessionRolePopover(props: Readonly<{
     sessionId: string;
+    serverId?: string | null;
     anchorRef: React.RefObject<View | null>;
     onRequestClose: () => void;
 }>) {
-    const currentAgentTargetKey = useSessionAgentTargetKey(props.sessionId);
-    const params = useSessionRolesRailParams({ sessionId: props.sessionId, currentAgentTargetKey });
+    const currentAgentTargetKey = useSessionAgentTargetKey(props.sessionId, props.serverId);
+    const params = useSessionRolesRailParams({ sessionId: props.sessionId, serverId: props.serverId, currentAgentTargetKey });
     return (
         <Popover
             open
@@ -191,6 +194,7 @@ export function SessionRolePopover(props: Readonly<{
             {({ maxHeight }) => (
                 <FloatingOverlay maxHeight={maxHeight} scrollEnabled>
                     <RolesRailDetail
+                        serverId={props.serverId}
                         value={params.value}
                         onChange={(roleId) => { params.onChange(roleId); props.onRequestClose(); }}
                         describeConsequence={params.describeConsequence}
@@ -211,12 +215,12 @@ export function SessionRolePopover(props: Readonly<{
  */
 export const SessionRoleValueRow = React.memo(function SessionRoleValueRow(props: Readonly<{
     sessionId: string;
+    serverId?: string | null;
     testID?: string;
-    copiedAtSpawn?: boolean;
 }>) {
     const { sessionId } = props;
-    const roleId = useSessionRoleId(sessionId);
-    const { selection } = useSessionRoleSelection(sessionId, roleId);
+    const roleId = useSessionRoleId(sessionId, props.serverId);
+    const { selection } = useSessionRoleSelection(sessionId, roleId, props.serverId);
     const anchorRef = React.useRef<View>(null);
     const [popoverOpen, setPopoverOpen] = React.useState(false);
     const openPopover = React.useCallback(() => setPopoverOpen(true), []);
@@ -239,11 +243,11 @@ export const SessionRoleValueRow = React.memo(function SessionRoleValueRow(props
                     detail={value}
                     density="compact"
                     accessibilityLabel={t('sessionWork.role.a11y', { role: value })}
-                    onPress={props.copiedAtSpawn ? undefined : openPopover}
+                    onPress={openPopover}
                 />
             </View>
-            {popoverOpen && !props.copiedAtSpawn ? (
-                <SessionRolePopover sessionId={sessionId} anchorRef={anchorRef} onRequestClose={closePopover} />
+            {popoverOpen ? (
+                <SessionRolePopover sessionId={sessionId} serverId={props.serverId} anchorRef={anchorRef} onRequestClose={closePopover} />
             ) : null}
         </>
     );

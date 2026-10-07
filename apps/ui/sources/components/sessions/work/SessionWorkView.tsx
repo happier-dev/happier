@@ -286,9 +286,9 @@ export const SessionWorkView = React.memo((props: Readonly<{
                 onAddTrigger={hasTriggersSection ? scrollToTriggers : null}
                 onKeepGoing={goalControlEntry.available ? goalControlEntry.open : null}
             />
-            <SessionWorkMoreMenu sessionId={props.sessionId} hasReports={hasReports} copiedAtSpawn={copiedAtSpawn} />
+            <SessionWorkMoreMenu sessionId={props.sessionId} serverId={sessionServerId} hasReports={hasReports} />
         </View>
-    ), [canExpandMap, copiedAtSpawn, goalControlEntry, hasReports, hasTriggersSection, launcher, openMapInDetails, props.sessionId, scrollToTriggers, styles.headerActions, view]);
+    ), [canExpandMap, goalControlEntry, hasReports, hasTriggersSection, launcher, openMapInDetails, props.sessionId, sessionServerId, scrollToTriggers, styles.headerActions, view]);
     const subtitle = projection ? readSubtitle(projection) : null;
     const { nothingYet, managedLoading, managedUnavailable } = resolveWorkReadPresentation({
         projection, managedRuns: sources?.managedRuns ?? null, transcriptLoaded: useSessionTranscriptLoaded(props.sessionId),
@@ -370,7 +370,7 @@ export const SessionWorkView = React.memo((props: Readonly<{
                     {/* The top value rows (Role, Goal; lab `convo-W8full`) lie flat on the pane like the
                         sections below (INT r0.4 §6 I4): page `Item` rows on the flat sheet, on the list's inset. */}
                     <WorkFlatSheet testID="session-work-top">
-                        <SessionRoleValueRow sessionId={props.sessionId} copiedAtSpawn={copiedAtSpawn} testID="session-work-role" />
+                        <SessionRoleValueRow sessionId={props.sessionId} serverId={sessionServerId} testID="session-work-role" />
                         {/* FIN 04's slot: the Goal row opens the one Goal control, the composer's. */}
                         <SessionGoalValueRow sessionId={props.sessionId} entry={goalControlEntry} testID="session-work-goal" />
                         <SessionWorkNotifications sessionId={props.sessionId} serverId={sessionServerId} />
@@ -443,9 +443,9 @@ export const SessionWorkView = React.memo((props: Readonly<{
                     {nothingYet ? null : triggersSlot}
                     <View testID="session-work-roles-slot" style={styles.slot}>
                         {/* Lane U2's section. */}
-                        <SessionRolesSection sessionId={props.sessionId} copiedAtSpawn={copiedAtSpawn} />
+                        <SessionRolesSection sessionId={props.sessionId} serverId={sessionServerId} copiedAtSpawn={copiedAtSpawn} />
                     </View>
-                    <SessionNotesSection sessionId={props.sessionId} copiedAtSpawn={copiedAtSpawn} />
+                    <SessionNotesSection sessionId={props.sessionId} serverId={sessionServerId} />
                 </ScrollView>
             </WorkViewportContext.Provider>
         </View>

@@ -1,7 +1,7 @@
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
+import { createSessionFixture, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 
 import { useSessionMetadata } from '@/sync/domains/state/storage';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -14,6 +14,26 @@ afterEach(() => {
 });
 
 describe('useSessionMetadata', () => {
+    it('does not disclose a same-id live record from another Home', async () => {
+        const previousState = storage.getState();
+        try {
+            const metadata = { host: 'home-b', path: '/b' };
+            storage.setState({ sessions: { 's-1': createSessionFixture({ id: 's-1', serverId: 'home-a' }) } });
+            const unavailable = await renderHook(() => useSessionMetadata('s-1', null));
+            expect(unavailable.getCurrent()).toBeNull();
+            await unavailable.unmount();
+            const hook = await renderHook(() => useSessionMetadata('s-1', 'home-b'));
+            expect(hook.getCurrent()).toBeNull();
+            await act(async () => {
+                storage.setState({ sessions: { 's-1': createSessionFixture({ id: 's-1', serverId: 'home-b', metadata }) } });
+            });
+            expect(hook.getCurrent()).toBe(metadata);
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
     it('does not re-render when non-metadata session fields change', async () => {
         const previousState = storage.getState();
         try {
