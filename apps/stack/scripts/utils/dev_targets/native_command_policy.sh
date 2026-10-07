@@ -30,6 +30,7 @@ native_command_policy_base() {
   policy_generator='0'
   policy_generatorCheck='0'
   policy_componentFromNative='0'
+  policy_preparationBuildMode='strict'
   if { [ "$policy_hasScript" = '1' ]; }; then
     policy_bootstrap='1'
   fi
@@ -147,6 +148,15 @@ native_command_policy_base() {
   fi
 }
 native_command_policy_finish() {
+  if { [ "$policy_nativeTest" = '1' ]; }; then
+    policy_preparationBuildMode='qa-runtime'
+  fi
+  if { [ "$policy_runnerKnown" = '1' ]; }; then
+    policy_preparationBuildMode='qa-runtime'
+  fi
+  if { [ "$policy_family" = 'test' ] || [ "$policy_family" = 'vitest' ]; }; then
+    policy_preparationBuildMode='qa-runtime'
+  fi
   if { [ "$policy_entry" = 'remote_runtime_build.mjs' ]; }; then
     policy_heavyClass='compilation'
   fi

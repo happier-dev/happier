@@ -1,5 +1,6 @@
 import { relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { resolveWorkspaceBuildMode, WORKSPACE_BUILD_MODE_ENV } from '../../../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
 
 function resolveComponentDir(repoDir, componentRelativeDir) {
   const repositoryRoot = resolve(repoDir);
@@ -19,10 +20,14 @@ export async function prepareRemoteValidationWorkspace({
   repoDir = resolve(process.cwd()),
   componentRelativeDir = '.',
   validationKind = 'runtime',
+  defaultBuildMode = 'strict',
   env = process.env,
   loadWorkspaceBuildOwner = async () => await import('../proc/pm.mjs'),
   loadCliBuildOwner = async () => await import('../../../../cli/scripts/buildSharedDeps.mjs'),
 } = {}) {
+  env = { ...env, [WORKSPACE_BUILD_MODE_ENV]: resolveWorkspaceBuildMode({
+    buildMode: env[WORKSPACE_BUILD_MODE_ENV] ?? defaultBuildMode, env,
+  }) };
   const { componentDir, componentPath } = resolveComponentDir(repoDir, componentRelativeDir);
   if (!componentPath) return { ok: true, built: [], skipped: ['repository-root-script-owned'] };
   const normalizedComponentPath = componentPath.replaceAll('\\', '/');
@@ -91,18 +96,23 @@ if (entryPath && pathToFileURL(resolve(entryPath)).href === import.meta.url) {
   const repo = process.argv.slice(2).find(value => value.startsWith('--repo-dir='));
   const repoDir = repo ? resolve(repo.slice('--repo-dir='.length)) : resolve(process.cwd());
   const executorRepoRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
+  const mode = process.argv.slice(2).find(value => value.startsWith('--default-build-mode='))?.slice('--default-build-mode='.length) ?? 'strict';
+  const env = { ...process.env, [WORKSPACE_BUILD_MODE_ENV]: resolveWorkspaceBuildMode({
+    buildMode: process.env[WORKSPACE_BUILD_MODE_ENV] ?? mode, env: process.env,
+  }) };
   if (repo && resolve(repoDir) !== resolve(executorRepoRoot)) {
     const kind = readValidationKind(process.argv.slice(2));
     if (kind !== 'source-test') {
       // The selected checkout owns its package graph and emitted output.
       const { ensureWorkspacePackagesBuiltForComponent } = await import(pathToFileURL(resolve(repoDir, 'scripts/workspaces/ensureWorkspacePackagesBuilt.mjs')).href);
-      await ensureWorkspacePackagesBuiltForComponent(resolveComponentDir(repoDir, readComponentRelativeDir(process.argv.slice(2))).componentDir, { env: process.env });
+      await ensureWorkspacePackagesBuiltForComponent(resolveComponentDir(repoDir, readComponentRelativeDir(process.argv.slice(2))).componentDir, { env });
     }
   } else {
     await prepareRemoteValidationWorkspace({
       repoDir,
       componentRelativeDir: readComponentRelativeDir(process.argv.slice(2)),
       validationKind: readValidationKind(process.argv.slice(2)),
+      env,
     });
   }
 }

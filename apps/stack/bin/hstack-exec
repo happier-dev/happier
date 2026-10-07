@@ -1548,6 +1548,7 @@ requires_remote_dependencies=$policy_bootstrap
 requires_remote_workspace_preparation=0
 [ "$command_class" = targeted-validation ] && requires_remote_workspace_preparation=1
 remote_validation_kind=$policy_kind
+remote_preparation_build_mode=${HAPPIER_WORKSPACE_BUILD_MODE-$policy_preparationBuildMode}
 preparation_component_relative_dir=$policy_component
 [ "$preparation_component_relative_dir" = . ] && preparation_component_relative_dir=
 preflight_command=$requested_command
@@ -2003,12 +2004,19 @@ cancel_dispatch_wait() {
 }
 trap 'cancel_dispatch_wait' HUP INT TERM
 while :; do
-  if mkdir "$dispatch_lock" 2>/dev/null; then
+  if dispatch_lock_error=$(LC_ALL=C mkdir "$dispatch_lock" 2>&1); then
     dispatch_lock_acquired=1
     break
   fi
-  # A non-directory is a controller filesystem failure, not a busy worker.
-  [ -d "$dispatch_lock" ] || break
+  # EEXIST can precede the previous owner's release. Retry that race, but
+  # preserve real filesystem failures and conflicting non-directory paths.
+  if [ ! -d "$dispatch_lock" ]; then
+    [ ! -e "$dispatch_lock" ] || break
+    case "$dispatch_lock_error" in
+      *'File exists'*) continue ;;
+      *) break ;;
+    esac
+  fi
   dispatch_stale_check_attempt=$((dispatch_stale_check_attempt + 1))
   # The selection critical section is normally brief. Poll passively, and
   # inspect its mtime only every fourth retry so a crowded caller set does not
@@ -2043,10 +2051,11 @@ while :; do
 done
 trap cleanup_probe_tmp EXIT HUP INT TERM
 release_dispatch_lock() {
+  [ "$dispatch_lock_acquired" -eq 1 ] || return 0
+  dispatch_lock_acquired=0
   rmdir "$dispatch_lock" 2>/dev/null || true
 }
 if [ "$dispatch_lock_acquired" -ne 1 ]; then
-  release_dispatch_lock
   printf '[preferred-execution] command dispatch lock is unavailable: %s; check directory permissions.\n' "$dispatch_lock" >&2
   exit 1
 fi
@@ -2365,11 +2374,11 @@ remote_script="set -euo pipefail; export HAPPIER_DEV_TARGET_EXECUTION=1;"
 if [ -n "$remote_path" ]; then remote_script="$remote_script PATH=$(quote_remote "$remote_path"):\$PATH; export PATH;"; fi
 remote_setup_script=
 if [ "$requires_remote_dependencies" -eq 1 ]; then
-  remote_setup_script="$remote_setup_script cd -- $(quote_remote "$remote_repo"); export HAPPIER_STACK_PM_CACHE_BASE_DIR=$(quote_remote "$remote_home/cache"); node $(quote_remote "$remote_executor_repo/apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs") $(quote_remote "--validation-kind=$remote_validation_kind") $(quote_remote "--component-relative-dir=$preparation_component_relative_dir") $(quote_remote "--repo-dir=$remote_repo");"
+  remote_setup_script="$remote_setup_script cd -- $(quote_remote "$remote_repo"); export HAPPIER_STACK_PM_CACHE_BASE_DIR=$(quote_remote "$remote_home/cache"); node $(quote_remote "$remote_executor_repo/apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs") $(quote_remote "--validation-kind=$remote_validation_kind") $(quote_remote "--component-relative-dir=$preparation_component_relative_dir") $(quote_remote "--repo-dir=$remote_repo") $(quote_remote "--default-build-mode=$remote_preparation_build_mode");"
   if [ -n "$command_repo_root" ]; then remote_setup_script="${remote_setup_script%;} --tools-only;"; fi
 fi
 if [ "$requires_remote_workspace_preparation" -eq 1 ]; then
-  remote_setup_script="$remote_setup_script cd -- $(quote_remote "$remote_repo"); export HAPPIER_STACK_PM_CACHE_BASE_DIR=$(quote_remote "$remote_home/cache"); node $(quote_remote "$remote_executor_repo/apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs") $(quote_remote "--component-relative-dir=$preparation_component_relative_dir") $(quote_remote "--validation-kind=$remote_validation_kind") $(quote_remote "--repo-dir=$remote_repo");"
+  remote_setup_script="$remote_setup_script cd -- $(quote_remote "$remote_repo"); export HAPPIER_STACK_PM_CACHE_BASE_DIR=$(quote_remote "$remote_home/cache"); node $(quote_remote "$remote_executor_repo/apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs") $(quote_remote "--component-relative-dir=$preparation_component_relative_dir") $(quote_remote "--validation-kind=$remote_validation_kind") $(quote_remote "--repo-dir=$remote_repo") $(quote_remote "--default-build-mode=$remote_preparation_build_mode");"
 fi
 remote_setup_script="$remote_setup_script cd -- $(quote_remote "$remote_cwd");"
 remote_command_environment=

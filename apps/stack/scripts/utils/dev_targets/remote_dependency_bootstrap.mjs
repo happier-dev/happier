@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { execYarn } from '../../../../../scripts/workspaces/execYarnCommand.mjs';
 import { SCRIPTLESS_DEPENDENCY_INSTALL_MODE, withDependencyRefresh } from '../proc/dependency_refresh.mjs';
 import { ensureUiPostinstallOutputs } from '../proc/ui_postinstall.mjs';
+import { resolveWorkspaceBuildMode, WORKSPACE_BUILD_MODE_ENV } from '../../../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
 
 export const REMOTE_INITIAL_DEPENDENCY_INSTALL_ARGS = [
   'install',
@@ -67,6 +68,7 @@ export async function bootstrapRemoteDependencies({
   validationKind = 'runtime',
   toolsOnly = false,
   componentRelativeDir = '.',
+  defaultBuildMode = 'strict',
   env = process.env,
   packageExists = existsSync,
   installInitialDependencies: installInitialDependenciesImpl = installInitialDependencies,
@@ -74,6 +76,9 @@ export async function bootstrapRemoteDependencies({
   loadWorkspaceBuildOwner = async () => await import('../../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs'),
   loadDependencyOwner = async () => await import('../proc/pm.mjs'),
 } = {}) {
+  env = { ...env, [WORKSPACE_BUILD_MODE_ENV]: resolveWorkspaceBuildMode({
+    buildMode: env[WORKSPACE_BUILD_MODE_ENV] ?? defaultBuildMode, env,
+  }) };
   const componentDir = join(repoDir, 'apps', 'stack');
   const componentPath = posix.normalize(String(componentRelativeDir).replaceAll('\\', '/'));
   const sourceToolsOnly = toolsOnly || validationKind === 'source-test';
@@ -153,10 +158,12 @@ if (entryPath && pathToFileURL(resolve(entryPath)).href === import.meta.url) {
   const kind = process.argv.slice(2).find(value => value.startsWith('--validation-kind='));
   const component = process.argv.slice(2).find(value => value.startsWith('--component-relative-dir='));
   const repo = process.argv.slice(2).find(value => value.startsWith('--repo-dir='));
+  const buildMode = process.argv.slice(2).find(value => value.startsWith('--default-build-mode='));
   await bootstrapRemoteDependencies({
     ...(repo ? { repoDir: resolve(repo.slice('--repo-dir='.length)) } : {}),
     toolsOnly: process.argv.includes('--tools-only'),
     validationKind: kind?.slice('--validation-kind='.length) ?? 'runtime',
     componentRelativeDir: component?.slice('--component-relative-dir='.length) ?? '.',
+    defaultBuildMode: buildMode?.slice('--default-build-mode='.length) ?? 'strict',
   });
 }

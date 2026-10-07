@@ -110,6 +110,7 @@ test('dependency bootstrap delegates to the cancellable remote command owner', a
     target,
     stackBaseDir: '/tmp/stack',
     syncAlreadyVerified: true,
+    defaultBuildMode: 'qa-runtime',
     env: { TEST_ENV: 'project' },
   }, {
     runCommand: async (options) => {
@@ -127,6 +128,7 @@ test('dependency bootstrap delegates to the cancellable remote command owner', a
       './apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs',
       '--validation-kind=runtime',
       '--component-relative-dir=.',
+      '--default-build-mode=qa-runtime',
     ],
     environment: {
       HAPPIER_STACK_PM_CACHE_BASE_DIR: '/home/dev/.happier/linux/cache',
@@ -162,6 +164,7 @@ test('workspace preparation delegates the component path to the cancellable remo
       './apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs',
       '--component-relative-dir=apps/cli',
       '--validation-kind=runtime',
+      '--default-build-mode=strict',
     ],
     environment: {
       HAPPIER_STACK_PM_CACHE_BASE_DIR: '/home/dev/.happier/linux/cache',
@@ -287,7 +290,7 @@ test('JavaScript dispatch admits bootstrap, preparation and command as one targe
   assert.match(request, /--heavyweight-admission[\s\S]*remote_dependency_bootstrap\.mjs[\s\S]*remote_validation_preparation\.mjs[\s\S]*vitest/);
 });
 
-test('Windows source-test dispatch preserves its source preparation contract through both existing transports', async (t) => {
+test('Windows source-test dispatch preserves preparation and explicit command mode through both existing transports', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'happier-executor-windows-source-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const trace = join(root, 'ssh-requests');
@@ -298,13 +301,16 @@ test('Windows source-test dispatch preserves its source preparation contract thr
     target: { ...target, platform: 'windows', repoDir: 'C:/repo', cliHomeDir: 'C:/home' },
     stackBaseDir: root, cwd: 'apps/cli', syncAlreadyVerified: true,
     commandArgs: ['vitest', 'run', 'arbitrary.test.ts'],
-    env: { ...process.env, TRACE: trace, PATH: `${root}:${process.env.PATH}` },
+    environment: { HAPPIER_WORKSPACE_BUILD_MODE: 'qa-runtime' },
+    env: { ...process.env, HAPPIER_WORKSPACE_BUILD_MODE: 'strict', TRACE: trace, PATH: `${root}:${process.env.PATH}` },
   });
   const requests = readFileSync(trace, 'utf8').trim().split('\n')
     .map(request => Buffer.from(request.split(' ').at(-1), 'base64').toString('utf16le'));
   assert.equal(requests.length, 3);
   assert.match(requests[0], /remote_dependency_bootstrap\.mjs.*--validation-kind=source-test/);
   assert.match(requests[1], /remote_validation_preparation\.mjs.*--validation-kind=source-test/);
+  assert.match(requests[0], /--default-build-mode=qa-runtime/);
+  assert.match(requests[1], /--default-build-mode=qa-runtime/);
   assert.doesNotMatch(requests.join('\n'), /--heavyweight-admission/);
 });
 

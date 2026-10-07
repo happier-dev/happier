@@ -79,15 +79,16 @@ process.exitCode = result.status ?? 1;
   await writeFile(source, 'export const value: string = 1;\n');
   // Installed dependency admission is separate from package compilation. The
   // real bootstrap, Stack package-manager adapter and compiler all run below it.
-  const env = { ...process.env, HAPPIER_STACK_SKIP_REFRESH_DEPS: '1', [WORKSPACE_BUILD_MODE_ENV]: 'qa-runtime' };
-  const bootstrap = (extraEnv = {}) => bootstrapRemoteDependencies({ repoDir, componentRelativeDir: 'apps/stack', env: { ...env, ...extraEnv } });
+  const env = { ...process.env, HAPPIER_STACK_SKIP_REFRESH_DEPS: '1' };
+  delete env[WORKSPACE_BUILD_MODE_ENV];
+  const bootstrap = (extraEnv = {}) => bootstrapRemoteDependencies({ repoDir, componentRelativeDir: 'apps/stack', defaultBuildMode: 'qa-runtime', env: { ...env, ...extraEnv } });
   await bootstrap();
   const stale = await inspectWorkspaceQaStalePackages(repoDir, ['@fixture/emitted']);
   assert.equal(stale.length, 1);
   assert.equal(stale[0].lastGreenBuildRecord.fingerprint, greenRecord.fingerprint);
   assert.match(stale[0].diagnosticSummary, /TS2322/);
   assert.match(await readFile(join(packageDir, 'dist/index.js'), 'utf8'), /green/);
-  await ensureWorkspacePackagesBuiltForComponent(join(repoDir, 'apps/stack'), { env, quiet: false });
+  await ensureWorkspacePackagesBuiltForComponent(join(repoDir, 'apps/stack'), { env: { ...env, [WORKSPACE_BUILD_MODE_ENV]: 'qa-runtime' }, quiet: false });
   assert.match(await readFile(join(packageDir, 'dist/index.js'), 'utf8'), /green/,
     'the default package-manager adapter applies the same verbose QA contract');
   await assert.rejects(bootstrap({ [WORKSPACE_BUILD_MODE_ENV]: 'strict' }));
@@ -486,19 +487,19 @@ test('remote dependency bootstrap builds the dependency-owner closure before loa
   assert.deepEqual(calls, [
     ['initial', {
       repoDir: '/remote/happier',
-      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache' },
+      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache', HAPPIER_WORKSPACE_BUILD_MODE: 'strict' },
     }],
     ['build-owner', '/remote/happier', ['@happier-dev/cli-common'], {
-      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache' },
+      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache', HAPPIER_WORKSPACE_BUILD_MODE: 'strict' },
       includeDevDependencies: false,
     }],
     ['load-owner'],
     ['ensure', '/remote/happier/apps/stack', 'remote Happier workspace', {
-      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache' },
+      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache', HAPPIER_WORKSPACE_BUILD_MODE: 'strict' },
       hasDependencyReadyAction: false,
     }],
     ['workspace', '/remote/happier/apps/stack', {
-      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache' },
+      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache', HAPPIER_WORKSPACE_BUILD_MODE: 'strict' },
     }],
   ]);
 });
@@ -530,10 +531,10 @@ test('remote dependency bootstrap leaves unrelated workspace publication to comp
   assert.deepEqual(calls, [
     ['initial', {
       repoDir: '/remote/happier',
-      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache' },
+      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache', HAPPIER_WORKSPACE_BUILD_MODE: 'strict' },
     }],
     ['build-owner', '/remote/happier', ['@happier-dev/cli-common'], {
-      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache' },
+      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache', HAPPIER_WORKSPACE_BUILD_MODE: 'strict' },
       includeDevDependencies: false,
     }],
     ['ensure:begin'],
@@ -629,7 +630,7 @@ test('remote dependency bootstrap refreshes the Stack component workspace closur
   assert.deepEqual(calls, [
     'dependencies',
     ['workspace', '/remote/happier/apps/stack', {
-      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache' },
+      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache', HAPPIER_WORKSPACE_BUILD_MODE: 'strict' },
     }],
   ]);
 });
@@ -658,7 +659,7 @@ test('remote dependency bootstrap repairs a scriptless install whose dependency 
 
   assert.deepEqual(calls, [
     ['build-owner', '/remote/happier', ['@happier-dev/cli-common'], {
-      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache' },
+      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache', HAPPIER_WORKSPACE_BUILD_MODE: 'strict' },
       includeDevDependencies: false,
     }],
     ['ensure'],

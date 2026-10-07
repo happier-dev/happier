@@ -137,7 +137,7 @@ test('native command decision artifact is current and executes the canonical cla
     { args: ['node', '--test', 'scripts/generateActionTypeMap.test.mjs'], cwd: 'packages/plugin-sdk' },
     { args: ['node', '--test', 'apps/ui/scripts/generateBundledPluginUiArtifacts.test.mjs'] },
     { args: ['node', '--test', 'packages/plugin-sdk/scripts/generateActionTypeMap.test.mjs', 'apps/ui/scripts/generateBundledPluginUiArtifacts.test.mjs'] },
-    { args: ['node', '--test', 'apps/stack/scripts/config.test.mjs'] },
+    { args: ['node', '--test', 'apps/stack/scripts/config.test.mjs'], expectedPreparationBuildMode: 'qa-runtime' },
     { args: ['nodejs', '--test', 'owner.test.mjs'], cwd: 'apps/stack2' },
     { args: ['node', '-e', 'console.log("control")'] },
     { args: ['apps/stack/bin/hstack-exec', '--heavyweight-admission', '--class=compilation', '--', 'node', '-e', 'console.log("native-build")'], expectedHeavyClass: 'compilation' },
@@ -152,8 +152,8 @@ test('native command decision artifact is current and executes the canonical cla
     { args: ['tsc', '-p', 'apps/cli/tsconfig.json'], expectedHeavyClass: 'compilation' },
     { args: ['tsc', '-p', 'apps\\cli\\tsconfig.json'] },
     { args: ['node', 'scripts/workspaces/runTypeScriptCli.mjs', '--project=apps/cli/tsconfig.json'], expectedHeavyClass: 'compilation' },
-    { args: ['corepack', 'yarn', '--cwd', 'apps/ui', '-s', 'typecheck'], expectedHeavyClass: 'compilation' },
-    { args: ['--script=build:local'], expectedHeavyClass: 'compilation' },
+    { args: ['corepack', 'yarn', '--cwd', 'apps/ui', '-s', 'typecheck'], expectedHeavyClass: 'compilation', expectedPreparationBuildMode: 'strict' },
+    { args: ['--script=build:local'], expectedHeavyClass: 'compilation', expectedPreparationBuildMode: 'strict' },
     { args: ['node', 'apps/stack/scripts/build/remote_runtime_build.mjs', '--worker-request=/request.json'], expectedHeavyClass: 'runtime-build' },
     { args: ['node', '--import=data:text/javascript;base64,ZXhwb3J0IHt9Ow==', 'apps/stack/scripts/build/remote_runtime_build.mjs', '--worker-request=stdin'], expectedHeavyClass: 'runtime-build' },
     { args: ['nodejs', '--import', '/tmp/runtime-sampler.mjs', 'apps/stack/scripts/build/remote_runtime_build.mjs', '--worker-request=stdin'], expectedHeavyClass: 'runtime-build' },
@@ -196,10 +196,11 @@ test('native command decision artifact is current and executes the canonical cla
     { args: ['yarn', 'install'] },
     { args: ['nodejs', 'node_modules\\vitest\\vitest.mjs', 'run'], cwd: 'apps/cli' },
   ];
-  for (const { args, cwd = '.', expectedHeavyClass, expectedPlacement } of cases) {
+  for (const { args, cwd = '.', expectedHeavyClass, expectedPlacement, expectedPreparationBuildMode } of cases) {
     const policy = resolveRemoteCommandPolicy(args, { cwd });
     if (expectedHeavyClass !== undefined) assert.equal(policy.heavyClass, expectedHeavyClass, args.join(' '));
     if (expectedPlacement) assert.equal(policy.placement, expectedPlacement, args.join(' '));
+    if (expectedPreparationBuildMode) assert.equal(policy.preparationBuildMode, expectedPreparationBuildMode, args.join(' '));
     const keys = Object.keys(policy);
     const artifactWord = "'" + fileURLToPath(artifact).replaceAll("'", "'\"'\"'") + "'";
     const body = 'repo_root=$1; invoked_cwd="$1/$2"; shift 2; . ' + artifactWord

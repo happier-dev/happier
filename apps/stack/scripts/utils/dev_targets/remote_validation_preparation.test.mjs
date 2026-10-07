@@ -194,7 +194,7 @@ test('remote validation preparation delegates component dependency outputs to th
 
   assert.deepEqual(calls, [[
     '/remote/happier/apps/cli',
-    { env: { TEST_ENV: '1' }, isolatePluginFailures: true },
+    { env: { TEST_ENV: '1', HAPPIER_WORKSPACE_BUILD_MODE: 'strict' }, isolatePluginFailures: true },
   ]]);
   assert.deepEqual(result, {
     ok: true,
@@ -204,7 +204,7 @@ test('remote validation preparation delegates component dependency outputs to th
   assert.deepEqual(publicationCalls, [{
     repoRoot: '/remote/happier',
     workspaceNames: ['protocol', 'agents', 'plugins-codex', 'plugins-claude'],
-    env: { TEST_ENV: '1' },
+    env: { TEST_ENV: '1', HAPPIER_WORKSPACE_BUILD_MODE: 'strict' },
     publicationMode: 'live',
     bundledPluginArtifactPublication: { mode: 'write', targetOwnedOnly: true },
   }]);

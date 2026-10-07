@@ -25,6 +25,7 @@ const DEFAULT_COMMAND_POLICY = Object.freeze({
   validation: '0', kind: 'runtime', heavyClass: '', workerTool: '',
   workerArguments: '0', runnerKnown: '0', componentOverride: '',
   generator: '0', generatorCheck: '0', componentFromNative: '0',
+  preparationBuildMode: 'strict',
 });
 const validation = { validation: '1', bootstrap: '1', heavyClass: 'validation' };
 // Available-memory envelopes, not process limits or fixed concurrency slots.
@@ -78,6 +79,11 @@ const COMMAND_RULES = [
   { when: { script: ['check:first-party-plugins:finite', 'check:first-party-plugins:finite:local', 'plugins:aggregate:finite', 'test:migration:bundled-plugin-projections', 'test:migration:governance'] }, set: { ...validation, generatorCheck: '1', componentOverride: 'apps/cli' } },
 ];
 const FINAL_COMMAND_RULES = [
+  // Test consumers need runtime outputs; their own compiler lanes retain
+  // responsibility for strict checking. Artifact/build consumers stay strict.
+  { when: { nativeTest: ['1'] }, set: { preparationBuildMode: 'qa-runtime' } },
+  { when: { runnerKnown: ['1'] }, set: { preparationBuildMode: 'qa-runtime' } },
+  { when: { family: ['test', 'vitest'] }, set: { preparationBuildMode: 'qa-runtime' } },
   { when: { entry: ['remote_runtime_build.mjs'] }, set: { heavyClass: 'compilation' } },
   { when: { validation: ['1'] }, set: { commandClass: 'targeted-validation' } },
   { when: { validation: ['1'], component: ['.'] }, set: { commandClass: 'full-validation' } },
@@ -494,13 +500,14 @@ export function buildRemoteExecCommand(
   if (target.platform !== 'windows' && (preparation || admissionClass)) {
     const repoDir = requireRemoteRelativeWorkingDirectory(target, '.');
     const body = ['set -euo pipefail', `cd -- ${posixQuote(repoDir)}`];
+    const defaultBuildMode = preparation?.defaultBuildMode ?? resolveRemoteCommandPolicy(commandArgs, { cwd }).preparationBuildMode;
     const cacheEnv = `env ${posixQuote(`HAPPIER_STACK_PM_CACHE_BASE_DIR=${String(target.cliHomeDir).replace(/[\\/]+$/, '')}/cache`)}`;
     if (preparation?.bootstrap) {
-      body.push(`${cacheEnv} node ./apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs ${posixQuote(`--validation-kind=${preparation.validationKind}`)} ${posixQuote(`--component-relative-dir=${preparation.bootstrapComponentRelativeDir ?? '.'}`)}`);
+      body.push(`${cacheEnv} node ./apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs ${posixQuote(`--validation-kind=${preparation.validationKind}`)} ${posixQuote(`--component-relative-dir=${preparation.bootstrapComponentRelativeDir ?? '.'}`)} ${posixQuote(`--default-build-mode=${defaultBuildMode}`)}`);
     }
     if (preparation?.componentRelativeDir != null) {
       requireRemoteRelativeWorkingDirectory(target, preparation.componentRelativeDir);
-      body.push(`${cacheEnv} node ./apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs ${posixQuote(`--component-relative-dir=${preparation.componentRelativeDir}`)} ${posixQuote(`--validation-kind=${preparation.validationKind}`)}`);
+      body.push(`${cacheEnv} node ./apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs ${posixQuote(`--component-relative-dir=${preparation.componentRelativeDir}`)} ${posixQuote(`--validation-kind=${preparation.validationKind}`)} ${posixQuote(`--default-build-mode=${defaultBuildMode}`)}`);
     }
     body.push(`cd -- ${posixQuote(workingDirectory)}`, `exec ${args.map(posixQuote).join(' ')}`);
     args = ['bash', '-c', body.join('; ')];

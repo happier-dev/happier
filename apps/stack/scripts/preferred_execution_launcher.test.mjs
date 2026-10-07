@@ -9,6 +9,8 @@ import { installNativeAdmissionFixture } from './testkit/core/native_admission_f
 
 const repoRoot = resolve(import.meta.dirname, '..', '..', '..');
 const launcher = join(repoRoot, 'apps', 'stack', 'bin', 'hstack-exec');
+// Measured cksum fixture key for `probe-command  ` (empty build target/components).
+const probeCommandCacheKey = '1086556756';
 const repoToken = repoRoot.split('/').at(-1)
   .toLowerCase()
   .replace(/[^a-z0-9-]+/g, '-')
@@ -969,7 +971,7 @@ test('compilation capacity target admission rejects a physically undersized mach
 });
 
 for (const { commandArgs, admissionClass, belowFloorKiB, floorKiB } of [
-  { commandArgs: ['corepack', 'yarn', '--cwd', 'packages/cli-common', '-s', 'build'], admissionClass: 'package-dist', belowFloorKiB: 4194304, floorKiB: 6291456 },
+  { commandArgs: ['corepack', 'yarn', '--cwd', 'packages/cli-common', '-s', 'build'], admissionClass: 'package-dist', belowFloorKiB: 4194304, floorKiB: 8388608 },
   { commandArgs: ['corepack', 'yarn', '--cwd', 'apps/ui', '-s', 'typecheck'], admissionClass: 'compilation', belowFloorKiB: 18874368, floorKiB: 22020096 },
   { commandArgs: ['node', 'apps/stack/scripts/build/remote_runtime_build.mjs', '--worker-request=/request.json'], admissionClass: 'runtime-build', belowFloorKiB: 15728640, floorKiB: 18874368 },
 ]) {
@@ -2267,6 +2269,8 @@ test('native launcher automatic placement remains compatible with GNU awk local 
 
 test('native launcher governs nested Vitest workers when automatic placement selects a pressured local Linux candidate', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-local-governor-'));
+  const { launcher } = await installNativeAdmissionFixture({ root });
+  const repoRoot = resolve(launcher, '../../../..');
   const binDir = join(root, 'bin');
   const storageDir = join(root, 'stacks');
   const stackDir = join(storageDir, `repo-${repoToken}-native`);
@@ -2290,7 +2294,7 @@ test('native launcher governs nested Vitest workers when automatic placement sel
     "target_1_remote_path='/usr/bin:/bin'",
     '',
   ].join('\n'));
-  await executable(join(binDir, 'node'), '#!/bin/sh\nexit 97\n');
+  await executable(join(binDir, 'node'), `#!/bin/sh\ncase "$*" in *service_memory.mjs*) exec ${JSON.stringify(process.execPath)} "$@" ;; *) exit 97 ;; esac\n`);
   await executable(join(binDir, 'uname'), '#!/bin/sh\nprintf "Linux\\n"\n');
   await executable(join(binDir, 'getconf'), '#!/bin/sh\nprintf "14\\n"\n');
   await executable(join(binDir, 'awk'), [
@@ -2558,8 +2562,13 @@ test('native launcher exact target fails closed when its command connection is r
   assert.doesNotMatch(result.stdout, /wrong-target:linux|wrong-local/);
 });
 
-test('native launcher preserves a successful remote command when the login shell exit hook fails', async () => {
+test('native launcher preserves a successful remote command when the login shell exit hook fails', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-remote-exit-hook-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const { launcher: workerLauncher } = await installNativeAdmissionFixture({ root });
+  const workerRepo = resolve(workerLauncher, '../../../..');
+  const exitHook = join(root, 'bash-exit-hook');
+  await writeFile(exitHook, 'trap false EXIT\n');
   const binDir = join(root, 'bin');
   const storageDir = join(root, 'stacks');
   const stackDir = join(storageDir, `repo-${repoToken}-native`);
@@ -2584,6 +2593,7 @@ test('native launcher preserves a successful remote command when the login shell
     "target_1_ssh='linux-host'",
     "target_1_ssh_config=''",
     `target_1_repo_dir='${remoteRepo}'`,
+    `target_1_executor_repo_dir='${workerRepo}'`,
     `target_1_cli_home='${remoteHome}'`,
     "target_1_remote_path='/usr/bin:/bin'",
     '',
@@ -2601,9 +2611,7 @@ test('native launcher preserves a successful remote command when the login shell
     '  *-MNf*|*-O\\ exit*) exit 0 ;;',
     '  *)',
     '    remote_command=; for ssh_argument in "$@"; do remote_command=$ssh_argument; done',
-    '    eval "set -- $remote_command"',
-    '    case "$3" in *"set +e"*) ;; *) exit 41 ;; esac',
-    '    printf "%s\\n" "$3" | /bin/bash -c \'source /dev/stdin\'',
+    '    BASH_ENV="$EXIT_HOOK" /bin/sh -c "$remote_command"',
     '    ;;',
     'esac',
     '',
@@ -2614,6 +2622,7 @@ test('native launcher preserves a successful remote command when the login shell
     env: {
       ...executionNeutralEnv,
       HOME: root,
+      EXIT_HOOK: exitHook,
       HAPPIER_STACK_STORAGE_DIR: storageDir,
       PATH: `${binDir}:/usr/bin:/bin`,
       TMPDIR: root,
@@ -3690,6 +3699,45 @@ test('native launcher passively waits for a contended dispatch reservation, canc
     });
     assert.equal(stale.status, 0, stale.stderr);
     assert.match(stale.stdout, /remote:dispatch/);
+    // The filesystem boundary reproduces a real EEXIST followed by the
+    // previous owner releasing before the launcher's directory observation.
+    const raceObserved = join(root, 'dispatch-race-observed');
+    const raceClaimed = join(root, 'dispatch-race-claimed');
+    const unownedRelease = join(root, 'dispatch-unowned-release');
+    await executable(join(binDir, 'mkdir'), [
+      '#!/bin/sh',
+      'if [ "$1" = "$DISPATCH_LOCK" ] && [ ! -f "$DISPATCH_RACE_OBSERVED" ]; then',
+      '  /bin/mkdir "$1" || exit 98',
+      '  /bin/mkdir "$1"; status=$?',
+      '  /bin/rmdir "$1" || exit 98',
+      '  : > "$DISPATCH_RACE_OBSERVED"',
+      '  exit "$status"',
+      'fi',
+      '/bin/mkdir "$@"; status=$?',
+      '[ "$1" != "$DISPATCH_LOCK" ] || [ "$status" != 0 ] || : > "$DISPATCH_RACE_CLAIMED"',
+      'exit "$status"', '',
+    ].join('\n'));
+    await executable(join(binDir, 'rmdir'), [
+      '#!/bin/sh',
+      'if [ "$1" = "$DISPATCH_LOCK" ] && [ ! -f "$DISPATCH_RACE_CLAIMED" ]; then : > "$DISPATCH_UNOWNED_RELEASE"; fi',
+      'exec /bin/rmdir "$@"', '',
+    ].join('\n'));
+    const raced = spawnSync('/bin/sh', [launcher, '--', 'probe-command', 'raced'], {
+      cwd: repoRoot, encoding: 'utf8',
+      env: { ...env, DISPATCH_LOCK: dispatchLock, DISPATCH_RACE_OBSERVED: raceObserved,
+        DISPATCH_RACE_CLAIMED: raceClaimed, DISPATCH_UNOWNED_RELEASE: unownedRelease },
+    });
+    await access(raceObserved);
+    await assert.rejects(access(unownedRelease), { code: 'ENOENT' }, 'a caller that never acquired the lock must not release it');
+    assert.equal(raced.status, 0, raced.stderr);
+    assert.match(raced.stdout, /remote:dispatch/);
+    await writeFile(dispatchLock, 'non-directory keeper');
+    const blocked = spawnSync('/bin/sh', [launcher, '--', 'probe-command', 'blocked'], {
+      cwd: repoRoot, encoding: 'utf8', env,
+    });
+    assert.notEqual(blocked.status, 0);
+    assert.doesNotMatch(blocked.stdout, /remote:dispatch/);
+    assert.equal(await readFile(dispatchLock, 'utf8'), 'non-directory keeper');
   } finally {
     if (waiter.exitCode == null) waiter.kill('SIGKILL');
     await waitForExit(waiter);
@@ -3712,7 +3760,7 @@ test('native launcher cache writes and reservations survive reused sandbox proce
   await writeFile(join(stackDir, 'dev-targets.json'), '{}\n');
   const cachedAt = Math.floor(Date.now() / 1_000);
   await writeFile(join(cacheDir, 'remote.cache'), `${cachedAt} 1 0.125000 8\n`);
-  await writeFile(join(cacheDir, 'remote.command.2560848116.cache'), `${cachedAt} 1\n`);
+  await writeFile(join(cacheDir, `remote.command.${probeCommandCacheKey}.cache`), `${cachedAt} 1 ready \n`);
   await writeFile(join(stackDir, 'dev-target-exec-v1.sh'), [
     "HSTACK_EXEC_PROJECTION_VERSION='2'",
     `projection_repo_root='${repoRoot}'`,
@@ -3855,7 +3903,7 @@ test(`native launcher keeps ${platform} control commands preferred and adapts re
     const reservationCount = platform === 'darwin' ? 13 : 7;
     for (let index = 0; index < reservationCount; index += 1) {
       const path = join(cacheDir, `linux.active.fixture-${index}`);
-      await writeFile(path, `${process.pid}\nvalidation\n`);
+      await writeFile(path, `${process.pid}\nvalidation\nnative-fixture-${index}\n-\n`);
       reservations.push(path);
     }
   }
@@ -4490,7 +4538,7 @@ test('queue policy native launcher delegates dependency refresh waiting to the r
   assert.ok(commandCacheName);
   assert.match(
     await readFile(join(commandCacheDir, commandCacheName), 'utf8'),
-    /^\d+ 1\n$/,
+    /^\d+ 1 ready \n$/,
   );
   await writeFile(
     join(commandCacheDir, commandCacheName),
@@ -4836,7 +4884,7 @@ test('native launcher exact target blocks dispatch when a clean cached probe is 
   await writeFile(join(stackDir, 'dev-targets.json'), '{}\n');
   const cachedAt = Math.floor(Date.now() / 1_000);
   await writeFile(join(cacheDir, 'linux.cache'), `${cachedAt} 1 0.000000 4\n`);
-  await writeFile(join(cacheDir, 'linux.command.2560848116.cache'), `${cachedAt} 1\n`);
+  await writeFile(join(cacheDir, `linux.command.${probeCommandCacheKey}.cache`), `${cachedAt} 1 ready \n`);
   await writeFile(join(stackDir, 'dev-target-exec-v1.sh'), [
     "HSTACK_EXEC_PROJECTION_VERSION='2'",
     `projection_repo_root='${repoRoot}'`,
@@ -4920,7 +4968,7 @@ test('a queued exact-target command dispatches only after its own flush observes
   await writeFile(sourceBytes, 'X\n');
   const cachedAt = Math.floor(Date.now() / 1_000);
   await writeFile(join(cacheDir, 'linux.cache'), `${cachedAt} 1 0.000000 4\n`);
-  await writeFile(join(cacheDir, 'linux.command.2560848116.cache'), `${cachedAt} 1\n`);
+  await writeFile(join(cacheDir, `linux.command.${probeCommandCacheKey}.cache`), `${cachedAt} 1 ready \n`);
   await writeFile(join(stackDir, 'dev-target-exec-v1.sh'), [
     "HSTACK_EXEC_PROJECTION_VERSION='2'",
     `projection_repo_root='${repoRoot}'`,
@@ -5027,9 +5075,9 @@ test('native launcher flushes an automatically selected mirror and retries anoth
   await writeFile(join(cacheDir, 'provenance.jsonl'), '');
   const cachedAt = Math.floor(Date.now() / 1_000);
   await writeFile(join(cacheDir, 'linux.cache'), `${cachedAt} 1 0.000000 4\n`);
-  await writeFile(join(cacheDir, 'linux.command.2560848116.cache'), `${cachedAt} 1\n`);
+  await writeFile(join(cacheDir, `linux.command.${probeCommandCacheKey}.cache`), `${cachedAt} 1 ready \n`);
   await writeFile(join(cacheDir, 'mac2.cache'), `${cachedAt} 1 0.500000 4\n`);
-  await writeFile(join(cacheDir, 'mac2.command.2560848116.cache'), `${cachedAt} 1\n`);
+  await writeFile(join(cacheDir, `mac2.command.${probeCommandCacheKey}.cache`), `${cachedAt} 1 ready \n`);
   await writeFile(join(stackDir, 'dev-target-exec-v1.sh'), [
     "HSTACK_EXEC_PROJECTION_VERSION='2'",
     `projection_repo_root='${repoRoot}'`,
@@ -5131,7 +5179,7 @@ test('native launcher exact target flushes the selected Mutagen session before r
   // path, which is the stale-byte boundary the flush protects.
   const cachedAt = Math.floor(Date.now() / 1_000);
   await writeFile(join(cacheDir, 'linux.cache'), `${cachedAt} 1 0.000000 4\n`);
-  await writeFile(join(cacheDir, 'linux.command.2560848116.cache'), `${cachedAt} 1\n`);
+  await writeFile(join(cacheDir, `linux.command.${probeCommandCacheKey}.cache`), `${cachedAt} 1 ready \n`);
   await writeFile(join(stackDir, 'dev-target-exec-v1.sh'), [
     "HSTACK_EXEC_PROJECTION_VERSION='2'",
     `projection_repo_root='${repoRoot}'`,
@@ -5438,8 +5486,8 @@ test('native launcher admits heavyweight local and remote jobs, reclaims stale o
     if (child.exitCode != null) return child.exitCode;
     return await new Promise((resolveExit) => child.once('exit', resolveExit));
   };
-  const remoteSchedulingWait = /waiting for (?:heavyweight (?:admission|capacity)|dispatch reservation)/;
-  const remoteAdmissionEvidence = /(?:admitted heavyweight command|waiting for (?:heavyweight (?:admission|capacity)|dispatch reservation))/;
+  const remoteSchedulingWait = /waiting for (?:(?:pool )?heavyweight (?:admission|capacity)|dispatch reservation)/;
+  const remoteAdmissionEvidence = /(?:admitted heavyweight command|waiting for (?:(?:pool )?heavyweight (?:admission|capacity)|dispatch reservation))/;
 
   const first = spawn('/bin/sh', [launcher, '--local', '--script=test:local-first'], {
     cwd: repoRoot,
@@ -5499,7 +5547,7 @@ test('native launcher admits heavyweight local and remote jobs, reclaims stale o
     await waitFor(
       () => remoteSchedulingWait.test(remoteOutput.stderr) || remote.exitCode != null,
       'a remote scheduling wait behind the local job',
-    );
+    ).catch(error => { throw new Error(`${error.message}\nRemote TypeScript output\nstdout: ${remoteOutput.stdout}\nstderr: ${remoteOutput.stderr}`); });
     assert.match(
       remoteOutput.stderr,
       remoteSchedulingWait,
@@ -5534,7 +5582,7 @@ test('native launcher admits heavyweight local and remote jobs, reclaims stale o
       assert.equal(await waitForExit(install), 0, output.stderr);
       assert.match(
         output.stderr,
-        /(?:admitted heavyweight command.*class=dependency-install|waiting for heavyweight capacity)/,
+        /(?:admitted heavyweight command.*class=dependency-install|waiting for (?:pool heavyweight admission|heavyweight capacity))/,
       );
     }
     assert.match(firstOutput.stdout, /local-first/);

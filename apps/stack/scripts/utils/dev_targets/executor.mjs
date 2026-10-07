@@ -173,6 +173,7 @@ export async function runDevTargetDependencyBootstrap(
     target,
     stackBaseDir,
     validationKind = 'runtime',
+    defaultBuildMode = 'strict',
     componentRelativeDir = '.',
     syncAlreadyVerified = false,
     flush = false,
@@ -188,6 +189,7 @@ export async function runDevTargetDependencyBootstrap(
       './apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs',
       `--validation-kind=${validationKind}`,
       `--component-relative-dir=${componentRelativeDir}`,
+      `--default-build-mode=${env.HAPPIER_WORKSPACE_BUILD_MODE ?? defaultBuildMode}`,
     ],
     environment: {
       HAPPIER_STACK_PM_CACHE_BASE_DIR: `${String(target.cliHomeDir).replace(/[\\/]+$/, '')}/cache`,
@@ -206,6 +208,7 @@ export async function runDevTargetWorkspacePreparation(
     stackBaseDir,
     cwd,
     validationKind = 'runtime',
+    defaultBuildMode = 'strict',
     syncAlreadyVerified = false,
     env = process.env,
   },
@@ -219,6 +222,7 @@ export async function runDevTargetWorkspacePreparation(
       './apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs',
       `--component-relative-dir=${cwd}`,
       `--validation-kind=${validationKind}`,
+      `--default-build-mode=${env.HAPPIER_WORKSPACE_BUILD_MODE ?? defaultBuildMode}`,
     ],
     environment: {
       HAPPIER_STACK_PM_CACHE_BASE_DIR: `${String(target.cliHomeDir).replace(/[\\/]+$/, '')}/cache`,
@@ -282,6 +286,8 @@ export async function runDevTargetCommand(
   const bootstrapRequired = dependencyAdmission !== 'skip' && classification.requiresDependencyBootstrap;
   const preparationRequired = workspacePreparation !== 'skip' && requiresRemoteWorkspacePreparation(commandArgs, { cwd });
   const validationKind = resolveRemoteValidationKind(commandArgs, { cwd });
+  const defaultBuildMode = environment.HAPPIER_WORKSPACE_BUILD_MODE ?? env.HAPPIER_WORKSPACE_BUILD_MODE
+    ?? resolveRemoteCommandPolicy(commandArgs, { cwd }).preparationBuildMode;
   // POSIX preparations are children of the same native admission and execution
   // identity as the payload. Windows retains its separate local-only transport.
   if (target.platform === 'windows' && bootstrapRequired) {
@@ -289,9 +295,10 @@ export async function runDevTargetCommand(
       target,
       stackBaseDir,
       validationKind,
+      defaultBuildMode,
       componentRelativeDir: resolveRemoteValidationComponentRelativeDir(commandArgs, { cwd }),
       syncAlreadyVerified: true,
-      env,
+      env: { ...env, HAPPIER_WORKSPACE_BUILD_MODE: defaultBuildMode },
     });
     if (bootstrap?.code !== 0) return bootstrap;
   }
@@ -304,8 +311,9 @@ export async function runDevTargetCommand(
       stackBaseDir,
       cwd: resolveRemoteValidationComponentRelativeDir(commandArgs, { cwd }),
       validationKind,
+      defaultBuildMode,
       syncAlreadyVerified: true,
-      env,
+      env: { ...env, HAPPIER_WORKSPACE_BUILD_MODE: defaultBuildMode },
     });
     if (preparation?.code !== 0) return preparation;
   }
@@ -322,6 +330,7 @@ export async function runDevTargetCommand(
         bootstrapComponentRelativeDir: resolveRemoteValidationComponentRelativeDir(commandArgs, { cwd }),
         ...(preparationRequired ? { componentRelativeDir: resolveRemoteValidationComponentRelativeDir(commandArgs, { cwd }) } : {}),
         validationKind,
+        defaultBuildMode,
       } : null,
       admissionClass: resolveRemoteCommandPolicy(commandArgs, { cwd }).heavyClass,
     }),
