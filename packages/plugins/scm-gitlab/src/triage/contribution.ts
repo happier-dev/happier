@@ -18,6 +18,7 @@ import type { PluginActionInvocationSurfaceV2 } from '@happier-dev/plugin-sdk/ac
 import {
   TriageSourceDescriptorV1Schema,
   TriageSourcesContributionProtocolV1,
+  TriageSourceConnectedAccountInputsV1,
   type TriageSourceDescriptorV1,
 } from '@happier-dev/triage-protocol/v1';
 
@@ -336,7 +337,7 @@ function declareOperationAction(input: Readonly<{
     surfaces: declaration.surfaces,
     execution: { target: 'daemon' },
     dangerLevel: declaration.dangerLevel as 'safe' | 'writesLocal',
-    inputSchema: declaration.input.schema.jsonSchema,
+    inputSchema: TriageSourceConnectedAccountInputsV1[input.role].jsonSchema,
     resultSchema: declaration.resultSchema.jsonSchema,
     hostAccess: [...GITLAB_NETWORK_HOST_ACCESS_IDS, GITLAB_CONNECTED_ACCOUNT_PURPOSE],
     ...(input.connectedAccountPurposeBindings === undefined

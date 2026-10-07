@@ -7,6 +7,7 @@ import {
 } from '../connect/qualifiedConnectedAccountPersistence.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { ScmPullRequestReferenceSchema } from '../scm/pullRequests.js';
+import { PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 } from '../plugins/contributionIdentity.js';
 
 /**
  * The selected pull-request review scope, and the top-level `review.start`
@@ -52,12 +53,15 @@ export type ScmPullRequestReviewObservationV1 = z.infer<typeof ScmPullRequestRev
  * It carries no Triage or source entry identity, no provider bag, no local
  * workspace path, no engine id, no finding and no mutable review state.
  */
-export const ScmPullRequestReviewScopeV1Schema = z.object({
+const scmPullRequestReviewScopeFieldsV1 = {
   kind: z.literal('scm_pull_request_review_scope.v1'),
-  account: asProtocolZod(QualifiedConnectedAccountRefSchema),
   pullRequest: ScmPullRequestReferenceSchema,
   observed: ScmPullRequestReviewObservationV1Schema,
-}).strict();
+};
+export const ScmPullRequestReviewScopeV1Schema = z.union([
+  z.object({ ...scmPullRequestReviewScopeFieldsV1, account: asProtocolZod(QualifiedConnectedAccountRefSchema) }).strict(),
+  z.object({ ...scmPullRequestReviewScopeFieldsV1, nativeService: asProtocolZod(PluginContributionIdentityV1Schema) }).strict(),
+]);
 export type ScmPullRequestReviewScopeV1 = z.infer<typeof ScmPullRequestReviewScopeV1Schema>;
 
 /**
@@ -134,9 +138,12 @@ export type ScmPullRequestReviewScopeProductionV1 =
  * partial arm, a caller that starts a review only on `produced` structurally
  * cannot start one on drift.
  */
+type ScmPullRequestReviewAuthorityV1 =
+  | Readonly<{ account: QualifiedConnectedAccountRef }>
+  | Readonly<{ nativeService: PluginContributionIdentityV1 }>;
+
 export function produceScmPullRequestReviewScope(input: Readonly<{
-  authoritative: Readonly<{
-    account: QualifiedConnectedAccountRef;
+  authoritative: ScmPullRequestReviewAuthorityV1 & Readonly<{
     pullRequest: unknown;
     observed: Readonly<{
       baseSha: string;
@@ -145,14 +152,18 @@ export function produceScmPullRequestReviewScope(input: Readonly<{
       observedAtMs: number;
     }>;
   }>;
-  expected: Readonly<{
-    account: QualifiedConnectedAccountRef;
+  expected: ScmPullRequestReviewAuthorityV1 & Readonly<{
     baseSha: string;
     headSha: string;
   }>;
 }>): ScmPullRequestReviewScopeProductionV1 {
   const { authoritative, expected } = input;
-  if (!sameQualifiedConnectedAccountRef(authoritative.account, expected.account)) {
+  const authorityMatches = 'account' in authoritative
+    ? 'account' in expected && sameQualifiedConnectedAccountRef(authoritative.account, expected.account)
+    : 'nativeService' in expected
+      && authoritative.nativeService.pluginId === expected.nativeService.pluginId
+      && authoritative.nativeService.localId === expected.nativeService.localId;
+  if (!authorityMatches) {
     return { status: 'refused', reason: 'accountMismatch' };
   }
   if (
@@ -163,7 +174,7 @@ export function produceScmPullRequestReviewScope(input: Readonly<{
   }
   const parsed = ScmPullRequestReviewScopeV1Schema.safeParse({
     kind: 'scm_pull_request_review_scope.v1',
-    account: authoritative.account,
+    ...('account' in authoritative ? { account: authoritative.account } : { nativeService: authoritative.nativeService }),
     pullRequest: authoritative.pullRequest,
     observed: authoritative.observed,
   });

@@ -15,7 +15,6 @@ import { githubHostingProviderAdapter } from '../adapter.js';
 import { createGithubAuthRequiredError } from './errors.js';
 import {
   createGithubRestAdapter,
-  isGithubDotComProvider,
   type GithubRestPullRequestAdapter,
 } from './restAdapter.js';
 
@@ -29,21 +28,6 @@ export type GithubPullRequestAdapter = typeof githubHostingProviderAdapter & Rea
     input: ScmHostingProviderPullRequestCheckoutReferenceInput
   ): Promise<ScmHostingProviderPullRequestCheckoutReferenceMetadata>;
 }>;
-
-/**
- * The bound GitHub Connected Account is the sole authenticated authority for
- * pull-request reads and mutations. A host with no qualified Connected Account
- * path — every non-`github.com` host, including GitHub Enterprise — is refused
- * typed rather than executed with whatever credentials happen to be present on
- * the machine.
- */
-function requireBoundAccountHost(provider: ScmHostingProviderRef): void {
-  if (isGithubDotComProvider(provider)) return;
-  throw createGithubAuthRequiredError(
-    'GitHub pull request operations require a bound github.com Connected Account; '
-    + 'this host has no qualified GitHub Connected Account.',
-  );
-}
 
 export function createGithubPullRequestAdapter(params?: Readonly<{
   restAdapter?: Partial<GithubRestPullRequestAdapter>;
@@ -59,21 +43,18 @@ export function createGithubPullRequestAdapter(params?: Readonly<{
         : null;
     },
     async listPullRequests(input: ScmHostingProviderPullRequestListInput) {
-      requireBoundAccountHost(input.provider);
       if (!restAdapter.listPullRequests) {
         throw createGithubAuthRequiredError('GitHub pull request listing is unavailable');
       }
       return await restAdapter.listPullRequests(input);
     },
     async getPullRequest(input: ScmHostingProviderPullRequestGetInput) {
-      requireBoundAccountHost(input.provider);
       if (!restAdapter.getPullRequest) {
         throw createGithubAuthRequiredError('GitHub pull request lookup is unavailable');
       }
       return await restAdapter.getPullRequest(input);
     },
     async createPullRequest(input: ScmHostingProviderPullRequestCreateInput) {
-      requireBoundAccountHost(input.provider);
       if (!restAdapter.createPullRequest) {
         throw createGithubAuthRequiredError('GitHub pull request creation is unavailable');
       }
@@ -82,7 +63,6 @@ export function createGithubPullRequestAdapter(params?: Readonly<{
     async resolvePullRequestCheckoutReference(
       input: ScmHostingProviderPullRequestCheckoutReferenceInput,
     ) {
-      requireBoundAccountHost(input.provider);
       if (!restAdapter.resolvePullRequestCheckoutReference) {
         throw createGithubAuthRequiredError('GitHub checkout reference lookup is unavailable');
       }

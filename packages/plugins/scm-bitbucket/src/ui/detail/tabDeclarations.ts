@@ -25,21 +25,21 @@ export type BitbucketDetailTabIdV1 =
   | 'overview'
   | 'activity'
   | 'diff'
-  | 'builds'
-  | 'comments';
+  | 'builds';
 
 /** Which read a panel's content comes from. */
 export type BitbucketDetailTabReadPlaneV1 =
   /** The native description and observation from one authoritative PR read. */
   | 'overview'
-  /** The one endpoint carrying approvals, updates and comments together. */
+  /**
+   * The activity collection (approvals, updates, comments) merged with the comment collection,
+   * which owns each remark's resolution and controls, into one chronological stream.
+   */
   | 'activity'
   /** The raw-diff redirect and diffstat collection. */
   | 'diff'
   /** The pull request's own build-status collection. */
-  | 'builds'
-  /** The pull request's comment collection, in provider order. */
-  | 'comments';
+  | 'builds';
 
 export type BitbucketDetailTabDeclarationV1 = Readonly<{
   id: BitbucketDetailTabIdV1;
@@ -69,7 +69,8 @@ export const BITBUCKET_DETAIL_TABS_V1: readonly BitbucketDetailTabDeclarationV1[
     title: 'Activity',
     titleKey: 'plugins.bitbucket.ui.tabs.activity',
     retention: 'discard' as const,
-    retainedState: 'nothing: activity rows, the opaque next link, scroll and expansion remount',
+    retainedState: 'nothing: activity and comment rows, both opaque next links, scroll, reply'
+      + ' expansion and any draft remount from defaults',
     readPlane: 'activity' as const,
     scrollOwner: 'list' as const,
   }),
@@ -89,16 +90,6 @@ export const BITBUCKET_DETAIL_TABS_V1: readonly BitbucketDetailTabDeclarationV1[
     retention: 'discard' as const,
     retainedState: 'nothing: status rows, the rollup, the opaque next link and scroll remount',
     readPlane: 'builds' as const,
-    scrollOwner: 'list' as const,
-  }),
-  Object.freeze({
-    id: 'comments' as const,
-    title: 'Comments',
-    titleKey: 'plugins.bitbucket.ui.tabs.comments',
-    retention: 'discard' as const,
-    retainedState: 'nothing: comment rows, the opaque next link, the 30-record window, scroll,'
-      + ' reply expansion and any draft remount from defaults',
-    readPlane: 'comments' as const,
     scrollOwner: 'list' as const,
   }),
 ] as const);

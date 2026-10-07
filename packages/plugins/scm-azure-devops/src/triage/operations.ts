@@ -14,6 +14,8 @@ import type {
 } from '@happier-dev/plugin-sdk/actions';
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import {
+  isTriageSourceConnectedAccountInstanceV1,
+  type TriageSourceConnectedAccountBindingV1,
   type TriageGetInputV1,
   type TriageGetResultV1,
   type TriageListInstancesResultV1,
@@ -1266,7 +1268,7 @@ export type AuthorizedClient =
  */
 async function confirmAzureConfiguredBaseIsCurrent(input: Readonly<{
   connectedAccounts: Pick<AzureTriageAccountService, 'listAccounts' | 'getBinding'>;
-  binding: TriageSourceAccountBindingV1;
+  binding: TriageSourceConnectedAccountBindingV1;
   origin: AzureDevOpsOrigin;
   signal: AbortSignal;
 }>): Promise<TriageSourceFailureV1 | null> {
@@ -1328,6 +1330,13 @@ export async function authorizeClient(input: Readonly<{
   origin: AzureDevOpsOrigin;
   signal: AbortSignal;
 }>): Promise<AuthorizedClient> {
+  if (!isTriageSourceConnectedAccountInstanceV1(input.instance)) {
+    return { ok: false, failure: createAzureSourceFailure({
+      class: 'unsupportedContract',
+      code: 'azure-devops/unsupported-credential-source',
+      detail: 'This Azure DevOps source requires a connected account.',
+    }) };
+  }
   const stale = await confirmAzureConfiguredBaseIsCurrent({
     connectedAccounts: input.services.connectedAccounts,
     binding: input.instance.binding,

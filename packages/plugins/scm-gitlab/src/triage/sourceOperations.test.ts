@@ -159,6 +159,28 @@ async function walkScan(
 }
 
 describe('GitLab scan', () => {
+  it('refuses a native credential binding before account or provider access', async () => {
+    const seam = harness({});
+    const result = await scanGitlabTriageSource({
+      scan: {
+        v: 1,
+        instance: configuredInstance({ binding: {
+          purpose: GITLAB_CONNECTED_ACCOUNT_PURPOSE,
+          source: 'native',
+          service: SERVICE,
+        } }),
+        page: { kind: 'initial', limit: 32 },
+      },
+      connectedAccounts: seam.connectedAccounts,
+      fetcher: seam.fetcher,
+      signal: new AbortController().signal,
+      nowMs: NOW_MS,
+    });
+    expect(result).toMatchObject({ kind: 'failed', failure: { class: 'unsupportedContract' } });
+    expect(seam.materializeListedAccount).not.toHaveBeenCalled();
+    expect(seam.fetcher).not.toHaveBeenCalled();
+  });
+
   it('reauthorizes and materializes only the configured instance binding', async () => {
     const seam = harness({
       '/api/v4/user': { body: VIEWER },

@@ -10,7 +10,7 @@ import {
 import {
     MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
     MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
-    TriageSourceAccountBindingV1Schema,
+    TriageSourceConnectedAccountBindingV1Schema,
     TriageSourceFailureV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 
@@ -40,13 +40,13 @@ export const PosthogConfigurationDirectoryInputV1Schema = defineProtocolUnion([
     defineProtocolObject({
         v: defineProtocolLiteral(1),
         kind: defineProtocolLiteral('organizations'),
-        binding: TriageSourceAccountBindingV1Schema,
+        binding: TriageSourceConnectedAccountBindingV1Schema,
         page: PageSchema,
     }, { policy: 'closed' }),
     defineProtocolObject({
         v: defineProtocolLiteral(1),
         kind: defineProtocolLiteral('environments'),
-        binding: TriageSourceAccountBindingV1Schema,
+        binding: TriageSourceConnectedAccountBindingV1Schema,
         organizationUuid: OrganizationUuidSchema,
         page: PageSchema,
     }, { policy: 'closed' }),

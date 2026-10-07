@@ -3,6 +3,7 @@ import type {
     TriageSourceInstanceDraftV1,
 } from '@happier-dev/triage-protocol/v1';
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
+import { triageSourceBindingComponentsV1 } from '@happier-dev/triage-protocol/v1';
 
 /**
  * The identity components of every durable tag, in the exact order the identity
@@ -107,10 +108,7 @@ export function configuredSourceInstanceTagComponents(input: Readonly<{
     return [
         input.source.pluginId,
         input.source.localId,
-        input.binding.purpose,
-        input.binding.account.service.pluginId,
-        input.binding.account.service.localId,
-        input.binding.account.accountId,
+        ...triageSourceBindingComponentsV1(input.binding),
         input.localInstanceKey,
     ];
 }

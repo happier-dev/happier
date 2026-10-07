@@ -54,6 +54,19 @@ const PREPARED_CURRENT: TriagePrepareReviewWorkspaceResultV1 = {
 };
 
 describe('resolveEntrySessionWorkspace', () => {
+    it('prepares a native-bound workspace without a synthetic selected connected account', async () => {
+        const source = createTestkitPrepareReviewWorkspace({ results: [PREPARED_CURRENT] });
+        const instance = testkitConfiguredInstance();
+        const nativeInstance = { ...instance, binding: {
+            purpose: instance.binding.purpose, source: 'native' as const,
+            service: { pluginId: 'happier.scm.forge.github', localId: 'github-account' },
+        } };
+        const resolved = await resolveEntrySessionWorkspace(source.deps, { ...REQUEST, instance: nativeInstance });
+        expect(resolved.status).toBe('prepared');
+        expect(source.calls[0]?.input.instance.binding).toEqual(nativeInstance.binding);
+        expect(source.calls[0]?.options).not.toHaveProperty('expectedSelectedConnectedAccountRef');
+    });
+
     it('invokes the admitted operation once with the exact selected workspace and observed revision', async () => {
         const source = createTestkitPrepareReviewWorkspace({ results: [PREPARED_CURRENT] });
 

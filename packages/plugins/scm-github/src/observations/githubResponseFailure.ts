@@ -175,7 +175,9 @@ export function classifyGithubTransportFailure(error: unknown): GithubResponseFa
     && typeof (error as { code: unknown }).code === 'string'
     ? (error as { code: string }).code
     : null;
-  if (code === 'github_credential_unavailable' || code === 'github_credential_mismatch') {
+  if (code === 'github_credential_unavailable'
+    || code === 'github_credential_mismatch'
+    || code === 'plugin_connected_account_native_unavailable') {
     return Object.freeze({ class: 'authentication', code });
   }
   // The shared exact-account materializer converts an abort into a typed reason rather

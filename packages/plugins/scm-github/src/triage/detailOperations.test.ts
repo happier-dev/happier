@@ -211,6 +211,7 @@ describe('GitHub overview plane', () => {
         headRevision: HEAD_SHA,
         additions: 214,
         deletions: 88,
+        changedFiles: 12,
         branchUpdateEligibility: 'behind',
       });
       expect(stub.requests.filter((request) => new URL(request.url).pathname.endsWith('/pulls/1284')))

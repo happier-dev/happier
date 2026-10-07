@@ -119,6 +119,22 @@ function configuredInstance(origin: string) {
 }
 
 describe('Sentry Triage source operations', () => {
+  it('refuses a native credential binding before account or provider access', async () => {
+    const seam = host();
+    const result = await scanSentrySource({
+      v: 1,
+      instance: { ...configuredInstance('https://de.sentry.io'), binding: {
+        purpose: SENTRY_CONNECTED_ACCOUNT_PURPOSE,
+        source: 'native',
+        service: ACCOUNT.service,
+      } },
+      page: { kind: 'initial', limit: 30 },
+    }, seam.context);
+    expect(result).toMatchObject({ kind: 'failed', failure: { class: 'unsupportedContract' } });
+    expect(seam.materializeListedAccount).not.toHaveBeenCalled();
+    expect(seam.request).not.toHaveBeenCalled();
+  });
+
   it('reports a first run with no selected account as an empty listing, not a Sentry failure', async () => {
     // The host declines to list a purpose it holds no selection for, and that refusal
     // is a throw. Mapping it into this source's provider vocabulary would accuse a

@@ -37,6 +37,20 @@ const publicationPlan = {
 };
 
 describe('review comment helpers', () => {
+    it('projects native publication identity through the same closed canonical plan', () => {
+        const { configuredAccountId: _accountId, ...entryTarget } = publicationPlan.target;
+        const nativePlan = { ...publicationPlan, target: {
+            ...entryTarget, nativeService: { pluginId: 'happier.scm.forge.github', localId: 'github-account' },
+        } };
+        expect(ReviewCommentPublicationPlanV1ProtocolSchema.parse(nativePlan)).toEqual(parseReviewCommentPublicationPlanV1(nativePlan));
+        for (const target of [
+            { ...nativePlan.target, configuredAccountId: 'synthetic-native' },
+            { ...nativePlan.target, nativeService: { ...nativePlan.target.nativeService, token: 'secret' } },
+        ]) {
+            expect(ReviewCommentPublicationPlanV1ProtocolSchema.safeParse({ ...nativePlan, target }).success).toBe(false);
+        }
+    });
+
     it('qualifies issue links beyond a provider-local number', () => {
         const base = {
             source: { pluginId: 'happier.scm.github', localId: 'github' },

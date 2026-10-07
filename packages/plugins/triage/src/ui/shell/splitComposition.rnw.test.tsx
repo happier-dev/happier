@@ -437,7 +437,7 @@ function openEntryInLocation(): boolean {
 }
 
 describe('the Triage entry detail in the host details pane', () => {
-    it('opens the entry in the pane beside the narrowed table, with the entry kept selected and the plugin context intact', async () => {
+    it('opens the entry in the pane beside the two-line list, with the entry kept selected and the plugin context intact', async () => {
         const shell = await mountShell({ detailsPane: { available: true } });
         await measureFillRegion(DESKTOP_WIDTH);
         const wideColumns = columnTitles();
@@ -455,17 +455,16 @@ describe('the Triage entry detail in the host details pane', () => {
         // Nothing of it stays in the page: no in-page split, no second copy.
         expect(document.querySelectorAll('[aria-label="Close details"]')).toHaveLength(1);
         expect(document.querySelector(`[data-testid="${TRIAGE_SHELL_DETAIL_REGION_TEST_ID_V1}"]`)?.textContent ?? '').toBe('');
-        // The table stays on screen beside it, with the entry selected; the location names it.
+        // The rows stay on screen beside it as the two-line list (the lab's Desk list beside its detail, not a
+        // squeezed table), with the entry selected; the location names it.
         expect(listRegionNode().style.display).toBe('');
-        expect(columnTitles()).toEqual(wideColumns);
+        expect(columnTitles()).not.toEqual(wideColumns);
+        expect(listRegionNode().textContent).toContain(ENTRY_TITLE);
         expect(openEntryInLocation()).toBe(true);
 
-        // The pane docks and the page narrows: the table drops columns by its priorities, never the entry, and the
-        // selection holds.
+        // The pane docks and the page narrows: still the list, and the selection holds.
         await measureFillRegion(SPLIT_WIDTH - 300);
-        const narrowColumns = columnTitles();
-        expect(narrowColumns.length).toBeLessThan(wideColumns.length);
-        expect(narrowColumns).toContain('Entry');
+        expect(listRegionNode().textContent).toContain(ENTRY_TITLE);
         expect(openEntryInLocation()).toBe(true);
         expect(detailsPaneNode()?.textContent).toContain(ENTRY_TITLE);
     });

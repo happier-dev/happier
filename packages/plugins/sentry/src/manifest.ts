@@ -5,6 +5,7 @@ import {
   TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
   TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
   TriageSourcesContributionProtocolV1,
+  TriageSourceConnectedAccountInputsV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import {
@@ -347,7 +348,7 @@ export const SENTRY_PLUGIN = definePlugin({
       description: 'Reads one page of the configured Sentry organization issue walk.',
       surfaces: sources.operations.scan.declaration.surfaces,
       dangerLevel: sources.operations.scan.declaration.dangerLevel,
-      inputSchema: sources.operations.scan.declaration.input.schema.jsonSchema,
+      inputSchema: TriageSourceConnectedAccountInputsV1.scan.jsonSchema,
       resultSchema: sources.operations.scan.declaration.resultSchema.jsonSchema,
       hostAccess: READ_HOST_ACCESS,
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
@@ -412,7 +413,7 @@ export const SENTRY_PLUGIN = definePlugin({
       // Action from global placement discovery — it disables no invocation.
       placementBindings: [],
       dangerLevel: sources.operations.get.declaration.dangerLevel,
-      inputSchema: sources.operations.get.declaration.input.schema.jsonSchema,
+      inputSchema: TriageSourceConnectedAccountInputsV1.get.jsonSchema,
       resultSchema: sources.operations.get.declaration.resultSchema.jsonSchema,
       hostAccess: READ_HOST_ACCESS,
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,

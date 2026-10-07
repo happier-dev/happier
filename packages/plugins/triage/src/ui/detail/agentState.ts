@@ -57,3 +57,23 @@ export function describeTriageAgentStatusV1(state: SessionStateV1): TriageAgentS
   }
   return null;
 }
+
+/** Which linked Session a list row speaks for: the one asking for the reader, then one at work, then the first that can be said. */
+const ROW_AGENT_PRIORITY: readonly SessionStateV1['workStatus']['bucket'][] = ['needs_you', 'working'];
+
+/**
+ * The one agent state a PRs & Issues row shows for all of its linked Sessions (the table's Agent column).
+ * It reuses the story rail's sentence owner, so a row and its detail never word the same Session differently.
+ */
+export function readTriageEntryAgentStatusV1(states: readonly SessionStateV1[]): TriageAgentStatusV1 | null {
+  for (const bucket of ROW_AGENT_PRIORITY) {
+    const match = states.find((state) => state.workStatus.bucket === bucket);
+    const described = match === undefined ? null : describeTriageAgentStatusV1(match);
+    if (described !== null) return described;
+  }
+  for (const state of states) {
+    const described = describeTriageAgentStatusV1(state);
+    if (described !== null) return described;
+  }
+  return null;
+}

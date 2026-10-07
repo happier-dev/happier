@@ -27,4 +27,12 @@ export const renderSurface = createTriageSourceSettingsSurface({
   listInstancesLocalActionId: GITHUB_TRIAGE_ACTION_IDS_V1.listInstances,
   connectedAccountServiceLocalId: GITHUB_CONNECTED_ACCOUNT_ID,
   sourceDisplayName: GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1.displayName,
+  nativeLoginLabel: {
+    key: 'plugins.github.settings.nativeLogin',
+    fallback: 'Use this machine’s GitHub CLI login',
+  },
+  nativeAuthenticationFailureLabel: {
+    key: 'plugins.github.settings.nativeLoginUnavailable',
+    fallback: 'Sign in with gh CLI on this machine.',
+  },
 });

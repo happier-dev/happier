@@ -89,6 +89,7 @@ function hasOpaqueContinuation(input: TriageListEntriesInputV1): boolean {
 const UNMOUNTED_SNAPSHOT: TriageListWindowSnapshotV1 = Object.freeze({
   freshness: 'unknown',
   pending: 'idle',
+  passes: 0,
   configuredSources: Object.freeze([]),
 });
 

@@ -1,4 +1,4 @@
-import { defineProtocolLiteral, defineProtocolObject, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
+import { defineProtocolArray, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
 import {
     TriageGetResultV1Schema,
     TriageSourceFailureV1Schema,
@@ -12,6 +12,11 @@ export const PosthogNativeOverviewResultV1Schema = defineProtocolObject({
         defineProtocolLiteral('high'), defineProtocolLiteral('critical'),
     ]).optional(),
     enrichmentFailure: TriageSourceFailureV1Schema.optional(),
+    /** The query plane's sparkline: each bucket's start and its occurrence count, oldest first. */
+    trend: defineProtocolArray(defineProtocolObject({
+        atMs: defineProtocolNumber({ integer: true }),
+        count: defineProtocolNumber({ minimum: 0 }),
+    }, { policy: 'closed' })).optional(),
 }, { policy: 'closed' });
 
 export type PosthogNativeOverviewResultV1 = ReturnType<typeof PosthogNativeOverviewResultV1Schema.parse>;

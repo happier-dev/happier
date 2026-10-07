@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
-import { TriageSourcesContributionProtocolV1 } from '@happier-dev/triage-protocol/v1';
+import { TriageSourceConnectedAccountInputsV1, TriageSourcesContributionProtocolV1 } from '@happier-dev/triage-protocol/v1';
 import { assertTriageSourceContributionV1 } from '@happier-dev/triage-protocol/testing/v1';
 import { describe, expect, it } from 'vitest';
 
@@ -206,7 +206,7 @@ describe('Sentry plugin manifest', () => {
           surfaces: sources.operations.scan.declaration.surfaces,
           execution: { target: 'daemon' },
           dangerLevel: sources.operations.scan.declaration.dangerLevel,
-          inputSchema: sources.operations.scan.declaration.input.schema.jsonSchema,
+          inputSchema: TriageSourceConnectedAccountInputsV1.scan.jsonSchema,
           resultSchema: sources.operations.scan.declaration.resultSchema.jsonSchema,
           connectedAccountPurposeBindings: [{
             path,

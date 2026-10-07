@@ -3,7 +3,7 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import {
   decodeTriagePagingTokenV1,
   encodeTriagePagingTokenV1,
-  type TriageConfiguredSourceInstanceV1,
+  type TriageConfiguredSourceConnectedAccountInstanceV1,
 } from '@happier-dev/triage-protocol/v1';
 
 const SIGNATURE_PATTERN = /^[A-Za-z0-9_-]{43}$/u;
@@ -17,7 +17,7 @@ function readContinuationKey(): Buffer {
 
 /** The configured identity and account route shared by every Bitbucket continuation plane. */
 export function buildBitbucketContinuationBindingScope(
-  instance: TriageConfiguredSourceInstanceV1,
+  instance: TriageConfiguredSourceConnectedAccountInstanceV1,
 ): string {
   return JSON.stringify([
     instance.instance.source.pluginId,

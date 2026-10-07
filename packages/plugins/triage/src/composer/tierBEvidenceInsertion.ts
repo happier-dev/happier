@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type { ComposerRefV1 } from '@happier-dev/plugin-ui';
 import type {
     TriageEvidenceDisclosureOutcomeV1,
@@ -56,11 +57,15 @@ export function useTriageTierBEvidenceInsertion(
 
     const disclose = React.useCallback(async (
         resolver: TriageEvidenceDisclosureResolverV1,
+        options?: PluginCancellationOptions,
     ): Promise<TriageEvidenceDisclosureOutcomeV1> => {
+        if (options?.signal?.aborted) return INERT;
         if (handle === null) return UNAVAILABLE;
 
         active.current?.abort();
         const controller = new AbortController();
+        const abort = () => controller.abort();
+        options?.signal?.addEventListener('abort', abort, { once: true });
         active.current = controller;
         const requestGeneration = ++generation.current;
         const isCurrent = () => (
@@ -88,6 +93,7 @@ export function useTriageTierBEvidenceInsertion(
                 reason: 'The evidence reference could not be prepared. Try again.',
             };
         } finally {
+            options?.signal?.removeEventListener('abort', abort);
             if (active.current === controller) active.current = null;
         }
     }, [handle]);

@@ -50,13 +50,15 @@ import {
   useSurfaceContext,
   useTabPanelActivity,
   type MetadataEntry,
+  type TextTone,
 } from '@happier-dev/plugin-ui';
 import {
   TriageDetailSurfaceInputV1Schema,
   type TriageDetailSurfaceInputV1,
   type TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
-import { TriageDetailInstance, TriageDetailPanel, TriageDetailStory, TriageDetailActivity, useTriageEvidenceDisclosure } from '@happier-dev/triage-sources/ui';
+import { TriageActivityTimeline, TriageDetailInstance, TriageDetailPanel, TriageDetailStory, useTriageEvidenceDisclosure, useTriageSourcePanelIntentV1, triageEvidenceDisclosureActionResultV1, type TriageActivityEventV1, type TriageActivityKindV1, type TriageSourcePanelCommandV1 } from '@happier-dev/triage-sources/ui';
+import { TriageDetailSpread, useTriageDetailPanelOpener, type TriageDetailSpreadTileV1, type TriageDetailTrendV1 } from '@happier-dev/triage-sources/ui';
 // The presentation rules used below are projections of the Triage contract's own
 // closed fact and failure vocabularies, so they are consumed from the one published
 // owner rather than re-spelled here: six copies is how one declared `compact` number
@@ -202,8 +204,8 @@ function SelectedOccurrenceSummary({
   controller: SentrySelectedEventControllerV1;
   locale: string;
   nowMs: number;
-  /** Absent in a Triage panel, where Stack trace is the frame's own tab (r0.42). */
-  onOpenStackTrace?: () => void;
+  /** Absent when no tab or frame panel offers the stack trace. */
+  onOpenStackTrace?: (() => void) | undefined;
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const { demand, read } = controller;
@@ -405,13 +407,8 @@ function LiveSummary({
   }
 
   const { value } = summary;
+  // Events and users are the spread's tiles; they are stated there and only there.
   const entries: readonly MetadataEntry[] = [
-    ...(value.eventCount === undefined
-      ? []
-      : [{ label: text('plugins.sentry.ui.metadata.events', 'Events'), value: `~${value.eventCount}` }]),
-    ...(value.userCount === undefined
-      ? []
-      : [{ label: text('plugins.sentry.ui.metadata.users', 'Users'), value: `~${formatNumber(locale, value.userCount, 'compact')}` }]),
     ...(value.firstSeenAtMs === undefined
       ? []
       : [{
@@ -659,6 +656,54 @@ function TagsSection({
   );
 }
 
+/** The observation facts the spread states as tiles, so no other Overview row repeats them. */
+const SPREAD_FACT_IDS: ReadonlySet<string> = new Set(['events', 'users']);
+
+function observedCount(fields: readonly SentryDetailFieldV1[], id: string): number | null {
+  const field = fields.find((candidate) => candidate.id === id);
+  return field?.kind === 'number' ? field.value : null;
+}
+
+/**
+ * The spread from what Sentry stated: the live issue read when it answered, otherwise the
+ * observation the detail opened with (the same facts, read earlier). A fact neither stated
+ * is absent, never zero.
+ */
+function useSentrySpread(
+  summary: SentryReadStateV1<SentryIssueSummaryV1>,
+  fields: readonly SentryDetailFieldV1[],
+  locale: string,
+): Readonly<{ tiles: readonly TriageDetailSpreadTileV1[]; trend: TriageDetailTrendV1 | null }> {
+  const text = usePluginTranslation();
+  const live = summary.kind === 'ready' ? summary.value : null;
+  const liveEvents = live?.eventCount === undefined ? null : Number(live.eventCount);
+  const events = liveEvents !== null && Number.isSafeInteger(liveEvents)
+    ? formatNumber(locale, liveEvents, 'compact')
+    : live?.eventCount ?? (() => {
+      const observed = observedCount(fields, 'events');
+      return observed === null ? null : formatNumber(locale, observed, 'compact');
+    })();
+  const userCount = live?.userCount ?? observedCount(fields, 'users');
+  const firstRelease = live?.firstRelease?.version ?? null;
+  const tiles: TriageDetailSpreadTileV1[] = [
+    ...(events === null ? [] : [{ id: 'events', label: text('plugins.sentry.ui.metadata.events', 'Events'), value: events }]),
+    ...(userCount === null ? [] : [{
+      id: 'users',
+      label: text('plugins.sentry.ui.spread.users', 'Users affected'),
+      value: formatNumber(locale, userCount, 'compact'),
+    }]),
+    ...(firstRelease === null ? [] : [{
+      id: 'first-release', label: text('plugins.sentry.ui.metadata.firstSeenIn', 'First seen in'), value: firstRelease,
+    }]),
+  ];
+  const trend = live?.eventTrend === undefined || live.eventTrend.length === 0 ? null : {
+    label: text('plugins.sentry.ui.spread.trend', 'Events per hour'),
+    windowLabel: text('plugins.sentry.ui.spread.window', 'Last 24 hours'),
+    points: live.eventTrend,
+  };
+  return { tiles, trend };
+}
+
 function OverviewPanel({
   input,
   overview,
@@ -675,8 +720,8 @@ function OverviewPanel({
   selectedEvent: SentrySelectedEventControllerV1;
   locale: string;
   nowMs: number;
-  /** Absent in a Triage panel, where Stack trace is the frame's own tab (r0.42). */
-  onOpenStackTrace?: () => void;
+  /** Absent when no tab or frame panel offers the stack trace. */
+  onOpenStackTrace?: (() => void) | undefined;
   story?: boolean;
 }>): React.ReactElement {
   const text = usePluginTranslation();
@@ -705,17 +750,21 @@ function OverviewPanel({
   const statusFields = overview.fields.filter(
     (field): field is Extract<SentryDetailFieldV1, { kind: 'status' }> => field.kind === 'status',
   );
-  const pendingFields = overview.fields.filter((field) => field.kind === 'pending');
+  // The story answers these in the panels beside it; only the standalone tabs list them.
+  const pendingFields = story ? [] : overview.fields.filter((field) => field.kind === 'pending');
   const entries: readonly MetadataEntry[] = overview.fields.flatMap((field) => {
-    if (field.kind === 'pending' || field.kind === 'status') return [];
+    if (field.kind === 'pending' || field.kind === 'status' || SPREAD_FACT_IDS.has(field.id)) return [];
     const value = fieldValueText(field, locale, nowMs);
     return value === null ? [] : [{ label: factLabel(field), value }];
   });
+  const { tiles, trend } = useSentrySpread(summary, overview.fields, locale);
+  const spread = <TriageDetailSpread tiles={tiles} trend={trend} locale={locale} nowMs={nowMs} />;
 
   return (
-      <TriageDetailStory kind={story ? 'report' : undefined}>
+      <TriageDetailStory kind={story ? 'error' : undefined} changes={story ? spread : undefined}>
         {overview.summary === null ? null : <Text variant="body">{overview.summary}</Text>}
         <LiveSummary summary={summary} locale={locale} nowMs={nowMs} />
+        {story ? null : spread}
         {statusFields.length === 0 ? null : (
           <Row gap="small">
             {statusFields.map((field) => (
@@ -723,16 +772,16 @@ function OverviewPanel({
             ))}
           </Row>
         )}
-        {entries.length === 0
-          ? (
+        {entries.length > 0
+          ? <Metadata title="Facts" titleKey="plugins.sentry.ui.facts" entries={entries} />
+          : story ? null : (
             <EmptyState
               title="No projected facts"
               titleKey="plugins.sentry.ui.noFacts"
               description="This observation carried no displayable facts."
               descriptionKey="plugins.sentry.ui.noFacts.description"
             />
-          )
-          : <Metadata title="Facts" titleKey="plugins.sentry.ui.facts" entries={entries} />}
+          )}
         {pendingFields.length === 0 ? null : (
           <Stack gap="small">
             <Text
@@ -764,8 +813,8 @@ function OverviewPanel({
         />
         <Divider />
         <TagsSection input={input} distribution={distribution} locale={locale} nowMs={nowMs} />
-        <Divider />
-        <Metadata
+        {story ? null : <Divider />}
+        {story ? null : <Metadata
           title="Observation"
           titleKey="plugins.sentry.ui.observation"
           entries={[
@@ -780,7 +829,7 @@ function OverviewPanel({
                 value: formatTimestamp(locale, overview.sourceUpdatedAtMs, 'relative', nowMs),
               }]),
           ]}
-        />
+        />}
       </TriageDetailStory>
   );
 }
@@ -898,6 +947,20 @@ function ActivatedOccurrenceDetail({
     setRevealUser(false);
   }, [selected]);
 
+  const revealCommands = React.useMemo<readonly TriageSourcePanelCommandV1[]>(() =>
+    selected.kind !== 'event' || read.kind !== 'success' || read.projection.user === null ? [] : [{
+      title: revealUser ? text('plugins.sentry.ui.hideUserDetails', 'Hide event user details')
+        : text('plugins.sentry.ui.showUserDetails', 'Show event user details'),
+      operation: { kind: 'revealSourceUser', occurrenceId: read.projection.eventId, revealed: !revealUser },
+    }], [read, revealUser, selected, text]);
+  const reveal = useTriageSourcePanelIntentV1('revealSourceUser', async (operation, signal) => {
+    if (operation.kind !== 'revealSourceUser' || signal.aborted || selected.kind !== 'event'
+      || read.kind !== 'success' || read.projection.eventId !== operation.occurrenceId
+      || read.projection.user === null) return { status: 'unavailable' };
+    setRevealUser(operation.revealed);
+    return { status: 'applied' };
+  }, revealCommands);
+
   if (!active || selected.kind !== 'event') return null;
   if (read.kind === 'idle' || read.kind === 'loading') {
     return <LoadingState title="Reading this occurrence" titleKey="plugins.sentry.ui.readingSelectedOccurrence" />;
@@ -960,7 +1023,7 @@ function ActivatedOccurrenceDetail({
                 : text('plugins.sentry.ui.showUserDetails', 'Show event user details')}
               variant="secondary"
               onPress={() => {
-                setRevealUser((current) => !current);
+                void reveal({ kind: 'revealSourceUser', occurrenceId: projection.eventId, revealed: !revealUser });
               }}
             />
             {revealUser ? <Metadata title="Event user" titleKey="plugins.sentry.ui.eventUser" entries={userEntries} /> : null}
@@ -972,9 +1035,8 @@ function ActivatedOccurrenceDetail({
 }
 
 /**
- * Confirms the exact visible occurrence before issuing its identity-only
- * candidate. The source owns this per-item disclosure decision; Triage still
- * owns the one Composer transaction and never receives provider bytes here.
+ * Named Action approval precedes candidate issuance. This source describes the
+ * selected evidence; Triage still owns the one bound Composer transaction.
  */
 function SelectedOccurrenceEvidenceAction({
   input,
@@ -985,30 +1047,40 @@ function SelectedOccurrenceEvidenceAction({
   projection: SentryEventProjectionV1;
   disclosure: ReturnType<typeof useTriageEvidenceDisclosure>;
 }>): React.ReactElement | null {
-  const hostApi = usePluginHostApi();
   const text = usePluginTranslation();
   const [busy, setBusy] = React.useState(false);
-  const attempt = React.useRef<AbortController | null>(null);
-
-  React.useEffect(() => () => {
-    attempt.current?.abort();
-    attempt.current = null;
-  }, []);
-
-  if (!disclosure.available) return null;
-  const title = text('plugins.sentry.ui.selectedOccurrence', 'Selected occurrence');
   const action = text(
     'plugins.sentry.ui.addSelectedOccurrence',
     'Add selected occurrence to message',
   );
+  const commands = React.useMemo<readonly TriageSourcePanelCommandV1[]>(() => !disclosure.available ? []
+    : [{ title: action, operation: { kind: 'insertSelectedEvidence', occurrenceId: projection.eventId } }],
+  [action, disclosure.available, projection.eventId]);
+  const insert = useTriageSourcePanelIntentV1('insertSelectedEvidence', async (operation, signal) => {
+    if (operation.kind !== 'insertSelectedEvidence' || operation.occurrenceId !== projection.eventId
+      || !disclosure.available || signal.aborted) return { status: 'unavailable' };
+    return triageEvidenceDisclosureActionResultV1(await disclosure.disclose(async (disclosureSignal) => {
+      if (signal.aborted || disclosureSignal.aborted) return null;
+      return createSentryEvidenceCandidate({
+        instance: input.instance,
+        localRef: {
+          kindId: input.observation.entryRef.kindId,
+          collisionScope: input.observation.entryRef.collisionScope,
+          entryId: input.observation.entryRef.entryId,
+        },
+        selected: projection,
+      });
+    }, { signal }));
+  }, commands);
+
+  if (!disclosure.available) return null;
   // What "Add" actually forwards, counted from the projection on screen. The
   // selecting panel shows the occurrence's title and tags, while dispatch also
-  // sends its frames, source context lines and breadcrumbs — so a confirmation
-  // naming only the action asks for approval of evidence it never described
-  // (`SENTRY.md` §8.4).
+  // sends its frames, source context lines and breadcrumbs. Keep the exact
+  // counts and exclusions visible alongside Add, while the named Action owns
+  // the shared approval decision (`SENTRY.md` §8.4).
   const evidence = summarizeSentryEvidenceDisclosure(projection);
-  const confirmation = [
-    action,
+  const description = [
     text(
       'plugins.sentry.ui.evidence.includes',
       'Sends this occurrence: {frames} stack frame(s), {contextLines} source context'
@@ -1031,47 +1103,22 @@ function SelectedOccurrenceEvidenceAction({
   ].join('\n\n');
 
   return (
-    <Button
-      title={action}
-      variant="secondary"
-      busy={busy}
-      onPress={async () => {
-        attempt.current?.abort();
-        const controller = new AbortController();
-        attempt.current = controller;
-        setBusy(true);
-        try {
-          // The selected projection and its redaction notice are visible in
-          // this exact panel, and the confirmation names the evidence itself.
-          // Confirmation happens before candidate issuance; a selection change
-          // or unmount aborts the host dialog.
-          const confirmed = await hostApi.confirm(confirmation, {
-            title,
-            signal: controller.signal,
-          });
-          if (!confirmed || controller.signal.aborted || attempt.current !== controller) return;
-          await disclosure.disclose(async (signal) => {
-            if (signal.aborted || controller.signal.aborted || attempt.current !== controller) {
-              return null;
-            }
-            return createSentryEvidenceCandidate({
-              instance: input.instance,
-              localRef: {
-                kindId: input.observation.entryRef.kindId,
-                collisionScope: input.observation.entryRef.collisionScope,
-                entryId: input.observation.entryRef.entryId,
-              },
-              selected: projection,
-            });
-          });
-        } finally {
-          if (attempt.current === controller) {
-            attempt.current = null;
+    <Stack gap="small">
+      <Text variant="caption" value={description} />
+      <Button
+        title={action}
+        variant="secondary"
+        busy={busy}
+        onPress={async () => {
+          setBusy(true);
+          try {
+            await insert({ kind: 'insertSelectedEvidence', occurrenceId: projection.eventId });
+          } finally {
             setBusy(false);
           }
-        }
-      }}
-    />
+        }}
+      />
+    </Stack>
   );
 }
 
@@ -1094,6 +1141,27 @@ function OccurrencesPanel({
   const controller = useSentryOccurrences(input, spread);
   const { state } = controller;
 
+  const orderCommands = React.useMemo<readonly TriageSourcePanelCommandV1[]>(() => [{
+    title: spread ? text('plugins.sentry.ui.hideSpread', 'Show Sentry’s own order')
+      : text('plugins.sentry.ui.showSpread', 'Show a spread of events'),
+    operation: { kind: 'setSourceOrdering', order: spread ? 'provider' : 'spread' },
+  }], [spread, text]);
+  const order = useTriageSourcePanelIntentV1('setSourceOrdering', async (operation, signal) => {
+    if (operation.kind !== 'setSourceOrdering' || signal.aborted) return { status: 'unavailable' };
+    setSpread(operation.order === 'spread');
+    return { status: 'applied' };
+  }, orderCommands);
+  const selectionCommands = React.useMemo<readonly TriageSourcePanelCommandV1[]>(() =>
+    state.kind !== 'ready' ? [] : state.rows.map((row) => ({ title: row.headline,
+      operation: { kind: 'selectSourceOccurrence', occurrenceId: row.eventId } })), [state]);
+  const select = useTriageSourcePanelIntentV1('selectSourceOccurrence', async (operation, signal) => {
+    if (operation.kind !== 'selectSourceOccurrence' || signal.aborted || state.kind !== 'ready'
+      || !state.rows.some((row) => row.eventId === operation.occurrenceId)) return { status: 'unavailable' };
+    selectedEvent.select({ kind: 'event', eventId: operation.occurrenceId });
+    selectedEvent.demand();
+    return { status: 'applied' };
+  }, selectionCommands);
+
   const spreadControl = (
     <Stack gap="small">
       <Button
@@ -1102,7 +1170,7 @@ function OccurrencesPanel({
           : text('plugins.sentry.ui.showSpread', 'Show a spread of events')}
         variant="plain"
         onPress={() => {
-          setSpread((current) => !current);
+          void order({ kind: 'setSourceOrdering', order: spread ? 'provider' : 'spread' });
         }}
       />
       {spread
@@ -1203,8 +1271,7 @@ function OccurrencesPanel({
             // Activation is the ONLY writer of the shared selection. Refresh, tab
             // switch and scroll never move it, and the event body is read because
             // this row was chosen rather than because the list rendered.
-            selectedEvent.select({ kind: 'event', eventId: row.eventId });
-            selectedEvent.demand();
+            void select({ kind: 'selectSourceOccurrence', occurrenceId: row.eventId });
           }}
         />
       )}
@@ -1439,8 +1506,39 @@ function ReleasePanel({
 
 /* -------------------------------------------------------------------- Activity */
 
-function activityHeadline(item: Readonly<{ type: string; actor?: string }>): string {
-  return item.actor === undefined ? item.type : `${item.type} · ${item.actor}`;
+type SentryActivityHistoryItemV1 = Extract<SentryActivityHistoryV1, { status: 'available' }>['items'][number];
+
+/**
+ * Sentry's own activity words that name what kind of change a record is. A word this
+ * build has not met stays an ordinary event and keeps Sentry's spelling as its sentence.
+ */
+const SENTRY_ACTIVITY_KIND: Readonly<Record<string, Readonly<{ kind: TriageActivityKindV1; tone?: TextTone }>>> =
+  Object.freeze({
+    note: { kind: 'comment' },
+    set_resolved: { kind: 'state', tone: 'success' },
+    set_resolved_in_release: { kind: 'state', tone: 'success' },
+    set_resolved_by_age: { kind: 'state', tone: 'success' },
+    set_resolved_in_commit: { kind: 'state', tone: 'success' },
+    set_resolved_in_pull_request: { kind: 'state', tone: 'success' },
+    set_unresolved: { kind: 'state' },
+    set_ignored: { kind: 'state' },
+    set_regression: { kind: 'escalation', tone: 'danger' },
+    set_escalating: { kind: 'escalation', tone: 'danger' },
+    first_seen: { kind: 'escalation', tone: 'danger' },
+    assigned: { kind: 'assignment' },
+    unassigned: { kind: 'assignment' },
+  });
+
+function sentryActivityEvent(item: SentryActivityHistoryItemV1): TriageActivityEventV1 {
+  const known = SENTRY_ACTIVITY_KIND[item.type];
+  return {
+    id: item.id,
+    atMs: item.atMs ?? null,
+    kind: known?.kind ?? 'other',
+    ...(known?.tone === undefined ? {} : { tone: known.tone }),
+    ...(item.actor === undefined ? {} : { actor: item.actor }),
+    summary: item.type,
+  };
 }
 
 function ActivityBody({
@@ -1466,11 +1564,12 @@ function ActivityBody({
   }
 
   return (
-    <List
+    <TriageActivityTimeline
       accessibilityLabel="Recorded activity for this Sentry issue"
       accessibilityLabelKey="plugins.sentry.ui.activityLabel"
-      items={history.items}
-      keyForItem={(item) => item.id}
+      events={history.items.map(sentryActivityEvent)}
+      locale={locale}
+      nowMs={nowMs}
       empty={(
         <EmptyState
           title="No recorded activity"
@@ -1500,14 +1599,6 @@ function ActivityBody({
               />
             )}
         </Stack>
-      )}
-      renderItem={(item) => (
-        <Item
-          title={activityHeadline(item)}
-          {...(item.atMs === undefined
-            ? {}
-            : { detail: formatTimestamp(locale, item.atMs, 'relative', nowMs) })}
-        />
       )}
     />
   );
@@ -1566,6 +1657,7 @@ function SentryDetailBody({
   // lifetime ends.
   const selectedEvent = useSentrySelectedEvent(input, signal);
   const overview = React.useMemo(() => projectSentryDetailOverview(input), [input]);
+  const openFrameStackTrace = useTriageDetailPanelOpener('stack-trace');
 
   const releaseSummary = summary.kind === 'ready' ? summary.value : null;
   const hasReleaseAssociation = releaseSummary !== null
@@ -1626,9 +1718,11 @@ function SentryDetailBody({
                 selectedEvent={selectedEvent}
                 locale={locale}
                 nowMs={nowMs}
+                // Stack trace is the frame's own panel here (r0.42), so the frame selects it.
+                onOpenStackTrace={openFrameStackTrace}
               />
             ),
-            activity: <TriageDetailActivity>{panels.activity}</TriageDetailActivity>,
+            activity: panels.activity,
             'stack-trace': panels['stack-trace'],
             occurrences: panels.occurrences,
             release: panels.release,

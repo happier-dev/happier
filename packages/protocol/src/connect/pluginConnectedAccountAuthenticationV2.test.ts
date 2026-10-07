@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest';
 
 import { PluginConnectedAccountConfigurationFieldV2Schema, PluginConnectedAccountDescriptorContributionV2Schema } from './pluginConnectedAccountAuthenticationV2.js';
 
+it('admits the closed native system-tool declaration without inventing a credential mode', () => {
+  const descriptor = {
+    id: 'work', title: 'Work',
+    authentication: { defaultModeId: 'manual', native: { systemTool: 'gh' }, modes: [{ id: 'manual', kind: 'manual', outcomeReconciliation: 'none', fields: [{ id: 'token', title: 'Token', schema: { type: 'string' }, secret: true }] }] },
+  };
+  expect(PluginConnectedAccountDescriptorContributionV2Schema.safeParse(descriptor).success).toBe(true);
+  expect(PluginConnectedAccountDescriptorContributionV2Schema.safeParse({ ...descriptor, authentication: { ...descriptor.authentication, native: { systemTool: 'gh', token: 'secret' } } }).success).toBe(false);
+});
+
 it('admits an explicitly supported reset capability while keeping the capability envelope closed', () => {
   const descriptor = {
     id: 'work', title: 'Work',

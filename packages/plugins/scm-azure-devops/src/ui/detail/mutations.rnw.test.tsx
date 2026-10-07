@@ -16,7 +16,6 @@ import type { AzureProjectedThreadRowV1 } from '../../triage/detail/projection.j
 
 import {
   advanceAzureThreadReplyWindow,
-  projectAzureActivityChronology,
   projectAzureThreadSubtitle,
   renderSurface,
 } from '../renderSurface.js';
@@ -46,7 +45,7 @@ let completedMutations = 0;
 /**
  * What a specific read answers, when a case needs one.
  *
- * The thread-status control only exists beside a thread, so its case has to make the Threads panel
+ * The thread-status control only exists beside a thread, so its case has to make the Activity panel
  * hold one. Every other action still settles into `nextResult`.
  */
 let readResults: Readonly<Record<string, JsonValue>> = {};
@@ -547,7 +546,7 @@ describe('the mounted Azure DevOps review publication', () => {
     readResults = { [AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readThreads]: THREADS_RESULT };
     const detail = await mountDetail(REVIEW_INPUT);
 
-    await detail.press(await detail.getByRole('tab', { name: 'Threads' }));
+    await detail.press(await detail.getByRole('tab', { name: 'Activity' }));
     await detail.press(await detail.getByRole('button', { name: 'Reply to thread 7' }));
     await detail.press(await detail.getByRole('radio', { name: 'Please keep this branch explicit.' }));
     await detail.press(await detail.getByRole('button', { name: 'Publish reply' }));
@@ -650,7 +649,7 @@ describe('the mounted Azure DevOps thread status', () => {
     nextResult = { kind: 'applied', status: 'fixed' } as unknown as JsonValue;
     const detail = await mountDetail();
 
-    await detail.press(await detail.getByRole('tab', { name: 'Threads' }));
+    await detail.press(await detail.getByRole('tab', { name: 'Activity' }));
     await detail.press(await detail.getByRole('button', { name: 'Set the status of thread 7' }));
     await detail.press(await detail.getByRole('radio', { name: 'Fixed' }));
     await detail.press(await detail.getByRole('button', { name: 'Set status' }));
@@ -679,7 +678,7 @@ describe('the mounted Azure DevOps thread status', () => {
     readResults = { [AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readThreads]: THREADS_RESULT };
     const detail = await mountDetail();
 
-    await detail.press(await detail.getByRole('tab', { name: 'Threads' }));
+    await detail.press(await detail.getByRole('tab', { name: 'Activity' }));
     await detail.press(await detail.getByRole('button', { name: 'Set the status of thread 7' }));
 
     // Azure's six requestable statuses are all real intents and none of them is a safe guess, so
@@ -695,7 +694,7 @@ describe('the mounted Azure DevOps thread status', () => {
     nextResult = { kind: 'rejected', reason: 'fields-ignored', status: 'active' } as unknown as JsonValue;
     const detail = await mountDetail();
 
-    await detail.press(await detail.getByRole('tab', { name: 'Threads' }));
+    await detail.press(await detail.getByRole('tab', { name: 'Activity' }));
     await detail.press(await detail.getByRole('button', { name: 'Set the status of thread 7' }));
     await detail.press(await detail.getByRole('radio', { name: 'Fixed' }));
     await detail.press(await detail.getByRole('button', { name: 'Set status' }));
@@ -769,38 +768,11 @@ describe('the mounted Azure DevOps detail read presentation', () => {
     ))).toHaveLength(1);
   });
 
-  it('merges iterations and commits by native timestamps without reordering either provider resource', () => {
-    const chronology = projectAzureActivityChronology(
-      [
-        { id: 3, createdAtMs: 300, reason: 'push' },
-        { id: 2, createdAtMs: 100, reason: 'push' },
-      ],
-      [
-        { commitId: 'new', comment: '', authoredAtMs: 250 },
-        { commitId: 'old', comment: '', authoredAtMs: 50 },
-      ],
-    );
-    expect(chronology.map((event) => (
-      event.kind === 'iteration' ? `iteration:${String(event.row.id)}` : `commit:${event.row.commitId}`
-    ))).toEqual(['iteration:3', 'commit:new', 'iteration:2', 'commit:old']);
-
-    const ascending = projectAzureActivityChronology(
-      [{ id: 1, createdAtMs: 100 }, { id: 2, createdAtMs: 300 }],
-      [
-        { commitId: 'old', comment: '', authoredAtMs: 50 },
-        { commitId: 'new', comment: '', authoredAtMs: 250 },
-      ],
-    );
-    expect(ascending.map((event) => (
-      event.kind === 'iteration' ? `iteration:${String(event.row.id)}` : `commit:${event.row.commitId}`
-    ))).toEqual(['commit:old', 'iteration:1', 'commit:new', 'iteration:2']);
-  });
-
   it('expands one embedded thread by two until its first reply is visible without another provider read', async () => {
     readResults = { [AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readThreads]: LONG_THREAD_RESULT };
     const detail = await mountDetail();
 
-    await detail.press(await detail.getByRole('tab', { name: 'Threads' }));
+    await detail.press(await detail.getByRole('tab', { name: 'Activity' }));
 
     const row = (LONG_THREAD_RESULT as unknown as Readonly<{
       rows: readonly AzureProjectedThreadRowV1[];

@@ -36,7 +36,7 @@ import {
 } from '@happier-dev/plugin-sdk/protocol';
 import {
   MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1,
-  TriageConfiguredSourceInstanceV1Schema,
+  TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   TriageGetResultV1Schema,
   TriageSourceEntryLocalRefV1Schema,
   TriageSourceFailureV1Schema,
@@ -97,7 +97,7 @@ const IncompleteReasonSchema = defineProtocolLiteral('pagination');
 
 const pagedPlaneInput = defineProtocolObject({
   v: defineProtocolLiteral(1),
-  instance: TriageConfiguredSourceInstanceV1Schema,
+  instance: TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
   routingToken: RoutingTokenSchema,
   limit: PageLimitSchema,
@@ -107,7 +107,7 @@ const pagedPlaneInput = defineProtocolObject({
 
 const itemPlaneInput = defineProtocolObject({
   v: defineProtocolLiteral(1),
-  instance: TriageConfiguredSourceInstanceV1Schema,
+  instance: TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
   routingToken: RoutingTokenSchema,
 }, { policy: 'closed' });
@@ -183,7 +183,7 @@ const ActivityEventSourceSchema = defineProtocolUnion([
 
 export const GitlabActivityEventsInputV1Schema = defineProtocolObject({
   v: defineProtocolLiteral(1),
-  instance: TriageConfiguredSourceInstanceV1Schema,
+  instance: TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
   routingToken: RoutingTokenSchema,
   eventSource: ActivityEventSourceSchema,

@@ -1,5 +1,5 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
+import type { ConnectedAccountRef, ConnectedAccountMaterialization } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import {
   createGithubListedAccountApiClient,
@@ -112,6 +112,8 @@ export function createStubGithubTransport(input: Readonly<{
    * configured Account.
    */
   binding?: Readonly<{ purpose: string }> | null;
+  /** Daemon credential boundary; native credentials never enter the listed-account path. */
+  nativeMaterialization?: ConnectedAccountMaterialization | (() => never);
   /** Optional host Action boundary used by operations that coordinate through a canonical host owner. */
   executeAction?: (actionId: string, actionInput: unknown) => unknown | Promise<unknown>;
 }>): StubGithubTransport {
@@ -122,6 +124,13 @@ export function createStubGithubTransport(input: Readonly<{
   let materializeCount = 0;
 
   const connectedAccounts = {
+    async materialize(): Promise<ConnectedAccountMaterialization> {
+      const materialized = input.nativeMaterialization;
+      if (materialized === undefined) {
+        throw Object.assign(new Error('Sign in with gh CLI'), { code: 'plugin_connected_account_native_unavailable' });
+      }
+      return typeof materialized === 'function' ? materialized() : materialized;
+    },
     async listAccounts(
       request: Readonly<{ purpose: string; limit?: number }>,
     ): Promise<StubConnectedAccountListing> {

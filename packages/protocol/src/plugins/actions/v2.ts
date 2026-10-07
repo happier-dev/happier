@@ -345,9 +345,13 @@ function isExactQualifiedConnectedAccountRefInputLeaf(
   ) return false;
   const service = inputLeaf.properties.service;
   const accountId = inputLeaf.properties.accountId;
+  if (!service || !isExactQualifiedServiceInputLeaf(service)) return false;
+  return accountId?.type === 'string';
+}
+
+function isExactQualifiedServiceInputLeaf(service: PluginJsonSchemaV2): boolean {
   if (
-    !service
-    || service.type !== 'object'
+    service.type !== 'object'
     || service.additionalProperties !== false
     || !service.properties
     || Object.keys(service.properties).length !== 2
@@ -357,8 +361,7 @@ function isExactQualifiedConnectedAccountRefInputLeaf(
     || !service.required.includes('localId')
   ) return false;
   return service.properties.pluginId?.type === 'string'
-    && service.properties.localId?.type === 'string'
-    && accountId?.type === 'string';
+    && service.properties.localId?.type === 'string';
 }
 
 function isExactOrNullableQualifiedConnectedAccountRefInputLeaf(
@@ -373,11 +376,61 @@ function isExactOrNullableQualifiedConnectedAccountRefInputLeaf(
     && alternatives.some(isExactQualifiedConnectedAccountRefInputLeaf) === true;
 }
 
+function resolveOptionalDeclaredInputLeaves(
+  inputSchema: PluginJsonSchemaV2,
+  segments: readonly string[],
+): readonly (PluginJsonSchemaV2 | undefined)[] {
+  if (segments.length === 0) return [inputSchema];
+  const [segment, ...remaining] = segments;
+  return expandDeclaredInputAlternatives(inputSchema).flatMap((arm) => {
+    const property = arm.type === 'object' && segment !== undefined ? arm.properties?.[segment] : undefined;
+    return property ? resolveOptionalDeclaredInputLeaves(property, remaining) : [undefined];
+  });
+}
+
+/** Preserve correlation while both paths traverse the same union-shaped selection. */
+function resolveDeclaredSelectionPairs(
+  inputSchema: PluginJsonSchemaV2,
+  accountPath: readonly string[],
+  nativePath: readonly string[],
+): readonly Readonly<{ account?: PluginJsonSchemaV2; native?: PluginJsonSchemaV2 }>[] {
+  return expandDeclaredInputAlternatives(inputSchema).flatMap((arm) => {
+    if (accountPath.length > 0 && accountPath[0] === nativePath[0]) {
+      const segment = accountPath[0]!;
+      const property = arm.type === 'object' ? arm.properties?.[segment] : undefined;
+      return property ? resolveDeclaredSelectionPairs(property, accountPath.slice(1), nativePath.slice(1)) : [{}];
+    }
+    return resolveOptionalDeclaredInputLeaves(arm, accountPath).flatMap((account) => (
+      resolveOptionalDeclaredInputLeaves(arm, nativePath).map((native) => ({ account, native }))
+    ));
+  });
+}
+
+function hasValidPurposeBindingInputLeaves(
+  inputSchema: PluginJsonSchemaV2,
+  binding: PluginActionConnectedAccountPurposeBindingV2,
+): boolean {
+  if (!binding.nativeServicePath) {
+    const leaves = resolveDeclaredInputLeaves(inputSchema, binding.path);
+    return leaves !== null && leaves.every(isExactOrNullableQualifiedConnectedAccountRefInputLeaf)
+      && declaredInputLeavesAgree(leaves);
+  }
+  const pairs = resolveDeclaredSelectionPairs(inputSchema, binding.path.split('.'), binding.nativeServicePath.split('.'));
+  if (pairs.length === 0 || !pairs.every(({ account, native }) => (
+    account !== undefined && native === undefined && isExactQualifiedConnectedAccountRefInputLeaf(account)
+    || account === undefined && native !== undefined && isExactQualifiedServiceInputLeaf(native)
+  ))) return false;
+  const accounts = pairs.flatMap(({ account }) => account ? [account] : []);
+  const services = pairs.flatMap(({ native }) => native ? [native] : []);
+  return (accounts.length === 0 || declaredInputLeavesAgree(accounts))
+    && (services.length === 0 || declaredInputLeavesAgree(services));
+}
+
 /**
  * Verifies the bounded, exact declaration shared by Action inputs and
- * Automation Event source configs. The host can only mint an Account binding
- * when the declaration proves one account ref at every representable schema
- * arm; consumers must not infer an Account from a field name or value shape.
+ * Automation Event source configs. Every representable arm proves an account
+ * ref or an explicitly declared native service. Consumers never infer
+ * credential authority from field names or value shapes.
  */
 export function hasValidPluginConnectedAccountPurposeBindingsV2(
   inputSchema: PluginJsonSchemaV2 | undefined,
@@ -388,8 +441,11 @@ export function hasValidPluginConnectedAccountPurposeBindingsV2(
   const bindingPaths = new Set<string>();
   const bindingPurposes = new Set<string>();
   for (const binding of purposeBindings) {
-    if (bindingPaths.has(binding.path) || bindingPurposes.has(binding.purpose)) return false;
+    if (bindingPaths.has(binding.path) || bindingPurposes.has(binding.purpose)
+      || binding.nativeServicePath === binding.path
+      || (binding.nativeServicePath !== undefined && bindingPaths.has(binding.nativeServicePath))) return false;
     bindingPaths.add(binding.path);
+    if (binding.nativeServicePath) bindingPaths.add(binding.nativeServicePath);
     bindingPurposes.add(binding.purpose);
   }
 
@@ -398,10 +454,7 @@ export function hasValidPluginConnectedAccountPurposeBindingsV2(
     : undefined;
   if (!traversableInputSchema) return false;
   return purposeBindings.every((binding) => {
-    const inputLeaves = resolveDeclaredInputLeaves(traversableInputSchema, binding.path);
-    return inputLeaves !== null
-      && inputLeaves.every(isExactOrNullableQualifiedConnectedAccountRefInputLeaf)
-      && declaredInputLeavesAgree(inputLeaves);
+    return hasValidPurposeBindingInputLeaves(traversableInputSchema, binding);
   });
 }
 
@@ -545,7 +598,8 @@ export const PluginActionContributionV2Schema = z.object({
   const bindingPaths = new Set<string>();
   const bindingPurposes = new Set<string>();
   purposeBindings.forEach((binding, index) => {
-    if (bindingPaths.has(binding.path)) {
+    if (bindingPaths.has(binding.path) || binding.nativeServicePath === binding.path
+      || (binding.nativeServicePath !== undefined && bindingPaths.has(binding.nativeServicePath))) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['connectedAccountPurposeBindings', index, 'path'],
@@ -553,6 +607,7 @@ export const PluginActionContributionV2Schema = z.object({
       });
     }
     bindingPaths.add(binding.path);
+    if (binding.nativeServicePath) bindingPaths.add(binding.nativeServicePath);
     if (bindingPurposes.has(binding.purpose)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -572,16 +627,11 @@ export const PluginActionContributionV2Schema = z.object({
   }
   if (traversableInputSchema) {
     purposeBindings.forEach((binding, index) => {
-      const inputLeaves = resolveDeclaredInputLeaves(traversableInputSchema, binding.path);
-      if (
-        !inputLeaves
-        || !inputLeaves.every(isExactOrNullableQualifiedConnectedAccountRefInputLeaf)
-        || !declaredInputLeavesAgree(inputLeaves)
-      ) {
+      if (!hasValidPurposeBindingInputLeaves(traversableInputSchema, binding)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['connectedAccountPurposeBindings', index, 'path'],
-          message: 'Connected Account purpose bindings must target one exact qualified credential-ref input leaf in every declared input arm.',
+          message: 'Connected Account purpose bindings must target one exact qualified account ref or declared native service in every input arm.',
         });
       }
     });

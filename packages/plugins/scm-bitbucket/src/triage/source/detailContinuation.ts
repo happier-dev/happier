@@ -1,4 +1,4 @@
-import type { TriageConfiguredSourceInstanceV1 } from '@happier-dev/triage-protocol/v1';
+import type { TriageConfiguredSourceConnectedAccountInstanceV1 } from '@happier-dev/triage-protocol/v1';
 
 import { readBitbucketApiUrl } from '../apiUrl.js';
 import {
@@ -26,7 +26,7 @@ export type BitbucketDetailContinuationPlaneV1 =
   | 'diffstat';
 
 export type BitbucketDetailContinuationContextV1 = Readonly<{
-  instance: TriageConfiguredSourceInstanceV1;
+  instance: TriageConfiguredSourceConnectedAccountInstanceV1;
   route: Readonly<{
     workspaceUuid: string;
     repositorySlug: string;

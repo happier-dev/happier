@@ -104,6 +104,10 @@ export type {
 } from './descriptor.js';
 
 export {
+    TriageConfiguredSourceConnectedAccountInstanceV1Schema,
+    TriageSourceConnectedAccountBindingV1Schema,
+    isTriageSourceConnectedAccountInstanceV1,
+    triageSourceBindingComponentsV1,
     TriageConfiguredSourceInstanceV1JsonSchema,
     TriageConfiguredSourceInstanceV1Schema,
     TriageListInstancesInputV1Schema,
@@ -114,6 +118,8 @@ export {
     TriageSourceInstanceLocatorV1Schema,
 } from './instances.js';
 export type {
+    TriageConfiguredSourceConnectedAccountInstanceV1,
+    TriageSourceConnectedAccountBindingV1,
     TriageConfiguredSourceInstanceV1,
     TriageListInstancesInputV1,
     TriageListInstancesResultV1,
@@ -218,6 +224,7 @@ export type {
 } from './detail.js';
 
 export {
+    TriageSourceConnectedAccountInputsV1,
     TriageSourcesContributionPointV1,
     TriageSourcesContributionProtocolV1,
 } from './contribution.js';

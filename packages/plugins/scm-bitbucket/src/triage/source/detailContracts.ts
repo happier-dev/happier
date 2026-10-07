@@ -9,7 +9,7 @@ import {
 } from '@happier-dev/plugin-sdk/protocol';
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/plugin-sdk/actions';
 import {
-  TriageConfiguredSourceInstanceV1Schema,
+  TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   TriageEntryLocatorV1Schema,
   TriageGetResultV1Schema,
   TriageSourceEntryLocalRefV1Schema,
@@ -86,7 +86,7 @@ const ContinuationSchema = defineProtocolString({
 
 const pagedPlaneInput = defineProtocolObject({
   v: defineProtocolLiteral(1),
-  instance: TriageConfiguredSourceInstanceV1Schema,
+  instance: TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
   lastKnownLocator: TriageEntryLocatorV1Schema,
   /** Present only for a following page, and only as this source minted it. */
@@ -95,7 +95,7 @@ const pagedPlaneInput = defineProtocolObject({
 
 const unpagedPlaneInput = defineProtocolObject({
   v: defineProtocolLiteral(1),
-  instance: TriageConfiguredSourceInstanceV1Schema,
+  instance: TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
   lastKnownLocator: TriageEntryLocatorV1Schema,
 }, { policy: 'closed' });

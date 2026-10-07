@@ -316,7 +316,9 @@ export async function resolveEntrySessionWorkspace(
         operation,
         projectTriagePrepareReviewWorkspaceInputV1(request),
         {
-            expectedSelectedConnectedAccountRef: request.instance.binding.account,
+            ...('account' in request.instance.binding
+                ? { expectedSelectedConnectedAccountRef: request.instance.binding.account }
+                : {}),
             ...(deps.signal ? { signal: deps.signal } : {}),
         },
     );

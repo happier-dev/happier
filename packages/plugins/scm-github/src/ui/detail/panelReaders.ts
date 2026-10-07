@@ -183,15 +183,19 @@ export type GithubOverviewControllerV1 = Readonly<{
 }>;
 
 /**
- * The Overview's one explicit exact entity read.
+ * The Overview's one exact entity read.
  *
- * No effect invokes it. The launch observation is useful immediately and only
- * pressing Refresh spends a provider call. A retained Overview keeps the exact
- * body model, while its active-interval signal owns cancellation and its
- * transient busy/error state is cleared when the tab becomes inactive.
+ * By default no effect invokes it: the launch observation is useful immediately
+ * and only pressing Refresh spends a provider call. The story rail (`readWhenActive`)
+ * has no Refresh control, so it reads once when it becomes active and again only
+ * when GitHub reports the entry changed (`sourceUpdatedAtMs`), the way the other
+ * sources' overviews read on activation. A retained Overview keeps the exact body
+ * model, while its active-interval signal owns cancellation and its transient
+ * busy/error state is cleared when the tab becomes inactive.
  */
 export function useGithubOverview(
   input: TriageDetailSurfaceInputV1,
+  options: Readonly<{ readWhenActive?: boolean }> = {},
 ): GithubOverviewControllerV1 {
   const action = useMemo(() => ({
     pluginId: GITHUB_PLUGIN_ID,
@@ -261,6 +265,15 @@ export function useGithubOverview(
       setState(Object.freeze({ value: parsed.data, refreshing: false, failure: null }));
     }
   }, [active, activeSignal, execute, instance, localRef, routingToken, state.refreshing]);
+
+  const readWhenActive = options.readWhenActive === true;
+  const readFor = useRef<string | null>(null);
+  const revision = `${routingToken ?? ''}|${localRef.entryId}|${input.observation.sourceUpdatedAtMs ?? ''}`;
+  useEffect(() => {
+    if (!readWhenActive || !active || readFor.current === revision) return;
+    readFor.current = revision;
+    void refresh();
+  }, [active, readWhenActive, refresh, revision]);
 
   return useMemo(() => ({ ...state, refresh }), [refresh, state]);
 }

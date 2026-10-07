@@ -15,7 +15,10 @@ import type {
   TriageConfiguredSourceInstanceV1,
   TriageSourceEntryLocalRefV1,
 } from '@happier-dev/triage-protocol/v1';
-import { TriageSourceInstanceIdV1Schema } from '@happier-dev/triage-protocol/v1';
+import {
+  isTriageSourceConnectedAccountInstanceV1,
+  TriageSourceInstanceIdV1Schema,
+} from '@happier-dev/triage-protocol/v1';
 import type { TriageEvidenceCandidateV1 } from '@happier-dev/triage-sources/ui';
 
 import type { SentryEventProjectionV1 } from '../privacy/sentryEventProjection.js';
@@ -201,7 +204,8 @@ export function createSentryEvidenceCandidate(input: Readonly<{
 }>): TriageEvidenceCandidateV1 | null {
   const localInstance = decodeSentryLocalInstanceKey(input.instance.localInstanceKey);
   const configuration = decodeSentryInstanceConfiguration(input.instance.configuration.token);
-  if (!localInstance.ok
+  if (!isTriageSourceConnectedAccountInstanceV1(input.instance)
+    || !localInstance.ok
     || !configuration.ok
     || configuration.configuration.organizationId !== localInstance.instance.organizationId
     || input.instance.instance.source.pluginId !== SENTRY_PLUGIN_ID

@@ -206,6 +206,10 @@ export type TriageEntryRowAnnouncementFactsV1 = Readonly<{
   contextDescription?: string;
   /** The row's visible last-activity age, said in the same place it is shown. */
   activityLabel?: string;
+  /** The table's Signal cell ("2 failing"), which a reader walking rows never reaches on its own. */
+  signalLabel?: string;
+  /** The table's Agent cell: what the linked agent is doing ("Needs your permission"). */
+  agentLabel?: string;
 }>;
 
 /** Compact scan context for every mounted reader of the canonical display facts. */
@@ -264,6 +268,8 @@ export function readTriageEntryRowAnnouncementV1(
   if (facts.lifecycleLabel !== null) parts.push(facts.lifecycleLabel);
   if (facts.activityLabel !== undefined) parts.push(facts.activityLabel);
   if (facts.detail !== null) parts.push(facts.detail);
+  if (facts.signalLabel !== undefined) parts.push(facts.signalLabel);
+  if (facts.agentLabel !== undefined) parts.push(facts.agentLabel);
   if (facts.stale) {
     // An age is only stated when one is actually known. A row nothing has ever
     // observed is still stale, and inventing a moment for it would be the one

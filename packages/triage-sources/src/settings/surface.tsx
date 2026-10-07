@@ -105,10 +105,8 @@ import {
 /**
  * Everything one source contributes to its own settings page.
  *
- * These are the only three facts the page cannot derive from a published
- * contract: which plugin is asking, which of that plugin's Actions enumerates
- * what it can reach, and what to call the source in a sentence. Anything else a
- * source wanted to vary here would be a second page, not a parameter.
+ * Identity, source-owned login copy and optional draft editing stay with the
+ * contribution. Lifecycle, row matching and submission remain shared.
  */
 export type TriageSourceSettingsSurfaceIdentityV1 = Readonly<{
   /** The contributing source plugin's own id, exactly as the host knows it. */
@@ -119,6 +117,10 @@ export type TriageSourceSettingsSurfaceIdentityV1 = Readonly<{
   connectedAccountServiceLocalId: string;
   /** The source's display name, exactly as its own descriptor spells it. */
   sourceDisplayName: string;
+  /** Source-owned localized presentation of an offered machine-native login. */
+  nativeLoginLabel?: Readonly<{ key: string; fallback: string }>;
+  /** Repair guidance stays with the source that owns the native login. */
+  nativeAuthenticationFailureLabel?: Readonly<{ key: string; fallback: string }>;
   /**
    * Optional source-native editor for facts the opaque draft alone cannot expose.
    * Lifecycle and submission remain here; the editor may only refine one freshly
@@ -395,7 +397,20 @@ function createTriageSourceSettingsSurfaceWithDiscoveryDeadline(
       });
     }, [DraftEditor, requestRemoval, submit]);
 
-    const state = readTriageSourceDiscovery(discovery.execution);
+    const discovered = readTriageSourceDiscovery(discovery.execution);
+    const nativeLoginLabel = identity.nativeLoginLabel === undefined
+      ? undefined
+      : text(identity.nativeLoginLabel.key, identity.nativeLoginLabel.fallback);
+    const nativeAuthenticationFailureLabel = identity.nativeAuthenticationFailureLabel === undefined
+      ? undefined
+      : text(identity.nativeAuthenticationFailureLabel.key, identity.nativeAuthenticationFailureLabel.fallback);
+    const state = discovered.kind !== 'listed' || nativeLoginLabel === undefined
+      ? discovered
+      : { ...discovered, candidates: discovered.candidates.map((candidate) => (
+          'account' in candidate.draft.binding ? candidate : {
+            ...candidate, label: nativeLoginLabel, path: candidate.path ?? candidate.label,
+          }
+        )) };
     const configured = readTriageSourceConfiguredInstances(configuredRead.execution);
     const configuredNotice = describeTriageSourceConfiguredRead(configured, sourceDisplayName, text);
     const rows = projectTriageSourceSettingsRows({
@@ -569,16 +584,20 @@ function createTriageSourceSettingsSurfaceWithDiscoveryDeadline(
                     {state.failures.map((entry) => (
                       <Item
                         key={entry.key}
-                        title={entry.localInstanceKey ?? entry.accountId}
-                        subtitle={describeTriageSourceFailure(entry.failure, text)}
+                        title={entry.localInstanceKey ?? entry.accountId ?? nativeLoginLabel ?? sourceDisplayName}
+                        subtitle={describeTriageSourceFailure(entry.failure, entry.accountId === null && nativeAuthenticationFailureLabel !== undefined
+                          ? (key, fallback, values) => key === 'plugins.triage.sourceSettings.failure.authentication'
+                            ? nativeAuthenticationFailureLabel
+                            : text(key, fallback, values)
+                          : text)}
                         tone="danger"
                         accessoryOutsidePressable
-                        accessory={entry.failure.class === 'authentication'
+                        accessory={entry.failure.class === 'authentication' && entry.accountId !== null
                           ? (
                               <Button
                                 title={text('plugins.triage.sourceSettings.reconnectAccount', 'Reconnect')}
                                 variant="secondary"
-                                onPress={() => openConnectedAccounts(entry.accountId)}
+                                onPress={() => { if (entry.accountId !== null) openConnectedAccounts(entry.accountId); }}
                               />
                             )
                           : undefined}

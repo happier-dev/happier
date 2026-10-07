@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { isApprovalRequiredByActionsSettings, normalizeActionsSettingsV1, pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol';
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
-import { TriageScanInputV1Schema, TriageSourcesContributionProtocolV1 } from '@happier-dev/triage-protocol/v1';
+import { TriageSourceConnectedAccountInputsV1, TriageSourcesContributionProtocolV1 } from '@happier-dev/triage-protocol/v1';
 import { assertTriageSourceContributionV1 } from '@happier-dev/triage-protocol/testing/v1';
 import { describe, expect, it } from 'vitest';
 
@@ -85,7 +85,7 @@ function defineScanBindingProbe(bindingPath: string) {
                 scopes: ['global'],
                 surfaces: ['plugin'],
                 dangerLevel: 'safe',
-                inputSchema: TriageScanInputV1Schema.jsonSchema,
+                inputSchema: TriageSourceConnectedAccountInputsV1.scan.jsonSchema,
                 hostAccess: [POSTHOG_CONNECTED_ACCOUNT_PURPOSE],
                 connectedAccountPurposeBindings: [{
                     path: bindingPath,
@@ -257,6 +257,13 @@ describe('PostHog plugin manifest', () => {
             .find((candidate) => candidate.target.pluginId === 'happier.triage');
         expect(Object.values(contribution?.operations ?? {}))
             .not.toContain(POSTHOG_ACTION_IDS.issueEvents);
+    });
+
+    it('exposes the same purpose-bound configuration reader to UI, agent, MCP and CLI', () => {
+        expect(PLUGIN_MANIFEST.contributes.actions.find(action => action.id === POSTHOG_ACTION_IDS.configuration))
+            .toMatchObject({ surfaces: ['ui', 'agent', 'mcp', 'cli'], connectedAccountPurposeBindings: [{
+                path: 'binding.account', purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
+            }] });
     });
 
     it('declares the explicit sensitive code-variable reread as a source-native Action', () => {

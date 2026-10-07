@@ -22,6 +22,8 @@ import {
 } from './v1.js';
 import { StoredJsonContentEnvelopeSchema } from '../../storage/storedJsonContentEnvelope.js';
 import { PluginSourceCustodyV1Schema } from '../../plugins/runtime/sourceCustody.js';
+import { PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 } from '../../plugins/contributionIdentity.js';
+import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 
 export const REVIEW_COMMENT_ACTION_IDS_V1 = Object.freeze([
   'reviews.comments.create',
@@ -203,9 +205,8 @@ export const ReviewCommentGetResponseV1Schema = lazyZodSchema(() => z.object({
 }).strict());
 export type ReviewCommentGetResponseV1 = z.infer<typeof ReviewCommentGetResponseV1Schema>;
 
-export const ReviewCommentPublicationTargetV1Schema = lazyZodSchema(() => z.object({
+const reviewCommentPublicationTargetFieldsV1 = () => ({
   providerId: z.string().min(1),
-  configuredAccountId: z.string().min(1),
   entryRef: z.object({
     sourceId: z.string().min(1),
     kindId: z.string().min(1),
@@ -216,12 +217,21 @@ export const ReviewCommentPublicationTargetV1Schema = lazyZodSchema(() => z.obje
     kindId: z.enum(['review-thread', 'review-comment']),
     targetId: z.string().min(1),
   }).strict().nullable(),
-}).strict());
+});
+export const ReviewCommentPublicationTargetV1Schema = lazyZodSchema(() => {
+  const fields = reviewCommentPublicationTargetFieldsV1();
+  return z.union([
+    z.object({ ...fields, configuredAccountId: z.string().min(1) }).strict(),
+    z.object({ ...fields, nativeService: asProtocolZod(PluginContributionIdentityV1Schema) }).strict(),
+  ]);
+});
 export type ReviewCommentPublicationTargetV1 = z.infer<typeof ReviewCommentPublicationTargetV1Schema>;
 
-export type ReviewCommentPublicationTargetExpectationV1 = Readonly<{
+export type ReviewCommentPublicationTargetExpectationV1 = (
+  | Readonly<{ configuredAccountId: string }>
+  | Readonly<{ nativeService: PluginContributionIdentityV1 }>
+) & Readonly<{
   providerId: string;
-  configuredAccountId: string;
   sourceId: string;
   localRef: Readonly<{
     kindId: string;
@@ -240,9 +250,14 @@ export function reviewCommentPublicationTargetMatchesV1(
     ? target.subtarget === null
     : target.subtarget?.kindId === expected.subtarget.kindId
       && target.subtarget.targetId === expected.subtarget.targetId;
+  const authorityMatches = 'configuredAccountId' in target
+    ? 'configuredAccountId' in expected && target.configuredAccountId === expected.configuredAccountId
+    : 'nativeService' in expected
+      && target.nativeService.pluginId === expected.nativeService.pluginId
+      && target.nativeService.localId === expected.nativeService.localId;
   return subtargetMatches
     && target.providerId === expected.providerId
-    && target.configuredAccountId === expected.configuredAccountId
+    && authorityMatches
     && target.entryRef.sourceId === expected.sourceId
     && target.entryRef.kindId === expected.localRef.kindId
     && target.entryRef.collisionScope === expected.localRef.collisionScope

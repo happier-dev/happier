@@ -19,21 +19,21 @@ export type AzureDetailTabIdV1 =
   | 'overview'
   | 'activity'
   | 'files'
-  | 'policies'
-  | 'threads';
+  | 'policies';
 
 /** Which read a panel's content comes from. */
 export type AzureDetailTabReadPlaneV1 =
   /** The applied observation only; this panel issues no provider read. */
   | 'observation'
-  /** The shared iteration projection plus the paged pull-request commits. */
+  /**
+   * The shared iteration projection, the paged pull-request commits and the one all-returned
+   * review-thread response, as one chronological stream.
+   */
   | 'activity'
   /** The shared iteration projection plus that iteration's changed files. */
   | 'files'
   /** The pull request's statuses and its project's policy evaluations. */
-  | 'policies'
-  /** The one all-returned review-thread response. */
-  | 'threads';
+  | 'policies';
 
 export type AzureDetailTabDeclarationV1 = Readonly<{
   id: AzureDetailTabIdV1;
@@ -63,8 +63,9 @@ export const AZURE_DETAIL_TABS_V1: readonly AzureDetailTabDeclarationV1[] = Obje
     title: 'Activity',
     titleKey: 'plugins.azureDevops.ui.tab.activity',
     retention: 'discard' as const,
-    retainedState: 'nothing: commit pages, the provider continuation token, the chronology'
-      + ' rows, scroll and expansions remount from defaults',
+    retainedState: 'nothing: commit pages, the provider continuation token, the thread'
+      + ' response, the 18-thread and 2-reply windows, scroll, expansions and any reply draft'
+      + ' remount from defaults',
     readPlane: 'activity' as const,
     scrollOwner: 'list' as const,
   }),
@@ -87,16 +88,6 @@ export const AZURE_DETAIL_TABS_V1: readonly AzureDetailTabDeclarationV1[] = Obje
     retainedState: 'nothing: statuses, policy and build projections, scroll and expansion'
       + ' remount from defaults',
     readPlane: 'policies' as const,
-    scrollOwner: 'list' as const,
-  }),
-  Object.freeze({
-    id: 'threads' as const,
-    title: 'Threads',
-    titleKey: 'plugins.azureDevops.ui.tab.threads',
-    retention: 'discard' as const,
-    retainedState: 'nothing: the all-returned response, the 18-thread and 2-reply windows,'
-      + ' scroll, expansions and any reply draft remount from defaults',
-    readPlane: 'threads' as const,
     scrollOwner: 'list' as const,
   }),
 ] as const);

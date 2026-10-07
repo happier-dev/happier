@@ -123,7 +123,8 @@ export type PosthogDetailReadV1 =
 export type PosthogDetailLiveReadV1 =
     | Readonly<{ kind: 'pending' }>
     | Readonly<{ kind: 'settled'; observation: TriageSourceObservationV1;
-        severity?: PosthogNativeOverviewResultV1['severity']; enrichmentFailure?: TriageSourceFailureV1 }>
+        severity?: PosthogNativeOverviewResultV1['severity']; enrichmentFailure?: TriageSourceFailureV1;
+        trend?: PosthogNativeOverviewResultV1['trend'] }>
     | Readonly<{ kind: 'failed'; failure: TriageSourceFailureV1 }>;
 
 export type PosthogDetailNativeStateV1 = Readonly<{
@@ -141,6 +142,8 @@ export type PosthogDetailSurfaceModelV1 = Readonly<{
      * provider-native disagreement it cannot know about, not a second copy of it.
      */
     nativeStateNow: PosthogDetailNativeStateV1 | null;
+    /** The live read's occurrence series across the detail window; only a settled live read has one. */
+    trend?: NonNullable<PosthogNativeOverviewResultV1['trend']>;
 }>;
 
 /**
@@ -342,5 +345,6 @@ export function projectPosthogDetailSurface(
         nativeStateNow: stateChanged
             ? { presentation: liveState.presentation, nativeLabel: liveState.nativeLabel ?? null }
             : null,
+        ...(liveRead.trend === undefined ? {} : { trend: liveRead.trend }),
     };
 }

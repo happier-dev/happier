@@ -33,7 +33,6 @@ import {
   EmptyState,
   ErrorState,
   Item,
-  ItemGroup,
   List,
   Markdown,
   LoadingState,
@@ -66,11 +65,11 @@ import {
   projectTriageDetailFieldTextV1 as fieldValueText,
 } from '@happier-dev/triage-protocol/v1';
 
-import type {
-  BitbucketProjectedActivityRowV1,
-  BitbucketProjectedCommentRowV1,
-  BitbucketProjectedDiffstatRowV1,
-  BitbucketProjectedStatusRowV1,
+import {
+  isBitbucketFailingBuildStateV1,
+  type BitbucketProjectedCommentRowV1,
+  type BitbucketProjectedDiffstatRowV1,
+  type BitbucketProjectedStatusRowV1,
 } from '../triage/detail/projection.js';
 import {
   projectBitbucketDetailOverview,
@@ -78,7 +77,15 @@ import {
   type BitbucketDetailOverviewV1,
 } from '../triage/source/detail.js';
 
-import { TriageDetailPanel, TriageDetailStory, TriageDetailChanges, TriageDetailChecks, TriageDetailActivity } from '@happier-dev/triage-sources/ui';
+import {
+  TriageActivityTimeline,
+  TriageDetailPanel,
+  TriageDetailStory,
+  TriageDetailChangeSummary,
+  TriageDetailChecks,
+  type TriageActivityEventV1,
+  type TriageActivityKindV1,
+} from '@happier-dev/triage-sources/ui';
 import {
   BitbucketCommentResolutionControls,
   BitbucketMutationControls,
@@ -137,9 +144,10 @@ function PagedFooter({
   summaryValues,
 }: Readonly<{
   state: BitbucketPagedStateV1<unknown>;
-  loadMoreTitle: string;
-  loadMoreTitleKey: string;
-  onLoadMore: () => void;
+  /** Absent where the Activity stream owns this collection's continuation. */
+  loadMoreTitle?: string;
+  loadMoreTitleKey?: string;
+  onLoadMore?: () => void;
   onRefresh: () => void;
   refreshLabel: string;
   refreshLabelKey: string;
@@ -167,11 +175,11 @@ function PagedFooter({
           fallback="Bitbucket offered another page, but this build could not carry its position, so this list stops here."
         />
       )}
-      {state.canLoadMore
+      {state.canLoadMore && loadMoreTitle !== undefined && onLoadMore !== undefined
         ? (
           <Button
             title={loadMoreTitle}
-            titleKey={loadMoreTitleKey}
+            {...(loadMoreTitleKey === undefined ? {} : { titleKey: loadMoreTitleKey })}
             variant="secondary"
             busy={state.pending}
             onPress={onLoadMore}
@@ -241,23 +249,24 @@ function BitbucketStoryChanges({ input }: Readonly<{ input: TriageDetailSurfaceI
   const text = usePluginTranslation();
   const controller = useBitbucketDiff(input);
   const { state } = controller;
-  return <TriageDetailChanges>
+  // Bitbucket's diffstat counts lines per file; it states no whole-change totals, so the
+  // shared step sums the pages read and says "N+ files" while more remain.
+  const rows = React.useMemo(() => state.rows.map((row) => ({
+    path: row.path, lines: { additions: row.linesAdded, deletions: row.linesRemoved },
+  })), [state.rows]);
+  return <TriageDetailChangeSummary rows={state.kind === 'ready' ? rows : []}
+    more={state.canLoadMore || state.incomplete !== null}>
     {state.kind === 'idle' || state.kind === 'loading' ? <LoadingState title="Reading changed files" titleKey="plugins.bitbucket.ui.readingDiff" />
       : state.kind === 'unavailable' ? <ErrorState title="The diff is unavailable" titleKey="plugins.bitbucket.ui.diffUnavailable"
         description={failureDescription(state.failure, text('plugins.bitbucket.ui.readFailed', 'Bitbucket could not complete this read.'))} />
-      : <><PageFailureBanner state={state} />
-        <Metadata title="Changed files" titleKey="plugins.bitbucket.ui.changedFiles" entries={state.rows.map((row) => ({ label: row.path, value: `${row.status} · +${row.linesAdded} −${row.linesRemoved}` }))} />
-        <PagedFooter state={state} onLoadMore={controller.loadMore} onRefresh={controller.refresh}
-          loadMoreTitle="Show more changed files" loadMoreTitleKey="plugins.bitbucket.ui.showMoreFiles"
-          refreshLabel="Re-read this diff from Bitbucket" refreshLabelKey="plugins.bitbucket.ui.rereadDiff"
-          summary={`${state.rows.length} changed file(s) read.`} summaryKey="plugins.bitbucket.ui.diffFilesRead" summaryValues={{ count: state.rows.length }} />
-      </>}
-  </TriageDetailChanges>;
+      : <PageFailureBanner state={state} />}
+  </TriageDetailChangeSummary>;
 }
 
 function BitbucketStoryChecks({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement | null {
   const { state, rollup } = useBitbucketBuilds(input);
-  return <TriageDetailChecks title="Builds" titleKey="plugins.bitbucket.ui.tabs.builds" rollup={state.kind === 'ready' ? rollup : null}>
+  return <TriageDetailChecks title="Builds" titleKey="plugins.bitbucket.ui.tabs.builds" rollup={state.kind === 'ready' ? rollup : null}
+    failing={state.rows.filter((row) => isBitbucketFailingBuildStateV1(row.state)).map((row) => ({ id: row.key, name: row.name }))}>
     <PageFailureBanner state={state} />
   </TriageDetailChecks>;
 }
@@ -275,6 +284,8 @@ function OverviewPanel({
   withWrites?: boolean;
 }>): React.ReactElement {
   const text = usePluginTranslation();
+  // The story rail (r0.42) draws the facts only: no observation block, empty-state stand-ins or Re-read chrome.
+  const story = !withWrites;
   const controller = useBitbucketOverview(input);
   const { overviewResult, effectiveInput, overview } = bitbucketEffectiveOverview(input, controller.result);
   const description = overviewResult === null ? overview.summary : overviewResult.description;
@@ -328,9 +339,9 @@ function OverviewPanel({
           </Row>
         )}
         {entries.length === 0
-          ? <EmptyState title="No projected facts" titleKey="plugins.bitbucket.ui.noFacts" description="This observation carried no displayable facts." descriptionKey="plugins.bitbucket.ui.noFacts.description" />
+          ? story ? null : <EmptyState title="No projected facts" titleKey="plugins.bitbucket.ui.noFacts" description="This observation carried no displayable facts." descriptionKey="plugins.bitbucket.ui.noFacts.description" />
           : <Metadata title="Facts" titleKey="plugins.bitbucket.ui.facts" entries={entries} />}
-        {pendingFields.length === 0 ? null : (
+        {story || pendingFields.length === 0 ? null : (
           <Stack gap="small">
             <Text
               variant="caption"
@@ -349,30 +360,34 @@ function OverviewPanel({
           * destructive control behind a click that says nothing about what is behind it.
           */}
         {withWrites ? <BitbucketMutationControls input={effectiveInput} overview={overview} /> : null}
-        <Divider />
-        <Metadata
-          title="Observation"
-          titleKey="plugins.bitbucket.ui.observation"
-          entries={[
-            {
-              label: text('plugins.bitbucket.ui.observed', 'Observed'),
-              value: formatTimestamp(locale, overview.observedAtMs, 'relative', nowMs),
-            },
-            ...(overview.sourceUpdatedAtMs === null
-              ? []
-              : [{
-                label: text('plugins.bitbucket.ui.lastChanged', 'Bitbucket last changed'),
-                value: formatTimestamp(locale, overview.sourceUpdatedAtMs, 'relative', nowMs),
-              }]),
-          ]}
-        />
-        <Action.Refresh
-          onRefresh={controller.refresh}
-          disabled={controller.pending}
-          variant="plain"
-          accessibilityLabel="Re-read this overview from Bitbucket"
-          accessibilityLabelKey="plugins.bitbucket.ui.rereadOverview"
-        />
+        {story ? null : <Divider />}
+        {story ? null : (
+          <Metadata
+            title="Observation"
+            titleKey="plugins.bitbucket.ui.observation"
+            entries={[
+              {
+                label: text('plugins.bitbucket.ui.observed', 'Observed'),
+                value: formatTimestamp(locale, overview.observedAtMs, 'relative', nowMs),
+              },
+              ...(overview.sourceUpdatedAtMs === null
+                ? []
+                : [{
+                  label: text('plugins.bitbucket.ui.lastChanged', 'Bitbucket last changed'),
+                  value: formatTimestamp(locale, overview.sourceUpdatedAtMs, 'relative', nowMs),
+                }]),
+            ]}
+          />
+        )}
+        {story && controller.failure === null ? null : (
+          <Action.Refresh
+            onRefresh={controller.refresh}
+            disabled={controller.pending}
+            variant="plain"
+            accessibilityLabel="Re-read this overview from Bitbucket"
+            accessibilityLabelKey="plugins.bitbucket.ui.rereadOverview"
+          />
+        )}
       </TriageDetailStory>
   );
 }
@@ -463,97 +478,20 @@ const ACTIVITY_HEADLINES: Readonly<Record<string, string | undefined>> = Object.
   comment: 'Commented',
 });
 
+const ACTIVITY_KINDS: Readonly<Record<string, TriageActivityKindV1 | undefined>> = Object.freeze({
+  approval: 'review',
+  changesRequested: 'review',
+  update: 'change',
+  comment: 'comment',
+});
+
 function activityHeadline(
   text: ReturnType<typeof usePluginTranslation>,
-  row: BitbucketProjectedActivityRowV1,
+  kind: string,
 ): string {
   // Unknown provider kinds retain the row itself, but use neutral localized chrome rather than
   // exposing an untranslated provider token as authored UI.
-  const headline = text(
-    `plugins.bitbucket.ui.activity.${row.kind}`,
-    ACTIVITY_HEADLINES[row.kind] ?? 'Activity',
-  );
-  return row.actor === undefined ? headline : `${headline} · ${row.actor}`;
-}
-
-function ActivityPanel({
-  input,
-  locale,
-  nowMs,
-}: Readonly<{
-  input: TriageDetailSurfaceInputV1;
-  locale: string;
-  nowMs: number;
-}>): React.ReactElement {
-  const text = usePluginTranslation();
-  const controller = useBitbucketActivity(input);
-  const { state } = controller;
-
-  if (state.kind === 'idle' || state.kind === 'loading') {
-    return <LoadingState title="Reading this activity from Bitbucket" titleKey="plugins.bitbucket.ui.readingActivity" />;
-  }
-  if (state.kind === 'unavailable') {
-    return (
-      <ErrorState
-        title="The activity is unavailable"
-        titleKey="plugins.bitbucket.ui.activityUnavailable"
-        description={failureDescription(
-          state.failure,
-          text('plugins.bitbucket.ui.readFailed', 'Bitbucket could not complete this read.'),
-        )}
-      />
-    );
-  }
-  return (
-    <List
-      accessibilityLabel="Activity Bitbucket recorded for this pull request"
-      accessibilityLabelKey="plugins.bitbucket.ui.activityLabel"
-      items={state.rows}
-      keyForItem={(row) => row.key}
-      header={(
-        <Stack gap="small">
-          <PageFailureBanner state={state} />
-          <Text
-            variant="caption"
-            tone="neutral"
-            valueKey="plugins.bitbucket.ui.activityCollection.description"
-            fallback="Bitbucket serves approvals, updates and comments from one collection, so this is all of them."
-          />
-        </Stack>
-      )}
-      empty={(
-        <EmptyState
-          title="No recorded activity"
-          titleKey="plugins.bitbucket.ui.noActivity"
-          description="Bitbucket has recorded nothing on this pull request yet."
-          descriptionKey="plugins.bitbucket.ui.noActivity.description"
-        />
-      )}
-      footer={(
-        <PagedFooter
-          state={state}
-          loadMoreTitle="Show more activity"
-          loadMoreTitleKey="plugins.bitbucket.ui.showMoreActivity"
-          onLoadMore={controller.loadMore}
-          onRefresh={controller.refresh}
-          refreshLabel="Re-read this activity from Bitbucket"
-          refreshLabelKey="plugins.bitbucket.ui.rereadActivity"
-          summary={`${String(state.rows.length)} entry/entries read.`}
-          summaryKey="plugins.bitbucket.ui.entriesRead"
-          summaryValues={{ count: state.rows.length }}
-        />
-      )}
-      renderItem={(row) => (
-        <Item
-          title={activityHeadline(text, row)}
-          {...(row.summary === undefined ? {} : { subtitle: row.summary })}
-          {...(row.atMs === undefined
-            ? {}
-            : { detail: formatTimestamp(locale, row.atMs, 'relative', nowMs) })}
-        />
-      )}
-    />
-  );
+  return text(`plugins.bitbucket.ui.activity.${kind}`, ACTIVITY_HEADLINES[kind] ?? 'Activity');
 }
 
 /* ---------------------------------------------------------------------- Builds */
@@ -690,17 +628,28 @@ const RESOLUTION_LABELS: Readonly<Record<string, string>> = Object.freeze({
   unknown: 'Resolution not reported',
 });
 
-function commentHeadline(
+function commentDetail(
   text: ReturnType<typeof usePluginTranslation>,
   row: BitbucketProjectedCommentRowV1,
 ): string {
-  const author = row.author ?? text('plugins.bitbucket.ui.someone', 'Someone');
-  const edited = row.editedAtMs === undefined ? '' : ` · ${text('plugins.bitbucket.ui.edited', 'edited')}`;
-  const reply = row.parentId === undefined ? '' : ` · ${text('plugins.bitbucket.ui.reply', 'reply')}`;
-  return `${author} · #${row.id}${reply}${edited}`;
+  return [
+    `#${row.id}`,
+    ...(row.parentId === undefined ? [] : [text('plugins.bitbucket.ui.reply', 'reply')]),
+    ...(row.editedAtMs === undefined ? [] : [text('plugins.bitbucket.ui.edited', 'edited')]),
+    text(`plugins.bitbucket.ui.resolution.${row.resolution}`, RESOLUTION_LABELS[row.resolution] ?? 'Resolution not reported'),
+  ].join(' · ');
 }
 
-function CommentsPanel({
+/**
+ * Activity: Bitbucket's activity collection and its comment collection as one chronological
+ * stream.
+ *
+ * The activity collection repeats every comment as a `comment` arm keyed by the comment's own
+ * id. The comment collection owns those remarks (their resolution and controls), so an arm whose
+ * comment that read already returned is dropped rather than shown twice; an arm whose comment
+ * has not been paged in yet still stands for it.
+ */
+function ActivityStreamPanel({
   input,
   locale,
   nowMs,
@@ -710,26 +659,27 @@ function CommentsPanel({
   nowMs: number;
 }>): React.ReactElement {
   const text = usePluginTranslation();
-  const controller = useBitbucketComments(input);
-  const { state } = controller;
+  const activity = useBitbucketActivity(input);
+  const comments = useBitbucketComments(input);
   const [expandedParents, setExpandedParents] = React.useState<ReadonlySet<string>>(() => new Set());
+  const commentRows = comments.state.rows;
   const replyGroups = React.useMemo(() => {
     const groups = new Map<string, string[]>();
-    for (const row of state.rows) {
+    for (const row of commentRows) {
       if (row.parentId === undefined) continue;
       const replies = groups.get(row.parentId);
       if (replies) replies.push(row.id);
       else groups.set(row.parentId, [row.id]);
     }
     return groups;
-  }, [state.rows]);
-  const visibleRows = React.useMemo(() => {
+  }, [commentRows]);
+  const visibleComments = React.useMemo(() => {
     const precedingVisibility = new Map<string, boolean>();
     // Keep provider order, including when a later page brings another reply. Missing
     // parents never hide returned evidence or manufacture a synthetic root comment.
     // A parent returned after its replies must not retroactively hide a visible
     // orphan when appending a page and move the reader's existing viewport.
-    return state.rows.filter((row) => {
+    return commentRows.filter((row) => {
       const visible = row.parentId === undefined
         || !precedingVisibility.has(row.parentId)
         || (precedingVisibility.get(row.parentId) === true
@@ -738,89 +688,34 @@ function CommentsPanel({
       precedingVisibility.set(row.id, visible);
       return visible;
     });
-  }, [state.rows, expandedParents, replyGroups]);
+  }, [commentRows, expandedParents, replyGroups]);
 
-  if (state.kind === 'idle' || state.kind === 'loading') {
-    return <LoadingState title="Reading the comments from Bitbucket" titleKey="plugins.bitbucket.ui.readingComments" />;
-  }
-  if (state.kind === 'unavailable') {
-    return (
-      <ErrorState
-        title="The comments are unavailable"
-        titleKey="plugins.bitbucket.ui.commentsUnavailable"
-        description={failureDescription(
-          state.failure,
-          text('plugins.bitbucket.ui.readFailed', 'Bitbucket could not complete this read.'),
-        )}
-      />
-    );
-  }
-  return (
-    <List
-      accessibilityLabel="Comments on this Bitbucket pull request"
-      accessibilityLabelKey="plugins.bitbucket.ui.commentsLabel"
-      items={visibleRows}
-      keyForItem={(row) => row.id}
-      header={(
+  const events = React.useMemo((): readonly TriageActivityEventV1[] => {
+    const readComments = new Set(commentRows.map((row) => `comment:${row.id}`));
+    const activityEvents = activity.state.rows
+      .filter((row) => row.kind !== 'comment' || !readComments.has(row.key))
+      .map((row): TriageActivityEventV1 => ({
+        id: `activity:${row.key}`,
+        atMs: row.atMs ?? null,
+        kind: ACTIVITY_KINDS[row.kind] ?? 'other',
+        actor: row.actor ?? null,
+        summary: activityHeadline(text, row.kind),
+        ...(row.kind === 'comment' ? { quote: row.summary ?? null } : { detail: row.summary ?? null }),
+      }));
+    const commentEvents = visibleComments.map((row): TriageActivityEventV1 => ({
+      id: `comment:${row.id}`,
+      atMs: row.atMs ?? null,
+      kind: 'comment',
+      actor: row.author ?? text('plugins.bitbucket.ui.someone', 'Someone'),
+      summary: activityHeadline(text, 'comment'),
+      detail: commentDetail(text, row),
+      quote: row.deleted ? text('plugins.bitbucket.ui.commentDeleted', 'This comment was deleted.') : row.body,
+      ...(row.url === undefined ? {} : {
+        href: row.url,
+        hrefLabel: text('plugins.bitbucket.ui.openComment', 'Open this comment in Bitbucket'),
+      }),
+      inset: (
         <Stack gap="small">
-          <PageFailureBanner state={state} />
-          <BitbucketReviewCommentReplyControls input={input} comments={state.rows} />
-        </Stack>
-      )}
-      empty={(
-        <EmptyState
-          title="No comments"
-          titleKey="plugins.bitbucket.ui.noComments"
-          description="Nobody has commented on this pull request yet."
-          descriptionKey="plugins.bitbucket.ui.noComments.description"
-        />
-      )}
-      footer={(
-        <PagedFooter
-          state={state}
-          // Deliberately not "earlier": Bitbucket publishes pagination but no
-          // chronological ordering contract for this collection.
-          loadMoreTitle="Show 30 more comments"
-          loadMoreTitleKey="plugins.bitbucket.ui.showMoreComments"
-          onLoadMore={controller.loadMore}
-          onRefresh={controller.refresh}
-          refreshLabel="Re-read the comments from Bitbucket"
-          refreshLabelKey="plugins.bitbucket.ui.rereadComments"
-          summary={`${String(state.rows.length)} comment(s) read.`}
-          summaryKey="plugins.bitbucket.ui.commentsRead"
-          summaryValues={{ count: state.rows.length }}
-        />
-      )}
-      renderItem={(row) => (
-        <Item
-          title={commentHeadline(text, row)}
-          subtitle={row.deleted ? text('plugins.bitbucket.ui.commentDeleted', 'This comment was deleted.') : row.body}
-          detail={text(
-            `plugins.bitbucket.ui.resolution.${row.resolution}`,
-            RESOLUTION_LABELS[row.resolution] ?? 'Resolution not reported',
-          )}
-          {...(row.atMs === undefined
-            ? {}
-            : { caption: formatTimestamp(locale, row.atMs, 'relative', nowMs) })}
-          {...(row.url === undefined
-            ? {}
-            : {
-              accessory: (
-                <Action.OpenExternal
-                  url={row.url}
-                  variant="plain"
-                  accessibilityLabel="Open this comment in Bitbucket"
-                  accessibilityLabelKey="plugins.bitbucket.ui.openComment"
-                />
-              ),
-            })}
-        >
-          {/*
-            * The resolve and reopen controls live in the row body rather than the trailing
-            * accessory, because they are two buttons plus whatever the write settled into and the
-            * accessory is one trailing slot. The row carries no `onPress`, so it is not a
-            * Pressable and these are not buttons inside a button.
-            */}
           <BitbucketCommentResolutionControls input={input} comment={row} />
           {row.parentId === undefined ? null : (
             <Text
@@ -838,7 +733,105 @@ function CommentsPanel({
               onPress={() => setExpandedParents((previous) => new Set([...previous, row.id]))}
             />
           ) : null}
-        </Item>
+        </Stack>
+      ),
+    }));
+    return [...activityEvents, ...commentEvents];
+  }, [activity.state.rows, commentRows, expandedParents, input, replyGroups, text, visibleComments]);
+
+  const settling = (state: BitbucketPagedStateV1<unknown>) => state.kind === 'idle' || state.kind === 'loading';
+  if (settling(activity.state) || settling(comments.state)) {
+    return <LoadingState title="Reading this activity from Bitbucket" titleKey="plugins.bitbucket.ui.readingActivity" />;
+  }
+  const readFailed = text('plugins.bitbucket.ui.readFailed', 'Bitbucket could not complete this read.');
+  if (activity.state.kind === 'unavailable' && comments.state.kind === 'unavailable') {
+    return (
+      <ErrorState
+        title="The activity is unavailable"
+        titleKey="plugins.bitbucket.ui.activityUnavailable"
+        description={failureDescription(activity.state.failure, readFailed)}
+      />
+    );
+  }
+  return (
+    <TriageActivityTimeline
+      events={events}
+      locale={locale}
+      nowMs={nowMs}
+      accessibilityLabel="Activity Bitbucket recorded for this pull request"
+      accessibilityLabelKey="plugins.bitbucket.ui.activityLabel"
+      header={(
+        <Stack gap="small">
+          {activity.state.kind === 'unavailable' ? (
+            <Banner
+              tone="warning"
+              title="The activity is unavailable"
+              titleKey="plugins.bitbucket.ui.activityUnavailable"
+              description={failureDescription(activity.state.failure, readFailed)}
+            />
+          ) : <PageFailureBanner state={activity.state} />}
+          {comments.state.kind === 'unavailable' ? (
+            <Banner
+              tone="warning"
+              title="The comments are unavailable"
+              titleKey="plugins.bitbucket.ui.commentsUnavailable"
+              description={failureDescription(comments.state.failure, readFailed)}
+            />
+          ) : <PageFailureBanner state={comments.state} />}
+          <BitbucketReviewCommentReplyControls input={input} comments={commentRows} />
+        </Stack>
+      )}
+      empty={(
+        <EmptyState
+          title="No recorded activity"
+          titleKey="plugins.bitbucket.ui.noActivity"
+          description="Bitbucket has recorded nothing on this pull request yet."
+          descriptionKey="plugins.bitbucket.ui.noActivity.description"
+        />
+      )}
+      continuations={[
+        ...(activity.state.kind === 'ready' && activity.state.canLoadMore ? [{
+          key: 'activity',
+          title: 'Show more activity',
+          titleKey: 'plugins.bitbucket.ui.showMoreActivity',
+          pending: activity.state.pending,
+          onLoadMore: activity.loadMore,
+        }] : []),
+        // Deliberately not "earlier": Bitbucket publishes pagination but no
+        // chronological ordering contract for this collection.
+        ...(comments.state.kind === 'ready' && comments.state.canLoadMore ? [{
+          key: 'comments',
+          title: 'Show 30 more comments',
+          titleKey: 'plugins.bitbucket.ui.showMoreComments',
+          pending: comments.state.pending,
+          onLoadMore: comments.loadMore,
+        }] : []),
+      ]}
+      footer={(
+        <Stack gap="small">
+          {activity.state.kind === 'ready' ? (
+            <PagedFooter
+              state={activity.state}
+              onRefresh={activity.refresh}
+              refreshLabel="Re-read this activity from Bitbucket"
+              refreshLabelKey="plugins.bitbucket.ui.rereadActivity"
+              summary={`${String(activity.state.rows.length)} entry/entries read.`}
+              summaryKey="plugins.bitbucket.ui.entriesRead"
+              summaryValues={{ count: activity.state.rows.length }}
+            />
+          ) : null}
+          {comments.state.kind === 'ready' ? (
+            <PagedFooter
+              state={comments.state}
+              onRefresh={comments.refresh}
+              refreshLabel="Re-read the comments from Bitbucket"
+              refreshLabelKey="plugins.bitbucket.ui.rereadComments"
+              summary={`${String(comments.state.rows.length)} comment(s) read.`}
+              summaryKey="plugins.bitbucket.ui.commentsRead"
+              summaryValues={{ count: comments.state.rows.length }}
+            />
+          ) : null}
+        </Stack>
       )}
     />
   );
@@ -858,14 +851,13 @@ function BitbucketDetailBody({
   const nowMs = Date.now();
   const panels: Readonly<Record<BitbucketDetailTabIdV1, React.ReactNode>> = {
     overview: <OverviewPanel input={input} locale={locale} nowMs={nowMs} />,
-    activity: <ActivityPanel input={input} locale={locale} nowMs={nowMs} />,
+    activity: <ActivityStreamPanel input={input} locale={locale} nowMs={nowMs} />,
     diff: <DiffPanel input={input} />,
     builds: <BuildsPanel input={input} locale={locale} nowMs={nowMs} />,
-    comments: <CommentsPanel input={input} locale={locale} nowMs={nowMs} />,
   };
 
   // The Triage detail asked for one panel (r0.42): its frame draws the tabs.
-  // Comments fold into Activity; the diff is Files and builds are Checks.
+  // The diff is Files and builds are Checks.
   if (input.panel !== undefined) {
     return (
       <Screen safeArea>
@@ -873,16 +865,10 @@ function BitbucketDetailBody({
           panel={input.panel}
           ariaLabel={text('plugins.bitbucket.ui.detailLabel', 'Bitbucket pull request detail')}
           retention={Object.fromEntries(BITBUCKET_DETAIL_TABS_V1
-            .filter((declaration) => declaration.id !== 'comments')
             .map((declaration) => [declaration.id === 'diff' ? 'files' : declaration.id === 'builds' ? 'checks' : declaration.id, declaration.retention]))}
           panels={{
             overview: <OverviewPanel input={input} locale={locale} nowMs={nowMs} withWrites={false} />,
-            activity: (
-              <TriageDetailActivity>
-                <Stack style={{ flex: 1, minHeight: 0 }}>{panels.comments}</Stack>
-                <Stack style={{ flex: 1, minHeight: 0 }}>{panels.activity}</Stack>
-              </TriageDetailActivity>
-            ),
+            activity: panels.activity,
             files: panels.diff,
             checks: panels.builds,
             actions: <BitbucketActionsPanel input={input} />,

@@ -110,6 +110,12 @@ describe('parsePosthogIssueQueryDetail', () => {
         expect(detail?.latestRelease?.commitId)
             .toBe('0000000000000000000000000000000000000000');
         expect(detail?.impact).toEqual({ occurrences: 1842, users: 311, sessions: 402 });
+        expect(detail?.sparkline).toEqual([0, 0, 0, 0, 1, 2, 4, 6, 9, 11, 13, 12]);
+    });
+
+    it('states no sparkline rather than a partial one when a bucket is unreadable', () => {
+        expect(parsePosthogIssueQueryDetail({ ...queryIssueDetail, sparkline: [1, 'many', 3] })?.sparkline).toBeNull();
+        expect(parsePosthogIssueQueryDetail({ ...queryIssueDetail, sparkline: undefined })?.sparkline).toBeNull();
     });
 
     it('never carries severity, which lives only on the CRUD plane', () => {

@@ -5,10 +5,12 @@ import {
   Stack,
   Tabs,
   TargetedSurface,
+  Text,
   usePluginTranslation,
 } from '@happier-dev/plugin-ui';
 import type { PluginUiTargetedContributionSurfaceV1 } from '@happier-dev/plugin-sdk/ui';
 import type { TriageDetailSurfaceInputV1 } from '@happier-dev/triage-protocol/v1';
+import { TriageDetailPanelNavigationProvider, type TriageDetailPanelNavigationV1 } from '@happier-dev/triage-sources/ui';
 
 import type { TriageDetailTabV1 } from './tabs.js';
 
@@ -120,6 +122,9 @@ export function TriageDetailTabbedBody(props: Readonly<{
   ], [hasSession, props.tabs]);
   const reportAvailableTabs = props.tabSelection?.onAvailableTabsChange;
   React.useLayoutEffect(() => { reportAvailableTabs?.(availableTabs); }, [availableTabs, reportAvailableTabs]);
+  // A source control that points at a sibling panel selects it through this one owner.
+  const navigation = React.useMemo<TriageDetailPanelNavigationV1>(
+    () => ({ panels: availableTabs, select: setSelected }), [availableTabs, setSelected]);
 
   const selectedTab = props.tabs.find((tab) => tab.id === selected);
   const slot = selected === 'session' ? 'session' : selectedTab?.from ?? 'unavailable';
@@ -133,36 +138,49 @@ export function TriageDetailTabbedBody(props: Readonly<{
         // Panels are bounded regions (the Overview rail scrolls itself; Session hosts the live chat).
         layout="fill"
         sharedPanel={(
-          <Tabs value={slot} onValueChange={() => {}} ariaLabel="" tabList="host" layout="fill">
-            <Tabs.Item value="entry" title="" retention="retain">
-              <SourceDetailInstance
-                key={props.entry.instanceKey}
-                mount={props.entry}
-                panel={slot === 'entry' ? selected : null}
-                fallback={props.fallback}
-                overviewLead={props.overviewLead}
-                overviewTail={props.overviewTail}
-                activityTail={props.activityTail}
-              />
-            </Tabs.Item>
-            <Tabs.Item value="fixPullRequest" title="" retention="retain">
-              {props.fixPullRequest === null ? props.fallback : (
+          <TriageDetailPanelNavigationProvider navigation={navigation}>
+            <Tabs value={slot} onValueChange={() => {}} ariaLabel="" tabList="host" layout="fill">
+              <Tabs.Item value="entry" title="" retention="retain">
                 <SourceDetailInstance
-                  key={props.fixPullRequest.instanceKey}
-                  mount={props.fixPullRequest}
-                  panel={slot === 'fixPullRequest' ? selected : null}
+                  key={props.entry.instanceKey}
+                  mount={props.entry}
+                  panel={slot === 'entry' ? selected : null}
                   fallback={props.fallback}
+                  overviewLead={props.overviewLead}
+                  overviewTail={props.overviewTail}
+                  activityTail={props.activityTail}
                 />
-              )}
-            </Tabs.Item>
-            <Tabs.Item value="session" title="" retention="retain">{props.session}</Tabs.Item>
-            <Tabs.Item value="none" title="">
-              <ScrollArea style={FILL_STYLE}>
-                <Stack gap="large">{props.overviewLead}{props.overviewTail}</Stack>
-              </ScrollArea>
-            </Tabs.Item>
-            <Tabs.Item value="unavailable" title="">{props.fallback}</Tabs.Item>
-          </Tabs>
+              </Tabs.Item>
+              <Tabs.Item value="fixPullRequest" title="" retention="retain">
+                {props.fixPullRequest === null ? props.fallback : (
+                  // These Files and Checks belong to the linked fix, not to this entry: said once, above them.
+                  <Stack gap="small" style={FILL_STYLE}>
+                    <Text
+                      variant="caption"
+                      tone="secondary"
+                      value={text('plugins.triage.surface.detail.fixPr.from', 'From the linked fix: {title}', {
+                        title: props.fixPullRequest.input.observation.snapshot.title,
+                      })}
+                      numberOfLines={1}
+                    />
+                    <SourceDetailInstance
+                      key={props.fixPullRequest.instanceKey}
+                      mount={props.fixPullRequest}
+                      panel={slot === 'fixPullRequest' ? selected : null}
+                      fallback={props.fallback}
+                    />
+                  </Stack>
+                )}
+              </Tabs.Item>
+              <Tabs.Item value="session" title="" retention="retain">{props.session}</Tabs.Item>
+              <Tabs.Item value="none" title="">
+                <ScrollArea style={FILL_STYLE}>
+                  <Stack gap="large">{props.overviewLead}{props.overviewTail}</Stack>
+                </ScrollArea>
+              </Tabs.Item>
+              <Tabs.Item value="unavailable" title="">{props.fallback}</Tabs.Item>
+            </Tabs>
+          </TriageDetailPanelNavigationProvider>
         )}
       >
         {props.tabs.map((tab) => (

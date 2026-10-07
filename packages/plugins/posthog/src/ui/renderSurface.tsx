@@ -22,7 +22,8 @@
 
 import * as React from 'react';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
-import { TriageDetailInstance, TriageDetailPanel, TriageDetailStory, TriageDetailActivity, useTriageEvidenceDisclosure } from '@happier-dev/triage-sources/ui';
+import { TriageActivityTimeline, TriageDetailInstance, TriageDetailPanel, TriageDetailStory, useTriageEvidenceDisclosure, useTriageSourcePanelIntentV1, triageEvidenceDisclosureActionResultV1, type TriageActivityEventV1, type TriageSourcePanelCommandV1 } from '@happier-dev/triage-sources/ui';
+import { TriageDetailSpread, useTriageDetailPanelOpener, type TriageDetailSpreadTileV1, type TriageDetailTrendV1 } from '@happier-dev/triage-sources/ui';
 import {
     Badge,
     Banner,
@@ -59,6 +60,7 @@ import {
 // could start meaning two things in one list. They are aliased to this file's local
 // vocabulary so the call sites read as the panel language they already are.
 import {
+  formatTriageCountV1 as formatNumber,
   formatTriageTimestampV1 as formatTimestamp,
   projectTriageDetailFieldTextV1 as fieldValueText,
 } from '@happier-dev/triage-protocol/v1';
@@ -234,15 +236,107 @@ function lastObservationDescription(
     return read.kind === 'unavailable' ? `${sentence} (${read.failure.code})` : sentence;
 }
 
+/** The facts the spread states as tiles, so no other Overview row repeats them. */
+const SPREAD_FIELD_IDS: ReadonlySet<string> = new Set(['posthog/occurrences', 'posthog/users', 'posthog/first-seen']);
+
+/**
+ * The spread from what PostHog stated: occurrences and users in the configured window, when
+ * the issue was first seen, and the query plane's own occurrence series. PostHog states no
+ * first release, so none is shown. A fact the body does not carry is absent, never zero.
+ */
+function posthogSpread(
+    model: PosthogDetailSurfaceModelV1,
+    locale: string,
+    nowMs: number,
+    text: PluginTranslate,
+): Readonly<{ tiles: readonly TriageDetailSpreadTileV1[]; trend: TriageDetailTrendV1 | null }> {
+    const field = (id: string) => model.body.fields.find((candidate) => candidate.id === id);
+    const occurrences = field('posthog/occurrences');
+    const users = field('posthog/users');
+    const firstSeen = field('posthog/first-seen');
+    const tiles: TriageDetailSpreadTileV1[] = [
+        ...(occurrences?.kind !== 'number' ? [] : [{
+            id: 'occurrences', label: posthogFactLabel(occurrences, text),
+            value: formatNumber(locale, occurrences.value, 'compact'),
+        }]),
+        ...(users?.kind !== 'number' ? [] : [{
+            id: 'users', label: text('plugins.posthog.ui.spread.users', 'Users affected'),
+            value: formatNumber(locale, users.value, 'compact'),
+        }]),
+        ...(firstSeen?.kind !== 'timestamp' ? [] : [{
+            id: 'first-seen', label: posthogFactLabel(firstSeen, text),
+            value: formatTimestamp(locale, firstSeen.atMs, 'relative', nowMs),
+        }]),
+    ];
+    const trend = model.trend === undefined || model.trend.length === 0 ? null : {
+        label: text('plugins.posthog.ui.spread.trend', 'Occurrences'),
+        windowLabel: text('plugins.posthog.ui.spread.window', 'In the configured window'),
+        points: model.trend,
+    };
+    return { tiles, trend };
+}
+
+/**
+ * ①'s occurrence: the exception of the sampled occurrence the reader has selected (the
+ * first one until they choose another) and its top application frame. It reads nothing:
+ * the detail's one sample controller already holds it.
+ */
+function SampledOccurrenceSummary({
+    controller,
+    onOpenStackTrace,
+}: Readonly<{
+    controller: PosthogOccurrenceControllerV1;
+    onOpenStackTrace: (() => void) | undefined;
+}>): React.ReactElement | null {
+    const trace = React.useMemo(() => posthogStackTrace(controller.selectedEvent), [controller.selectedEvent]);
+    if (controller.state.kind === 'loading') {
+        return <LoadingState title="Reading sampled occurrences" titleKey="plugins.posthog.ui.readingSamples" />;
+    }
+    if (controller.state.kind === 'unavailable') {
+        return <SampledUnavailable failure={controller.state.failure} />;
+    }
+    if (controller.selectedEvent === undefined) return null;
+    const frame = trace.topFrame;
+    return (
+        <Stack gap="small">
+            <Text
+                variant="caption"
+                tone="neutral"
+                valueKey="plugins.posthog.ui.showingSample"
+                fallback="Showing one sampled occurrence."
+            />
+            {trace.exceptionLabel === null ? null : <Text variant="body" value={trace.exceptionLabel} />}
+            {frame === null
+                ? null
+                : <Text variant="caption" tone="neutral" value={frame.location === null ? frame.label : `${frame.label} — ${frame.location}`} />}
+            {trace.frames.length === 0 || onOpenStackTrace === undefined
+                ? null
+                : (
+                    <Button
+                        title="Open the stack trace"
+                        titleKey="plugins.posthog.ui.openStack"
+                        variant="secondary"
+                        onPress={onOpenStackTrace}
+                    />
+                )}
+        </Stack>
+    );
+}
+
 function OverviewPanel({
     model,
+    controller,
     locale,
     nowMs,
+    onOpenStackTrace,
     story = false,
 }: Readonly<{
     model: PosthogDetailSurfaceModelV1;
+    controller: PosthogOccurrenceControllerV1;
     locale: string;
     nowMs: number;
+    /** Absent when no tab or frame panel offers the stack trace. */
+    onOpenStackTrace: (() => void) | undefined;
     story?: boolean;
 }>): React.ReactElement {
     const text = usePluginTranslation();
@@ -252,9 +346,10 @@ function OverviewPanel({
                 field.kind === 'status'
             ),
         );
-        const pendingFields = model.body.fields.filter((field) => field.kind === 'pending');
+        // The story answers these in the panels beside it; only the standalone tabs list them.
+        const pendingFields = story ? [] : model.body.fields.filter((field) => field.kind === 'pending');
         const entries: readonly MetadataEntry[] = model.body.fields.flatMap((field) => {
-            if (field.kind === 'pending' || field.kind === 'status') return [];
+            if (field.kind === 'pending' || field.kind === 'status' || SPREAD_FIELD_IDS.has(field.id)) return [];
             const value = fieldValueText(field, locale, nowMs);
             return value === null ? [] : [{ label: posthogFactLabel(field, text), value }];
         });
@@ -263,11 +358,13 @@ function OverviewPanel({
                 ? [{ id: field.id, label: posthogFactLabel(field, text), disclosure: field.disclosure }]
                 : []),
         );
-        return { statusFields, pendingFields, entries, disclosures };
-    }, [locale, model, nowMs]);
+        return { statusFields, pendingFields, entries, disclosures, spread: posthogSpread(model, locale, nowMs, text) };
+    }, [locale, model, nowMs, story]);
+    const spread = <TriageDetailSpread tiles={projected.spread.tiles} trend={projected.spread.trend} locale={locale} nowMs={nowMs} />;
 
     return (
-            <TriageDetailStory kind={story ? 'report' : undefined}>
+            <TriageDetailStory kind={story ? 'error' : undefined} changes={story ? spread : undefined}>
+                <SampledOccurrenceSummary controller={controller} onOpenStackTrace={onOpenStackTrace} />
                 {/*
                     Anything but a settled live read leaves these facts unconfirmed, and
                     a body that says nothing presents them as current. `unavailable`
@@ -316,16 +413,17 @@ function OverviewPanel({
                             ))}
                         </Row>
                     )}
-                {projected.entries.length === 0
-                    ? (
+                {story ? null : spread}
+                {projected.entries.length > 0
+                    ? <Metadata title="Facts" titleKey="plugins.posthog.ui.facts" entries={projected.entries} />
+                    : story ? null : (
                         <EmptyState
                             title="No projected facts"
                             titleKey="plugins.posthog.ui.noFacts"
                             description="This observation carried no displayable facts."
                             descriptionKey="plugins.posthog.ui.noFacts.description"
                         />
-                    )
-                    : <Metadata title="Facts" titleKey="plugins.posthog.ui.facts" entries={projected.entries} />}
+                    )}
                 {projected.disclosures.map((disclosure) => (
                     <Text key={disclosure.id} variant="caption" tone="neutral">
                         {`${disclosure.label}: ${disclosure.disclosure}`}
@@ -359,8 +457,8 @@ function OverviewPanel({
                         />
                     )
                     : null}
-                <Divider />
-                <Metadata
+                {story ? null : <Divider />}
+                {story ? null : <Metadata
                     title="Observation"
                     titleKey="plugins.posthog.ui.observation"
                     entries={[
@@ -385,7 +483,7 @@ function OverviewPanel({
                                 ),
                             }]),
                     ]}
-                />
+                />}
             </TriageDetailStory>
     );
 }
@@ -497,6 +595,15 @@ function OccurrencesPanel({
         () => posthogOccurrenceRows(controller.state.rows),
         [controller.state.rows],
     );
+    const commands = React.useMemo<readonly TriageSourcePanelCommandV1[]>(() => rows.map((row) => ({
+        title: row.headline, operation: { kind: 'selectSourceOccurrence', occurrenceId: row.uuid },
+    })), [rows]);
+    const select = useTriageSourcePanelIntentV1('selectSourceOccurrence', async (operation, signal) => {
+        if (operation.kind !== 'selectSourceOccurrence' || signal.aborted
+            || !rows.some((row) => row.uuid === operation.occurrenceId)) return { status: 'unavailable' };
+        controller.select(operation.occurrenceId);
+        return { status: 'applied' };
+    }, commands);
 
     if (controller.state.kind === 'loading') {
         return <LoadingState title="Reading sampled occurrences" titleKey="plugins.posthog.ui.readingSamples" />;
@@ -513,7 +620,7 @@ function OccurrencesPanel({
             keyForItem={(row) => row.uuid}
             selection={{
                 selectedKey: controller.state.selectedUuid,
-                onSelectedKeyChange: controller.select,
+                onSelectedKeyChange: (occurrenceId) => { void select({ kind: 'selectSourceOccurrence', occurrenceId }); },
             }}
             {...(controller.state.failure === null
                 ? {}
@@ -548,9 +655,31 @@ function SelectedEvidenceDisclosure({
     controller: PosthogOccurrenceControllerV1;
 }>): React.ReactElement | null {
     const disclosure = useTriageEvidenceDisclosure();
+    const text = usePluginTranslation();
     const selected = controller.selectedEvent;
     const frozenRequest = controller.selectedFrozenRequest;
     const selectedAbsoluteOffset = controller.selectedAbsoluteOffset;
+    const commands = React.useMemo<readonly TriageSourcePanelCommandV1[]>(() => !disclosure.available
+        || selected === undefined || frozenRequest === undefined || selectedAbsoluteOffset === undefined ? [] : [{
+            title: text('plugins.posthog.ui.addSelectedOccurrence', 'Add selected occurrence to message'),
+            operation: { kind: 'insertSelectedEvidence', occurrenceId: selected.uuid },
+        }], [disclosure.available, frozenRequest, selected, selectedAbsoluteOffset, text]);
+    const insert = useTriageSourcePanelIntentV1('insertSelectedEvidence', async (operation, signal) => {
+        if (operation.kind !== 'insertSelectedEvidence' || signal.aborted || !disclosure.available
+            || selected === undefined || selected.uuid !== operation.occurrenceId
+            || frozenRequest === undefined || selectedAbsoluteOffset === undefined) return { status: 'unavailable' };
+        return triageEvidenceDisclosureActionResultV1(await disclosure.disclose(async (disclosureSignal) => {
+            if (signal.aborted || disclosureSignal.aborted) return null;
+            return createPosthogEvidenceCandidate({
+                instance: input.instance,
+                localRef: {
+                    kindId: input.observation.entryRef.kindId,
+                    collisionScope: input.observation.entryRef.collisionScope,
+                    entryId: input.observation.entryRef.entryId,
+                }, selected, frozenRequest, selectedAbsoluteOffset,
+            });
+        }, { signal }));
+    }, commands);
 
     // The parent owns availability and the exact Composer transaction. A source only
     // shows this affordance when it can form one opaque, provider-owned candidate.
@@ -567,20 +696,7 @@ function SelectedEvidenceDisclosure({
             titleKey="plugins.posthog.ui.addSelectedOccurrence"
             variant="secondary"
             onPress={() => {
-                void disclosure.disclose(async (signal) => {
-                    if (signal.aborted) return null;
-                    return createPosthogEvidenceCandidate({
-                        instance: input.instance,
-                        localRef: {
-                            kindId: input.observation.entryRef.kindId,
-                            collisionScope: input.observation.entryRef.collisionScope,
-                            entryId: input.observation.entryRef.entryId,
-                        },
-                        selected,
-                        frozenRequest,
-                        selectedAbsoluteOffset,
-                    });
-                });
+                void insert({ kind: 'insertSelectedEvidence', occurrenceId: selected.uuid });
             }}
         />
     );
@@ -813,11 +929,24 @@ function activityActorLabel(row: PosthogProjectedActivityRecord): string | null 
     return row.actor ?? null;
 }
 
-/** What one activity record says happened, without saying what it changed to. */
-function activityHeadline(row: PosthogProjectedActivityRecord): string {
-    return row.changedFields.length === 0
-        ? row.activity
-        : `${row.activity}: ${row.changedFields.join(', ')}`;
+/**
+ * One PostHog record as a timeline event. PostHog's own activity word is the sentence and
+ * the fields it changed are its quiet detail; neither is translated, because both are
+ * provider facts rather than this product's words about them.
+ */
+function posthogActivityEvent(row: PosthogProjectedActivityRecord): TriageActivityEventV1 {
+    const actor = activityActorLabel(row);
+    const kind = row.activity === 'created' || row.changedFields.includes('status')
+        ? 'state'
+        : row.changedFields.includes('assignee') ? 'assignment' : 'other';
+    return {
+        id: row.id,
+        atMs: row.atMs ?? null,
+        kind,
+        ...(actor === null ? {} : { actor }),
+        summary: row.activity,
+        ...(row.changedFields.length === 0 ? {} : { detail: row.changedFields.join(', ') }),
+    };
 }
 
 function ActivityFooter({
@@ -864,17 +993,6 @@ function ActivityFooter({
                         fallback="PostHog recorded more activity than this list could read, so it stops here."
                     />
                 )}
-            {state.canLoadMore
-                ? (
-                    <Button
-                        title="Load more activity"
-                        titleKey="plugins.posthog.ui.loadMoreActivity"
-                        variant="secondary"
-                        busy={state.pending}
-                        onPress={controller.loadMore}
-                    />
-                )
-                : null}
         </Stack>
     );
 }
@@ -921,11 +1039,12 @@ function ActivityPanel({
     }
 
     return (
-        <List
+        <TriageActivityTimeline
             accessibilityLabel="Recorded activity for this PostHog issue"
             accessibilityLabelKey="plugins.posthog.ui.activityLabel"
-            items={state.rows}
-            keyForItem={(row) => row.id}
+            events={state.rows.map(posthogActivityEvent)}
+            locale={locale}
+            nowMs={nowMs}
             {...(state.failure === null
                 ? {}
                 : {
@@ -958,18 +1077,16 @@ function ActivityPanel({
                         descriptionKey="plugins.posthog.ui.noReadableActivity.description"
                     />
                 )}
+            continuations={state.canLoadMore
+                ? [{
+                    key: 'activity',
+                    title: 'Load more activity',
+                    titleKey: 'plugins.posthog.ui.loadMoreActivity',
+                    pending: state.pending,
+                    onLoadMore: controller.loadMore,
+                }]
+                : []}
             footer={<ActivityFooter controller={controller} />}
-            renderItem={(row) => (
-                <Item
-                    title={activityHeadline(row)}
-                    {...(activityActorLabel(row) === null
-                        ? {}
-                        : { subtitle: activityActorLabel(row) ?? '' })}
-                    {...(row.atMs === undefined
-                        ? {}
-                        : { detail: formatTimestamp(locale, row.atMs, 'relative', nowMs) })}
-                />
-            )}
         />
     );
 }
@@ -1006,13 +1123,24 @@ function PosthogDetailBody({
 
     const live = useLiveEntry(input, signal);
     const controller = usePosthogOccurrenceController(input, signal);
+    const openFrameStackTrace = useTriageDetailPanelOpener('stack-trace');
     const model = React.useMemo(
         () => projectPosthogDetailSurface(input, live),
         [input, live],
     );
 
     const panels: Readonly<Record<PosthogDetailTabIdV1, React.ReactNode>> = {
-        overview: <OverviewPanel model={model} locale={locale} nowMs={nowMs} story={input.panel !== undefined} />,
+        overview: (
+            <OverviewPanel
+                model={model}
+                controller={controller}
+                locale={locale}
+                nowMs={nowMs}
+                story={input.panel !== undefined}
+                // In a Triage panel Stack trace is the frame's own panel (r0.42), so the frame selects it.
+                onOpenStackTrace={input.panel !== undefined ? openFrameStackTrace : () => { setTab('stack-trace'); }}
+            />
+        ),
         occurrences: (
             <OccurrencesPanel controller={controller} locale={locale} nowMs={nowMs} />
         ),
@@ -1036,7 +1164,7 @@ function PosthogDetailBody({
                         (declaration) => [declaration.id, declaration.retention] as const,
                     ))}
                     ariaLabel={text('plugins.posthog.ui.tabsLabel', 'PostHog issue detail')}
-                    panels={{ ...panels, activity: <TriageDetailActivity>{panels.activity}</TriageDetailActivity> }}
+                    panels={panels}
                 />
             </Screen>
         );

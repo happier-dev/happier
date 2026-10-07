@@ -20,7 +20,15 @@ import {
   TriageSourceEntryLocalRefV1Schema,
   TriageSourceFailureV1Schema,
   TriageSourceObservationV1Schema,
+  type TriageSourceAccountBindingV1,
 } from '@happier-dev/triage-protocol/v1';
+
+/** Source UI and publication admission describe the same credential authority. */
+export function githubReviewPublicationCredential(binding: TriageSourceAccountBindingV1) {
+  return 'account' in binding
+    ? Object.freeze({ configuredAccountId: binding.account.accountId })
+    : Object.freeze({ nativeService: binding.service });
+}
 
 /**
  * The GitHub pull-request mutation contracts.

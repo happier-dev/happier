@@ -1,18 +1,21 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 import { readTriageSourceAccountListingV1 } from '@happier-dev/triage-sources/runtime';
 import {
   type TriageListInstancesResultV1,
   type TriageSourceInstanceDraftV1,
+  type TriageSourceAccountBindingV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import {
   decodeGithubJsonResponse,
   createGithubListedAccountApiClient,
+  createGithubNativeApiClient,
+  type GithubApiClientV1,
 } from '../observations/githubApiClient.js';
 import {
   GITHUB_API_ORIGIN,
   GITHUB_CONNECTED_ACCOUNT_PURPOSE,
+  GITHUB_CONNECTED_ACCOUNT_SERVICE,
 } from '../observations/githubProviderContracts.js';
 
 import {
@@ -31,21 +34,19 @@ import { toTriageFailure } from './mapping/protocol.js';
 import type { GithubTriageFailureV1 } from './types.js';
 
 /**
- * GitHub discovery: one non-durable candidate per authorized Connected Account.
+ * GitHub discovery: exact-account candidates, or this machine's authenticated
+ * native login when the purpose has no selected account.
  *
- * Discovery reads only the generic bounded account-metadata listing for this
- * source's own declared purpose. It never enumerates GitHub users, never invents a
+ * Discovery uses the generic bounded account-metadata listing and native
+ * materialization for this source's own declared purpose. It never enumerates GitHub users, never invents a
  * cursor the incumbent owner does not have, and never writes a configured instance:
  * a candidate stays a Settings choice until the user invokes the target-owned
  * administration Action. A truncated listing is reported as `incomplete` rather
  * than silently dropping an account the user has configured.
  *
- * A purpose with no selected account is an empty `complete` set, not a failure.
- * The host declines to list an unbound purpose, and the shared listing owner
- * separates that decline from a real refusal by re-asking the same authorized
- * target through the nullable question. Calling it a GitHub failure would accuse
- * a provider this source never contacted, and would hide the one thing the
- * reader can act on: connecting an account.
+ * An unbound purpose with unavailable machine authentication reports the native
+ * service's sign-in failure, so Settings can offer the existing gh-login remedy.
+ * Other materialization refusals never authorize native fallback.
  */
 
 export type GithubTriageInstancesDependenciesV1 = Readonly<{
@@ -76,13 +77,16 @@ function readAccountIdentity(body: unknown): GithubAccountIdentity | null {
  * metadata, and no candidate exists without a current authorized provider response.
  */
 async function readCandidate(
-  account: ConnectedAccountRef,
+  binding: TriageSourceAccountBindingV1,
   context: PluginInvocationContext,
   now: () => number,
+  nativeClient?: GithubApiClientV1,
 ): Promise<CandidateOutcome> {
   let identity: GithubAccountIdentity | null;
   try {
-    const client = await createGithubListedAccountApiClient(context, account);
+    const client = nativeClient ?? ('account' in binding
+      ? await createGithubListedAccountApiClient(context, binding.account)
+      : await createGithubNativeApiClient(context, binding.service));
     const response = await client.request({ url: `${GITHUB_API_ORIGIN}/user` });
     if (!isGithubSuccessStatus(response.status)) {
       return Object.freeze({
@@ -117,10 +121,7 @@ async function readCandidate(
     kind: 'candidate' as const,
     draft: Object.freeze({
       v: 1 as const,
-      binding: Object.freeze({
-        purpose: GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1.purpose,
-        account,
-      }),
+      binding,
       // The source-native scope only. GitHub's deployment is the whole scope a
       // discovery candidate can prove; the account ref stays in `binding`, so two
       // accounts legitimately produce two candidates under this same key.
@@ -143,6 +144,17 @@ export async function listGithubTriageInstances(
   dependencies: GithubTriageInstancesDependenciesV1 = {},
 ): Promise<TriageListInstancesResultV1> {
   const now = dependencies.now ?? Date.now;
+  let nativeClient: GithubApiClientV1 | undefined;
+  let nativeFailure: GithubTriageFailureV1 | undefined;
+  try {
+    nativeClient = await createGithubNativeApiClient(context);
+  } catch (error) {
+    context.signal.throwIfAborted();
+    const failure = classifyGithubTransportFailure(error);
+    if (failure.code === 'plugin_connected_account_native_unavailable') {
+      nativeFailure = failure;
+    }
+  }
   const listing = await readTriageSourceAccountListingV1({
     connectedAccounts: context.services.connectedAccounts,
     purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE,
@@ -169,8 +181,25 @@ export async function listGithubTriageInstances(
     binding: TriageSourceInstanceDraftV1['binding'];
     failure: ReturnType<typeof toTriageFailure>;
   }>> = [];
+  if (listing.kind === 'unbound' && (nativeClient !== undefined || nativeFailure !== undefined)) {
+    const binding: TriageSourceAccountBindingV1 = Object.freeze({
+      purpose: GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1.purpose,
+      source: 'native' as const,
+      service: GITHUB_CONNECTED_ACCOUNT_SERVICE,
+    });
+    if (nativeClient !== undefined) {
+      const outcome = await readCandidate(binding, context, now, nativeClient);
+      if (outcome.kind === 'candidate') candidates.push(outcome.draft);
+      else failures.push(Object.freeze({ binding, failure: toTriageFailure(outcome.failure) }));
+    } else if (nativeFailure !== undefined) {
+      failures.push(Object.freeze({ binding, failure: toTriageFailure(nativeFailure) }));
+    }
+  }
   for (const listedAccount of listed.accounts) {
-    const outcome = await readCandidate(listedAccount.account, context, now);
+    const outcome = await readCandidate(Object.freeze({
+      purpose: GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1.purpose,
+      account: listedAccount.account,
+    }), context, now);
     if (outcome.kind === 'candidate') {
       candidates.push(outcome.draft);
       continue;

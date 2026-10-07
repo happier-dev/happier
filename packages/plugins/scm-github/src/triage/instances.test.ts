@@ -1,4 +1,4 @@
-import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
+import type { ConnectedAccountRef, ConnectedAccountMaterialization } from '@happier-dev/plugin-sdk/connected-accounts';
 import { TriageListInstancesResultV1Schema } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
 
@@ -47,11 +47,13 @@ function transport(input: Readonly<{
   binding?: Readonly<{ purpose: string }> | null;
   userStatus?: number;
   userHeaders?: Readonly<Record<string, string>>;
+  nativeMaterialization?: ConnectedAccountMaterialization | (() => never);
 }>) {
   let identityReads = 0;
   return createStubGithubTransport({
     ...(input.listing === undefined ? {} : { listing: input.listing }),
     ...(input.binding === undefined ? {} : { binding: input.binding }),
+    ...(input.nativeMaterialization === undefined ? {} : { nativeMaterialization: input.nativeMaterialization }),
     respond: (request) => {
       if (!request.url.endsWith('/user')) return undefined;
       identityReads += 1;
@@ -67,6 +69,92 @@ function transport(input: Readonly<{
 }
 
 describe('GitHub Triage discovery', () => {
+  it('offers the machine login only when unbound and authenticated, without exposing the token in the candidate', async () => {
+    const nativeToken = 'native-token-must-stay-in-daemon';
+    const stub = transport({
+      binding: null,
+      listing: () => { throw Object.assign(new Error('resource not selected'), { code: 'plugin_host_access_resource_not_selected' }); },
+      nativeMaterialization: { kind: 'httpHeaders', headers: { Authorization: `Bearer ${nativeToken}` } },
+    });
+
+    const result = await listGithubTriageInstances(stub.context);
+
+    expect(result.kind).toBe('complete');
+    if (result.kind !== 'complete') throw new Error('expected complete discovery');
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0]?.binding).toEqual({
+      purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE,
+      source: 'native',
+      service: FIRST_ACCOUNT.service,
+    });
+    expect(stub.requests[0]?.headers.Authorization).toBe(`Bearer ${nativeToken}`);
+    expect(JSON.stringify(result)).not.toContain(nativeToken);
+    expect(stub.materializations).toEqual([]);
+  });
+
+  it('does not replace a failed explicit selection with the machine login after the listing becomes unbound', async () => {
+    const stub = transport({
+      binding: null,
+      listing: () => { throw Object.assign(new Error('resource not selected'), { code: 'plugin_host_access_resource_not_selected' }); },
+      nativeMaterialization: () => { throw Object.assign(new Error('Selected account unavailable'), { code: 'plugin_connected_account_unavailable' }); },
+    });
+    expect(await listGithubTriageInstances(stub.context)).toEqual({ kind: 'complete', candidates: [], failures: [] });
+    expect(stub.requests).toEqual([]);
+    expect(stub.bindingReads).toEqual([GITHUB_CONNECTED_ACCOUNT_PURPOSE]);
+  });
+
+  it('reports the native sign-in remedy for an unbound purpose when the machine login is unavailable', async () => {
+    const stub = transport({
+      binding: null,
+      listing: () => { throw Object.assign(new Error('resource not selected'), { code: 'plugin_host_access_resource_not_selected' }); },
+      nativeMaterialization: () => { throw Object.assign(new Error('Sign in with gh'), { code: 'plugin_connected_account_native_unavailable' }); },
+    });
+
+    const result = await listGithubTriageInstances(stub.context);
+
+    expect(TriageListInstancesResultV1Schema.safeParse(result).success).toBe(true);
+    expect(result).toEqual({
+      kind: 'complete',
+      candidates: [],
+      failures: [{
+        binding: { purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE, source: 'native', service: FIRST_ACCOUNT.service },
+        failure: { class: 'authentication', code: 'plugin_connected_account_native_unavailable' },
+      }],
+    });
+    expect(stub.requests).toEqual([]);
+  });
+
+  it('preserves cancellation rather than publishing a missing-native-login failure', async () => {
+    const controller = new AbortController();
+    const cancelled = new DOMException('Cancelled', 'AbortError');
+    const stub = createStubGithubTransport({
+      signal: controller.signal,
+      binding: null,
+      nativeMaterialization: () => {
+        controller.abort(cancelled);
+        throw Object.assign(new Error('Sign in with gh'), { code: 'plugin_connected_account_native_unavailable' });
+      },
+      respond: () => undefined,
+    });
+
+    await expect(listGithubTriageInstances(stub.context)).rejects.toBe(cancelled);
+    expect(stub.requests).toEqual([]);
+  });
+
+  it('retains only exact-account candidates while an account selection is bound even if native materialization succeeds', async () => {
+    const stub = transport({
+      listing: listing('complete', [FIRST_ACCOUNT]),
+      nativeMaterialization: { kind: 'httpHeaders', headers: { Authorization: 'Bearer probe-only-token' } },
+    });
+    const result = await listGithubTriageInstances(stub.context);
+    if (result.kind !== 'complete') throw new Error('expected complete discovery');
+    expect(result.candidates.map(({ binding }) => binding)).toEqual([
+      { purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE, account: FIRST_ACCOUNT },
+    ]);
+    expect(stub.requests[0]?.headers.Authorization).toBe('Bearer test-only-placeholder');
+    expect(JSON.stringify(result)).not.toContain('probe-only-token');
+  });
+
   it('projects two purpose-scoped account metadata rows into two candidates with their exact binding refs', async () => {
     const stub = transport({ listing: listing('complete', [FIRST_ACCOUNT, SECOND_ACCOUNT]) });
 
@@ -103,6 +191,7 @@ describe('GitHub Triage discovery', () => {
     const keys = result.candidates.map((candidate) => candidate.localInstanceKey);
     expect(keys).toEqual(['github.com', 'github.com']);
     for (const candidate of result.candidates) {
+      if (!('account' in candidate.binding)) throw new Error('expected an account candidate');
       expect(candidate.localInstanceKey).not.toContain(candidate.binding.account.accountId);
       expect(candidate.localInstanceKey).not.toContain(GITHUB_CONNECTED_ACCOUNT_PURPOSE);
       // A candidate is a Settings choice; it mints no configured-instance identity.
@@ -138,33 +227,6 @@ describe('GitHub Triage discovery', () => {
     });
     // A source that learned nothing performs no provider read on a missing listing.
     expect(failing.requests).toHaveLength(0);
-  });
-
-  /**
-   * A reader with no connected GitHub account has configured nothing — they have
-   * not been refused by GitHub. The host declines to list a purpose it holds no
-   * selection for, and reporting that decline as a source failure tells the
-   * Settings page that a provider it never contacted returned something
-   * unreadable, hiding the one thing the reader can act on.
-   */
-  it('reports an unbound purpose as a complete empty candidate set, not a source failure', async () => {
-    const unbound = transport({
-      binding: null,
-      listing: () => {
-        throw Object.assign(new Error('resource not selected'), {
-          code: 'plugin_host_access_resource_not_selected',
-        });
-      },
-    });
-
-    const result = await listGithubTriageInstances(unbound.context, { now: fixedClock(1_000) });
-
-    expect(() => TriageListInstancesResultV1Schema.parse(result)).not.toThrow();
-    expect(result).toEqual({ kind: 'complete', candidates: [], failures: [] });
-    // The claim is the host's own answer about the binding, never an error-code guess.
-    expect(unbound.bindingReads).toEqual([GITHUB_CONNECTED_ACCOUNT_PURPOSE]);
-    // Nothing was connected, so no provider read was attempted.
-    expect(unbound.requests).toHaveLength(0);
   });
 
   it('still reports a refused listing as a failure while the purpose is bound', async () => {

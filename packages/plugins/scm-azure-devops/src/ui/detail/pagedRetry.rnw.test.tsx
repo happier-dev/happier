@@ -62,6 +62,8 @@ const changeInputs: unknown[] = [];
 const mounted: PluginUiTestkit[] = [];
 /** Successive answers for the iteration-changes walk, by request order. */
 let changesAnswers: readonly JsonValue[] = [];
+/** The review threads read, when a case needs one. */
+let threadsAnswer: JsonValue | undefined;
 
 async function mountDetail(panel?: string, policies?: JsonValue, commits?: JsonValue, rootOptions: Readonly<{
   visible: () => boolean;
@@ -93,6 +95,7 @@ async function mountDetail(panel?: string, policies?: JsonValue, commits?: JsonV
           }
           if (localId === AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readPolicies && policies !== undefined) return policies;
           if (localId === AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.listCommits && commits !== undefined) return commits;
+          if (localId === AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readThreads && threadsAnswer !== undefined) return threadsAnswer;
           if (localId === AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.listIterationChanges) {
             const index = changeInputs.length;
             changeInputs.push(input);
@@ -122,6 +125,7 @@ async function pressShowMore(detail: PluginUiTestkit): Promise<void> {
 afterEach(async () => {
   changeInputs.splice(0);
   changesAnswers = [];
+  threadsAnswer = undefined;
   for (const fixture of mounted.splice(0)) await fixture.dispose();
 });
 
@@ -168,26 +172,43 @@ describe('the mounted Azure DevOps Files walk after a refused page', () => {
     await act(async () => { await detail.retire(); });
     expect(signals.every((signal) => signal.aborted)).toBe(true);
   });
-  it('composes host Activity as a story while keeping commits and the shared iteration', async () => {
+  it('reads commits, iterations and review threads as one chronological stream', async () => {
+    threadsAnswer = {
+      kind: 'threads',
+      rows: [{
+        id: '7', status: 'active', omittedCommentCount: 0,
+        comments: [{ id: '1', author: 'Reviewer', content: 'Please rename this', publishedAtMs: 150 }],
+      }],
+      omittedRowCount: 0, projectionTruncated: false,
+    } as unknown as JsonValue;
     const detail = await mountDetail('activity', undefined, {
-      kind: 'commits', rows: [{ commitId: 'abc123', comment: 'Source-only commit.', author: 'Mara' }],
+      kind: 'commits', rows: [{ commitId: 'abc12345', comment: 'Source-only commit.', author: 'Mara', authoredAtMs: 100 }],
       omittedRowCount: 0, projectionTruncated: false,
     });
-    await expect(detail.getByRole('heading', { name: 'Activity' })).resolves.toBeDefined();
     await expect(detail.getByText('Source-only commit.')).resolves.toBeDefined();
     await expect(detail.getByText('Iteration 2')).resolves.toBeDefined();
+    // The thread keeps its own controls inside the stream.
+    await expect(detail.getByRole('button', { name: 'Reply to thread 7' })).resolves.toBeDefined();
+    const text = document.body.textContent ?? '';
+    const order = ['Source-only commit.', 'Please rename this', 'Iteration 2'].map((value) => text.indexOf(value));
+    expect(order.every((position) => position >= 0)).toBe(true);
+    expect([...order].sort((left, right) => left - right)).toEqual(order);
+    await expect(detail.queryByRole('heading', { name: 'Activity' })).resolves.toBeUndefined();
     await expect(detail.queryByRole('tab')).resolves.toBeUndefined();
   });
   it.each([
-    ['approved', false, 'Passed'],
-    ['rejected', false, '1 failed'],
-    ['running', false, 'Running'],
-    ['approved', true, null],
-    ['future-provider-state', false, null],
-  ] as const)('reports only complete, known policy evidence in the story (%s, partial %s)', async (status, evaluationsPartial, label) => {
+    [['approved'], false, 'Passed'],
+    [['rejected'], false, '1 failed'],
+    [['running'], false, 'Running'],
+    [['approved'], true, null],
+    [['future-provider-state'], false, null],
+    // Azure's own vocabulary: a policy that does not apply blocks nothing, a broken one fails.
+    [['approved', 'notApplicable'], false, 'Passed'],
+    [['approved', 'broken'], false, '1 failed'],
+  ] as const)('reports only complete, known policy evidence in the story (%s, partial %s)', async (statuses, evaluationsPartial, label) => {
     const detail = await mountDetail('overview', {
       kind: 'policies', statuses: [],
-      evaluations: [{ evaluationId: 'required-policy', status, isBlocking: true, isBuildValidation: true }],
+      evaluations: statuses.map((status, index) => ({ evaluationId: `required-policy-${index}`, status, isBlocking: true, isBuildValidation: true })),
       evaluationsPartial, omittedRowCount: 0, projectionTruncated: false,
     });
     if (label === null) {
@@ -198,13 +219,34 @@ describe('the mounted Azure DevOps Files walk after a refused page', () => {
       await expect(detail.getByRole('image', { name: label })).resolves.toBeDefined();
     }
   });
+  it('keeps the policy step when only a policy name was shortened, and names what failed', async () => {
+    const detail = await mountDetail('overview', {
+      kind: 'policies', statuses: [],
+      evaluations: [
+        { evaluationId: 'build', status: 'rejected', displayName: 'Build validation', isBlocking: true, isBuildValidation: true },
+        { evaluationId: 'reviewers', status: 'approved', displayName: 'Minimum number of reviewers…', isBlocking: true, isBuildValidation: false, truncated: true },
+      ],
+      evaluationsPartial: false, omittedRowCount: 0, projectionTruncated: true,
+    });
+    await expect(detail.getByRole('image', { name: '1 failed' })).resolves.toBeDefined();
+    await expect(detail.getByText('1 failing')).resolves.toBeDefined();
+    await expect(detail.getByText('· 1 passed')).resolves.toBeDefined();
+    await expect(detail.getByText('Build validation')).resolves.toBeDefined();
+  });
   it('renders the host Overview story from the current iteration, with no invented policy state', async () => {
     const detail = await mountDetail('overview');
     await expect(detail.getByRole('heading', { name: 'The ask' })).resolves.toBeDefined();
     await expect(detail.getByRole('heading', { name: 'What changed' })).resolves.toBeDefined();
     await expect(detail.getByText('/src/tail.ts')).resolves.toBeDefined();
+    // Azure reports no line counts, and the story says so rather than drawing numbers.
+    await expect(detail.getByText('1 file')).resolves.toBeDefined();
+    await expect(detail.getByText('Line counts not reported')).resolves.toBeDefined();
     await expect(detail.queryByRole('tab')).resolves.toBeUndefined();
     await expect(detail.queryByRole('heading', { name: 'Policies' })).resolves.toBeUndefined();
+    // The chrome the story leaves out: the observation block and its empty-state stand-ins.
+    for (const chrome of ['Observation', 'Observed', 'No projected facts', 'Answered in the panels beside this one, not on the list row:']) {
+      await expect(detail.queryByText(chrome)).resolves.toBeUndefined();
+    }
   });
   it('asks Azure again for the position it refused', async () => {
     changesAnswers = [

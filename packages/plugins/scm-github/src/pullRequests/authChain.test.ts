@@ -136,7 +136,7 @@ describe('GitHub pull request adapter authority', () => {
     expect(ambient.executeCommand).not.toHaveBeenCalled();
   });
 
-  it('refuses GitHub Enterprise hosts typed because they have no bound-account path', async () => {
+  it('delegates GitHub Enterprise reads to the same authenticated REST owner', async () => {
     const ambient = createAmbientProcessSpy();
     const calls: string[] = [];
     const adapter = createGithubPullRequestAdapter({
@@ -152,12 +152,12 @@ describe('GitHub pull request adapter authority', () => {
       provider: enterpriseProvider,
       head: 'feature/chain',
       runtimeServices: ambient.runtimeServices,
-    })).rejects.toMatchObject({ errorCode: 'REMOTE_AUTH_REQUIRED' });
-    expect(calls).toEqual([]);
+    })).resolves.toEqual([]);
+    expect(calls).toEqual(['rest']);
     expect(ambient.executeCommand).not.toHaveBeenCalled();
   });
 
-  it('refuses an Enterprise pull-request mutation typed', async () => {
+  it('delegates Enterprise mutations to the same authenticated REST owner', async () => {
     const ambient = createAmbientProcessSpy();
     const adapter = createGithubPullRequestAdapter({
       restAdapter: {
@@ -171,7 +171,7 @@ describe('GitHub pull request adapter authority', () => {
       head: 'feature/chain',
       title: 'Adapter chain',
       runtimeServices: ambient.runtimeServices,
-    })).rejects.toMatchObject({ errorCode: 'REMOTE_AUTH_REQUIRED' });
+    })).resolves.toEqual(pullRequest);
     expect(ambient.executeCommand).not.toHaveBeenCalled();
   });
 });

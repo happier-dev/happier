@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { createTriageSourceV1Fixture } from '../testing/v1/fixtures.js';
+import { TriageSourceConnectedAccountInputsV1, TriageSourcesContributionProtocolV1 } from './index.js';
 import {
     TriageConfiguredSourceInstanceV1Schema,
     TriageListInstancesInputV1Schema,
@@ -18,6 +19,64 @@ import {
 const fixture = createTriageSourceV1Fixture();
 const instance = fixture.configuredInstance;
 const present = fixture.getResult;
+
+describe('Triage connected-Account source inputs', () => {
+    it('accepts Account bindings and rejects native bindings in every instance-bearing role', () => {
+        const inputs = {
+            scan: fixture.scanInput,
+            get: fixture.getInput,
+            readPullRequestStatus: fixture.getInput,
+            prepareReviewWorkspace: fixture.prepareReviewWorkspaceInput,
+            verifyReviewWorkspace: {
+                ...fixture.prepareReviewWorkspaceInput,
+                workspace: {
+                    serverId: 'server-1',
+                    machineId: 'machine-1',
+                    rootPath: '/workspaces/example-repository',
+                },
+                prepared: { repositoryPath: '/workspaces/example-repository', pullRequest: { number: 17 } },
+            },
+        };
+        expect(TriageSourceConnectedAccountInputsV1.listInstances.safeParse(fixture.listInstancesInput).success).toBe(true);
+        for (const role of Object.keys(inputs) as Array<keyof typeof inputs>) {
+            const schema = TriageSourceConnectedAccountInputsV1[role];
+            const input = inputs[role];
+            expect(schema.safeParse(input).success, role).toBe(true);
+            const nativeInput = {
+                ...input,
+                instance: {
+                    ...input.instance,
+                    binding: {
+                        purpose: 'example.api',
+                        source: 'native',
+                        service: { pluginId: 'happier.example.source', localId: 'example-account' },
+                    },
+                },
+            };
+            expect(schema.safeParse(nativeInput).success, role).toBe(false);
+            const genericInput = TriageSourcesContributionProtocolV1.operations[role].declaration.input;
+            expect(genericInput.kind === 'protocolDefined' && genericInput.schema.safeParse(nativeInput).success, role).toBe(true);
+            expect(schema.safeParse({ ...input, instance: { ...input.instance, unexpected: true } }).success, role).toBe(false);
+        }
+    });
+
+    it('preserves pagination and workspace requiredness when specializing the instance', () => {
+        expect(TriageSourceConnectedAccountInputsV1.scan.safeParse({
+            ...fixture.scanInput,
+            page: { kind: 'continuation', continuation: { v: 1, token: 'cursor' } },
+        }).success).toBe(true);
+        expect(TriageSourceConnectedAccountInputsV1.scan.safeParse({
+            ...fixture.scanInput,
+            page: { kind: 'continuation', continuation: { v: 1, token: 'cursor' }, limit: 8 },
+        }).success).toBe(false);
+        const { workspace: _workspace, ...withoutWorkspace } = fixture.prepareReviewWorkspaceInput;
+        expect(TriageSourceConnectedAccountInputsV1.prepareReviewWorkspace.safeParse(withoutWorkspace).success).toBe(true);
+        expect(TriageSourceConnectedAccountInputsV1.verifyReviewWorkspace.safeParse({
+            ...withoutWorkspace,
+            prepared: { repositoryPath: '/workspaces/example-repository', pullRequest: { number: 17 } },
+        }).success).toBe(false);
+    });
+});
 
 describe('Triage scan paging', () => {
     it('carries a limit on the initial arm only', () => {

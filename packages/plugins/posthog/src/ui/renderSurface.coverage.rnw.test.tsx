@@ -8,10 +8,10 @@ import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { TriageDetailSurfaceInputV1Schema } from '@happier-dev/triage-protocol/v1';
 import {
-    TriageEvidenceDisclosureProvider,
     type TriageEvidenceCandidateV1,
 } from '@happier-dev/triage-sources/ui';
-import { afterEach, describe, expect, it } from 'vitest';
+import { TriageDetailPanelNavigationProvider, type TriageDetailPanelNavigationV1 } from '@happier-dev/triage-sources/ui';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { POSTHOG_ACTION_IDS, POSTHOG_PLUGIN_ID } from '../posthogContracts.js';
 import { POSTHOG_ACTIVITY_WALK_STOPPED_SHORT_V1 } from '../source/detail/issueActivityContract.js';
@@ -19,6 +19,8 @@ import { POSTHOG_SAMPLE_WALK_STOPPED_SHORT_V1 } from '../source/detail/issueEven
 import { encodePosthogConfiguration } from '../source/instance.js';
 
 import { renderSurface } from './renderSurface.js';
+import { SourcePanelActionsFixture, invokeSourcePanelFixtureAction } from '../../../triage/src/ui/sourcePanelActions.test-support.js';
+import { createTriageEphemeralSharedScopeFixture } from '../../../triage/src/ui/window/ephemeralSharedScope.test-support.js';
 
 /**
  * What the two paged detail panels say about their own coverage, mounted the way the
@@ -171,6 +173,15 @@ function createHarness(
     }> = {},
 ) {
     let sampledReads = 0;
+    let activityReads = 0;
+    /** One activity result for every page, or a page sequence whose last entry repeats. */
+    const nextActivity = (): JsonValue => {
+        if (!Array.isArray(activity)) return activity;
+        const page = activity[Math.min(activityReads, activity.length - 1)];
+        activityReads += 1;
+        if (page === undefined) throw new Error('activity sequence must not be empty');
+        return page;
+    };
     const nextSampled = (): JsonValue => {
         if (!Array.isArray(sampled)) return sampled as JsonValue;
         const page = sampled[Math.min(sampledReads, sampled.length - 1)];
@@ -183,7 +194,7 @@ function createHarness(
     ): Promise<JsonValue> {
         const { localId } = action as Readonly<{ localId: string }>;
         options.onExecute?.(localId);
-        if (localId === POSTHOG_ACTION_IDS.issueActivity) return activity;
+        if (localId === POSTHOG_ACTION_IDS.issueActivity) return nextActivity();
         if (localId === POSTHOG_ACTION_IDS.issueEvents) return options.readSampled === undefined
             ? nextSampled() : await options.readSampled(signal);
         if (localId === POSTHOG_ACTION_IDS.codeVariables) {
@@ -202,6 +213,8 @@ function createHarness(
 }
 
 const mounted: PluginUiTestkit[] = [];
+/** The Triage frame's panel selection, when a case mounts the source inside one. */
+let frameNavigation: TriageDetailPanelNavigationV1 | null = null;
 
 function SourceHostTabs({ children }: Readonly<{ children: React.ReactNode }>) {
     const [panel, setPanel] = React.useState('source');
@@ -218,11 +231,15 @@ async function mountDetail(
     panel?: string | (() => string),
 ): Promise<PluginUiTestkit> {
     const harness = createHarness(activity, sampled, options);
+    const scope = createTriageEphemeralSharedScopeFixture();
     const surface = defineUiSurface((context) => {
         const source = renderSurface(typeof panel === 'function'
             ? { ...context, launchInput: { ...DETAIL_INPUT, panel: panel() } as unknown as JsonValue }
             : context);
-        return options.ancestorTabs ? <SourceHostTabs>{source}</SourceHostTabs> : source;
+        const actions = <SourcePanelActionsFixture scope={scope}>{source}</SourcePanelActionsFixture>;
+        const body = frameNavigation === null ? actions
+            : <TriageDetailPanelNavigationProvider navigation={frameNavigation}>{actions}</TriageDetailPanelNavigationProvider>;
+        return options.ancestorTabs ? <SourceHostTabs>{body}</SourceHostTabs> : body;
     });
     let fixture!: PluginUiTestkit;
     await act(async () => {
@@ -234,8 +251,12 @@ async function mountDetail(
             adapter: createPluginUiRnwSemanticSurfaceAdapter(),
             launchInput: { ...DETAIL_INPUT, ...(typeof panel === 'string' ? { panel } : {}) } as unknown as JsonValue,
             handlers: {
-                executeAction: async ({ action, input, signal }) =>
-                    await harness.executeAction({ action, input, signal }),
+                executeAction: async ({ action, input, signal }) => {
+                    const localId = typeof action === 'string' ? action : action.localId;
+                    return localId.startsWith('ui/')
+                        ? await invokeSourcePanelFixtureAction(scope, localId, input, fixture.context, signal)
+                        : await harness.executeAction({ action, input, signal });
+                },
             },
         });
     });
@@ -250,6 +271,7 @@ async function mountDetailWithEvidenceDisclosure(
     disclosed: () => TriageEvidenceCandidateV1 | null;
 }>> {
     let candidate: TriageEvidenceCandidateV1 | null = null;
+    const scope = createTriageEphemeralSharedScopeFixture();
     let fixture!: PluginUiTestkit;
     await act(async () => {
         fixture = await createPluginUiTestkit({
@@ -258,8 +280,8 @@ async function mountDetailWithEvidenceDisclosure(
                 mountNonce: 'posthog-detail-evidence-disclosure',
             },
             authorPlugin: { id: POSTHOG_PLUGIN_ID, version: '0.0.0' },
-            surface: (context) => (
-                <TriageEvidenceDisclosureProvider disclosure={{
+            surface: defineUiSurface((context) => (
+                <SourcePanelActionsFixture scope={scope} disclosure={{
                     available: true,
                     disclose: async (resolve) => {
                         candidate = await resolve(new AbortController().signal);
@@ -267,14 +289,15 @@ async function mountDetailWithEvidenceDisclosure(
                     },
                 }}>
                     {renderSurface(context)}
-                </TriageEvidenceDisclosureProvider>
-            ),
+                </SourcePanelActionsFixture>
+            )),
             surfaceContext: createSurfaceContextFixture(),
             adapter: createPluginUiRnwSemanticSurfaceAdapter(),
             launchInput: evidenceDetailInput() as unknown as JsonValue,
             handlers: {
-                executeAction: async ({ action }) => {
-                    const { localId } = action as Readonly<{ localId: string }>;
+                executeAction: async ({ action, input, signal }) => {
+                    const localId = typeof action === 'string' ? action : action.localId;
+                    if (localId.startsWith('ui/')) return await invokeSourcePanelFixtureAction(scope, localId, input, fixture.context, signal);
                     if (localId === POSTHOG_ACTION_IDS.issueEvents) return sampled;
                     if (localId === POSTHOG_ACTION_IDS.nativeOverview) return { kind: 'unreadable-by-design' };
                     if (localId === POSTHOG_ACTION_IDS.issueActivity) return activityResult({});
@@ -301,6 +324,7 @@ async function mountActivity(activity: JsonValue): Promise<PluginUiTestkit> {
 
 afterEach(async () => {
     for (const fixture of mounted.splice(0)) await fixture.dispose();
+    frameNavigation = null;
 });
 
 describe('the mounted PostHog Overview', () => {
@@ -366,14 +390,76 @@ describe('the mounted PostHog Overview', () => {
         await act(async () => { await page.updateSurface(createSurfaceContextFixture()); });
         await expect(page.getByText('critical')).resolves.toBeDefined();
     });
-    it('renders the host Overview as a report with one source-owned occurrence sample', async () => {
+    it('renders the host Overview as what happened with one source-owned occurrence sample', async () => {
         const dispatched: string[] = [];
         const page = await mountDetail(activityResult({}), SAMPLED_EVENTS, {
             onExecute: (id) => { dispatched.push(id); },
         }, 'overview');
-        await expect(page.getByRole('heading', { name: 'The report' })).resolves.toBeDefined();
+        await expect(page.getByRole('heading', { name: 'What happened' })).resolves.toBeDefined();
         await expect(page.queryByRole('tab')).resolves.toBeUndefined();
         expect(dispatched.filter((id) => id === POSTHOG_ACTION_IDS.issueEvents)).toHaveLength(1);
+    });
+    it('shows the sampled occurrence and the spread once, without the observation chrome', async () => {
+        const select = vi.fn();
+        frameNavigation = { panels: ['overview', 'activity', 'stack-trace'], select };
+        const firstSeenMs = Date.now() - 6 * 3_600_000;
+        const page = await mountDetail(activityResult({}), {
+            kind: 'sampled',
+            events: [{
+                uuid: '00000000-0000-4000-8000-0000000000f1',
+                exceptions: [{
+                    type: 'TypeError',
+                    value: 'plan is undefined',
+                    frames: [
+                        { function: 'submitPlan', source: 'onboarding/plan.tsx', line: 88, inApp: true },
+                        { function: 'flushWork', source: 'react-dom.js', line: 12, inApp: false },
+                    ],
+                }],
+            }],
+            omittedRowCount: 0,
+        }, {
+            overview: {
+                observation: {
+                    kind: 'present',
+                    localRef: { kindId: 'error-issue', collisionScope: COLLISION_SCOPE, entryId: ENTRY_ID },
+                    locator: { v: 1 },
+                    snapshot: { ...DETAIL_INPUT.observation.snapshot, facts: [
+                        { id: 'posthog/occurrences', label: 'Occurrences in window', importance: 'primary',
+                            value: { kind: 'number', value: 96, format: 'compact' } },
+                        { id: 'posthog/users', label: 'Users', importance: 'secondary',
+                            value: { kind: 'number', value: 57, format: 'compact', approximate: true } },
+                        { id: 'posthog/first-seen', label: 'First seen', importance: 'supplementary',
+                            value: { kind: 'timestamp', atMs: firstSeenMs, format: 'relative' } },
+                        { id: 'posthog/severity', label: 'Severity', importance: 'secondary', value: { kind: 'detailOnly' } },
+                    ] },
+                    viewer: { involvement: [] },
+                },
+                trend: [
+                    { atMs: firstSeenMs, count: 2 },
+                    { atMs: firstSeenMs + 3_600_000, count: 9 },
+                ],
+            },
+        }, () => 'overview');
+
+        // ① What happened: the sampled occurrence's exception and its top application frame.
+        await expect(page.getByText('TypeError: plan is undefined')).resolves.toBeDefined();
+        await expect(page.getByText('submitPlan — onboarding/plan.tsx:88')).resolves.toBeDefined();
+        // ② Spread: each count once, as a tile.
+        await expect(page.getByRole('heading', { name: 'Spread' })).resolves.toBeDefined();
+        await expect(page.getByText('Users affected')).resolves.toBeDefined();
+        const bodyText = document.body.textContent ?? '';
+        expect(bodyText.match(/57/gu) ?? []).toHaveLength(1);
+        expect(bodyText.match(/96/gu) ?? []).toHaveLength(1);
+        await expect(page.getByText('6 hours ago')).resolves.toBeDefined();
+        expect(document.querySelector('[role="img"]')?.getAttribute('aria-label') ?? '').toContain('9');
+        // The chrome the story removed: no observation metadata, no empty-facts state, no
+        // pending-field badges (Severity is answered beside this panel).
+        for (const gone of ['Observation', 'Observed', 'No projected facts', 'Read only in the detail plane:']) {
+            await expect(page.queryByText(gone)).resolves.toBeUndefined();
+        }
+        // Stack trace is the frame's own panel: the inline control asks the frame for it.
+        await act(async () => { await page.press(await page.getByRole('button', { name: 'Open the stack trace' })); });
+        expect(select).toHaveBeenCalledWith('stack-trace');
     });
     it.each([true, false])('shows CRUD severity and distinguishes failed enrichment from missing optional facts (%s)', async (failed) => {
         const page = await mountDetail(activityResult({}), SAMPLED_EVENTS, {
@@ -403,15 +489,46 @@ describe('the mounted PostHog Overview', () => {
 });
 
 describe('the mounted PostHog Activity panel', () => {
-    it('composes host Activity as a story while keeping native field changes', async () => {
+    it('renders native field changes as one chronological Activity timeline', async () => {
         const page = await mountDetail(activityResult({ records: [{
-            id: '01994b1e-0000-4000-8000-0000000000a1',
+            id: '01994b1e-0000-4000-8000-0000000000a2',
             activity: 'updated', isSystem: false, actor: 'Mara', changedFields: ['status'],
+            atMs: 1_760_000_600_000,
+        }, {
+            id: '01994b1e-0000-4000-8000-0000000000a1',
+            activity: 'created', isSystem: true, changedFields: [], atMs: 1_760_000_100_000,
         }] }), SAMPLED_EVENTS, {}, 'activity');
-        await expect(page.getByRole('heading', { name: 'Activity' })).resolves.toBeDefined();
-        await expect(page.getByText('updated: status')).resolves.toBeDefined();
+        // The shared timeline is the panel: no numbered "Activity" step above it.
+        await expect(page.queryByRole('heading', { name: 'Activity' })).resolves.toBeUndefined();
+        await expect(page.getByText('updated')).resolves.toBeDefined();
+        await expect(page.getByText('status')).resolves.toBeDefined();
         await expect(page.getByText('Mara')).resolves.toBeDefined();
+        const text = document.body.textContent ?? '';
+        // PostHog lists its log newest first; the timeline reads oldest first.
+        expect(text.indexOf('created')).toBeGreaterThanOrEqual(0);
+        expect(text.indexOf('created')).toBeLessThan(text.indexOf('updated'));
         await expect(page.queryByRole('tab')).resolves.toBeUndefined();
+    });
+
+    it('pages more activity through the timeline continuation into the same stream', async () => {
+        const page = await mountDetail([
+            activityResult({ records: [{
+                id: '01994b1e-0000-4000-8000-0000000000b2',
+                activity: 'updated', isSystem: false, actor: 'Mara', changedFields: ['status'],
+                atMs: 1_760_000_600_000,
+            }], continuation: 'page-2' }),
+            activityResult({ records: [{
+                id: '01994b1e-0000-4000-8000-0000000000b1',
+                activity: 'created', isSystem: true, changedFields: [], atMs: 1_760_000_100_000,
+            }] }),
+        ], SAMPLED_EVENTS, {}, 'activity');
+        await act(async () => {
+            await page.press(await page.getByRole('button', { name: 'Load more activity' }));
+        });
+        await expect(page.getByText('created')).resolves.toBeDefined();
+        await expect(page.queryByRole('button', { name: 'Load more activity' })).resolves.toBeUndefined();
+        const text = document.body.textContent ?? '';
+        expect(text.indexOf('created')).toBeLessThan(text.indexOf('updated'));
     });
     it('says the list stops short when PostHog named a page this build will not follow', async () => {
         const page = await mountActivity(activityResult({

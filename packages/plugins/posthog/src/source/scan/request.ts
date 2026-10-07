@@ -64,12 +64,16 @@ export function buildPosthogIssuesQueryBody(
     };
 }
 
+/**
+ * The single-issue detail query. `includeSparkline` asks PostHog for the issue's own
+ * occurrence series across `dateRange`; no `volumeResolution` is sent, so the provider
+ * chooses the bucket count (equal-width buckets, 12 by its own default).
+ */
 export type PosthogIssueQueryBody = Readonly<{
     issueId: string;
     dateRange: Readonly<{ date_from: string; date_to: string | null }>;
     filterTestAccounts: false;
-    volumeResolution: 0;
-    includeSparkline: false;
+    includeSparkline: true;
 }>;
 
 export function buildPosthogIssueQueryBody(
@@ -80,7 +84,6 @@ export function buildPosthogIssueQueryBody(
         issueId,
         dateRange: { date_from: window.from, date_to: window.to },
         filterTestAccounts: false,
-        volumeResolution: 0,
-        includeSparkline: false,
+        includeSparkline: true,
     };
 }

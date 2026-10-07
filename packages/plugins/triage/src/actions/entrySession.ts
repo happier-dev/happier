@@ -494,7 +494,9 @@ export function createTriageStartPullRequestReviewActionHandler(): ActionHandler
                 },
             },
             {
-                expectedSelectedConnectedAccountRef: input.review.instance.binding.account,
+                ...('account' in input.review.instance.binding
+                    ? { expectedSelectedConnectedAccountRef: input.review.instance.binding.account }
+                    : {}),
                 ...(context.signal === undefined ? {} : { signal: context.signal }),
             },
         );
@@ -508,14 +510,17 @@ export function createTriageStartPullRequestReviewActionHandler(): ActionHandler
             return { v: 1, status: 'refused', reason: 'revisionMismatch' };
         }
 
+        const reviewAuthority = 'account' in input.review.instance.binding
+            ? { account: input.review.instance.binding.account }
+            : { nativeService: input.review.instance.binding.service };
         const scope = produceScmPullRequestReviewScope({
             authoritative: {
-                account: input.review.instance.binding.account,
+                ...reviewAuthority,
                 pullRequest: verified.pullRequest,
                 observed: input.review.observed,
             },
             expected: {
-                account: input.review.instance.binding.account,
+                ...reviewAuthority,
                 baseSha: input.review.observed.baseSha,
                 headSha: input.review.observed.headSha,
             },

@@ -9,7 +9,7 @@ import {
 } from '@happier-dev/plugin-sdk/protocol';
 import {
   MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1,
-  TriageConfiguredSourceInstanceV1Schema,
+  TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   TriageSourceEntryLocalRefV1Schema,
   TriageSourceFailureV1Schema,
 } from '@happier-dev/triage-protocol/v1';
@@ -79,7 +79,7 @@ const ContinuationTokenSchema = defineProtocolString({ minLength: 1 });
 
 const entryInput = defineProtocolObject({
   v: defineProtocolLiteral(1),
-  instance: TriageConfiguredSourceInstanceV1Schema,
+  instance: TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
   routingToken: RoutingTokenSchema,
 }, { policy: 'closed' });
@@ -127,7 +127,7 @@ export type AzureIterationsResultV1 = ReturnType<typeof AzureIterationsResultV1S
 
 export const AzureCommitsInputV1Schema = defineProtocolObject({
   v: defineProtocolLiteral(1),
-  instance: TriageConfiguredSourceInstanceV1Schema,
+  instance: TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
   routingToken: RoutingTokenSchema,
   /** Present only for a following page, and only as Azure issued it. */
@@ -163,7 +163,7 @@ export type AzureCommitsResultV1 = ReturnType<typeof AzureCommitsResultV1Schema.
 
 const azureIterationChangesInputShape = {
   v: defineProtocolLiteral(1),
-  instance: TriageConfiguredSourceInstanceV1Schema,
+  instance: TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
   routingToken: RoutingTokenSchema,
   /**
@@ -273,7 +273,7 @@ export type AzurePoliciesResultV1 = ReturnType<typeof AzurePoliciesResultV1Schem
 
 export const AzureThreadsInputV1Schema = defineProtocolObject({
   v: defineProtocolLiteral(1),
-  instance: TriageConfiguredSourceInstanceV1Schema,
+  instance: TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
   routingToken: RoutingTokenSchema,
   /**

@@ -16,6 +16,7 @@ import {
   type TriageDetailSurfaceInputV1,
 } from '@happier-dev/triage-protocol/v1';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
+import { useTriageDetailPanelOpener } from '@happier-dev/triage-sources/ui';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { TriageDetailTabbedBody } from './body.js';
@@ -211,6 +212,20 @@ describe('the tabbed detail body (r0.42)', () => {
     await body.dispose();
     expect(intervals.every((signal) => signal.aborted)).toBe(true);
   });
+  it('lets the source open a sibling panel through the frame\'s own selection, and only one it offers', async () => {
+    function SourceOpener() {
+      const openFiles = useTriageDetailPanelOpener('files');
+      const openReleases = useTriageDetailPanelOpener('release');
+      return <>
+        {openFiles === undefined ? null : <Button title="Open files" onPress={openFiles} />}
+        {openReleases === undefined ? <Text value="No release panel here" /> : <Button title="Open release" onPress={openReleases} />}
+      </>;
+    }
+    const body = await mountBody(PR_TABS.kind === 'tabs' ? PR_TABS.tabs : [], <SourceOpener />);
+    await expect(body.getByText('No release panel here')).resolves.toBeDefined();
+    await act(async () => { await body.press(await body.getByRole('button', { name: 'Open files' })); });
+    await expect(body.getByRole('tab', { name: 'Files', state: { selected: true } })).resolves.toBeDefined();
+  });
   it('keeps declared fix-PR panels visible with the unavailable state before the PR mount is ready', async () => {
     const plan = planTriageDetailTabsV1({
       workflowSubject: 'issue', entryTabs: [{ kind: 'shared', id: 'overview' }],
@@ -225,7 +240,8 @@ describe('the tabbed detail body (r0.42)', () => {
 
     const tabNames = (await body.getAllByRole('tab')).map((tab) => tab.name);
     expect(tabNames).toEqual(['Overview', 'Activity', 'Files', 'Checks']);
-    await expect(body.getByText('Agent work')).resolves.toBeDefined();
+    // ③, named after the linked Session doing the work.
+    expect(document.querySelector('[data-testid="triage-story-agent"]')?.textContent).toContain('Fix rounding');
     await expect(body.getByRole('button', { name: 'Fix rounding' })).resolves.toBeDefined();
     // Overview asked for the overview panel, which this fixture refuses.
     await expect(body.getByText(FALLBACK)).resolves.toBeDefined();
@@ -238,7 +254,7 @@ describe('the tabbed detail body (r0.42)', () => {
       await body.press(await body.getByRole('tab', { name: 'Files' }));
     });
     await expect(body.getByText(PANEL_BODY)).resolves.toBeDefined();
-    await expect(body.queryByText('Agent work')).resolves.toBeUndefined();
+    expect(document.querySelector('[data-testid="triage-story-agent"]')).toBeNull();
 
     await act(async () => {
       await body.press(await body.getByRole('tab', { name: 'Checks' }));

@@ -277,6 +277,11 @@ const FAILING_STATES = new Set(['FAILED', 'ERROR']);
 const RUNNING_STATES = new Set(['INPROGRESS']);
 const PASSING_STATES = new Set(['SUCCESSFUL']);
 
+/** Whether Bitbucket's own state for one build status counts as failing in the rollup. */
+export function isBitbucketFailingBuildStateV1(state: string): boolean {
+  return FAILING_STATES.has(state.trim().toUpperCase());
+}
+
 /**
  * Rolls a COMPLETE status collection up into three counts, or returns `null`.
  *
@@ -296,7 +301,7 @@ export function projectBitbucketBuildRollup(input: Readonly<{
   let passingCount = 0;
   for (const row of input.rows) {
     const state = row.state.trim().toUpperCase();
-    if (FAILING_STATES.has(state)) failingCount += 1;
+    if (isBitbucketFailingBuildStateV1(state)) failingCount += 1;
     else if (RUNNING_STATES.has(state)) runningCount += 1;
     else if (PASSING_STATES.has(state)) passingCount += 1;
   }

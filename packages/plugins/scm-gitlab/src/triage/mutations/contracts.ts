@@ -45,7 +45,7 @@ import {
 } from '@happier-dev/plugin-sdk/reviews';
 import {
   MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1,
-  TriageConfiguredSourceInstanceV1Schema,
+  TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   TriageSourceEntryLocalRefV1Schema,
   TriageSourceFailureV1Schema,
 } from '@happier-dev/triage-protocol/v1';
@@ -113,7 +113,7 @@ const GitlabSingleReviewCommentPublicationPlanV1Schema =
 
 const GitlabPublicationTargetFieldsV1 = {
   v: defineProtocolLiteral(1),
-  instance: TriageConfiguredSourceInstanceV1Schema,
+  instance: TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
   routingToken: RoutingTokenSchema,
 } as const;
@@ -379,7 +379,7 @@ const SHARED_ISSUE_MUTATION_ARMS = defineGitlabMutationArms(GitlabIssueStateRowV
  */
 export const GitlabMergeRequestMergeInputV1Schema = defineProtocolObject({
   v: defineProtocolLiteral(1),
-  instance: TriageConfiguredSourceInstanceV1Schema,
+  instance: TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
   routingToken: RoutingTokenSchema,
   observedHeadSha: GitlabObservedHeadShaV1Schema,
@@ -422,7 +422,7 @@ export type GitlabMergeRequestMergeResultV1 =
  */
 export const GitlabMergeRequestMarkReadyInputV1Schema = defineProtocolObject({
   v: defineProtocolLiteral(1),
-  instance: TriageConfiguredSourceInstanceV1Schema,
+  instance: TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
   routingToken: RoutingTokenSchema,
   observedHeadSha: GitlabObservedHeadShaV1Schema,
@@ -458,7 +458,7 @@ export type GitlabMergeRequestMarkReadyResultV1 =
  */
 export const GitlabMergeRequestCloseInputV1Schema = defineProtocolObject({
   v: defineProtocolLiteral(1),
-  instance: TriageConfiguredSourceInstanceV1Schema,
+  instance: TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
   routingToken: RoutingTokenSchema,
 }, { policy: 'closed' });
@@ -493,7 +493,7 @@ export type GitlabMergeRequestCloseResultV1 =
  */
 export const GitlabMergeRequestReopenInputV1Schema = defineProtocolObject({
   v: defineProtocolLiteral(1),
-  instance: TriageConfiguredSourceInstanceV1Schema,
+  instance: TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
   routingToken: RoutingTokenSchema,
 }, { policy: 'closed' });
@@ -529,7 +529,7 @@ export const GitlabObservedIssueRevisionV1Schema = IdentifierSchema;
 
 const GitlabIssueMutationInputFields = {
   v: defineProtocolLiteral(1),
-  instance: TriageConfiguredSourceInstanceV1Schema,
+  instance: TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
   routingToken: RoutingTokenSchema,
   observedRevision: GitlabObservedIssueRevisionV1Schema,
@@ -588,7 +588,7 @@ const NonEmptyUniqueNamesSchema = defineProtocolUniqueArray(LabelSchema, {
 
 export const GitlabMergeRequestReviewerChangeInputV1Schema = defineProtocolObject({
   v: defineProtocolLiteral(1),
-  instance: TriageConfiguredSourceInstanceV1Schema,
+  instance: TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
   routingToken: RoutingTokenSchema,
   observedHeadSha: GitlabObservedHeadShaV1Schema,
@@ -649,7 +649,7 @@ const GitlabDiscussionStateV1Schema = defineProtocolObject({
 
 export const GitlabMergeRequestDiscussionResolutionInputV1Schema = defineProtocolObject({
   v: defineProtocolLiteral(1),
-  instance: TriageConfiguredSourceInstanceV1Schema,
+  instance: TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
   routingToken: RoutingTokenSchema,
   observedHeadSha: GitlabObservedHeadShaV1Schema,

@@ -1,6 +1,23 @@
 import { describe, expect, it } from 'vitest';
 
-import { renderSourceQualifiedId, sameTriageSourceIdentity } from './components.js';
+import { configuredSourceInstanceTagComponents, renderSourceQualifiedId, sameTriageSourceIdentity } from './components.js';
+
+describe('configured source binding identity', () => {
+    it('preserves account tuples and gives native service bindings a distinct tuple', () => {
+        const source = { pluginId: 'happier.scm.forge.github', localId: 'triage' };
+        const service = { pluginId: source.pluginId, localId: 'github-account' };
+        const common = { source, localInstanceKey: 'repository:1' };
+        const account = configuredSourceInstanceTagComponents({
+            ...common, binding: { purpose: 'github-use', account: { service, accountId: 'native' } },
+        });
+        expect(account).toEqual([source.pluginId, source.localId, 'github-use', service.pluginId, service.localId, 'native', 'repository:1']);
+        const native = configuredSourceInstanceTagComponents({
+            ...common, binding: { purpose: 'github-use', source: 'native', service },
+        });
+        expect(native).not.toEqual(account);
+        expect(native).toEqual([source.pluginId, source.localId, 'github-use', 'source', 'native', service.pluginId, service.localId, 'repository:1']);
+    });
+});
 
 /**
  * The source-agreement gate refuses an entry whose source is not the configured

@@ -7,6 +7,7 @@ import {
     defineProtocolUnion,
 } from '@happier-dev/plugin-sdk/protocol';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/plugin-sdk/connected-accounts';
+import { PluginContributionIdentityV1Schema } from '@happier-dev/plugin-sdk/manifest';
 
 import {
     MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1,
@@ -41,13 +42,42 @@ import {
  * consumer cannot install, and the emitted `account` member stays mutually
  * assignable with the SDK's `QualifiedConnectedAccountRef`.
  */
-export const TriageSourceAccountBindingV1Schema = defineProtocolObject({
+export const TriageSourceConnectedAccountBindingV1Schema = defineProtocolObject({
     purpose: TriageIdentifierV1ProtocolSchema,
     account: QualifiedConnectedAccountRefSchema,
 }, { policy: 'closed' });
+export type TriageSourceConnectedAccountBindingV1 = ReturnType<typeof TriageSourceConnectedAccountBindingV1Schema.parse>;
+
+/** Native selection names only the service whose machine login is used. */
+export const TriageSourceAccountBindingV1Schema = defineProtocolUnion([
+    TriageSourceConnectedAccountBindingV1Schema,
+    defineProtocolObject({
+        purpose: TriageIdentifierV1ProtocolSchema,
+        source: defineProtocolLiteral('native'),
+        service: PluginContributionIdentityV1Schema,
+    }, { policy: 'closed' }),
+]);
 export type TriageSourceAccountBindingV1 = ReturnType<
     typeof TriageSourceAccountBindingV1Schema.parse
 >;
+
+/**
+ * Exact binding identity; account tuples retain their original persisted order.
+ * Native tuples have a distinct arity, so no contract-valid account components
+ * can impersonate a native selection.
+ */
+export function triageSourceBindingComponentsV1(binding: TriageSourceAccountBindingV1): readonly string[] {
+    return 'account' in binding
+        ? [binding.purpose, binding.account.service.pluginId, binding.account.service.localId, binding.account.accountId]
+        : [binding.purpose, 'source', binding.source, binding.service.pluginId, binding.service.localId];
+}
+
+/** Narrows an admitted instance for sources that authorize connected accounts only. */
+export function isTriageSourceConnectedAccountInstanceV1<T extends { binding: TriageSourceAccountBindingV1 }>(
+    value: T,
+): value is T & { binding: TriageSourceConnectedAccountBindingV1 } {
+    return 'account' in value.binding;
+}
 
 /**
  * The bounded source-private configured-instance token. Each source owns a
@@ -96,7 +126,7 @@ export const TriageSourceInstanceKeyStabilityV1ProtocolSchema = defineProtocolUn
 ]);
 
 /**
- * One discovery candidate: the exact account binding plus the provider-native
+ * One discovery candidate: the exact login binding plus the provider-native
  * instance/scope and routing configuration the source could reach.
  *
  * A draft never creates a durable configured instance. `localInstanceKey`
@@ -119,17 +149,26 @@ export type TriageSourceInstanceDraftV1 = ReturnType<
 /**
  * The exact configured instance the target passes to `scan`, `get`, `detail`,
  * and optional review-workspace preparation. `instance` carries the
- * target-minted stable ref; the source reauthorizes `binding.account` on every
- * invocation and never falls through to another authorized account.
+ * target-minted stable ref; the source reauthorizes the exact connected account
+ * or native service login on every invocation and never falls through to an
+ * alternative credential source.
  */
-export const TriageConfiguredSourceInstanceV1Schema = defineProtocolObject({
+const triageConfiguredSourceInstanceFieldsV1 = {
     v: defineProtocolLiteral(1),
     instance: TriageSourceInstanceRefV1Schema,
-    binding: TriageSourceAccountBindingV1Schema,
     localInstanceKey: TriageLocalInstanceKeyV1ProtocolSchema,
     configuration: TriageSourceInstanceConfigurationV1Schema,
     locator: TriageSourceInstanceLocatorV1Schema.optional(),
+};
+export const TriageConfiguredSourceInstanceV1Schema = defineProtocolObject({
+    ...triageConfiguredSourceInstanceFieldsV1,
+    binding: TriageSourceAccountBindingV1Schema,
 }, { policy: 'closed' });
+export const TriageConfiguredSourceConnectedAccountInstanceV1Schema = defineProtocolObject({
+    ...triageConfiguredSourceInstanceFieldsV1,
+    binding: TriageSourceConnectedAccountBindingV1Schema,
+}, { policy: 'closed' });
+export type TriageConfiguredSourceConnectedAccountInstanceV1 = ReturnType<typeof TriageConfiguredSourceConnectedAccountInstanceV1Schema.parse>;
 export type TriageConfiguredSourceInstanceV1 = ReturnType<
     typeof TriageConfiguredSourceInstanceV1Schema.parse
 >;
