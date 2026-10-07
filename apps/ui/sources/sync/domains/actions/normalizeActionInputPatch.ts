@@ -1,6 +1,6 @@
 import { ActionIdSchema, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { normalizeActionInputByFieldHints } from '@happier-dev/protocol/inputs/inputFieldRuntime';
+import { normalizeInputByFieldHints as normalizeActionInputByFieldHints } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 
 function resolveActionSpec(actionId: ActionId | string) {
   const parsed = ActionIdSchema.safeParse(actionId);

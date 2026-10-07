@@ -1,7 +1,7 @@
 import type { AcpCatalogSettingsV1, PersistedBackendTargetRefV2 } from '@happier-dev/protocol';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { PluginSourceCustodyV1Schema, pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
-import { resolveEffectiveActionInputFields } from '@happier-dev/protocol/inputs/inputFieldRuntime';
+import { resolveEffectiveInputFields as resolveEffectiveActionInputFields } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import * as React from 'react';
 
 import type { MergedBackendProjectionEntry, MergedProviderProjectionEntry } from '@/agents/backendCatalog/mergedProjectionTypes';

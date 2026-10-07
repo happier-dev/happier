@@ -1,5 +1,5 @@
 import { getActionSpec, type ActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { resolveEffectiveActionInputFields, type EffectiveActionInputField } from '@happier-dev/protocol/inputs/inputFieldRuntime';
+import { resolveEffectiveInputFields as resolveEffectiveActionInputFields, type EffectiveInputField as EffectiveActionInputField } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 
 import { resolveActionInputValidationError } from '@/sync/domains/actions/resolveActionInputValidationError';
 import type { SessionActionDraft } from '@/sync/domains/sessionActions/sessionActionDraftTypes';
