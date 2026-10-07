@@ -1650,8 +1650,8 @@ async function executeActionBlock(
   }
   // The one-shot call may have returned exact launch ids after this claim was
   // interrupted. Preserve that correspondence before stopping observation.
-  assertWorkflowAbortSignal(context);
   if (completionState) {
+    assertWorkflowAbortSignal(context);
     if (!workspace) return await fail('outcome_uncertain', 'outcome_uncertain');
     const observationWorkspace = workspace;
     completed = await context.holds.track(() => resumeActionCompletionV1({ actionId: actionId.data,
@@ -1660,6 +1660,14 @@ async function executeActionBlock(
       observeRun: async (run) => await context.deps.action!.observeRun(run, { workspace: observationWorkspace, ...(context.signal ? { signal: context.signal } : {}) }) }));
   }
   if (!completed) return await fail('outcome_uncertain', 'outcome_uncertain');
+  // The command owner confirms cancellation with its exact terminal output.
+  // Native launch failures can carry details while their execution remains unknown.
+  if (actionId.data === 'machines.command.run' && completed.kind === 'failed'
+    && completed.errorCode === 'command_cancelled' && completed.value !== undefined
+    && classifyWorkflowAbort(context.signal) === 'cancelled') {
+    await context.deps.store.commitFact({ key: row.key, lifecycle: 'cancelled',
+      reason: completed.errorCode, result: completed.value });
+  }
   assertWorkflowAbortSignal(context);
   if (completed.kind !== 'completed') {
     // Only the native start owner's explicit non-creation evidence proves failure. Otherwise

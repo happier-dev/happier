@@ -89,14 +89,14 @@ describe('workflow Action leaves', () => {
     expect(row).toMatchObject({ lifecycle: 'failed', reason: 'command_failed', result: output });
     expect(contexts).toEqual([`effect-run/${row.logicalInvocationRecordId ?? row.recordId}/0`]);
   });
-  it('keeps known command output when an authoritative Stop cancels the Run during the effect', async () => {
+  it.each([true, false])('keeps known command output only when an authoritative Stop cancels the Run during the effect (%s)', async (authoritative) => {
     const controller = new AbortController();
     const store = createInMemoryWorkflowCoordinatorStore();
     const output = { exitCode: -1, stdout: 'printed before Stop', stderr: '' };
     const leaf: WorkflowActionLeafV1 = { kind: 'action', id: 'command', actionId: 'machines.command.run',
       input: { command: { kind: 'literal', value: 'long-running-command' } } };
     const executor = createTestActionExecutor({ machineCommandRun: async () => {
-      controller.abort(WORKFLOW_CANCEL_REQUESTED_ABORT_REASON);
+      controller.abort(authoritative ? WORKFLOW_CANCEL_REQUESTED_ABORT_REASON : new WorkflowRuntimeInterruption());
       return { ok: false, errorCode: 'command_cancelled', error: 'Command cancelled', details: output };
     } });
     const coordinator = createWorkflowCoordinator({ store, executeStep: async () => { throw new Error('Action has no Agent'); },
@@ -105,10 +105,54 @@ describe('workflow Action leaves', () => {
         externalActionTarget: { kind: 'machine', machineId: workspace.machineId,
           project: { machineId: workspace.machineId, directory: workspace.directory } } }),
         observeRun: async () => { throw new Error('Immediate Action has no awaited Runs'); } } });
-    expect(await coordinator.run({ runId: 'stopped-command', definition: definition([leaf]), inputs: {},
+    const running = coordinator.run({ runId: 'stopped-command', definition: definition([leaf]), inputs: {},
+      executionTarget, authorization, signal: controller.signal, materializedLeaves: [frozen(leaf)] });
+    if (authoritative) {
+      await expect(running).resolves.toMatchObject({ state: 'cancelled' });
+      expect(store.list().find((row) => row.blockId === leaf.id)).toMatchObject({
+        lifecycle: 'cancelled', reason: 'command_cancelled', result: output,
+      });
+    } else {
+      await expect(running).rejects.toBeInstanceOf(WorkflowRuntimeInterruption);
+      expect(store.list().find((row) => row.blockId === leaf.id)).toMatchObject({ lifecycle: 'admitting' });
+      expect(store.list().find((row) => row.blockId === leaf.id)?.result).toBeUndefined();
+    }
+  });
+  it('keeps a native start with defined outcome-unknown details nonterminal after Stop', async () => {
+    const controller = new AbortController();
+    const store = createInMemoryWorkflowCoordinatorStore();
+    let starts = 0;
+    const leaf: WorkflowActionLeafV1 = { kind: 'action', id: 'native', actionId: 'execution.run.start', input: {
+      target: { kind: 'literal', value: { kind: 'detached' } },
+      intent: { kind: 'literal', value: 'review' },
+      backendTarget: { kind: 'literal', value: { kind: 'backend', backendId: 'codex' } },
+      instructions: { kind: 'literal', value: 'Review' },
+      permissionMode: { kind: 'literal', value: 'read_only' },
+      retentionPolicy: { kind: 'literal', value: 'ephemeral' },
+      runClass: { kind: 'literal', value: 'bounded' },
+      ioMode: { kind: 'literal', value: 'request_response' },
+    } };
+    const executor = createTestActionExecutor({
+      executionRunCheckProtocolV2: async () => ({ ok: true }),
+      executionRunStart: async () => {
+        starts++;
+        controller.abort(WORKFLOW_CANCEL_REQUESTED_ABORT_REASON);
+        return { ok: false, errorCode: 'native_response_lost', error: 'native_response_lost',
+          details: withExecutionRunStartFailureDetails(undefined, 'outcomeUnknown') };
+      },
+    });
+    const coordinator = createWorkflowCoordinator({ store, executeStep: async () => { throw new Error('Action has no Agent'); },
+      resolveWorkspace: async () => ({ ok: true, workspace }), isAcceptedAuthorizationCurrent: async () => true,
+      action: { executor, buildContext: async () => ({ surface: 'cli', externalActionTarget: {
+        kind: 'machine', machineId: workspace.machineId,
+        project: { machineId: workspace.machineId, directory: workspace.directory } } }),
+        observeRun: async () => { throw new Error('Unknown native start has no acknowledged correspondence'); } } });
+    await expect(coordinator.run({ runId: 'unknown-stopped-native', definition: definition([leaf]), inputs: {},
       executionTarget, authorization, signal: controller.signal, materializedLeaves: [frozen(leaf)] }))
-      .toMatchObject({ state: 'cancelled' });
-    expect(store.list().find((row) => row.blockId === leaf.id)?.result).toEqual(output);
+      .resolves.toMatchObject({ state: 'cancelled' });
+    expect(starts).toBe(1);
+    expect(store.list().find((row) => row.blockId === leaf.id)).toMatchObject({ lifecycle: 'admitting' });
+    expect(store.list().find((row) => row.blockId === leaf.id)?.result).toBeUndefined();
   });
   it.each([true, false])('keeps a successful Action with invalid frozen output repairable only when review is enabled (%s)', async (pauseForReview) => {
     let effects = 0;
