@@ -84,6 +84,20 @@ test('root typecheck attempts every phase sequentially before reporting complete
   assert.equal(maximumActive, 1);
 });
 
+test('compiler-only typecheck stops before consumers when package preparation fails', async () => {
+  for (const failedPrerequisite of ['build-packages', 'prepare-workspaces']) {
+    const executed: string[] = [];
+    await assert.rejects(runRootTypecheck({
+      compilerOnly: true,
+      runCommand: async (command) => {
+        executed.push(command.id);
+        if (command.id === failedPrerequisite) throw new Error('current declarations unavailable');
+      },
+    }), /current declarations unavailable/u);
+    assert.deepEqual(executed, ['build-packages', 'prepare-workspaces']);
+  }
+});
+
 test('compiler-only typecheck executes compilers after preparation and reports compiler failures', async () => {
   const executed: string[][] = [];
   await assert.rejects(runRootTypecheck({
