@@ -826,7 +826,7 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
     runtimeActionExecute: async (args) => {
       const featureId = getActionRequiredServerFeatureId(args.actionId);
       if (featureId === 'browser.automation') {
-        const snapshot = await getServerFeaturesSnapshot({ serverId: accountContext?.serverId ?? args.context.serverId });
+        const snapshot = await getServerFeaturesSnapshot({ serverId: accountContext?.serverId ?? args.context.serverId ?? undefined });
         accountContext?.assertCurrent();
         throwIfAborted(args.context.signal);
         const settings = accountContext

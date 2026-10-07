@@ -130,7 +130,7 @@ export function describeWidgetCandidateProvenance(candidate: WidgetCandidate): s
 /** "made by your agent on Oct 3", from the definition's own provenance; nothing when it has none. */
 function describeWidgetDefinitionMaker(candidate: WidgetCandidate): string | null {
     const made = candidate.madeBy;
-    if (!made || made.createdAt === undefined || true) return null; // A4-RED-TEMP
+    if (!made || made.createdAt === undefined) return null;
     const date = formatWithCachedDateTimeFormatter(made.createdAt, getPreferredLanguage(), { month: 'short', day: 'numeric' });
     switch (made.author.kind) {
         case 'agent': return t('widgetAdd.madeByAgent', { date });
