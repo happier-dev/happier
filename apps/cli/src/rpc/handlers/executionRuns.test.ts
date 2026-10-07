@@ -409,9 +409,10 @@ async function expectPromisePending(promise: Promise<unknown>): Promise<void> {
   expect(settled).toBe(false);
 }
 
-function createStaticBackend(responseText: string): ExecutionRunHostRuntime {
+function createStaticBackend(responseText: string, providerSessionId?: string): ExecutionRunHostRuntime {
   let runtime: ReturnType<typeof createTestExecutionRunHostRuntime>;
   runtime = createTestExecutionRunHostRuntime({
+    providerSessionId,
     onSendPrompt() {
       runtime.emitMessage({ type: 'model-output', fullText: responseText } as AgentMessage);
     },
@@ -539,6 +540,7 @@ function createResumableBackendFactory(responseText: string): () => ExecutionRun
     let runtime: ReturnType<typeof createTestExecutionRunHostRuntime>;
     runtime = createTestExecutionRunHostRuntime({
       runtimeId: 'child_session_resumable',
+      providerSessionId: 'provider_session_resumable',
       resumeSupported: true,
       onSendPrompt() {
         runtime.emitMessage({ type: 'model-output', fullText: responseText } as AgentMessage);
@@ -936,6 +938,7 @@ describe('executionRuns session RPC handlers', () => {
     await expect(deps.approvalsResolveBlockingDecision({
       artifactId: 'approval_execution_run_intermediate',
       decision: 'approve',
+      decisionAuthority: 'present_user',
       request: approvedRequest,
       serverId: null,
     })).resolves.toEqual({ resolved: true });
@@ -2025,6 +2028,7 @@ describe('executionRuns session RPC handlers', () => {
     const createdBackends: Array<{ backendId: string; permissionMode: string; modelId?: string }> = [];
     const client = createEncryptedRpcTestClient({
       scopePrefix: 'sess_1',
+      callerAuthority: 'present_user',
       registerHandlers: (rpc) => {
         registerExecutionRunHandlers(rpc, {
           sessionId: 'sess_1',
@@ -2143,6 +2147,7 @@ describe('executionRuns session RPC handlers', () => {
 
     const client = createEncryptedRpcTestClient({
       scopePrefix: 'sess_1',
+      callerAuthority: 'present_user',
       registerHandlers: (rpc) => {
         registerExecutionRunHandlers(rpc, {
           sessionId: 'sess_1',
@@ -2235,6 +2240,7 @@ describe('executionRuns session RPC handlers', () => {
 
     const client = createEncryptedRpcTestClient({
       scopePrefix: 'sess_1',
+      callerAuthority: 'present_user',
       registerHandlers: (rpc) => {
         registerExecutionRunHandlers(rpc, {
           sessionId: 'sess_1',
@@ -2344,6 +2350,7 @@ describe('executionRuns session RPC handlers', () => {
 
     const client = createEncryptedRpcTestClient({
       scopePrefix: 'sess_1',
+      callerAuthority: 'present_user',
       registerHandlers: (rpc) => {
         registerExecutionRunHandlers(rpc, {
           sessionId: 'sess_1',
@@ -2397,6 +2404,7 @@ describe('executionRuns session RPC handlers', () => {
 
     const client = createEncryptedRpcTestClient({
       scopePrefix: 'sess_1',
+      callerAuthority: 'present_user',
       registerHandlers: (rpc) => {
         registerExecutionRunHandlers(rpc, {
           sessionId: 'sess_1',
@@ -2479,6 +2487,7 @@ describe('executionRuns session RPC handlers', () => {
 
     const client = createEncryptedRpcTestClient({
       scopePrefix: 'sess_1',
+      callerAuthority: 'present_user',
       registerHandlers: (rpc) => {
         registerExecutionRunHandlers(rpc, {
           sessionId: 'sess_1',
@@ -2618,6 +2627,7 @@ describe('executionRuns session RPC handlers', () => {
 
     const client = createEncryptedRpcTestClient({
       scopePrefix: 'sess_1',
+      callerAuthority: 'present_user',
       registerHandlers: (rpc) => {
         registerExecutionRunHandlers(rpc, {
           sessionId: 'sess_1',
@@ -2664,6 +2674,15 @@ describe('executionRuns session RPC handlers', () => {
     const stopped = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_STOP, { runId: started.runId });
     expect(stopped.ok).toBe(true);
 
+    const retained = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_GET, {
+      runId: started.runId,
+      includeStructured: false,
+    });
+    expect(retained?.run?.resumeHandle).toMatchObject({
+      kind: 'provider_session.v1',
+      providerSessionId: 'provider_session_resumable',
+    });
+
     const stream2 = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START, {
       runId: started.runId,
       message: 'Hi again',
@@ -2689,6 +2708,7 @@ describe('executionRuns session RPC handlers', () => {
 
     const client = createEncryptedRpcTestClient({
       scopePrefix: 'sess_1',
+      callerAuthority: 'present_user',
       registerHandlers: (rpc) => {
         registerExecutionRunHandlers(rpc, {
           sessionId: 'sess_1',
@@ -2699,6 +2719,7 @@ describe('executionRuns session RPC handlers', () => {
             let runtime: ReturnType<typeof createTestExecutionRunHostRuntime>;
             runtime = createTestExecutionRunHostRuntime({
               runtimeId: modelKey === 'commit' ? 'commit_session_1' : 'chat_session_1',
+              providerSessionId: modelKey === 'commit' ? 'commit_provider_session_1' : 'chat_provider_session_1',
               resumeSupported: true,
               onProvisionRuntime(opts) {
                 if (opts?.resumeRuntimeId) {
@@ -2760,7 +2781,11 @@ describe('executionRuns session RPC handlers', () => {
       runId: started.runId,
       includeStructured: false,
     });
-    expect(beforeStop?.run?.resumeHandle?.kind).toBe('voice_agent_sessions.v1');
+    expect(beforeStop?.run?.resumeHandle).toMatchObject({
+      kind: 'voice_agent_sessions.v1',
+      chatProviderSessionId: 'chat_provider_session_1',
+      commitProviderSessionId: 'commit_provider_session_1',
+    });
 
     const stopped = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_STOP, { runId: started.runId });
     expect(stopped.ok).toBe(true);
@@ -2784,8 +2809,8 @@ describe('executionRuns session RPC handlers', () => {
     )?.output?.text).toBe(
       'I sent that to the coding assistant and am waiting for its update.',
     );
-    expect(loadCalls.chat).toEqual(['chat_session_1']);
-    expect(loadCalls.commit).toEqual(['commit_session_1']);
+    expect(loadCalls.chat).toEqual(['chat_provider_session_1']);
+    expect(loadCalls.commit).toEqual(['commit_provider_session_1']);
   });
 
   it('rejects voice_agent runs when voice feature is locally disabled', async () => {
@@ -2929,12 +2954,16 @@ describe('executionRuns session RPC handlers', () => {
   it('returns voice_agent.commit results via execution.run.action', async () => {
     const client = createEncryptedRpcTestClient({
       scopePrefix: 'sess_1',
+      callerAuthority: 'present_user',
       registerHandlers: (rpc) => {
         registerExecutionRunHandlers(rpc, {
           sessionId: 'sess_1',
           cwd: process.cwd(),
           parentProvider: 'claude',
-          createBackend: ({ modelId }) => createStaticBackend(modelId === 'commit' ? 'COMMIT_TEXT' : 'Hello.'),
+          createBackend: ({ modelId }) => createStaticBackend(
+            modelId === 'commit' ? 'COMMIT_TEXT' : 'Hello.',
+            modelId === 'commit' ? 'commit_provider_session_1' : 'chat_provider_session_1',
+          ),
           sendAcp: async () => {},
         });
       },
@@ -2968,13 +2997,18 @@ describe('executionRuns session RPC handlers', () => {
       includeStructured: false,
     });
     expect(got?.run?.availableActionIds).toEqual(['voice_agent.welcome', 'voice_agent.commit']);
-    expect(got?.run?.resumeHandle?.kind).toBe('voice_agent_sessions.v1');
+    expect(got?.run?.resumeHandle).toMatchObject({
+      kind: 'voice_agent_sessions.v1',
+      chatProviderSessionId: 'chat_provider_session_1',
+      commitProviderSessionId: 'commit_provider_session_1',
+    });
   });
 
   it('returns voice_agent.welcome results via execution.run.action', async () => {
     const onExecutionRunVoiceAgentWelcomed = vi.fn();
     const client = createEncryptedRpcTestClient({
       scopePrefix: 'sess_1',
+      callerAuthority: 'present_user',
       registerHandlers: (rpc) => {
         registerExecutionRunHandlers(rpc, {
           sessionId: 'sess_1',
