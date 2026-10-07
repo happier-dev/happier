@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import tweetnacl from "tweetnacl";
 import {
@@ -362,6 +362,10 @@ describe("mintDirectRouteGrantV1", () => {
         expect(restored.capability.publicKey).toBe(first.capability.publicKey);
         expect(restored.secretKey).toEqual(first.secretKey);
 
+        const establishedSeed = createHmac("sha512", "happier.machine-route-grant.v1 Master Seed")
+            .update(env.HANDY_MASTER_SECRET!, "utf8").digest().subarray(0, 32);
+        expect(first.secretKey).toEqual(tweetnacl.sign.keyPair.fromSeed(establishedSeed).secretKey);
+
         const publicKey = tweetnacl.sign.keyPair.fromSecretKey(first.secretKey).publicKey;
         expect(first.keyId).toBe(createHash("sha256").update(publicKey).digest("hex"));
         const minted = mintDirectRouteGrantV1({
@@ -475,6 +479,34 @@ describe("mintDirectRouteGrantV1", () => {
             ok: false,
             reasonCode: "invalid_private_key",
         });
+    });
+
+    it("retains explicit 64-byte signing keys and their stored public-key comparison policy", () => {
+        const env = {
+            HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_KEY_ID: "explicit-key",
+            HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PRIVATE_KEY: toBase64Url(keyPair.secretKey),
+            HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PUBLIC_KEY: toBase64Url(keyPair.publicKey),
+        };
+        const resolved = resolvePeerMediationGrantSigningConfig(env);
+        expect(resolved.ok).toBe(true);
+        if (!resolved.ok) throw new Error("expected explicit signing key");
+        expect(new Uint8Array(resolved.secretKey)).toEqual(keyPair.secretKey);
+
+        // Existing 64-byte configuration uses its stored public half, rather
+        // than deriving or silently repairing it from the seed half.
+        const configuredSecretKey = new Uint8Array(keyPair.secretKey);
+        const configuredPublicKey = new Uint8Array(32).fill(7);
+        configuredSecretKey.set(configuredPublicKey, 32);
+        env.HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PRIVATE_KEY = toBase64Url(configuredSecretKey);
+        expect(resolvePeerMediationGrantSigningConfig(env)).toEqual({ ok: false, reasonCode: "invalid_public_key" });
+        env.HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PUBLIC_KEY = toBase64Url(configuredPublicKey);
+        const configured = resolvePeerMediationGrantSigningConfig(env);
+        expect(configured).toMatchObject({
+            ok: true,
+            capability: { publicKey: toBase64Url(configuredPublicKey) },
+        });
+        if (!configured.ok) throw new Error("expected stored public half to match");
+        expect(new Uint8Array(configured.secretKey)).toEqual(configuredSecretKey);
     });
 
     it("rejects an expired signing root at its exact expiry while retaining a usable root", () => {
