@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WorkflowTriggerSetV1Schema } from '@happier-dev/protocol';
 import { createDeferred, renderHook, standardCleanup } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
+import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { useWorkflowTriggerEditing } from './useWorkflowTriggerEditing';
 import { editWorkflowTriggerDraft } from './workflowTriggerDraft';
 import { useWorkflowTriggerSets } from './useWorkflowTriggerSets';
@@ -10,10 +11,6 @@ import { useWorkflowTriggerSets } from './useWorkflowTriggerSets';
 // The Action transport and applied network identity are boundaries; schemas, store and hook stay real.
 const transport = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({ createFrontDoorActionExecute: () => transport }));
-vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
-    getAppliedActiveServerSnapshot: () => ({ serverId: storage.getState().profileScope?.serverId }),
-    isAppliedActiveServerRuntimeAvailable: () => true,
-}));
 
 const definitionId = '00000000-0000-4000-8000-000000000001';
 const projectTarget = { machineId: 'm1', directory: '/repo' };
@@ -22,15 +19,44 @@ const set = WorkflowTriggerSetV1Schema.parse({ automationId: 'set-1', revision: 
     target: { kind: 'workflow', ref: definitionId }, triggers: [{ ...trigger, id: 't1', revision: 1, createdAt: 1, updatedAt: 1,
         nextRunAt: null, triggerDefinitionEnvelope: null }] });
 let previous = storage.getState();
+let previousAppliedSnapshot = getAppliedActiveServerSnapshot();
+let previousRuntimeAvailable = isAppliedActiveServerRuntimeAvailable();
 beforeEach(() => {
     previous = storage.getState();
+    previousAppliedSnapshot = getAppliedActiveServerSnapshot();
+    previousRuntimeAvailable = isAppliedActiveServerRuntimeAvailable();
+    publishAppliedActiveServerSnapshot({ serverId: 'server-a', serverUrl: 'http://trigger.test', generation: 1 });
     storage.setState({ profileScope: { serverId: 'server-a', accountId: 'account-a' } });
     transport.mockReset();
     transport.mockResolvedValue({ ok: true, result: { sets: [] } });
 });
-afterEach(() => { standardCleanup(); storage.setState(previous); });
+afterEach(() => { standardCleanup(); storage.setState(previous); publishAppliedActiveServerSnapshot(previousAppliedSnapshot, previousRuntimeAvailable); });
 
 describe('workflow trigger editing lifetime', () => {
+    it('loads a new Account’s session triggers without claiming the previous Account’s settled status', async () => {
+        const { useSessionTriggers } = await import('./useSessionTriggers');
+        const reply = { ok: true, result: { sessionId: 'session-a', sets: [], pullRequestLinks: [] } };
+        transport.mockResolvedValueOnce(reply);
+        const hook = await renderHook(() => useSessionTriggers('session-a'));
+        expect(hook.getCurrent().status).toBe('ready');
+        const next = createDeferred<unknown>();
+        transport.mockReturnValueOnce(next.promise);
+        await act(async () => storage.setState({ profileScope: { serverId: 'server-a', accountId: 'account-b' } }));
+        expect(hook.getCurrent().status).toBe('loading');
+        expect(hook.getCurrent().pullRequestLinks).toEqual({ status: 'loading' });
+        await act(async () => { next.resolve(reply); await next.promise; });
+        expect(hook.getCurrent().status).toBe('ready');
+    });
+    it('does not reread an unchanged semantic query when its request object is replaced', async () => {
+        const hook = await renderHook(useWorkflowTriggerSets, { initialProps: { workflow: definitionId } });
+        expect(hook.getCurrent().status).toBe('ready');
+        await hook.rerender({ workflow: definitionId });
+        expect(transport.mock.calls.filter(([action]) => action === 'workflow.trigger.list')).toHaveLength(1);
+        const otherId = '00000000-0000-4000-8000-000000000002';
+        await hook.rerender({ workflow: otherId });
+        expect(transport.mock.calls.filter(([action]) => action === 'workflow.trigger.list').map(([, request]) => request))
+            .toEqual([{ workflow: definitionId }, { workflow: otherId }]);
+    });
     it('restores semantic history across addition acknowledgement without duplicating a saved trigger', async () => {
         transport.mockImplementation(async (action: string) => action === 'workflow.trigger.add'
             ? { ok: true, result: { set, triggerId: 't1', triggerRevision: 1 } }
@@ -231,6 +257,20 @@ describe('workflow trigger editing lifetime', () => {
         await act(async () => hook.getCurrent().retry());
         expect(hook.getCurrent().status).toBe('ready');
         expect(transport.mock.calls.filter(([action]) => action === 'workflow.trigger.list').map(([, request]) => request)).toEqual([query, query]);
+    });
+
+    /** A refresh shows the last-known answer: a workflow with no triggers keeps reading Manual, not Loading. */
+    it('stays ready while a settled read refreshes', async () => {
+        const hook = await renderHook(useWorkflowTriggerEditing, { initialProps: { definitionId, sourceKey: 'refresh', projectTarget } });
+        expect(hook.getCurrent().status).toBe('ready');
+        const manual = hook.getCurrent().summary;
+        const refresh = createDeferred<unknown>();
+        transport.mockImplementationOnce(() => refresh.promise);
+        await act(async () => hook.getCurrent().retry());
+        expect(hook.getCurrent().status).toBe('ready');
+        expect(hook.getCurrent().summary).toBe(manual);
+        await act(async () => { refresh.resolve({ ok: true, result: { sets: [] } }); await refresh.promise; });
+        expect(hook.getCurrent().status).toBe('ready');
     });
 
     it('reports failed reads, keeps known rows and retries the same owner', async () => {

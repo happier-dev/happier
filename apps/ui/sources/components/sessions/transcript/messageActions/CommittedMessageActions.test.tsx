@@ -1,39 +1,72 @@
 import * as React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installMessageViewCommonModuleMocks } from '../messageViewTestHelpers';
 import type { UserTextMessage, AgentTextMessage } from '@happier-dev/session-core/messages';
 import type { TranscriptForkCommon } from '../transcriptSessionCommon';
 import type { PluginProjectionEntry } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
-
 installMessageViewCommonModuleMocks({ reactNative: async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({ Platform: { OS: 'ios', select: (values: Record<string, unknown>) => values.ios ?? values.default ?? values.web } });
 } });
-// Load consumers after the canonical native boundary is configured.
+// Home fixtures can reach React Native too: configure its native boundary before importing them.
+const { createHomeGovernanceHarness, installHomeGovernanceBoundaries } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+const home = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(home);
+// Load consumers after the canonical native and HTTP boundaries are configured.
 const { View } = await import('react-native');
 const { renderScreen, standardCleanup, createTestSessionTranscriptSource, wrapWithSessionTranscriptSource } = await import('@/dev/testkit');
 const { TranscriptMessageSelectionProvider } = await import('../messageSelection/TranscriptMessageSelectionContext');
 const { ContextMenu } = await import('@/components/ui/forms/dropdown/ContextMenu');
 const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+const { getStorage } = await import('@/sync/domains/state/storageStore');
+const featuresClient = await import('@/sync/api/capabilities/serverFeaturesClient');
+const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
 const { CommittedMessageActions } = await import('./CommittedMessageActions');
 const { createPluginMessageActionHost, PluginMessageActionHostProvider } = await import('./PluginMessageActions');
 const { resolveSelectableMessageText } = await import('../messageSelection/resolveSelectableMessageText');
-afterEach(standardCleanup);
+let serverId = '';
+let activeFeatureSubscriptions = 0;
+let restoreFeatureSubscriptionObservation = () => {};
+beforeEach(async () => {
+    bodyRenders = 0;
+    await home.reset();
+    serverId = await home.addHome({ serverUrl: 'https://committed-actions.test', name: 'Action test', accountId: 'account-a' });
+    getStorage().setState({ profileScope: { serverId, accountId: 'account-a' }, settings: settingsDefaults });
+    getStorage().getState().applySettingsLocal({ experiments: true, featureToggles: { automations: true, workflows: true } });
+    await featuresClient.getServerFeaturesSnapshot({ serverId, force: true });
+    activeFeatureSubscriptions = 0;
+    const subscribe = featuresClient.subscribeServerFeaturesSnapshot;
+    // Observe the real feature-store lifetime without replacing its decision or subscriber.
+    const observation = vi.spyOn(featuresClient, 'subscribeServerFeaturesSnapshot').mockImplementation((listener) => {
+        activeFeatureSubscriptions += 1;
+        const dispose = subscribe(listener);
+        return () => { activeFeatureSubscriptions -= 1; dispose(); };
+    });
+    restoreFeatureSubscriptionObservation = () => observation.mockRestore();
+});
+afterEach(() => { standardCleanup(); restoreFeatureSubscriptionObservation(); });
 
-const source = createTestSessionTranscriptSource({ sessionId: 's1', serverId: 'server-a' });
 const forkCommon: TranscriptForkCommon = {
     sessionReplayEnabled: true, sessionReplayMaxSeedChars: 1000, sessionReplayStrategy: 'recent_messages', sessionReplaySummaryRunnerV1: null,
     executionRunsEnabled: false, agentSwitchingEnabled: false,
     sessionForkSupportSource: { metadata: null },
 };
 const noop = () => {};
-const repeatable = { available: true, openRepeatable: vi.fn() };
+let nextBodyId = 0;
+let bodyRenders = 0;
 
-function element(kind: 'user-text' | 'agent-text', overrides: Partial<typeof settingsDefaults> = {}, structured = false, id = 'm1', pinned = false, text = 'Useful prompt', unsupported = false) {
+function MessageBody(props: Readonly<{ row: React.ReactNode }>) {
+    bodyRenders += 1;
+    const [identity] = React.useState(() => String(++nextBodyId));
+    return <View accessibilityLabel={identity} testID="committed-message-body">{props.row}</View>;
+}
+
+function element(kind: 'user-text' | 'agent-text', overrides: Partial<typeof settingsDefaults> = {}, structured = false, id = 'm1', pinned = false, text = 'Useful prompt', unsupported = false, thinking = false) {
     const message: UserTextMessage | AgentTextMessage = { kind, id, localId: id, text, createdAt: 1, seq: 5, transcriptBlockIndex: 0,
+        ...(kind === 'agent-text' ? { isThinking: thinking } : {}),
         messageActionReference: { v: 1, sessionId: 's1', messageId: id, observedRevision: 'r1' } };
     return wrapWithSessionTranscriptSource(<TranscriptMessageSelectionProvider sessionId="s1" eligibleMessageIdsInOrder={[id]}>
-        <CommittedMessageActions message={message} sessionId="s1" serverId="server-a"
+        <CommittedMessageActions message={message} sessionId="s1" serverId={serverId}
             selectableText={resolveSelectableMessageText({ message, isStructuredOnly: structured, hasAttachmentBlockToStrip: true })}
             copyText={message.text} isStructuredOnly={structured} hasUnsupportedContent={unsupported}
             canFork forkCommon={forkCommon} isForkAllowed={() => true}
@@ -42,25 +75,55 @@ function element(kind: 'user-text' | 'agent-text', overrides: Partial<typeof set
             onToggleMessagePin={noop} messagePins={pinned ? [{ version: 1, sessionId: 's1', seq: 5, transcriptBlockIndex: 0,
                 routeMessageId: `local:${id}`, role: kind === 'user-text' ? 'user' : 'assistant', pinnedAtMs: 1, label: null }] : []}
             showActions showPinAction timestampText={null} invertTimestampAndActions={false}
-            onActionsFocus={noop} onActionsBlur={noop} makeRepeatable={kind === 'agent-text' ? repeatable : undefined}>
-            {(row) => <View>{row}</View>}
+            onActionsFocus={noop} onActionsBlur={noop}>
+            {(row) => <MessageBody row={row} />}
         </CommittedMessageActions>
-    </TranscriptMessageSelectionProvider>, source);
+    </TranscriptMessageSelectionProvider>, createTestSessionTranscriptSource({ sessionId: 's1', serverId }));
 }
 
 describe('Committed row and native menu availability', () => {
-    it('switches Make repeatable off in the row and menu, including a recycled assistant row', async () => {
+    it('does not republish an unavailable workflow capability into a second message-body render', async () => {
+        const features = createRootLayoutFeaturesResponse();
+        features.features.workflows.enabled = false;
+        home.answer(serverId, '/v1/features', { body: features });
+        home.answer(serverId, '/v1/features/authenticated', { body: features });
+        await featuresClient.getServerFeaturesSnapshot({ serverId, force: true });
         const screen = await renderScreen(element('agent-text'));
-        expect(screen.findHostByTestId('transcript-message-repeatable:m1')).not.toBeNull();
+        expect(screen.findHostByTestId('transcript-message-repeatable:m1')).toBeNull();
+        expect(screen.findAllByType(ContextMenu)[0]?.props.items.some((item: { id: string }) => item.id === 'makeRepeatable')).toBe(false);
+        expect(bodyRenders).toBe(1);
+    });
+
+    it('subscribes only while Make repeatable is eligible, preserving a view-only recycled body and row/menu parity', async () => {
+        const off = { transcriptMessageMakeRepeatableActionEnabled: false };
+        const screen = await renderScreen(element('agent-text', off));
+        const bodyIdentity = screen.findHostByTestId('committed-message-body')?.props.accessibilityLabel;
         const menu = () => screen.findAllByType(ContextMenu)[0]?.props.items ?? [];
+        expect(activeFeatureSubscriptions).toBe(0);
+        expect(screen.findHostByTestId('transcript-message-repeatable:m1')).toBeNull();
+        await screen.update(element('agent-text'));
+        expect(screen.findHostByTestId('transcript-message-repeatable:m1')).not.toBeNull();
         expect(menu().some((item: { id: string }) => item.id === 'makeRepeatable')).toBe(true);
-        await screen.pressByTestIdAsync('transcript-message-repeatable:m1');
-        expect(repeatable.openRepeatable).toHaveBeenCalledOnce();
-        await screen.update(element('agent-text', { transcriptMessageMakeRepeatableActionEnabled: false }));
+        expect(activeFeatureSubscriptions).toBeGreaterThan(0);
+        await screen.update(element('agent-text', off));
         expect(screen.findHostByTestId('transcript-message-repeatable:m1')).toBeNull();
         expect(menu().some((item: { id: string }) => item.id === 'makeRepeatable')).toBe(false);
-        await screen.update(element('agent-text', { transcriptMessageMakeRepeatableActionEnabled: false }, false, 'recycled'));
+        expect(activeFeatureSubscriptions).toBe(0);
+        await screen.update(element('agent-text', off, false, 'recycled'));
         expect(screen.findHostByTestId('transcript-message-repeatable:recycled')).toBeNull();
+        await screen.update(element('agent-text', {}, false, 'recycled'));
+        expect(screen.findHostByTestId('transcript-message-repeatable:recycled')).not.toBeNull();
+        for (const next of [
+            element('agent-text', {}, false, 'thinking', false, 'Thinking', false, true),
+            element('user-text', {}, false, 'user'),
+            element('agent-text', {}, true, 'structured'),
+            element('agent-text', {}, false, 'empty', false, '   '),
+        ]) {
+            await screen.update(next);
+            expect(activeFeatureSubscriptions).toBe(0);
+            expect(menu().some((item: { id: string }) => item.id === 'makeRepeatable')).toBe(false);
+            expect(screen.findHostByTestId('committed-message-body')?.props.accessibilityLabel).toBe(bodyIdentity);
+        }
     });
 
     it('leaves no committed actions when all switches are off, even with workflow eligibility', async () => {

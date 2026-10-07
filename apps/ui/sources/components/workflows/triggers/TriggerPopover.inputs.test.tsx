@@ -6,14 +6,11 @@ import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 
 const execute = vi.hoisted(() => vi.fn());
-// The Action transport and applied network identity are boundaries; the library and exact reader stay real.
+// The Action transport is a boundary; the library, scope and exact reader stay real.
 vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({ createFrontDoorActionExecute: () => execute }));
-vi.mock('@/sync/runtime/orchestration/connectionManager', async (original) => ({
-    ...await original<typeof import('@/sync/runtime/orchestration/connectionManager')>(),
-    getAppliedActiveServerSnapshot: () => getActiveServerSnapshot(), isAppliedActiveServerRuntimeAvailable: () => true,
-}));
 afterEach(async () => {
     standardCleanup();
     (await import('../library/workflowLibraryReads')).resetWorkflowLibraryReadsForTests();
@@ -97,10 +94,16 @@ describe('Run a workflow trigger inputs', () => {
     it('keeps JSON drafts distinct from string values and preserves an explicit false input on reopen', async ({ onTestFinished }) => {
         // Plugin definition content is Account-scoped; this fixture must establish its disclosure scope.
         const previousScope = getStorage().getState().profileScope;
+        const previousApplied = getAppliedActiveServerSnapshot();
+        const previousAvailable = isAppliedActiveServerRuntimeAvailable();
         const runtime = await import('@/sync/domains/server/serverRuntime');
         const server = await runtime.upsertAndActivateServer({ serverUrl: 'http://trigger-inputs.test', name: 'Trigger inputs' });
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
         getStorage().setState({ profileScope: { serverId: server.id, accountId: 'account-a' } });
-        onTestFinished(async () => { await act(async () => { getStorage().setState({ profileScope: previousScope }); }); });
+        onTestFinished(async () => { await act(async () => {
+            getStorage().setState({ profileScope: previousScope });
+            publishAppliedActiveServerSnapshot(previousApplied, previousAvailable);
+        }); });
         const definition = WorkflowDefinitionV1Schema.parse({ version: 1, defaults: {}, inputs: [
             { name: 'payload', valueType: 'json', required: true },
             { name: 'announce', valueType: 'boolean', required: false, default: true },

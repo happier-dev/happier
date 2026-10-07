@@ -26,7 +26,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text } from '@/components/ui/text/Text';
-import { SessionAuthoringControls } from '@/components/sessions/authoring/controls/SessionAuthoringControls';
+import { SessionAuthoringControls, useSessionAuthoringEngineSummary } from '@/components/sessions/authoring/controls/SessionAuthoringControls';
 import type { SessionAuthoringControlFacts } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 import type { AuthoringComposerScope } from '@/components/sessions/authoring/ScopedAuthoringComposer';
 import {
@@ -430,6 +430,10 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
     const documentEditable = props.documentPresentation?.editable !== false;
     const defaultAuthoringValues = React.useMemo(() => resolveWorkflowStepSelectionV1({ defaults: draft.defaults, purpose: 'authoring' }).selection, [draft.defaults]);
     const canOpenSettings = true;
+    const engineSummary = useSessionAuthoringEngineSummary({
+        values: defaultAuthoringValues, engine: draft.defaults.engine, workflowRoles: draft.roles,
+        ...(props.authoringFacts === undefined ? {} : { facts: props.authoringFacts }),
+    });
     const sessionDrop = useWorkflowSessionBinding({
         context: { scope: props.sessionBindingScope ?? null, draft, editable: documentEditable,
             whereMachineId: props.projectTarget?.machineId ?? null, candidates: props.sessionDropCandidates ?? props.existingSessions ?? [] },
@@ -950,6 +954,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             onCustomize={openInspector}
             onCommitChange={props.onCommitChange}
             onUseExample={useExample}
+            rootAddRow={!compactLayout}
             registerPromptRef={registerPromptRef}
             requestPromptFocus={requestPromptFocus}
             {...(props.documentPresentation === undefined ? {} : { presentation: props.documentPresentation })}
@@ -1187,24 +1192,14 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                                 onPress={openSettings}
                             />
                         )}
+                        {/* A value row like Where and Triggers (04 §4.10): its value is the chip's own
+                            summary, and it opens the settings where the Agent and model field is. */}
                         <Item
                             testID={`${testIDPrefix}-agent-row`}
                             title={t('workflows.page.sections.agentTitle')}
-                            accessoryLayout="stacked"
-                            mode="info"
-                            rightElement={(
-                                <SessionAuthoringControls
-                                    disabled={!documentEditable}
-                                    fields={HEADER_ENGINE_FIELDS}
-                                    values={defaultAuthoringValues} engine={draft.defaults.engine} workflowRoles={draft.roles}
-                                    onChangeEngine={(engine) => { if (documentEditable) onChange({ ...draft, defaults: withWorkflowAuthoringEngine(draft.defaults, engine) }); }}
-                                    onChangeFields={(fields) => { if (documentEditable) onChange({ ...draft, defaults: withWorkflowAuthoringEngineFields(draft.defaults, fields) }); }}
-                                    overriddenFields="all"
-                                    onChangeField={(field, value) => onChange(setWorkflowDefaultField(draft, field, value))}
-                                    {...(props.authoringFacts === undefined ? {} : { facts: props.authoringFacts })}
-                                    testIDPrefix={`${testIDPrefix}-header-engine`}
-                                />
-                            )}
+                            subtitle={engineSummary}
+                            showChevron={canOpenSettings}
+                            {...(canOpenSettings ? { onPress: openSettings } : { mode: 'info' as const })}
                         />
                     </ItemGroup>
                     <View style={styles.statusLine}>

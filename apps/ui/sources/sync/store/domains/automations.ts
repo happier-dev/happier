@@ -75,7 +75,7 @@ export function createWorkflowTriggerSetSelector(queryKey: string, includeEmpty 
 }
 
 /** Automation sync is the invalidation signal, not a second opened-content owner. */
-export function createWorkflowTriggerChangeSelector(sessionId: string | null) {
+export function createWorkflowTriggerChangeSelector(sessionId: string | null, workflow: string | null = null) {
     let previous: AutomationsDomain['automations'] | null = null;
     let signal = '';
     return (state: Pick<AutomationsDomain, 'automations'>) => {
@@ -83,7 +83,7 @@ export function createWorkflowTriggerChangeSelector(sessionId: string | null) {
         previous = state.automations;
         signal = Object.values(state.automations)
             .filter((automation) => sessionId === null
-                ? !automation.scopeSessionId && !automation.workflowDefinitionId
+                ? !automation.scopeSessionId && (workflow === null ? !automation.workflowDefinitionId : automation.workflowDefinitionId === workflow)
                 : automation.scopeSessionId === sessionId)
             .map((automation) => `${automation.id}:${automation.updatedAt}:${automation.lastRunAt}`).join('|');
         return signal;

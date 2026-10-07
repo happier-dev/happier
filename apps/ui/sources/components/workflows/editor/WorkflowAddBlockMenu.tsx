@@ -52,10 +52,13 @@ export function WorkflowAddBlockMenu(props: Readonly<{
      */
     variant?: 'row' | 'inserter';
     revealed?: boolean;
+    /** `row` only: the host's own bar holds Add (a phone), so this row offers only Start from an example. */
+    examplesOnly?: boolean;
     testID?: string;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const anchorRef = React.useRef<View>(null);
+    const examplesAnchorRef = React.useRef<View>(null);
     const [open, setOpen] = React.useState(false);
     const [examplesOpen, setExamplesOpen] = React.useState(false);
     const close = React.useCallback(() => setOpen(false), []);
@@ -99,7 +102,7 @@ export function WorkflowAddBlockMenu(props: Readonly<{
 
     return (
         <View style={workflowEditorStyles.addRow}>
-            <View ref={anchorRef} collapsable={false}>
+            {props.examplesOnly === true ? null : <View ref={anchorRef} collapsable={false}>
                 <HappierPressable
                     testID={props.testID}
                     accessibilityRole="button"
@@ -117,9 +120,11 @@ export function WorkflowAddBlockMenu(props: Readonly<{
                     <Icon name="plus" size={16} color={theme.colors.text.primary} />
                     <Text style={workflowEditorStyles.addLabel}>{t('workflows.editor.add')}</Text>
                 </HappierPressable>
-            </View>
-            {props.onUseExample === undefined ? null : <RoundButton testID={`${props.testID}-examples`} size="small" display="inverted"
-                title={t('workflows.examples.title')} onPress={() => setExamplesOpen(true)} />}
+            </View>}
+            {props.onUseExample === undefined ? null : <View ref={examplesAnchorRef} collapsable={false}>
+                <RoundButton testID={`${props.testID}-examples`} size="small" display="inverted"
+                    title={t('workflows.examples.title')} onPress={() => setExamplesOpen(true)} />
+            </View>}
             {open ? (
                 <WorkflowAddBlockMenuPopover
                     composerScope={props.composerScope}
@@ -130,7 +135,7 @@ export function WorkflowAddBlockMenu(props: Readonly<{
                     {...(props.testID === undefined ? {} : { testID: props.testID })}
                 />
             ) : null}
-            {examplesOpen ? <WorkflowExamplesPopover anchorRef={anchorRef} onRequestClose={() => setExamplesOpen(false)} onUse={props.onUseExample} /> : null}
+            {examplesOpen ? <WorkflowExamplesPopover anchorRef={examplesAnchorRef} onRequestClose={() => setExamplesOpen(false)} onUse={props.onUseExample} /> : null}
         </View>
     );
 }

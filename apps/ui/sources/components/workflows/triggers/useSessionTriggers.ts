@@ -49,11 +49,11 @@ export function useSessionTriggers(sessionId: string): SessionTriggersRead {
         () => Object.fromEntries(Object.values(getStorage().getState().automations)
             .filter((automation) => automation.scopeSessionId === sessionId)
             .map((automation) => [automation.id, automation.lastRunAt])),
-        [changeSignal, sessionId],
+        [changeSignal, linkScopeKey, sessionId],
     );
 
-    const [state, setState] = React.useState<Readonly<{ sessionId: string; status: SessionTriggersRead['status'] }>>(
-        () => ({ sessionId, status: 'loading' }),
+    const [state, setState] = React.useState<Readonly<{ scopeKey: string | null; status: SessionTriggersRead['status'] }>>(
+        () => ({ scopeKey: linkScopeKey, status: 'loading' }),
     );
     const [attempt, setAttempt] = React.useState(0);
     const [links, setLinks] = React.useState<Readonly<{ scopeKey: string | null; value: SessionTriggersRead['pullRequestLinks'] }>>(
@@ -77,27 +77,27 @@ export function useSessionTriggers(sessionId: string): SessionTriggersRead {
 
     React.useEffect(() => {
         const controller = new AbortController();
-        setState((current) => (current.sessionId === sessionId ? current : { sessionId, status: 'loading' }));
+        setState((current) => (current.scopeKey === linkScopeKey ? current : { scopeKey: linkScopeKey, status: 'loading' }));
         listSessionTriggers({ sessionId }, { ...options(), signal: controller.signal })
             .then((result) => {
                 if (!controller.signal.aborted) {
                     setLinks({ scopeKey: linkScopeKey, value: result.pullRequestLinks });
-                    setState({ sessionId, status: 'ready' });
+                    setState({ scopeKey: linkScopeKey, status: 'ready' });
                 }
             })
             .catch(() => {
-                if (!controller.signal.aborted) setState((current) => ({ ...current, sessionId, status: 'failed' }));
+                if (!controller.signal.aborted) setState({ scopeKey: linkScopeKey, status: 'failed' });
             });
         return () => controller.abort();
     }, [attempt, changeSignal, linkScopeKey, options, sessionId]);
 
     const applyWrite = React.useCallback((result: WorkflowTriggerWriteResult) => {
         setAttempt((value) => value + 1);
-        setState((current) => (current.sessionId === sessionId
+        setState((current) => (current.scopeKey === linkScopeKey
             ? { ...current, status: 'ready' }
             : current));
         return result;
-    }, [sessionId]);
+    }, [linkScopeKey]);
 
     const add = React.useCallback<SessionTriggersRead['add']>(
         async (request) => applyWrite(await addSessionTrigger({ ...request, sessionId }, options())),
@@ -113,7 +113,7 @@ export function useSessionTriggers(sessionId: string): SessionTriggersRead {
     );
     const retry = React.useCallback(() => setAttempt((value) => value + 1), []);
 
-    const owned = state.sessionId === sessionId;
+    const owned = linkScopeKey !== null && state.scopeKey === linkScopeKey;
     return {
         machineId: readMachineControlTargetForSession(sessionId)?.machineId ?? null,
         pullRequestLinks: linkScopeKey !== null && links.scopeKey === linkScopeKey ? links.value : { status: 'loading' },

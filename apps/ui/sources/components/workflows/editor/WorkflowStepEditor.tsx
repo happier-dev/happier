@@ -4,6 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { hasAgentIconMark } from '@/agents/catalog/catalog';
 import { resolveSessionAuthoringAgentId } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
+import { useSessionAuthoringEngineSummary } from '@/components/sessions/authoring/controls/SessionAuthoringControls';
 import { Icon } from '@/components/ui/icons/Icon';
 
 import { Text } from '@/components/ui/text/Text';
@@ -20,7 +21,8 @@ import type {
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { t } from '@/text';
 
-import { PluginJsonValueV2Schema, resolveRoleSelectionV1 } from '@happier-dev/protocol';
+import { PluginJsonValueV2Schema } from '@happier-dev/protocol';
+import { resolveRoleDisplayName } from '@/sync/domains/roles/roleCatalog';
 import { isPermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type { WorkflowEngineSelectionV1, WorkflowStep, WorkflowStepExecutionSelection } from '@happier-dev/protocol/workflows/workflowV1';
 import { useSessionAuthoringEnginePicker } from '@/components/sessions/authoring/controls/useSessionAuthoringEnginePicker';
@@ -37,7 +39,7 @@ import {
 } from '@/sync/domains/workflows/workflowAuthoring';
 
 import type { WorkflowBlockAction } from './WorkflowBlockActionsMenu';
-import { WorkflowBlockHeading } from './WorkflowBlockHeading';
+import { WorkflowBlockHeading, type WorkflowBlockNameEditor } from './WorkflowBlockHeading';
 import { workflowEditorStyles } from './workflowEditorStyles';
 import { formatWorkflowConversationLabel, formatWorkflowWorkspaceLabel } from './WorkflowContinuityControls';
 import { WorkflowStepDataEditor } from './WorkflowStepDataEditor';
@@ -111,6 +113,7 @@ const WorkflowStepPromptField = React.memo(React.forwardRef<
                 attachmentsEnabled
                 placeholder={t('workflows.editor.promptPlaceholder')}
                 editable={props.editable}
+                voiceAffordance="dictation"
                 onFocus={props.onFocusPrompt}
                 agentInputContext={props.agentInputContext}
                 {...(props.extraActionChips === undefined ? {} : { extraActionChips: props.extraActionChips })}
@@ -123,6 +126,7 @@ export function WorkflowStepEditor(props: Readonly<{
     step: WorkflowStep;
     draft: WorkflowEditorDraft;
     ordinal: number;
+    nameEditor?: WorkflowBlockNameEditor;
     total: number;
     /** Where this step's references, files and attachments are addressed from. */
     composerScope: AuthoringComposerScope;
@@ -240,18 +244,16 @@ export function WorkflowStepEditor(props: Readonly<{
     }), [editable, engine, props.draft.roles]);
     const enginePicker = useSessionAuthoringEnginePicker({ values: effective, facts: props.authoringFacts,
         disabled: !editable, onChangeFields: changeEngineFields, roleSelection });
+    const engineSummary = useSessionAuthoringEngineSummary({ values: effective, engine,
+        workflowRoles: props.draft.roles, facts: props.authoringFacts });
     const permissionMode = isPermissionMode(effective.permissionMode) ? effective.permissionMode : undefined;
     // A role reads by its name (a built-in's or this workflow's own), through the one role resolver.
-    const roleName = React.useMemo(() => {
-        if (!engine || !('role' in engine)) return null;
-        const resolved = resolveRoleSelectionV1({ roleId: engine.role, workflowRoles: props.draft.roles ?? [] });
-        return resolved.ok && resolved.selection.name ? resolved.selection.name : engine.role;
-    }, [engine, props.draft.roles]);
+    const roleName = React.useMemo(() => (engine && 'role' in engine ? resolveRoleDisplayName(engine.role, props.draft.roles) : null),
+        [engine, props.draft.roles]);
     const agentInputContext = React.useMemo(() => ({
         agentType: enginePicker.agentId ?? agentId ?? undefined,
         agentLabel: roleName ?? enginePicker.label,
-        engineLabel: roleName
-            ?? (!editable ? [enginePicker.label, effective.modelSelection?.ref.modelId].filter(Boolean).join(' · ') : undefined),
+        engineLabel: engineSummary,
         modelMode: effective.modelSelection?.ref.modelId,
         permissionMode,
         showStatusPermissionMode: false,
@@ -262,7 +264,7 @@ export function WorkflowStepEditor(props: Readonly<{
         // the effective engine chip visible in a read-only document.
         onAgentClick: enginePicker.onAgentClick,
     }), [agentId, effective.modelSelection, permissionMode, enginePicker.agentId,
-        editable, roleName, enginePicker.label, enginePicker.onAgentClick, enginePicker.onSelect, enginePicker.options, enginePicker.selectedOptionId]);
+        editable, roleName, engineSummary, enginePicker.label, enginePicker.onAgentClick, enginePicker.onSelect, enginePicker.options, enginePicker.selectedOptionId]);
     const composerChips = React.useMemo(() => [stepOptionsChip], [stepOptionsChip]);
     const promptFrameRef = React.useRef<View>(null);
     const issues = workflowIssuesForBlock(validation, step.id, props.draft);
@@ -279,6 +281,7 @@ export function WorkflowStepEditor(props: Readonly<{
             style={workflowEditorStyles.blockBody}
         >
             <WorkflowBlockHeading
+                nameEditor={props.nameEditor}
                 kindMark={kindMark}
                 ordinal={ordinal}
                 displayName={displayName}
@@ -320,17 +323,18 @@ export function WorkflowStepEditor(props: Readonly<{
 
             {props.slots?.reviewedCard ?? null}
 
-            {!editable && (props.slots?.engineChip || props.slots?.footer) ? (
+            {!editable && props.slots?.engineChip ? (
                 <View style={workflowEditorStyles.metaRow}>
-                    {props.slots?.engineChip ?? null}
-                    {props.slots?.footer ?? null}
+                    {props.slots.engineChip}
                 </View>
             ) : null}
 
+            {/* A reader's footer fact ("Open conversation") shares the "Returns …" line (run-A_steps). */}
             <WorkflowStepDataEditor
                 draft={props.draft}
                 step={step}
                 editable={editable}
+                {...(!editable && props.slots?.footer ? { footerAccessory: props.slots.footer } : {})}
                 onChangeInput={props.onChangeInput}
                 {...(editable ? { onAddNamedResults: () => onCustomize(promptFrameRef) } : {})}
                 testIDPrefix={testIDPrefix}

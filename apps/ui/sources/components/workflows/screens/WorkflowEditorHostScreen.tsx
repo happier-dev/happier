@@ -851,7 +851,7 @@ export function WorkflowEditorHostScreen(props: Readonly<{
         rawTextValues: inputRawTextValues,
         onChangeRawTextValues: setInputRawTextValues,
         workflowName: draft.name,
-        preview: description || draft.blocks.map(workflowBlockReferenceLabel).join('\n'),
+        preview: description || draft.blocks.map((block) => workflowBlockReferenceLabel(block)).join('\n'),
         ...(planReview ? { preview: readWorkflowPlanResult(planReview.value)?.document, notice: t('workflows.review.planRunNotice') } : {}),
         includesUnsavedEdits: !pluginJsonValuesEqual(draft, savedDraftRef.current ?? initialDraftBaselineRef.current)
             || description !== savedDescriptionRef.current,

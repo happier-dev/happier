@@ -19,11 +19,13 @@ import { findWorkflowActionSpec } from '@/components/workflows/presentation/work
 import type { ResolveSessionActionFieldOptions } from '@/components/sessions/actions/sessionActionFieldOptions';
 import { Text } from '@/components/ui/text/Text';
 import { Icon } from '@/components/ui/icons/Icon';
+import { resolvePluginContributedActionIconName } from '@/components/plugins/actions/pluginContributedActionPresentation';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { t } from '@/text';
+import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 
 import type { WorkflowBlockAction } from './WorkflowBlockActionsMenu';
-import { WorkflowBlockHeading } from './WorkflowBlockHeading';
+import { WorkflowBlockHeading, type WorkflowBlockNameEditor } from './WorkflowBlockHeading';
 import { formatWorkflowConditionSentence } from './WorkflowConditionEditor';
 import { WorkflowStepOptionsFootChip } from './WorkflowStepOptionsChip';
 import type { WorkflowDocumentStepSlots } from './workflowDocumentPresentation';
@@ -83,6 +85,7 @@ export function WorkflowActionBlockEditor(props: Readonly<{
     block: WorkflowActionLeafV1;
     draft: WorkflowEditorDraft;
     ordinal: number;
+    nameEditor?: WorkflowBlockNameEditor;
     total: number;
     actions: readonly WorkflowBlockAction[];
     onSelect: () => void;
@@ -108,7 +111,8 @@ export function WorkflowActionBlockEditor(props: Readonly<{
         requests: rows.flatMap((row) => row.hint ? [{ field: row.hint, actionId: block.actionId, draftInput: literalInput }] : []) });
     const resolveFieldOptions = parseQualifiedPluginActionId(block.actionId) ? fieldOptions.resolveOptions
         : props.resolveFieldOptions ?? fieldOptions.resolveOptions;
-    const displayName = spec?.title ?? t('workflows.page.blocks.menuAction');
+    const actionTitle = spec?.title ?? t('workflows.page.blocks.menuAction');
+    const displayName = workflowBlockReferenceLabel(block, actionTitle);
     const rowPrefix = `${testIDPrefix}-action-${block.id}`;
 
     const setBinding = (key: string, binding: WorkflowActionFieldBindingV1 | undefined) => {
@@ -118,8 +122,10 @@ export function WorkflowActionBlockEditor(props: Readonly<{
 
     return (
         <View testID={rowPrefix} style={workflowEditorStyles.blockBody}>
+            {props.slots?.occurrenceSelector ?? null}
             <WorkflowBlockHeading
-                kindMark={<Icon name="lightning" size={16} />}
+                nameEditor={props.nameEditor}
+                kindMark={<Icon name={spec?.plugin ? resolvePluginContributedActionIconName(spec.plugin.icon) : 'lightning'} size={16} />}
                 ordinal={props.ordinal}
                 displayName={displayName}
                 accessibilityLabel={t('workflows.a11y.stepContext', { block: displayName, position: props.ordinal, total: props.total })}
@@ -129,8 +135,12 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                 testID={`${rowPrefix}-label`}
                 actionsTestID={`${rowPrefix}-actions`}
             />
-            {props.slots?.occurrenceSelector ?? null}
             <View testID={`${rowPrefix}-card`} style={workflowEditorStyles.actionCard}>
+                <View style={workflowEditorStyles.metaRow}>
+                    <Icon name={spec?.plugin ? resolvePluginContributedActionIconName(spec.plugin.icon) : 'lightning'} size={16} />
+                    <Text testID={`${rowPrefix}-card-title`} style={workflowEditorStyles.headingName}>{actionTitle}</Text>
+                    <Text style={workflowEditorStyles.metaText}>{spec?.plugin?.title ?? (spec === null ? t('workflows.contentUnavailable') : 'Happier')}</Text>
+                </View>
             {rows.length === 0 ? (
                 <Text style={workflowEditorStyles.groupSummary}>{t('workflows.page.blocks.noFields')}</Text>
             ) : rows.map((row) => {

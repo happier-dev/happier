@@ -99,6 +99,7 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
     headingNameInput: {
         ...Typography.default('semiBold'),
         color: theme.colors.text.primary,
+        minHeight: TOUCH_TARGET_FLOOR,
         flexGrow: 1,
         flexShrink: 1,
         paddingVertical: theme.margins.xs,

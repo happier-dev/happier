@@ -12,6 +12,13 @@ const AGENT_TARGET = {
 };
 
 describe('workflowBlockLabel', () => {
+    it('uses an authored name before kind, prompt or catalog labels and falls back when blank', () => {
+        const block = { kind: 'step' as const, id: 'inspect', document: { text: 'Prompt body', references: [], attachments: [] }, input: [], result: { kind: 'text' as const } };
+        expect(workflowBlockReferenceLabel({ ...block, name: '  Inspect the change  ' })).toBe('Inspect the change');
+        expect(workflowBlockReferenceLabel({ ...block, name: '   ' })).toBe(t('workflows.editor.addStep'));
+        expect(workflowBlockReferenceLabel({ kind: 'action', id: 'notify', name: 'Announce it', actionId: 'notifications.notify_me', input: {} })).toBe('Announce it');
+        expect(workflowBlockReferenceLabel({ kind: 'loop', id: 'keep', name: 'Keep going', body: [], repetition: { kind: 'count', count: { kind: 'literal', value: 2 } } })).toBe('Keep going');
+    });
     it('names document blocks by their human kind rather than opaque ids or a clipped prompt', () => {
         expect(workflowBlockReferenceLabel({ kind: 'step', id: 'action-1', document: {
             text: 'Check the supplied goal and most recent turn. Return progress with evidence rather than guessing.',

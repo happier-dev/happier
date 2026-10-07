@@ -107,7 +107,9 @@ export function WorkflowsLibraryHome(): React.ReactElement {
     const router = useRouter();
     const openAgent = useWorkflowAgentAuthoring();
     const library = useWorkflowDefinitionLibrary();
-    const history = useWorkflowRunWindow('all');
+    const libraryIsEmpty = library.definitions.length === 0 && library.pluginWorkflows.length === 0;
+    // Only an empty library needs history to distinguish first visit from returning to it.
+    const history = useWorkflowRunWindow('all', { enabled: library.status === 'loaded' && libraryIsEmpty });
     const [query, setQuery] = React.useState('');
     const [view, setView] = React.useState<'all' | 'triggered'>('all');
     const split = React.useMemo(() => splitLibraryDefinitions(library.definitions, library.pluginWorkflows), [library.definitions, library.pluginWorkflows]);
@@ -155,8 +157,7 @@ export function WorkflowsLibraryHome(): React.ReactElement {
     const importWorkflow = () => router.push(WORKFLOWS_IMPORT_ROUTE as never);
     const createWithAgent = () => openAgent(buildWorkflowAgentAuthoringSeed({ kind: 'create' }));
 
-    const firstVisit = library.status === 'loaded' && library.definitions.length === 0
-        && library.pluginWorkflows.length === 0
+    const firstVisit = library.status === 'loaded' && libraryIsEmpty
         && history.status === 'loaded' && history.rows.length === 0;
     if (firstVisit) return <WorkflowsFirstVisit onNewWorkflow={newWorkflow} onImport={importWorkflow} onCreateWithAgent={createWithAgent} />;
 

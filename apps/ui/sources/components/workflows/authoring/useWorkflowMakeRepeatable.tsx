@@ -2,7 +2,7 @@ import * as React from 'react';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { storage } from '@/sync/domains/state/storageStore';
-import { writeExistingSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { appendMountedComposerDraft } from '@/sync/ops/actions/appendMountedComposerDraft';
 import { buildWorkflowAgentAuthoringSeed } from '@/sync/domains/workflows/workflowAgentAuthoringSeed';
 import { useWorkflowsAvailability } from '../gating/workflowsAvailability';
 
@@ -12,7 +12,7 @@ type RepeatableSource = Readonly<{
     message?: Readonly<{ id: string; text: string }>;
 }>;
 
-/** Both entry points prefill this Session's ordinary editable composer; pressing never sends. */
+/** Both entry points append to this Session's mounted editable composer; pressing never sends. */
 export function useWorkflowMakeRepeatable(source: RepeatableSource) {
     const workflows = useWorkflowsAvailability({ scopeKind: 'spawn', serverId: source.serverId ?? undefined });
     const profileScope = storage((state) => state.profileScope);
@@ -24,7 +24,7 @@ export function useWorkflowMakeRepeatable(source: RepeatableSource) {
         const seed = buildWorkflowAgentAuthoringSeed({ kind: 'repeatable', sessionId: source.sessionId,
             serverId: source.serverId, ...(source.message ? { message: source.message } : {}),
         });
-        writeExistingSessionDraft({ scope: lifetime.scope, sessionId: source.sessionId, patch: { text: seed.prompt } });
+        return appendMountedComposerDraft({ scope: lifetime.scope, ref: { kind: 'session', sessionId: source.sessionId }, text: seed.prompt });
     }, [available, source.sessionId, source.serverId, source.message]);
     return { available, openRepeatable };
 }

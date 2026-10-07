@@ -202,7 +202,7 @@ const windowProjectionCache = new WeakMap<WorkflowRunInvocationWindow, Readonly<
     invocations: readonly WorkflowRunInvocationIndexV1[];
 }>>();
 
-/** One window's rows as current facts; the same array until its ids or the fact map change. */
+/** One window's rows as current facts; unrelated facts do not invalidate its projection. */
 export function selectWorkflowRunWindowInvocations(
     invocations: WorkflowRunInvocations | null | undefined,
     windowId: WorkflowRunInvocationWindowId,
@@ -212,7 +212,9 @@ export function selectWorkflowRunWindowInvocations(
     if (window.invocationIds.length === 0) return EMPTY_INVOCATION_LIST;
     const cached = windowProjectionCache.get(window);
     if (cached?.factsById === invocations.factsById) return cached.invocations;
-    const projected = factsFor(invocations.factsById, window.invocationIds);
+    const rows = factsFor(invocations.factsById, window.invocationIds);
+    const projected = cached && rows.length === cached.invocations.length
+        && rows.every((row, index) => row === cached.invocations[index]) ? cached.invocations : rows;
     windowProjectionCache.set(window, { factsById: invocations.factsById, invocations: projected });
     return projected;
 }
@@ -679,7 +681,8 @@ export function createWorkflowRunsDomain<S extends WorkflowRunsDomain>({
             const workflowRunListWindows = Object.fromEntries(
                 Object.entries(state.workflowRunListWindows).map(([id, window]) => [
                     id,
-                    window ? { ...window, runIds: window.runIds.filter((candidate) => candidate !== runId) } : window,
+                    window?.runIds.includes(runId)
+                        ? { ...window, runIds: window.runIds.filter((candidate) => candidate !== runId) } : window,
                 ]),
             ) as WorkflowRunsDomain['workflowRunListWindows'];
             const workflowRunInvocationsByRunId = { ...state.workflowRunInvocationsByRunId };
@@ -702,10 +705,13 @@ export function createWorkflowRunsDomain<S extends WorkflowRunsDomain>({
                     : mode === 'refresh'
                         ? refreshWorkflowRunListWindow({ runsById: workflowRunsById, previous, pageRunIds, nextCursor })
                         : { runIds: pageRunIds, nextCursor, loaded: true };
+                const unchangedWindow = previous !== undefined && sameStrictJsonValue(previous, window);
+                if (unchangedWindow && workflowRunsById === state.workflowRunsById) return state;
                 return {
                     ...state,
                     workflowRunsById,
-                    workflowRunListWindows: { ...state.workflowRunListWindows, [windowId]: window },
+                    workflowRunListWindows: unchangedWindow ? state.workflowRunListWindows
+                        : { ...state.workflowRunListWindows, [windowId]: window },
                 };
             }),
         applyWorkflowRunInvocationPage: ({ runId, window: windowId = 'history', invocations, nextCursor, parentRevision, mode }) =>
@@ -738,10 +744,12 @@ export function createWorkflowRunsDomain<S extends WorkflowRunsDomain>({
                 } else {
                     invocationIds = pageIds;
                 }
-                const nextWindow: WorkflowRunInvocationWindow = {
+                const candidateWindow: WorkflowRunInvocationWindow = {
                     invocationIds, nextCursor: cursor, loaded: true,
                     parentRevision: Math.max(previousWindow.parentRevision ?? 0, parentRevision),
                 };
+                const nextWindow = sameStrictJsonValue(previousWindow, candidateWindow) ? previousWindow : candidateWindow;
+                if (factsById === previous.factsById && nextWindow === previousWindow) return state;
                 return {
                     ...state,
                     workflowRunInvocationsByRunId: {
@@ -756,22 +764,25 @@ export function createWorkflowRunsDomain<S extends WorkflowRunsDomain>({
             set((state) => {
                 const previous = state.workflowRunInvocationsByRunId[runId] ?? EMPTY_RUN_INVOCATIONS;
                 const factsById = mergeInvocationFacts(previous.factsById, [invocation]);
-                const history: WorkflowRunInvocationWindow = {
+                const candidateHistory: WorkflowRunInvocationWindow = {
                     ...previous.history,
                     invocationIds: appendUniqueInvocationIds(previous.history.invocationIds, [invocation.id]),
                     parentRevision: Math.max(previous.history.parentRevision ?? 0, parentRevision),
                 };
+                const history = sameStrictJsonValue(previous.history, candidateHistory) ? previous.history : candidateHistory;
                 // Only an accepted (not older) fact may change actionable membership.
                 const accepted = !isWorkflowInvocationFactOlder(invocation, factsById[invocation.id]!);
                 const needsYou = WORKFLOW_ATTENTION_INVOCATION_LIFECYCLES_V1.some((lifecycle) => lifecycle === invocation.lifecycle);
                 const attentionIds = previous.attention.invocationIds;
-                const attention: WorkflowRunInvocationWindow = !accepted || !previous.attention.loaded
+                const candidateAttention: WorkflowRunInvocationWindow = !accepted || !previous.attention.loaded
                     ? previous.attention
                     : needsYou
                         ? { ...previous.attention, invocationIds: appendUniqueInvocationIds(attentionIds, [invocation.id]) }
                         : attentionIds.includes(invocation.id)
                             ? { ...previous.attention, invocationIds: attentionIds.filter((id) => id !== invocation.id) }
                             : previous.attention;
+                const attention = sameStrictJsonValue(previous.attention, candidateAttention) ? previous.attention : candidateAttention;
+                if (factsById === previous.factsById && history === previous.history && attention === previous.attention) return state;
                 return {
                     ...state,
                     workflowRunInvocationsByRunId: {

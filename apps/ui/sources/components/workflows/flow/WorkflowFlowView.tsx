@@ -9,6 +9,7 @@ import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { ExecutionRunAgentMark } from '@/components/sessions/runs/ExecutionRunAgentMark';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { workflowBlockOrdinalV1 } from '@happier-dev/protocol/workflows';
 import { formatWorkflowAgentStatusLabel } from '@/components/workflows/presentation/workflowStatusLabel';
 import { WorkflowLifecycleStatus } from '@/components/workflows/presentation/WorkflowLifecycleStatus';
 import {
@@ -249,7 +250,7 @@ export function WorkflowFlowView(props: Readonly<{
                             : props.agentMarkForNode?.(node) ?? <ExecutionRunAgentMark agentId={null} size={compact ? 22 : 28} />}
                         {compact || node.observed ? null : (
                             <View testID={`${testIDPrefix}-node-${node.nodeId}-ordinal`} style={styles.ordinal}>
-                                <Text style={styles.ordinalText}>{node.ordinal}</Text>
+                                <Text style={styles.ordinalText}>{workflowBlockOrdinalV1(node.ordinal - 1)}</Text>
                             </View>
                         )}
                     </>

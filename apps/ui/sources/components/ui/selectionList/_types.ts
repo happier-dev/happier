@@ -678,6 +678,8 @@ export type SelectionListFilter = Readonly<{
     clearAccessibilityLabel?: string;
     /** The chip's testID; its popover list is `<testID>.list` and each option `<testID>:<optionId>`. */
     testID?: string;
+    /** What else the chip's value means ("Changed for this step"), announced after its name. */
+    accessibilityHint?: string;
 }>;
 
 export type SelectionListProps = Readonly<{
