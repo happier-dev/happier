@@ -11,12 +11,12 @@ import { getHappyStacksHomeDir } from '../paths/paths.mjs';
 import { runCaptureResult } from '../proc/proc.mjs';
 import { ensureExecutionHostServiceTunnel } from './service_tunnel.mjs';
 import { mountExecutionHostWorkspace } from './workspace_mount.mjs';
-import { inspectGhopsBrokerSockets } from './ghops_credential_broker.mjs';
+import { GHOPS_BROKER_FIX_COMMAND, inspectGhopsBrokerSockets } from './ghops_credential_broker.mjs';
+export { GHOPS_BROKER_FIX_COMMAND } from './ghops_credential_broker.mjs';
 
 const RECOVERY_LABEL = 'dev.happier.stack.dev-vm-recovery';
 const RECOVERY_ROOT = 'execution-host-recovery';
 const GHOPS_LABEL = 'dev.happier.stack.ghops-credential-broker';
-export const GHOPS_BROKER_FIX_COMMAND = 'hstack dev-vm recovery enable';
 const SAFE_COMPONENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 function requireActiveManagedProfile(profile) {
@@ -115,14 +115,27 @@ export async function installExecutionHostGhopsBroker({
     keepAliveOnFailure: true,
   });
   await writeAtomically(paths.plistPath, plist, 0o644);
-  await processBoundary.capture('launchctl', ['bootout', target]);
-  // Enable before bootstrap, so a previously disabled job starts immediately.
-  for (const args of [['enable', target], ['bootstrap', `gui/${uid}`, paths.plistPath]]) {
-    const result = await processBoundary.capture('launchctl', args);
+  const requireSuccess = (args, result) => {
     if (result.exitCode !== 0) {
-      throw new Error(`[dev-vm] could not ${args[0]} the ghops broker LaunchAgent: ${String(result.err ?? result.out ?? '').trim()}`);
+      throw new Error(`[dev-vm] could not ${args[0]} the ghops broker LaunchAgent: ${String(result.err || result.out || `exit ${result.exitCode}`).trim()}; run \`${GHOPS_BROKER_FIX_COMMAND}\` in the 0.3 checkout on the Mac while logged in`);
     }
+  };
+  const enable = ['enable', target];
+  requireSuccess(enable, await processBoundary.capture('launchctl', enable));
+  const bootstrap = ['bootstrap', `gui/${uid}`, paths.plistPath];
+  const bootstrapped = await processBoundary.capture('launchctl', bootstrap);
+  if (bootstrapped.exitCode !== 0) {
+    // bootstrap rejects an already-loaded label. Restart it in place: bootout
+    // is asynchronous and a following bootstrap can collide with its teardown,
+    // leaving no job at all. launchd retains the loaded definition until login;
+    // kickstart loads current broker source through that definition's entrypoint.
+    const loaded = await processBoundary.capture('launchctl', ['print', target]);
+    if (loaded.exitCode !== 0) requireSuccess(bootstrap, bootstrapped);
+    const kickstart = ['kickstart', '-k', target];
+    requireSuccess(kickstart, await processBoundary.capture('launchctl', kickstart));
   }
+  const inspect = ['print', target];
+  requireSuccess(inspect, await processBoundary.capture('launchctl', inspect));
   return { paths, launchAgent: { label: GHOPS_LABEL, loaded: true } };
 }
 

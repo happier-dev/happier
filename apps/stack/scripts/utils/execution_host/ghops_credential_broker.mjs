@@ -9,6 +9,7 @@ const BOT_TOKEN_ENV_KEY = 'HAPPIER_GITHUB_BOT_TOKEN';
 const KEYCHAIN_SERVICE = 'happier/ghops';
 const KEYCHAIN_ACCOUNT = 'happier-bot';
 const MAX_REQUEST_BYTES = 4096;
+export const GHOPS_BROKER_FIX_COMMAND = 'node apps/stack/bin/hstack.mjs dev-vm recovery enable --json';
 
 function defaultReadCredential() {
   return readKeychainBundle({ service: KEYCHAIN_SERVICE, account: KEYCHAIN_ACCOUNT });

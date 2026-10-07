@@ -7,6 +7,7 @@ import { createInterface } from 'node:readline';
 import { expandHome } from './utils/paths/canonical_home.mjs';
 import { loadDevTargetsConfig } from './utils/dev_targets/config.mjs';
 import { resolveRepoStackIdentity, resolveStacksStorageRoot } from './utils/stack/repo_stack_identity.mjs';
+import { GHOPS_BROKER_FIX_COMMAND } from './utils/execution_host/ghops_credential_broker.mjs';
 import { deleteKeychainBundle } from '../../../scripts/pipeline/secrets/delete-keychain-bundle.mjs';
 import { readKeychainBundle } from '../../../scripts/pipeline/secrets/read-keychain-bundle.mjs';
 import { writeKeychainBundle } from '../../../scripts/pipeline/secrets/write-keychain-bundle.mjs';
@@ -134,7 +135,7 @@ async function readMacHostBotToken(repoRoot) {
   });
   if (result.error || result.status !== 0) {
     throw new Error(
-      `mac-host credential broker is unavailable or failed for stack '${stackName}'; run \`hstack dev-vm recovery enable\` on the Mac to (re)install its login-session LaunchAgent.`,
+      `mac-host credential broker is unavailable or failed for stack '${stackName}'; from the 0.3 checkout run \`./apps/stack/bin/hstack-exec --target=mac-host -- ${GHOPS_BROKER_FIX_COMMAND}\` to (re)install its login-session LaunchAgent while the Mac user is logged in.`,
     );
   }
 

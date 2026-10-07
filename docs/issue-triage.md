@@ -25,9 +25,16 @@ The maintainer CLI deliberately does not own an `issue triage` reviewer, prompt 
 
 The stack installs a per-user macOS LaunchAgent for the ghops credential broker
 during `hstack dev-vm setup` and `hstack dev-vm activate`. On an already configured
-Mac, `hstack dev-vm recovery enable` installs or updates and immediately loads the
+Mac, `node apps/stack/bin/hstack.mjs dev-vm recovery enable --json` from the 0.3
+checkout installs or updates and immediately loads the
 broker; `hstack dev-vm recovery disable` unloads it and removes its plist alongside
 login recovery. Recovery itself still waits until the next login to reconcile the VM.
+
+Updates atomically replace the plist, then bootstrap an absent job or kickstart
+an already-loaded job without unloading it. A failed update reports the launchctl
+error and recovery command; it leaves an incumbent job loaded. Kickstart restarts
+the broker through its loaded entrypoint and reads current source. Changes to the
+plist's executable, arguments or environment take effect at the next GUI login.
 
 The broker runs in the Mac user's GUI login session, independently of foreground
 Stack commands, SSH connections and VM restarts. It reads the `happier/ghops`
@@ -41,8 +48,10 @@ removes its own socket.
 `hstack doctor` reports broker installation, launchd loading and socket liveness
 (through `mac-host` when run in the guest). `hstack dev-vm doctor` and
 `hstack dev-vm recovery status` provide host-side diagnostics. If no broker is
-available, run `hstack dev-vm recovery enable` on the Mac while that user is logged
-in. A successful socket probe establishes transport availability; verify Keychain
+available, run the recovery command above on the Mac while that user is logged
+in. From the VM's 0.3 checkout, use
+`./apps/stack/bin/hstack-exec --target=mac-host -- node apps/stack/bin/hstack.mjs dev-vm recovery enable --json`.
+A successful socket probe establishes transport availability; verify Keychain
 access and bot identity separately with `yarn ghops auth status` and
 `yarn ghops api user --jq .login` in the guest.
 

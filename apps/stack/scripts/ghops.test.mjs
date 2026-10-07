@@ -381,6 +381,7 @@ test('fails closed when the configured mac-host credential route is unavailable'
 
   assert.notEqual(res.status, 0);
   assert.match(res.stderr, /mac-host.*credential/i);
+  assert.ok(res.stderr.includes('./apps/stack/bin/hstack-exec --target=mac-host -- node apps/stack/bin/hstack.mjs dev-vm recovery enable --json'));
   assert.doesNotMatch(`${res.stdout}\n${res.stderr}`, /personal-token-should-not-be-used/);
 });
 

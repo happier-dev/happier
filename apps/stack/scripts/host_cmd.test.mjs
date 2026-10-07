@@ -43,12 +43,59 @@ test('ghops LaunchAgent installs, updates, diagnoses and removes through the rec
   assert.equal(status.installed, true);
   assert.equal(status.launchAgent.loaded, true);
   assert.equal(status.socketLive, true);
+  assert.equal(status.fixCommand, 'node apps/stack/bin/hstack.mjs dev-vm recovery enable --json');
   await broker.close();
   assert.equal((await owner.inspectExecutionHostGhopsBroker(options)).socketLive, false);
   await owner.removeExecutionHostGhopsBroker(options);
   assert.equal((await owner.inspectExecutionHostGhopsBroker(options)).installed, false);
   await assert.rejects(owner.installExecutionHostGhopsBroker({ ...options, programArgs: ['/node', '/broker.mjs'],
     boundary: { capture: async () => ({ exitCode: 1, err: 'no GUI session' }) } }), /no GUI session/);
+});
+
+test('ghops LaunchAgent update preserves a loaded job when bootstrap collides or restart fails', async (t) => {
+  const owner = await import('./utils/execution_host/recovery.mjs');
+  const fixture = await createTempFixture(t, { prefix: 'g-up-', parentDir: '/tmp' });
+  let loaded = true;
+  let restartFails = false;
+  let restarts = 0;
+  const options = { env: { HAPPIER_STACK_HOME_DIR: fixture.path('stack-home') },
+    homeDir: fixture.path('home'), platform: 'darwin', uid: process.getuid(),
+    programArgs: ['/pinned/node', '/repo/broker.mjs'],
+    // launchctl is the OS boundary. bootout returns before service teardown,
+    // reproducing macOS's Operation already in progress on immediate bootstrap.
+    boundary: { capture: async (_command, args) => {
+      if (args[0] === 'bootout') { loaded = false; return { exitCode: 0 }; }
+      if (args[0] === 'bootstrap') return { exitCode: 37, err: 'Operation already in progress' };
+      if (args[0] === 'print') return { exitCode: loaded ? 0 : 113 };
+      if (args[0] === 'kickstart') {
+        if (!loaded || restartFails) return { exitCode: 1, err: 'restart refused' };
+        restarts++;
+      }
+      return { exitCode: 0 };
+    } },
+  };
+  const result = await owner.installExecutionHostGhopsBroker(options);
+  assert.equal(loaded, true);
+  assert.equal(result.launchAgent.loaded, true);
+  assert.equal(restarts, 1);
+  restartFails = true;
+  await assert.rejects(owner.installExecutionHostGhopsBroker(options), /restart refused/);
+  assert.equal(loaded, true, 'a failed update must retain the incumbent LaunchAgent');
+});
+
+test('ghops LaunchAgent install reports bootstrap failure with the exact repo-local recovery command', async (t) => {
+  const owner = await import('./utils/execution_host/recovery.mjs');
+  const fixture = await createTempFixture(t, { prefix: 'g-fail-', parentDir: '/tmp' });
+  await assert.rejects(owner.installExecutionHostGhopsBroker({
+    env: { HAPPIER_STACK_HOME_DIR: fixture.path('stack-home') }, homeDir: fixture.path('home'),
+    platform: 'darwin', uid: process.getuid(), programArgs: ['/pinned/node', '/repo/broker.mjs'],
+    boundary: { capture: async (_command, args) => ({ exitCode: args[0] === 'enable' ? 0 : 113,
+      err: 'no GUI session' }) },
+  }), (error) => {
+    assert.match(error.message, /no GUI session/);
+    assert.ok(error.message.includes('node apps/stack/bin/hstack.mjs dev-vm recovery enable --json'));
+    return true;
+  });
 });
 
 test('host status reports an absent candidate without creating or starting a VM', async (t) => {
@@ -75,10 +122,14 @@ test('dev-vm setup preserves retained mount configuration when mount overrides a
   const bin = fixture.path('bin');
   const limaHome = fixture.path('lima');
   const mountDir = fixture.path('vm-home');
+  const launchctlLog = fixture.path('launchctl.log');
   await Promise.all([
     mkdir(home, { recursive: true }),
     mkdir(bin, { recursive: true }),
+  ]);
+  await Promise.all([
     writeFile(join(bin, 'uname'), '#!/bin/sh\nprintf "Darwin\\n"\n', 'utf8'),
+    writeFile(join(bin, 'launchctl'), `#!/bin/sh\nprintf '%s\\n' "$*" >> '${launchctlLog}'\nexit 0\n`, 'utf8'),
     writeFile(join(bin, 'limactl'), [
       '#!/bin/sh',
       'if [ "$1" = "--version" ]; then printf "limactl version 2.1.0\\n"; exit 0; fi',
@@ -110,11 +161,13 @@ test('dev-vm setup preserves retained mount configuration when mount overrides a
   ]);
   await Promise.all([
     chmod(join(bin, 'uname'), 0o755),
+    chmod(join(bin, 'launchctl'), 0o755),
     chmod(join(bin, 'limactl'), 0o755),
   ]);
 
   const env = {
     ...process.env,
+    HOME: home,
     PATH: `${bin}:${process.env.PATH ?? ''}`,
     HAPPIER_STACK_HOME_DIR: home,
     HAPPIER_STACK_DISABLE_STACK_ENV_AUTOLOAD: '1',
@@ -122,6 +175,11 @@ test('dev-vm setup preserves retained mount configuration when mount overrides a
   const result = await runNodeCapture([script, 'setup', '--no-install', '--json'], { env });
 
   assert.equal(result.code, 0, result.stderr);
+  if (process.platform === 'darwin') {
+    const broker = JSON.parse(result.stdout).ghopsBroker;
+    assert.equal(broker.paths.plistPath, join(home, 'Library', 'LaunchAgents', 'dev.happier.stack.ghops-credential-broker.plist'));
+    assert.match(await readFile(launchctlLog, 'utf8'), /bootstrap gui\//);
+  }
   assert.deepEqual(JSON.parse(await readFile(join(home, 'execution-host.json'), 'utf8')), {
     version: 1,
     mode: 'managed-lima',
@@ -1181,7 +1239,10 @@ test('dev-vm recovery enable installs a next-login LaunchAgent without touching 
   await writeFile(join(bin, 'launchctl'), [
     '#!/bin/sh',
     `printf '%s\\n' "$*" >> ${JSON.stringify(launchctlLog)}`,
-    'if [ "$1" = "print" ]; then exit 113; fi',
+    'if [ "$1" = "print" ]; then',
+    '  case "$2" in *ghops-credential-broker) exit 0 ;; esac',
+    '  exit 113',
+    'fi',
     'exit 0',
     '',
   ].join('\n'), 'utf8');
