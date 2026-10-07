@@ -423,7 +423,10 @@
           "global"
         ],
         "surfaces": [
-          "ui"
+          "ui",
+          "agent",
+          "mcp",
+          "cli"
         ],
         "title": "Configure PostHog error issues"
       },
@@ -463,16 +466,69 @@
                     "additionalProperties": false,
                     "properties": {
                       "binding": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "account": {
+                        "anyOf": [
+                          {
                             "additionalProperties": false,
                             "properties": {
-                              "accountId": {
-                                "maxLength": 256,
+                              "account": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "accountId": {
+                                    "maxLength": 256,
+                                    "minLength": 1,
+                                    "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])",
+                                    "type": "string"
+                                  },
+                                  "service": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "localId": {
+                                        "maxLength": 256,
+                                        "minLength": 1,
+                                        "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                                        "type": "string"
+                                      },
+                                      "pluginId": {
+                                        "maxLength": 256,
+                                        "minLength": 3,
+                                        "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "pluginId",
+                                      "localId"
+                                    ],
+                                    "type": "object"
+                                  }
+                                },
+                                "required": [
+                                  "service",
+                                  "accountId"
+                                ],
+                                "type": "object"
+                              },
+                              "purpose": {
                                 "minLength": 1,
-                                "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])",
-                                "type": "string"
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "type": "string",
+                                "x-happier-max-utf8-bytes": 128
+                              }
+                            },
+                            "required": [
+                              "purpose",
+                              "account"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "additionalProperties": false,
+                            "properties": {
+                              "purpose": {
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "type": "string",
+                                "x-happier-max-utf8-bytes": 128
                               },
                               "service": {
                                 "additionalProperties": false,
@@ -495,26 +551,19 @@
                                   "localId"
                                 ],
                                 "type": "object"
+                              },
+                              "source": {
+                                "const": "native"
                               }
                             },
                             "required": [
-                              "service",
-                              "accountId"
+                              "purpose",
+                              "source",
+                              "service"
                             ],
                             "type": "object"
-                          },
-                          "purpose": {
-                            "minLength": 1,
-                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                            "type": "string",
-                            "x-happier-max-utf8-bytes": 128
                           }
-                        },
-                        "required": [
-                          "purpose",
-                          "account"
-                        ],
-                        "type": "object"
+                        ]
                       },
                       "configuration": {
                         "additionalProperties": false,
@@ -603,16 +652,69 @@
                     "additionalProperties": false,
                     "properties": {
                       "binding": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "account": {
+                        "anyOf": [
+                          {
                             "additionalProperties": false,
                             "properties": {
-                              "accountId": {
-                                "maxLength": 256,
+                              "account": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "accountId": {
+                                    "maxLength": 256,
+                                    "minLength": 1,
+                                    "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])",
+                                    "type": "string"
+                                  },
+                                  "service": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "localId": {
+                                        "maxLength": 256,
+                                        "minLength": 1,
+                                        "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                                        "type": "string"
+                                      },
+                                      "pluginId": {
+                                        "maxLength": 256,
+                                        "minLength": 3,
+                                        "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "pluginId",
+                                      "localId"
+                                    ],
+                                    "type": "object"
+                                  }
+                                },
+                                "required": [
+                                  "service",
+                                  "accountId"
+                                ],
+                                "type": "object"
+                              },
+                              "purpose": {
                                 "minLength": 1,
-                                "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])",
-                                "type": "string"
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "type": "string",
+                                "x-happier-max-utf8-bytes": 128
+                              }
+                            },
+                            "required": [
+                              "purpose",
+                              "account"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "additionalProperties": false,
+                            "properties": {
+                              "purpose": {
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "type": "string",
+                                "x-happier-max-utf8-bytes": 128
                               },
                               "service": {
                                 "additionalProperties": false,
@@ -635,26 +737,19 @@
                                   "localId"
                                 ],
                                 "type": "object"
+                              },
+                              "source": {
+                                "const": "native"
                               }
                             },
                             "required": [
-                              "service",
-                              "accountId"
+                              "purpose",
+                              "source",
+                              "service"
                             ],
                             "type": "object"
-                          },
-                          "purpose": {
-                            "minLength": 1,
-                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                            "type": "string",
-                            "x-happier-max-utf8-bytes": 128
                           }
-                        },
-                        "required": [
-                          "purpose",
-                          "account"
-                        ],
-                        "type": "object"
+                        ]
                       },
                       "failure": {
                         "additionalProperties": false,
@@ -739,16 +834,69 @@
                     "additionalProperties": false,
                     "properties": {
                       "binding": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "account": {
+                        "anyOf": [
+                          {
                             "additionalProperties": false,
                             "properties": {
-                              "accountId": {
-                                "maxLength": 256,
+                              "account": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "accountId": {
+                                    "maxLength": 256,
+                                    "minLength": 1,
+                                    "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])",
+                                    "type": "string"
+                                  },
+                                  "service": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "localId": {
+                                        "maxLength": 256,
+                                        "minLength": 1,
+                                        "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                                        "type": "string"
+                                      },
+                                      "pluginId": {
+                                        "maxLength": 256,
+                                        "minLength": 3,
+                                        "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "pluginId",
+                                      "localId"
+                                    ],
+                                    "type": "object"
+                                  }
+                                },
+                                "required": [
+                                  "service",
+                                  "accountId"
+                                ],
+                                "type": "object"
+                              },
+                              "purpose": {
                                 "minLength": 1,
-                                "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])",
-                                "type": "string"
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "type": "string",
+                                "x-happier-max-utf8-bytes": 128
+                              }
+                            },
+                            "required": [
+                              "purpose",
+                              "account"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "additionalProperties": false,
+                            "properties": {
+                              "purpose": {
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "type": "string",
+                                "x-happier-max-utf8-bytes": 128
                               },
                               "service": {
                                 "additionalProperties": false,
@@ -771,26 +919,19 @@
                                   "localId"
                                 ],
                                 "type": "object"
+                              },
+                              "source": {
+                                "const": "native"
                               }
                             },
                             "required": [
-                              "service",
-                              "accountId"
+                              "purpose",
+                              "source",
+                              "service"
                             ],
                             "type": "object"
-                          },
-                          "purpose": {
-                            "minLength": 1,
-                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                            "type": "string",
-                            "x-happier-max-utf8-bytes": 128
                           }
-                        },
-                        "required": [
-                          "purpose",
-                          "account"
-                        ],
-                        "type": "object"
+                        ]
                       },
                       "configuration": {
                         "additionalProperties": false,
@@ -928,16 +1069,69 @@
                     "additionalProperties": false,
                     "properties": {
                       "binding": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "account": {
+                        "anyOf": [
+                          {
                             "additionalProperties": false,
                             "properties": {
-                              "accountId": {
-                                "maxLength": 256,
+                              "account": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "accountId": {
+                                    "maxLength": 256,
+                                    "minLength": 1,
+                                    "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])",
+                                    "type": "string"
+                                  },
+                                  "service": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "localId": {
+                                        "maxLength": 256,
+                                        "minLength": 1,
+                                        "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                                        "type": "string"
+                                      },
+                                      "pluginId": {
+                                        "maxLength": 256,
+                                        "minLength": 3,
+                                        "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "pluginId",
+                                      "localId"
+                                    ],
+                                    "type": "object"
+                                  }
+                                },
+                                "required": [
+                                  "service",
+                                  "accountId"
+                                ],
+                                "type": "object"
+                              },
+                              "purpose": {
                                 "minLength": 1,
-                                "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])",
-                                "type": "string"
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "type": "string",
+                                "x-happier-max-utf8-bytes": 128
+                              }
+                            },
+                            "required": [
+                              "purpose",
+                              "account"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "additionalProperties": false,
+                            "properties": {
+                              "purpose": {
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "type": "string",
+                                "x-happier-max-utf8-bytes": 128
                               },
                               "service": {
                                 "additionalProperties": false,
@@ -960,26 +1154,19 @@
                                   "localId"
                                 ],
                                 "type": "object"
+                              },
+                              "source": {
+                                "const": "native"
                               }
                             },
                             "required": [
-                              "service",
-                              "accountId"
+                              "purpose",
+                              "source",
+                              "service"
                             ],
                             "type": "object"
-                          },
-                          "purpose": {
-                            "minLength": 1,
-                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                            "type": "string",
-                            "x-happier-max-utf8-bytes": 128
                           }
-                        },
-                        "required": [
-                          "purpose",
-                          "account"
-                        ],
-                        "type": "object"
+                        ]
                       },
                       "failure": {
                         "additionalProperties": false,
@@ -1310,9 +1497,9 @@
                   "required": [
                     "v",
                     "instance",
-                    "binding",
                     "localInstanceKey",
-                    "configuration"
+                    "configuration",
+                    "binding"
                   ],
                   "type": "object"
                 },
@@ -1506,9 +1693,9 @@
                   "required": [
                     "v",
                     "instance",
-                    "binding",
                     "localInstanceKey",
-                    "configuration"
+                    "configuration",
+                    "binding"
                   ],
                   "type": "object"
                 },
@@ -3337,9 +3524,9 @@
               "required": [
                 "v",
                 "instance",
-                "binding",
                 "localInstanceKey",
-                "configuration"
+                "configuration",
+                "binding"
               ],
               "type": "object"
             },
@@ -3856,9 +4043,9 @@
               "required": [
                 "v",
                 "instance",
-                "binding",
                 "localInstanceKey",
-                "configuration"
+                "configuration",
+                "binding"
               ],
               "type": "object"
             },
@@ -4345,9 +4532,9 @@
               "required": [
                 "v",
                 "instance",
-                "binding",
                 "localInstanceKey",
-                "configuration"
+                "configuration",
+                "binding"
               ],
               "type": "object"
             },
@@ -4681,9 +4868,9 @@
               "required": [
                 "v",
                 "instance",
-                "binding",
                 "localInstanceKey",
-                "configuration"
+                "configuration",
+                "binding"
               ],
               "type": "object"
             },
@@ -5930,9 +6117,9 @@
               "required": [
                 "v",
                 "instance",
-                "binding",
                 "localInstanceKey",
-                "configuration"
+                "configuration",
+                "binding"
               ],
               "type": "object"
             },
@@ -7303,14 +7490,15 @@
             "plugins.posthog.ui.tab.overview": "Overview",
             "plugins.posthog.ui.tab.stackTrace": "Stack trace",
             "plugins.posthog.ui.tabsLabel": "PostHog issue detail",
-            "plugins.triage.detailStory.activity": "Activity",
             "plugins.triage.detailStory.ask": "The ask",
             "plugins.triage.detailStory.changed": "What changed",
             "plugins.triage.detailStory.detail": "Source detail",
             "plugins.triage.detailStory.failed": "{count} failed",
+            "plugins.triage.detailStory.happened": "What happened",
             "plugins.triage.detailStory.passed": "Passed",
             "plugins.triage.detailStory.report": "The report",
             "plugins.triage.detailStory.running": "Running",
+            "plugins.triage.detailStory.spread": "Spread",
             "plugins.triage.sourceSettings.configuration.added": "Added to {product}.",
             "plugins.triage.sourceSettings.configuration.alreadyConfigured": "Already in {product}.",
             "plugins.triage.sourceSettings.configuration.atMaximum": "You have configured as many sources as {product} holds. Remove one you no longer use.",
@@ -7500,14 +7688,15 @@
             "plugins.posthog.ui.tab.overview": "Обзор",
             "plugins.posthog.ui.tab.stackTrace": "Трассировка стека",
             "plugins.posthog.ui.tabsLabel": "Сведения о проблеме PostHog",
-            "plugins.triage.detailStory.activity": "Активность",
             "plugins.triage.detailStory.ask": "Запрос",
             "plugins.triage.detailStory.changed": "Что изменилось",
             "plugins.triage.detailStory.detail": "Подробности источника",
             "plugins.triage.detailStory.failed": "Ошибок: {count}",
+            "plugins.triage.detailStory.happened": "Что произошло",
             "plugins.triage.detailStory.passed": "Успешно",
             "plugins.triage.detailStory.report": "Отчёт",
             "plugins.triage.detailStory.running": "Выполняется",
+            "plugins.triage.detailStory.spread": "Распространение",
             "plugins.triage.sourceSettings.configuration.added": "Добавлено в «{product}».",
             "plugins.triage.sourceSettings.configuration.alreadyConfigured": "Уже в «{product}».",
             "plugins.triage.sourceSettings.configuration.atMaximum": "Вы настроили максимальное количество источников, которое вмещает «{product}». Удалите источник, которым больше не пользуетесь.",
@@ -7697,14 +7886,15 @@
             "plugins.posthog.ui.tab.overview": "Przegląd",
             "plugins.posthog.ui.tab.stackTrace": "Ślad stosu",
             "plugins.posthog.ui.tabsLabel": "Szczegóły problemu PostHog",
-            "plugins.triage.detailStory.activity": "Aktywność",
             "plugins.triage.detailStory.ask": "Prośba",
             "plugins.triage.detailStory.changed": "Co się zmieniło",
             "plugins.triage.detailStory.detail": "Szczegóły źródła",
             "plugins.triage.detailStory.failed": "Niepowodzenia: {count}",
+            "plugins.triage.detailStory.happened": "Co się stało",
             "plugins.triage.detailStory.passed": "Powodzenie",
             "plugins.triage.detailStory.report": "Zgłoszenie",
             "plugins.triage.detailStory.running": "W toku",
+            "plugins.triage.detailStory.spread": "Zasięg",
             "plugins.triage.sourceSettings.configuration.added": "Dodano do {product}.",
             "plugins.triage.sourceSettings.configuration.alreadyConfigured": "Już w {product}.",
             "plugins.triage.sourceSettings.configuration.atMaximum": "Skonfigurowano już tyle źródeł, ile może pomieścić {product}. Usuń źródło, którego już nie używasz.",
@@ -7894,14 +8084,15 @@
             "plugins.posthog.ui.tab.overview": "Resumen",
             "plugins.posthog.ui.tab.stackTrace": "Traza de pila",
             "plugins.posthog.ui.tabsLabel": "Detalles de la incidencia de PostHog",
-            "plugins.triage.detailStory.activity": "Actividad",
             "plugins.triage.detailStory.ask": "La solicitud",
             "plugins.triage.detailStory.changed": "Qué cambió",
             "plugins.triage.detailStory.detail": "Detalle de la fuente",
             "plugins.triage.detailStory.failed": "{count} fallidos",
+            "plugins.triage.detailStory.happened": "Qué pasó",
             "plugins.triage.detailStory.passed": "Correcto",
             "plugins.triage.detailStory.report": "El informe",
             "plugins.triage.detailStory.running": "En curso",
+            "plugins.triage.detailStory.spread": "Alcance",
             "plugins.triage.sourceSettings.configuration.added": "Añadido a {product}.",
             "plugins.triage.sourceSettings.configuration.alreadyConfigured": "Ya está en {product}.",
             "plugins.triage.sourceSettings.configuration.atMaximum": "Has configurado tantas fuentes como {product} admite. Quita una que ya no uses.",
@@ -8091,14 +8282,15 @@
             "plugins.posthog.ui.tab.overview": "Vue d’ensemble",
             "plugins.posthog.ui.tab.stackTrace": "Trace de pile",
             "plugins.posthog.ui.tabsLabel": "Détails du problème PostHog",
-            "plugins.triage.detailStory.activity": "Activité",
             "plugins.triage.detailStory.ask": "La demande",
             "plugins.triage.detailStory.changed": "Ce qui a changé",
             "plugins.triage.detailStory.detail": "Détails de la source",
             "plugins.triage.detailStory.failed": "{count} en échec",
+            "plugins.triage.detailStory.happened": "Ce qui s’est passé",
             "plugins.triage.detailStory.passed": "Réussi",
             "plugins.triage.detailStory.report": "Le signalement",
             "plugins.triage.detailStory.running": "En cours",
+            "plugins.triage.detailStory.spread": "Étendue",
             "plugins.triage.sourceSettings.configuration.added": "Ajouté à {product}.",
             "plugins.triage.sourceSettings.configuration.alreadyConfigured": "Déjà dans {product}.",
             "plugins.triage.sourceSettings.configuration.atMaximum": "Vous avez configuré autant de sources que {product} peut en contenir. Retirez-en une que vous n’utilisez plus.",
@@ -8288,14 +8480,15 @@
             "plugins.posthog.ui.tab.overview": "Panoramica",
             "plugins.posthog.ui.tab.stackTrace": "Analisi dello stack",
             "plugins.posthog.ui.tabsLabel": "Dettagli del problema PostHog",
-            "plugins.triage.detailStory.activity": "Attività",
             "plugins.triage.detailStory.ask": "La richiesta",
             "plugins.triage.detailStory.changed": "Cosa è cambiato",
             "plugins.triage.detailStory.detail": "Dettaglio della fonte",
             "plugins.triage.detailStory.failed": "{count} non riusciti",
+            "plugins.triage.detailStory.happened": "Cosa è successo",
             "plugins.triage.detailStory.passed": "Riuscito",
             "plugins.triage.detailStory.report": "La segnalazione",
             "plugins.triage.detailStory.running": "In corso",
+            "plugins.triage.detailStory.spread": "Diffusione",
             "plugins.triage.sourceSettings.configuration.added": "Aggiunto a {product}.",
             "plugins.triage.sourceSettings.configuration.alreadyConfigured": "Già in {product}.",
             "plugins.triage.sourceSettings.configuration.atMaximum": "Hai configurato il numero massimo di fonti che {product} può contenere. Rimuovine una che non usi più.",
@@ -8485,14 +8678,15 @@
             "plugins.posthog.ui.tab.overview": "Visão geral",
             "plugins.posthog.ui.tab.stackTrace": "Rastreamento de pilha",
             "plugins.posthog.ui.tabsLabel": "Detalhes do problema do PostHog",
-            "plugins.triage.detailStory.activity": "Atividade",
             "plugins.triage.detailStory.ask": "O pedido",
             "plugins.triage.detailStory.changed": "O que mudou",
             "plugins.triage.detailStory.detail": "Detalhes da fonte",
             "plugins.triage.detailStory.failed": "{count} falharam",
+            "plugins.triage.detailStory.happened": "O que aconteceu",
             "plugins.triage.detailStory.passed": "Concluído",
             "plugins.triage.detailStory.report": "O relatório",
             "plugins.triage.detailStory.running": "Em andamento",
+            "plugins.triage.detailStory.spread": "Alcance",
             "plugins.triage.sourceSettings.configuration.added": "Adicionado a {product}.",
             "plugins.triage.sourceSettings.configuration.alreadyConfigured": "Já em {product}.",
             "plugins.triage.sourceSettings.configuration.atMaximum": "Configurou tantas fontes quantas {product} permite. Remova uma que já não utiliza.",
@@ -8682,14 +8876,15 @@
             "plugins.posthog.ui.tab.overview": "Übersicht",
             "plugins.posthog.ui.tab.stackTrace": "Stacktrace",
             "plugins.posthog.ui.tabsLabel": "Details zum PostHog-Problem",
-            "plugins.triage.detailStory.activity": "Aktivität",
             "plugins.triage.detailStory.ask": "Die Anfrage",
             "plugins.triage.detailStory.changed": "Was sich geändert hat",
             "plugins.triage.detailStory.detail": "Quelldetails",
             "plugins.triage.detailStory.failed": "{count} fehlgeschlagen",
+            "plugins.triage.detailStory.happened": "Was passiert ist",
             "plugins.triage.detailStory.passed": "Bestanden",
             "plugins.triage.detailStory.report": "Der Bericht",
             "plugins.triage.detailStory.running": "Läuft",
+            "plugins.triage.detailStory.spread": "Ausmaß",
             "plugins.triage.sourceSettings.configuration.added": "Zu {product} hinzugefügt.",
             "plugins.triage.sourceSettings.configuration.alreadyConfigured": "Bereits in {product}.",
             "plugins.triage.sourceSettings.configuration.atMaximum": "Du hast so viele Quellen konfiguriert, wie {product} aufnehmen kann. Entferne eine nicht mehr benötigte Quelle.",
@@ -8879,14 +9074,15 @@
             "plugins.posthog.ui.tab.overview": "Resum",
             "plugins.posthog.ui.tab.stackTrace": "Traça de pila",
             "plugins.posthog.ui.tabsLabel": "Detalls del problema de PostHog",
-            "plugins.triage.detailStory.activity": "Activitat",
             "plugins.triage.detailStory.ask": "La petició",
             "plugins.triage.detailStory.changed": "Què ha canviat",
             "plugins.triage.detailStory.detail": "Detall de la font",
             "plugins.triage.detailStory.failed": "{count} han fallat",
+            "plugins.triage.detailStory.happened": "Què ha passat",
             "plugins.triage.detailStory.passed": "Correcte",
             "plugins.triage.detailStory.report": "L’informe",
             "plugins.triage.detailStory.running": "En curs",
+            "plugins.triage.detailStory.spread": "Abast",
             "plugins.triage.sourceSettings.configuration.added": "S’ha afegit a {product}.",
             "plugins.triage.sourceSettings.configuration.alreadyConfigured": "Ja és a {product}.",
             "plugins.triage.sourceSettings.configuration.atMaximum": "Has configurat tantes fonts com {product} pot contenir. Treu-ne una que ja no utilitzis.",
@@ -9076,14 +9272,15 @@
             "plugins.posthog.ui.tab.overview": "概览",
             "plugins.posthog.ui.tab.stackTrace": "堆栈跟踪",
             "plugins.posthog.ui.tabsLabel": "PostHog 问题详情",
-            "plugins.triage.detailStory.activity": "活动",
             "plugins.triage.detailStory.ask": "请求",
             "plugins.triage.detailStory.changed": "变更内容",
             "plugins.triage.detailStory.detail": "来源详情",
             "plugins.triage.detailStory.failed": "{count} 项失败",
+            "plugins.triage.detailStory.happened": "发生了什么",
             "plugins.triage.detailStory.passed": "通过",
             "plugins.triage.detailStory.report": "报告",
             "plugins.triage.detailStory.running": "进行中",
+            "plugins.triage.detailStory.spread": "影响范围",
             "plugins.triage.sourceSettings.configuration.added": "已添加到 {product}。",
             "plugins.triage.sourceSettings.configuration.alreadyConfigured": "已在 {product} 中。",
             "plugins.triage.sourceSettings.configuration.atMaximum": "{product} 可容纳的来源已全部配置。请移除一个不再使用的来源。",
@@ -9273,14 +9470,15 @@
             "plugins.posthog.ui.tab.overview": "概觀",
             "plugins.posthog.ui.tab.stackTrace": "堆疊追蹤",
             "plugins.posthog.ui.tabsLabel": "PostHog 問題詳細資料",
-            "plugins.triage.detailStory.activity": "活動",
             "plugins.triage.detailStory.ask": "請求",
             "plugins.triage.detailStory.changed": "變更內容",
             "plugins.triage.detailStory.detail": "來源詳細資料",
             "plugins.triage.detailStory.failed": "{count} 項失敗",
+            "plugins.triage.detailStory.happened": "發生了什麼",
             "plugins.triage.detailStory.passed": "通過",
             "plugins.triage.detailStory.report": "報告",
             "plugins.triage.detailStory.running": "進行中",
+            "plugins.triage.detailStory.spread": "影響範圍",
             "plugins.triage.sourceSettings.configuration.added": "已新增至 {product}。",
             "plugins.triage.sourceSettings.configuration.alreadyConfigured": "已在 {product} 中。",
             "plugins.triage.sourceSettings.configuration.atMaximum": "{product} 可容納的來源已全部設定。請移除一個不再使用的來源。",
@@ -9470,14 +9668,15 @@
             "plugins.posthog.ui.tab.overview": "概要",
             "plugins.posthog.ui.tab.stackTrace": "スタック トレース",
             "plugins.posthog.ui.tabsLabel": "PostHog 問題の詳細",
-            "plugins.triage.detailStory.activity": "アクティビティ",
             "plugins.triage.detailStory.ask": "依頼",
             "plugins.triage.detailStory.changed": "変更内容",
             "plugins.triage.detailStory.detail": "ソースの詳細",
             "plugins.triage.detailStory.failed": "{count} 件失敗",
+            "plugins.triage.detailStory.happened": "何が起きたか",
             "plugins.triage.detailStory.passed": "成功",
             "plugins.triage.detailStory.report": "報告",
             "plugins.triage.detailStory.running": "実行中",
+            "plugins.triage.detailStory.spread": "影響範囲",
             "plugins.triage.sourceSettings.configuration.added": "{product} に追加しました。",
             "plugins.triage.sourceSettings.configuration.alreadyConfigured": "すでに {product} に追加されています。",
             "plugins.triage.sourceSettings.configuration.atMaximum": "{product} に設定できるソース数の上限に達しています。使用しなくなったソースを1つ削除してください。",

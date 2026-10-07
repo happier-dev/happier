@@ -63,7 +63,7 @@ describe('bundled translation projection', () => {
         "import { BUNDLED_PLUGIN_TRANSLATIONS, type BundledPluginTranslationKey } from './projection';",
         `export const key: BundledPluginTranslationKey = ${JSON.stringify(firstKey)};`,
         `export const keys: readonly BundledPluginTranslationKey[] = ${JSON.stringify(keys)};`,
-        `export const value: string = BUNDLED_PLUGIN_TRANSLATIONS[${JSON.stringify(firstLocale)}][key];`,
+        `export const value: string | undefined = BUNDLED_PLUGIN_TRANSLATIONS[${JSON.stringify(firstLocale)}][key];`,
         '// @ts-expect-error Unknown translation keys must not be admitted by declaration materialization.',
         "export const invalidKey: BundledPluginTranslationKey = '__unknown_ci03_translation__';",
         '// @ts-expect-error The table itself retains the published key boundary.',

@@ -25,7 +25,7 @@ import { prepareBundledWorkspaceDependenciesForCli } from '../buildSharedDeps.mj
 import { ensureWorkspacePackagesBuiltByName } from '../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
 import { BUNDLED_AGENT_DEFINITIONS_BY_ID } from '../../../../packages/agents/src/generated/bundledAgentDefinitions';
 import { AGENT_IDS, BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '../../../../packages/agents/src/generated/agentIds';
-import { collectBundledAgentContributionIdentities } from './generateBundledPluginEntries.ts';
+import { collectBundledAgentContributionIdentities, runRuntimeConsumedAgentFactsPrivatePhase } from './generateBundledPluginEntries.ts';
 import { renderAgentIdsTs } from './bundledPlugins/agentFacts.ts';
 import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from '../../src/plugins/projection/registry/sources/generatedBundledPluginManifests';
 import { readGeneratorAuthoringSourceFingerprint, readGeneratorHostProjectionCurrentness } from './generateBundledPluginEntries.ts';
@@ -159,6 +159,49 @@ function sourceBetween(startMarker: string, endMarker: string, source = generato
 }
 
 describe('generated output ownership', () => {
+  it('refreshes early Agent facts from authored metadata without evaluating unrelated projections', async () => {
+    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happier-bounded-agent-facts-');
+    const packageRoot = writeBundledPluginSourceInputs({ repoRoot, pluginId: 'claude' });
+    const unrelatedRoot = writeBundledPluginSourceInputs({ repoRoot, pluginId: 'unrelated' });
+    writeCliBundledHostPackage({ happyCliDir, bundledDependencies: ['@happier-dev/plugins-claude', '@happier-dev/plugins-unrelated'] });
+    const locator = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.find((entry) => entry.pluginId === 'happier.agent.claude');
+    if (!locator) throw new Error('Missing Claude declaration fixture');
+    const ingestion = ingestPluginManifestV2(locator.manifest);
+    if (!ingestion.ok) throw new Error(JSON.stringify(ingestion.diagnostics));
+    const agent = ingestion.manifest.contributes.agents?.[0];
+    if (!agent?.cli) throw new Error('Missing Claude CLI metadata fixture');
+    const manifest = { ...ingestion.manifest, contributes: { ...ingestion.manifest.contributes,
+      agents: [{ ...agent, cli: { ...agent.cli, displayName: 'Current authored Agent' } }],
+    } };
+    writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({ name: '@happier-dev/plugins-claude', version: '0.0.0' }));
+    writeFileSync(join(packageRoot, 'src/manifest.ts'), `export const PLUGIN_MANIFEST = ${JSON.stringify(manifest)};`);
+    mkdirSync(join(packageRoot, 'src/agent'), { recursive: true });
+    writeFileSync(join(packageRoot, 'src/agent/definition.ts'), `export const AGENT_DEFINITION = ${JSON.stringify(claudeDefinition.AGENT_DEFINITION)}; export const AGENT_STATE_SHARING_DESCRIPTOR = ${JSON.stringify(claudeDefinition.AGENT_STATE_SHARING_DESCRIPTOR)};`);
+    mkdirSync(join(packageRoot, 'src/ui'), { recursive: true });
+    writeFileSync(join(packageRoot, 'src/ui/descriptor.ts'), 'throw new Error("UI is not an early Agent-facts input");');
+    writeFileSync(join(unrelatedRoot, 'src/manifest.ts'), 'throw new Error("Non-Agent manifest is not an early Agent-facts input");');
+    const outPath = join(repoRoot, 'packages/agents/src/generated/bundledAgentDefinitions.ts');
+    try {
+      await withWorkspaceBundleLock(async (lease) => {
+        await runRuntimeConsumedAgentFactsPrivatePhase(repoRoot, lease);
+      }, { lockPath: join(repoRoot, 'publication.lock') });
+      const first = readFileSync(outPath, 'utf8');
+      expect(first).toContain('Current authored Agent');
+      expect(first).toContain('CLAUDE_CONFIG_DIR');
+      manifest.contributes.agents[0].cli.displayName = 'Updated authored Agent';
+      writeFileSync(join(packageRoot, 'src/manifest.ts'), `export const PLUGIN_MANIFEST = ${JSON.stringify(manifest)};`);
+      await withWorkspaceBundleLock(async (lease) => {
+        await runRuntimeConsumedAgentFactsPrivatePhase(repoRoot, lease);
+      }, { lockPath: join(repoRoot, 'publication.lock') });
+      expect(readFileSync(outPath, 'utf8')).toContain('Updated authored Agent');
+      const published = readFileSync(outPath, 'utf8');
+      writeFileSync(join(packageRoot, 'src/agent/definition.ts'), 'throw new Error("Required Agent definition failed");');
+      await expect(withWorkspaceBundleLock(async (lease) => {
+        await runRuntimeConsumedAgentFactsPrivatePhase(repoRoot, lease);
+      }, { lockPath: join(repoRoot, 'publication.lock') })).rejects.toThrow(/required by host code/u);
+      expect(readFileSync(outPath, 'utf8')).toBe(published);
+    } finally { cleanup(); }
+  }, 30_000);
   it('retains source catalog identities when optional Agent publication is unavailable', () => {
     const identities = collectBundledAgentContributionIdentities([], {
       agents: { AGENT_IDS, BUNDLED_AGENT_CONTRIBUTION_IDENTITIES },
@@ -455,19 +498,21 @@ describe('generator workspace lock policy', () => {
     );
 
     expect(generatorSource).not.toContain('beforeRuntimeStaging');
-    expect(privatePhase).toContain('await collectBundledPluginSourcePackages({');
-    expect(privatePhase.indexOf('throwBundledPluginPackageFailures('))
-      .toBeLessThan(privatePhase.indexOf('publishCoherentProjectionOutputs('));
+    expect(privatePhase).not.toContain('await collectBundledPluginSourcePackages({');
+    expect(privatePhase).not.toContain("await loadPluginAuthorRuntimeForScope('full')");
     expect(privatePhase.indexOf('collectBundledAgentDefinitionProjection('))
       .toBeLessThan(privatePhase.indexOf('publishCoherentProjectionOutputs('));
     expect(mainSource).toContain('await publishGeneratedCompilerInputs(options, publicationLease);');
     expect(mainSource).not.toContain('await runCanonicalPluginSdkGeneratedCompilerInputs({');
     expect(mainSource.indexOf('await publishGeneratedCompilerInputs(options, publicationLease);'))
-      .toBeLessThan(mainSource.indexOf('await runRuntimeConsumedAgentFactsPrivateChild(argv, inheritedLockValue);'));
-    expect(mainSource).toContain('await runRuntimeConsumedAgentFactsPrivateChild(argv, inheritedLockValue);');
+      .toBeLessThan(mainSource.indexOf('await runRuntimeConsumedAgentFactsPrivateChild(argv, inheritedLockValue, dependencyCurrentness);'));
+    expect(mainSource).toContain('await runRuntimeConsumedAgentFactsPrivateChild(argv, inheritedLockValue, dependencyCurrentness);');
+    const childPreparation = sourceBetween('async function runRuntimeConsumedAgentFactsPrivateChild(', 'async function runGeneratorPrivateChild(');
+    expect(childPreparation).not.toContain('readGeneratorDependencyCurrentness(');
     expect(privatePhase).not.toContain('await synchronizeGeneratorAuthoringRuntimeClosure(');
     expect(mainSource).not.toContain('inheritedLockValue: publicationLease.heldLockValue');
-    expect(directEntry).toContain('async () => await synchronizeGeneratorAuthoringRuntimeClosure(');
+    expect(directEntry).not.toContain('async () => await synchronizeGeneratorAuthoringRuntimeClosure(');
+    expect(directEntry).toContain('prepared.dependencyCurrentness');
     expect(directEntry).toContain('PRIVATE_RUNTIME_CONSUMED_AGENT_FACTS_PHASE_ENV');
     expect(directEntry.indexOf('delete process.env[PRIVATE_RUNTIME_CONSUMED_AGENT_FACTS_PHASE_ENV];'))
       .toBeLessThan(directEntry.indexOf('runRuntimeConsumedAgentFactsPrivatePhase('));
@@ -918,14 +963,17 @@ describe('bundled plugin UI translation aggregation', () => {
       "type Known = Assert<'plugins.example.message599' extends BundledPluginTranslationKey ? true : false>;",
       "type OtherLocale = Assert<'plugins.example.frenchOnly' extends BundledPluginTranslationKey ? true : false>;",
       "type Unknown = Assert<'plugins.example.missing' extends BundledPluginTranslationKey ? false : true>;",
-      "export const translated: string = BUNDLED_PLUGIN_TRANSLATIONS.en['plugins.example.message599'];",
+      "export const translated: string | undefined = BUNDLED_PLUGIN_TRANSLATIONS.en['plugins.example.message599'];",
+      "export const missing: string | undefined = BUNDLED_PLUGIN_TRANSLATIONS.en['plugins.example.frenchOnly'];",
+      '// @ts-expect-error A locale may omit a key present in another locale.',
+      "export const required: string = BUNDLED_PLUGIN_TRANSLATIONS.en['plugins.example.frenchOnly'];",
     ].join('\n'));
     try {
       execFileSync(process.execPath, [
-        'scripts/workspaces/runTypeScriptCli.mjs', '--declaration', '--emitDeclarationOnly',
+        'scripts/workspaces/runTypeScriptCli.mjs', '--strict', '--declaration', '--emitDeclarationOnly',
         '--target', 'ES2022', '--module', 'ESNext', '--moduleResolution', 'Bundler',
         '--skipLibCheck', '--outDir', join(root, 'declarations'), generated, consumer,
-      ], { cwd: new URL('../../../../', import.meta.url), stdio: 'pipe' });
+      ], { cwd: new URL('../../../../', import.meta.url), stdio: 'inherit' });
       const declaration = readFileSync(join(root, 'declarations/translations.d.ts'), 'utf8');
       expect(declaration.length).toBeLessThan(source.length / 4);
     } finally { rmSync(root, { recursive: true, force: true }); }
