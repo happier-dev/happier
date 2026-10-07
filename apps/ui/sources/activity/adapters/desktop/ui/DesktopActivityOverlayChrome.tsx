@@ -275,7 +275,7 @@ export function createDesktopActivityOverlayInteriorSurfaceStyle(
  * island chrome is a fixed near-black surface in both themes, and the light (`#007AFF`) and dark
  * (`#9EB9FF`) rings both clear the 3:1 non-text contrast ratio against it.
  */
-export function createDesktopActivityOverlayFocusRingStyle(theme: Theme, focused: boolean | undefined) {
+export function createDesktopActivityOverlayFocusRingStyle(theme: Theme, focused: boolean | undefined): ReturnType<typeof focusRingStyle> {
     return focusRingStyle({ focused: resolveHappierFocusRingVisible(focused), color: theme.colors.border.focus, placement: 'inset' });
 }
 

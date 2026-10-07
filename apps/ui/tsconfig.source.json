@@ -3661,6 +3661,7 @@
     "sources/components/widgets/definitions/widgetSnapshotCapture.ts",
     "sources/components/widgets/flow/WidgetFlowPanel.tsx",
     "sources/components/widgets/flow/WidgetFlowShell.tsx",
+    "sources/components/widgets/flow/WidgetPreviewStage.tsx",
     "sources/components/widgets/frame/WidgetFrame.tsx",
     "sources/components/widgets/frame/WidgetSizeControl.tsx",
     "sources/components/widgets/frame/useWidgetFrameRename.tsx",
