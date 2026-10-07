@@ -150,6 +150,7 @@ import {
   buildVisibleMessageDescriptor,
   hasDescriptorFields,
   renderBundledPluginTranslationsTs,
+  renderBundledPluginTranslationKeysTs,
   renderBundledSessionAgentBehaviorsTs,
   renderBundledUiBehaviorOverridesTs,
   renderBundledVisibleMessageResolversTs,
@@ -3048,57 +3049,15 @@ export async function runRuntimeConsumedAgentFactsPrivatePhase(
 ): Promise<void> {
   // Early facts consume Agent definitions and their manifest CLI metadata only.
   // UI, prompt, account and runtime validation belongs to the full publication.
-  await publishSourceAgentDefinitions({ rootDir: repoRoot, mode: 'write' }, publicationContext, 'authored');
+  await publishSourceAgentDefinitions({ rootDir: repoRoot, mode: 'write' }, publicationContext);
 }
 
 /** Refresh data-only Agent facts with the canonical loader, projection and writer. */
 async function publishSourceAgentDefinitions(
   options: Pick<GeneratorOptions, 'rootDir' | 'mode'>,
   publicationContext: WorkspaceBundleLockContext,
-  manifestSource: 'tracked' | 'authored' = 'tracked',
 ): Promise<void> {
-  const parser = await importCanonicalWorkspaceModule('@happier-dev/protocol', 'plugins/manifest') as ProtocolManifestWorkspaceModule;
-  // The tracked projection is the clean-checkout declaration authority. Packed
-  // plugin.json files are publication outputs and need not exist before builds.
-  const manifestProjection = manifestSource === 'tracked' ? await import(pathToFileURL(resolve(options.rootDir,
-    'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts')).href) as Readonly<{
-      BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS: readonly Readonly<{ pluginId: string; manifest: unknown; sourceSpec: { locator: string } }>[];
-  }> : undefined;
-  const definitions = await withTypescriptModuleInspectionSession(async () => {
-    const entries: Pick<BundledPluginPackage, 'agentId' | 'agentDefinition' | 'agentNativeHomeEnvironmentKeys'>[] = [];
-    for (const packageName of readBundledPluginPackageNames(options.rootDir)) {
-      const pluginPackageId = pluginPackageNameToPackageId(packageName);
-      const packageRoot = resolve(options.rootDir, 'packages/plugins', pluginPackageId);
-      const definitionPath = resolve(packageRoot, 'src/agent/definition.ts');
-      if (!existsSync(definitionPath)) continue;
-      try {
-        const locator = manifestProjection?.BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.find((entry) => entry.sourceSpec.locator === packageName);
-        const manifest = manifestSource === 'authored'
-          ? await loadPluginManifest(options.rootDir, pluginPackageId, { protocol: parser })
-          : locator ? normalizePluginManifest(locator.manifest, `bundled:${locator.pluginId}`, parser) : undefined;
-        if (!manifest) throw new Error(`Missing tracked bundled plugin declaration: ${packageName}`);
-        const sourceFacts = await loadPluginAgentDefinitionFacts(options.rootDir, pluginPackageId);
-        const definition = projectNativeAgentCliDefinitionFacts(
-          sourceFacts.agentDefinition,
-          manifest,
-          pluginPackageId,
-        );
-        rejectRetiredAgentRuntimeContributionsAggregate(definition, definitionPath);
-        if (!isRecord(definition) || typeof definition.id !== 'string') {
-          throw new Error(`Invalid Agent definition at ${definitionPath}`);
-        }
-        entries.push({ agentId: definition.id, agentDefinition: definition,
-          agentNativeHomeEnvironmentKeys: sourceFacts.agentNativeHomeEnvironmentKeys });
-      } catch (error) {
-        if (manifestSource === 'tracked') throw error;
-        // Retain the existing early-phase optional-plugin policy. The full
-        // publisher retries and records these failures; required owners throw.
-        createBundledPluginPublicationFailure({ repoRoot: options.rootDir, packageName,
-          code: 'plugin_manifest_invalid', error });
-      }
-    }
-    return collectBundledAgentDefinitionProjection(entries);
-  });
+  const definitions = await readBundledSourceAgentDefinitionProjection(options.rootDir);
   const outPath = resolve(options.rootDir, 'packages/agents/src/generated/bundledAgentDefinitions.ts');
   const out = renderBundledAgentDefinitionsTs({
     agentIds: definitions.agentIds,
@@ -3107,6 +3066,55 @@ async function publishSourceAgentDefinitions(
   });
   if (options.mode === 'check') assertGeneratedOutputMatches(outPath, out);
   else publishCoherentProjectionOutputs(options.rootDir, [{ outPath, out }], publicationContext);
+}
+
+async function readBundledSourceAgentDefinitionProjection(
+  repoRoot: string,
+  preparedPluginPackages: readonly BundledPluginPackage[] = [],
+) {
+  const parser = await importCanonicalWorkspaceModule('@happier-dev/protocol', 'plugins/manifest') as ProtocolManifestWorkspaceModule;
+  // The tracked projection is the clean-checkout declaration authority. Packed
+  // plugin.json files and executable manifests need not be usable before builds.
+  // Static catalog facts survive optional executable-plugin failures.
+  const manifestProjection = await import(pathToFileURL(resolve(repoRoot,
+    'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts')).href) as Readonly<{
+      BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS: readonly Readonly<{ pluginId: string; manifest: unknown; sourceSpec: { locator: string } }>[];
+  }>;
+  return await withTypescriptModuleInspectionSession(async () => {
+    const entries: Pick<BundledPluginPackage, 'agentId' | 'agentDefinition' | 'agentNativeHomeEnvironmentKeys'>[] = [];
+    for (const packageName of readBundledPluginPackageNames(repoRoot)) {
+      const pluginPackageId = pluginPackageNameToPackageId(packageName);
+      const prepared = preparedPluginPackages.find((entry) => entry.packageName === packageName);
+      if (prepared?.agentDefinition !== undefined) {
+        entries.push(prepared);
+        continue;
+      }
+      const packageRoot = resolve(repoRoot, 'packages/plugins', pluginPackageId);
+      const definitionPath = resolve(packageRoot, 'src/agent/definition.ts');
+      const locator = manifestProjection.BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.find((entry) => entry.sourceSpec.locator === packageName);
+      if (!existsSync(definitionPath)) {
+        if (locator && readManifestContributionArray(locator.manifest, 'agents').length > 0) {
+          throw new Error(`Missing required agent definition at ${definitionPath}`);
+        }
+        continue;
+      }
+      const manifest = locator ? normalizePluginManifest(locator.manifest, `bundled:${locator.pluginId}`, parser) : undefined;
+      if (!manifest) throw new Error(`Missing tracked bundled plugin declaration: ${packageName}`);
+      const sourceFacts = await loadPluginAgentDefinitionFacts(repoRoot, pluginPackageId);
+      const definition = projectNativeAgentCliDefinitionFacts(
+        sourceFacts.agentDefinition,
+        manifest,
+        pluginPackageId,
+      );
+      rejectRetiredAgentRuntimeContributionsAggregate(definition, definitionPath);
+      if (!isRecord(definition) || typeof definition.id !== 'string') {
+        throw new Error(`Invalid Agent definition at ${definitionPath}`);
+      }
+      entries.push({ agentId: definition.id, agentDefinition: definition,
+        agentNativeHomeEnvironmentKeys: sourceFacts.agentNativeHomeEnvironmentKeys });
+    }
+    return collectBundledAgentDefinitionProjection(entries);
+  });
 }
 
 async function runRuntimeConsumedAgentFactsPrivateChild(
@@ -4778,7 +4786,7 @@ async function generateBundledPluginEntries(
   assertNoBundledPluginPublicationFailures(failures, options.mode);
   const bundledVoiceProjectionSources = bundledVoiceProjection.sources;
   const packageNames = pluginPackages.map((entry) => entry.packageName);
-  const bundledAgentDefinitionProjection = collectBundledAgentDefinitionProjection(pluginPackages);
+  const bundledAgentDefinitionProjection = await readBundledSourceAgentDefinitionProjection(options.rootDir, pluginPackages);
   const bundledAgentDefinitionIds = bundledAgentDefinitionProjection.agentIds;
   const generatedAgentIds = collectGeneratedAgentIds(bundledAgentDefinitionIds, dependencies);
   const agentDefinitionsById = bundledAgentDefinitionProjection.agentDefinitionsById;
@@ -4875,6 +4883,14 @@ async function generateBundledPluginEntries(
   );
   const uiOut = renderUiBundledPluginEntriesTs({ packageNames, pluginPackages });
   const uiTranslationsOut = renderBundledPluginTranslationsTs(bundledPluginUiTranslations);
+  const uiTranslationLocaleOutputs = Object.keys(bundledPluginUiTranslations).sort().map((locale) => ({
+    outPath: join(dirname(uiTranslationsOutPath), 'bundledPluginTranslations', `${locale}.generated.ts`),
+    out: renderBundledPluginTranslationsTs(bundledPluginUiTranslations, locale),
+  }));
+  uiTranslationLocaleOutputs.push({
+    outPath: join(dirname(uiTranslationsOutPath), 'bundledPluginTranslationKeys.generated.ts'),
+    out: renderBundledPluginTranslationKeysTs(bundledPluginUiTranslations),
+  });
   const uiBehaviorOverridesOut = renderBundledUiBehaviorOverridesTs(agentUiBehaviorDescriptorSources);
   const sessionAgentBehaviorsOut = renderBundledSessionAgentBehaviorsTs(sessionAgentBehaviorSources);
   const visibleMessageResolversOut = renderBundledVisibleMessageResolversTs(visibleMessageResolverSources);
@@ -4921,6 +4937,9 @@ async function generateBundledPluginEntries(
     assertGeneratedOutputMatches(protocolExternalSessionSourcesOutPath, protocolExternalSessionSourcesOut);
     assertGeneratedOutputMatches(uiOutPath, uiOut);
     assertGeneratedOutputMatches(uiTranslationsOutPath, uiTranslationsOut);
+    for (const output of uiTranslationLocaleOutputs) {
+      assertGeneratedOutputMatches(output.outPath, output.out);
+    }
     assertGeneratedOutputMatches(uiBehaviorOverridesOutPath, uiBehaviorOverridesOut);
     assertGeneratedOutputMatches(sessionAgentBehaviorsOutPath, sessionAgentBehaviorsOut);
     assertGeneratedOutputMatches(visibleMessageResolversOutPath, visibleMessageResolversOut);
@@ -4954,6 +4973,7 @@ async function generateBundledPluginEntries(
     { outPath: protocolExternalSessionSourcesOutPath, out: protocolExternalSessionSourcesOut },
     { outPath: uiOutPath, out: uiOut },
     { outPath: uiTranslationsOutPath, out: uiTranslationsOut },
+    ...uiTranslationLocaleOutputs,
     { outPath: uiBehaviorOverridesOutPath, out: uiBehaviorOverridesOut },
     { outPath: sessionAgentBehaviorsOutPath, out: sessionAgentBehaviorsOut },
     { outPath: visibleMessageResolversOutPath, out: visibleMessageResolversOut },
