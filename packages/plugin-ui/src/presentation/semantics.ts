@@ -22,6 +22,7 @@ export type HappierTone =
   | 'info'
   | 'success'
   | 'warning'
+  | 'attention'
   | 'danger'
   | 'accent';
 
@@ -36,6 +37,8 @@ export const HAPPIER_TONE_COLOR_TOKEN = {
   info: 'info',
   success: 'success',
   warning: 'warning',
+  /** "Needs you" — the host's attention ink; `warning` stays a caution. */
+  attention: 'attention',
   danger: 'danger',
   accent: 'accent',
 } as const satisfies Record<HappierTone, string>;

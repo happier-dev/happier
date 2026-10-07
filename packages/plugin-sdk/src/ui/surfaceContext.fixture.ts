@@ -27,6 +27,7 @@ export const SURFACE_CONTEXT_THEME_FIXTURE: PluginUiThemeV1 = {
         onAccent: '#ffffff',
         success: '#34c759',
         warning: '#ff9500',
+        attention: '#945200',
         danger: '#ff3b30',
         info: '#5856d6',
         control: '#252525',

@@ -74,6 +74,8 @@ describe('foundation presentation families', () => {
     expect(resolveHappierProgressPercentage(1.2, { indeterminate: 0.15, minimumVisible: 0.04 })).toBe(100);
     expect(resolveHappierProgressPercentage(Number.NaN, { indeterminate: 0.15, minimumVisible: 0.04 })).toBe(15);
     expect(isHappierBannerUrgent('warning')).toBe(true);
+    // "Needs you" speaks like a warning: announced, with the warning mark.
+    expect(isHappierBannerUrgent('attention')).toBe(true);
     expect(isHappierBannerUrgent('neutral')).toBe(false);
   });
 

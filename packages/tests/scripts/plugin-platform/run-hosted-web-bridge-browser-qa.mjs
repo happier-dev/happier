@@ -68,7 +68,7 @@ function surfaceSnapshot(overrides = {}) {
         canvas: '#101014', surface: '#17171c', elevatedSurface: '#1e1e24', text: '#f5f5f7',
         secondaryText: '#b9b9c2', mutedText: '#8a8a95', border: '#2c2c34', divider: '#24242b',
         focus: '#6f8cff', accent: '#6f8cff', onAccent: '#0b0b0f', success: '#57c98a',
-        warning: '#e0b341', danger: '#e2606b', info: '#5fb6e5', control: '#22222a',
+        warning: '#e0b341', attention: '#e0b65a', danger: '#e2606b', info: '#5fb6e5', control: '#22222a',
         controlDisabled: '#1a1a20', overlay: '#00000099',
       },
       spacing: { xsmall: 4, small: 8, medium: 12, large: 16, xlarge: 24 },

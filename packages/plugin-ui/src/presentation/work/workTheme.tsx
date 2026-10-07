@@ -79,7 +79,7 @@ export function resolveHappierWorkTheme(
       hover: palette.navigationHover,
       selected: palette.navigationSelected,
       focus: colors.focus,
-      attention: snapshotState(colors.warning, colors.surface),
+      attention: snapshotState(colors.attention, colors.surface),
       danger: snapshotState(colors.danger, colors.surface),
     },
     spacing: { xsmall: base.spacing.xsmall, small: base.spacing.small },
