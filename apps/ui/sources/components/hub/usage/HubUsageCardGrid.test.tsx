@@ -74,7 +74,11 @@ describe('HubUsageCardGrid identity privacy', () => {
             const shown = screen.getTextContent();
             expect(shown).toContain('leeroy@company.com');
             expect(shown).toContain('kevin@gmail.com');
-            expect(shown).toContain('acct_9f2c8e71');
+            // Without a name or an email the account reads as its service's account, never its raw id.
+            expect(shown).toContain('connectedServicesCollection.accountLabel');
+            expect(shown).not.toContain('acct_9f2c8e71');
+            // A name that is the email is said once.
+            expect(shown.split('kevin@gmail.com')).toHaveLength(2);
 
             await act(async () => {
                 storage.setState((state) => ({
@@ -87,7 +91,6 @@ describe('HubUsageCardGrid identity privacy', () => {
             // Enough stays to tell accounts apart (the hidden runs are blurred on the web, `•••` elsewhere).
             expect(hidden).toMatch(/le.*@c.*\.com/);
             expect(hidden).toMatch(/ke.*@g.*\.com/);
-            expect(hidden).toMatch(/acct_.*71/);
             expect(hidden).toContain('connectedServices.quota.remaining');
             expect(hidden).not.toContain('leeroy@company.com');
             expect(hidden).not.toContain('kevin@gmail.com');
@@ -100,7 +103,7 @@ describe('HubUsageCardGrid identity privacy', () => {
                 }));
             });
             expect(screen.getTextContent()).toContain('leeroy@company.com');
-            expect(screen.getTextContent()).toContain('acct_9f2c8e71');
+            expect(screen.getTextContent()).not.toContain('acct_9f2c8e71');
         } finally {
             standardCleanup();
             storage.setState(previousState, true);

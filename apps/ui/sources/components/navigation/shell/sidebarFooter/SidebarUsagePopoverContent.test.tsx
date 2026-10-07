@@ -206,6 +206,28 @@ describe('SidebarUsagePopoverContent', () => {
         expect(modalSpy).toHaveBeenCalledWith({ kind: 'reconnect', serviceKey: 'happier.agent.codex/openai-codex', accountId: 'w' });
     });
 
+    it('names every account by a name, its email or its service, never a raw id, and says an email once', async () => {
+        const uuid = '97bd5614-8970-4068-87f0-1d2c3b4a5e6f';
+        state.summaries = [
+            summary(`claude:${uuid}`, null, 74),
+            // Earlier producers stored the account id as its display name.
+            summary('claude:7e9ced1f-60ac-4618-bcf0-aa11bb22cc33', '7e9ced1f-60ac-4618-bcf0-aa11bb22cc33', 100),
+        ];
+        state.needingSignIn = [{
+            key: 'claude:s1', ref: { service: { pluginId: 'plugin.anthropic', localId: 'claude' }, accountId: 's1' },
+            serviceLabel: 'Anthropic Claude', legacyServiceId: 'claude', serviceGroupKey: 'plugin.anthropic/claude',
+            accountLabel: 'ai1@happier.dev', accountEmail: 'ai1@happier.dev', accountId: 's1',
+        }];
+        const text = (await renderContent()).getTextContent();
+
+        expect(text).not.toContain(uuid);
+        expect(text).not.toContain('7e9ced1f');
+        // Two accounts that both read as the service's account are told apart by number, never by id.
+        expect(text.split('connectedServicesCollection.accountLabel(service=Anthropic Claude)')).toHaveLength(2);
+        expect(text).toContain('connectedServicesCollection.accountLabelNumbered(service=Anthropic Claude,number=2)');
+        expect(text.split('ai1@happier.dev')).toHaveLength(2);
+    });
+
     describe('the one popover (rail and session)', () => {
         async function renderView(options: Readonly<{
             hidden?: boolean;
@@ -288,13 +310,14 @@ describe('SidebarUsagePopoverContent', () => {
         it('shows emails and ids as they are until the device hides them; names people gave stay', async () => {
             const shown = (await renderView()).getTextContent();
             expect(shown).toContain('leeroy@company.com');
-            expect(shown).toContain('Anthropic Claude · acct_9f2c8e71');
+            // An account with neither a name nor an email reads as its service's account, never its id.
+            expect(shown).toContain('connectedServicesCollection.accountLabel(service=Anthropic Claude)');
+            expect(shown).not.toContain('acct_9f2c8e71');
 
             const hidden = (await renderView({ hidden: true })).getTextContent();
             expect(hidden).toContain('Anthropic Claude · Work');
             expect(hidden).toContain('le•••@c•••.com');
             expect(hidden).toContain('ke•••@g•••.com');
-            expect(hidden).toContain('acct_•••71');
             expect(hidden).not.toContain('leeroy@company.com');
             expect(hidden).not.toContain('kevin@gmail.com');
             expect(hidden).not.toContain('acct_9f2c8e71');

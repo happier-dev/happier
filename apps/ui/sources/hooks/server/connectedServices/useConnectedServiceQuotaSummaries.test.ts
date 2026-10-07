@@ -280,6 +280,54 @@ describe('useConnectedServiceQuotaSummaries', () => {
         });
     });
 
+    it('names a built-in service by its own name before its descriptor projection arrives, never "Connected service"', async () => {
+        const { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } = await import('@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility');
+        const { resolveConnectedServiceDisplayName } = await import('@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName');
+        const { t } = await import('@/text');
+        const [legacyServiceId, compatibility] = Object.entries(BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID)[0]!;
+        const ref = { service: compatibility.service, accountId: '97bd5614-8970-4068-87f0-1d2c3b4a5e6f' } as const;
+        const account = {
+            ref,
+            status: 'connected',
+            authenticationModeId: 'oauth',
+            revisionSemantics: 'revisioned',
+            credentialRevision: 'revision-1',
+            configurationReady: true,
+            configurationRevision: null,
+            scopes: [],
+        } satisfies QualifiedConnectedAccountProfileV4;
+        const snapshot = QualifiedConnectedAccountQuotaSnapshotV4Schema.parse({
+            v: 1, ref, fetchedAt: 5, staleAfterMs: 60_000, planLabel: null, accountLabel: null, activeAccountId: ref.accountId,
+            meters: [{
+                meterId: 'weekly', label: 'Weekly', used: 40, limit: 100, unit: 'count', utilizationPct: null,
+                resetsAt: null, status: 'ok', confidence: 'exact', details: { limitCategory: 'usage_limit' },
+            }],
+        });
+        getQualifiedConnectedAccountQuotaV4Spy.mockResolvedValue(QualifiedConnectedAccountQuotaResponseV4Schema.parse({
+            ref,
+            sourceResolution: {
+                source: { ref, bindingKind: 'account' },
+                recordId: buildProviderAccountUsageRecordId({
+                    providerId: 'acme', accountSubjectId: ref.accountId, subjectKind: 'account', quotaScope: 'account',
+                }),
+                providerAccountId: ref.accountId,
+                fetchedAt: 5,
+                staleAfterMs: 60_000,
+            },
+            content: { t: 'plain', v: snapshot },
+            metadata: { fetchedAt: 5, staleAfterMs: 60_000, status: 'ok' },
+        }));
+        serverFeaturesState.current.features.capabilities.connectedServices.qualifiedAccounts = { protocolVersion: 4 };
+        useProfileSpy.mockReturnValue({ connectedAccountsV4: [account], connectedServicesV2: [] });
+
+        const { useConnectedServiceQuotaSummaries } = await import('./useConnectedServiceQuotaSummaries');
+        const seen = await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries({ fetchPolicy: 'once' }));
+
+        const named = resolveConnectedServiceDisplayName(legacyServiceId, t);
+        expect(named).not.toBe(t('connectedServices.fallbackName'));
+        expect(seen.at(-1)?.summaries[0]).toMatchObject({ serviceLabel: named, legacyServiceId });
+    });
+
     it('says which connected accounts have no usage yet: still being read, or read and unavailable', async () => {
         const ref = { service: { pluginId: 'acme.connected.accounts', localId: 'gateway' }, accountId: 'work' } as const;
         const account = {

@@ -60,19 +60,21 @@ describe('buildUsagePopoverSession', () => {
         expect(session.accountKey).toBe('happier.agent.claude%2Fclaude-subscription/lab');
         expect(session.scopeLine).toContain('sidebarFooter.usageSessionThroughPool(');
         expect(session.scopeLine).toContain('pool=Work pool');
-        expect(session.nextMove).toBe('sidebarFooter.usageNextInOrder(account=lab)');
+        // Without a name or an email the account reads as its service's account, never its raw id.
+        expect(session.nextMove).toMatch(/^sidebarFooter\.usageNextInOrder\(account=connectedServicesCollection\.accountLabel\(/);
+        expect(session.nextMove).not.toContain('account=lab');
     });
 
     it('names the pool\'s rule, never a member: most left, or it stays until you switch', async () => {
         const binding = { [SERVICE_KEY]: { source: 'connected', selection: 'group', groupId: 'work', profileId: 'lab' } };
         expect((await build(binding, { groups: [group({ strategy: 'least_limited', autoSwitch: true })] })).nextMove)
-            .toBe('sidebarFooter.usageNextMostLeft(account=lab)');
+            .toMatch(/^sidebarFooter\.usageNextMostLeft\(account=connectedServicesCollection\.accountLabel\(/);
         expect((await build(binding, { groups: [group({ strategy: 'least_limited', autoSwitch: false })] })).nextMove)
-            .toBe('sidebarFooter.usageNextStays(pool=Work pool,account=lab)');
+            .toMatch(/^sidebarFooter\.usageNextStays\(pool=Work pool,account=connectedServicesCollection\.accountLabel\(/);
         expect((await build(binding, { groups: [group({
             strategy: 'priority', autoSwitch: true,
             switchOn: { usageLimit: false, authExpired: true, accountChanged: true, refreshFailure: true },
-        })] })).nextMove).toBe('sidebarFooter.usageNextStays(pool=Work pool,account=lab)');
+        })] })).nextMove).toMatch(/^sidebarFooter\.usageNextStays\(pool=Work pool,account=connectedServicesCollection\.accountLabel\(/);
     });
 
     it('does not take the pool\'s current account for the session\'s when the binding does not name one', async () => {

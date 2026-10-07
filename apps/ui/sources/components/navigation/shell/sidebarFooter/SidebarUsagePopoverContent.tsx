@@ -40,6 +40,7 @@ import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected
 import type { ConnectedServiceQuotaRecoveryCreditsV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import type { ProviderAccountSubscriptionV1 } from '@happier-dev/protocol/connect/accountSubscription';
 import { t } from '@/text';
+import { presentConnectedAccountName } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -374,20 +375,26 @@ function withDividers(items: readonly React.ReactElement[]): React.ReactNode {
         : [<View key={`divider:${String(item.key)}`} style={styles.divider} />, item]));
 }
 
-function accountTitle(serviceLabel: string, name: string | null): string {
-    return name ? `${serviceLabel} · ${name}` : serviceLabel;
-}
-
 /**
- * One account's identity line through the one presenter: the name people gave it stays; its email
- * (on the right) and, with neither a name nor an email, its id follow "Hide account emails and IDs".
+ * One account's head line through the one naming rule (`presentConnectedAccountName`) and the one privacy
+ * presenter: "Service · Name" with its email (or a short provider id hint) on the right, or the service's
+ * account when it has neither a name nor an email. Never a raw account id.
  */
-function presentAccountIdentity(
+function presentAccountHeader(
     present: ConnectedAccountIdentityPresenter,
-    input: Readonly<{ label: string | null; email: string | null; accountId: string | null }>,
-): Readonly<{ name: string | null; email: string | null }> {
-    const shown = present(input);
-    return { name: shown.label ?? (shown.email ? null : shown.accountId), email: shown.email };
+    input: Readonly<{ serviceLabel: string; label: string | null; email: string | null; accountId: string | null }>,
+): Readonly<{ title: string; email: string | null }> {
+    const name = presentConnectedAccountName({
+        serviceTitle: input.serviceLabel,
+        displayName: input.label,
+        email: input.email,
+        accountId: input.accountId,
+        presentIdentity: present,
+    });
+    return {
+        title: name.serviceFallback ? name.primaryLabel : `${input.serviceLabel} · ${name.primaryLabel}`,
+        email: name.identityLabel,
+    };
 }
 
 /** An account's head: the bare service mark, "Service · Name", the plan, and the email on the right. */
@@ -418,7 +425,7 @@ const UsageAccountGroup = React.memo(function UsageAccountGroup(props: Readonly<
     now: number;
 }>) {
     const { account } = props;
-    const identity = presentAccountIdentity(props.present, account);
+    const identity = presentAccountHeader(props.present, { ...account, serviceLabel: props.serviceLabel });
     const stateLabel = account.windows.length > 0
         ? null
         : account.state === 'loading' ? t('common.loading') : t('common.unavailable');
@@ -426,7 +433,7 @@ const UsageAccountGroup = React.memo(function UsageAccountGroup(props: Readonly<
         <View testID={`sidebar-usage-account-${account.key}`} style={styles.group}>
             <AccountHeader
                 legacyServiceId={props.legacyServiceId}
-                title={accountTitle(props.serviceLabel, identity.name)}
+                title={identity.title}
                 planLabel={account.planLabel}
                 email={identity.email}
             />
@@ -501,7 +508,8 @@ const SignedOutAccount = React.memo(function SignedOutAccount(props: Readonly<{
 }>) {
     const { theme } = useUnistyles();
     const { account } = props;
-    const identity = presentAccountIdentity(props.present, {
+    const identity = presentAccountHeader(props.present, {
+        serviceLabel: account.serviceLabel,
         label: account.accountLabel,
         email: account.accountEmail,
         accountId: account.accountId,
@@ -510,7 +518,7 @@ const SignedOutAccount = React.memo(function SignedOutAccount(props: Readonly<{
         <View testID={`sidebar-usage-signed-out-${account.key}`} style={styles.group}>
             <AccountHeader
                 legacyServiceId={account.legacyServiceId}
-                title={accountTitle(account.serviceLabel, identity.name)}
+                title={identity.title}
                 planLabel={null}
                 email={identity.email}
             />
