@@ -1,5 +1,5 @@
 import { redactVoicePathLikeString } from '@/voice/shared/redactVoicePathLikeData';
-import { readBackendTargetRefV2 } from '@happier-dev/protocol';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 function asObject(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;

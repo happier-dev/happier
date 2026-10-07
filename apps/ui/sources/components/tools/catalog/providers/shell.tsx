@@ -1,4 +1,4 @@
-import { extractShellCommand, stripShellCommandPreludeForDisplay } from '@happier-dev/protocol';
+import { extractShellCommand, stripShellCommandPreludeForDisplay } from '@happier-dev/protocol/activity/shellCommand';
 import type { Metadata } from '@happier-dev/session-core/state';
 import type { ToolCall } from "@happier-dev/session-core/messages";
 import { resolvePath } from '@/utils/path/pathUtils';

@@ -4,7 +4,7 @@ import {
     isPluginTranscriptActivityContentTypeV1,
     MAX_PLUGIN_TRANSCRIPT_ACTIVITY_RESOURCE_BYTES_V1,
     PluginTranscriptActivityResourceSnapshotV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/contributions/ui/transcriptActivities';
 
 import {
     usePluginContextualResourceStoreOwner,

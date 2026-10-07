@@ -1,7 +1,7 @@
 import {
     resolveTerminalProvisioningVariantV2,
     type TerminalProvisioningV2Response,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/crypto/terminalProvisioningV2';
 import tweetnacl from 'tweetnacl';
 
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';

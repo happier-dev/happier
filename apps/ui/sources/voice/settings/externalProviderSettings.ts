@@ -1,15 +1,9 @@
-import {
-  compilePluginJsonSchema,
-  isValidPluginJsonSchemaValue,
-  ConnectedServiceBindingsV1Schema,
-  PersistedConnectedServiceBindingsV1Schema,
-  readBuiltInLegacyConnectedAccountServiceKeyIngress,
-  type ConnectedServiceId,
-  type PluginSettingFieldV2,
-  type VoiceProviderSettings,
-  type VoiceProviderSettingsPresentation,
-  type VoiceProviderSettingsJsonValueV1,
-} from '@happier-dev/protocol';
+import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import { ConnectedServiceBindingsV1Schema, PersistedConnectedServiceBindingsV1Schema, readBuiltInLegacyConnectedAccountServiceKeyIngress, type ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { PluginSettingFieldV2 } from '@happier-dev/protocol/plugins/contributions/settings';
+import type { VoiceProviderSettings, VoiceProviderSettingsPresentation } from '@happier-dev/protocol/plugins/contributions/voice';
+import type { VoiceProviderSettingsJsonValueV1 } from '@happier-dev/protocol/voice/realtime/providerSettings';
 
 export type ExternalVoiceProviderSettingsDescriptor = Readonly<{
   schemaVersion: 1 | 2;

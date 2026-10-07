@@ -1,5 +1,7 @@
 import * as React from 'react';
-import { ActionIdSchema, getActionSpec, resolveEffectiveActionInputFields } from '@happier-dev/protocol';
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { resolveEffectiveActionInputFields } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import { projectInputOptionsDependencies } from '@happier-dev/protocol/inputs';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { useStableValueBySignature } from '@/components/sessions/transcript/items/stableValueBySignature';

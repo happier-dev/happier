@@ -1,10 +1,8 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { isDataKeyAuthCredentials } from '@/auth/storage/tokenStorage';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
-import {
-    createAccountScopedCryptoMaterialSnapshotV1,
-    convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
-} from '@happier-dev/protocol';
+import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { decodeBase64 } from '@/encryption/base64';
 import { fetchAccountEncryptionCurrentness } from '@/sync/api/account/apiAccountEncryptionMode';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';

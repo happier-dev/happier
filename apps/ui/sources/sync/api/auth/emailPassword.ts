@@ -11,7 +11,7 @@ import {
     NativeEmailPasswordErrorResponseV1Schema,
     type NativeEmailPasswordLoginRequestV1,
     type NativeEmailPasswordUnlockRequestV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/auth/nativeAuthEmailRoutes';
 
 import type { ServerFetch } from '@/sync/http/client';
 import { HappyError } from '@/utils/errors/errors';

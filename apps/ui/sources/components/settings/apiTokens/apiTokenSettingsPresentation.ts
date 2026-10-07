@@ -1,9 +1,7 @@
-import {
-    isApiTokenGrantRestrictedV1,
-    type AccountApiTokenSummaryV1,
-    type ActionIdFamilyV1,
-    type ProviderBoundModelRef,
-} from '@happier-dev/protocol';
+import { isApiTokenGrantRestrictedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol/auth/accountApiTokens';
+import type { ActionIdFamilyV1 } from '@happier-dev/protocol/actions/actionIds';
+import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
 
 import type { StatusPillVariant } from '@/components/ui/status/StatusPill';
 import { t, type TranslationKeyNoParams } from '@/text';

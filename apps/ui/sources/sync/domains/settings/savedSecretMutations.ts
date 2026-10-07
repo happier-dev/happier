@@ -1,7 +1,7 @@
 import {
     AccountSettingsSavedSecretMutationError,
     applyAccountSettingsSavedSecretMutation,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 
 import type { SavedSecret } from './savedSecretTypes';
 

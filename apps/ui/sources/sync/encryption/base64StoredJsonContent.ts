@@ -1,7 +1,7 @@
 import {
     StoredJsonContentEnvelopeSchema,
     type StoredJsonContentEnvelope,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/storage/storedJsonContentEnvelope';
 
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 

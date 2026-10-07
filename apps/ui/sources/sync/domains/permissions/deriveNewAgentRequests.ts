@@ -1,4 +1,4 @@
-import { resolveAgentRequestKind, type AgentRequestKind } from '@happier-dev/protocol';
+import { resolveAgentRequestKind, type AgentRequestKind } from '@happier-dev/protocol/activity/agentRequestSummary';
 
 export type NewPermissionRequest = Readonly<{
   requestId: string;

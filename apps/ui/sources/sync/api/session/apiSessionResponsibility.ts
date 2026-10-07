@@ -1,14 +1,7 @@
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import {
-    SESSION_RESPONSIBILITY_ASSIGNEE_UNAVAILABLE_V1,
-    SessionResponsibilityCandidatesResponseSchema,
-    SetSessionResponsibilityResponseSchema,
-    V2SessionByIdResponseSchema,
-    getActionSpec,
-    type SessionResponsibilityCandidatesResponse,
-    type SessionResponsibilityCandidatePurposeV1,
-    type SetSessionResponsibilityResponse,
-} from '@happier-dev/protocol';
+import { SESSION_RESPONSIBILITY_ASSIGNEE_UNAVAILABLE_V1, SessionResponsibilityCandidatesResponseSchema, SetSessionResponsibilityResponseSchema, type SessionResponsibilityCandidatesResponse, type SessionResponsibilityCandidatePurposeV1, type SetSessionResponsibilityResponse } from '@happier-dev/protocol/sessions/access/sessionResponsibilityV1';
+import { V2SessionByIdResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import { runWithServerAccountScopeRequestGuard } from '@/sync/runtime/orchestration/serverScopedRpc/serverAccountScopeRequestGuard';
 import { SessionAccessApiError, SessionAccessApprovalPendingError, createSessionAccessClient } from './sessionAccessApi';

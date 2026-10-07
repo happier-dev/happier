@@ -1,7 +1,8 @@
 import { homeConnectServiceStepId } from '../home/selectHomeConnectInvitations';
 import type { ConnectedServiceSetupCatalogEntry, ConnectedServiceSetupTarget } from './ConnectedServiceSetupPanel';
 import { getConnectedServiceSetupPresentation } from '@/sync/domains/connectedServices/connectedServiceRegistry';
-import { parseQualifiedPluginContributionKey, QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 
 /** The same setup target travels from an inline block or a phone detail footer to the page. */
 export function buildConnectedServiceSetupRoute(target: ConnectedServiceSetupTarget) {

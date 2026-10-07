@@ -14,6 +14,770 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./actions/sessionTerminalActionFamily": {
+      "types": "./dist/actions/sessionTerminalActionFamily.d.ts",
+      "default": "./dist/actions/sessionTerminalActionFamily.js"
+    },
+    "./terminal/workspace": {
+      "types": "./dist/terminal/workspace.d.ts",
+      "default": "./dist/terminal/workspace.js"
+    },
+    "./account/accountJsonKv": {
+      "types": "./dist/account/accountJsonKv.d.ts",
+      "default": "./dist/account/accountJsonKv.js"
+    },
+    "./account/encryptionMigrate": {
+      "types": "./dist/account/encryptionMigrate.d.ts",
+      "default": "./dist/account/encryptionMigrate.js"
+    },
+    "./account/settings/accountRemoteAlertPolicy": {
+      "types": "./dist/account/settings/accountRemoteAlertPolicy.d.ts",
+      "default": "./dist/account/settings/accountRemoteAlertPolicy.js"
+    },
+    "./account/settings/accountSettingsHistoryRestoreV1": {
+      "types": "./dist/account/settings/accountSettingsHistoryRestoreV1.d.ts",
+      "default": "./dist/account/settings/accountSettingsHistoryRestoreV1.js"
+    },
+    "./account/settings/accountSettingsStoredContentEnvelope": {
+      "types": "./dist/account/settings/accountSettingsStoredContentEnvelope.d.ts",
+      "default": "./dist/account/settings/accountSettingsStoredContentEnvelope.js"
+    },
+    "./account/settings/attentionDeliveryPolicy": {
+      "types": "./dist/account/settings/attentionDeliveryPolicy.d.ts",
+      "default": "./dist/account/settings/attentionDeliveryPolicy.js"
+    },
+    "./account/settings/machineAdministrationSelectionsV1": {
+      "types": "./dist/account/settings/machineAdministrationSelectionsV1.d.ts",
+      "default": "./dist/account/settings/machineAdministrationSelectionsV1.js"
+    },
+    "./account/settings/peerMediationPreferencesV1": {
+      "types": "./dist/account/settings/peerMediationPreferencesV1.d.ts",
+      "default": "./dist/account/settings/peerMediationPreferencesV1.js"
+    },
+    "./account/settings/savedSecretResourceActionsV1": {
+      "types": "./dist/account/settings/savedSecretResourceActionsV1.d.ts",
+      "default": "./dist/account/settings/savedSecretResourceActionsV1.js"
+    },
+    "./account/settings/sessionAgentStartAllowListsV1": {
+      "types": "./dist/account/settings/sessionAgentStartAllowListsV1.d.ts",
+      "default": "./dist/account/settings/sessionAgentStartAllowListsV1.js"
+    },
+    "./account/settings/sessionReminderPresetsV1": {
+      "types": "./dist/account/settings/sessionReminderPresetsV1.d.ts",
+      "default": "./dist/account/settings/sessionReminderPresetsV1.js"
+    },
+    "./account/settings/workspaceFileViewerPreferencesV1": {
+      "types": "./dist/account/settings/workspaceFileViewerPreferencesV1.d.ts",
+      "default": "./dist/account/settings/workspaceFileViewerPreferencesV1.js"
+    },
+    "./acp/catalog/catalogMutationsV1": {
+      "types": "./dist/acp/catalog/catalogMutationsV1.d.ts",
+      "default": "./dist/acp/catalog/catalogMutationsV1.js"
+    },
+    "./actions/actionApprovalPresentation": {
+      "types": "./dist/actions/actionApprovalPresentation.d.ts",
+      "default": "./dist/actions/actionApprovalPresentation.js"
+    },
+    "./actions/actionDraftSeed": {
+      "types": "./dist/actions/actionDraftSeed.d.ts",
+      "default": "./dist/actions/actionDraftSeed.js"
+    },
+    "./actions/actionUiPlacements": {
+      "types": "./dist/actions/actionUiPlacements.d.ts",
+      "default": "./dist/actions/actionUiPlacements.js"
+    },
+    "./actions/agentBackendInventory": {
+      "types": "./dist/actions/agentBackendInventory.d.ts",
+      "default": "./dist/actions/agentBackendInventory.js"
+    },
+    "./actions/anchoredListOrderV1": {
+      "types": "./dist/actions/anchoredListOrderV1.d.ts",
+      "default": "./dist/actions/anchoredListOrderV1.js"
+    },
+    "./actions/appShellActionFamily": {
+      "types": "./dist/actions/appShellActionFamily.d.ts",
+      "default": "./dist/actions/appShellActionFamily.js"
+    },
+    "./actions/appUpdateActionFamily": {
+      "types": "./dist/actions/appUpdateActionFamily.d.ts",
+      "default": "./dist/actions/appUpdateActionFamily.js"
+    },
+    "./actions/composerIngressAction": {
+      "types": "./dist/actions/composerIngressAction.d.ts",
+      "default": "./dist/actions/composerIngressAction.js"
+    },
+    "./actions/executor/types": {
+      "types": "./dist/actions/executor/types.d.ts",
+      "default": "./dist/actions/executor/types.js"
+    },
+    "./actions/executor/workflowTriggerActions": {
+      "types": "./dist/actions/executor/workflowTriggerActions.d.ts",
+      "default": "./dist/actions/executor/workflowTriggerActions.js"
+    },
+    "./actions/findActionSpecs": {
+      "types": "./dist/actions/findActionSpecs.d.ts",
+      "default": "./dist/actions/findActionSpecs.js"
+    },
+    "./actions/listReorderAction": {
+      "types": "./dist/actions/listReorderAction.d.ts",
+      "default": "./dist/actions/listReorderAction.js"
+    },
+    "./actions/notificationConfigurationActionFamily": {
+      "types": "./dist/actions/notificationConfigurationActionFamily.d.ts",
+      "default": "./dist/actions/notificationConfigurationActionFamily.js"
+    },
+    "./actions/scopeActionFamily": {
+      "types": "./dist/actions/scopeActionFamily.d.ts",
+      "default": "./dist/actions/scopeActionFamily.js"
+    },
+    "./actions/sessionCanvasActionFamily": {
+      "types": "./dist/actions/sessionCanvasActionFamily.d.ts",
+      "default": "./dist/actions/sessionCanvasActionFamily.js"
+    },
+    "./actions/sessionCanvasActionIds": {
+      "types": "./dist/actions/sessionCanvasActionIds.d.ts",
+      "default": "./dist/actions/sessionCanvasActionIds.js"
+    },
+    "./actions/sessionModeIds": {
+      "types": "./dist/actions/sessionModeIds.d.ts",
+      "default": "./dist/actions/sessionModeIds.js"
+    },
+    "./actions/sessionOrganizationMoveAction": {
+      "types": "./dist/actions/sessionOrganizationMoveAction.d.ts",
+      "default": "./dist/actions/sessionOrganizationMoveAction.js"
+    },
+    "./actions/specs/homeHub": {
+      "types": "./dist/actions/specs/homeHub.d.ts",
+      "default": "./dist/actions/specs/homeHub.js"
+    },
+    "./actions/specs/machineConnection": {
+      "types": "./dist/actions/specs/machineConnection.d.ts",
+      "default": "./dist/actions/specs/machineConnection.js"
+    },
+    "./actions/voiceConversationActionFamily": {
+      "types": "./dist/actions/voiceConversationActionFamily.d.ts",
+      "default": "./dist/actions/voiceConversationActionFamily.js"
+    },
+    "./actions/workflowAuthoringAction": {
+      "types": "./dist/actions/workflowAuthoringAction.d.ts",
+      "default": "./dist/actions/workflowAuthoringAction.js"
+    },
+    "./actions/workspaceActionFamily": {
+      "types": "./dist/actions/workspaceActionFamily.d.ts",
+      "default": "./dist/actions/workspaceActionFamily.js"
+    },
+    "./activity/eventIdentity": {
+      "types": "./dist/activity/eventIdentity.d.ts",
+      "default": "./dist/activity/eventIdentity.js"
+    },
+    "./activity/live/remoteUpdateCapabilities": {
+      "types": "./dist/activity/live/remoteUpdateCapabilities.d.ts",
+      "default": "./dist/activity/live/remoteUpdateCapabilities.js"
+    },
+    "./approvals/approvalExecutionFailure": {
+      "types": "./dist/approvals/approvalExecutionFailure.d.ts",
+      "default": "./dist/approvals/approvalExecutionFailure.js"
+    },
+    "./artifacts/artifactAccountEncryptionMigrationV1": {
+      "types": "./dist/artifacts/artifactAccountEncryptionMigrationV1.d.ts",
+      "default": "./dist/artifacts/artifactAccountEncryptionMigrationV1.js"
+    },
+    "./auth/accountAdmission": {
+      "types": "./dist/auth/accountAdmission.d.ts",
+      "default": "./dist/auth/accountAdmission.js"
+    },
+    "./auth/accountErasure": {
+      "types": "./dist/auth/accountErasure.d.ts",
+      "default": "./dist/auth/accountErasure.js"
+    },
+    "./auth/errors": {
+      "types": "./dist/auth/errors.d.ts",
+      "default": "./dist/auth/errors.js"
+    },
+    "./auth/nativeAuthOneTimeOperation": {
+      "types": "./dist/auth/nativeAuthOneTimeOperation.d.ts",
+      "default": "./dist/auth/nativeAuthOneTimeOperation.js"
+    },
+    "./auth/providers": {
+      "types": "./dist/auth/providers.d.ts",
+      "default": "./dist/auth/providers.js"
+    },
+    "./automations/automationColumnBoundsV1": {
+      "types": "./dist/automations/automationColumnBoundsV1.d.ts",
+      "default": "./dist/automations/automationColumnBoundsV1.js"
+    },
+    "./automations/automationEventFilterV1": {
+      "types": "./dist/automations/automationEventFilterV1.d.ts",
+      "default": "./dist/automations/automationEventFilterV1.js"
+    },
+    "./automations/automationEventJsonBoundsV1": {
+      "types": "./dist/automations/automationEventJsonBoundsV1.d.ts",
+      "default": "./dist/automations/automationEventJsonBoundsV1.js"
+    },
+    "./automations/automationEventSourceStatusV1": {
+      "types": "./dist/automations/automationEventSourceStatusV1.d.ts",
+      "default": "./dist/automations/automationEventSourceStatusV1.js"
+    },
+    "./automations/automationLegacyWorkflowV1": {
+      "types": "./dist/automations/automationLegacyWorkflowV1.d.ts",
+      "default": "./dist/automations/automationLegacyWorkflowV1.js"
+    },
+    "./automations/automationSessionLifecycle": {
+      "types": "./dist/automations/automationSessionLifecycle.d.ts",
+      "default": "./dist/automations/automationSessionLifecycle.js"
+    },
+    "./automations/automationTriggerDefinition": {
+      "types": "./dist/automations/automationTriggerDefinition.d.ts",
+      "default": "./dist/automations/automationTriggerDefinition.js"
+    },
+    "./automations/automationTriggerIdentity": {
+      "types": "./dist/automations/automationTriggerIdentity.d.ts",
+      "default": "./dist/automations/automationTriggerIdentity.js"
+    },
+    "./automations/automationTriggerProjectionV1": {
+      "types": "./dist/automations/automationTriggerProjectionV1.d.ts",
+      "default": "./dist/automations/automationTriggerProjectionV1.js"
+    },
+    "./boards/actionsV1": {
+      "types": "./dist/boards/actionsV1.d.ts",
+      "default": "./dist/boards/actionsV1.js"
+    },
+    "./boards/workBoardV1": {
+      "types": "./dist/boards/workBoardV1.d.ts",
+      "default": "./dist/boards/workBoardV1.js"
+    },
+    "./browser/adapters/kinds": {
+      "types": "./dist/browser/adapters/kinds.d.ts",
+      "default": "./dist/browser/adapters/kinds.js"
+    },
+    "./browser/automation/errors": {
+      "types": "./dist/browser/automation/errors.d.ts",
+      "default": "./dist/browser/automation/errors.js"
+    },
+    "./browser/diagnostics/egress/url": {
+      "types": "./dist/browser/diagnostics/egress/url.d.ts",
+      "default": "./dist/browser/diagnostics/egress/url.js"
+    },
+    "./browser/target/v1": {
+      "types": "./dist/browser/target/v1.d.ts",
+      "default": "./dist/browser/target/v1.js"
+    },
+    "./browser/view/v1": {
+      "types": "./dist/browser/view/v1.d.ts",
+      "default": "./dist/browser/view/v1.js"
+    },
+    "./common/probedResourceCache": {
+      "types": "./dist/common/probedResourceCache.d.ts",
+      "default": "./dist/common/probedResourceCache.js"
+    },
+    "./connect/configurationActionsV1": {
+      "types": "./dist/connect/configurationActionsV1.d.ts",
+      "default": "./dist/connect/configurationActionsV1.js"
+    },
+    "./connect/connectedAccountPurposeSelectionV1": {
+      "types": "./dist/connect/connectedAccountPurposeSelectionV1.d.ts",
+      "default": "./dist/connect/connectedAccountPurposeSelectionV1.js"
+    },
+    "./connect/connectedServiceCredentialKind": {
+      "types": "./dist/connect/connectedServiceCredentialKind.d.ts",
+      "default": "./dist/connect/connectedServiceCredentialKind.js"
+    },
+    "./connect/connectedServiceQuotaLimitSelection": {
+      "types": "./dist/connect/connectedServiceQuotaLimitSelection.d.ts",
+      "default": "./dist/connect/connectedServiceQuotaLimitSelection.js"
+    },
+    "./connect/connectedServiceQuotaMeterLabel": {
+      "types": "./dist/connect/connectedServiceQuotaMeterLabel.d.ts",
+      "default": "./dist/connect/connectedServiceQuotaMeterLabel.js"
+    },
+    "./connect/qualifiedConnectedAccountGroupRequestsV4": {
+      "types": "./dist/connect/qualifiedConnectedAccountGroupRequestsV4.d.ts",
+      "default": "./dist/connect/qualifiedConnectedAccountGroupRequestsV4.js"
+    },
+    "./crypto/accountScopedCipherEnvelope": {
+      "types": "./dist/crypto/accountScopedCipherEnvelope.d.ts",
+      "default": "./dist/crypto/accountScopedCipherEnvelope.js"
+    },
+    "./crypto/cryptoGoldenVectors": {
+      "types": "./dist/crypto/cryptoGoldenVectors.d.ts",
+      "default": "./dist/crypto/cryptoGoldenVectors.js"
+    },
+    "./crypto/publicShareCapabilityUrl": {
+      "types": "./dist/crypto/publicShareCapabilityUrl.d.ts",
+      "default": "./dist/crypto/publicShareCapabilityUrl.js"
+    },
+    "./devices/simulator/inputV1": {
+      "types": "./dist/devices/simulator/inputV1.d.ts",
+      "default": "./dist/devices/simulator/inputV1.js"
+    },
+    "./devices/simulator/sidebandV1": {
+      "types": "./dist/devices/simulator/sidebandV1.d.ts",
+      "default": "./dist/devices/simulator/sidebandV1.js"
+    },
+    "./drafts/sessionDrafts": {
+      "types": "./dist/drafts/sessionDrafts.d.ts",
+      "default": "./dist/drafts/sessionDrafts.js"
+    },
+    "./drafts/sessionDraftsV2": {
+      "types": "./dist/drafts/sessionDraftsV2.d.ts",
+      "default": "./dist/drafts/sessionDraftsV2.js"
+    },
+    "./execution/runs/completionInputV1": {
+      "types": "./dist/execution/runs/completionInputV1.d.ts",
+      "default": "./dist/execution/runs/completionInputV1.js"
+    },
+    "./features/payload/capabilities/deviceCapabilities": {
+      "types": "./dist/features/payload/capabilities/deviceCapabilities.d.ts",
+      "default": "./dist/features/payload/capabilities/deviceCapabilities.js"
+    },
+    "./features/payload/capabilities/homeSearchCapabilities": {
+      "types": "./dist/features/payload/capabilities/homeSearchCapabilities.d.ts",
+      "default": "./dist/features/payload/capabilities/homeSearchCapabilities.js"
+    },
+    "./features/payload/capabilities/peerMediationCapabilities": {
+      "types": "./dist/features/payload/capabilities/peerMediationCapabilities.d.ts",
+      "default": "./dist/features/payload/capabilities/peerMediationCapabilities.js"
+    },
+    "./features/payload/capabilities/petsCapabilities": {
+      "types": "./dist/features/payload/capabilities/petsCapabilities.d.ts",
+      "default": "./dist/features/payload/capabilities/petsCapabilities.js"
+    },
+    "./features/payload/capabilities/pluginDataCollectionsCapabilities": {
+      "types": "./dist/features/payload/capabilities/pluginDataCollectionsCapabilities.d.ts",
+      "default": "./dist/features/payload/capabilities/pluginDataCollectionsCapabilities.js"
+    },
+    "./features/payload/capabilities/sessionCapabilities": {
+      "types": "./dist/features/payload/capabilities/sessionCapabilities.d.ts",
+      "default": "./dist/features/payload/capabilities/sessionCapabilities.js"
+    },
+    "./features/payload/capabilities/sharingCapabilities": {
+      "types": "./dist/features/payload/capabilities/sharingCapabilities.d.ts",
+      "default": "./dist/features/payload/capabilities/sharingCapabilities.js"
+    },
+    "./features/payload/featureGatesSchema": {
+      "types": "./dist/features/payload/featureGatesSchema.d.ts",
+      "default": "./dist/features/payload/featureGatesSchema.js"
+    },
+    "./home/governance/projection": {
+      "types": "./dist/home/governance/projection.d.ts",
+      "default": "./dist/home/governance/projection.js"
+    },
+    "./identity/githubApps": {
+      "types": "./dist/identity/githubApps.d.ts",
+      "default": "./dist/identity/githubApps.js"
+    },
+    "./identity/providers": {
+      "types": "./dist/identity/providers.d.ts",
+      "default": "./dist/identity/providers.js"
+    },
+    "./launchProfiles/launchProfileArtifactV1": {
+      "types": "./dist/launchProfiles/launchProfileArtifactV1.d.ts",
+      "default": "./dist/launchProfiles/launchProfileArtifactV1.js"
+    },
+    "./llm/tasks/llmTaskRunnerConfigV1": {
+      "types": "./dist/llm/tasks/llmTaskRunnerConfigV1.d.ts",
+      "default": "./dist/llm/tasks/llmTaskRunnerConfigV1.js"
+    },
+    "./local/services/preview/diagnostics/v1": {
+      "types": "./dist/local/services/preview/diagnostics/v1.d.ts",
+      "default": "./dist/local/services/preview/diagnostics/v1.js"
+    },
+    "./machines/machineKind": {
+      "types": "./dist/machines/machineKind.d.ts",
+      "default": "./dist/machines/machineKind.js"
+    },
+    "./machines/peer/mediation/flowKind": {
+      "types": "./dist/machines/peer/mediation/flowKind.d.ts",
+      "default": "./dist/machines/peer/mediation/flowKind.js"
+    },
+    "./machines/peer/mediation/observability/flowSnapshotFold": {
+      "types": "./dist/machines/peer/mediation/observability/flowSnapshotFold.d.ts",
+      "default": "./dist/machines/peer/mediation/observability/flowSnapshotFold.js"
+    },
+    "./machines/peer/mediation/observability/scopeIdentity": {
+      "types": "./dist/machines/peer/mediation/observability/scopeIdentity.d.ts",
+      "default": "./dist/machines/peer/mediation/observability/scopeIdentity.js"
+    },
+    "./machines/peer/mediation/rpc/directV1": {
+      "types": "./dist/machines/peer/mediation/rpc/directV1.d.ts",
+      "default": "./dist/machines/peer/mediation/rpc/directV1.js"
+    },
+    "./machines/peer/mediation/tunnel/authorizationSchemas": {
+      "types": "./dist/machines/peer/mediation/tunnel/authorizationSchemas.d.ts",
+      "default": "./dist/machines/peer/mediation/tunnel/authorizationSchemas.js"
+    },
+    "./machines/peer/mediation/voiceMediaV1": {
+      "types": "./dist/machines/peer/mediation/voiceMediaV1.d.ts",
+      "default": "./dist/machines/peer/mediation/voiceMediaV1.js"
+    },
+    "./messages/structured/HappierMetaEnvelope": {
+      "types": "./dist/messages/structured/HappierMetaEnvelope.d.ts",
+      "default": "./dist/messages/structured/HappierMetaEnvelope.js"
+    },
+    "./messages/structured/reviewCommentsV1": {
+      "types": "./dist/messages/structured/reviewCommentsV1.d.ts",
+      "default": "./dist/messages/structured/reviewCommentsV1.js"
+    },
+    "./pets/source": {
+      "types": "./dist/pets/source.d.ts",
+      "default": "./dist/pets/source.js"
+    },
+    "./plugins/contributions/agentUiGrammar": {
+      "types": "./dist/plugins/contributions/agentUiGrammar.d.ts",
+      "default": "./dist/plugins/contributions/agentUiGrammar.js"
+    },
+    "./plugins/contributions/entityDragDrop": {
+      "types": "./dist/plugins/contributions/entityDragDrop.d.ts",
+      "default": "./dist/plugins/contributions/entityDragDrop.js"
+    },
+    "./plugins/contributions/roles": {
+      "types": "./dist/plugins/contributions/roles.d.ts",
+      "default": "./dist/plugins/contributions/roles.js"
+    },
+    "./plugins/contributions/ui/declarativeDataV1": {
+      "types": "./dist/plugins/contributions/ui/declarativeDataV1.d.ts",
+      "default": "./dist/plugins/contributions/ui/declarativeDataV1.js"
+    },
+    "./plugins/contributions/ui/declarativeDocumentPreflightV1": {
+      "types": "./dist/plugins/contributions/ui/declarativeDocumentPreflightV1.d.ts",
+      "default": "./dist/plugins/contributions/ui/declarativeDocumentPreflightV1.js"
+    },
+    "./plugins/contributions/ui/hostedHtmlSourceV1": {
+      "types": "./dist/plugins/contributions/ui/hostedHtmlSourceV1.d.ts",
+      "default": "./dist/plugins/contributions/ui/hostedHtmlSourceV1.js"
+    },
+    "./plugins/contributions/ui/widgetAreas": {
+      "types": "./dist/plugins/contributions/ui/widgetAreas.d.ts",
+      "default": "./dist/plugins/contributions/ui/widgetAreas.js"
+    },
+    "./plugins/data/accountEraseV1": {
+      "types": "./dist/plugins/data/accountEraseV1.d.ts",
+      "default": "./dist/plugins/data/accountEraseV1.js"
+    },
+    "./plugins/data/collectionContractRefV1": {
+      "types": "./dist/plugins/data/collectionContractRefV1.d.ts",
+      "default": "./dist/plugins/data/collectionContractRefV1.js"
+    },
+    "./plugins/openableContentViewerV1": {
+      "types": "./dist/plugins/openableContentViewerV1.d.ts",
+      "default": "./dist/plugins/openableContentViewerV1.js"
+    },
+    "./profiles/profileRequirements": {
+      "types": "./dist/profiles/profileRequirements.d.ts",
+      "default": "./dist/profiles/profileRequirements.js"
+    },
+    "./profiles/secretSatisfaction": {
+      "types": "./dist/profiles/secretSatisfaction.d.ts",
+      "default": "./dist/profiles/secretSatisfaction.js"
+    },
+    "./prompts/library/promptDocV2": {
+      "types": "./dist/prompts/library/promptDocV2.d.ts",
+      "default": "./dist/prompts/library/promptDocV2.js"
+    },
+    "./prompts/library/promptInvocationsV1": {
+      "types": "./dist/prompts/library/promptInvocationsV1.d.ts",
+      "default": "./dist/prompts/library/promptInvocationsV1.js"
+    },
+    "./prompts/library/promptLibraryDigests": {
+      "types": "./dist/prompts/library/promptLibraryDigests.d.ts",
+      "default": "./dist/prompts/library/promptLibraryDigests.js"
+    },
+    "./prompts/library/renderPromptTemplateTextV1": {
+      "types": "./dist/prompts/library/renderPromptTemplateTextV1.d.ts",
+      "default": "./dist/prompts/library/renderPromptTemplateTextV1.js"
+    },
+    "./prompts/roles/roleArtifactV1": {
+      "types": "./dist/prompts/roles/roleArtifactV1.d.ts",
+      "default": "./dist/prompts/roles/roleArtifactV1.js"
+    },
+    "./prompts/roles/rolesV1": {
+      "types": "./dist/prompts/roles/rolesV1.d.ts",
+      "default": "./dist/prompts/roles/rolesV1.js"
+    },
+    "./providers/migrations/legacyProfileReferencesV1": {
+      "types": "./dist/providers/migrations/legacyProfileReferencesV1.d.ts",
+      "default": "./dist/providers/migrations/legacyProfileReferencesV1.js"
+    },
+    "./push/activityRemoteAlert": {
+      "types": "./dist/push/activityRemoteAlert.d.ts",
+      "default": "./dist/push/activityRemoteAlert.js"
+    },
+    "./push/pushTokenRegistration": {
+      "types": "./dist/push/pushTokenRegistration.d.ts",
+      "default": "./dist/push/pushTokenRegistration.js"
+    },
+    "./push/sessionChangedWake": {
+      "types": "./dist/push/sessionChangedWake.d.ts",
+      "default": "./dist/push/sessionChangedWake.js"
+    },
+    "./retention/serverRetentionPolicyV2": {
+      "types": "./dist/retention/serverRetentionPolicyV2.d.ts",
+      "default": "./dist/retention/serverRetentionPolicyV2.js"
+    },
+    "./reviews/reviewFindingsApplyInputV1": {
+      "types": "./dist/reviews/reviewFindingsApplyInputV1.d.ts",
+      "default": "./dist/reviews/reviewFindingsApplyInputV1.js"
+    },
+    "./reviews/reviewTriageStatus": {
+      "types": "./dist/reviews/reviewTriageStatus.d.ts",
+      "default": "./dist/reviews/reviewTriageStatus.js"
+    },
+    "./scm/branches": {
+      "types": "./dist/scm/branches.d.ts",
+      "default": "./dist/scm/branches.js"
+    },
+    "./serverConfig/registry": {
+      "types": "./dist/serverConfig/registry.d.ts",
+      "default": "./dist/serverConfig/registry.js"
+    },
+    "./serverConfig/serverConfigCodec": {
+      "types": "./dist/serverConfig/serverConfigCodec.d.ts",
+      "default": "./dist/serverConfig/serverConfigCodec.js"
+    },
+    "./serverConfig/serverConfigEntry": {
+      "types": "./dist/serverConfig/serverConfigEntry.d.ts",
+      "default": "./dist/serverConfig/serverConfigEntry.js"
+    },
+    "./sessions/access/sessionAccessGrantV1": {
+      "types": "./dist/sessions/access/sessionAccessGrantV1.d.ts",
+      "default": "./dist/sessions/access/sessionAccessGrantV1.js"
+    },
+    "./sessions/access/sessionAccessPrincipalV1": {
+      "types": "./dist/sessions/access/sessionAccessPrincipalV1.d.ts",
+      "default": "./dist/sessions/access/sessionAccessPrincipalV1.js"
+    },
+    "./sessions/access/sessionResponsibilityV1": {
+      "types": "./dist/sessions/access/sessionResponsibilityV1.d.ts",
+      "default": "./dist/sessions/access/sessionResponsibilityV1.js"
+    },
+    "./sessions/authoring/fieldCatalog": {
+      "types": "./dist/sessions/authoring/fieldCatalog.d.ts",
+      "default": "./dist/sessions/authoring/fieldCatalog.js"
+    },
+    "./sessions/authoring/index": {
+      "types": "./dist/sessions/authoring/index.d.ts",
+      "default": "./dist/sessions/authoring/index.js"
+    },
+    "./sessions/authoring/syncedSessionAuthoringV1": {
+      "types": "./dist/sessions/authoring/syncedSessionAuthoringV1.d.ts",
+      "default": "./dist/sessions/authoring/syncedSessionAuthoringV1.js"
+    },
+    "./sessions/awareness/inputV1": {
+      "types": "./dist/sessions/awareness/inputV1.d.ts",
+      "default": "./dist/sessions/awareness/inputV1.js"
+    },
+    "./sessions/awareness/presentationV1": {
+      "types": "./dist/sessions/awareness/presentationV1.d.ts",
+      "default": "./dist/sessions/awareness/presentationV1.js"
+    },
+    "./sessions/changes/checkpointAttributionScope": {
+      "types": "./dist/sessions/changes/checkpointAttributionScope.d.ts",
+      "default": "./dist/sessions/changes/checkpointAttributionScope.js"
+    },
+    "./sessions/changes/reconcileWithScmSnapshot": {
+      "types": "./dist/sessions/changes/reconcileWithScmSnapshot.d.ts",
+      "default": "./dist/sessions/changes/reconcileWithScmSnapshot.js"
+    },
+    "./sessions/changes/rollbacks": {
+      "types": "./dist/sessions/changes/rollbacks.d.ts",
+      "default": "./dist/sessions/changes/rollbacks.js"
+    },
+    "./sessions/changes/types": {
+      "types": "./dist/sessions/changes/types.d.ts",
+      "default": "./dist/sessions/changes/types.js"
+    },
+    "./sessions/control/handoff/handoffTypes": {
+      "types": "./dist/sessions/control/handoff/handoffTypes.d.ts",
+      "default": "./dist/sessions/control/handoff/handoffTypes.js"
+    },
+    "./sessions/control/handoff/workspaceSyncConflictProjection": {
+      "types": "./dist/sessions/control/handoff/workspaceSyncConflictProjection.d.ts",
+      "default": "./dist/sessions/control/handoff/workspaceSyncConflictProjection.js"
+    },
+    "./sessions/control/readCursor": {
+      "types": "./dist/sessions/control/readCursor.d.ts",
+      "default": "./dist/sessions/control/readCursor.js"
+    },
+    "./sessions/creation/sessionDirectoryIntentV1": {
+      "types": "./dist/sessions/creation/sessionDirectoryIntentV1.d.ts",
+      "default": "./dist/sessions/creation/sessionDirectoryIntentV1.js"
+    },
+    "./sessions/creation/sessionSpawnSourceContextV1": {
+      "types": "./dist/sessions/creation/sessionSpawnSourceContextV1.d.ts",
+      "default": "./dist/sessions/creation/sessionSpawnSourceContextV1.js"
+    },
+    "./sessions/discussions/actionIds": {
+      "types": "./dist/sessions/discussions/actionIds.d.ts",
+      "default": "./dist/sessions/discussions/actionIds.js"
+    },
+    "./sessions/encryption/membershipSessionDataKeyEnvelopes": {
+      "types": "./dist/sessions/encryption/membershipSessionDataKeyEnvelopes.d.ts",
+      "default": "./dist/sessions/encryption/membershipSessionDataKeyEnvelopes.js"
+    },
+    "./sessions/external/rpcErrorCodes": {
+      "types": "./dist/sessions/external/rpcErrorCodes.d.ts",
+      "default": "./dist/sessions/external/rpcErrorCodes.js"
+    },
+    "./sessions/follow/accountFollow": {
+      "types": "./dist/sessions/follow/accountFollow.d.ts",
+      "default": "./dist/sessions/follow/accountFollow.js"
+    },
+    "./sessions/follow/actions": {
+      "types": "./dist/sessions/follow/actions.d.ts",
+      "default": "./dist/sessions/follow/actions.js"
+    },
+    "./sessions/follow/changes": {
+      "types": "./dist/sessions/follow/changes.d.ts",
+      "default": "./dist/sessions/follow/changes.js"
+    },
+    "./sessions/listFilter/sessionListFilterV1": {
+      "types": "./dist/sessions/listFilter/sessionListFilterV1.d.ts",
+      "default": "./dist/sessions/listFilter/sessionListFilterV1.js"
+    },
+    "./sessions/metadata/windowsRemoteSessionLaunchMode": {
+      "types": "./dist/sessions/metadata/windowsRemoteSessionLaunchMode.d.ts",
+      "default": "./dist/sessions/metadata/windowsRemoteSessionLaunchMode.js"
+    },
+    "./sessions/organization/accountEncryptionMigrationInventory": {
+      "types": "./dist/sessions/organization/accountEncryptionMigrationInventory.d.ts",
+      "default": "./dist/sessions/organization/accountEncryptionMigrationInventory.js"
+    },
+    "./sessions/organization/constants": {
+      "types": "./dist/sessions/organization/constants.d.ts",
+      "default": "./dist/sessions/organization/constants.js"
+    },
+    "./sessions/organization/folders": {
+      "types": "./dist/sessions/organization/folders.d.ts",
+      "default": "./dist/sessions/organization/folders.js"
+    },
+    "./sessions/organization/ordering": {
+      "types": "./dist/sessions/organization/ordering.d.ts",
+      "default": "./dist/sessions/organization/ordering.js"
+    },
+    "./sessions/organization/standings": {
+      "types": "./dist/sessions/organization/standings.d.ts",
+      "default": "./dist/sessions/organization/standings.js"
+    },
+    "./sessions/organization/tags": {
+      "types": "./dist/sessions/organization/tags.d.ts",
+      "default": "./dist/sessions/organization/tags.js"
+    },
+    "./sessions/pending/pendingMessageMutationFingerprintV1": {
+      "types": "./dist/sessions/pending/pendingMessageMutationFingerprintV1.d.ts",
+      "default": "./dist/sessions/pending/pendingMessageMutationFingerprintV1.js"
+    },
+    "./sessions/personal/viewer": {
+      "types": "./dist/sessions/personal/viewer.d.ts",
+      "default": "./dist/sessions/personal/viewer.js"
+    },
+    "./sessions/readState/actionIds": {
+      "types": "./dist/sessions/readState/actionIds.d.ts",
+      "default": "./dist/sessions/readState/actionIds.js"
+    },
+    "./sessions/readState/actions": {
+      "types": "./dist/sessions/readState/actions.d.ts",
+      "default": "./dist/sessions/readState/actions.js"
+    },
+    "./sessions/system/records/sessionSystemRecordAddress": {
+      "types": "./dist/sessions/system/records/sessionSystemRecordAddress.d.ts",
+      "default": "./dist/sessions/system/records/sessionSystemRecordAddress.js"
+    },
+    "./sessions/work/agentActivity/adapters/fromSubagentStatus": {
+      "types": "./dist/sessions/work/agentActivity/adapters/fromSubagentStatus.d.ts",
+      "default": "./dist/sessions/work/agentActivity/adapters/fromSubagentStatus.js"
+    },
+    "./sessions/work/workflow/sessionWorkflowPhases": {
+      "types": "./dist/sessions/work/workflow/sessionWorkflowPhases.d.ts",
+      "default": "./dist/sessions/work/workflow/sessionWorkflowPhases.js"
+    },
+    "./settings/registry/buildSettingArtifacts": {
+      "types": "./dist/settings/registry/buildSettingArtifacts.d.ts",
+      "default": "./dist/settings/registry/buildSettingArtifacts.js"
+    },
+    "./settings/registry/settingDefinition": {
+      "types": "./dist/settings/registry/settingDefinition.d.ts",
+      "default": "./dist/settings/registry/settingDefinition.js"
+    },
+    "./system/tasks/acquisitionProgress": {
+      "types": "./dist/system/tasks/acquisitionProgress.d.ts",
+      "default": "./dist/system/tasks/acquisitionProgress.js"
+    },
+    "./system/tasks/tailscaleEnsureReadyTaskContract": {
+      "types": "./dist/system/tasks/tailscaleEnsureReadyTaskContract.d.ts",
+      "default": "./dist/system/tasks/tailscaleEnsureReadyTaskContract.js"
+    },
+    "./system/tasks/tailscaleSecureAccessTaskContract": {
+      "types": "./dist/system/tasks/tailscaleSecureAccessTaskContract.d.ts",
+      "default": "./dist/system/tasks/tailscaleSecureAccessTaskContract.js"
+    },
+    "./teams/identity/actionIds": {
+      "types": "./dist/teams/identity/actionIds.d.ts",
+      "default": "./dist/teams/identity/actionIds.js"
+    },
+    "./teams/invitation": {
+      "types": "./dist/teams/invitation.d.ts",
+      "default": "./dist/teams/invitation.js"
+    },
+    "./teams/principal": {
+      "types": "./dist/teams/principal.d.ts",
+      "default": "./dist/teams/principal.js"
+    },
+    "./terminal/compatibility": {
+      "types": "./dist/terminal/compatibility.d.ts",
+      "default": "./dist/terminal/compatibility.js"
+    },
+    "./tools/v2/names": {
+      "types": "./dist/tools/v2/names.d.ts",
+      "default": "./dist/tools/v2/names.js"
+    },
+    "./tools/v2/schemas": {
+      "types": "./dist/tools/v2/schemas.d.ts",
+      "default": "./dist/tools/v2/schemas.js"
+    },
+    "./transfers/relay/v2/transferRelayEnvelopeSchema": {
+      "types": "./dist/transfers/relay/v2/transferRelayEnvelopeSchema.d.ts",
+      "default": "./dist/transfers/relay/v2/transferRelayEnvelopeSchema.js"
+    },
+    "./voice/providerContributionIdentity": {
+      "types": "./dist/voice/providerContributionIdentity.d.ts",
+      "default": "./dist/voice/providerContributionIdentity.js"
+    },
+    "./voice/realtime/capabilities": {
+      "types": "./dist/voice/realtime/capabilities.d.ts",
+      "default": "./dist/voice/realtime/capabilities.js"
+    },
+    "./workflows/builtins/catalog": {
+      "types": "./dist/workflows/builtins/catalog.d.ts",
+      "default": "./dist/workflows/builtins/catalog.js"
+    },
+    "./workflows/builtins/examples": {
+      "types": "./dist/workflows/builtins/examples.d.ts",
+      "default": "./dist/workflows/builtins/examples.js"
+    },
+    "./workflows/triggers/workflowTriggerActionsV1": {
+      "types": "./dist/workflows/triggers/workflowTriggerActionsV1.d.ts",
+      "default": "./dist/workflows/triggers/workflowTriggerActionsV1.js"
+    },
+    "./workflows/workflowIdsV1": {
+      "types": "./dist/workflows/workflowIdsV1.d.ts",
+      "default": "./dist/workflows/workflowIdsV1.js"
+    },
+    "./workflows/workflowPluginSourceContractV1": {
+      "types": "./dist/workflows/workflowPluginSourceContractV1.d.ts",
+      "default": "./dist/workflows/workflowPluginSourceContractV1.js"
+    },
+    "./workflows/workflowRunAccountEncryptionV1": {
+      "types": "./dist/workflows/workflowRunAccountEncryptionV1.d.ts",
+      "default": "./dist/workflows/workflowRunAccountEncryptionV1.js"
+    },
+    "./workflows/workflowSessionAuthoringV1": {
+      "types": "./dist/workflows/workflowSessionAuthoringV1.d.ts",
+      "default": "./dist/workflows/workflowSessionAuthoringV1.js"
+    },
+    "./workspace/workspaceTabsV1": {
+      "types": "./dist/workspace/workspaceTabsV1.d.ts",
+      "default": "./dist/workspace/workspaceTabsV1.js"
+    },
     "./common/deadlineTimer": {
       "types": "./dist/common/deadlineTimer.d.ts",
       "default": "./dist/common/deadlineTimer.js"
@@ -73,6 +837,10 @@
     "./widgets/widgetDefinitionV1": {
       "types": "./dist/widgets/widgetDefinitionV1.d.ts",
       "default": "./dist/widgets/widgetDefinitionV1.js"
+    },
+    "./widgets/widgetPresentationV1": {
+      "types": "./dist/widgets/widgetPresentationV1.d.ts",
+      "default": "./dist/widgets/widgetPresentationV1.js"
     },
     "./widgets/widgetActionInputResolverV1": {
       "types": "./dist/widgets/widgetActionInputResolverV1.d.ts",

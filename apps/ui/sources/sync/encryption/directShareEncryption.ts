@@ -1,7 +1,5 @@
-import {
-    sealEncryptedDataKeyEnvelopeV1,
-    verifyAccountContentKeyBindingV1,
-} from '@happier-dev/protocol';
+import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { verifyAccountContentKeyBindingV1 } from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
 
 import { encodeBase64, decodeBase64 } from '@/encryption/base64';
 import { decodeHex } from '@/encryption/hex';

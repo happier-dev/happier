@@ -1,6 +1,8 @@
 import { t } from '@/text';
 import type { WorkflowPhaseRollup } from '@/components/sessions/workState/sessionWorkflowActivityTypes';
-import { fromWorkflowRunStatus, type SessionWorkflowRunHeadlineV1, type SessionWorkflowRunStatusV1 } from '@happier-dev/protocol';
+import { fromWorkflowRunStatus } from '@happier-dev/protocol/sessions/work/agentActivity/adapters/fromWorkflowRunStatus';
+import type { SessionWorkflowRunHeadlineV1 } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowActivityHeadlineV1';
+import type { SessionWorkflowRunStatusV1 } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowRunSnapshotV1';
 
 import { resolveWorkStatusTone, type WorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 

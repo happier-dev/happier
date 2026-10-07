@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { resolveVoiceSpeechSettingsCorrespondence } from '@happier-dev/protocol';
+import { resolveVoiceSpeechSettingsCorrespondence } from '@happier-dev/protocol/plugins/contributions/voice';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';

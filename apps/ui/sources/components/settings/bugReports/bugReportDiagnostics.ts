@@ -1,18 +1,11 @@
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
-import {
-    hasAcceptedBugReportArtifactKind,
-    inferBugReportDeploymentTypeFromServerUrl as inferDeploymentType,
-    pushBugReportArtifact,
-    resolveBugReportServerDiagnosticsLines,
-    sanitizeBugReportDaemonDiagnosticsPayload,
-    sanitizeBugReportArtifactFileSegment,
-    sanitizeBugReportArtifactPath,
-    sanitizeBugReportStackContextPayload,
-    sanitizeBugReportUrl,
-    parseDoctorSnapshotSafe,
-    type BugReportArtifactPayload,
-} from '@happier-dev/protocol';
+import { hasAcceptedBugReportArtifactKind, pushBugReportArtifact } from '@happier-dev/protocol/bugs/reports/artifacts';
+import { inferBugReportDeploymentTypeFromServerUrl as inferDeploymentType, sanitizeBugReportArtifactFileSegment, sanitizeBugReportArtifactPath, sanitizeBugReportUrl } from '@happier-dev/protocol/bugs/reports/sanitize';
+import { resolveBugReportServerDiagnosticsLines } from '@happier-dev/protocol/bugs/reports/serverDiagnostics';
+import { sanitizeBugReportDaemonDiagnosticsPayload, sanitizeBugReportStackContextPayload } from '@happier-dev/protocol/bugs/reports/machineDiagnostics';
+import { parseDoctorSnapshotSafe } from '@happier-dev/protocol/diagnostics/doctorSnapshot';
+import type { BugReportArtifactPayload } from '@happier-dev/protocol/bugs/reports/types';
 
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { getStorage } from '@/sync/domains/state/storage';

@@ -1,11 +1,5 @@
-import {
-  PluginContributionIdentityV1Schema,
-  VoiceCredentialBindingV1Schema,
-  VoiceProviderSettingsEnvelopeV1Schema,
-  buildQualifiedPluginContributionKey,
-  type VoiceCredentialBindingV1,
-  type VoiceProviderSettingsEnvelopeV1,
-} from '@happier-dev/protocol';
+import { PluginContributionIdentityV1Schema, buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { VoiceCredentialBindingV1Schema, VoiceProviderSettingsEnvelopeV1Schema, type VoiceCredentialBindingV1, type VoiceProviderSettingsEnvelopeV1 } from '@happier-dev/protocol/voice/realtime/providerSettings';
 
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 

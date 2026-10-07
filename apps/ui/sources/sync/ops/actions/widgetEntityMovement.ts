@@ -1,4 +1,6 @@
-import { ActionApprovalRequestCreatedResultSchema, sameStrictJsonValue, type ActionExecuteResult, type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { admitWidgetActionSurfaceV1, readWidgetActionSurfacePortV1, WidgetMoveCaptureV1Schema, WidgetInstanceActionInputSchemasV1, WidgetInstanceActionOutputSchemasV1, WidgetSurfaceReadV1Schema, WidgetTransferFailureDetailsV1Schema, type WidgetInstanceRefV1, type WidgetInstanceV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import type { EntityDragItemV1, EntityDropAdmissionV1, EntityDropEffectV1, EntityDropOutcomeV1 } from '@happier-dev/protocol/plugins/ui';
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';

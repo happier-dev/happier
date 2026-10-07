@@ -2,11 +2,8 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import {
-    parseDoctorSnapshotSafe,
-    sanitizeBugReportUrl,
-    type DoctorSnapshot,
-} from '@happier-dev/protocol';
+import { parseDoctorSnapshotSafe, type DoctorSnapshot } from '@happier-dev/protocol/diagnostics/doctorSnapshot';
+import { sanitizeBugReportUrl } from '@happier-dev/protocol/bugs/reports/sanitize';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';

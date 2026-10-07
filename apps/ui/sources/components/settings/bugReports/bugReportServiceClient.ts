@@ -1,10 +1,6 @@
-import {
-    submitBugReportToService as submitBugReportToSharedService,
-    searchBugReportSimilarIssues as searchBugReportSimilarIssuesShared,
-    type BugReportSimilarIssue,
-    type BugReportArtifactPayload,
-    type BugReportFormPayload,
-} from '@happier-dev/protocol';
+import { submitBugReportToService as submitBugReportToSharedService } from '@happier-dev/protocol/bugs/reports/submit';
+import { searchBugReportSimilarIssues as searchBugReportSimilarIssuesShared, type BugReportSimilarIssue } from '@happier-dev/protocol/bugs/reports/similarIssues';
+import type { BugReportArtifactPayload, BugReportFormPayload } from '@happier-dev/protocol/bugs/reports/types';
 import { captureBugReportSentryEvent } from '@/utils/system/sentry';
 
 export type {

@@ -4,7 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { CodeView } from '@/components/ui/media/CodeView';
-import { maybeParseJson } from '@happier-dev/protocol';
+import { maybeParseJson } from '@happier-dev/protocol/activity/parseJson';
 import { extractStdStreams } from "@happier-dev/session-core/tools";
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';

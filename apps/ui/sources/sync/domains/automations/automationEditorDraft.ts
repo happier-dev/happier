@@ -1,21 +1,12 @@
 import { z } from 'zod';
 
-import {
-    AutomationStoredDefinitionExecutionRecipeV1Schema,
-    AutomationStoredDefinitionExecutionRecipeV1ReadSchema,
-    AutomationStoredWorkflowDefinitionRecipeV2Schema,
-    AutomationStoredWorkflowDefinitionRecipeV2ReadSchema,
-    AutomationSourceSelectorIdV1Schema,
-    type AutomationAssignmentInput,
-    type AutomationDefinitionDetail,
-    type AutomationEventTriggerDefinitionStoredPayloadV1,
-    type AutomationStoredDefinitionExecutionRecipeV1,
-    type AutomationStoredWorkflowDefinitionRecipeV2,
-    type AutomationSourceSelectorIdV1,
-    type AutomationTriggerDefinitionInput,
-    type AutomationTriggerId,
-    type AutomationTriggerRevision,
-} from '@happier-dev/protocol';
+import { AutomationStoredDefinitionExecutionRecipeV1Schema, AutomationStoredDefinitionExecutionRecipeV1ReadSchema, type AutomationStoredDefinitionExecutionRecipeV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
+import { AutomationStoredWorkflowDefinitionRecipeV2Schema, AutomationStoredWorkflowDefinitionRecipeV2ReadSchema, type AutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
+import { AutomationSourceSelectorIdV1Schema, type AutomationSourceSelectorIdV1 } from '@happier-dev/protocol/automations/automationEventJsonBoundsV1';
+import type { AutomationAssignmentInput, AutomationDefinitionDetail } from '@happier-dev/protocol/automations/automationApiV3';
+import type { AutomationEventTriggerDefinitionStoredPayloadV1 } from '@happier-dev/protocol/automations/event';
+import type { AutomationTriggerDefinitionInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
+import type { AutomationTriggerId, AutomationTriggerRevision } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import { randomUUID } from '@/platform/randomUUID';
 
 export type AutomationEditorTriggerDraft = Readonly<{

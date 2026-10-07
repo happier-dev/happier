@@ -1,9 +1,6 @@
-import {
-    PluginPortableReleaseManifestV1Schema,
-    normalizePluginAccountCollectionContractsV1,
-    resolvePluginCollectionMigrationArtifactOwnerV1,
-    type NormalizedPluginAccountCollectionContractV1,
-} from '@happier-dev/protocol';
+import { PluginPortableReleaseManifestV1Schema } from '@happier-dev/protocol/plugins/availability/v1';
+import { normalizePluginAccountCollectionContractsV1, type NormalizedPluginAccountCollectionContractV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
+import { resolvePluginCollectionMigrationArtifactOwnerV1 } from '@happier-dev/protocol/plugins/data/collectionContributionV1';
 import {
     PluginUiArtifactsManifestEntryV2Schema,
     type PluginUiArtifactDigestV1,

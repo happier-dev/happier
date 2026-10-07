@@ -1,10 +1,5 @@
-import {
-  AGENT_SIGN_IN_PREPARE_RPC_METHOD, AGENT_SIGN_IN_STATUS_RPC_METHOD,
-  AgentSignInPrepareRequestSchema, AgentSignInPrepareResponseSchema,
-  AgentSignInStatusRequestSchema, AgentSignInStatusResponseSchema,
-  startMachineAgentSignIn, type AgentSignInPrepareRequest,
-  cancelMachineAgentSignIn,
-} from '@happier-dev/protocol';
+import { AGENT_SIGN_IN_PREPARE_RPC_METHOD, AGENT_SIGN_IN_STATUS_RPC_METHOD, AgentSignInPrepareRequestSchema, AgentSignInPrepareResponseSchema, AgentSignInStatusRequestSchema, AgentSignInStatusResponseSchema, type AgentSignInPrepareRequest } from '@happier-dev/protocol/daemon/agentSignIn';
+import { startMachineAgentSignIn, cancelMachineAgentSignIn } from '@happier-dev/protocol/daemon/startAgentSignIn';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { runConnectedAccountAuthenticationCommand } from '@/sync/ops/connectedAccounts/connectedAccountDaemon';
 import { machineTerminalEnsure, machineTerminalClose, machineTerminalList } from '@/sync/ops/machineTerminal';

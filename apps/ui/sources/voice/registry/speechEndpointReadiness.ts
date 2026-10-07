@@ -1,8 +1,6 @@
-import {
-  resolveVoiceSpeechEndpointPolicy,
-  type VoiceProviderSettingsEnvelopeV1,
-  type VoiceReadinessRole,
-} from '@happier-dev/protocol';
+import { resolveVoiceSpeechEndpointPolicy } from '@happier-dev/protocol/plugins/contributions/voice';
+import type { VoiceProviderSettingsEnvelopeV1 } from '@happier-dev/protocol/voice/realtime/providerSettings';
+import type { VoiceReadinessRole } from '@happier-dev/protocol/voice/realtime/capabilities';
 
 import type { VoiceReadinessFact } from './readiness';
 import {

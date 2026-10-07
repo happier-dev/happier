@@ -1,18 +1,9 @@
 import * as React from 'react';
 
-import {
-    arePluginMachineExecutionOriginsEqual,
-    buildQualifiedPluginContributionKey,
-    createPluginContributionIdentity,
-    derivePluginClientContributionRegistrationRights,
-    PluginMachineExecutionOriginV1Schema,
-    type PluginContributionClientPlatform,
-    type PluginContributionRegistrationRight,
-    type PluginMachineExecutionOriginV1,
-    type PluginProjectedActionV2,
-    type PluginProjectedDragSourceEntryV1,
-    type PluginProjectedDropTargetEntryV1,
-} from '@happier-dev/protocol';
+import { arePluginMachineExecutionOriginsEqual, PluginMachineExecutionOriginV1Schema, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { buildQualifiedPluginContributionKey, createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
+import { derivePluginClientContributionRegistrationRights, type PluginContributionClientPlatform, type PluginContributionRegistrationRight } from '@happier-dev/protocol/plugins/contributions/catalog';
+import type { PluginProjectedActionV2, PluginProjectedDragSourceEntryV1, PluginProjectedDropTargetEntryV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginClientApi } from '@happier-dev/plugin-sdk';
 import type { PluginDragSourceRuntime, PluginDropTargetRuntime } from '@happier-dev/plugin-sdk';
 import type { PluginClientActionHandler } from '@happier-dev/plugin-sdk/actions';

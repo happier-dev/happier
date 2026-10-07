@@ -1,6 +1,6 @@
 import type { PromptExternalLinksV1 } from '@happier-dev/protocol';
 
-export { findPromptExternalLink, upsertPromptExternalLink } from '@happier-dev/protocol';
+export { findPromptExternalLink, upsertPromptExternalLink } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 
 export function removePromptExternalLink(
   links: PromptExternalLinksV1 | null | undefined,

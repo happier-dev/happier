@@ -1,4 +1,5 @@
-import { ComposerTransactionResultV1Schema, type ComposerRefV1 } from '@happier-dev/protocol';
+import { ComposerTransactionResultV1Schema } from '@happier-dev/protocol/plugins/ui/composer';
+import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef';
 
 import { readMountedComposerPresentationSnapshot, requestRegisteredComposerFocus } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';

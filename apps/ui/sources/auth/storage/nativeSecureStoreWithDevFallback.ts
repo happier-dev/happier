@@ -2,7 +2,7 @@ import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 
-import { parseOptionalBooleanEnv } from '@happier-dev/protocol';
+import { parseOptionalBooleanEnv } from '@happier-dev/protocol/env/parseBooleanEnv';
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
 
 const EXPO_PUBLIC_HAPPIER_NATIVE_SECURE_STORE_DEV_FALLBACK = 'EXPO_PUBLIC_HAPPIER_NATIVE_SECURE_STORE_DEV_FALLBACK';

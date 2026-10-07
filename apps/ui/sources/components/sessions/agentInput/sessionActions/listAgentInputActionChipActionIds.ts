@@ -1,4 +1,5 @@
-import { listActionSpecs, type ActionId } from '@happier-dev/protocol';
+import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
 
@@ -9,4 +10,3 @@ export function listAgentInputActionChipActionIds(state: Readonly<{ settings?: u
         .filter((spec) => isActionEnabledInState(state as any, spec.id, { surface: 'ui', placement: 'agent_input_chips' } as any))
         .map((spec) => spec.id);
 }
-

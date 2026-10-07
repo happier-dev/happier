@@ -17,7 +17,7 @@ import {
     createVoiceAgentOutputTurnV1,
     ingestVoiceAgentOutputEventV1,
     type VoiceAgentOutputEffectV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/voice/outputEvents';
 
 export async function streamVoiceAgentTurn(params: Readonly<{
     sessionId: string;

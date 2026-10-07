@@ -1,11 +1,5 @@
-import {
-    SessionAgentTransitionRequestV1Schema,
-    SessionAgentTransitionResultV1Schema,
-    beginSessionAgentTransitionEffects,
-    rejectUndispatchedSessionAgentTransition,
-    type SessionAgentTransitionRequestV1,
-    type SessionAgentTransitionResultV1,
-} from '@happier-dev/protocol';
+import { SessionAgentTransitionRequestV1Schema, SessionAgentTransitionResultV1Schema, type SessionAgentTransitionRequestV1, type SessionAgentTransitionResultV1 } from '@happier-dev/protocol/sessions/agentTransition';
+import { beginSessionAgentTransitionEffects, rejectUndispatchedSessionAgentTransition } from '@happier-dev/protocol/sessions/agentTransitionEffectStage';
 import {
     RPC_ERROR_CODES,
     RPC_METHODS,

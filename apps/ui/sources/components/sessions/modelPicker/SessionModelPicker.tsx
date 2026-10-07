@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { providerCatalogPermitsUnlistedModelIdV1 } from '@happier-dev/protocol';
+import { providerCatalogPermitsUnlistedModelIdV1 } from '@happier-dev/protocol/providers/catalog/merge';
 import type { ProviderBoundModelRef, ProviderErrorV1 } from '@happier-dev/protocol';
 import type {
     DaemonProviderCurrentSelectionRecoveryV1,

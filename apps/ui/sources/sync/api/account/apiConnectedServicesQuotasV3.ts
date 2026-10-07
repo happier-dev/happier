@@ -6,7 +6,9 @@ import {
 import { HappyError } from '@/utils/errors/errors';
 import { backoff } from '@/utils/timing/time';
 
-import { ConnectedServiceQuotaSnapshotV1Schema, StoredJsonContentEnvelopeSchema, type ConnectedServiceId, type ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol';
+import { ConnectedServiceQuotaSnapshotV1Schema, type ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { StoredJsonContentEnvelopeSchema } from '@happier-dev/protocol/storage/storedJsonContentEnvelope';
+import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { z } from 'zod';
 
 function extractErrorCode(json: unknown): string | null {

@@ -1,4 +1,5 @@
-import { parseAccountApiTokenBearerV1, readAuthTokenProvenance } from '@happier-dev/protocol';
+import { parseAccountApiTokenBearerV1 } from '@happier-dev/protocol/auth/accountApiTokens';
+import { readAuthTokenProvenance } from '@happier-dev/protocol/auth/authToken';
 import { parseTokenPayload } from '@/utils/auth/parseToken';
 
 export type CredentialAuthorityKind = 'account' | 'terminal' | 'api_token' | 'none';

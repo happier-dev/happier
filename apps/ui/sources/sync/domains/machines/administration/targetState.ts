@@ -1,4 +1,4 @@
-import { MachineAdministrationTargetV1Schema } from '@happier-dev/protocol';
+import { MachineAdministrationTargetV1Schema } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
 
 import { resolveMachinePickerPresence } from '@/sync/domains/machines/identity/resolveMachinePickerPresence';
 import { resolveServerScopedMachines } from '@/sync/domains/machines/resolveServerScopedMachines';

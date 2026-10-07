@@ -1,6 +1,7 @@
-import { ScmDiffSummaryModelSelectorSchema, parseBackendTargetKeyV2, readBackendTargetRefV2,
-    type BackendTargetRefV2, type ScmDiffSummaryModelSelector, type CapabilitySupport } from '@happier-dev/protocol';
-import { ACCOUNT_SETTING_DEFINITIONS } from '@happier-dev/protocol';
+import { ScmDiffSummaryModelSelectorSchema, type ScmDiffSummaryModelSelector } from '@happier-dev/protocol/scm/diffSummary';
+import { parseBackendTargetKeyV2, readBackendTargetRefV2, type BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { CapabilitySupport } from '@happier-dev/protocol/providers/capabilities/v1';
+import { ACCOUNT_SETTING_DEFINITIONS } from '@happier-dev/protocol/account/settings/accountSettings';
 import type { SettingStorageBinding } from '@/components/settings/catalog/settingDeclarations';
 
 export const SCM_DIFF_SUMMARY_SETTING_KEYS = {

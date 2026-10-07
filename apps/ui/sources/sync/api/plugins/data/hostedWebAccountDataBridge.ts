@@ -5,7 +5,7 @@ import {
     type PluginHostedWebAccountDataBridgeChangeV1,
     type PluginHostedWebAccountDataBridgeOperationV1,
     type PluginHostedWebAccountDataBridgeResponseV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/data/hostedWebAccountDataBridgeV1';
 import type {
     PluginUiAccountCollectionForDefinition,
     PluginUiCollectionQueryPager,

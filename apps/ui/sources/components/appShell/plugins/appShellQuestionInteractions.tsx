@@ -5,7 +5,7 @@ import {
     HappierItemGroupBehavior,
     useHappierItemGroupItemBehavior,
 } from '@happier-dev/plugin-ui/presentation';
-import { createTransientInteractionOwner } from '@happier-dev/protocol';
+import { createTransientInteractionOwner } from '@happier-dev/protocol/plugins/interactions/owner';
 import type {
     InteractionTransientChoiceSelectionV1,
     InteractionTransientConfirmationAuthorRequestV1,

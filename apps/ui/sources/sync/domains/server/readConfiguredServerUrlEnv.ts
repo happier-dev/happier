@@ -1,6 +1,6 @@
 import { isStackContext } from './serverContext';
 import { readWebRuntimeConfigServerUrl } from '@/sync/runtime/webRuntimeConfig';
-import { isLoopbackHostname } from '@happier-dev/protocol';
+import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
 
 function readFirstNonEmptyEnv(...values: Array<string | undefined>): string {
     for (const value of values) {

@@ -1,8 +1,5 @@
-import {
-    serializeModelVisibilityRefV1,
-    type ProviderBoundModelRef,
-    type ProviderSettingsV1,
-} from '@happier-dev/protocol';
+import { serializeModelVisibilityRefV1, type ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
+import type { ProviderSettingsV1 } from '@happier-dev/protocol/providers/settings/v1';
 import type { DaemonProviderModelProjectionResponseV1 } from '@happier-dev/protocol/rpc';
 import type { DaemonProviderCurrentSelectionRecoveryV1 } from '@happier-dev/protocol/rpc';
 import type { TeamCredentialProviderModelSelectionV1, TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';

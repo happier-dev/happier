@@ -3,7 +3,7 @@ import { I18nManager, Platform, View, type LayoutChangeEvent, type ScrollView } 
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useAnimatedReaction, useSharedValue, type SharedValue } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
-import { AnchoredListPositionV1Schema, resolveAnchoredListMoveV1, type AnchoredListPositionV1 } from '@happier-dev/protocol';
+import { AnchoredListPositionV1Schema, resolveAnchoredListMoveV1, type AnchoredListPositionV1 } from '@happier-dev/protocol/actions/anchoredListOrderV1';
 import { entityDragScopesEqualV1, type EntityDragItemV1, type EntityDragKindV1, type EntityDragScopeV1, type EntityDropAdmissionV1, type EntityDropEffectV1, type EntityDropOutcomeV1 } from '@happier-dev/protocol/plugins/ui';
 import { HAPPIER_CARRIED_SOURCE_OPACITY, describeHappierDropAnnouncement, resolveHappierDropChooserSections, resolveHappierStagedMoveKey } from '@happier-dev/plugin-ui/presentation';
 
@@ -57,7 +57,7 @@ export async function settleEntityReorderWrite(write: () => Promise<void>): Prom
 
 /** Present-user execution preserves the existing Action policy and the exact Account fence. */
 export async function executeEntityReorderAction(effect: EntityDropEffectV1, scope: EntityDragScopeV1): Promise<EntityDropOutcomeV1> {
-    const { ActionIdSchema } = await import('@happier-dev/protocol');
+    const { ActionIdSchema } = await import('@happier-dev/protocol/actions/actionIds');
     try {
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
         const actionId = ActionIdSchema.parse(effect.actionId);

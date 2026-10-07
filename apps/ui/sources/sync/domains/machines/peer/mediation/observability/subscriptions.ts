@@ -1,17 +1,7 @@
-import {
-    PEER_MEDIATION_OBSERVABILITY_DELTA_SOCKET_EVENT,
-    PEER_MEDIATION_OBSERVABILITY_SNAPSHOT_SOCKET_EVENT,
-    PEER_MEDIATION_OBSERVABILITY_SUBSCRIBE_SOCKET_EVENT,
-    PEER_MEDIATION_OBSERVABILITY_UNSUBSCRIBE_SOCKET_EVENT,
-    PeerMediationObservabilityDeltaV1Schema,
-    PeerMediationObservabilitySnapshotV1Schema,
-    readServerEnabledBit,
-    type FeatureDecision,
-    type FeaturesResponse,
-    type PeerMediationObservabilityDeltaV1,
-    type PeerMediationObservabilityScopeV1,
-    type PeerMediationObservabilitySnapshotV1,
-} from '@happier-dev/protocol';
+import { PEER_MEDIATION_OBSERVABILITY_DELTA_SOCKET_EVENT, PEER_MEDIATION_OBSERVABILITY_SNAPSHOT_SOCKET_EVENT, PEER_MEDIATION_OBSERVABILITY_SUBSCRIBE_SOCKET_EVENT, PEER_MEDIATION_OBSERVABILITY_UNSUBSCRIBE_SOCKET_EVENT, PeerMediationObservabilityDeltaV1Schema, PeerMediationObservabilitySnapshotV1Schema, type PeerMediationObservabilityDeltaV1, type PeerMediationObservabilityScopeV1, type PeerMediationObservabilitySnapshotV1 } from '@happier-dev/protocol/machines/peer/mediation/observability/v1';
+import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
+import type { FeatureDecision } from '@happier-dev/protocol/features/decision';
+import type { FeaturesResponse } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 
 import { peerMediationObservabilityScopesEqual } from './keys';
 import { isPeerMediationObservabilityDeltaSequenceContiguous } from './store';

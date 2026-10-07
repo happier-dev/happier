@@ -18,7 +18,7 @@ import {
     type PromptRegistryListSourcesResponseV1,
     type PromptRegistryScanSourceRequestV1,
     type PromptRegistryScanSourceResponseV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/prompts/library/promptRegistriesV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';

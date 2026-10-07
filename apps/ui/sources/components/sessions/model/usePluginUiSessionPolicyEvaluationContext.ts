@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { isFeatureId } from '@happier-dev/protocol';
+import { isFeatureId } from '@happier-dev/protocol/features/catalog';
 
 import {
     resolveRuntimeFeatureDecisionFromSnapshot,

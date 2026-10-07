@@ -30,32 +30,15 @@ import type {
     DecryptedArtifact,
 } from '@/sync/domains/artifacts/artifactTypes';
 import type { ArtifactHeader } from '@/sync/domains/artifacts/artifactTypes';
-import {
-    ARTIFACT_PLAIN_DATA_KEY_MARKER,
-    ArtifactBodyV1Schema,
-    ArtifactBodyEnvelopeV1StoredSchema,
-    ArtifactSavedByV1Schema,
-    type ArtifactBodyEnvelopeV1,
-    type ArtifactSavedByV1,
-    type ArtifactWorkspaceSourceV1,
-    ArtifactBlobReferenceV1Schema,
-    artifactKindRequiresTextBodyV1,
-    type ArtifactBlobReferenceV1,
-    type ArtifactBodyV1,
-    decodePlainArtifactStoredContent,
-    encodePlainArtifactStoredContent,
-    isPlainArtifactDataKeyMarker,
-    runArtifactRecipientKeyPreparationV1,
-    prepareArtifactRecipientKeyEnvelopesV1,
-    withArtifactExcerptV1,
-    prepareArtifactHeaderForRevisionV1,
-    prepareArtifactHeaderForBodyV1,
-    type ArtifactRevisionV1,
-    isArtifactHtmlHeaderV1,
-    artifactHtmlBundleFromBodyV1,
-    buildArtifactHtmlPreviewUrlV1,
-    listArtifactHeadersV1,
-} from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, isPlainArtifactDataKeyMarker } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { ArtifactBodyV1Schema, ArtifactBodyEnvelopeV1StoredSchema, ArtifactSavedByV1Schema, type ArtifactBodyEnvelopeV1, type ArtifactSavedByV1, type ArtifactWorkspaceSourceV1, ArtifactBlobReferenceV1Schema, type ArtifactBlobReferenceV1, type ArtifactBodyV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
+import { artifactKindRequiresTextBodyV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
+import { runArtifactRecipientKeyPreparationV1, prepareArtifactRecipientKeyEnvelopesV1 } from '@happier-dev/protocol/artifacts/artifactRecipientKeyPreparationV1';
+import { withArtifactExcerptV1 } from '@happier-dev/protocol/artifacts/artifactExcerptV1';
+import { prepareArtifactHeaderForRevisionV1, prepareArtifactHeaderForBodyV1 } from '@happier-dev/protocol/artifacts/artifactHeaderRestorationV1';
+import type { ArtifactRevisionV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { isArtifactHtmlHeaderV1, artifactHtmlBundleFromBodyV1, buildArtifactHtmlPreviewUrlV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
+import { listArtifactHeadersV1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
 import { hashArtifactBinaryContent, openArtifactBinaryContent, sealArtifactBinaryContent } from '@/sync/domains/artifacts/artifactBinaryContent';
 import { openArtifactPrivateRevisionMetadata, sealArtifactPrivateRevisionMetadata } from '@/sync/domains/artifacts/accountArtifactEnvelope';
 import type { ArtifactRevisionProvenanceV1 } from '@happier-dev/protocol';

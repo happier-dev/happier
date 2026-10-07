@@ -1,13 +1,10 @@
 import * as React from 'react';
 import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
-import {
-    areProviderContributionKeysEqualV1,
-    parseProviderContributionIdentityV1,
-    type MachineAdministrationTargetV1,
-    type ProviderErrorV1,
-    type QualifiedConnectedAccountPurposeBindingTargetV1,
-} from '@happier-dev/protocol';
+import { areProviderContributionKeysEqualV1, parseProviderContributionIdentityV1 } from '@happier-dev/protocol/providers/contribution-identity';
+import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
+import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import {
     DaemonProviderConnectionMutationRequestV1Schema,
     type DaemonProviderConnectionMutationRequestV1,

@@ -1,7 +1,7 @@
 import {
     sealTerminalProvisioningV3TokenOnlyPayload,
     sealTerminalProvisioningV3Payload,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/crypto/terminalProvisioningV2';
 
 import { getRandomBytes } from '@/platform/cryptoRandom';
 

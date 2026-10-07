@@ -2,7 +2,7 @@ import { AgentStateSchema, MetadataSchema, type AgentState, type Metadata } from
 import {
     SESSION_METADATA_LAYOUT_VERSION_V1,
     SessionSharedMetadataV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 export function readSessionMetadataLayoutVersion(value: unknown): number {
     if (value === undefined) return 0;

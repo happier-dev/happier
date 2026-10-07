@@ -1,15 +1,6 @@
-import {
-    ExecutionRunClassSchema,
-    ExecutionRunIntentSchema,
-    ExecutionRunIoModeSchema,
-    ExecutionRunRetentionPolicySchema,
-    type BackendTargetRefV1,
-    type ExecutionRunClass,
-    type ExecutionRunIntent,
-    type ExecutionRunIoMode,
-    type ExecutionRunPublicState,
-    type ExecutionRunRetentionPolicy,
-} from '@happier-dev/protocol';
+import { ExecutionRunClassSchema, ExecutionRunIntentSchema, ExecutionRunIoModeSchema, ExecutionRunRetentionPolicySchema, type ExecutionRunClass, type ExecutionRunIntent, type ExecutionRunIoMode, type ExecutionRunRetentionPolicy } from '@happier-dev/protocol/execution/runs/index';
+import type { BackendTargetRefV1 } from '@happier-dev/protocol/backends/targets/backendTargetRef';
+import type { ExecutionRunPublicState } from '@happier-dev/protocol/execution/runs/responseSchemas';
 
 import {
     readOptionalString,

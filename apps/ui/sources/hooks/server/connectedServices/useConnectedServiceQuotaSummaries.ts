@@ -29,13 +29,10 @@ import {
     type ConnectedServiceQuotaSummaryStrategy,
 } from '@/sync/domains/connectedServices/connectedServiceQuotaBadges';
 import { shouldHideQuotaForCredentialStatus } from '@/sync/domains/connectedServices/shouldHideQuotaForCredentialStatus';
-import {
-    buildQualifiedPluginContributionKey,
-    type ConnectedServiceId,
-    type ConnectedServiceQuotaRecoveryCreditsV1,
-    type PluginContributionIdentityV1,
-    type ProviderAccountUsageRecordId,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { ConnectedServiceQuotaRecoveryCreditsV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
+import type { ProviderAccountUsageRecordId } from '@happier-dev/protocol/connect/account-usage-primitives';
 
 import {
     useConnectedServiceQuotaSnapshots,

@@ -1,23 +1,12 @@
 import * as React from 'react';
 
-import {
-    buildQualifiedPluginContributionKey,
-    ComposerContentHandleV1Schema,
-    ComposerInstanceIdSchema,
-    ComposerOperationV1Schema,
-    ComposerTransactionV1Schema,
-    MAX_COMPOSER_ATTACHMENT_INSTANCES_V1,
-    type ComposerAttachmentViewV1,
-    type ComposerContentHandleV1,
-    type ComposerDecorationSetV1,
-    type ComposerRefV1,
-    type ComposerSnapshotV1,
-    type ComposerTransactionResultV1,
-    type ComposerInputLockRequestV1,
-    type PluginContributionIdentityV1,
-    type SessionExecutionTargetV1,
-    type SessionDirectoryIntentV1,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { ComposerContentHandleV1Schema, type ComposerContentHandleV1 } from '@happier-dev/protocol/runtime/input/composerContentV1';
+import { ComposerInstanceIdSchema, MAX_COMPOSER_ATTACHMENT_INSTANCES_V1, type ComposerAttachmentViewV1 } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import { ComposerOperationV1Schema, ComposerTransactionV1Schema, type ComposerDecorationSetV1, type ComposerSnapshotV1, type ComposerTransactionResultV1, type ComposerInputLockRequestV1 } from '@happier-dev/protocol/plugins/ui/composer';
+import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef';
+import type { SessionExecutionTargetV1 } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
+import type { SessionDirectoryIntentV1 } from '@happier-dev/protocol/sessions/creation/sessionDirectoryIntentV1';
 import { composerRefV1Key } from '@happier-dev/protocol/plugins/ui/composerRef';
 import type {
     CurrentSessionPresentationIntentResultV1,

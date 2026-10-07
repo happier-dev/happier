@@ -3,7 +3,7 @@ import React from 'react';
 import {
   BUG_REPORT_DEFAULT_ISSUE_OWNER,
   BUG_REPORT_DEFAULT_ISSUE_REPO,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/bugs/reports/types';
 
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { Profile } from '@/sync/domains/profiles/profile';

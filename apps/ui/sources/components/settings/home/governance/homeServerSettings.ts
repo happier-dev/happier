@@ -1,4 +1,4 @@
-import { SERVER_CONFIG_REGISTRY_BASE } from '@happier-dev/protocol';
+import { SERVER_CONFIG_REGISTRY_BASE } from '@happier-dev/protocol/serverConfig/registry';
 import type { HomeSettingEntryV1 } from '@happier-dev/protocol/home/governance';
 
 import {

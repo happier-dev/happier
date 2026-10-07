@@ -2,18 +2,12 @@ import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import {
-    parseQualifiedPluginContributionKey,
-    projectAgentConnectedAccountPurposeDefaultsToSessionBindings,
-    resolveAgentConnectedAccountPurposeDefaults,
-    writeAgentConnectedServiceDefault,
-    type ConnectedServiceId,
-    type ConnectedServicesDefaultAuthByAgentIdV1,
-    type AccountProfile,
-    type PluginContributionIdentityV1,
-    type PluginProjectedAgentConnectedAccountPurposeV2,
-    type QualifiedConnectedAccountPurposeBindingsV1,
-} from '@happier-dev/protocol';
+import { parseQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { projectAgentConnectedAccountPurposeDefaultsToSessionBindings, resolveAgentConnectedAccountPurposeDefaults, writeAgentConnectedServiceDefault, type ConnectedServicesDefaultAuthByAgentIdV1 } from '@happier-dev/protocol/account/settings/connected-services';
+import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { AccountProfile } from '@happier-dev/protocol/account/profile';
+import type { PluginProjectedAgentConnectedAccountPurposeV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
 import type { ConnectedServicesAccountGroupOption } from '@happier-dev/agents';
 

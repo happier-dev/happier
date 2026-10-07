@@ -1,20 +1,7 @@
 import type { z } from 'zod';
-import {
-    SessionTriggerAddRequestV1Schema,
-    SessionTriggerListRequestV1Schema,
-    SessionTriggerListResultV1Schema,
-    SessionTriggerRemoveRequestV1Schema,
-    SessionTriggerUpdateRequestV1Schema,
-    WorkflowTriggerAddRequestV1Schema,
-    WorkflowTriggerListRequestV1Schema,
-    WorkflowTriggerListResultV1Schema,
-    WorkflowTriggerRemoveRequestV1Schema,
-    WorkflowTriggerUpdateRequestV1Schema,
-    WorkflowTriggerWriteResultV1Schema,
-    type ActionId,
-    type ActionExecutorContext,
-    type WorkflowTriggerSetV1,
-} from '@happier-dev/protocol';
+import { SessionTriggerAddRequestV1Schema, SessionTriggerListRequestV1Schema, SessionTriggerListResultV1Schema, SessionTriggerRemoveRequestV1Schema, SessionTriggerUpdateRequestV1Schema, WorkflowTriggerAddRequestV1Schema, WorkflowTriggerListRequestV1Schema, WorkflowTriggerListResultV1Schema, WorkflowTriggerRemoveRequestV1Schema, WorkflowTriggerUpdateRequestV1Schema, WorkflowTriggerWriteResultV1Schema, type WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
 import { callWorkflowAction, type WorkflowActionExecute } from './callWorkflowAction';
 import { getStorage } from '@/sync/domains/state/storage';

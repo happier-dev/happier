@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierInputField, happierPageTextMetrics, resolveHappierActionFieldPresentation, useHappierInputPicker } from '@happier-dev/plugin-ui/presentation';
-import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol';
+import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readInputOptionValue } from '@happier-dev/protocol/inputs';
 
 import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';

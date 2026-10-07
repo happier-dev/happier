@@ -1,12 +1,8 @@
-import {
-  buildBackendTargetKey,
-  convertBackendTargetRefV2ToV1,
-  readBackendTargetRefV2,
-  type ActionExecuteResult,
-  type ActionExecutorContext,
-  type ActionId,
-  type BackendTargetRefV2Input,
-} from '@happier-dev/protocol';
+import { buildBackendTargetKey } from '@happier-dev/protocol/backends/targets/backendTargetRef';
+import { convertBackendTargetRefV2ToV1, readBackendTargetRefV2, type BackendTargetRefV2Input } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 
 import type { SessionComposerSendResolution } from './resolveSessionComposerSend';
 import { storage } from '@/sync/domains/state/storage';

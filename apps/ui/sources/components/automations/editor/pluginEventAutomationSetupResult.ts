@@ -1,10 +1,7 @@
-import {
-    PluginEventAutomationSetupResultV1Schema,
-    compilePluginJsonSchema,
-    isValidPluginJsonSchemaValue,
-    type DaemonContributionRegistryProjectionAutomationEligibleEventV1,
-    type PluginEventAutomationSetupResultV1,
-} from '@happier-dev/protocol';
+import { PluginEventAutomationSetupResultV1Schema, type PluginEventAutomationSetupResultV1 } from '@happier-dev/protocol/automations/event-setup-result';
+import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import type { DaemonContributionRegistryProjectionAutomationEligibleEventV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 export type PluginEventAutomationSetupResultValidation =
     | Readonly<{ kind: 'available'; result: PluginEventAutomationSetupResultV1 }>

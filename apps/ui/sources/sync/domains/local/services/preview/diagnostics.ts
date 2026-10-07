@@ -1,7 +1,7 @@
 import {
     LocalServicePreviewDiagnosticV1Schema,
     type LocalServicePreviewDiagnosticV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/local/services/preview/diagnostics/v1';
 
 export function readLocalServicePreviewDiagnostics(
     value: readonly unknown[],

@@ -1,7 +1,7 @@
 import {
     SessionDiscussionAccountIdSchema,
     type SessionDiscussionMessageContentV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/discussions/content';
 
 import type { ComposerStructuredInputMention } from '@/components/sessions/agentInput/structuredInputMentions';
 

@@ -13,7 +13,7 @@ import type {
 } from '@/sync/ops/connectedServices/sessionAuthSwitch';
 import { t } from '@/text';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
-import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 type PartialAuthSwitchServiceStatus = Extract<
     SessionConnectedServiceAuthSwitchServiceResult['status'],

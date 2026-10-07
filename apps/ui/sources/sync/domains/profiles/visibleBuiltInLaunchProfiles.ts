@@ -1,8 +1,6 @@
-import {
-    resolveVisibleBuiltInAiLaunchProfilesV1,
-    type AIBackendProfile,
-    type ProviderSettingsMigrationStateV1,
-} from '@happier-dev/protocol';
+import { resolveVisibleBuiltInAiLaunchProfilesV1 } from '@happier-dev/protocol/profiles/visibilityV1';
+import type { AIBackendProfile } from '@happier-dev/protocol/profiles/backendProfileSchema';
+import type { ProviderSettingsMigrationStateV1 } from '@happier-dev/protocol/providers/settings/v1';
 
 /** UI adapter over the protocol-owned post-demotion evidence policy. */
 export function resolveVisibleBuiltInLaunchProfiles(input: Readonly<{

@@ -3,7 +3,7 @@ import {
 } from '@/sync/domains/state/machineDisplayWarmCacheAdapters';
 import type { MachineDisplayCacheEntryV1 } from '@/sync/domains/state/warmCachePersistence';
 import type { Machine } from '@/sync/domains/state/storageTypes';
-import { isPersistentMachine } from '@happier-dev/protocol';
+import { isPersistentMachine } from '@happier-dev/protocol/machines/machineKind';
 import { areServerProfileIdentifiersEquivalent, type ServerProfile } from '@/sync/domains/server/serverProfiles';
 
 import {

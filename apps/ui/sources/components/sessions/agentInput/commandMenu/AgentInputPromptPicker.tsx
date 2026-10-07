@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { Platform, View, useWindowDimensions } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { renderPromptTemplateTextV1, type PromptInvocationEntryV1, type PromptLibraryListItem, type RenderedPromptTemplateTextV1 } from '@happier-dev/protocol';
+import { renderPromptTemplateTextV1, type RenderedPromptTemplateTextV1 } from '@happier-dev/protocol/prompts/library/renderPromptTemplateTextV1';
+import type { PromptInvocationEntryV1 } from '@happier-dev/protocol/prompts/library/promptInvocationsV1';
+import type { PromptLibraryListItem } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { KeyHint } from '@/components/ui/keyboard/KeyHint';
 import { SelectionListSearchHeader } from '@/components/ui/selectionList/SelectionListSearchHeader';

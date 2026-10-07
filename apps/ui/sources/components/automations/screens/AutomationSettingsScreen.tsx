@@ -1,11 +1,8 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import {
-    AutomationV3SettingsSchema,
-    SettingsDeclarationActionOutputSchemasV1,
-    type AutomationV3Settings,
-} from '@happier-dev/protocol';
+import { AutomationV3SettingsSchema, type AutomationV3Settings } from '@happier-dev/protocol/automations/automationApiV3';
+import { SettingsDeclarationActionOutputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol';
+import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { WidgetInstanceActionInputSchemasV1, WidgetSurfaceReadV1Schema, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import type { PluginUiWidgetAreaPresentation } from '@happier-dev/plugin-ui/advanced';
 

@@ -1,17 +1,13 @@
 import type { ReactNode } from 'react';
-import {
-    buildBackendTargetKeyV2,
-    readAcpConfiguredBackendV1FromMetadata,
-    SessionModelSelectionIntentV1Schema,
-    AccountProfile,
-    type ExternalSessionsAgentId,
-    type AcpConfigOptionOverridesV1,
-    type PendingDeliveryDetailV1,
-    type AgentUiSettingReferenceV1,
-    ExternalSessionLinkEnsureRequest,
-    ExternalSessionsSource,
-    RuntimeDescriptorV1,
-} from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { readAcpConfiguredBackendV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/acpConfiguredBackendV1';
+import { SessionModelSelectionIntentV1Schema } from '@happier-dev/protocol/providers/model-selection';
+import { AccountProfile } from '@happier-dev/protocol/account/profile';
+import { type ExternalSessionsAgentId, ExternalSessionLinkEnsureRequest, ExternalSessionsSource } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
+import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
+import type { PendingDeliveryDetailV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
+import type { AgentUiSettingReferenceV1 } from '@happier-dev/protocol/plugins/contributions/agentUiGrammar';
+import { RuntimeDescriptorV1 } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 import type { DetailsTab } from '@/components/appShell/panes/model/appPaneReducer';
 import type { AgentCoreConfig, AgentId, BundledAgentId, CanonicalAgentId, PermissionPromptProtocol } from './registryCore';

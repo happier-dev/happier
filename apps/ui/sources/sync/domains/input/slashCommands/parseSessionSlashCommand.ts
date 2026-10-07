@@ -1,4 +1,5 @@
-import { listActionSpecs, type ActionId } from '@happier-dev/protocol';
+import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 
 export type ParsedSessionSlashCommand =
     | { kind: 'action'; actionId: ActionId; rest: string };

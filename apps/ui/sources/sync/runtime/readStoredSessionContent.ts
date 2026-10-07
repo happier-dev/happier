@@ -1,9 +1,6 @@
-import {
-    isMessageStructuredPresentationV1Candidate,
-    resolveStoredContentKindForSessionEncryptionMode,
-    type SessionEncryptionMode,
-    type SessionMessageV1,
-} from '@happier-dev/protocol';
+import { isMessageStructuredPresentationV1Candidate } from '@happier-dev/protocol/sessions/messages/messageStructuredPresentationV1';
+import { resolveStoredContentKindForSessionEncryptionMode, type SessionEncryptionMode } from '@happier-dev/protocol/encryption/storagePolicyDecisions';
+import type { SessionMessageV1 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 
 
 import type { DecryptedMessage } from '@/sync/domains/state/storageTypes';

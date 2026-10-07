@@ -5,10 +5,8 @@ import type {
 import type { RunnerActivationProjectionV1 } from '@happier-dev/protocol/ephemeralRunner/projection';
 import type { RunnerMaterializationResponseV1 } from '@happier-dev/protocol/ephemeralRunner/materialization';
 import type { RunnerActivationProgressPhaseV1 } from '@happier-dev/protocol/ephemeralRunner/progress';
-import {
-    EPHEMERAL_RUNNER_ACTIVATION_ACCOUNT_CHANGE_ENTITY_ID_V1,
-    type TemporaryComputerActivationRefV1,
-} from '@happier-dev/protocol';
+import { EPHEMERAL_RUNNER_ACTIVATION_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
+import type { TemporaryComputerActivationRefV1 } from '@happier-dev/protocol/sessions/authoring/fieldCatalog';
 
 import type { RunnerActivationClient } from '@/sync/api/ephemeralRunner/runnerActivationClient';
 import { RunnerActivationClientError } from '@/sync/api/ephemeralRunner/runnerActivationClient';

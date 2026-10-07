@@ -1,14 +1,7 @@
 import { decodeAutomationTemplate, encodeAutomationTemplate } from './automationTemplateCodec';
 import type { AutomationTemplate } from './automationTypes';
-import {
-    AUTOMATION_TEMPLATE_ENCRYPTED_V1_KIND,
-    AUTOMATION_TEMPLATE_PLAIN_V1_KIND,
-    readAutomationTemplateStoredEnvelopeV1,
-    automationTemplateStoredPayloadMatchesEnvelopeV1,
-    type AutomationTemplateEnvelope,
-    type EncryptedAutomationTemplateEnvelope,
-    type PlainAutomationTemplateEnvelope,
-} from '@happier-dev/protocol';
+import { AUTOMATION_TEMPLATE_ENCRYPTED_V1_KIND, AUTOMATION_TEMPLATE_PLAIN_V1_KIND, type AutomationTemplateEnvelope, type EncryptedAutomationTemplateEnvelope, type PlainAutomationTemplateEnvelope } from '@happier-dev/protocol/automations/automationTemplateEnvelope';
+import { readAutomationTemplateStoredEnvelopeV1, automationTemplateStoredPayloadMatchesEnvelopeV1 } from '@happier-dev/protocol/automations/automationTemplateStoredV1';
 
 export const AUTOMATION_TEMPLATE_ENVELOPE_KIND =
     AUTOMATION_TEMPLATE_ENCRYPTED_V1_KIND;

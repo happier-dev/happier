@@ -1,4 +1,4 @@
-import { readSessionDirectoryKind } from '@happier-dev/protocol';
+import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 
 import { normalizeNonEmptyString } from './shared';

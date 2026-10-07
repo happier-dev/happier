@@ -1,11 +1,8 @@
-import {
-    buildBackendTargetKey,
-    parseQualifiedPluginContributionKey,
-    readBuiltInLegacyConnectedServiceIdForQualifiedService,
-    type AccountProfile,
-    type ConnectedServiceId,
-    type PluginProjectedAgentConnectedAccountPurposeV2,
-} from '@happier-dev/protocol';
+import { buildBackendTargetKey } from '@happier-dev/protocol/backends/targets/backendTargetRef';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { readBuiltInLegacyConnectedServiceIdForQualifiedService, type ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { AccountProfile } from '@happier-dev/protocol/account/profile';
+import type { PluginProjectedAgentConnectedAccountPurposeV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
 import { shouldHideQuotaForCredentialStatus } from '@/sync/domains/connectedServices/shouldHideQuotaForCredentialStatus';

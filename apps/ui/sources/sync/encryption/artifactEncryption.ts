@@ -3,7 +3,8 @@ import { ArtifactHeader, ArtifactBody } from '../domains/artifacts/artifactTypes
 import { AES256Encryption } from './encryptor';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { syncPerformanceTelemetry } from '../runtime/syncPerformanceTelemetry';
-import { ArtifactBodyEnvelopeV1Schema, ArtifactBodyEnvelopeV1StoredSchema, WorkflowDefinitionArtifactHeaderV1ReadSchema } from '@happier-dev/protocol';
+import { ArtifactBodyEnvelopeV1Schema, ArtifactBodyEnvelopeV1StoredSchema } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
+import { WorkflowDefinitionArtifactHeaderV1ReadSchema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 
 const ARTIFACT_HEADER_DEFAULT_VERSION = 1;
 const ARTIFACT_HEADER_MAX_VERSION = 1;

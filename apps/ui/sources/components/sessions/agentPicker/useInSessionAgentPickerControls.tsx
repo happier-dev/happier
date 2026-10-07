@@ -1,13 +1,10 @@
 import * as React from 'react';
 
-import {
-    buildAcpConfigOptionOverridesV1FromConfigOptions,
-    isNativeAutomaticModelSelectionInputV1,
-    ProviderConnectionIdSchema,
-    type FeatureDecision,
-    type SessionAgentTransitionSelectionV1,
-    type SessionModelSelectionV1,
-} from '@happier-dev/protocol';
+import { buildAcpConfigOptionOverridesV1FromConfigOptions } from '@happier-dev/protocol/actions/sessionSpawnConfigOptions';
+import { isNativeAutomaticModelSelectionInputV1, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
+import type { FeatureDecision } from '@happier-dev/protocol/features/decision';
+import type { SessionAgentTransitionSelectionV1 } from '@happier-dev/protocol/sessions/agentTransition';
 
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';

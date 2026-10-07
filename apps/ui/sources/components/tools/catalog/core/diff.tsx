@@ -3,7 +3,7 @@ import type { ToolCall } from "@happier-dev/session-core/messages";
 import * as z from 'zod';
 import { ICON_EDIT } from '../icons';
 import type { KnownToolDefinition } from '../_types';
-import { DiffInputV2Schema } from '@happier-dev/protocol';
+import { DiffInputV2Schema } from '@happier-dev/protocol/tools/v2/schemas';
 import { resolveDiffToolHeaderPresentation } from '../resolveDiffToolHeaderPresentation';
 
 export const coreDiffTools = {

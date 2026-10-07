@@ -2,7 +2,7 @@ import tweetnacl from 'tweetnacl';
 import {
     deriveBoxPublicKeyFromSeed,
     deriveBoxSecretKeyFromSeed,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/crypto/boxBundle';
 
 import { getRandomBytes } from '@/platform/cryptoRandom';
 

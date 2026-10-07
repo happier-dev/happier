@@ -1,10 +1,7 @@
 import * as React from 'react';
 
-import {
-    ComposerInputLockSnapshotV1Schema,
-    type ComposerInputLockSnapshotV1,
-    type ComposerRefV1,
-} from '@happier-dev/protocol';
+import { ComposerInputLockSnapshotV1Schema, type ComposerInputLockSnapshotV1 } from '@happier-dev/protocol/plugins/ui/composer';
+import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef';
 import { composerRefV1Key } from '@happier-dev/protocol/plugins/ui/composerRef';
 
 import type {

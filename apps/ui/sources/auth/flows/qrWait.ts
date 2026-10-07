@@ -3,7 +3,8 @@ import { QRAuthKeyPair, type HomeQrEnrollmentTarget } from './qrStart';
 import { decryptBox } from '@/encryption/libsodium';
 import { isRuntimeActive } from '@/utils/runtime/isRuntimeActive';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { openTerminalProvisioningV3Response, type HomeQrInviteDirectionV2 } from '@happier-dev/protocol';
+import { openTerminalProvisioningV3Response } from '@happier-dev/protocol/crypto/terminalProvisioningV2';
+import type { HomeQrInviteDirectionV2 } from '@happier-dev/protocol/crypto/qrProvisioningV2';
 import tweetnacl from 'tweetnacl';
 import {
     ENROLLMENT_POLL_IDLE_DELAY_MS,

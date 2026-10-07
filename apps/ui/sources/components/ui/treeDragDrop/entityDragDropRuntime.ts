@@ -1,4 +1,4 @@
-import { sameStrictJsonValue } from '@happier-dev/protocol';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import {
     EntityDragItemV1Schema, EntityDropOutcomeV1Schema,
     entityDragKindV1, entityDragScopesEqualV1,

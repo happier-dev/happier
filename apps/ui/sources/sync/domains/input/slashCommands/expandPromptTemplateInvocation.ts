@@ -1,4 +1,4 @@
-import { readPromptDocInLibrary } from '@happier-dev/protocol';
+import { readPromptDocInLibrary } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 import { uiPromptLibraryArtifactStore } from '@/sync/ops/promptLibrary/promptLibraryArtifactStore';
 
 import { renderPromptTemplateTextV1 } from './renderPromptTemplateTextV1';

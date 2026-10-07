@@ -5,7 +5,7 @@ import {
     type ConnectedServiceUxDiagnosticCodeV1,
     type ConnectedServiceUxDiagnosticSuggestedActionV1,
     type ConnectedServiceUxDiagnosticV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 
 import type { TranslationKey } from '@/text';
 

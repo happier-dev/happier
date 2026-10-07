@@ -7,7 +7,7 @@ import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDispla
 import { t } from '@/text';
 
 import type { ToolViewProps } from '../core/_registry';
-import { maybeParseJson } from '@happier-dev/protocol';
+import { maybeParseJson } from '@happier-dev/protocol/activity/parseJson';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 
 /**

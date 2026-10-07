@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { LocalNeuralExecutionSchema } from '@happier-dev/protocol';
+import { LocalNeuralExecutionSchema } from '@happier-dev/protocol/daemon/voiceInference';
 
 import {
   migrateLegacyGoogleSttSettings,

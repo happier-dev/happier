@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { StrictJsonValueSchema, type ScmDiffSummaryResult, type ScmDiffSummaryResultEdit } from '@happier-dev/protocol';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import type { ScmDiffSummaryResult, ScmDiffSummaryResultEdit } from '@happier-dev/protocol/scm/diffSummaryResult';
 
 import { useSessionScmDiffSummaryBinding } from '@/components/sessions/files/comparison/useSessionScmDiffSummaryBinding';
 import { useSessionScmWalkthrough } from '@/components/sessions/files/walkthrough/useSessionScmWalkthrough';

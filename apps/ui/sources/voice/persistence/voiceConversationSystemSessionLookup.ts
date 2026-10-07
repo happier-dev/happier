@@ -1,4 +1,4 @@
-import { readSystemSessionMetadataFromMetadata } from '@happier-dev/protocol';
+import { readSystemSessionMetadataFromMetadata } from '@happier-dev/protocol/sessions/control/contract';
 
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';

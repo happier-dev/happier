@@ -1,7 +1,5 @@
-import {
-  PromptStacksV1Schema,
-  resolvePromptStackSystemAppendBlocksV1 as resolvePromptStackSystemAppendBlocksProtocolV1,
-} from '@happier-dev/protocol';
+import { PromptStacksV1Schema } from '@happier-dev/protocol/prompts/library/promptStacksV1';
+import { resolvePromptStackSystemAppendBlocksV1 as resolvePromptStackSystemAppendBlocksProtocolV1 } from '@happier-dev/protocol/prompts/library/resolvePromptStackSystemAppendBlocksV1';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 
 export async function resolvePromptStackSystemAppendBlocksV1(args: Readonly<{

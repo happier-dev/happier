@@ -1,6 +1,6 @@
 import {
     LegacyHostSessionSystemRecordLookupResponseSchema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { SessionSystemRecordCompatibilityOpenInput } from '../codec';

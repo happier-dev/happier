@@ -17,7 +17,8 @@ import type {
     SessionContextUsageSnapshotV1,
     SessionViewerProjectionV1,
 } from "@happier-dev/protocol";
-import { CliUpdateFactsSchema, WindowsRemoteSessionLaunchModeSchema } from "@happier-dev/protocol";
+import { CliUpdateFactsSchema } from '@happier-dev/protocol/machines/cliUpdateFacts';
+import { WindowsRemoteSessionLaunchModeSchema } from '@happier-dev/protocol/sessions/metadata/windowsRemoteSessionLaunchMode';
 import type { Metadata, AgentState } from "@happier-dev/session-core/state";
 import type { ComposerOptionsInputV1 } from '@happier-dev/protocol/embed';
 import type { ScmOperationState as ProtocolScmOperationState } from '@happier-dev/protocol/scm';

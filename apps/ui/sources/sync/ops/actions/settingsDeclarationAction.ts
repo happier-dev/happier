@@ -1,15 +1,9 @@
 import { z } from 'zod';
-import {
-    SettingsDeclarationActionInputSchemasV1,
-    SettingsDeclarationValueV1Schema,
-    ACCOUNT_SETTING_DEFINITIONS,
-    AutomationV3SettingsSchema,
-    type AutomationV3Settings,
-    type FeatureId,
-    type SettingsDeclarationActionIdV1,
-    type SettingsDeclarationDescriptorV1,
-    type ActionExecutorContext,
-} from '@happier-dev/protocol';
+import { SettingsDeclarationActionInputSchemasV1, SettingsDeclarationValueV1Schema, type SettingsDeclarationActionIdV1, type SettingsDeclarationDescriptorV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
+import { ACCOUNT_SETTING_DEFINITIONS } from '@happier-dev/protocol/account/settings/accountSettings';
+import { AutomationV3SettingsSchema, type AutomationV3Settings } from '@happier-dev/protocol/automations/automationApiV3';
+import type { FeatureId } from '@happier-dev/protocol/features/catalog';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
 import { getSettingsPageDeclarations } from '@/components/settings/catalog/settingsPageDeclarations';
 import { buildSettingHref, settingRendersOnHost, type SettingRef, type SettingsHost, type SettingsMutationServices } from '@/components/settings/catalog/settingDeclarations';

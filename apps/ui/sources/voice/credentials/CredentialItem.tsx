@@ -9,10 +9,8 @@ import type {
   VoiceProviderContribution,
   VoiceRawCredentialGrantDeclaration,
 } from '@happier-dev/protocol';
-import {
-  buildQualifiedPluginContributionKey,
-  resolveRequiredRecipientContractApprovalDigestV1,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { resolveRequiredRecipientContractApprovalDigestV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';

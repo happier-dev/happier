@@ -6,7 +6,7 @@ import {
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { StopSessionResultSchema, type StopSessionResult } from '@happier-dev/protocol';
+import { StopSessionResultSchema, type StopSessionResult } from '@happier-dev/protocol/sessionStop';
 import { isRpcSessionMachineControlUnavailableError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { readMachineControlTargetForSession, shouldFallbackFromMachineRpc } from './sessionMachineTarget';
 import { log } from '@/log';

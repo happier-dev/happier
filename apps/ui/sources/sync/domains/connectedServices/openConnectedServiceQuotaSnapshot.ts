@@ -1,9 +1,5 @@
-import {
-  ConnectedServiceQuotaSnapshotV1Schema,
-  openConnectedServiceQuotaSnapshotCiphertext,
-  type ConnectedServiceQuotaSnapshotV1,
-  type SealedConnectedServiceQuotaSnapshotV1,
-} from '@happier-dev/protocol';
+import { ConnectedServiceQuotaSnapshotV1Schema, type ConnectedServiceQuotaSnapshotV1, type SealedConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { openConnectedServiceQuotaSnapshotCiphertext } from '@happier-dev/protocol/connect/connectedServiceCipher';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from './resolveAccountScopedCryptoMaterialFromCredentials';

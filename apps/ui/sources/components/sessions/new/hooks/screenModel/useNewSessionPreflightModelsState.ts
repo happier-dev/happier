@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { readBackendTargetRefV2, type BackendTargetRefV2 } from '@happier-dev/protocol';
+import { readBackendTargetRefV2, type BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
 import { resolveCatalogAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';

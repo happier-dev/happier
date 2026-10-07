@@ -1,8 +1,5 @@
-import {
-  PromptDocBodyV1Schema,
-  updatePromptDocInLibrary,
-  createPromptDocInLibrary,
-} from '@happier-dev/protocol';
+import { PromptDocBodyV1Schema } from '@happier-dev/protocol/prompts/library/promptDocV2';
+import { updatePromptDocInLibrary, createPromptDocInLibrary } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 
 import { sync } from '@/sync/sync';
 import { storage } from '@/sync/domains/state/storage';

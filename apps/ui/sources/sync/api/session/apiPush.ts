@@ -5,9 +5,8 @@ import { HappyError } from '@/utils/errors/errors';
 import { serverFetch } from '@/sync/http/client';
 import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
 import { z } from 'zod';
-import { PushTokenSchema, PushTokenRegisterResponseSchema, PushTokensResponseSchema,
-    PushTokensRemoteAlertProjectionV2Schema, type DeviceRemoteAlertPolicyV1,
-    type PushTokensRemoteAlertProjectionV2 } from '@happier-dev/protocol';
+import { PushTokenSchema, PushTokenRegisterResponseSchema, PushTokensResponseSchema, PushTokensRemoteAlertProjectionV2Schema, type PushTokensRemoteAlertProjectionV2 } from '@happier-dev/protocol/push/pushTokenRegistration';
+import type { DeviceRemoteAlertPolicyV1 } from '@happier-dev/protocol/account/settings/accountRemoteAlertPolicy';
 
 export async function registerPushToken(
     credentials: AuthCredentials,

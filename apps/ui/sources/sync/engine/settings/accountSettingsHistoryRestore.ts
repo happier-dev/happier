@@ -1,8 +1,5 @@
-import {
-    AccountSettingsV2HistoryDetailResponseSchema,
-    applyAccountSettingsHistoryRestoreV1,
-    type AccountSettingsHistoryRestoreInvalidReasonV1,
-} from '@happier-dev/protocol';
+import { AccountSettingsV2HistoryDetailResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { applyAccountSettingsHistoryRestoreV1, type AccountSettingsHistoryRestoreInvalidReasonV1 } from '@happier-dev/protocol/account/settings/accountSettingsHistoryRestoreV1';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { Encryption } from '@/sync/encryption/encryption';

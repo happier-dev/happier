@@ -1,10 +1,6 @@
 import { type SessionMessageV1 } from '@happier-dev/protocol';
-import {
-    deriveSessionMutationEqualityTagV1,
-    projectSessionMetadataForWire,
-    SESSION_DISCUSSION_MUTATION_EQUALITY_HKDF_LABEL_V1,
-    SESSION_INPUT_EQUALITY_HKDF_LABEL_V1,
-} from '@happier-dev/protocol';
+import { deriveSessionMutationEqualityTagV1, SESSION_DISCUSSION_MUTATION_EQUALITY_HKDF_LABEL_V1, SESSION_INPUT_EQUALITY_HKDF_LABEL_V1 } from '@happier-dev/protocol/sessions/mutations/sessionMutationEqualityV1';
+import { projectSessionMetadataForWire } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
 import { encodeBase64 } from '@/encryption/base64';
 import type { RawRecord } from "@happier-dev/session-core/raw";
 

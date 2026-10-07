@@ -4,7 +4,7 @@ import {
 import {
     SESSION_METADATA_LAYOUT_VERSION_V1,
     SessionSharedMetadataV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 

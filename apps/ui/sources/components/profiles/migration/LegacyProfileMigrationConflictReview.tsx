@@ -4,7 +4,7 @@ import type {
     ProviderErrorV1,
     ProviderSettingsMigrationPendingConflictV1,
 } from '@happier-dev/protocol';
-import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 
 import { MachineSetupTextField } from '@/components/ui/forms/MachineSetupTextField';
 import { Item } from '@/components/ui/lists/Item';

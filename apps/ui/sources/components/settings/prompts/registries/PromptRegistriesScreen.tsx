@@ -9,7 +9,7 @@ import {
   type PromptRegistryConfiguredSourceV1,
   type PromptRegistryItemSummaryV1,
   type PromptRegistrySourceDescriptorV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/prompts/library/promptRegistriesV1';
 
 import { ContextBar } from '@/components/settings/contextBar/ContextBar';
 import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';

@@ -1,4 +1,4 @@
-import { RETIRED_ACCOUNT_SETTINGS_SESSION_ORGANIZATION_KEYS } from '@happier-dev/protocol';
+import { RETIRED_ACCOUNT_SETTINGS_SESSION_ORGANIZATION_KEYS } from '@happier-dev/protocol/account/settings/accountSettings';
 
 import { areAccountSettingsJsonValuesEqual } from './accountSettingsStructuralEquality';
 

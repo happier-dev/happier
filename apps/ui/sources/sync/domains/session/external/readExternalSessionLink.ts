@@ -1,7 +1,7 @@
 import {
     readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
     type LinkedExternalSessionV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/external/linked-metadata';
 
 export type ExternalSessionLink = LinkedExternalSessionV1;
 

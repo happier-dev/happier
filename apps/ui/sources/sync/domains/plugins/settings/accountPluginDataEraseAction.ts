@@ -4,7 +4,7 @@ import {
     type PluginAccountDataEraseActionOutputV1,
     type PluginAccountDataEraseDataArmResultV1,
     type PluginAccountDataEraseSettingsArmResultV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/data/accountEraseV1';
 
 import {
     eraseCurrentAccountPluginData,

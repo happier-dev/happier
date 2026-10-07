@@ -13,7 +13,7 @@ export {
     type UsersSearchResponse,
     RelationshipUpdatedEventSchema,
     type RelationshipUpdatedEvent,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/social/friends';
 
 //
 // Utility functions

@@ -1,7 +1,5 @@
-import {
-    ExternalSessionOperationSharedPresentationV1Schema,
-    type SessionMetadata,
-} from '@happier-dev/protocol';
+import { ExternalSessionOperationSharedPresentationV1Schema } from '@happier-dev/protocol/sessions/external/operationV1';
+import type { SessionMetadata } from '@happier-dev/protocol/sessions/control/contract';
 
 export function readExternalSessionOperationPresentationFromMetadata(
     metadata: SessionMetadata | null | undefined,

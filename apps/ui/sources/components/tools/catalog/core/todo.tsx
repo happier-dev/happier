@@ -3,7 +3,7 @@ import type { ToolCall, Message } from "@happier-dev/session-core/messages";
 import { t } from '@/text';
 import { ICON_TODO } from '../icons';
 import type { KnownToolDefinition } from '../_types';
-import { TodoResultV2Schema, TodoWriteInputV2Schema } from '@happier-dev/protocol';
+import { TodoResultV2Schema, TodoWriteInputV2Schema } from '@happier-dev/protocol/tools/v2/schemas';
 
 export const coreTodoTools = {
     'TodoWrite': {

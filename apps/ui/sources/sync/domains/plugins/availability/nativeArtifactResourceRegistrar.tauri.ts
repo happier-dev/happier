@@ -1,4 +1,4 @@
-import { encodeBase64 } from '@happier-dev/protocol';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 
 import type {
     PluginNativeArtifactResourceProfileIsolationCapability,

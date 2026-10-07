@@ -1,10 +1,7 @@
-import {
-  buildQualifiedPluginContributionKey,
-  createPluginContributionIdentity,
-  type RecipientContractV1,
-  type PluginContributionClientPlatform,
-  type VoiceProviderContribution,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey, createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { RecipientContractV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
+import type { PluginContributionClientPlatform } from '@happier-dev/protocol/plugins/contributions/catalog';
+import type { VoiceProviderContribution } from '@happier-dev/protocol/plugins/contributions/voice';
 import type { PluginSettingsActionInput } from '@happier-dev/plugin-sdk/settings';
 
 import {

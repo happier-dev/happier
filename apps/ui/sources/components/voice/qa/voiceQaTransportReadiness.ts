@@ -1,8 +1,5 @@
-import {
-  DEFAULT_MACHINE_TUNNEL_CAPABILITIES,
-  MachineTunnelCapabilitiesSchema,
-  type FeaturesResponse,
-} from '@happier-dev/protocol';
+import { DEFAULT_MACHINE_TUNNEL_CAPABILITIES, MachineTunnelCapabilitiesSchema } from '@happier-dev/protocol/features/payload/capabilities/machineTunnelCapabilities';
+import type { FeaturesResponse } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { resolveVoiceDaemonDirectRouteAvailability } from '@/voice/settings/voiceProviderLocalAvailability';

@@ -4,12 +4,12 @@ import {
     markExternalSessionAttentionUnreadV1,
     markExternalSessionAttentionViewedV1,
     type ExternalSessionObservedProgress,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/external/linked-metadata';
 
 import type { Metadata } from '@happier-dev/session-core/state';
 
 import { readExternalSessionAttention } from './readExternalSessionAttention';
-export { deriveExternalSessionObservedProgress } from '@happier-dev/protocol';
+export { deriveExternalSessionObservedProgress } from '@happier-dev/protocol/sessions/external/linked-metadata';
 
 export function updateMetadataWithObservedExternalSessionProgress(
     metadata: Metadata,

@@ -35,12 +35,10 @@ import {
     type ConnectedAccountIdentityPresenter,
 } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import type { MeterTone } from '@/components/ui/lists/MeterBar';
-import {
-    buildQualifiedPluginContributionKey,
-    type ConnectedServiceId,
-    type ConnectedServiceQuotaRecoveryCreditsV1,
-    type ProviderAccountSubscriptionV1,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { ConnectedServiceQuotaRecoveryCreditsV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
+import type { ProviderAccountSubscriptionV1 } from '@happier-dev/protocol/connect/accountSubscription';
 import { t } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';

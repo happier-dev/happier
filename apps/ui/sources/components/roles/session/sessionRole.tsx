@@ -1,13 +1,10 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { useRouter } from 'expo-router';
-import {
-    readSessionRoleIdV1,
-    readSessionRolesV1,
-    resolveRoleSelectionV1,
-    type ResolvedRoleV1,
-    type RoleArtifactV1,
-} from '@happier-dev/protocol';
+import { readSessionRoleIdV1, readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
+import { resolveRoleSelectionV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
+import type { ResolvedRoleV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
+import type { RoleArtifactV1 } from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
 
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { useRoleCatalog } from '@/components/roles/catalog/useRoleCatalog';

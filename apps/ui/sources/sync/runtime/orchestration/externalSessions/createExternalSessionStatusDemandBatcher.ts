@@ -2,7 +2,7 @@ import {
     EXTERNAL_SESSION_STATUS_DEMAND_EVENT_V1,
     buildExternalSessionStatusDemandReplaceV1,
     type ExternalSessionStatusDemandEntryV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/external/statusDemandV1';
 
 type DemandLink = Readonly<Omit<ExternalSessionStatusDemandEntryV1, 'demand'>>;
 

@@ -2,7 +2,7 @@ import type { HomeTargetInput } from '@happier-dev/cli-common/homeTarget';
 import {
     canonicalizeKeyChallengeV2AudienceOrigin,
     type KeyChallengeV2Audience,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/auth/keyChallenge';
 
 import {
     getServerProfileById,

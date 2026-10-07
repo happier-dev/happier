@@ -1,11 +1,6 @@
-import {
-    deriveWorkspaceSyncTopology,
-    WorkspaceSyncRelationshipV1Schema,
-    resolveWorkspaceSyncTransferRoute,
-    type WorkspaceRefV1,
-    type WorkspaceSyncRelationshipV1,
-    type WorkspaceSyncStatusV1,
-} from '@happier-dev/protocol';
+import { deriveWorkspaceSyncTopology, resolveWorkspaceSyncTransferRoute } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
+import { WorkspaceSyncRelationshipV1Schema, type WorkspaceSyncRelationshipV1, type WorkspaceSyncStatusV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 import {
     normalizeWorkspaceScopeBase,

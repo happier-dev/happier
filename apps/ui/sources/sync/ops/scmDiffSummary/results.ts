@@ -8,7 +8,11 @@ import {
   ScmCommitPlanAcceptInputSchema, ScmCommitPlanControlInputSchema, ScmCommitPlanIncludeHookChangesInputSchema,
   type ScmCommitPlanAcceptInput, type ScmCommitPlanControlInput, type ScmCommitPlanIncludeHookChangesInput,
 } from '@happier-dev/protocol/scm';
-import { ActionApprovalRequestCreatedResultSchema, SessionDraftRecipientValueV1Schema, StrictJsonValueSchema, pluginJsonValuesEqual, type ActionPrepareResult } from '@happier-dev/protocol';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { SessionDraftRecipientValueV1Schema } from '@happier-dev/protocol/drafts/sessionDrafts';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
+import type { ActionPrepareResult } from '@happier-dev/protocol/actions/executor/types';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { getSessionDraftSnapshot, writeExistingSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import type { UiActionExecutorContext } from '@/sync/ops/actions/defaultActionExecutor';

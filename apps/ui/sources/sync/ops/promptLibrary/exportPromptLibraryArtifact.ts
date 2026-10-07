@@ -1,12 +1,7 @@
-import {
-  exportPromptLibraryArtifact,
-  readPromptLibraryArtifactForExport as readStoredPromptLibraryArtifactForExport,
-  type ExportablePromptLibraryArtifact,
-  type PromptAssetInstallModeV1,
-  type PromptAssetMutationResponseV1,
-  type PromptAssetScopeV1,
-  type PromptExternalLinksV1,
-} from '@happier-dev/protocol';
+import { exportPromptLibraryArtifact, readPromptLibraryArtifactForExport as readStoredPromptLibraryArtifactForExport, type ExportablePromptLibraryArtifact } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
+import type { PromptAssetInstallModeV1, PromptAssetScopeV1 } from '@happier-dev/protocol/prompts/library/promptAssetDescriptorsV1';
+import type { PromptAssetMutationResponseV1 } from '@happier-dev/protocol/prompts/library/promptAssetsV1';
+import type { PromptExternalLinksV1 } from '@happier-dev/protocol/prompts/library/promptExternalLinksV1';
 
 import { machinePromptAssetsWrite } from '@/sync/ops/machinePromptAssets';
 import { randomUUID } from '@/platform/randomUUID';

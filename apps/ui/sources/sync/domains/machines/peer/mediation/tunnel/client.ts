@@ -1,15 +1,8 @@
-import {
-    PEER_TCP_TUNNEL_DEFAULT_INITIAL_WINDOW_BYTES,
-    PEER_TCP_TUNNEL_DEFAULT_MAX_FRAME_BYTES,
-    PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
-    PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT,
-    PEER_TCP_TUNNEL_STREAM_PATH,
-    type FeatureDecision,
-    type PeerTcpTunnelOpenResponseV1,
-    type PeerTcpTunnelOpenV1,
-    type PeerTcpTunnelOpenV2,
-    type PeerTcpTunnelRelayEnvelope,
-} from '@happier-dev/protocol';
+import { PEER_TCP_TUNNEL_DEFAULT_INITIAL_WINDOW_BYTES, PEER_TCP_TUNNEL_DEFAULT_MAX_FRAME_BYTES, PEER_TCP_TUNNEL_STREAM_PATH, type PeerTcpTunnelOpenResponseV1, type PeerTcpTunnelOpenV1 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/v1';
+import { PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/encoding';
+import { PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, type PeerTcpTunnelRelayEnvelope } from '@happier-dev/protocol/machines/peer/mediation/tunnel/relay';
+import type { FeatureDecision } from '@happier-dev/protocol/features/decision';
+import type { PeerTcpTunnelOpenV2 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/openAuthorizationV2';
 import type { PeerTcpTunnelFrame } from '@happier-dev/peer-transport/duplexFrames';
 
 import {

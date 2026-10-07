@@ -1,13 +1,5 @@
-import {
-    DEFAULT_SESSION_HANDOFF_DEFAULTS_V1,
-    SessionHandoffDefaultsV1Schema,
-    computeWorkspaceSyncPolicyDigest,
-    type HandoffWorkspaceActionV1,
-    type SessionHandoffDefaultsV1,
-    type SessionHandoffDirectTargetMode,
-    type WorkspaceContentPolicyV1,
-    type WorkspaceSyncModeV1,
-} from '@happier-dev/protocol';
+import { DEFAULT_SESSION_HANDOFF_DEFAULTS_V1, SessionHandoffDefaultsV1Schema, type SessionHandoffDefaultsV1, type SessionHandoffDirectTargetMode } from '@happier-dev/protocol/account/settings/accountSettings';
+import { computeWorkspaceSyncPolicyDigest, type HandoffWorkspaceActionV1, type WorkspaceContentPolicyV1, type WorkspaceSyncModeV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
 export {
     DEFAULT_SESSION_HANDOFF_DEFAULTS_V1,

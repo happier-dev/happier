@@ -10,7 +10,7 @@ import { t } from '@/text';
 import { useAuth } from '@/auth/context/AuthContext';
 import { useSettingsSelector } from '@/sync/domains/state/storage';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
-import { isExpoPushNotificationChannelEnabled } from '@happier-dev/protocol';
+import { isExpoPushNotificationChannelEnabled } from '@happier-dev/protocol/account/settings/accountSettings';
 import { deletePushToken, fetchPushTokens, type PushToken } from '@/sync/api/session/apiPush';
 import {
     formatPushTimestamp,

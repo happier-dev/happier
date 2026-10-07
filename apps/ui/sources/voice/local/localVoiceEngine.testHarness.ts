@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, vi } from 'vitest';
 import type { AuthContextType } from '@/auth/context/AuthContext';
-import { buildSystemSessionMetadataV1, SessionCurrentProjectionRecordV1Schema, SessionMetadataTuplePatchV1Schema, FeaturesResponseSchema, encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/control/contract';
+import { SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
+import { SessionMetadataTuplePatchV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { VOICE_CONVERSATION_SYSTEM_SESSION_KEY } from '@/voice/persistence/voiceConversationSystemSessionLookup';
 import type {

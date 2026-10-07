@@ -1,9 +1,6 @@
-import {
-    buildBackendTargetKeyV2,
-    SessionModelSelectionV1Schema,
-    type AgentExecutionTargetV1,
-    type SessionModelSelectionV1,
-} from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 
 /**
  * The one way an authored model choice becomes a durable selection.

@@ -1,7 +1,7 @@
 import {
     writePersistedBackendTargetRefV2,
     type PersistedBackendTargetRefV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 import {
     isBundledAgentId,

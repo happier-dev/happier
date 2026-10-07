@@ -1,4 +1,4 @@
-import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol';
+import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { resolveSessionOwnerMetadataViewRead } from './readSessionOwnerMetadataView';

@@ -1,4 +1,5 @@
-import { AsyncTtlCache, ServerRetentionPolicyV2Schema } from '@happier-dev/protocol';
+import { AsyncTtlCache } from '@happier-dev/protocol/common/asyncTtlCache';
+import { ServerRetentionPolicyV2Schema } from '@happier-dev/protocol/retention/serverRetentionPolicyV2';
 
 import { serverFetch } from '@/sync/http/client';
 import { getServerFeaturesSnapshot } from './serverFeaturesClient';

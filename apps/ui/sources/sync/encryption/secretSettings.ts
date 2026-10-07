@@ -1,21 +1,6 @@
-import {
-  decryptSecretStringV1,
-  decryptSecretValueV1,
-  decryptSecretValueWithKeysV1,
-  deriveSettingsSecretsKeySetV1,
-  deriveSettingsSecretsKeyV1,
-  EncryptedStringV1Schema,
-  encryptSecretStringV1,
-  resealSecretsDeepV1,
-  sealSecretsDeepV1,
-  SecretStringV1Schema,
-  unsealSecretsDeepV1,
-  unsealSecretsDeepWithKeysV1,
-  type EncryptedStringV1,
-  type SettingsSecretsKeySetV1,
-  type SecretStringV1,
-  type AccountScopedCryptoMaterial,
-} from '@happier-dev/protocol';
+import { decryptSecretStringV1, decryptSecretValueV1, decryptSecretValueWithKeysV1, deriveSettingsSecretsKeySetV1, deriveSettingsSecretsKeyV1, encryptSecretStringV1, resealSecretsDeepV1, sealSecretsDeepV1, unsealSecretsDeepV1, unsealSecretsDeepWithKeysV1, type SettingsSecretsKeySetV1 } from '@happier-dev/protocol/crypto/settingsSecretStringsV1';
+import { EncryptedStringV1Schema, SecretStringV1Schema, type EncryptedStringV1, type SecretStringV1 } from '@happier-dev/protocol/crypto/settingsSecretStringSchemasV1';
+import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 
 import { getRandomBytes } from '@/platform/cryptoRandom';
 

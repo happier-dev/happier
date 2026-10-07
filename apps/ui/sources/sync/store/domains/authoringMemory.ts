@@ -3,7 +3,7 @@ import {
     LegacyRecentMachinePathsSchema,
     LegacyRememberedEngineSelectionsByScopeV1Schema,
     type RetainedRememberedEngineSelectionsByScopeV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/settings/legacyAuthoringMemorySettingsV1';
 import {
     RememberedEngineSelectionsByScopeV1Schema,
     type RememberedEngineSelectionsByScopeV1,

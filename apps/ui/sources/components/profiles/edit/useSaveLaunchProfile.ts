@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { isLaunchProfileV2, type AiLaunchProfile } from '@happier-dev/protocol';
+import { isLaunchProfileV2, type AiLaunchProfile } from '@happier-dev/protocol/profiles/read';
 
 import { Modal } from '@/modal';
 import { DEFAULT_PROFILES, getBuiltInProfileNameKey } from '@/sync/domains/profiles/profileUtils';

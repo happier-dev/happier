@@ -2,7 +2,7 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import {
     AutomationSessionLifecycleEventsSchema,
     type AutomationSessionLifecycleEvent,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/automations/automationSessionLifecycle';
 
 export type ExactTurnAutomationPrefill = Readonly<{
     sourceSessionId: string;

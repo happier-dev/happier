@@ -1,9 +1,7 @@
 import { randomUUID } from '@/platform/randomUUID';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import {
-    WorkspaceRefV1Schema,
-    WorkspaceSyncRelationshipV1Schema,
-} from '@happier-dev/protocol';
+import { WorkspaceRefV1Schema } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { WorkspaceSyncRelationshipV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
 import type { WorkspaceScopeBase } from './workspaceScope';
 import { normalizeWorkspaceRootPath } from './workspaceScope';

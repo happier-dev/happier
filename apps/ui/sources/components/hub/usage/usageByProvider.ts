@@ -1,6 +1,6 @@
 import type { MeterTone } from '@/components/ui/lists/MeterBar';
 import { resolveQuotaTone } from '@/sync/domains/connectedServices/resolveQuotaTone';
-import { resolveConnectedServiceQuotaMeterLabel } from '@happier-dev/protocol';
+import { resolveConnectedServiceQuotaMeterLabel } from '@happier-dev/protocol/connect/connectedServiceQuotaMeterLabel';
 
 /**
  * The usage summary grouped the way people read limits: per provider (Claude, Codex…), then each

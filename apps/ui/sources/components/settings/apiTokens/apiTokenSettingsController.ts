@@ -1,18 +1,7 @@
-import {
-    AccountApiTokensCreateActionOutputV1Schema,
-    AccountApiTokensListActionOutputV1Schema,
-    formatAccountApiTokenCredentialV1,
-    AccountApiTokensRevokeActionOutputV1Schema,
-    AccountApiTokensRevokeAllActionOutputV1Schema,
-    AccountApiTokensUpdateActionOutputV1Schema,
-    AccountSessionsSignOutEverywhereActionOutputV1Schema,
-    ApiTokenGrantV1Schema,
-    parseAccountApiTokenBearerV1,
-    type AccountApiTokenSummaryV1,
-    type AccountApiTokensUpdateActionInputV1,
-    type ActionExecuteResult,
-    type ApiTokenGrantV1,
-} from '@happier-dev/protocol';
+import { AccountApiTokensCreateActionOutputV1Schema, AccountApiTokensListActionOutputV1Schema, formatAccountApiTokenCredentialV1, AccountApiTokensRevokeActionOutputV1Schema, AccountApiTokensRevokeAllActionOutputV1Schema, AccountApiTokensUpdateActionOutputV1Schema, parseAccountApiTokenBearerV1, type AccountApiTokenSummaryV1, type AccountApiTokensUpdateActionInputV1 } from '@happier-dev/protocol/auth/accountApiTokens';
+import { AccountSessionsSignOutEverywhereActionOutputV1Schema } from '@happier-dev/protocol/auth/accountSessions';
+import { ApiTokenGrantV1Schema, type ApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { EmbedConfigV1 } from '@happier-dev/protocol/embed';
 
 import {

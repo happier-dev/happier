@@ -56,11 +56,9 @@ import {
     resolveSessionRuntimeActivityProjectionFields,
     type SessionRuntimeActivityResyncHandler,
 } from './sessionRuntimeActivityProjection';
-import {
-    parseSessionAgentActivityHeadlineV1,
-    SessionAccessAccountSummaryV1Schema,
-    type PrimaryTurnStatusV1,
-} from '@happier-dev/protocol';
+import { parseSessionAgentActivityHeadlineV1 } from '@happier-dev/protocol/sessions/work/agentActivity/agentActivityHeadlineV1';
+import { SessionAccessAccountSummaryV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessPrincipalV1';
+import type { PrimaryTurnStatusV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { resolveSessionViewerProjectionUpdate } from '@/sync/domains/session/readState/sessionViewer';
 export { handleNewMessageSocketUpdate } from './sessionSocketUpdate';
 export { handleMessageUpdatedSocketUpdate } from './sessionSocketUpdate';

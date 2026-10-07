@@ -1,10 +1,6 @@
-import {
-  canonicalSessionDraftAddressV2,
-  pluginJsonValuesEqual,
-  type AccountEncryptionMigrateRequest,
-  type AccountEncryptionMigrateSuccessResponse,
-  type SessionDraftRecordV2,
-} from '@happier-dev/protocol';
+import { canonicalSessionDraftAddressV2, type SessionDraftRecordV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
+import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
+import type { AccountEncryptionMigrateRequest, AccountEncryptionMigrateSuccessResponse } from '@happier-dev/protocol/account/encryptionMigrate';
 
 type Params = Readonly<{
   request: AccountEncryptionMigrateRequest;

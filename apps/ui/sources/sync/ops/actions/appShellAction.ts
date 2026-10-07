@@ -1,4 +1,5 @@
-import { AppShellActionInputSchemas, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { AppShellActionInputSchemas } from '@happier-dev/protocol/actions/appShellActionFamily';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { executeSessionBulkAction } from '@/components/sessions/actions/sessionBulkActionExecution';
 import { SESSION_BULK_ACTION_IDS } from '@/components/sessions/actions/sessionBulkActionTypes';
 import { isNewSessionDraftDeletionBlocked } from '@/components/sessions/drafts/newSessionDraftDeletion';

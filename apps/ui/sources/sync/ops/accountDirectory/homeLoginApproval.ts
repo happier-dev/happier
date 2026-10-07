@@ -10,7 +10,7 @@ import {
     ACCOUNT_DIRECTORY_MAX_HOME_LOGIN_CREDENTIAL_PLAINTEXT_BYTES,
     ACCOUNT_DIRECTORY_MAX_SEALED_TOKEN_BYTES,
     HomeLoginCredentialPayloadV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/auth/accountDirectory';
 import {
     continueAccountServiceHomeEnrollment,
     type AccountServiceHomeEnrollmentResult,

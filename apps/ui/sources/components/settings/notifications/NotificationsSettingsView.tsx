@@ -21,18 +21,10 @@ import { schedulePushTokenReconciliation } from '@/sync/engine/account/syncAccou
 import { runPushNotificationPermissionPriming } from '@/activity/notifications/permission/pushNotificationPermissionPriming';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import {
-    AttentionDeliveryPolicyV1Schema,
-    DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS,
-    PUSH_NOTIFICATION_SOUND_IDS,
-    accountSettingsParse,
-    resolveExpoNotificationSoundName,
-    resolveNotificationChannelsV1FromAccountSettings,
-    type AttentionDeliveryPolicyV1,
-    type LiveActivityRemoteUpdateCapabilityDiagnostics,
-    type NotificationChannelV1,
-    type WebhookNotificationChannelV1,
-} from '@happier-dev/protocol';
+import { AttentionDeliveryPolicyV1Schema, accountSettingsParse, resolveNotificationChannelsV1FromAccountSettings, type AttentionDeliveryPolicyV1 } from '@happier-dev/protocol/account/settings/accountSettings';
+import { DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS, type LiveActivityRemoteUpdateCapabilityDiagnostics } from '@happier-dev/protocol/activity/live/remoteUpdateCapabilities';
+import { PUSH_NOTIFICATION_SOUND_IDS, resolveExpoNotificationSoundName } from '@happier-dev/protocol/push/pushNotificationActions';
+import type { NotificationChannelV1, WebhookNotificationChannelV1 } from '@happier-dev/protocol/account/settings/notificationChannels';
 
 import { SessionAutoFollowPreferencesSection } from '@/components/sessions/follow/SessionAutoFollowPreferencesSection';
 import { ActivitySurfacesSettingsSection } from './ActivitySurfacesSettingsSection';

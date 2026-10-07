@@ -1,8 +1,10 @@
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { classifyWorkflowHoldV1, sameStrictJsonValue, StrictJsonValueSchema, type JsonValue, type WorkflowInvocationLifecycleV1,
-    type WorkflowProgressEnvelopeV1, type WorkflowResultContract, type PluginJsonSchemaV2 } from '@happier-dev/protocol';
+import { classifyWorkflowHoldV1, type WorkflowInvocationLifecycleV1, type WorkflowProgressEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { sameStrictJsonValue, StrictJsonValueSchema, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { WorkflowResultContract } from '@happier-dev/protocol/workflows/workflowV1';
+import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { decodeExecutionRunResultObservation } from '@happier-dev/protocol/execution/runs/resultContract';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';

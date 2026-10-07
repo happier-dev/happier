@@ -3,7 +3,7 @@ import type {
     TeamCredentialProviderModelSelectionV1,
     TeamCredentialResourceCatalogEntryV1,
 } from '@happier-dev/protocol/teams';
-import { SessionInitialAccessMaterializedV1Schema } from '@happier-dev/protocol';
+import { SessionInitialAccessMaterializedV1Schema } from '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1';
 import type {
     PluginProjectedAgentV2,
     PluginProjectionInstalledPackageV2,

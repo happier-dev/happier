@@ -3,4 +3,4 @@ export {
     hasReviewCommentDraftBody,
     normalizeReviewCommentDraft,
     normalizeReviewCommentDrafts,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/messages/structured/reviewCommentsInput';

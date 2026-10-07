@@ -1,10 +1,7 @@
 import * as React from 'react';
 
-import {
-    PersistedBackendTargetRefV2Schema,
-    buildQualifiedPluginContributionKey,
-    type PersistedBackendTargetRefV2,
-} from '@happier-dev/protocol';
+import { PersistedBackendTargetRefV2Schema, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import { isBundledAgentId, resolveBundledAgentIdFromContributionIdentity, type AgentId } from '@/agents/catalog/catalog';
 import { resolvePreferredBackendTarget } from '@/agents/backendCatalog/resolvePreferredBackendTarget';

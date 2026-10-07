@@ -1,23 +1,6 @@
-import {
-    WorkflowDefinitionCreateRequestV1Schema,
-    WorkflowDefinitionCreateResultV1Schema,
-    WorkflowDefinitionDeleteRequestV1Schema,
-    WorkflowDefinitionDeleteResultV1Schema,
-    WorkflowDefinitionGetRequestV1Schema,
-    WorkflowDefinitionGetResultV1Schema,
-    WorkflowDefinitionListRequestV1Schema,
-    WorkflowDefinitionListResultV1Schema,
-    WorkflowDefinitionUpdateRequestV1Schema,
-    WorkflowDefinitionUpdateResultV1Schema,
-    type ActionId,
-    type WorkflowArtifactRevisionV1,
-    type WorkflowDefinitionCreateResultV1,
-    type WorkflowDefinitionDeleteResultV1,
-    type WorkflowDefinitionGetResultV1,
-    type WorkflowDefinitionListResultV1,
-    type WorkflowDefinitionMetadataV1,
-    type WorkflowDefinitionUpdateResultV1,
-} from '@happier-dev/protocol';
+import { WorkflowDefinitionCreateRequestV1Schema, WorkflowDefinitionCreateResultV1Schema, WorkflowDefinitionDeleteRequestV1Schema, WorkflowDefinitionDeleteResultV1Schema, WorkflowDefinitionGetRequestV1Schema, WorkflowDefinitionGetResultV1Schema, WorkflowDefinitionListRequestV1Schema, WorkflowDefinitionListResultV1Schema, WorkflowDefinitionUpdateRequestV1Schema, WorkflowDefinitionUpdateResultV1Schema, type WorkflowDefinitionCreateResultV1, type WorkflowDefinitionDeleteResultV1, type WorkflowDefinitionGetResultV1, type WorkflowDefinitionListResultV1, type WorkflowDefinitionUpdateResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import type { WorkflowArtifactRevisionV1, WorkflowDefinitionMetadataV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import { callWorkflowAction } from './callWorkflowAction';

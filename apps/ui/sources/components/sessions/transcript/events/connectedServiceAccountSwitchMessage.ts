@@ -1,5 +1,5 @@
 import type { ConnectedServiceId } from '@happier-dev/protocol';
-import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import {
     resolveConnectedServiceShortName,

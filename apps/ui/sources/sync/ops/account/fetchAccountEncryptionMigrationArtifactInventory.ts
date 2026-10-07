@@ -1,4 +1,5 @@
-import { ArtifactAccountEncryptionMigrationInventoryV1Schema, isPlainArtifactDataKeyMarker, isPlainArtifactStoredContent } from '@happier-dev/protocol';
+import { ArtifactAccountEncryptionMigrationInventoryV1Schema } from '@happier-dev/protocol/artifacts/artifactAccountEncryptionMigrationV1';
+import { isPlainArtifactDataKeyMarker, isPlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { ServerFetch } from '@/sync/http/client';
 import { assertAccountEncryptionMigrationScopeCurrent, type AccountEncryptionMigrationScope } from '@/sync/domains/settings/scope/accountSettingsScope';

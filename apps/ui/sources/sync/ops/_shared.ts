@@ -4,7 +4,7 @@ import {
     type SpawnSessionErrorCode,
     type SpawnSessionErrorDetail,
     type SpawnSessionResult,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/spawnSession';
 import { isSocketIoAckTimeoutError } from '@happier-dev/sync-client';
 
 export function isPlainObject(value: unknown): value is Record<string, unknown> {

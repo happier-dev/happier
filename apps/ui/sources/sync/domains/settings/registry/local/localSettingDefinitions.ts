@@ -1,4 +1,5 @@
-import { buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/protocol';
+import { buildSettingArtifacts } from '@happier-dev/protocol/settings/registry/buildSettingArtifacts';
+import { defineSettingDefinitions } from '@happier-dev/protocol/settings/registry/settingDefinition';
 import {
     buildUiSurfaceExecutableApprovalKeyStringV1,
     createUiSurfaceRequestedCapabilitiesDigestV1,

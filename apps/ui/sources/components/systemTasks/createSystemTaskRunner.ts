@@ -1,13 +1,5 @@
-import {
-    CLI_ACQUISITION_PROGRESS_EVENT,
-    parseCliAcquisitionProgress,
-    SystemTaskEventSchema,
-    SystemTaskResultSchema,
-    SystemTaskSpecSchema,
-    type SystemTaskEvent,
-    type SystemTaskResult,
-    type SystemTaskSpec,
-} from '@happier-dev/protocol';
+import { CLI_ACQUISITION_PROGRESS_EVENT, parseCliAcquisitionProgress } from '@happier-dev/protocol/system/tasks/acquisitionProgress';
+import { SystemTaskEventSchema, SystemTaskResultSchema, SystemTaskSpecSchema, type SystemTaskEvent, type SystemTaskResult, type SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
 
 import { readLatestSystemTaskPrompt } from './prompts/readLatestSystemTaskPrompt';
 import { matchesThisComputerSetupScope, readThisComputerSetupScope } from './thisComputerSetup/thisComputerSetupScope';

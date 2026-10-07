@@ -1,16 +1,9 @@
-import {
-    SessionHandoffStartResponseSchema,
-    SessionHandoffActionResultV1Schema,
-    SessionHandoffStatusSchema,
-    HandoffTargetReplacementPreflightResultV1Schema,
-    type SessionHandoffStartResponse,
-    type SessionHandoffActionResultV1,
-    type SessionHandoffStatus,
-    type SessionHandoffStorageMode,
-    type HandoffWorkspaceActionV1,
-    type HandoffTargetReplacementApprovalV1,
-    type ActionExecutorDeps,
-} from '@happier-dev/protocol';
+import { SessionHandoffStartResponseSchema, SessionHandoffActionResultV1Schema, SessionHandoffStatusSchema, type SessionHandoffStartResponse, type SessionHandoffActionResultV1 } from '@happier-dev/protocol/sessions/control/handoff/handoffSchemas';
+import { HandoffTargetReplacementPreflightResultV1Schema, type HandoffWorkspaceActionV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import type { SessionHandoffStatus } from '@happier-dev/protocol/sessions/control/handoff/handoffStatus';
+import type { SessionHandoffStorageMode } from '@happier-dev/protocol/sessions/control/handoff/handoffTypes';
+import type { HandoffTargetReplacementApprovalV1 } from '@happier-dev/protocol/sessions/control/handoff/handoffTargetReplacementApprovalV1';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
 

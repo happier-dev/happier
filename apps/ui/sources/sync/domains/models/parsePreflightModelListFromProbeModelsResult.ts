@@ -1,6 +1,6 @@
 import type { AcpConfigOption } from '@/sync/domains/sessionControl/configOptionsControl';
 import type { PreflightModelList } from '@/sync/domains/models/modelOptions';
-import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol';
+import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol/models/descriptor';
 
 export function parsePreflightModelListFromProbeModelsResult(raw: unknown): PreflightModelList | null {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;

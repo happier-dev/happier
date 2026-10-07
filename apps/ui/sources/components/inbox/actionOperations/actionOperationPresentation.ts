@@ -2,7 +2,7 @@ import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import {
     SessionSpawnNewResultV1Schema,
     type SessionSpawnNewInitialInputDispositionV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import type { ActionOperationObservation } from '@/sync/domains/actionOperations/actionOperationStore';

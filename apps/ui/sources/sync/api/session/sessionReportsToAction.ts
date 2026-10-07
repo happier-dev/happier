@@ -1,11 +1,7 @@
-import {
-    getActionSpec,
-    SessionReportsToSetRequestV1Schema,
-    SessionReportsToSetResultV1Schema,
-    projectSessionFollowSourceKeyPreparationAfterSetV1,
-    type SessionFollowSourceKeyPreparationResultV1,
-    type ActionExecutorDeps,
-} from '@happier-dev/protocol';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { SessionReportsToSetRequestV1Schema, SessionReportsToSetResultV1Schema } from '@happier-dev/protocol/sessions/relations/sessionReportsToV1';
+import { projectSessionFollowSourceKeyPreparationAfterSetV1, type SessionFollowSourceKeyPreparationResultV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceKeyPreparationV1';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';

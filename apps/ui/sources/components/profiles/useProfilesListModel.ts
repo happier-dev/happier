@@ -1,6 +1,6 @@
 import { useAuthoringMemoryField } from '@/sync/domains/state/storage';
 import * as React from 'react';
-import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol';
+import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
 
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';

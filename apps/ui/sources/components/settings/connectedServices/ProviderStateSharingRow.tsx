@@ -12,7 +12,7 @@ import type {
     ConnectedServicesProviderStateSharingModeV1,
     ConnectedServicesProviderStateSharingSettingsV1,
 } from '@happier-dev/protocol';
-import { resolveConnectedServicesProviderStateSharingPolicyV1 } from '@happier-dev/protocol';
+import { resolveConnectedServicesProviderStateSharingPolicyV1 } from '@happier-dev/protocol/account/settings/connected-services';
 
 const UNSUPPORTED_PROVIDER_STATE_SHARING_CAPABILITY: ConnectedServicesProviderStateSharingCapability = {
     config: {

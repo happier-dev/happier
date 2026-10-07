@@ -1,11 +1,8 @@
 import { sha256 } from '@noble/hashes/sha2';
 import { bytesToHex } from '@noble/hashes/utils';
-import {
-    SESSION_ORGANIZATION_MAX_ID_LENGTH,
-    SESSION_ORGANIZATION_MAX_SORT_KEY_LENGTH,
-    type ImportLegacySessionOrganizationRequest,
-    type SessionOrganizationSnapshot,
-} from '@happier-dev/protocol';
+import { SESSION_ORGANIZATION_MAX_ID_LENGTH, SESSION_ORGANIZATION_MAX_SORT_KEY_LENGTH } from '@happier-dev/protocol/sessions/organization/constants';
+import type { ImportLegacySessionOrganizationRequest } from '@happier-dev/protocol/sessions/organization/mutations';
+import type { SessionOrganizationSnapshot } from '@happier-dev/protocol/sessions/organization/snapshot';
 import {
     SessionFoldersV1StoredSchema,
     type SessionFolderWorkspaceRefV1,

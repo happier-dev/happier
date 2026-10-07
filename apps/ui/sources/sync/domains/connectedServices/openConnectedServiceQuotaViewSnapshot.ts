@@ -1,10 +1,6 @@
-import {
-    projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1,
-    type ConnectedServiceId,
-    type ConnectedServiceQuotaSnapshotV1,
-    type SealedConnectedServiceQuotaSnapshotV1,
-    type SealedProviderAccountUsageSnapshotV1,
-} from '@happier-dev/protocol';
+import { projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1, type SealedProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/accountUsage';
+import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { ConnectedServiceQuotaSnapshotV1, SealedConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 

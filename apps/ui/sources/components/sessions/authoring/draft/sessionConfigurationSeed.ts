@@ -1,8 +1,8 @@
-import { readSessionDirectoryKind } from '@happier-dev/protocol';
+import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import {
     AcpConfigOptionOverridesV1Schema,
     AcpSessionModeOverrideV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/metadata/overrides';
 import {
     LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY,
     LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY,

@@ -1,17 +1,8 @@
-import {
-    RestartSessionRunnerRequestV1Schema,
-    RestartSessionRunnerRequestV2Schema,
-    RestartSessionRunnerResultV1Schema,
-    SessionProviderBindingSecurityChangeConfirmationV1Schema,
-    SessionRunnerRuntimeStateV1Schema,
-    SessionRunnerRuntimeStatusV2Schema,
-    SessionRunnerStatusGetRequestV1Schema,
-    type RestartSessionRunnerResultV1,
-    type SessionProviderBindingMetadataV1,
-    type SessionRunnerRuntimeStateV1,
-    type SessionRunnerProcessIdentityV2,
-    type SessionRunnerStatusGetRequestV1,
-} from '@happier-dev/protocol';
+import { RestartSessionRunnerRequestV1Schema, RestartSessionRunnerResultV1Schema, type RestartSessionRunnerResultV1 } from '@happier-dev/protocol/sessions/control/sessionRunnerRestartV1';
+import { RestartSessionRunnerRequestV2Schema } from '@happier-dev/protocol/sessions/control/sessionRunnerRestartV2';
+import { SessionProviderBindingSecurityChangeConfirmationV1Schema, type SessionProviderBindingMetadataV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import { SessionRunnerRuntimeStateV1Schema, SessionRunnerStatusGetRequestV1Schema, type SessionRunnerRuntimeStateV1, type SessionRunnerStatusGetRequestV1 } from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1';
+import { SessionRunnerRuntimeStatusV2Schema, type SessionRunnerProcessIdentityV2 } from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV2';
 import {
     isRpcMethodNotFoundResult,
     RPC_ERROR_CODES,

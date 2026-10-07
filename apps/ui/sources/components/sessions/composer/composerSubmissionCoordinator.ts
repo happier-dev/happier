@@ -6,12 +6,10 @@ import type {
     SessionExecutionTargetV1,
 } from '@happier-dev/protocol';
 import { composerRefsV1Equal } from '@happier-dev/protocol/plugins/ui/composerRef';
-import {
-    admitMentionRefsV1ForText,
-    ComposerContentHandleV1Schema,
-    hasSessionInputContentV1,
-    SessionExecutionTargetV1Schema,
-} from '@happier-dev/protocol';
+import { admitMentionRefsV1ForText } from '@happier-dev/protocol/runtime/input/mentionRefV1';
+import { ComposerContentHandleV1Schema } from '@happier-dev/protocol/runtime/input/composerContentV1';
+import { hasSessionInputContentV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAuthoringV1';
+import { SessionExecutionTargetV1Schema } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
 
 import { sameComposerAttachmentViews } from '@/components/sessions/composer/composerDocumentOwner';
 import { getComposerMediaContentAvailability } from '@/sync/domains/transfers/runtime/transferRuntime';

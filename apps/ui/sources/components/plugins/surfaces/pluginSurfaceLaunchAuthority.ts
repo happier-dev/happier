@@ -8,7 +8,7 @@ import {
 import {
     arePluginMachineExecutionOriginsEqual,
     type PluginMachineExecutionOriginV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 
 /**
  * The authority a plugin launch input belongs to.

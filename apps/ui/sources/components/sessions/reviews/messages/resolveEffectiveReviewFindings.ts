@@ -1,11 +1,7 @@
-import {
-    resolveEffectiveReviewFindingFollowUps,
-    ReviewFollowUpV1Schema,
-    type EffectiveReviewFindings,
-    type ExecutionRunStructuredRunRef,
-    type ReviewFinding,
-    type ReviewFollowUpV1,
-} from '@happier-dev/protocol';
+import { resolveEffectiveReviewFindingFollowUps, type EffectiveReviewFindings } from '@happier-dev/protocol/reviews/resolveEffectiveReviewFindings';
+import { ReviewFollowUpV1Schema, type ReviewFollowUpV1 } from '@happier-dev/protocol/messages/structured/reviewFollowUpV1';
+import type { ExecutionRunStructuredRunRef } from '@happier-dev/protocol/messages/structured/executionRunStructuredRunRef';
+import type { ReviewFinding } from '@happier-dev/protocol/reviews/ReviewFinding';
 import type { Message } from '@happier-dev/session-core/messages';
 import { parseHappierMetaEnvelope } from '@/components/sessions/transcript/structured/happierMetaEnvelope';
 

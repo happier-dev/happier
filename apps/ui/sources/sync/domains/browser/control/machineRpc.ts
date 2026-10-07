@@ -1,13 +1,5 @@
-import {
-    DaemonBrowserControlDispatchRequestV1Schema,
-    DaemonBrowserControlDispatchResponseV1Schema,
-    DaemonBrowserViewListRequestV1Schema,
-    DaemonBrowserViewListResponseV1Schema,
-    type BrowserDaemonViewV1,
-    type BrowserCommandDispatchResultV1,
-    type BrowserCommandV1,
-    type BrowserEventV1,
-} from '@happier-dev/protocol';
+import { DaemonBrowserControlDispatchRequestV1Schema, DaemonBrowserControlDispatchResponseV1Schema, DaemonBrowserViewListRequestV1Schema, DaemonBrowserViewListResponseV1Schema, type BrowserDaemonViewV1, type BrowserCommandDispatchResultV1, type BrowserCommandV1 } from '@happier-dev/protocol/browser/control/v1';
+import type { BrowserEventV1 } from '@happier-dev/protocol/browser/events/v1';
 import { isRpcMethodNotFoundResult, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';

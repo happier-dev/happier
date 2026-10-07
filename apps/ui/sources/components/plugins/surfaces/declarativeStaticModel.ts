@@ -1,15 +1,9 @@
-import {
-    buildQualifiedPluginContributionKey,
-    NormalizedPluginCollectionUiQueryDescriptorV1Schema,
-    PluginContributionIdentityV1Schema,
-    PluginDeclarativeProjectedModelV1Schema,
-    PluginDeclarativeSettingsInventoryEntryV1Schema,
-    sameStrictJsonValue,
-    type NormalizedPluginCollectionUiQueryDescriptorV1,
-    type PluginContributionIdentityV1,
-    type PluginDeclarativeSettingsInventoryEntryV1,
-    type PluginJsonSchemaV2,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey, PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { NormalizedPluginCollectionUiQueryDescriptorV1Schema, type NormalizedPluginCollectionUiQueryDescriptorV1 } from '@happier-dev/protocol/plugins/data/collectionUiQueryWireV1';
+import { PluginDeclarativeProjectedModelV1Schema } from '@happier-dev/protocol/plugins/contributions/ui/declarativeProjectedModelV1';
+import { PluginDeclarativeSettingsInventoryEntryV1Schema, type PluginDeclarativeSettingsInventoryEntryV1 } from '@happier-dev/protocol/plugins/contributions/ui/declarativeDocument';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 
 export type DeclarativeStaticRecord = Readonly<Record<string, unknown>>;
 

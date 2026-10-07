@@ -1,9 +1,5 @@
-import {
-    readScmHostingRepositoryIdentity,
-    WorkspaceRefV1Schema,
-    type ProjectKeyV1,
-    type WorkspaceRefV1,
-} from '@happier-dev/protocol';
+import { readScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
+import { WorkspaceRefV1Schema, type ProjectKeyV1, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';

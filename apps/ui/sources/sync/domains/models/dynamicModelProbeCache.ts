@@ -1,6 +1,7 @@
 import { normalizeAcpConfigOptionsArray, type AcpConfigOption } from '@/sync/domains/sessionControl/configOptionsControl';
 import { createUnavailablePreflightModelList, type PreflightModelList } from '@/sync/domains/models/modelOptions';
-import { ProviderModelDescriptorV1Schema, type ProbedResourceSnapshot } from '@happier-dev/protocol';
+import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol/models/descriptor';
+import type { ProbedResourceSnapshot } from '@happier-dev/protocol/common/probedResourceCache';
 
 import { createPersistentProbedResourceCache } from '@/sync/runtime/probedResources/createPersistentProbedResourceCache';
 

@@ -1,11 +1,6 @@
-import {
-    isSafeDirectTransferEndpointCandidate,
-    normalizeDirectPeerTransferEndpointBaseUrl,
-    TransferChunkEnvelopeSchema,
-    TransferEndpointCandidateSchema,
-    type PromptRegistryConfiguredSourceV1,
-    type TransferEndpointCandidate,
-} from '@happier-dev/protocol';
+import { isSafeDirectTransferEndpointCandidate, normalizeDirectPeerTransferEndpointBaseUrl } from '@happier-dev/protocol/machines/transfer/directPeerUrls';
+import { TransferChunkEnvelopeSchema, TransferEndpointCandidateSchema, type TransferEndpointCandidate } from '@happier-dev/protocol/machines/transfer/transferStream';
+import type { PromptRegistryConfiguredSourceV1 } from '@happier-dev/protocol/prompts/library/promptRegistriesV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { type ChunkDownloadProgress, downloadInChunks } from './chunkTransferClient';

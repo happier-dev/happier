@@ -2,57 +2,10 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { serverFetch } from '@/sync/http/client';
 import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
 import { HappyError } from '@/utils/errors/errors';
-import {
-    CreateOrUpdateSessionOrganizationFolderResponseSchema,
-    CreateOrUpdateSessionOrganizationTagResponseSchema,
-    DeleteSessionOrganizationLabelResponseSchema,
-    DeleteSessionOrganizationFolderResponseSchema,
-    DeleteSessionOrganizationTagResponseSchema,
-    ImportLegacySessionOrganizationRequestSchema,
-    ImportLegacySessionOrganizationResponseSchema,
-    MoveSessionFolderAssignmentsResponseSchema,
-    ReorderSessionOrganizationResponseSchema,
-    SESSION_ORGANIZATION_CURRENT_PROJECTION_VERSION,
-    SESSION_ORGANIZATION_MAX_SCOPED_SNAPSHOT_IDS,
-    SESSION_ORGANIZATION_SNAPSHOT_VERSION,
-    SessionFolderAssignmentListResponseSchema,
-    SessionOrganizationSnapshotRequestSchema,
-    SessionOrganizationSnapshotResponseSchema,
-    SetSessionAttentionStandingResponseSchema,
-    SetSessionFolderAssignmentResponseSchema,
-    SetSessionPinResponseSchema,
-    SetSessionTagAssignmentsResponseSchema,
-    UpsertSessionOrganizationLabelResponseSchema,
-    type CreateOrUpdateSessionOrganizationFolderRequest,
-    type CreateOrUpdateSessionOrganizationFolderResponse,
-    type CreateOrUpdateSessionOrganizationTagRequest,
-    type CreateOrUpdateSessionOrganizationTagResponse,
-    type DeleteSessionOrganizationFolderRequest,
-    type DeleteSessionOrganizationFolderResponse,
-    type DeleteSessionOrganizationLabelRequest,
-    type DeleteSessionOrganizationLabelResponse,
-    type DeleteSessionOrganizationTagRequest,
-    type DeleteSessionOrganizationTagResponse,
-    type ImportLegacySessionOrganizationRequest,
-    type ImportLegacySessionOrganizationResponse,
-    type MoveSessionFolderAssignmentsRequest,
-    type MoveSessionFolderAssignmentsResponse,
-    type ReorderSessionOrganizationRequest,
-    type ReorderSessionOrganizationResponse,
-    type SessionFolderAssignmentListResponse,
-    type SessionOrganizationSnapshotRequest,
-    type SessionOrganizationSnapshotResponse,
-    type SetSessionAttentionStandingRequest,
-    type SetSessionAttentionStandingResponse,
-    type SetSessionFolderAssignmentRequest,
-    type SetSessionFolderAssignmentResponse,
-    type SetSessionPinRequest,
-    type SetSessionPinResponse,
-    type SetSessionTagAssignmentsRequest,
-    type SetSessionTagAssignmentsResponse,
-    type UpsertSessionOrganizationLabelRequest,
-    type UpsertSessionOrganizationLabelResponse,
-} from '@happier-dev/protocol';
+import { CreateOrUpdateSessionOrganizationFolderResponseSchema, CreateOrUpdateSessionOrganizationTagResponseSchema, DeleteSessionOrganizationLabelResponseSchema, DeleteSessionOrganizationFolderResponseSchema, DeleteSessionOrganizationTagResponseSchema, ImportLegacySessionOrganizationRequestSchema, ImportLegacySessionOrganizationResponseSchema, MoveSessionFolderAssignmentsResponseSchema, ReorderSessionOrganizationResponseSchema, SessionFolderAssignmentListResponseSchema, SetSessionFolderAssignmentResponseSchema, SetSessionPinResponseSchema, SetSessionTagAssignmentsResponseSchema, UpsertSessionOrganizationLabelResponseSchema, type CreateOrUpdateSessionOrganizationFolderRequest, type CreateOrUpdateSessionOrganizationFolderResponse, type CreateOrUpdateSessionOrganizationTagRequest, type CreateOrUpdateSessionOrganizationTagResponse, type DeleteSessionOrganizationFolderRequest, type DeleteSessionOrganizationFolderResponse, type DeleteSessionOrganizationLabelRequest, type DeleteSessionOrganizationLabelResponse, type DeleteSessionOrganizationTagRequest, type DeleteSessionOrganizationTagResponse, type ImportLegacySessionOrganizationRequest, type ImportLegacySessionOrganizationResponse, type MoveSessionFolderAssignmentsRequest, type MoveSessionFolderAssignmentsResponse, type ReorderSessionOrganizationRequest, type ReorderSessionOrganizationResponse, type SessionFolderAssignmentListResponse, type SetSessionFolderAssignmentRequest, type SetSessionFolderAssignmentResponse, type SetSessionPinRequest, type SetSessionPinResponse, type SetSessionTagAssignmentsRequest, type SetSessionTagAssignmentsResponse, type UpsertSessionOrganizationLabelRequest, type UpsertSessionOrganizationLabelResponse } from '@happier-dev/protocol/sessions/organization/mutations';
+import { SESSION_ORGANIZATION_CURRENT_PROJECTION_VERSION, SESSION_ORGANIZATION_MAX_SCOPED_SNAPSHOT_IDS, SESSION_ORGANIZATION_SNAPSHOT_VERSION } from '@happier-dev/protocol/sessions/organization/constants';
+import { SessionOrganizationSnapshotRequestSchema, SessionOrganizationSnapshotResponseSchema, type SessionOrganizationSnapshotRequest, type SessionOrganizationSnapshotResponse } from '@happier-dev/protocol/sessions/organization/snapshot';
+import { SetSessionAttentionStandingResponseSchema, type SetSessionAttentionStandingRequest, type SetSessionAttentionStandingResponse } from '@happier-dev/protocol/sessions/organization/standings';
 import type { z } from 'zod';
 
 const SESSION_ORGANIZATION_ROUTE = '/v2/session-organization';

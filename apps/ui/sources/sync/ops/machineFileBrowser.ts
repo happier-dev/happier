@@ -5,7 +5,7 @@ import {
     type DaemonFilesystemListDirectoryRequest,
     type DaemonFilesystemListDirectoryResponse,
     type DaemonFilesystemListRootsResponse,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/fileBrowser';
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 

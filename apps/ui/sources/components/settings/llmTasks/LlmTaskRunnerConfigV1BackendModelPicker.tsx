@@ -4,13 +4,9 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
-import {
-  convertBackendTargetRefV2ToV1,
-  readBackendTargetRefV2,
-  type AcpCatalogSettingsV1,
-  type BackendTargetRefV2,
-  type LlmTaskRunnerConfigV1,
-} from '@happier-dev/protocol';
+import { convertBackendTargetRefV2ToV1, readBackendTargetRefV2, type BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { AcpCatalogSettingsV1 } from '@happier-dev/protocol/acp/catalog/settingsV1';
+import type { LlmTaskRunnerConfigV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
 
 import {
   getResolvedBackendCatalogEntries,

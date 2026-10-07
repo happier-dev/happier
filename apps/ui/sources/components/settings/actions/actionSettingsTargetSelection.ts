@@ -1,13 +1,7 @@
-import {
-    ACTION_TOOL_EXPOSURE_SURFACES,
-    isActionSettingsOptInPlacement,
-    type ActionSettingsActionId,
-    type ActionSurfaces,
-    type ActionToolExposureMode,
-    type ActionToolExposureSurface,
-    type ActionUiPlacement,
-    type ActionsSettingsV1,
-} from '@happier-dev/protocol';
+import { ACTION_TOOL_EXPOSURE_SURFACES } from '@happier-dev/protocol/actions/actionToolExposure';
+import { isActionSettingsOptInPlacement, type ActionSettingsActionId, type ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import type { ActionSurfaces, ActionToolExposureMode, ActionToolExposureSurface } from '@happier-dev/protocol/actions/metadata';
+import type { ActionUiPlacement } from '@happier-dev/protocol/actions/actionUiPlacements';
 
 import { normalizeActionsSettings } from './normalizeActionsSettings';
 import {

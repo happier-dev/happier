@@ -1,9 +1,5 @@
-import {
-    bindHomeDomainActionHttpRequestV1,
-    HomeGovernanceProjectionV1Schema,
-    homeDomainActionOutputSchemaV1,
-    type HomeGovernanceProjectionV1,
-} from '@happier-dev/protocol';
+import { bindHomeDomainActionHttpRequestV1, homeDomainActionOutputSchemaV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
+import { HomeGovernanceProjectionV1Schema, type HomeGovernanceProjectionV1 } from '@happier-dev/protocol/home/governance/projection';
 
 import {
     requestHomeDomain,

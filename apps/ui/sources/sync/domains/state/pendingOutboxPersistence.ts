@@ -1,10 +1,7 @@
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import {
-    readPendingLocalId,
-    ParticipantExecutionRunRecipientRoutingIdentityV1Schema,
-    SessionExecutionRunPendingEnqueueRequestV1Schema,
-    type ParticipantRecipientRoutingIdentityV1,
-} from '@happier-dev/protocol';
+import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
+import { ParticipantExecutionRunRecipientRoutingIdentityV1Schema, type ParticipantRecipientRoutingIdentityV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
+import { SessionExecutionRunPendingEnqueueRequestV1Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingExecutionRunMachineAdmissionV2';
 import { Platform } from 'react-native';
 import {
     assertValidPendingMessageId,

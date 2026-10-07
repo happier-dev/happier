@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { ActionIdSchema, getActionSpec } from '@happier-dev/protocol';
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ApprovalDecisionFooter } from '@/components/tools/shell/approvals/ApprovalDecisionFooter';

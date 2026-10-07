@@ -1,10 +1,7 @@
 import * as React from 'react';
 
-import {
-    arePluginMachineExecutionOriginsEqual,
-    type PluginMachineMaterializationV1,
-    type PluginMachineExecutionOriginV1,
-} from '@happier-dev/protocol';
+import { arePluginMachineExecutionOriginsEqual, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import type { PluginMachineMaterializationV1 } from '@happier-dev/protocol/plugins/availability/v1';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import {
     applyInstalledAppShellPluginUiReactNativeExecutableAuthorityInvalidation,

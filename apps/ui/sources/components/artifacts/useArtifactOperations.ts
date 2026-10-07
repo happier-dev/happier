@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { getArtifactKindPolicyV1 } from '@happier-dev/protocol';
+import { getArtifactKindPolicyV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 
 import { showDocumentShareSheet } from '@/components/sharing/documents/showDocumentShareSheet';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';

@@ -1,9 +1,5 @@
-import {
-    arePluginMachineMaterializationRefsEqual,
-    isPluginMachineMaterializationOnServerIdentityV1,
-    type PluginMachineExecutionOriginV1,
-    type PluginMachineMaterializationV1,
-} from '@happier-dev/protocol';
+import { arePluginMachineMaterializationRefsEqual, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { isPluginMachineMaterializationOnServerIdentityV1, type PluginMachineMaterializationV1 } from '@happier-dev/protocol/plugins/availability/v1';
 
 import type { ServerMachineInventorySnapshotV1 } from '@/sync/domains/machines/machineInventorySnapshots';
 import { resolveMachinePickerPresence } from '@/sync/domains/machines/identity/resolveMachinePickerPresence';

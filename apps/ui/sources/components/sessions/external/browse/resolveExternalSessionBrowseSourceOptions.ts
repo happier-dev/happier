@@ -1,14 +1,9 @@
-import {
-    materializeExternalSessionSourceInstances,
-    parseExternalSessionsSourceForDeclaration,
-    resolveExternalSessionsSourceKeyForDeclaration,
-    type AccountProfile,
-    type ExternalSessionsAgentId,
-    type ExternalSessionsSource,
-    type PluginBackendExternalSessionSourceDeclarationV1,
-    type PluginProjectedAgentV2,
-    type PluginProjectionV2,
-} from '@happier-dev/protocol';
+import { materializeExternalSessionSourceInstances } from '@happier-dev/protocol/plugins/backendExternalSessionSourceInstances';
+import { parseExternalSessionsSourceForDeclaration, resolveExternalSessionsSourceKeyForDeclaration } from '@happier-dev/protocol/sessions/external/sourceCatalog';
+import type { AccountProfile } from '@happier-dev/protocol/account/profile';
+import type { ExternalSessionsAgentId, ExternalSessionsSource } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
+import type { PluginBackendExternalSessionSourceDeclarationV1 } from '@happier-dev/protocol/plugins/backendDefinitionV1';
+import type { PluginProjectedAgentV2, PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
 import { resolveAgentUiBehavior } from '@/agents/registry/registryUiBehavior';

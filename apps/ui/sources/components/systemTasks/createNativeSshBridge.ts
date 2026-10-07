@@ -1,4 +1,4 @@
-import { SystemTaskSpecSchema, type SystemTaskResult, type SystemTaskSpec } from '@happier-dev/protocol';
+import { SystemTaskSpecSchema, type SystemTaskResult, type SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
 import type {
     NativeSshAuthPromptEvent,
     NativeSshAuthPromptResponse,

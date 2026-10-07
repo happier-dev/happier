@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { Pressable } from 'react-native';
-import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol';
+import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import {
     type TeamMembershipV1,
     type TeamRoleV1,

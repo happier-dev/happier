@@ -1,4 +1,5 @@
-import { getActionSpec, type createActionExecutor, type PublicActionResultById } from '@happier-dev/protocol';
+import { getActionSpec, type PublicActionResultById } from '@happier-dev/protocol/actions/actionSpecs';
+import type { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import type { WidgetDefinitionRefV1, WidgetDefinitionV1, WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 
 export async function readWidgetDefinitionForInstanceV1(

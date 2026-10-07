@@ -1,22 +1,9 @@
-import {
-  applyAccountSettingsSavedSecretMutation,
-  applyAccountSettingsVoiceCredentialSourceMutation,
-  buildQualifiedPluginContributionKey,
-  deriveVoiceCredentialBindingIdentityV1,
-  resolveAccountSettingsVoiceCredentialSecret,
-  resolveAccountSettingsVoiceCredentialSource,
-  normalizeRecipientContractV1,
-  type AccountSettingsSavedSecretMutation,
-  type AccountSettingsVoiceCredentialSourceMutation,
-  type AccountSettingsVoiceCredentialSourceMutationResult,
-  type PluginContributionIdentityV1,
-  type QualifiedConnectedAccountPurposeV1,
-  type SecretStringV1,
-  type VoiceCredentialSourceSelection,
-  type VoiceProviderContribution,
-  type VoiceRawCredentialGrantDeclaration,
-  VoiceProviderContributionSchema,
-} from '@happier-dev/protocol';
+import { applyAccountSettingsSavedSecretMutation, applyAccountSettingsVoiceCredentialSourceMutation, resolveAccountSettingsVoiceCredentialSecret, resolveAccountSettingsVoiceCredentialSource, type AccountSettingsSavedSecretMutation, type AccountSettingsVoiceCredentialSourceMutation, type AccountSettingsVoiceCredentialSourceMutationResult, type VoiceCredentialSourceSelection } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { deriveVoiceCredentialBindingIdentityV1, type VoiceProviderContribution, type VoiceRawCredentialGrantDeclaration, VoiceProviderContributionSchema } from '@happier-dev/protocol/plugins/contributions/voice';
+import { normalizeRecipientContractV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
+import type { QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
+import type { SecretStringV1 } from '@happier-dev/protocol/crypto/settingsSecretStringSchemasV1';
 import { qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { sha256 } from '@noble/hashes/sha2';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';

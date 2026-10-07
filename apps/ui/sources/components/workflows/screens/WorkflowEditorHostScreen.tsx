@@ -19,7 +19,12 @@ import { t, tLoose } from '@/text';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
 
-import { matchesWorkflowAcceptedDefinitionV1, pluginJsonValuesEqual, WORKFLOW_STARTER_EXAMPLES_V1, getBuiltinWorkflowCatalogV1, type ArtifactCallerAccessV1, type JsonValue } from '@happier-dev/protocol';
+import { matchesWorkflowAcceptedDefinitionV1 } from '@happier-dev/protocol/workflows/workflowValidationV1';
+import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
+import { WORKFLOW_STARTER_EXAMPLES_V1 } from '@happier-dev/protocol/workflows/builtins/examples';
+import { getBuiltinWorkflowCatalogV1 } from '@happier-dev/protocol/workflows/builtins/catalog';
+import type { ArtifactCallerAccessV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
 import { isWorkflowProjectTarget } from '@/sync/domains/workflows/workflowProjectTarget';
 import type { WorkflowArtifactRevisionV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';

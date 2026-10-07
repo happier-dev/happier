@@ -1,14 +1,10 @@
 import { z } from 'zod';
-import {
-    BUILT_IN_ROLE_IDS_V1,
-    RoleActionEntryV1Schema,
-    resolveRoleSelectionV1,
-    sameStrictJsonValue,
-    type ResolvedRoleV1,
-    type RoleArtifactV1,
-    type RoleInstructionsOverrideV1,
-    type WorkflowRoleV1,
-} from '@happier-dev/protocol';
+import { BUILT_IN_ROLE_IDS_V1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
+import { RoleActionEntryV1Schema } from '@happier-dev/protocol/prompts/roles/roleActionsV1';
+import { resolveRoleSelectionV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { ResolvedRoleV1, RoleInstructionsOverrideV1, WorkflowRoleV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
+import type { RoleArtifactV1 } from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
 
 /** One `roles.list` item (the Action's result contract): a role document and, for Artifacts, its revision. */
 const RolesListItemSchema = RoleActionEntryV1Schema;

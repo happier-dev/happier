@@ -1,4 +1,5 @@
-import { MemoryStatusV1Schema, RPC_METHODS, type MemoryStatusV1 } from '@happier-dev/protocol';
+import { MemoryStatusV1Schema, type MemoryStatusV1 } from '@happier-dev/protocol/memory/memoryStatus';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 

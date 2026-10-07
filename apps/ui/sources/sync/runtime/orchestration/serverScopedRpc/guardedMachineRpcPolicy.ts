@@ -1,4 +1,4 @@
-import { readServerEnabledBit } from '@happier-dev/protocol';
+import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';

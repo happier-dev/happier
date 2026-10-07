@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { isLoopbackHostname } from '@happier-dev/protocol';
+import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
 
 import { subscribeRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
 import { readHomeApplicationCarrierEligibility } from '@/sync/runtime/homeCarrierPolicy';

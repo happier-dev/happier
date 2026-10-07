@@ -21,7 +21,7 @@ import type {
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { t } from '@/text';
 
-import { PluginJsonValueV2Schema } from '@happier-dev/protocol';
+import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { resolveRoleDisplayName } from '@/sync/domains/roles/roleCatalog';
 import { isPermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type { WorkflowEngineSelectionV1, WorkflowStep, WorkflowStepExecutionSelection } from '@happier-dev/protocol/workflows/workflowV1';

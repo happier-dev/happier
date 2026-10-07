@@ -1,6 +1,6 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { applyTodoSessionLinkV1, TodoSessionLinkErrorV1 as TodoSessionLinkError,
-    resolveAnchoredListMoveV1, type AnchoredListPositionV1 } from '@happier-dev/protocol';
+import { applyTodoSessionLinkV1, TodoSessionLinkErrorV1 as TodoSessionLinkError } from '@happier-dev/protocol/todos/todoSessionLinkV1';
+import { resolveAnchoredListMoveV1, type AnchoredListPositionV1 } from '@happier-dev/protocol/actions/anchoredListOrderV1';
 import { storage } from '@/sync/domains/state/storage';
 import {
     kvGet,

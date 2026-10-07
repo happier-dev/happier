@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import type { WorkflowDefinitionListResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import type { WorkflowPluginSourceV1 } from '@happier-dev/protocol/workflows';
-import { sameStrictJsonValue } from '@happier-dev/protocol';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 import {
     resolveWorkflowProblemPresentation,

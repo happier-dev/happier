@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { listActionSpecs, PromptInvocationEntryV1Schema, validatePromptInvocationTokenV1 } from '@happier-dev/protocol';
+import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+import { PromptInvocationEntryV1Schema, validatePromptInvocationTokenV1 } from '@happier-dev/protocol/prompts/library/promptInvocationsV1';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';

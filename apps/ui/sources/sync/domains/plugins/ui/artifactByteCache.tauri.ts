@@ -1,6 +1,6 @@
 import { sha256 } from '@noble/hashes/sha2';
 import { bytesToHex } from '@noble/hashes/utils';
-import { decodeBase64, encodeBase64 } from '@happier-dev/protocol';
+import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import {
     PluginUiArtifactDigestV1Schema,
     type PluginUiArtifactDigestV1,

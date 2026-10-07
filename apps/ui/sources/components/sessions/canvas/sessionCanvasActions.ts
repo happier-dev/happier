@@ -1,4 +1,5 @@
-import { SESSION_CANVAS_ACTION_INPUT_SCHEMAS, type SessionCanvasActionId, type SessionCanvasActionOutcome } from '@happier-dev/protocol';
+import { SESSION_CANVAS_ACTION_INPUT_SCHEMAS, type SessionCanvasActionOutcome } from '@happier-dev/protocol/actions/sessionCanvasActionFamily';
+import type { SessionCanvasActionId } from '@happier-dev/protocol/actions/sessionCanvasActionIds';
 import type { z } from 'zod';
 import { entityDragScopesEqualV1 } from '@happier-dev/protocol/plugins/ui';
 import { collectSplitCanvasLeaves } from '@/components/appShell/splitCanvas/model/splitCanvasTree';

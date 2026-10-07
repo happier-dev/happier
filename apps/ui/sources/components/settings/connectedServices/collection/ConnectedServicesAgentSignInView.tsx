@@ -1,9 +1,7 @@
 import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import {
-    buildQualifiedPluginContributionKey,
-    ConnectedServicesProviderStateSharingSettingsV1Schema,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { ConnectedServicesProviderStateSharingSettingsV1Schema } from '@happier-dev/protocol/account/settings/connected-services';
 
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';

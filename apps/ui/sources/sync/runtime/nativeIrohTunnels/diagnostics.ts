@@ -1,9 +1,5 @@
-import {
-    sanitizeBugReportUrl,
-    sanitizeDoctorDiagnosticErrorCode,
-    sanitizeDoctorDiagnosticErrorMessage,
-    type DoctorSnapshotHomeTransportDiagnostics,
-} from '@happier-dev/protocol';
+import { sanitizeBugReportUrl } from '@happier-dev/protocol/bugs/reports/sanitize';
+import { sanitizeDoctorDiagnosticErrorCode, sanitizeDoctorDiagnosticErrorMessage, type DoctorSnapshotHomeTransportDiagnostics } from '@happier-dev/protocol/diagnostics/doctorSnapshot';
 import type { IrohRelayPolicy } from '@happier-dev/iroh-native';
 
 type IrohDiagnosticsLifecycleEvent = Readonly<{

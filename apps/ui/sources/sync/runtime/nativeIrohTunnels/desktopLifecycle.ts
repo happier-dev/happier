@@ -1,5 +1,5 @@
 import { IrohError, normalizeIrohNativeError, type IrohHomeTunnelLease, type IrohHomeTunnelRequest, type IrohObservedPath } from '@happier-dev/iroh-native';
-import { isLiteralLoopbackHostname } from '@happier-dev/protocol';
+import { isLiteralLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
 
 import { desktopHostKind, invokeDesktopHost } from '@/utils/platform/desktopHost';
 

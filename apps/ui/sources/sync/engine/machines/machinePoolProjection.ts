@@ -1,4 +1,4 @@
-import { readServerEnabledBit } from '@happier-dev/protocol';
+import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 
 import { getCachedServerFeaturesSnapshot, getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';

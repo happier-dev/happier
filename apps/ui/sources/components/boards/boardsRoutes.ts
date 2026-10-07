@@ -1,4 +1,4 @@
-import { WORK_BOARD_ARTIFACT_KIND_V1 } from '@happier-dev/protocol';
+import { WORK_BOARD_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/boards/workBoardArtifactV1';
 
 /** The Boards destination's routes. */
 export const BOARDS_ROUTE = '/boards';

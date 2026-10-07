@@ -1,7 +1,7 @@
 import {
     openPublicShareDataKeyV1,
     sealPublicShareDataKeyV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/crypto/publicShareEncryptedDataKeyEnvelopeV0';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 
 /**

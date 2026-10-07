@@ -19,7 +19,7 @@ import type { ActionOperationSnapshotEphemeralV1 } from '@happier-dev/protocol';
 import {
     isPlainMachineDataKeyMarker,
     resolvePublishedMachineDataEncryptionKeyV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/machineStoredContent';
 import { normalizeActionOperationEphemeralIngress } from '@/sync/domains/actionOperations/actionOperationEphemeralIngress';
 import type { PendingMessage, Session } from '@/sync/domains/state/storageTypes';
 import type { Machine } from '@/sync/domains/state/storageTypes';

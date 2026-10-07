@@ -1,20 +1,10 @@
-import {
-    ACTION_ID_FAMILIES_V1,
-    BrowserAutomationCancelActiveResultV1Schema,
-    BrowserAutomationActionRequestV1Schema,
-    BrowserCommandDispatchResultV1Schema,
-    BrowserCommandV1Schema,
-    createUnavailableRuntimeActionExecutor,
-    getActionSpec,
-    resolveRuntimeActionExecutionFamily,
-    resolveBrowserAutomationActionRequester,
-    type ActionExecuteResult,
-    type BrowserAutomationActionRequestV1,
-    type BrowserCommandV1,
-    type RuntimeActionExecute,
-    type RuntimeActionExecuteArgs,
-    type RuntimeActionIdV1,
-} from '@happier-dev/protocol';
+import { ACTION_ID_FAMILIES_V1, type RuntimeActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
+import { BrowserAutomationCancelActiveResultV1Schema, BrowserAutomationActionRequestV1Schema, resolveBrowserAutomationActionRequester, type BrowserAutomationActionRequestV1 } from '@happier-dev/protocol/browser/automation/v1';
+import { BrowserCommandDispatchResultV1Schema, BrowserCommandV1Schema, type BrowserCommandV1 } from '@happier-dev/protocol/browser/control/v1';
+import { createUnavailableRuntimeActionExecutor, resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol/actions/executor/dispatch';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { RuntimeActionExecute, RuntimeActionExecuteArgs } from '@happier-dev/protocol/actions/executor/types';
 
 import {
     dispatchBrowserControlCommand,

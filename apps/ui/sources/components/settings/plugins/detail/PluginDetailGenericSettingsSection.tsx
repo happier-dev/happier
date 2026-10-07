@@ -4,7 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { createPluginAgentSettingsRoute } from '@/agents/catalog/agentSettingsRoutes';
-import { readManagedServiceEndpointUrl } from '@happier-dev/protocol';
+import { readManagedServiceEndpointUrl } from '@happier-dev/protocol/plugins/managedServiceEndpointUrl';
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 
 import type {

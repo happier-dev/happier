@@ -9,7 +9,7 @@ import { isOpenApprovalInboxArtifact } from '@/sync/domains/artifacts/approvalAr
 import {
     type SessionBulkActionTarget,
 } from '@/components/sessions/actions/sessionBulkActionTypes';
-import { AppShellActionOutputSchemas } from '@happier-dev/protocol';
+import { AppShellActionOutputSchemas } from '@happier-dev/protocol/actions/appShellActionFamily';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import {

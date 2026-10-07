@@ -10,19 +10,10 @@ import type { TranscriptAccountActor } from "@happier-dev/session-core/messages"
 import { nowServerMs } from '@/sync/runtime/time';
 import type { RawRecord } from "@happier-dev/session-core/raw";
 import type { SessionMessageHostAdmissionOrigin } from '@/sync/domains/session/input/types';
-import {
-    buildTrustedHostSessionInputAdmissionV1,
-    projectSessionMessageModelSelectionToLegacyModelV1,
-    SESSION_INPUT_REQUEST_META_KEY,
-    SESSION_MESSAGE_PROVENANCE_META_KEY,
-    resolveEffectiveApiTokenModelRefV1,
-    resolveEffectiveApiTokenPermissionModeV1,
-    stripSessionInputProtectedMeta,
-    withSessionMessageModelSelectionV1,
-    type ProviderBoundModelRef,
-    type SentFrom,
-    type SessionModelSelectionV1,
-} from '@happier-dev/protocol';
+import { buildTrustedHostSessionInputAdmissionV1, SESSION_INPUT_REQUEST_META_KEY, SESSION_MESSAGE_PROVENANCE_META_KEY, stripSessionInputProtectedMeta } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { projectSessionMessageModelSelectionToLegacyModelV1, withSessionMessageModelSelectionV1, type ProviderBoundModelRef, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import { resolveEffectiveApiTokenModelRefV1, resolveEffectiveApiTokenPermissionModeV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import type { SentFrom } from '@happier-dev/protocol/sentFrom';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { getModelOverrideForSpawn } from '@/sync/domains/models/modelOverride';
 import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';

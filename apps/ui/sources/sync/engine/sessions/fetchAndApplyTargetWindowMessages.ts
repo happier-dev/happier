@@ -5,7 +5,7 @@ import {
     applySessionMessagesWindowPage,
     type SessionMessagesWindowState,
 } from '@/sync/runtime/sessionMessagesWindowState';
-import { buildSessionMessagesPath, type SessionMessagesPageScope } from '@happier-dev/protocol';
+import { buildSessionMessagesPath, type SessionMessagesPageScope } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import { parseStableSessionMessageRouteId } from "@happier-dev/session-core/messages";
 import type { NormalizedMessage } from "@happier-dev/session-core/raw";
 

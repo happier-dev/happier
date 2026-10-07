@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 
-import { PluginJsonValueV2Schema } from '@happier-dev/protocol';
+import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import type { WorkflowWaitLeafV1 } from '@happier-dev/protocol/workflows/workflowLeafV1';
 
 import {

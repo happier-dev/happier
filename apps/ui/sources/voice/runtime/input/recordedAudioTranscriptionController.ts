@@ -1,7 +1,5 @@
-import {
-  VoiceProviderOperationErrorCodeSchema,
-  DaemonVoiceInferenceErrorCodeSchema,
-} from '@happier-dev/protocol';
+import { VoiceProviderOperationErrorCodeSchema } from '@happier-dev/protocol/voice/providerOperations';
+import { DaemonVoiceInferenceErrorCodeSchema } from '@happier-dev/protocol/daemon/voiceInference';
 import { prepareDaemonVoiceInferenceSttSource } from '@/voice/input/prepareDaemonVoiceInferenceSttSource';
 import {
   parseLocalVoiceSttSettings,

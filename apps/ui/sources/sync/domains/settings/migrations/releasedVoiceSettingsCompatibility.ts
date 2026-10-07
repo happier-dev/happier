@@ -1,4 +1,5 @@
-import { SecretStringV1Schema, type VoiceProviderSettingsJsonValueV1 } from '@happier-dev/protocol';
+import { SecretStringV1Schema } from '@happier-dev/protocol/crypto/settingsSecretStringSchemasV1';
+import type { VoiceProviderSettingsJsonValueV1 } from '@happier-dev/protocol/voice/realtime/providerSettings';
 import { z } from 'zod';
 
 import { VoiceLocalDirectSchema } from '@/voice/adapters/localDirect/settings';

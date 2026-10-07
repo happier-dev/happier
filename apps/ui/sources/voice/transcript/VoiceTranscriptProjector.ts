@@ -1,13 +1,7 @@
-import {
-    REALTIME_CONVERSATION_VOICE_TURN_ORIGIN_V1,
-    deriveVoiceAgentTurnLocalId,
-    deriveVoiceAgentTurnProvisionalLocalId,
-    readVoiceAgentTurnPayloadFromMeta,
-    readVoiceAgentTurnProvisionalLocalId,
-    type ConversationTurnOriginV1,
-    type VoiceAgentTurnV1,
-    type VoiceTranscriptCanonicalEventV1,
-} from '@happier-dev/protocol';
+import { REALTIME_CONVERSATION_VOICE_TURN_ORIGIN_V1, type ConversationTurnOriginV1 } from '@happier-dev/protocol/messages/structured/conversationTurnOriginV1';
+import { deriveVoiceAgentTurnLocalId, deriveVoiceAgentTurnProvisionalLocalId, readVoiceAgentTurnPayloadFromMeta, readVoiceAgentTurnProvisionalLocalId } from '@happier-dev/protocol/messages/structured/voiceAgentTurnLocalId';
+import type { VoiceAgentTurnV1 } from '@happier-dev/protocol/messages/structured/voiceAgentTurnV1';
+import type { VoiceTranscriptCanonicalEventV1 } from '@happier-dev/protocol/voice/realtime/events';
 
 import {
     readStoredSessionMessages,

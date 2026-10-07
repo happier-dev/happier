@@ -1,4 +1,4 @@
-import { sanitizeBugReportUrl } from '@happier-dev/protocol';
+import { sanitizeBugReportUrl } from '@happier-dev/protocol/bugs/reports/sanitize';
 
 import type { SystemTaskRunState } from '@/components/systemTasks/types';
 import type { PlanChecklistExecutionState } from '@/components/systemTasks/planChecklist';

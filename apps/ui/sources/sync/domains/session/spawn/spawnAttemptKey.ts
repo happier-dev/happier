@@ -1,13 +1,8 @@
 import { normalizeFileSystemPath } from '@/sync/domains/fileSystem/normalizeFileSystemPath';
 import { resolveAbsolutePath } from '@/utils/path/pathUtils';
-import {
-    SessionCreationImmutableRecipeV1Schema,
-    SessionSpawnNewInputV2Schema,
-    type SessionCreationImmutableRecipeV1,
-    type SessionDirectoryIntentV1,
-    type SessionSpawnNewInputV2,
-    normalizeSessionCreationOrganizationPlacementV1,
-} from '@happier-dev/protocol';
+import { SessionCreationImmutableRecipeV1Schema, type SessionCreationImmutableRecipeV1, normalizeSessionCreationOrganizationPlacementV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { SessionSpawnNewInputV2Schema, type SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import type { SessionDirectoryIntentV1 } from '@happier-dev/protocol/sessions/creation/sessionDirectoryIntentV1';
 import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 

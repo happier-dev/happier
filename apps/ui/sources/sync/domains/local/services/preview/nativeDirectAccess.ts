@@ -1,5 +1,7 @@
 import { Platform } from 'react-native';
-import { createEphemeralPeerRouteProofHandleV2, IrohMachineHandshakeV1Schema, PeerTcpTunnelOpenV2Schema } from '@happier-dev/protocol';
+import { createEphemeralPeerRouteProofHandleV2 } from '@happier-dev/protocol/machines/peer/mediation/ephemeralPeerRouteProofV2';
+import { IrohMachineHandshakeV1Schema } from '@happier-dev/protocol/connectivity/iroh/machineHandshakeV1';
+import { PeerTcpTunnelOpenV2Schema } from '@happier-dev/protocol/machines/peer/mediation/tunnel/openAuthorizationV2';
 import { LocalServicePreviewNativeDirectAccessRequestV1Schema, LocalServicePreviewNativeDirectAccessV1Schema, LocalServicePreviewServerAccessRequestV1Schema, LocalServicePreviewServerAccessV1Schema } from '@happier-dev/protocol/local/services/preview/nativeDirect';
 import { resolveEffectivePeerDirectRoutePolicy } from '@happier-dev/peer-mediation';
 

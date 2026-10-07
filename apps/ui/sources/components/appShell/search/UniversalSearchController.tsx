@@ -1,4 +1,4 @@
-import { readSessionDirectoryKind } from '@happier-dev/protocol';
+import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import * as React from 'react';
 import { openChatWithFindSeed } from '@/components/appShell/panes/fileFindSeedHandoff';
 import { Platform, View } from 'react-native';

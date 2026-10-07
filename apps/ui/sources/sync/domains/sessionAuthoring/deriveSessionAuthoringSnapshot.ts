@@ -1,9 +1,7 @@
 import { resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents';
-import {
-    buildBackendTargetKeyV2,
-    readRuntimeDescriptorV1FromMetadata,
-    readSessionMcpSelectionV1FromMetadata,
-} from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
+import { readSessionMcpSelectionV1FromMetadata } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
 
 import { getModelOverrideForSpawn } from '@/sync/domains/models/modelOverride';
 import { getPermissionModeOverrideForSpawn } from '@/sync/domains/permissions/permissionModeOverride';

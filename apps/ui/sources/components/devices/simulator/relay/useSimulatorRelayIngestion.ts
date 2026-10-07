@@ -1,13 +1,7 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
-import {
-    MACHINE_LIVE_STREAM_SOCKET_EVENT,
-    MachineLiveStreamDecodedEnvelopeV1Schema as MachineLiveStreamRelayEnvelopeV1Schema,
-    type MachineLiveStreamCapsV1,
-    type MachineLiveStreamCodecIdV1,
-    type MachineLiveStreamRelayEnvelopeV1,
-    type MachineLiveStreamFrameV1,
-} from '@happier-dev/protocol';
+import { MACHINE_LIVE_STREAM_SOCKET_EVENT, MachineLiveStreamDecodedEnvelopeV1Schema as MachineLiveStreamRelayEnvelopeV1Schema, type MachineLiveStreamCapsV1, type MachineLiveStreamRelayEnvelopeV1, type MachineLiveStreamFrameV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import type { MachineLiveStreamCodecIdV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/codecsV1';
 
 import { openMachineLiveStreamRelayClient, renewMachineLiveStreamRelayClient, type MachineLiveStreamRelayClientInput } from '@/sync/domains/machines/peer/mediation/stream/relayClient';
 import { resolveLiveStreamViewerCapabilities, type LiveStreamViewerCapabilities } from '@/sync/domains/machines/peer/mediation/stream/capabilities';

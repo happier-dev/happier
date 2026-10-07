@@ -1,8 +1,5 @@
-import {
-    resolveAgentRequestKind,
-    type AgentRequestKind,
-    type WorkflowProgressEnvelopeV1,
-} from '@happier-dev/protocol';
+import { resolveAgentRequestKind, type AgentRequestKind } from '@happier-dev/protocol/activity/agentRequestSummary';
+import type { WorkflowProgressEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 /**
  * One request recorded in an invocation's private interaction state.

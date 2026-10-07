@@ -1,10 +1,7 @@
 import * as React from 'react';
 
-import {
-  BUG_REPORT_DEFAULT_ISSUE_OWNER,
-  BUG_REPORT_DEFAULT_ISSUE_REPO,
-  appendBugReportReporterToSummary,
-} from '@happier-dev/protocol';
+import { BUG_REPORT_DEFAULT_ISSUE_OWNER, BUG_REPORT_DEFAULT_ISSUE_REPO } from '@happier-dev/protocol/bugs/reports/types';
+import { appendBugReportReporterToSummary } from '@happier-dev/protocol/bugs/reports/reporter';
 
 import { clearBugReportUserActionTrail, recordBugReportUserAction } from '@/utils/system/bugReportActionTrail';
 import { clearBugReportLogBuffer } from '@/utils/system/bugReportLogBuffer';
@@ -83,4 +80,3 @@ export function useBugReportFallbackIssue(input: Readonly<{
     input.whatChangedRecently,
   ]);
 }
-

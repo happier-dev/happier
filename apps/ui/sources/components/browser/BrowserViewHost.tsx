@@ -2,7 +2,7 @@ import type {
     BrowserProfileV1,
     BrowserRenderEngineKindV1,
 } from '@happier-dev/protocol';
-import { browserViewKey } from '@happier-dev/protocol';
+import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';

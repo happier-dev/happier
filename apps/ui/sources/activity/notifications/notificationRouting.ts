@@ -3,7 +3,7 @@ import {
     type ActivityInteractionCommand,
 } from '@/activity/actions/resolveActivityInteractionCommand';
 import { normalizeServerUrl } from '@/sync/domains/server/activeServerSwitch';
-import { isLoopbackHostname } from '@happier-dev/protocol';
+import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 
 import { resolveIncomingActivityRemoteAlert } from './remoteAlerts/activityRemoteAlertRouting';

@@ -1,6 +1,6 @@
 import type { FeaturesResponse as ServerFeatures, SessionHandoffTransportStrategy } from '@happier-dev/protocol';
 import { resolveMachineTransferRoute } from '@happier-dev/transfers';
-import { readServerEnabledBit } from '@happier-dev/protocol';
+import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 
 type SessionHandoffTransportError = Readonly<{
     ok: false;

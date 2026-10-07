@@ -1,17 +1,9 @@
 import * as React from 'react';
 import { getRandomBytes } from 'expo-crypto';
-import {
-    arePluginMachineExecutionOriginsEqual,
-    arePluginMachineMaterializationRefsEqual,
-    PluginWebhookDeliveryMovePendingResultV1Schema,
-    PluginWebhookEndpointCredentialConfigureResultV1Schema,
-    PluginWebhookEndpointCredentialFinishRotationResultV1Schema,
-    PluginWebhookEndpointCredentialRotateResultV1Schema,
-    PluginWebhookEndpointRetargetResultV1Schema,
-    PluginWebhookEndpointRevokeResultV1Schema,
-    type PluginMachineMaterializationV1,
-    type PluginMachineMaterializationRefV1,
-} from '@happier-dev/protocol';
+import { arePluginMachineExecutionOriginsEqual, arePluginMachineMaterializationRefsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { PluginWebhookDeliveryMovePendingResultV1Schema, PluginWebhookEndpointCredentialConfigureResultV1Schema, PluginWebhookEndpointCredentialFinishRotationResultV1Schema, PluginWebhookEndpointCredentialRotateResultV1Schema, PluginWebhookEndpointRetargetResultV1Schema, PluginWebhookEndpointRevokeResultV1Schema } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
+import type { PluginMachineMaterializationV1 } from '@happier-dev/protocol/plugins/availability/v1';
+import type { PluginMachineMaterializationRefV1 } from '@happier-dev/protocol/plugins/availability/materializationRefV1';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';

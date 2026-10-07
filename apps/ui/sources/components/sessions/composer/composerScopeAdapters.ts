@@ -1,14 +1,10 @@
-import {
-    buildQualifiedPluginContributionKey,
-    ComposerAttachmentDraftV1Schema,
-    isValidPluginJsonSchemaValue,
-    readHappierStructuredInputV1FromMeta,
-    type ComposerAttachmentDraftV1,
-    type ComposerAttachmentViewV1,
-    type ComposerSnapshotV1,
-    type MentionRefV1,
-    type PluginProjectedComposerAttachmentEntryV1,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { ComposerAttachmentDraftV1Schema, type ComposerAttachmentDraftV1, type ComposerAttachmentViewV1 } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import { readHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/sessions/userMessageRpc';
+import type { ComposerSnapshotV1 } from '@happier-dev/protocol/plugins/ui/composer';
+import type { MentionRefV1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
+import type { PluginProjectedComposerAttachmentEntryV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { buildStructuredInputMetaOverrides } from '@/components/sessions/agentInput/structuredInputMentions';
 import type { PluginUiComposerAttachmentProjection } from '@/sync/domains/plugins/ui/projection';

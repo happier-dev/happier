@@ -5,13 +5,11 @@ import {
     type RunnerReviewedFileV1,
 } from '@happier-dev/protocol/ephemeralRunner/launchManifest';
 import type { VerifiedRunnerArtifactV1 } from '@happier-dev/protocol/ephemeralRunner/runnerArtifact';
-import {
-    computeContentPublicKeyFingerprint,
-    signAccountContentKeyBindingV1,
-    type ComposerSnapshotV1,
-    type ActionsSettingsV1,
-    type SessionAuthoringValueV1,
-} from '@happier-dev/protocol';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import { signAccountContentKeyBindingV1 } from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
+import type { ComposerSnapshotV1 } from '@happier-dev/protocol/plugins/ui/composer';
+import type { ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import type { SessionAuthoringValueV1 } from '@happier-dev/protocol/sessions/authoring/index';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import type { ExpectedMarketplaceListingV1 } from '@happier-dev/protocol/marketplace/internal';
 import { RunnerEndpointFactsRecipientV1Schema, type RunnerEndpointFactsRecipientV1 } from '@happier-dev/protocol/ephemeralRunner/activation';

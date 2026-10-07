@@ -1,4 +1,4 @@
-import { readSessionDirectoryKind } from '@happier-dev/protocol';
+import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 
 import { t } from '@/text';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';

@@ -2,7 +2,7 @@ import {
     AutomationEventFilterV1Schema,
     type AutomationEventFilterV1,
     type AutomationJsonScalarV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/automations/automationEventFilterV1';
 
 /** One transient bounded-control clause; never a persisted Event filter shape. */
 export type PluginEventAutomationFilterClauseDraft = Readonly<{

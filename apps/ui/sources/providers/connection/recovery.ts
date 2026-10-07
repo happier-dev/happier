@@ -1,4 +1,4 @@
-import { ProviderErrorV1Schema, type ProviderErrorV1 } from '@happier-dev/protocol';
+import { ProviderErrorV1Schema, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 
 type RecoveryRouter = Readonly<{ push: (href: string) => void }>;
 

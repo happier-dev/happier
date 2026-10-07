@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { getBuiltinWorkflowCatalogV1, type BuiltinWorkflowCatalogEntryV1, type BuiltinWorkflowPurposeV1 } from '@happier-dev/protocol';
+import { getBuiltinWorkflowCatalogV1, type BuiltinWorkflowCatalogEntryV1, type BuiltinWorkflowPurposeV1 } from '@happier-dev/protocol/workflows/builtins/catalog';
 import { countWorkflowStepsV1 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';

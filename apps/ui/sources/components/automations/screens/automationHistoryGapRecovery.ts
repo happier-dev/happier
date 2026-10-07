@@ -1,11 +1,9 @@
-import {
-    arePluginMachineMaterializationRefsEqual,
-    pluginSourceCustodyV1Equal,
-    type AutomationEventSourceStatusV1,
-    type AutomationDefinitionListItem,
-    type AutomationTriggerListItem,
-    type DaemonContributionRegistryProjectionAutomationEligibleEventV1,
-} from '@happier-dev/protocol';
+import { arePluginMachineMaterializationRefsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import type { AutomationEventSourceStatusV1 } from '@happier-dev/protocol/automations/automationEventSourceStatusV1';
+import type { AutomationDefinitionListItem } from '@happier-dev/protocol/automations/automationApiV3';
+import type { AutomationTriggerListItem } from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
+import type { DaemonContributionRegistryProjectionAutomationEligibleEventV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { reconstructPluginUiSelectedActionInput } from '@happier-dev/protocol/plugins/ui';
 import type { MutableRefObject } from 'react';
 

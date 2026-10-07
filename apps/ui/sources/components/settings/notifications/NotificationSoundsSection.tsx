@@ -7,7 +7,8 @@ import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import type { AttentionDeviceOverridesV1 } from '@/sync/domains/settings/attentionDeviceOverridesV1';
 import { t } from '@/text';
-import { PUSH_NOTIFICATION_SOUND_IDS, type AttentionDeliveryPolicyV1 } from '@happier-dev/protocol';
+import { PUSH_NOTIFICATION_SOUND_IDS } from '@happier-dev/protocol/push/pushNotificationActions';
+import type { AttentionDeliveryPolicyV1 } from '@happier-dev/protocol/account/settings/accountSettings';
 import { SettingAnchor, SettingRow } from '@/components/settings/shell/SettingRow';
 import { NOTIFICATIONS_SETTINGS } from '@/components/settings/notifications/notificationsSettings';
 

@@ -1,8 +1,5 @@
-import {
-    SessionDiscussionSelectionSourceV1Schema,
-    type SessionDiscussionOpenedMessageV1,
-    type SessionDiscussionSelectionSourceV1,
-} from '@happier-dev/protocol';
+import { SessionDiscussionSelectionSourceV1Schema, type SessionDiscussionSelectionSourceV1 } from '@happier-dev/protocol/sessions/discussions/content';
+import type { SessionDiscussionOpenedMessageV1 } from '@happier-dev/protocol/sessions/discussions/actions';
 
 import { formatSelectedMessagesForClipboard } from '@/components/sessions/transcript/messageSelection/formatSelectedMessagesForClipboard';
 import type { TranscriptBulkCopyFormat } from '@/components/sessions/transcript/messageSelection/_types';

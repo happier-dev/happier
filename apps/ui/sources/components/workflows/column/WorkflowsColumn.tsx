@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { getBuiltinWorkflowCatalogV1 } from '@happier-dev/protocol';
+import { getBuiltinWorkflowCatalogV1 } from '@happier-dev/protocol/workflows/builtins/catalog';
 import { HAPPIER_COLLECTION_LIST_METRICS, HAPPIER_COLLECTION_LIST_TEXT, HAPPIER_PRESS_FEEDBACK_V1, HappierPressable, HappierSkeletonBlock } from '@happier-dev/plugin-ui/presentation';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';

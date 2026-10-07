@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildAuthenticatedAccountEntryHref } from '@/components/navigation/accountEntry/authenticatedAccountEntryRoute';
-import { createHomeLoginRequesterFingerprintV1 } from '@happier-dev/protocol';
+import { createHomeLoginRequesterFingerprintV1 } from '@happier-dev/protocol/auth/accountDirectory';
 import { Platform, StyleSheet, View } from 'react-native';
 
 import {

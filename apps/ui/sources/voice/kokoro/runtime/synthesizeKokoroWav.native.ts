@@ -7,15 +7,8 @@ import {
 import { createSentenceStream } from '@/voice/kokoro/runtime/streamKokoroWavSentences';
 import { ensureModelPackInstalled } from '@/voice/modelPacks/installer.native';
 import { resolveModelPackManifestUrl } from '@/voice/modelPacks/manifests';
-import {
-  KOKORO_DEFAULT_TTS_PACK_ID,
-  getModelPackCatalogEntry,
-  isPublishedModelPackCatalogEntry,
-  resolveCanonicalModelPackId,
-  resolveKokoroModelConfig,
-  resolveKokoroVoiceSid,
-  type KokoroModelConfig,
-} from '@happier-dev/protocol';
+import { KOKORO_DEFAULT_TTS_PACK_ID, getModelPackCatalogEntry, isPublishedModelPackCatalogEntry, resolveCanonicalModelPackId } from '@happier-dev/protocol/voice/modelPacks/catalog';
+import { resolveKokoroModelConfig, resolveKokoroVoiceSid, type KokoroModelConfig } from '@happier-dev/protocol/voice/modelPacks/kokoro';
 
 type KokoroNativeModuleLike = {
   initialize(params: { assetsDir: string; initializationId: string; frontend?: KokoroModelConfig }): Promise<void>;

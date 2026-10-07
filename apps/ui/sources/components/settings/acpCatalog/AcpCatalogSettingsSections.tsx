@@ -5,7 +5,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { applyAcpBackendDeleteV1, normalizeAcpCatalogSettingsV1 } from '@happier-dev/protocol';
+import { applyAcpBackendDeleteV1, normalizeAcpCatalogSettingsV1 } from '@happier-dev/protocol/acp/catalog/catalogMutationsV1';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import { createCustomAcpAgentSettingsRoute } from '@/agents/catalog/agentSettingsRoutes';
 import { CustomAcpAgentMark } from './CustomAcpAgentMark';

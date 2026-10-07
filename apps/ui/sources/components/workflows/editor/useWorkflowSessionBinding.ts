@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { WorkflowConversationBindInputV1Schema, WorkflowConversationBindResultV1Schema } from '@happier-dev/protocol';
+import { WorkflowConversationBindInputV1Schema, WorkflowConversationBindResultV1Schema } from '@happier-dev/protocol/actions/workflowAuthoringAction';
 import type { EntityDragItemV1, EntityDragScopeV1, EntityDropAdmissionV1, EntityDropEffectV1, EntityDropOutcomeV1 } from '@happier-dev/protocol/plugins/ui';
 import { resolveWorkflowSessionBinding, type WorkflowSessionBindingContext } from '@/sync/domains/workflows/workflowAuthoringSessionBinding';
 import { findWorkflowBlock } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';

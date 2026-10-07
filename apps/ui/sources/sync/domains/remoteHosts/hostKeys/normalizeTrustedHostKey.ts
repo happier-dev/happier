@@ -4,7 +4,7 @@ import {
     normalizeSshHostKeyFingerprintSha256,
     normalizeSshHostTrustHost,
     normalizeSshHostTrustPort,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/ssh/hostTrust';
 
 import type { RemoteHostTrustedHostKeyLookup } from './model';
 

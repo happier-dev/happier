@@ -1,5 +1,5 @@
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
-import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol';
+import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessions/awareness/availability';
 import React from 'react';
 import {
     Animated,

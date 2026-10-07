@@ -1,4 +1,4 @@
-import { SessionWorkStateGetResponseV1Schema } from '@happier-dev/protocol';
+import { SessionWorkStateGetResponseV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';

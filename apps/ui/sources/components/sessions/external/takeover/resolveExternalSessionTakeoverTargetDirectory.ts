@@ -1,4 +1,4 @@
-import { ExternalSessionTakeoverTargetDirectoryV1Schema } from '@happier-dev/protocol';
+import { ExternalSessionTakeoverTargetDirectoryV1Schema } from '@happier-dev/protocol/sessions/external/operationV1';
 
 import { resolveAbsolutePath } from '@/utils/path/pathUtils';
 

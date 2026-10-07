@@ -1,4 +1,4 @@
-import { SessionOwnerMetadataEnvelopeV1Schema } from '@happier-dev/protocol';
+import { SessionOwnerMetadataEnvelopeV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 import {
     fetchSessionListPageCompat,

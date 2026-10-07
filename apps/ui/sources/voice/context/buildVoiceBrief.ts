@@ -11,7 +11,7 @@ import { resolveWorkflowRunDisplayName } from '@/components/workflows/presentati
 import type { WorkflowAttentionSource } from '@/hooks/inbox/useWorkflowAttentionSource';
 import type { AutomationInboxItem } from '@/hooks/inbox/useInboxModel';
 import type { AgentRequestKind } from '@happier-dev/protocol';
-import { resolveVoiceSessionUpdatePolicyV1 } from '@happier-dev/protocol';
+import { resolveVoiceSessionUpdatePolicyV1 } from '@happier-dev/protocol/voice/sourceDisclosureV1';
 import { buildInboxSessionContextLine } from '@/components/inbox/workGroups/inboxSessionContextLine';
 
 export type VoiceBriefSource = Pick<InboxModel, 'sessionPresentation' | 'workGroups' | 'automationAttentionItems'

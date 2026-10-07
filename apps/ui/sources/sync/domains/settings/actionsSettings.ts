@@ -1,9 +1,6 @@
 import type { ActionId, ActionSettingsActionId } from '@happier-dev/protocol';
-import {
-    isActionEnabledByActionsSettings,
-    isApprovalRequiredByActionsSettings,
-    normalizeActionsSettingsV1,
-} from '@happier-dev/protocol';
+import { isActionEnabledByActionsSettings, normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 
 import { isExecutionRunsFeatureAction } from '@/sync/domains/actions/isExecutionRunsFeatureAction';
 import { resolveLocalFeaturePolicyEnabled } from '@/sync/domains/features/featureLocalPolicy';

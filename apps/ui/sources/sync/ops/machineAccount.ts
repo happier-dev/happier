@@ -1,9 +1,6 @@
 import { serverFetch } from '@/sync/http/client';
-import {
-    readProviderSettingsMutationBasisV1,
-    removeProviderMachineStateV1,
-    writeProviderSettingsToAccountSettingsV1,
-} from '@happier-dev/protocol';
+import { readProviderSettingsMutationBasisV1, writeProviderSettingsToAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
+import { removeProviderMachineStateV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
 import type { OneShotAccountSettingsMutationResult } from '@/sync/engine/settings/syncSettings';
 import {
     areAccountSettingsScopesEqual,

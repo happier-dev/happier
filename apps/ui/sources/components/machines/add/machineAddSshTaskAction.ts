@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { MachineAddSshStartInputSchema, MachineAddSshTaskInputSchema, MachineAddSshRespondInputSchema,
-    type ActionExecutorDeps } from '@happier-dev/protocol';
+import { MachineAddSshStartInputSchema, MachineAddSshTaskInputSchema, MachineAddSshRespondInputSchema } from '@happier-dev/protocol/actions/specs/machineConnection';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import { areServerProfileIdentifiersEquivalent, buildHomeConnectionDescriptorForProfile, getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';

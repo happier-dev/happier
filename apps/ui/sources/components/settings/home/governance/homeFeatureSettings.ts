@@ -1,4 +1,4 @@
-import { FEATURE_IDS, isFeatureServerRepresented, type FeatureId } from '@happier-dev/protocol';
+import { FEATURE_IDS, isFeatureServerRepresented, type FeatureId } from '@happier-dev/protocol/features/catalog';
 
 import {
     defineSettingsPage,

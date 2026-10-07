@@ -5,13 +5,9 @@ import {
     readSessionModelSelectionV2FromMetadata,
 } from '@happier-dev/agents';
 import { readSessionModelSelectionIntentFromMetadata } from '@/sync/domains/models/readSessionModelSelectionIntent';
-import {
-    readSessionProviderBindingMetadataStateV1,
-    sessionProviderBindingMetadataMatchesRuntimeBasisV1,
-    type ProviderBoundModelRef,
-    type SessionModelSelectionIntentV1,
-    type SessionModelSelectionV2,
-} from '@happier-dev/protocol';
+import { readSessionProviderBindingMetadataStateV1, sessionProviderBindingMetadataMatchesRuntimeBasisV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import type { ProviderBoundModelRef, SessionModelSelectionIntentV1 } from '@happier-dev/protocol/providers/model-selection';
+import type { SessionModelSelectionV2 } from '@happier-dev/protocol/providers/selection/v2';
 
 export type CurrentSessionRunnerProcessIdentity = Readonly<{
     pid: number;

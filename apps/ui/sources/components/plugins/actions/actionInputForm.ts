@@ -1,9 +1,5 @@
-import {
-    normalizeActionInputByFieldHints,
-    resolveEffectiveActionInputFields,
-    type ActionInputHints,
-    type EffectiveActionInputField,
-} from '@happier-dev/protocol';
+import { normalizeActionInputByFieldHints, resolveEffectiveActionInputFields, type EffectiveActionInputField } from '@happier-dev/protocol/inputs/inputFieldRuntime';
+import type { ActionInputHints } from '@happier-dev/protocol/inputs/inputFields';
 
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 

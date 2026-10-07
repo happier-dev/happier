@@ -4,7 +4,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol';
+import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { WorkflowInputDefinition } from '@happier-dev/protocol/workflows/workflowV1';
 
 import { Text, TextInput } from '@/components/ui/text/Text';

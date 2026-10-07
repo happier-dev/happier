@@ -1,7 +1,5 @@
-import {
-    ActionApprovalRequestCreatedResultSchema,
-    MachinePoolErrorV1Schema,
-} from '@happier-dev/protocol';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { MachinePoolErrorV1Schema } from '@happier-dev/protocol/machines/pools/v1';
 import type {
     MachinePoolActionIdV1,
     MachinePoolActionInputV1,

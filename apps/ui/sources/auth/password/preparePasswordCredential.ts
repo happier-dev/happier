@@ -5,7 +5,7 @@ import {
     acceptPasswordTextV1,
     encodePasswordCredentialFieldV1,
     type PasswordWrappedRecoverySecretV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/auth/accountPasswordCredential';
 
 import { getRandomBytesAsync } from '@/platform/cryptoRandom';
 

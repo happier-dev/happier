@@ -1,6 +1,6 @@
 import type { ScmLogEntry, ScmLogListRequest, ScmLogListResponse } from '@happier-dev/protocol';
 
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 import { machineScmLogList } from '@/sync/ops/scm/machineScm';
 import {
     normalizeWorkspaceScopeBase,

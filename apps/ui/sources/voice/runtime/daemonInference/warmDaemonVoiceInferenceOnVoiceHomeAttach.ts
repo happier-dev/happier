@@ -1,7 +1,5 @@
-import {
-    DaemonVoiceInferenceModelsWarmResponseSchema,
-    VOICE_RUNTIME_WARM_DEFAULTS,
-} from '@happier-dev/protocol';
+import { DaemonVoiceInferenceModelsWarmResponseSchema } from '@happier-dev/protocol/daemon/voiceInference';
+import { VOICE_RUNTIME_WARM_DEFAULTS } from '@happier-dev/protocol/voice/runtimeConfig';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';

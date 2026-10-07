@@ -72,7 +72,7 @@ import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import {
     sanitizeDoctorDiagnosticText,
     type DoctorSnapshotHomeTransportDiagnostics,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/diagnostics/doctorSnapshot';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { HOMES_ADD_ROUTE } from '@/components/settings/server/collection/homeCollectionModel';
 import { buildHomeRecoveryHref } from '@/components/settings/server/navigation/serverSettingsRouteParams';

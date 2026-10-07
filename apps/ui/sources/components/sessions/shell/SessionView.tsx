@@ -1,4 +1,5 @@
-import { readRuntimeDescriptorV1FromMetadata, resolveEffectiveApiTokenPermissionModeV1 } from '@happier-dev/protocol';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
+import { resolveEffectiveApiTokenPermissionModeV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { createScmDiffSummaryResultOperations } from '@/sync/ops/scmDiffSummary/results';
 import { applySavedScmDiffSummaryResult, getScmDiffSummaryState } from '@/sync/ops/scmDiffSummary/generate';
 import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
@@ -525,33 +526,23 @@ import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 import { resolvePendingActivationBanner } from '@/components/sessions/pending/resolvePendingActivationBanner';
 import type { ComposerStructuredInputMention } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
 import type { StorageState } from '@/sync/store/types';
-import {
-    readSessionWorkStatePrimaryItemV1,
-    ConnectedServiceIdSchema,
-    buildQualifiedPluginContributionKey,
-    parseQualifiedPluginContributionKey,
-    type ConnectedAccountServiceKey,
-    RawIngressStructuredInputV1Schema,
-    type ComposerAttachmentDraftV1,
-    type ComposerAttachmentInputV1,
-    type SessionPendingMessageComposerAdmissionAbandonedRequestV1,
-    type ComposerRefV1,
-    type ComposerSnapshotV1,
-    type ComposerTransactionResultV1,
-    type PluginContributionIdentityV1,
-    SESSION_RUNNER_RUNTIME_METADATA_KEY,
-    type ConnectedServiceQuotaSnapshotV1,
-    isHiddenSystemSession,
-    readSessionProviderBindingMetadataV1,
-    removeSessionPendingQueueHoldV1FromMetadata,
-    SessionModelTransitionResultV1Schema,
-    SessionRunnerRuntimeStateV1Schema,
-    sameStrictJsonValue,
-    StrictJsonValueSchema,
-    type ProviderBoundModelRef,
-    readProviderSettingsFromAccountSettingsV1,
-    writeSessionPendingQueueHoldV1ToMetadata,
-} from '@happier-dev/protocol';
+import { readSessionWorkStatePrimaryItemV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStatePrimary';
+import { ConnectedServiceIdSchema, type ConnectedAccountServiceKey } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { RawIngressStructuredInputV1Schema } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import type { ComposerAttachmentDraftV1, ComposerAttachmentInputV1 } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import type { SessionPendingMessageComposerAdmissionAbandonedRequestV1 } from '@happier-dev/protocol/sessions/userMessageRpc';
+import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef';
+import type { ComposerSnapshotV1, ComposerTransactionResultV1 } from '@happier-dev/protocol/plugins/ui/composer';
+import { SESSION_RUNNER_RUNTIME_METADATA_KEY, SessionRunnerRuntimeStateV1Schema } from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1';
+import type { ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { isHiddenSystemSession } from '@happier-dev/protocol/sessions/control/contract';
+import { readSessionProviderBindingMetadataV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import { removeSessionPendingQueueHoldV1FromMetadata, writeSessionPendingQueueHoldV1ToMetadata } from '@happier-dev/protocol/sessions/metadata/sessionPendingQueueHoldV1';
+import { SessionModelTransitionResultV1Schema } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
+import { sameStrictJsonValue, StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
+import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
 import { useProviderBindingStatus } from '@/providers/hooks/useProviderBindingStatus';
 import { presentSessionProviderBinding } from '@/providers/session/presentation';
 import { useProviderModelProjection } from '@/providers/hooks/useProviderModelProjection';
@@ -727,11 +718,8 @@ import {
     computeProviderAccountUsageGaugeViewModel,
     selectProviderUsageDisplaySource,
 } from '@/sync/domains/connectedServices/accountUsage/providerAccountUsageSelectors';
-import {
-    readProviderAccountUsageRecordIdsFromMetadata,
-    type ComposerAgentContinuationIntentV1,
-    type SessionAgentTransitionResultV1,
-} from '@happier-dev/protocol';
+import { readProviderAccountUsageRecordIdsFromMetadata } from '@happier-dev/protocol/sessions/metadata/providerAccountUsageRefsV1';
+import type { ComposerAgentContinuationIntentV1, SessionAgentTransitionResultV1 } from '@happier-dev/protocol/sessions/agentTransition';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 export { resolveSessionAuthSurfaceState } from './sessionAuthSurfaceState';

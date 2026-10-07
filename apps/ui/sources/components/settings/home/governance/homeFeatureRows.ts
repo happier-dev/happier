@@ -1,10 +1,6 @@
-import {
-    FEATURE_IDS,
-    isFeatureServerRepresented,
-    listFeatureDependents,
-    type FeatureDecision,
-    type FeatureId,
-} from '@happier-dev/protocol';
+import { FEATURE_IDS, isFeatureServerRepresented, type FeatureId } from '@happier-dev/protocol/features/catalog';
+import { listFeatureDependents } from '@happier-dev/protocol/features/featureDecisionEngine';
+import type { FeatureDecision } from '@happier-dev/protocol/features/decision';
 import type { HomeSettingEntryV1, HomeSettingsProjectionV1 } from '@happier-dev/protocol/home/governance';
 
 import { isHomeSettingWritable } from './homeSettingDeclaration';

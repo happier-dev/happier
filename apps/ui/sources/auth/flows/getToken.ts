@@ -11,14 +11,9 @@ import {
 } from '@/sync/api/capabilities/serverFeaturesClient';
 import * as serverHttp from '@/sync/http/client';
 import type { ServerFetch, ServerFetchOptions } from '@/sync/http/client';
-import {
-    canonicalizeKeyChallengeV2AudienceOrigin,
-    KeyChallengeV2IssueResponseSchema,
-    readServerEnabledBit,
-    signAccountContentKeyBindingV1,
-    type KeyChallengeAuthRequest,
-    type KeyChallengeV2IssueResponse,
-} from '@happier-dev/protocol';
+import { canonicalizeKeyChallengeV2AudienceOrigin, KeyChallengeV2IssueResponseSchema, type KeyChallengeAuthRequest, type KeyChallengeV2IssueResponse } from '@happier-dev/protocol/auth/keyChallenge';
+import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
+import { signAccountContentKeyBindingV1 } from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
 import type { TeamInvitationAccountAdmissionV1 } from '@happier-dev/protocol';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { HappyError } from '@/utils/errors/errors';

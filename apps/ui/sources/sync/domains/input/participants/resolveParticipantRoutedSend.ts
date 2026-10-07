@@ -1,4 +1,5 @@
-import { normalizeParticipantRecipientRoutingIdentityV1, withParticipantRecipientV1, type ParticipantRecipientV1, type PendingRequestedActionV1 } from '@happier-dev/protocol';
+import { normalizeParticipantRecipientRoutingIdentityV1, withParticipantRecipientV1, type ParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
+import type { PendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 
 import type { SessionParticipantTarget } from '@/sync/domains/session/participants/participantTargets';
 

@@ -25,7 +25,7 @@ import {
     WebhookNotificationChannelV1Schema,
     type NotificationChannelV1,
     type WebhookNotificationChannelV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/settings/notificationChannels';
 
 import {
     addWebhookNotificationChannel,

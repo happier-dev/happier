@@ -1,11 +1,8 @@
 import * as React from 'react';
 import { useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
 
-import {
-  PromptInvocationEntryV1Schema,
-  validatePromptInvocationTokenV1,
-  listActionSpecs,
-} from '@happier-dev/protocol';
+import { PromptInvocationEntryV1Schema, validatePromptInvocationTokenV1 } from '@happier-dev/protocol/prompts/library/promptInvocationsV1';
+import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Switch } from '@/components/ui/forms/Switch';

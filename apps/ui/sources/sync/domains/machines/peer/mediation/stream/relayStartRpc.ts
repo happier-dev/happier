@@ -1,8 +1,5 @@
-import {
-    DaemonMachineLiveStreamRelayStartRequestV1Schema,
-    DaemonMachineLiveStreamRelayStartResponseV1Schema,
-    type MachineLiveStreamStartRequestV1,
-} from '@happier-dev/protocol';
+import { DaemonMachineLiveStreamRelayStartRequestV1Schema, DaemonMachineLiveStreamRelayStartResponseV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/relayStartRpcV1';
+import type { MachineLiveStreamStartRequestV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { isRpcMethodNotFoundResult, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';

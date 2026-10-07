@@ -13,7 +13,7 @@ import type {
     ReviewCommentV1,
     ReviewCommentScopeV1,
 } from '@happier-dev/protocol';
-import { REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1, renderReviewFindingsForVerifyV1 } from '@happier-dev/protocol';
+import { REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1, renderReviewFindingsForVerifyV1 } from '@happier-dev/protocol/reviews/reviewFindingsApplyInputV1';
 import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
 import { t } from '@/text';

@@ -1,6 +1,6 @@
 import type { ServerFetch } from '@/sync/http/client';
 import type { HomeQrEnrollmentTarget } from '@/auth/flows/qrStart';
-import { parseHomeQrPairingStatusV2, type HomeQrPairingStatusV2 } from '@happier-dev/protocol';
+import { parseHomeQrPairingStatusV2, type HomeQrPairingStatusV2 } from '@happier-dev/protocol/crypto/qrProvisioningV2';
 
 export type PairingStartResponse = Readonly<{
     pairId: string;

@@ -1,4 +1,5 @@
-import { extractShellCommand, formatPermissionRequestSummary } from '@happier-dev/protocol';
+import { extractShellCommand } from '@happier-dev/protocol/activity/shellCommand';
+import { formatPermissionRequestSummary } from '@happier-dev/protocol/activity/agentRequestSummary';
 
 import { resolveAgentIdForPermissionUi } from '@/agents/catalog/resolve';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';

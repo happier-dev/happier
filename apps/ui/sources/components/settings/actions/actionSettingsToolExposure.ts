@@ -1,12 +1,8 @@
-import {
-    ACTION_TOOL_EXPOSURE_SURFACES,
-    getActionSpec,
-    resolveActionToolExposureMode,
-    type ActionId,
-    type ActionToolExposureMode,
-    type ActionToolExposureSurface,
-    type ActionsSettingsV1,
-} from '@happier-dev/protocol';
+import { ACTION_TOOL_EXPOSURE_SURFACES, resolveActionToolExposureMode } from '@happier-dev/protocol/actions/actionToolExposure';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import type { ActionToolExposureMode, ActionToolExposureSurface } from '@happier-dev/protocol/actions/metadata';
+import type { ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 
 import {
     getActionSettingsTargetDefinition,

@@ -1,9 +1,6 @@
 import * as React from 'react';
-import {
-    createProviderErrorV1,
-    type ProviderDiscoveryCandidateV1,
-    type ProviderErrorV1,
-} from '@happier-dev/protocol';
+import { createProviderErrorV1, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import type { ProviderDiscoveryCandidateV1 } from '@happier-dev/protocol/providers/detection/v1';
 import { usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';

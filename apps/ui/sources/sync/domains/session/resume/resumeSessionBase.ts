@@ -6,7 +6,7 @@ import {
     getAgentVendorResumeId,
     resolveConfiguredAcpBackendId,
 } from '@/agents/runtime/resumeCapabilities';
-import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
 import type { PermissionModeOverrideForSpawn } from '@/sync/domains/permissions/permissionModeOverride';
 import type { ModelOverrideForSpawn } from '@/sync/domains/models/modelOverride';
 import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';

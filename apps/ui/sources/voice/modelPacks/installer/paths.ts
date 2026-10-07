@@ -1,9 +1,5 @@
-import {
-  assertManifestPathsSafe as assertProtocolManifestPathsSafe,
-  assertPackIdFilesystemSafe,
-  filePathParts,
-  type ModelPackManifest,
-} from '@happier-dev/protocol';
+import { assertManifestPathsSafe as assertProtocolManifestPathsSafe, assertPackIdFilesystemSafe, filePathParts } from '@happier-dev/protocol/voice/modelPacks/pathSafety';
+import type { ModelPackManifest } from '@happier-dev/protocol/voice/modelPacks/manifest';
 
 import type { ExpoFsDirectory, ExpoFsFile, InstallerFs } from './types';
 

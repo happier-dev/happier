@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { ProviderErrorV1Schema } from '@happier-dev/protocol';
+import { ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
 import { useUnistyles } from 'react-native-unistyles';
 import { Platform, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';

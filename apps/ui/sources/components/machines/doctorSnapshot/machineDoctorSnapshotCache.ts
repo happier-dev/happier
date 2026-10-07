@@ -3,7 +3,7 @@ import {
     DoctorSnapshotSchema,
     sanitizeDoctorSnapshotUrls,
     type DoctorSnapshot,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/diagnostics/doctorSnapshot';
 
 export type CachedMachineDoctorSnapshot = Readonly<{
     cachedAt: number;

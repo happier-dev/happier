@@ -1,10 +1,5 @@
-import {
-  buildBugReportExportBundle,
-  serializeBugReportExportBundle,
-  type BugReportArtifactPayload,
-  type BugReportEnvironmentPayload,
-  type BugReportFormPayload,
-} from '@happier-dev/protocol';
+import { buildBugReportExportBundle, serializeBugReportExportBundle } from '@happier-dev/protocol/bugs/reports/export';
+import type { BugReportArtifactPayload, BugReportEnvironmentPayload, BugReportFormPayload } from '@happier-dev/protocol/bugs/reports/types';
 
 import { t } from '@/text';
 import { createNativeCacheFileSink, shareNativeCacheFile } from '@/sync/runtime/files/nativeCacheFileSink';

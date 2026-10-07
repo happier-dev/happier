@@ -7,11 +7,9 @@ import type {
     PluginConnectedAccountAuthenticationModeV2,
     QualifiedConnectedAccountRef,
 } from '@happier-dev/protocol';
-import {
-    BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
-    ConnectedServiceIdSchema,
-    removeAgentConnectedAccountDefaultsForDeletedTarget,
-} from '@happier-dev/protocol';
+import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
+import { ConnectedServiceIdSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { removeAgentConnectedAccountDefaultsForDeletedTarget } from '@happier-dev/protocol/account/settings/connected-services';
 
 import {
     useProjectedPluginLocalizedTextResolver,

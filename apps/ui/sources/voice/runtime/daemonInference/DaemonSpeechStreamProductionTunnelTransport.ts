@@ -1,37 +1,21 @@
-import {
-  DIRECT_ROUTE_GRANT_TTL_MS,
-  DEFAULT_MACHINE_TUNNEL_CAPABILITIES,
-  RPC_METHODS,
-  MachineTunnelCapabilitiesSchema,
-  PEER_MEDIATION_RECEIPTS,
-  PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
-  PEER_TCP_TUNNEL_OPEN_PATH,
-  PEER_TCP_TUNNEL_OPEN_PATH_V2,
-  PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT,
-  PeerTcpTunnelOpenResponseV1Schema,
-  PeerTcpTunnelRelayAuthorizationV2Schema,
-  SignedDirectRouteGrantV2Schema,
-  createEphemeralPeerRouteProofHandleV2,
-  createVoiceMediaRelayTunnelId,
-  createPeerApplicationAuthorityDigestV1,
-  createSpeechTranscriptionApplicationAuthorityDigestV1,
-  readMachineLiveStreamRelayCaps,
-  resolveMachineRpcRelayFallbackDecision,
-  resolveMachineRpcRoutePolicy,
-  resolvePeerRouteFeatureId,
-  readServerEnabledBit,
-  type MachineTunnelCapabilities,
-  type PeerLoopbackEndpointCandidateV1,
-  type PeerTcpTunnelDestinationV1,
-  type PeerTcpTunnelOpenV1,
-  type PeerTcpTunnelOpenV2,
-  type PeerTcpTunnelRelayEnvelope,
-  type PeerTcpTunnelRelayAuthorizationV2,
-  type SignedDirectRouteGrantV2,
-  type PeerRouteEphemeralProofV2,
-  type PeerApplicationEncryptionAuthorityBindingV1,
-  type VoiceMediaApplicationAuthorityV1,
-} from '@happier-dev/protocol';
+import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
+import { DEFAULT_MACHINE_TUNNEL_CAPABILITIES, MachineTunnelCapabilitiesSchema, type MachineTunnelCapabilities } from '@happier-dev/protocol/features/payload/capabilities/machineTunnelCapabilities';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/mediation/receipts';
+import { PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/encoding';
+import { PEER_TCP_TUNNEL_OPEN_PATH, PeerTcpTunnelOpenResponseV1Schema, type PeerTcpTunnelDestinationV1, type PeerTcpTunnelOpenV1 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/v1';
+import { PEER_TCP_TUNNEL_OPEN_PATH_V2, type PeerTcpTunnelOpenV2 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/openAuthorizationV2';
+import { PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, type PeerTcpTunnelRelayEnvelope } from '@happier-dev/protocol/machines/peer/mediation/tunnel/relay';
+import { PeerTcpTunnelRelayAuthorizationV2Schema, type PeerTcpTunnelRelayAuthorizationV2 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/authorizationSchemas';
+import { SignedDirectRouteGrantV2Schema, type SignedDirectRouteGrantV2 } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
+import { createEphemeralPeerRouteProofHandleV2, type PeerRouteEphemeralProofV2 } from '@happier-dev/protocol/machines/peer/mediation/ephemeralPeerRouteProofV2';
+import { createVoiceMediaRelayTunnelId, resolveMachineRpcRelayFallbackDecision, resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import { createPeerApplicationAuthorityDigestV1, createSpeechTranscriptionApplicationAuthorityDigestV1, type PeerApplicationEncryptionAuthorityBindingV1 } from '@happier-dev/protocol/machines/peer/mediation/peerApplicationEncryptionV1';
+import { readMachineLiveStreamRelayCaps } from '@happier-dev/protocol/features/payload/capabilities/machineLiveStreamCapabilities';
+import { resolvePeerRouteFeatureId } from '@happier-dev/protocol/machines/peer/mediation/routeFeature';
+import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
+import type { PeerLoopbackEndpointCandidateV1 } from '@happier-dev/protocol/machines/peer/mediation/loopbackEndpointV1';
+import type { VoiceMediaApplicationAuthorityV1 } from '@happier-dev/protocol/machines/peer/mediation/voiceMediaV1';
 import { resolveEffectivePeerDirectRoutePolicy } from '@happier-dev/peer-mediation';
 
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';

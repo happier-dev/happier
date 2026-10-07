@@ -1,13 +1,7 @@
-import {
-    BrowserContextItemV1Schema,
-    stripBrowserDiagnosticUrlValues,
-    type BrowserAnnotationStrokeV1,
-    type BrowserContextItemV1,
-    type BrowserDiagnosticFidelityV1,
-    type BrowserDiagnosticsElementSourceLocationV1,
-    type BrowserScreenshotMediaReferenceV1,
-    type BrowserSemanticAdapterKindV1,
-} from '@happier-dev/protocol';
+import { BrowserContextItemV1Schema, type BrowserAnnotationStrokeV1, type BrowserContextItemV1, type BrowserScreenshotMediaReferenceV1 } from '@happier-dev/protocol/browser/context/v1';
+import { stripBrowserDiagnosticUrlValues } from '@happier-dev/protocol/browser/diagnostics/egress/url';
+import type { BrowserDiagnosticFidelityV1, BrowserDiagnosticsElementSourceLocationV1 } from '@happier-dev/protocol/browser/diagnostics/v1';
+import type { BrowserSemanticAdapterKindV1 } from '@happier-dev/protocol/browser/adapters/kinds';
 
 import {
     resolveAnnotationCropClip,

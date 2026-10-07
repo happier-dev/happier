@@ -1,5 +1,7 @@
-import { compilePluginJsonSchema, isValidPluginJsonSchemaValue, sameStrictJsonValue,
-    freezePluginDeclarativeDataNodeV1, type JsonValue, type PluginDeclarativeDataNodeV1 } from '@happier-dev/protocol';
+import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { freezePluginDeclarativeDataNodeV1, type PluginDeclarativeDataNodeV1 } from '@happier-dev/protocol/plugins/contributions/ui/declarativeDataV1';
 import type { PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { readPluginUiContributionOrigin } from '@/sync/domains/plugins/ui/projectionUnion';

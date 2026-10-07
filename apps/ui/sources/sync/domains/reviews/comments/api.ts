@@ -1,21 +1,10 @@
 import { getActionSpec } from '@happier-dev/protocol/actions';
-import {
-    buildReviewCommentPlainMutationTransportInputV1,
-    buildReviewCommentPublicationTransportRequestV1,
-    executeReviewCommentTransportV1,
-    openReviewCommentPublicationTransportResponseV1,
-    type AccountScopedCryptoMaterial,
-    type ReviewCommentActionIdV1,
-    type ReviewCommentAttachEvidenceRequestV1,
-    type ReviewCommentBulkTransitionRequestV1,
-    type ReviewCommentClaimPublicationDispatchRequestV1,
-    type ReviewCommentCreateRequestV1,
-    type ReviewCommentEditRequestV1,
-    type ReviewCommentRedactRequestV1,
-    type ReviewCommentReplyRequestV1,
-    type ReviewCommentSetDispositionRequestV1,
-    type ReviewCommentTransitionRequestV1,
-} from '@happier-dev/protocol';
+import { buildReviewCommentPlainMutationTransportInputV1 } from '@happier-dev/protocol/reviews/comments/content';
+import { buildReviewCommentPublicationTransportRequestV1, openReviewCommentPublicationTransportResponseV1 } from '@happier-dev/protocol/reviews/comments/publicationTransport';
+import { executeReviewCommentTransportV1 } from '@happier-dev/protocol/reviews/comments/transport';
+import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import type { ReviewCommentActionIdV1, ReviewCommentBulkTransitionRequestV1, ReviewCommentClaimPublicationDispatchRequestV1 } from '@happier-dev/protocol/reviews/comments/actions';
+import type { ReviewCommentAttachEvidenceRequestV1, ReviewCommentCreateRequestV1, ReviewCommentEditRequestV1, ReviewCommentRedactRequestV1, ReviewCommentReplyRequestV1, ReviewCommentSetDispositionRequestV1, ReviewCommentTransitionRequestV1 } from '@happier-dev/protocol/reviews/comments/v1';
 
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { getRandomBytes } from '@/platform/cryptoRandom';

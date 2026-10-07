@@ -6,7 +6,7 @@ import type {
     SimulatorSidebandKindV1,
     SimulatorSidebandMessageV1,
 } from '@happier-dev/protocol';
-import { isBackedSimulatorSidebandKindV1 } from '@happier-dev/protocol';
+import { isBackedSimulatorSidebandKindV1 } from '@happier-dev/protocol/devices/simulator/actionBuilders';
 
 import { decodeBase64 } from '@/encryption/base64';
 

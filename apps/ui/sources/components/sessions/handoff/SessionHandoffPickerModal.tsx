@@ -1,13 +1,11 @@
 import { useAuthoringMemoryField } from '@/sync/domains/state/storage';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
-import { readSessionDirectoryKind } from '@happier-dev/protocol';
+import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import * as React from 'react';
 import { View } from 'react-native';
-import {
-    evaluateSessionHandoffWorkspaceTransferSourcePathSafety,
-    getActionSpec,
-    HandoffWorkspaceActionV1Schema,
-} from '@happier-dev/protocol';
+import { evaluateSessionHandoffWorkspaceTransferSourcePathSafety } from '@happier-dev/protocol/sessions/control/handoff/workspaceTransferSourcePathSafety';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { HandoffWorkspaceActionV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { CustomModalInjectedProps } from '@/modal';

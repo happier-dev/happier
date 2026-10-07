@@ -1,10 +1,7 @@
 import * as React from 'react';
-import {
-    createProviderErrorV1,
-    ProviderErrorCodeV1Schema,
-    SessionSpawnNewResultV1Schema,
-    type SessionDirectoryIntentV1,
-} from '@happier-dev/protocol';
+import { createProviderErrorV1, ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
+import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import type { SessionDirectoryIntentV1 } from '@happier-dev/protocol/sessions/creation/sessionDirectoryIntentV1';
 
 import { NewSessionScreen } from '@/components/sessions/new/NewSessionScreen';
 import {

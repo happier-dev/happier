@@ -8,7 +8,7 @@ import {
 
 import type { Metadata } from '@happier-dev/session-core/state';
 import type { ComposerOptionsInputV1 } from '@happier-dev/protocol/embed';
-import { readSessionModesMetadata, type SessionOwnerModeCatalogV2 } from '@happier-dev/protocol';
+import { readSessionModesMetadata, type SessionOwnerModeCatalogV2 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 type SessionModesState = SessionOwnerModeCatalogV2;
 type SessionModelsState = NonNullable<Metadata['sessionModelsV1'] | Metadata['acpSessionModelsV1']>;

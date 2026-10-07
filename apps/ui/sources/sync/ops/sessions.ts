@@ -49,13 +49,11 @@ import type {
     SpawnSessionExecutionAuthorization,
     SpawnSessionResult,
 } from '@happier-dev/protocol';
-import {
-    CheckpointCodeRollbackResultSchema,
-    SessionForkRpcResultSchema,
-    SessionRollbackRpcResultSchema,
-    SessionAuthoringValueV1Schema,
-    SPAWN_SESSION_ERROR_CODES,
-} from '@happier-dev/protocol';
+import { CheckpointCodeRollbackResultSchema } from '@happier-dev/protocol/sessions/control/rollback/checkpointCodeRollback';
+import { SessionForkRpcResultSchema } from '@happier-dev/protocol/sessions/fork';
+import { SessionRollbackRpcResultSchema } from '@happier-dev/protocol/sessions/rollback';
+import { SessionAuthoringValueV1Schema } from '@happier-dev/protocol/sessions/authoring/index';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import type { StructuredQuestionAnswersV1 } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { normalizeSpawnSessionResult } from './_shared';

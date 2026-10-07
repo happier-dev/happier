@@ -1,4 +1,4 @@
-import { FeaturesResponseSchema, type FeaturesResponse } from '@happier-dev/protocol';
+import { FeaturesResponseSchema, type FeaturesResponse } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 
 const KEEP_FOREVER_POLICY = { mode: 'keep_forever' } as const;
 

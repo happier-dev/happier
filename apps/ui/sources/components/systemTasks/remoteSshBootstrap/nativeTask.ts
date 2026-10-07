@@ -1,8 +1,6 @@
-import {
-    parseSshTarget,
-    SystemTaskJsonValueSchema,
-    type HomeConnectionDescriptorV1,
-} from '@happier-dev/protocol';
+import { parseSshTarget } from '@happier-dev/protocol/ssh/sshTarget';
+import { SystemTaskJsonValueSchema } from '@happier-dev/protocol/system/tasks/spec';
+import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol/auth/accountDirectory';
 import {
     buildRemoteBootstrapCommand,
     createOpenSshHappierJsonExecutor,

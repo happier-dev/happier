@@ -1,9 +1,5 @@
-import {
-    SessionAuthoringTerminalV1Schema,
-    SessionAuthoringValueV1Schema,
-    type SessionAuthoringTerminalV1,
-    type SessionAuthoringValueV1,
-} from '@happier-dev/protocol';
+import { SessionAuthoringTerminalV1Schema } from '@happier-dev/protocol/sessions/authoring/creationFieldsV1';
+import { SessionAuthoringValueV1Schema, type SessionAuthoringTerminalV1, type SessionAuthoringValueV1 } from '@happier-dev/protocol/sessions/authoring/index';
 
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';

@@ -1,4 +1,4 @@
-import { isLaunchProfileV2, type AiLaunchProfile } from '@happier-dev/protocol';
+import { isLaunchProfileV2, type AiLaunchProfile } from '@happier-dev/protocol/profiles/read';
 
 import {
     appendAiLaunchProfile,

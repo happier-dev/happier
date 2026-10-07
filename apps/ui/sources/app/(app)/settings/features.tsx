@@ -1,12 +1,6 @@
 import React from 'react';
-import {
-    FEATURE_IDS,
-    featureRequiresServerSnapshot,
-    getFeatureDependencies,
-    isFeatureServerRepresented,
-    readServerEnabledBit,
-    type FeatureId,
-} from '@happier-dev/protocol';
+import { FEATURE_IDS, featureRequiresServerSnapshot, getFeatureDependencies, isFeatureServerRepresented, type FeatureId } from '@happier-dev/protocol/features/catalog';
+import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';

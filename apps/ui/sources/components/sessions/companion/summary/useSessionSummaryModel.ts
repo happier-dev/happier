@@ -3,7 +3,7 @@ import * as React from 'react';
 import {
     computeContextPercentUsed,
     type SessionContextUsageSnapshotV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/usage/contextUsage';
 
 import { getAgentCore } from '@/agents/catalog/catalog';
 import { buildSessionScmSummary } from '@/components/sessions/sourceControl/status/statusSummary';

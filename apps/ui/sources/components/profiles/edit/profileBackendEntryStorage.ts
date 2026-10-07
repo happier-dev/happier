@@ -1,10 +1,5 @@
-import {
-    buildBackendTargetKey,
-    buildBackendTargetKeyV2,
-    convertBackendTargetRefV2ToV1,
-    readBackendTargetRefV2,
-    type BackendTargetRefV2Input,
-} from '@happier-dev/protocol';
+import { buildBackendTargetKey } from '@happier-dev/protocol/backends/targets/backendTargetRef';
+import { buildBackendTargetKeyV2, convertBackendTargetRefV2ToV1, readBackendTargetRefV2, type BackendTargetRefV2Input } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { isProfileCompatibleWithBackendTarget } from '@/sync/domains/profiles/profileCompatibility';

@@ -1,4 +1,4 @@
-import { isLoopbackHostname } from '@happier-dev/protocol';
+import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
 
 export function isSafeBadgeUrl(raw: string): boolean {
     const value = String(raw ?? '').trim();

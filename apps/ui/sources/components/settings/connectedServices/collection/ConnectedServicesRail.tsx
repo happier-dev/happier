@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useGlobalSearchParams, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { normalizeConnectedServiceCredentialHealthStatus } from '@happier-dev/protocol';
+import { normalizeConnectedServiceCredentialHealthStatus } from '@happier-dev/protocol/connect/connected-service-schemas';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon } from '@/components/ui/icons/Icon';

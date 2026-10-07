@@ -1,7 +1,7 @@
 import {
     SessionOrganizationAccountEncryptionMigrationInventorySchema,
     type SessionOrganizationAccountEncryptionMigrationInventory,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/organization/accountEncryptionMigrationInventory';
 
 import { serverFetch } from '@/sync/http/client';
 

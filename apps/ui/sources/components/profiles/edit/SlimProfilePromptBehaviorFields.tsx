@@ -3,7 +3,7 @@ import {
     resolveCodingPromptBehaviorV1,
     type CodingPromptBehaviorOverridesV1,
     type CodingPromptSessionTitleUpdatesModeV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/prompts/codingPromptBehaviorV1';
 
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';

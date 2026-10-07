@@ -1,7 +1,7 @@
 import {
     isUnsafeTelemetryDataKey,
     normalizeTelemetryDataKey,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/diagnostics/sensitive-keys';
 
 const REDACTED_DEBUG_VALUE = '[redacted]';
 const CIRCULAR_DEBUG_VALUE = '[circular]';

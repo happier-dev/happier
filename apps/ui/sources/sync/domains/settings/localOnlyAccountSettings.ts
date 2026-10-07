@@ -1,5 +1,5 @@
 import type { Settings } from '@/sync/domains/settings/settings';
-import { LEGACY_AUTHORING_MEMORY_SETTINGS_KEYS } from '@happier-dev/protocol';
+import { LEGACY_AUTHORING_MEMORY_SETTINGS_KEYS } from '@happier-dev/protocol/account/settings/legacyAuthoringMemorySettingsV1';
 
 import {
     NewSessionOrdinaryEntryDraftIdSchema,

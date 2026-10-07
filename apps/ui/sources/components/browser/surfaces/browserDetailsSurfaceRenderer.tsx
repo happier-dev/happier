@@ -1,10 +1,7 @@
-import {
-    type BrowserProfileV1,
-    BrowserViewTargetV1Schema,
-    type BrowserPlatformV1,
-    type BrowserViewTargetV1,
-    type FeatureDecision,
-} from '@happier-dev/protocol';
+import type { BrowserProfileV1 } from '@happier-dev/protocol/browser/profile/v1';
+import { BrowserViewTargetV1Schema, type BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
+import type { BrowserPlatformV1 } from '@happier-dev/protocol/browser/view/v1';
+import type { FeatureDecision } from '@happier-dev/protocol/features/decision';
 import * as React from 'react';
 
 import { resolveBrowserSurfacePlatform } from './useBrowserSurfaceHostProps';

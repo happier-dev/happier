@@ -1,6 +1,6 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
-import { ENCRYPTED_DATA_KEY_V1_BYTES } from '@happier-dev/protocol';
+import { ENCRYPTED_DATA_KEY_V1_BYTES } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 
 export function createSessionDataKeyFixture(fill = 7): Uint8Array {
     return new Uint8Array(ENCRYPTED_DATA_KEY_V1_BYTES).fill(fill);

@@ -1,23 +1,7 @@
-import {
-    NATIVE_AUTH_EMAIL_VERIFY_PREVIEW_PATH_V1,
-    NATIVE_AUTH_EMAIL_VERIFY_REQUEST_PATH_V1,
-    NATIVE_AUTH_PASSWORD_RESET_PREVIEW_PATH_V1,
-    NATIVE_AUTH_PASSWORD_RESET_REQUEST_PATH_V1,
-    NATIVE_AUTH_PASSWORD_RESET_SUBMIT_PATH_V1,
-    NativeAuthBearerPreviewRequestV1Schema,
-    NativeAuthEmailAcceptedResponseV1Schema,
-    NativeEmailPasswordErrorResponseV1Schema,
-    NativeEmailVerifyPreviewResponseV1Schema,
-    NativeEmailVerifyRequestV1Schema,
-    NativePasswordResetPreviewResponseV1Schema,
-    NativePasswordResetRequestV1Schema,
-    PlainPasswordResetSubmitRequestV1Schema,
-    PlainPasswordResetSubmitResponseV1Schema,
-    type NativeEmailVerifyPreviewResponseV1,
-    type NativePasswordResetPreviewResponseV1,
-    type TeamInvitationAccountAdmissionV1,
-    maskEmailForNativeAuthPreview,
-} from '@happier-dev/protocol';
+import { NATIVE_AUTH_EMAIL_VERIFY_PREVIEW_PATH_V1, NATIVE_AUTH_EMAIL_VERIFY_REQUEST_PATH_V1, NATIVE_AUTH_PASSWORD_RESET_PREVIEW_PATH_V1, NATIVE_AUTH_PASSWORD_RESET_REQUEST_PATH_V1, NativeAuthBearerPreviewRequestV1Schema, NativeAuthEmailAcceptedResponseV1Schema, NativeEmailPasswordErrorResponseV1Schema, NativeEmailVerifyPreviewResponseV1Schema, NativeEmailVerifyRequestV1Schema, NativePasswordResetPreviewResponseV1Schema, NativePasswordResetRequestV1Schema, type NativeEmailVerifyPreviewResponseV1, type NativePasswordResetPreviewResponseV1 } from '@happier-dev/protocol/auth/nativeAuthEmailRoutes';
+import { NATIVE_AUTH_PASSWORD_RESET_SUBMIT_PATH_V1, PlainPasswordResetSubmitRequestV1Schema, PlainPasswordResetSubmitResponseV1Schema } from '@happier-dev/protocol/auth/accountSecurity';
+import type { TeamInvitationAccountAdmissionV1 } from '@happier-dev/protocol/auth/accountAdmission';
+import { maskEmailForNativeAuthPreview } from '@happier-dev/protocol/auth/nativeAuthOneTimeOperation';
 import { z } from 'zod';
 
 import type { ServerFetch } from '@/sync/http/client';

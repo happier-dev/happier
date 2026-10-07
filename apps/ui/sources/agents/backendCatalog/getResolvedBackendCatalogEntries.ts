@@ -1,10 +1,5 @@
-import {
-    readBackendTargetRefV2,
-    type AcpCatalogSettingsV1,
-    type BackendTargetRefV2,
-    type BackendTargetRefV2Input,
-    type PersistedBackendTargetRefV2,
-} from '@happier-dev/protocol';
+import { readBackendTargetRefV2, type BackendTargetRefV2, type BackendTargetRefV2Input, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { AcpCatalogSettingsV1 } from '@happier-dev/protocol/acp/catalog/settingsV1';
 
 import type { AgentId } from '@/agents/catalog/catalog';
 import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
@@ -20,7 +15,7 @@ import type {
     MergedBackendProjectionEntry,
     MergedProviderProjectionEntry,
 } from './mergedProjectionTypes';
-import { normalizeAcpCatalogSettingsV1 } from '@happier-dev/protocol';
+import { normalizeAcpCatalogSettingsV1 } from '@happier-dev/protocol/acp/catalog/catalogMutationsV1';
 import { t } from '@/text';
 import { resolveCliAuthBackgroundCheckSafe } from './resolveCliAuthBackgroundCheckSafe';
 import { resolveAgentExecutionTargetForBackendTarget } from './resolveAgentExecutionTargetForBackendTarget';

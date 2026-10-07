@@ -1,4 +1,4 @@
-import { isHiddenSystemSession } from '@happier-dev/protocol';
+import { isHiddenSystemSession } from '@happier-dev/protocol/sessions/control/contract';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import { isSessionAccessRecipient, isSessionAccessOwner, type NormalizedSessionAccessProjection } from '@/sync/engine/sessions/normalizeSessionAccessProjection';

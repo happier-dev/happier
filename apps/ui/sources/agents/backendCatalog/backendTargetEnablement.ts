@@ -1,5 +1,6 @@
 import * as agents from '@happier-dev/agents';
-import { readAccountSettingValueForBackendTarget, type BackendTargetRefV2, type BackendTargetRefV2Input } from '@happier-dev/protocol';
+import { readAccountSettingValueForBackendTarget } from '@happier-dev/protocol/account/settings/accountSettings';
+import type { BackendTargetRefV2, BackendTargetRefV2Input } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 import { resolveBackendTargetKeyV2 } from './backendTargetKeyV2';
 import type {

@@ -1,9 +1,6 @@
-import {
-    ExecutionRunGetResponseSchema,
-    ExecutionRunStartResponseSchema,
-    type ActionExecuteResult,
-    type ActionExecutorContext,
-} from '@happier-dev/protocol';
+import { ExecutionRunGetResponseSchema, ExecutionRunStartResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 

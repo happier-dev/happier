@@ -2,11 +2,8 @@ import type {
   BundledVoiceRuntimeContribution,
   VoiceAdapterController,
 } from '@/voice/session/types';
-import {
-  buildQualifiedPluginContributionKey,
-  createPluginContributionIdentity,
-  derivePluginClientContributionRegistrationRights,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey, createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
+import { derivePluginClientContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
 import {
   createPluginRegistrationScope,
   type PluginRuntimeRegistration,

@@ -1,8 +1,5 @@
-import {
-  createVoiceProviderRecipientContractFromCredentialsV1,
-  type RecipientContractV1,
-  type VoiceProviderContribution,
-} from '@happier-dev/protocol';
+import { createVoiceProviderRecipientContractFromCredentialsV1, type RecipientContractV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
+import type { VoiceProviderContribution } from '@happier-dev/protocol/plugins/contributions/voice';
 
 /**
  * Canonical trusted build-time identity for first-party Voice recipients.

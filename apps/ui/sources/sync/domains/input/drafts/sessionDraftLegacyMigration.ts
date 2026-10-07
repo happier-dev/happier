@@ -1,4 +1,6 @@
-import { MENTION_KIND_V1, buildMentionRefForKindV1, pluginJsonValuesEqual, type MentionRefV1, type StrictJsonValue } from '@happier-dev/protocol';
+import { MENTION_KIND_V1, buildMentionRefForKindV1, type MentionRefV1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
+import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
+import type { StrictJsonValue } from '@happier-dev/protocol/drafts/sessionDrafts';
 import {
     composerReferencesFromStructuredMentions,
     composerStructuredMentionsFromReferences,

@@ -37,12 +37,8 @@ import {
     type DaemonProviderProfileMigrationConflictConfirmResponseV1,
 } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
-import {
-    createProviderErrorV1,
-    ProviderErrorV1Schema,
-    type CustomProviderTemplateV1,
-    type ProviderErrorV1,
-} from '@happier-dev/protocol';
+import { createProviderErrorV1, ProviderErrorV1Schema, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import type { CustomProviderTemplateV1 } from '@happier-dev/protocol/providers/connections/customTemplateV1';
 import type { z } from 'zod';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';

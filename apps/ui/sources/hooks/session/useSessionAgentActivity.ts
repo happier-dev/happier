@@ -3,7 +3,7 @@ import * as React from 'react';
 import {
     readSessionAgentActivityHeadlineFromMetadata,
     type SessionAgentActivityHeadlineV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/work/agentActivity/agentActivityHeadlineV1';
 
 import type { UseExternalSessionRuntimeResult } from '@/components/sessions/model/useExternalSessionRuntime';
 import {

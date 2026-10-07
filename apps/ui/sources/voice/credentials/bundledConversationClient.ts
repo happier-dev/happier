@@ -1,6 +1,6 @@
 import {
   VoiceRealtimeJsonValueSchema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/voice/realtime/events';
 
 import { storage } from '@/sync/domains/state/storage';
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';

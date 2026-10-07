@@ -1,4 +1,7 @@
-import { resolveExecutionRunInteractionAffordances, type ExecutionRunPublicState, type ParticipantRecipientV1, type ScmDiffSummaryResult } from '@happier-dev/protocol';
+import { resolveExecutionRunInteractionAffordances } from '@happier-dev/protocol/execution/runs/interactionAffordances';
+import type { ExecutionRunPublicState } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import type { ParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
+import type { ScmDiffSummaryResult } from '@happier-dev/protocol/scm/diffSummaryResult';
 import { buildSessionExecutionRunRouteHref } from '@/components/sessions/agents/navigation/buildSessionExecutionRunRouteHref';
 
 export type ScmDiffSummaryDiscussionTarget =

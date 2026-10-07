@@ -1,17 +1,5 @@
-import {
-    DaemonMcpServersDetectRequestSchema,
-    DaemonMcpServersDetectResponseSchema,
-    DaemonMcpServersPreviewRequestSchema,
-    DaemonMcpServersPreviewResponseSchema,
-    DaemonMcpServersTestRequestSchema,
-    DaemonMcpServersTestResponseSchema,
-    type DaemonMcpServersDetectRequest,
-    type DaemonMcpServersDetectResponse,
-    type DaemonMcpServersPreviewRequest,
-    type DaemonMcpServersPreviewResponse,
-    type DaemonMcpServersTestRequest,
-    type DaemonMcpServersTestResponse,
-} from '@happier-dev/protocol';
+import { DaemonMcpServersDetectRequestSchema, DaemonMcpServersDetectResponseSchema, DaemonMcpServersTestRequestSchema, DaemonMcpServersTestResponseSchema, type DaemonMcpServersDetectRequest, type DaemonMcpServersDetectResponse, type DaemonMcpServersTestRequest, type DaemonMcpServersTestResponse } from '@happier-dev/protocol/mcp/servers/daemonRpcV1';
+import { DaemonMcpServersPreviewRequestSchema, DaemonMcpServersPreviewResponseSchema, type DaemonMcpServersPreviewRequest, type DaemonMcpServersPreviewResponse } from '@happier-dev/protocol/mcp/servers/previewV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';

@@ -1,4 +1,5 @@
-import { resolveBrowserContextPrivacyDenial, type BrowserScreenshotMediaReferenceV1 } from '@happier-dev/protocol';
+import { resolveBrowserContextPrivacyDenial } from '@happier-dev/protocol/browser/context/privacy';
+import type { BrowserScreenshotMediaReferenceV1 } from '@happier-dev/protocol/browser/context/v1';
 
 import type {
     BrowserAnnotationCaptureProvider,

@@ -1,4 +1,4 @@
-import { readCanonicalPaddedBase64DecodedLength } from '@happier-dev/protocol';
+import { readCanonicalPaddedBase64DecodedLength } from '@happier-dev/protocol/crypto/base64';
 
 import { invokeDesktopHost, isDesktopHost } from '@/utils/platform/desktopHost';
 

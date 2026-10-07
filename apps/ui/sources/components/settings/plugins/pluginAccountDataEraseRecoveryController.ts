@@ -1,8 +1,5 @@
-import {
-    PluginAccountDataEraseActionInputV1Schema,
-    PluginAccountDataEraseActionOutputV1Schema,
-    type ActionExecuteResult,
-} from '@happier-dev/protocol';
+import { PluginAccountDataEraseActionInputV1Schema, PluginAccountDataEraseActionOutputV1Schema } from '@happier-dev/protocol/plugins/data/accountEraseV1';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { Modal, type IModal } from '@/modal';
 import {

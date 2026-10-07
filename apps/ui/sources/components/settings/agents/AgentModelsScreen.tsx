@@ -1,12 +1,8 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import {
-    createProviderErrorV1,
-    serializeModelVisibilityRefV1,
-    type ModelVisibilityRefV1,
-    type ProviderErrorV1,
-} from '@happier-dev/protocol';
+import { createProviderErrorV1, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { serializeModelVisibilityRefV1, type ModelVisibilityRefV1 } from '@happier-dev/protocol/providers/model-selection';
 import { getAgentStaticModels } from '@happier-dev/agents';
 
 import { isBundledAgentId } from '@/agents/catalog/catalog';

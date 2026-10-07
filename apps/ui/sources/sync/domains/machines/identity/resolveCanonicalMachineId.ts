@@ -9,4 +9,4 @@
 export {
     resolveCanonicalMachineId,
     type MachineReplacementRecord,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/identity/canonicalMachineId';

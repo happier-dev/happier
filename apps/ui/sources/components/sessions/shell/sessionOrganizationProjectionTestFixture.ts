@@ -7,7 +7,7 @@ import type {
     SessionOrganizationContentEnvelope,
     SessionOrganizationOrderEntry,
 } from '@happier-dev/protocol';
-import { SessionOrganizationSnapshotSchema } from '@happier-dev/protocol';
+import { SessionOrganizationSnapshotSchema } from '@happier-dev/protocol/sessions/organization/snapshot';
 
 type SessionOrganizationJsonValue = Extract<
     SessionOrganizationContentEnvelope,

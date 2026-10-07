@@ -1,7 +1,7 @@
 import {
     arePluginMachineExecutionOriginsEqual,
     type PluginMachineExecutionOriginV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 
 export type PluginContributionIdentity = Readonly<{ pluginId: string; localId: string }>;
 export type FreshPluginMachineExecutionOriginComparable = Readonly<{

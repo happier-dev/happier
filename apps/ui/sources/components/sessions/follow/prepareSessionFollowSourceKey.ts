@@ -1,14 +1,6 @@
-import {
-    isPersistentMachine,
-    SessionFollowSourceKeyPrepareResponseV1Schema,
-    buildSessionFollowSourceKeyPrepareRequestV1,
-    resolveSessionFollowSourceKeyPreparationFailureV1,
-    supportsMachineSessionFollowContextV1,
-    type MachineKind,
-    type SessionFollowSourceKeyPrepareAuthorizationV1,
-    type SessionFollowSourceKeyPrepareRequestV1,
-    type SessionFollowSourceKeyPreparationResultV1,
-} from '@happier-dev/protocol';
+import { isPersistentMachine, type MachineKind } from '@happier-dev/protocol/machines/machineKind';
+import { SessionFollowSourceKeyPrepareResponseV1Schema, buildSessionFollowSourceKeyPrepareRequestV1, resolveSessionFollowSourceKeyPreparationFailureV1, type SessionFollowSourceKeyPrepareAuthorizationV1, type SessionFollowSourceKeyPrepareRequestV1, type SessionFollowSourceKeyPreparationResultV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceKeyPreparationV1';
+import { supportsMachineSessionFollowContextV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { encodeBase64 } from '@/encryption/base64';

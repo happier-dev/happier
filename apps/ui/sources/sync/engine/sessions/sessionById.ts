@@ -1,15 +1,11 @@
 import { isSessionAccessOwner, normalizeSessionAccessProjection } from './normalizeSessionAccessProjection';
 import { projectComposerOptionsInputV1 } from '@happier-dev/protocol/embed';
-import {
-  SessionSharedMetadataV1Schema,
-  SessionCurrentProjectionRecordV1Schema,
-  SessionTurnsProjectionV1Schema,
-  isSessionEncryptionModeAllowedByClientRequirement,
-  type AccountEncryptionCurrentnessResponse,
-  type SessionTurnsProjectionV1,
-  type V2SessionByIdResponse,
-  type ClientEncryptionRequirement,
-} from '@happier-dev/protocol';
+import { SessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
+import { SessionTurnsProjectionV1Schema, type SessionTurnsProjectionV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
+import { isSessionEncryptionModeAllowedByClientRequirement, type ClientEncryptionRequirement } from '@happier-dev/protocol/encryption/clientEncryptionRequirement';
+import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
+import type { V2SessionByIdResponse } from '@happier-dev/protocol/sessions/control/contract';
 import type {
   SessionMetadataTupleMutationSnapshotV1,
 } from '@happier-dev/cli-common/sessionMetadata';

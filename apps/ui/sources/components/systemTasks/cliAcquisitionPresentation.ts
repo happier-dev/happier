@@ -1,10 +1,5 @@
-import {
-    CLI_ACQUISITION_PROGRESS_EVENT,
-    parseCliAcquisitionProgress,
-    readCliAcquisitionFailurePhase,
-    type CliAcquisitionPhase,
-    type SystemTaskEvent,
-} from '@happier-dev/protocol';
+import { CLI_ACQUISITION_PROGRESS_EVENT, parseCliAcquisitionProgress, readCliAcquisitionFailurePhase, type CliAcquisitionPhase } from '@happier-dev/protocol/system/tasks/acquisitionProgress';
+import type { SystemTaskEvent } from '@happier-dev/protocol/system/tasks/spec';
 
 import { t, type TranslationKeyNoParams } from '@/text';
 import { formatByteSize } from '@/utils/files/formatByteSize';

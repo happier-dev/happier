@@ -1,10 +1,5 @@
-import {
-  isVoiceSdkSafeActionSpec,
-  listVoiceActionBlockSpecs,
-  listVoiceToolActionSpecs,
-  type ActionId,
-  type ActionSpec,
-} from '@happier-dev/protocol';
+import { isVoiceSdkSafeActionSpec, listVoiceActionBlockSpecs, listVoiceToolActionSpecs, type ActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
 import { isInventoryPrivacyAction } from '@/sync/domains/settings/actionSettingsPolicy';

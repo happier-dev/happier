@@ -1,7 +1,7 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { isModelMode, type PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents';
-import { buildBackendTargetKeyV2 } from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { resolveSessionActionDefaultBackend, resolveSessionActionDefaultTarget } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { resolveMergedSessionPermissionMode } from './resolveMergedSessionPermissionMode';

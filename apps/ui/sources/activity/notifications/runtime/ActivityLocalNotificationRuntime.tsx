@@ -3,17 +3,10 @@ import * as React from 'react';
 
 import { Platform } from 'react-native';
 
-import {
-    isPushNotificationBundledSoundId,
-    isSessionAwarenessContentReadableV1,
-    resolveActivityRequestEventIdentityV1,
-    resolveActivitySequenceEventIdentityV1,
-    resolveActivityTranscriptLocalIdEventIdentityV1,
-    resolveActivityTurnEventIdentityV1,
-    resolveSessionPersonalEventEligibilityV1,
-    resolveExpoNotificationSoundName,
-    resolvePushNotificationAndroidChannelId,
-} from '@happier-dev/protocol';
+import { isPushNotificationBundledSoundId, resolveExpoNotificationSoundName, resolvePushNotificationAndroidChannelId } from '@happier-dev/protocol/push/pushNotificationActions';
+import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessions/awareness/availability';
+import { resolveActivityRequestEventIdentityV1, resolveActivitySequenceEventIdentityV1, resolveActivityTranscriptLocalIdEventIdentityV1, resolveActivityTurnEventIdentityV1 } from '@happier-dev/protocol/activity/eventIdentity';
+import { resolveSessionPersonalEventEligibilityV1 } from '@happier-dev/protocol/sessions/personal/eventEligibility';
 import { resolveActivityAttentionDeliveryPlan } from '@/activity/delivery/resolveActivityAttentionDeliveryPlan';
 import { useExactHomeAccountSettings } from '@/activity/delivery/useExactHomeAccountSettings';
 import type { ActivityAttentionDeliveryEventKind } from '@/activity/delivery/activityAttentionDeliveryPlanTypes';

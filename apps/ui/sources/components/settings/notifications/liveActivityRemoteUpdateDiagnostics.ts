@@ -5,7 +5,7 @@ import {
     type LiveActivityRemoteUpdateCapabilityReason,
     type LiveActivityRemoteUpdateMode,
     type LiveActivityRemoteUpdateModeResolutionReason,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/activity/live/remoteUpdateCapabilities';
 
 import type { TranslationKey } from '@/text';
 

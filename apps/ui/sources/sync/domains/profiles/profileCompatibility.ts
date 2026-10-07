@@ -1,11 +1,6 @@
-import {
-    convertBackendTargetRefV2ToV1,
-    getProfileEnvironmentVariables as getProfileEnvironmentVariablesProtocol,
-    isProfileCompatibleWithBackendTarget as isProfileCompatibleWithBackendTargetProtocol,
-    isProfileCompatibleWithAgent as isProfileCompatibleWithAgentProtocol,
-    parseBackendTargetKeyV2,
-    type BackendTargetRefV2Input,
-} from '@happier-dev/protocol';
+import { convertBackendTargetRefV2ToV1, parseBackendTargetKeyV2, type BackendTargetRefV2Input } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { getProfileEnvironmentVariables as getProfileEnvironmentVariablesProtocol } from '@happier-dev/protocol/profiles/backendProfileSchema';
+import { isProfileCompatibleWithBackendTarget as isProfileCompatibleWithBackendTargetProtocol, isProfileCompatibleWithAgent as isProfileCompatibleWithAgentProtocol } from '@happier-dev/protocol/profiles/profileCompatibility';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/catalog';
 import type { AgentId } from '@/agents/registry/registryCore';

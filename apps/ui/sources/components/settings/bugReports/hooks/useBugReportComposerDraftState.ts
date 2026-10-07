@@ -2,12 +2,8 @@ import * as React from 'react';
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 
-import {
-  inferBugReportDeploymentTypeFromServerUrl as inferDeploymentType,
-  type BugReportDeploymentType,
-  type BugReportFrequency,
-  type BugReportSeverity,
-} from '@happier-dev/protocol';
+import { inferBugReportDeploymentTypeFromServerUrl as inferDeploymentType } from '@happier-dev/protocol/bugs/reports/sanitize';
+import type { BugReportDeploymentType, BugReportFrequency, BugReportSeverity } from '@happier-dev/protocol/bugs/reports/types';
 
 import type { Profile } from '@/sync/domains/profiles/profile';
 

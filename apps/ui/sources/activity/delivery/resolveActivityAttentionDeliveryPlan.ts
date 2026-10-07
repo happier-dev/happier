@@ -1,10 +1,5 @@
-import {
-    accountSettingsParse,
-    composeAttentionDeliveryPolicyDeviceOverrides,
-    resolveAttentionDeliveryPolicyDecision,
-    type AccountSettings,
-    type AttentionDeliveryPolicyV1,
-} from '@happier-dev/protocol';
+import { accountSettingsParse, resolveAttentionDeliveryPolicyDecision, type AccountSettings, type AttentionDeliveryPolicyV1 } from '@happier-dev/protocol/account/settings/accountSettings';
+import { composeAttentionDeliveryPolicyDeviceOverrides } from '@happier-dev/protocol/account/settings/attentionDeliveryPolicy';
 
 import {
     AttentionDeviceOverridesV1Schema,

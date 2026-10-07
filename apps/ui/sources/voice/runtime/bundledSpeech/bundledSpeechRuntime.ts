@@ -1,10 +1,8 @@
 import { Platform } from 'react-native';
-import {
-  resolveVoiceSpeechSettingsCorrespondence,
-  resolveVoiceSpeechSynthesisInputLimits,
-  batchSpeechTextForSynthesis,
-  type VoiceProviderSettingsJsonValueV1,
-} from '@happier-dev/protocol';
+import { resolveVoiceSpeechSettingsCorrespondence } from '@happier-dev/protocol/plugins/contributions/voice';
+import { resolveVoiceSpeechSynthesisInputLimits } from '@happier-dev/protocol/voice/speech';
+import { batchSpeechTextForSynthesis } from '@happier-dev/protocol/voice/speechText';
+import type { VoiceProviderSettingsJsonValueV1 } from '@happier-dev/protocol/voice/realtime/providerSettings';
 
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import { guessAudioMimeType } from '@/voice/input/guessAudioMimeType';

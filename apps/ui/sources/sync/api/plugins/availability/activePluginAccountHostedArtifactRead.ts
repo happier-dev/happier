@@ -32,11 +32,9 @@ import {
     type AccountStoredContentCompatibilityHeaderResolution,
 } from '@/sync/http/accountStoredContentCompatibility';
 import { captureServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
-import {
-    createAccountScopedCryptoMaterialSnapshotV1,
-    convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
-    type AccountEncryptionCurrentnessResponse,
-} from '@happier-dev/protocol';
+import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
 import {
     PluginAvailabilityActionHttpPathsV1,
     PluginAvailabilityUiArtifactPublishActionInputV1Schema,

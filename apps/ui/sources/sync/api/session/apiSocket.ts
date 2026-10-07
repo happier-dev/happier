@@ -17,15 +17,11 @@ import { getRandomBytes } from '@/platform/cryptoRandom';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { Encryption } from '@/sync/encryption/encryption';
 import { observeServerTimestamp } from '@/sync/runtime/time';
-import {
-    MACHINE_LIVE_STREAM_SOCKET_EVENT,
-    TRANSFER_RELAY_V2_SOCKET_EVENT,
-    CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
-    buildAccountStoredContentCompatibilitySocketAuthV1,
-    type MachineLiveStreamRelayEnvelopeV1,
-    type TransferRelayV2SendEnvelope,
-    uiBrowserAutomationDispatchMethod,
-} from '@happier-dev/protocol';
+import { MACHINE_LIVE_STREAM_SOCKET_EVENT, type MachineLiveStreamRelayEnvelopeV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import { TRANSFER_RELAY_V2_SOCKET_EVENT } from '@happier-dev/protocol/transfers/relay/v2/socketEvents';
+import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION, buildAccountStoredContentCompatibilitySocketAuthV1 } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import type { TransferRelayV2SendEnvelope } from '@happier-dev/protocol/transfers/relay/v2/transferRelayEnvelopeSchema';
+import { uiBrowserAutomationDispatchMethod } from '@happier-dev/protocol/browser/automation/reverseDispatchV1';
 import { SOCKET_RPC_EVENTS, SocketRpcCancellationPayloadSchema, SocketRpcRequestIdSchema, type SessionTransferRoutingV1 } from '@happier-dev/protocol/socketRpc';
 import {
     RPC_ERROR_CODES,
@@ -76,7 +72,7 @@ import { isServerRuntimeTransportPublished, resolveActiveServerRuntimeOrigin } f
 import { getActiveServerHomeCarrier } from '@/sync/domains/server/serverRuntime';
 import { ServerScopedTransportUnavailableError } from '@/sync/runtime/homeCarrier';
 import { fetchAccountEncryptionCurrentness, getAccountEncryptionModeCacheRevision } from '@/sync/api/account/apiAccountEncryptionMode';
-import { MachineLiveStreamPayloadErrorV1, type MachineLiveStreamContentV1 } from '@happier-dev/protocol';
+import { MachineLiveStreamPayloadErrorV1, type MachineLiveStreamContentV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/payloadV1';
 import { createMachineLiveStreamSocketTransport } from '@/sync/domains/machines/peer/mediation/stream/socketTransport';
 
 const STATIC_EXPO_PUBLIC_HAPPIER_SOCKET_ACK_AUTH_SETTLE_TIMEOUT_MS =

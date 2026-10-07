@@ -1,7 +1,7 @@
-import {
-    buildComposerReferenceMentionPayloadV1, buildMentionRefForKindV1, MENTION_KIND_V1,
-    type ComposerReferenceCandidateV1, type PluginContributionIdentityV1,
-} from '@happier-dev/protocol';
+import { buildComposerReferenceMentionPayloadV1 } from '@happier-dev/protocol/runtime/input/composerReferenceProviderV1';
+import { buildMentionRefForKindV1, MENTION_KIND_V1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
+import type { ComposerReferenceCandidateV1 } from '@happier-dev/protocol/plugins/contributions/composer-reference-providers';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { formatComposerSuggestionToken } from '@/components/autocomplete/composerSuggestionGrammar';
 import { buildComposerSessionTokenSlug, type ComposerSessionSuggestionItem } from './suggestionSession';
 

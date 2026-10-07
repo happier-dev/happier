@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { KOKORO_DEFAULT_TTS_PACK_ID, LocalNeuralExecutionSchema } from '@happier-dev/protocol';
+import { KOKORO_DEFAULT_TTS_PACK_ID } from '@happier-dev/protocol/voice/modelPacks/catalog';
+import { LocalNeuralExecutionSchema } from '@happier-dev/protocol/daemon/voiceInference';
 
 import {
   migrateLegacyGoogleTtsSettings,

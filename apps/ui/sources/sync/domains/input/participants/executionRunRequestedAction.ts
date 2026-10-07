@@ -2,7 +2,7 @@ import {
     DEFAULT_PENDING_REQUESTED_ACTION_V1,
     PendingRequestedActionV1Schema,
     type PendingRequestedActionV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 
 /**
  * Reads the canonical requested action stored by current composers. Invalid or

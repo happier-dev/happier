@@ -1,6 +1,8 @@
 import { projectUiSessionAwareness } from '@/sync/domains/session/awareness/sessionAwareness';
 import { resolveSessionAwarenessContentLabel } from '@/sync/domains/session/awareness/sessionAwarenessContentLabels';
-import { isSessionAwarenessContentReadableV1, readSessionDirectoryKind, type SessionAwarenessEncryptionV1 } from '@happier-dev/protocol';
+import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessions/awareness/availability';
+import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
+import type { SessionAwarenessEncryptionV1 } from '@happier-dev/protocol/sessions/awareness/projectionV1';
 import * as React from 'react';
 import { Message } from "@happier-dev/session-core/messages";
 import { readLatestLocalOutboundPendingUserMessageAt } from '@/sync/domains/messages/outgoingUserMessage';

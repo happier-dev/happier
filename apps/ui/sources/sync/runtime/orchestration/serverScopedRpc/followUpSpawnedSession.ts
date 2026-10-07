@@ -1,4 +1,4 @@
-import { hasRawComposerAttachmentSelectionV1 } from '@happier-dev/protocol';
+import { hasRawComposerAttachmentSelectionV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';

@@ -12,11 +12,8 @@ import type {
     SessionTeamCredentialBindingIntentListV1,
     TeamCredentialResourceCatalogEntryV1,
 } from '@happier-dev/protocol/teams';
-import {
-    ConnectedAccountServiceKeySchema,
-    buildQualifiedPluginContributionKey,
-    parseQualifiedPluginContributionKey,
-} from '@happier-dev/protocol';
+import { ConnectedAccountServiceKeySchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import type { AgentInputExtraActionChip, AgentInputStatusBadge } from '@/components/sessions/agentInput/agentInputContracts';
 import type { AgentInputContentPopoverRenderArgs } from '@/components/sessions/agentInput/components/AgentInputContentPopover';

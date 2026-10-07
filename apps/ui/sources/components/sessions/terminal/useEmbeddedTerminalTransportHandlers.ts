@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { TerminalInputEventSchema } from '@happier-dev/protocol';
+import { TerminalInputEventSchema } from '@happier-dev/protocol/terminal/stream';
 
 import { resolveTerminalPasteAction, type TerminalPasteAction } from '@/components/terminal/interaction/paste';
 import { Modal } from '@/modal';

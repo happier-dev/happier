@@ -20,7 +20,7 @@ import { getConnectedServiceCredentialSealed } from '@/sync/api/account/apiConne
 import { buildAccountEncryptionMigrateToE2eeRequest } from '@/sync/ops/account/buildAccountEncryptionMigrateToE2eeRequest';
 import { getConnectedServiceCredentialPlain } from '@/sync/api/account/apiConnectedServicesV3';
 import { getQualifiedConnectedAccountConfigurationV4, getQualifiedConnectedAccountCredentialV4 } from '@/sync/api/account/apiQualifiedConnectedAccountsV4';
-import { AccountEncryptionMigrateInvalidParamsReasonSchema, AccountEncryptionMigrateRequestSchema, createAccountEncryptionMigrateRequestBindingDigestV1, type AccountEncryptionMigrateRequest } from '@happier-dev/protocol';
+import { AccountEncryptionMigrateInvalidParamsReasonSchema, AccountEncryptionMigrateRequestSchema, createAccountEncryptionMigrateRequestBindingDigestV1, type AccountEncryptionMigrateRequest } from '@happier-dev/protocol/account/encryptionMigrate';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import { fetchMachineRows } from '@/sync/engine/machines/syncMachines';
 import { fetchAccountEncryptionMigrationKvInventory } from '@/sync/ops/account/fetchAccountEncryptionMigrationKvInventory';
@@ -50,7 +50,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
-import { AccountHistoricalEncryptionKeyForgetResultV1Schema, AccountEncryptionAutomationTemplatesRecoverResultV1Schema } from '@happier-dev/protocol';
+import { AccountHistoricalEncryptionKeyForgetResultV1Schema, AccountEncryptionAutomationTemplatesRecoverResultV1Schema } from '@happier-dev/protocol/auth/accountSecurity';
 
 type AccountEncryptionModePresentation = Readonly<{
     scope: string | null;

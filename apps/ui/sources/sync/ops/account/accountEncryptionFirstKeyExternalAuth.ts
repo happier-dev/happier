@@ -1,21 +1,11 @@
 import { Linking, Platform } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
 
-import {
-    AccountEncryptionMigrateExternalAuthProofSchema,
-    AccountExternalAuthProofV1Schema,
-    AccountEncryptionMigrateRequestSchema,
-    computeAccountEncryptionMigrateKeyFingerprintV1,
-    createAccountEncryptionMigrateRequestBindingDigestV1,
-    createPasswordCredentialMutationDigestV1,
-    createPasswordCredentialTargetDigestV1,
-    PasswordCredentialMutationV1Schema,
-    PlainAccountPasswordCredentialV1Schema,
-    type AccountEncryptionMigrateExternalAuthProof,
-    type AccountEncryptionMigrateRequest,
-    type AccountExternalAuthProofV1,
-    type PlainAccountPasswordCredentialV1,
-} from '@happier-dev/protocol';
+import { AccountEncryptionMigrateExternalAuthProofSchema, AccountEncryptionMigrateRequestSchema, createAccountEncryptionMigrateRequestBindingDigestV1, type AccountEncryptionMigrateExternalAuthProof, type AccountEncryptionMigrateRequest } from '@happier-dev/protocol/account/encryptionMigrate';
+import { AccountExternalAuthProofV1Schema, type AccountExternalAuthProofV1 } from '@happier-dev/protocol/auth/accountExternalAuthProof';
+import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import { createPasswordCredentialMutationDigestV1, createPasswordCredentialTargetDigestV1, PasswordCredentialMutationV1Schema } from '@happier-dev/protocol/auth/passwordMutationChallenge';
+import { PlainAccountPasswordCredentialV1Schema, type PlainAccountPasswordCredentialV1 } from '@happier-dev/protocol/auth/accountPasswordCredential';
 import {
     ACCOUNT_ENCRYPTION_FIRST_KEY_PENDING_TTL_MS,
     isLegacyAuthCredentials,

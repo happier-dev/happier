@@ -2,7 +2,7 @@ import {
   resolveVoiceSessionUpdatePolicyV1,
   type VoiceSessionUpdatePolicyV1,
   type VoiceUpdateLevelV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/voice/sourceDisclosureV1';
 
 import { storage } from '@/sync/domains/state/storage';
 import {

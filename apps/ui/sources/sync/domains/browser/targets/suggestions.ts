@@ -1,8 +1,5 @@
-import {
-    BrowserViewTargetV1Schema,
-    type BrowserViewTargetV1,
-    type LocalServiceLauncherSnapshotV1,
-} from '@happier-dev/protocol';
+import { BrowserViewTargetV1Schema, type BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
+import type { LocalServiceLauncherSnapshotV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 
 import { resolvePluginBrowserPolicyDecision } from '@/sync/domains/plugins/browser/policy';
 import {

@@ -1,5 +1,5 @@
 import { canonicalizeServerUrl } from './serverUrlCanonical';
-import { redactPublicShareCapabilityUrl } from '@happier-dev/protocol';
+import { redactPublicShareCapabilityUrl } from '@happier-dev/protocol/crypto/publicShareCapabilityUrl';
 
 export function toServerUrlDisplay(raw: string): string {
     const canonical = canonicalizeServerUrl(raw);

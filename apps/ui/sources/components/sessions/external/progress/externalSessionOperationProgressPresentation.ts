@@ -1,4 +1,4 @@
-import { canCancelExternalSessionOperationV1, isExternalSessionOperationTerminalStatusV1 } from '@happier-dev/protocol';
+import { canCancelExternalSessionOperationV1, isExternalSessionOperationTerminalStatusV1 } from '@happier-dev/protocol/sessions/external/operationV1';
 import type {
     ExternalSessionOperationPhaseV1,
     ExternalSessionOperationProgressV1,

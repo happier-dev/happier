@@ -1,5 +1,6 @@
 import { nestSessionListReports, resolveWorkflowRunParentSessionId } from './nestSessionListReports';
-import { normalizeSessionListFilterV1, type SessionListFilterV1, type WorkflowRunSummaryV1 } from '@happier-dev/protocol';
+import { normalizeSessionListFilterV1, type SessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
+import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { workflowRunMatchesSessionListFilter } from './sessionListWorkFilter';
 import { buildSessionListDateGroups } from './sessionListDateGroups';
 import { t } from '@/text';

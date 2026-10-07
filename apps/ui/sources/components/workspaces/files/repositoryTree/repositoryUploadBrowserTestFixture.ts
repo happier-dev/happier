@@ -1,4 +1,4 @@
-import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { vi } from 'vitest';

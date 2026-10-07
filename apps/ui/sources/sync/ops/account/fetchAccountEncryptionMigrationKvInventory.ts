@@ -1,4 +1,4 @@
-import { ACCOUNT_JSON_KV_PREFIXES, classifyAccountJsonKvKey, type AccountJsonKvNamespace } from '@happier-dev/protocol';
+import { ACCOUNT_JSON_KV_PREFIXES, classifyAccountJsonKvKey, type AccountJsonKvNamespace } from '@happier-dev/protocol/account/accountJsonKv';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { kvList, type KvItem } from '@/sync/api/account/apiKv';
 import type { ServerFetch } from '@/sync/http/client';

@@ -1,9 +1,6 @@
 import * as React from 'react';
-import {
-    SshTunnelListResponseSchema,
-    type SshTunnelSnapshot,
-    type SystemTaskResult,
-} from '@happier-dev/protocol';
+import { SshTunnelListResponseSchema, type SshTunnelSnapshot } from '@happier-dev/protocol/ssh/tunnels';
+import type { SystemTaskResult } from '@happier-dev/protocol/system/tasks/spec';
 
 import { getDefaultSystemTaskRunner, useSystemTaskSnapshot } from '@/components/systemTasks';
 import type { SystemTaskRunState, SystemTaskRunner } from '@/components/systemTasks/types';

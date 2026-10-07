@@ -1,4 +1,5 @@
-import { makeExternalSessionHistoricalImportLocalId, type ExternalSessionsAgentId, type ExternalSessionsSource } from '@happier-dev/protocol';
+import { makeExternalSessionHistoricalImportLocalId } from '@happier-dev/protocol/sessions/external/historicalImportIdentity';
+import type { ExternalSessionsAgentId, ExternalSessionsSource } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import type { ChatFindSeed } from '@/components/appShell/panes/fileFindSeedHandoff';
 
 import { Modal } from '@/modal';

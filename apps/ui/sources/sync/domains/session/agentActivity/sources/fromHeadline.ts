@@ -1,8 +1,6 @@
-import {
-    resolveAgentActivityEntryAgentHandle,
-    type SessionAgentActivityEntryV1,
-    type SessionAgentActivityHeadlineV1,
-} from '@happier-dev/protocol';
+import { resolveAgentActivityEntryAgentHandle } from '@happier-dev/protocol/sessions/work/agentActivity/agentActivityEntryId';
+import type { SessionAgentActivityEntryV1 } from '@happier-dev/protocol/sessions/work/agentActivity/agentActivityEntryV1';
+import type { SessionAgentActivityHeadlineV1 } from '@happier-dev/protocol/sessions/work/agentActivity/agentActivityHeadlineV1';
 
 import { toAgentActivityEntryKind, type AgentActivityHeadlineEntry } from '../types';
 

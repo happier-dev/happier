@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { arePluginMachineMaterializationRefsEqual } from '@happier-dev/protocol';
+import { arePluginMachineMaterializationRefsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 
 import { InstalledPluginBrandMark } from '@/components/plugins/shared/InstalledPluginBrandMark';
 import { useInstalledPluginBrandPresentation } from '@/components/plugins/shared/installedPluginBrandPresentation';

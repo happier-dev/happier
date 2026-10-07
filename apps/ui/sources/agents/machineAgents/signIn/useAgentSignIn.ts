@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { machineAgentSignInTerminalKey, type AgentSignInStatusResponse, type DaemonTerminalStreamEventUrl, type MachinesAgentsSignInStartOutput, type MachinesAgentsSignInCancelOutput } from '@happier-dev/protocol';
+import { machineAgentSignInTerminalKey, type AgentSignInStatusResponse, type MachinesAgentsSignInStartOutput, type MachinesAgentsSignInCancelOutput } from '@happier-dev/protocol/daemon/agentSignIn';
+import type { DaemonTerminalStreamEventUrl } from '@happier-dev/protocol/daemon/terminal';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { serverAccountScopedResourceKey, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';

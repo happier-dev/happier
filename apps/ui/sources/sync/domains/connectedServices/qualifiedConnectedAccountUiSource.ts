@@ -11,20 +11,13 @@ import {
     removeQualifiedConnectedAccountGroupMemberV4,
     setQualifiedConnectedAccountGroupActiveAccountV4,
 } from '@/sync/api/account/apiQualifiedConnectedAccountsV4';
-import {
-    BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
-    ConnectedServiceAuthGroupPolicyV1Schema,
-    CONNECTED_SERVICE_POOL_MEMBER_PRIORITY_STEP,
-    sameQualifiedConnectedAccountGroupRef,
-    type BuiltInLegacyConnectedAccountOperation,
-    type ConnectedServiceAuthGroupMemberStateV1,
-    type ConnectedServiceAuthGroupPolicyV1,
-    type ConnectedServiceAuthGroupStateV1,
-    type ConnectedServiceId,
-    type PluginContributionIdentityV1,
-    type QualifiedConnectedAccountGroupV4,
-    type QualifiedConnectedAccountRef,
-} from '@happier-dev/protocol';
+import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID, type BuiltInLegacyConnectedAccountOperation } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
+import { ConnectedServiceAuthGroupPolicyV1Schema, type ConnectedServiceAuthGroupMemberStateV1, type ConnectedServiceAuthGroupPolicyV1, type ConnectedServiceAuthGroupStateV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { CONNECTED_SERVICE_POOL_MEMBER_PRIORITY_STEP } from '@happier-dev/protocol/connect/configurationActionsV1';
+import { sameQualifiedConnectedAccountGroupRef, type QualifiedConnectedAccountGroupV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 
 export type QualifiedConnectedAccountUiSource = Readonly<{ protocol: 'v4' }>;
 

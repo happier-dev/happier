@@ -13,10 +13,8 @@ import { storage } from '@/sync/domains/state/storage';
 import {
   readSessionIncludedInVoiceFromState,
 } from '@/voice/runtime/voiceUpdatePolicy';
-import {
-  SessionFollowErrorCodeV1Schema,
-  type VoiceTrackedTargetsActionResultV1,
-} from '@happier-dev/protocol';
+import { SessionFollowErrorCodeV1Schema } from '@happier-dev/protocol/sessions/follow/api';
+import type { VoiceTrackedTargetsActionResultV1 } from '@happier-dev/protocol/sessions/follow/voiceTrackedTargetsCompatibilityV1';
 
 import {
   resolveVoiceSessionRef,

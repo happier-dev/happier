@@ -1,4 +1,4 @@
-import { PENDING_INPUT_PROTOCOL_VERSION_V1, PENDING_INPUT_PROTOCOL_VERSION_V3 } from '@happier-dev/protocol';
+import { PENDING_INPUT_PROTOCOL_VERSION_V1, PENDING_INPUT_PROTOCOL_VERSION_V3 } from '@happier-dev/protocol/clientCompatibility/primitives';
 
 import type { ServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { isReleasedServerV021CompatibilitySnapshot } from '@/sync/api/capabilities/releasedServerV021Compatibility';

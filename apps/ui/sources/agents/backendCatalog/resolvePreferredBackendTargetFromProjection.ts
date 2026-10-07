@@ -3,7 +3,7 @@ import {
     readBackendTargetRefV2,
     type BackendTargetRefV2Input,
     type PersistedBackendTargetRefV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 import { isBundledAgentId, type AgentId, type BundledAgentId } from '@/agents/catalog/catalog';
 import { getEnabledAgentIds } from '@/agents/catalog/enabled';

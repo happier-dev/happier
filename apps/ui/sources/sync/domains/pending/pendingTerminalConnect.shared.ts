@@ -1,8 +1,5 @@
-import {
-    HomeConnectionDescriptorV1Schema,
-    normalizeServerIdentityIdCapability,
-    type HomeConnectionDescriptorV1,
-} from '@happier-dev/protocol';
+import { HomeConnectionDescriptorV1Schema, type HomeConnectionDescriptorV1 } from '@happier-dev/protocol/auth/accountDirectory';
+import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import {
     createServerAccountScope,
     type ServerAccountScope,

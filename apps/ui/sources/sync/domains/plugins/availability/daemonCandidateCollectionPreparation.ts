@@ -1,9 +1,6 @@
-import {
-    DaemonPluginCollectionCandidatePreparationRequestV1Schema,
-    DaemonPluginCollectionCandidatePreparationResponseV1Schema,
-    type PluginCollectionCandidatePreparationBindingV1,
-    type PluginCollectionContractRefV1,
-} from '@happier-dev/protocol';
+import { DaemonPluginCollectionCandidatePreparationRequestV1Schema, DaemonPluginCollectionCandidatePreparationResponseV1Schema } from '@happier-dev/protocol/daemon/pluginCollectionCandidatePreparation';
+import type { PluginCollectionCandidatePreparationBindingV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
+import type { PluginCollectionContractRefV1 } from '@happier-dev/protocol/plugins/data/collectionContractRefV1';
 import { isRpcMethodNotFoundResult, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import {

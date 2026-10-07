@@ -1,5 +1,5 @@
 import { sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';
-import { resolveActivityTranscriptLocalIdEventIdentityV1 } from '@happier-dev/protocol';
+import { resolveActivityTranscriptLocalIdEventIdentityV1 } from '@happier-dev/protocol/activity/eventIdentity';
 
 import type { ActivityAlertEventKind } from './activityRemoteAlertRouting';
 

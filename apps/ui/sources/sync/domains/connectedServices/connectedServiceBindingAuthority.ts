@@ -1,12 +1,8 @@
-import {
-  isConnectedServiceCredentialHealthStatusUsable,
-  normalizeConnectedServiceCredentialHealthStatus,
-  readBuiltInLegacyConnectedAccountServiceKeyIngress,
-  sameQualifiedConnectedAccountRef,
-  type AccountProfile,
-  type ConnectedServiceBindingsV1,
-  type QualifiedConnectedAccountPurposeBindingTargetV1,
-} from '@happier-dev/protocol';
+import { isConnectedServiceCredentialHealthStatusUsable, normalizeConnectedServiceCredentialHealthStatus } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { readBuiltInLegacyConnectedAccountServiceKeyIngress, type ConnectedServiceBindingsV1 } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import type { AccountProfile } from '@happier-dev/protocol/account/profile';
+import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 

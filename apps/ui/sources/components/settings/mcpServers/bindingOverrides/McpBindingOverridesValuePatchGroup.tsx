@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import type { McpValueRefV1 } from '@happier-dev/protocol';
-import { McpValueRefV1Schema } from '@happier-dev/protocol';
+import { McpValueRefV1Schema } from '@happier-dev/protocol/mcp/servers/settingsV1';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';

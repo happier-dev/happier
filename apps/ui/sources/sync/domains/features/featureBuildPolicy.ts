@@ -1,11 +1,6 @@
-import {
-    evaluateFeatureBuildPolicy,
-    resolveEmbeddedFeaturePolicyEnv,
-    resolveFeatureBuildPolicyFromEnvOrEmbedded,
-    type FeatureBuildPolicy,
-    type FeatureBuildPolicyEvaluation,
-    type FeatureId,
-} from '@happier-dev/protocol';
+import { evaluateFeatureBuildPolicy, type FeatureBuildPolicy, type FeatureBuildPolicyEvaluation } from '@happier-dev/protocol/features/buildPolicy';
+import { resolveEmbeddedFeaturePolicyEnv, resolveFeatureBuildPolicyFromEnvOrEmbedded } from '@happier-dev/protocol/features/embeddedFeaturePolicy';
+import type { FeatureId } from '@happier-dev/protocol/features/catalog';
 
 let cachedBuildPolicy: FeatureBuildPolicy | null = null;
 let cachedBuildPolicyKey: string | null = null;

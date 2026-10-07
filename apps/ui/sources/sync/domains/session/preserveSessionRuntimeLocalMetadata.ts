@@ -1,5 +1,5 @@
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
-import { resolveLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol';
+import { resolveLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 import type { Metadata } from '@happier-dev/session-core/state';
 
 type RuntimeLocalMetadataShape = {

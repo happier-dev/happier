@@ -1,10 +1,7 @@
-import {
-    readSessionWorkStatePrimaryItemV1,
-    type SessionWorkflowActivityHeadlineV1,
-    type SessionWorkflowRunHeadlineV1,
-    type SessionWorkflowRunSnapshotV1,
-    type WorkflowRunStateV1,
-} from '@happier-dev/protocol';
+import { readSessionWorkStatePrimaryItemV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStatePrimary';
+import type { SessionWorkflowActivityHeadlineV1, SessionWorkflowRunHeadlineV1 } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowActivityHeadlineV1';
+import type { SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowRunSnapshotV1';
+import type { WorkflowRunStateV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 import type {
     AgentInputStatusBadgeEmphasis,

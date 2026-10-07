@@ -1,9 +1,5 @@
-import {
-    ACCOUNT_SETTING_DEFINITIONS,
-    LegacyRememberedEngineSelectionsByScopeV1Schema,
-    type AccountSettingsDefaults,
-    type RetainedRememberedEngineSelectionsByScopeV1,
-} from '@happier-dev/protocol';
+import { ACCOUNT_SETTING_DEFINITIONS, type AccountSettingsDefaults } from '@happier-dev/protocol/account/settings/accountSettings';
+import { LegacyRememberedEngineSelectionsByScopeV1Schema, type RetainedRememberedEngineSelectionsByScopeV1 } from '@happier-dev/protocol/account/settings/legacyAuthoringMemorySettingsV1';
 
 import {
     FavoriteModelSelectionV1Schema,

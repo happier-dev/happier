@@ -3,7 +3,7 @@ import {
     LocalServiceActionResultV1Schema,
     type LocalServiceActionRequestV1,
     type LocalServiceActionResultV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/local/services/actions/v1';
 
 export const LOCAL_SERVICE_ACTION_EXECUTE_ROUTE = '/local-services/actions/execute';
 

@@ -1,4 +1,4 @@
-import { isInProgressAgentActivityStatus, type AgentActivityStatusV1 } from '@happier-dev/protocol';
+import { isInProgressAgentActivityStatus, type AgentActivityStatusV1 } from '@happier-dev/protocol/sessions/work/agentActivity/agentActivityStatusV1';
 
 import type { IconName } from '@/components/ui/icons/Icon';
 import type { StatusPillVariant } from '@/components/ui/status/StatusPill';

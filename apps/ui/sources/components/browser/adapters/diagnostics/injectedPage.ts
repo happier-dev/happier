@@ -1,32 +1,7 @@
-import {
-    INJECTED_CONSOLE_TEXT_MAX_LENGTH,
-    INJECTED_OWNER_VALUE_MAX_LENGTH,
-    SAFE_TELEMETRY_HEADER_NAMES,
-    BrowserDiagnosticEventBatchV1Schema,
-    BrowserDiagnosticsElementPickerCommandMessageV1Schema,
-    BrowserDiagnosticsElementPickerResultMessageV1Schema,
-    BrowserDiagnosticsEvalCommandMessageV1Schema,
-    BrowserDiagnosticsEvalResultMessageV1Schema,
-    BrowserDiagnosticsGetPropertiesCommandMessageV1Schema,
-    BrowserDiagnosticsGetPropertiesResultMessageV1Schema,
-    BrowserDiagnosticsReleaseObjectGroupCommandMessageV1Schema,
-    BrowserDiagnosticsReleaseObjectGroupResultMessageV1Schema,
-    type BrowserDiagnosticEventV1,
-    type BrowserDiagnosticsElementPickerCommandMessageV1,
-    type BrowserDiagnosticsElementPickerRequestV1,
-    type BrowserDiagnosticsElementPickerResultV1,
-    type BrowserDiagnosticsEvalCommandMessageV1,
-    type BrowserDiagnosticsEvalRequestV1,
-    type BrowserDiagnosticsEvalResultV1,
-    type BrowserDiagnosticsGetPropertiesCommandMessageV1,
-    type BrowserDiagnosticsGetPropertiesRequestV1,
-    type BrowserDiagnosticsGetPropertiesResultV1,
-    type BrowserDiagnosticsReleaseObjectGroupCommandMessageV1,
-    type BrowserDiagnosticsReleaseObjectGroupRequestV1,
-    type BrowserDiagnosticsReleaseObjectGroupResultV1,
-    redactDiagnosticsHeaders,
-    stripUrlValuesInString,
-} from '@happier-dev/protocol';
+import { INJECTED_CONSOLE_TEXT_MAX_LENGTH, INJECTED_OWNER_VALUE_MAX_LENGTH } from '@happier-dev/protocol/browser/diagnostics/egress/classifier';
+import { SAFE_TELEMETRY_HEADER_NAMES, redactDiagnosticsHeaders } from '@happier-dev/protocol/browser/diagnostics/egress/headers';
+import { BrowserDiagnosticEventBatchV1Schema, BrowserDiagnosticsElementPickerCommandMessageV1Schema, BrowserDiagnosticsElementPickerResultMessageV1Schema, BrowserDiagnosticsEvalCommandMessageV1Schema, BrowserDiagnosticsEvalResultMessageV1Schema, BrowserDiagnosticsGetPropertiesCommandMessageV1Schema, BrowserDiagnosticsGetPropertiesResultMessageV1Schema, BrowserDiagnosticsReleaseObjectGroupCommandMessageV1Schema, BrowserDiagnosticsReleaseObjectGroupResultMessageV1Schema, type BrowserDiagnosticEventV1, type BrowserDiagnosticsElementPickerCommandMessageV1, type BrowserDiagnosticsElementPickerRequestV1, type BrowserDiagnosticsElementPickerResultV1, type BrowserDiagnosticsEvalCommandMessageV1, type BrowserDiagnosticsEvalRequestV1, type BrowserDiagnosticsEvalResultV1, type BrowserDiagnosticsGetPropertiesCommandMessageV1, type BrowserDiagnosticsGetPropertiesRequestV1, type BrowserDiagnosticsGetPropertiesResultV1, type BrowserDiagnosticsReleaseObjectGroupCommandMessageV1, type BrowserDiagnosticsReleaseObjectGroupRequestV1, type BrowserDiagnosticsReleaseObjectGroupResultV1 } from '@happier-dev/protocol/browser/diagnostics/v1';
+import { stripUrlValuesInString } from '@happier-dev/protocol/browser/diagnostics/egress/url';
 import { buildInjectedBrowserDiagnosticsRuntimeScript } from '@happier-dev/peer-mediation/browser/collector/build';
 
 type InjectedBrowserDiagnosticsCollectorIdentity = Readonly<{

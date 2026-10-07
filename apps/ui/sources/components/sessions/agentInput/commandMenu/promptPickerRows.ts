@@ -1,4 +1,5 @@
-import { isPromptInvocationAvailable, type PromptInvocationEntryV1, type PromptLibraryListItem } from '@happier-dev/protocol';
+import { isPromptInvocationAvailable, type PromptInvocationEntryV1 } from '@happier-dev/protocol/prompts/library/promptInvocationsV1';
+import type { PromptLibraryListItem } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 import type { BuiltInPrompt } from '@/sync/domains/input/slashCommands/builtInPrompts';
 import type { UserMessageHistoryEntry } from '@/hooks/session/useUserMessageHistoryEntries';
 

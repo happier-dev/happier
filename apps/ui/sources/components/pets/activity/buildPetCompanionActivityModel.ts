@@ -1,4 +1,4 @@
-import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol';
+import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessions/awareness/availability';
 import { projectUiSessionAwareness } from '@/sync/domains/session/awareness/sessionAwareness';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import {

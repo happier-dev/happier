@@ -1,5 +1,5 @@
 import { buildMessageRouteId } from '@happier-dev/session-core/messages';
-import { resolvePendingRequestAttentionReasonV1 } from '@happier-dev/protocol';
+import { resolvePendingRequestAttentionReasonV1 } from '@happier-dev/protocol/sessions/personal/attention';
 import { isSessionPersonallyTrackedForViewer } from '@/sync/domains/session/readState/sessionViewer';
 import { resolveSessionPersonalAttentionForViewer } from '@/sync/domains/session/readState/sessionViewerAttention';
 import { areSessionAddressesEqual, normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';

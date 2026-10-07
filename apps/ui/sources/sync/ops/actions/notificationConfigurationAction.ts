@@ -1,7 +1,7 @@
-import {
-    accountSettingsParse, hasConfiguredSecretStringValue, resolveNotificationChannelsV1FromAccountSettings,
-    NotificationConfigurationActionInputSchemas, type ActionExecutorDeps,
-} from '@happier-dev/protocol';
+import { accountSettingsParse, resolveNotificationChannelsV1FromAccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
+import { hasConfiguredSecretStringValue } from '@happier-dev/protocol/account/settings/notificationChannels';
+import { NotificationConfigurationActionInputSchemas } from '@happier-dev/protocol/actions/notificationConfigurationActionFamily';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import {
     addWebhookNotificationChannel, updateNotificationChannelById, removeNotificationChannelById,
     buildWebhookNotificationSettingsDelta,

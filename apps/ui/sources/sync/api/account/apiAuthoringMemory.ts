@@ -4,7 +4,7 @@ import {
     AuthoringMemoryReadResponseV1Schema,
     AuthoringMemoryMutationResponseV1Schema,
     AuthoringMemoryMutationRequestV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/authoringMemory';
 import type { AuthoringMemoryTransport } from '@/sync/engine/authoringMemory/authoringMemorySync';
 
 /** Reuses the reserved Account-row route shape with an exact Home/Account request. */

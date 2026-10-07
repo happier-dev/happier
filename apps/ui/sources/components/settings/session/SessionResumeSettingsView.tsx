@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { HappierReplayWritableMaxSeedCharsSchema } from '@happier-dev/protocol';
+import { HappierReplayWritableMaxSeedCharsSchema } from '@happier-dev/protocol/sessions/replay-seed-budget';
 import { StyleSheet } from 'react-native-unistyles';
 import { Icon } from '@/components/ui/icons/Icon';
 

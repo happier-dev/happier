@@ -8,7 +8,7 @@ import type { SettingsPageId } from './types';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import type { Settings, WritableSettingsKey } from '@/sync/domains/settings/settings';
 import type { SettingsWriteDelta } from '@/sync/domains/settings/settings';
-import { SettingsDeclarationValueV1Schema } from '@happier-dev/protocol';
+import { SettingsDeclarationValueV1Schema } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import type { z } from 'zod';
 
 export type SettingValue = z.infer<typeof SettingsDeclarationValueV1Schema>;

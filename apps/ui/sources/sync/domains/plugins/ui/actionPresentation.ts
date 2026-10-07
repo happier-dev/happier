@@ -1,9 +1,6 @@
-import {
-    normalizeActionInputHintsText,
-    type ActionInputHints,
-    type PluginLocalizedStringV2,
-    type PluginProjectedActionV2,
-} from '@happier-dev/protocol';
+import { normalizeActionInputHintsText, type ActionInputHints } from '@happier-dev/protocol/inputs/inputFields';
+import type { PluginLocalizedStringV2 } from '@happier-dev/protocol/plugins/contributions/public-types';
+import type { PluginProjectedActionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { resolvePluginUiText } from './i18n';
 import type { PluginUiProjectionModel } from './projection';

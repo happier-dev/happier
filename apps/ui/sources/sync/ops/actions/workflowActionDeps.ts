@@ -1,18 +1,16 @@
-import {
-    createAccountScopedCryptoMaterialSnapshotV1,
-    readServerEnabledBit,
-    resolveValidatedAutomationAccountEncryptionV1,
-    resolveWorkflowDefinitionRefV1,
-    projectWorkflowPluginSourceV1,
-    ExecutionRunGetResponseSchema,
-    isExecutionRunTerminalStatus,
-    isTerminalAutomationRunStateV3,
-    WorkflowRunSummaryV1Schema,
-    type WorkflowActionExecute,
-    type WorkflowTriggerActionsDependencies,
-    type AutomationTemplateRetainedSessionV1,
-    WorkflowStepExecutionSelectionSchema,
-} from '@happier-dev/protocol';
+import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
+import { resolveValidatedAutomationAccountEncryptionV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
+import { resolveWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionResolverV1';
+import { projectWorkflowPluginSourceV1 } from '@happier-dev/protocol/workflows/workflowPluginSourceV1';
+import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { isExecutionRunTerminalStatus } from '@happier-dev/protocol/execution/runs/waitForTerminal';
+import { isTerminalAutomationRunStateV3 } from '@happier-dev/protocol/automations/automationRunStateV3';
+import { WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import type { WorkflowActionExecute } from '@happier-dev/protocol/actions/executor/types';
+import type { WorkflowTriggerActionsDependencies } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
+import type { AutomationTemplateRetainedSessionV1 } from '@happier-dev/protocol/automations/automationTemplateStoredV1';
+import { WorkflowStepExecutionSelectionSchema } from '@happier-dev/protocol/workflows/workflowV1';
 import {
     createAccountWorkflowTriggerActions,
     createWorkflowActionExecutor,

@@ -6,7 +6,7 @@ import {
     type DaemonPluginUiComposerSurfaceCatalogEntryV1,
     type DaemonPluginUiTargetedContributionsReadResponse,
     type PluginProjectionV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 export type DaemonContributionRegistryProjection = PluginProjectionV2;
 

@@ -1,12 +1,5 @@
-import {
-    SESSION_DRAFT_SOCKET_EVENT,
-    SESSION_DRAFT_V2_SOCKET_EVENT,
-    SessionDraftSocketUpdateV1Schema,
-    SessionDraftSocketUpdateV2Schema,
-    type SessionDraftAddressV2,
-    type SessionDraftSocketUpdateV1,
-    type SessionDraftSocketUpdateV2,
-} from '@happier-dev/protocol';
+import { SESSION_DRAFT_SOCKET_EVENT, SessionDraftSocketUpdateV1Schema, type SessionDraftSocketUpdateV1 } from '@happier-dev/protocol/drafts/sessionDrafts';
+import { SESSION_DRAFT_V2_SOCKET_EVENT, SessionDraftSocketUpdateV2Schema, type SessionDraftAddressV2, type SessionDraftSocketUpdateV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 
 import {
     areServerAccountScopesEqual,

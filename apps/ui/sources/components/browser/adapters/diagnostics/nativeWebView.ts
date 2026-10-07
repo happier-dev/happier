@@ -1,9 +1,5 @@
-import {
-    BrowserDiagnosticEventV1Schema,
-    stripBrowserDiagnosticUrlValues,
-    type BrowserDiagnosticEventV1,
-    type BrowserDiagnosticUnavailableReasonV1,
-} from '@happier-dev/protocol';
+import { BrowserDiagnosticEventV1Schema, type BrowserDiagnosticEventV1, type BrowserDiagnosticUnavailableReasonV1 } from '@happier-dev/protocol/browser/diagnostics/v1';
+import { stripBrowserDiagnosticUrlValues } from '@happier-dev/protocol/browser/diagnostics/egress/url';
 
 type NativeWebViewDiagnosticBaseInput = Readonly<{
     eventId: string;

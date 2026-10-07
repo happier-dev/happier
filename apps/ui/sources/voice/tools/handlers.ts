@@ -1,13 +1,9 @@
-import {
-  ActionApprovalRequestCreatedResultSchema,
-  getActionSpec,
-  listVoiceToolActionSpecs,
-  normalizeSpawnSessionErrorDetail,
-  parseSessionAwarenessListResultV1,
-  PluginContributionIdentityV1Schema,
-  type ActionExecuteResult,
-  type ActionId,
-} from '@happier-dev/protocol';
+import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { getActionSpec, listVoiceToolActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+import { normalizeSpawnSessionErrorDetail } from '@happier-dev/protocol/spawnSession';
+import { parseSessionAwarenessListResultV1 } from '@happier-dev/protocol/sessions/awareness/action';
+import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import {
   PluginUiJsonValueV1Schema,
   type PluginUiJsonValueV1,

@@ -2,7 +2,7 @@ import {
     areSessionMcpSelectionsEquivalent,
     readSessionMcpSelectionRestartRequiredV1FromMetadata,
     readSessionMcpSelectionV1FromMetadata,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
 
 import type { AgentInputStatusBadgeTone } from '@/components/sessions/agentInput/agentInputContracts';
 

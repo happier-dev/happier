@@ -1,9 +1,5 @@
-import {
-    parseSavedSecretRefV1,
-    type SavedSecretCatalogCorruptEntryV1,
-    type SavedSecretCatalogEntryV1,
-    type SavedSecretCatalogMaterialStatusV1,
-} from '@happier-dev/protocol';
+import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import type { SavedSecretCatalogCorruptEntryV1, SavedSecretCatalogEntryV1, SavedSecretCatalogMaterialStatusV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 
 import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';

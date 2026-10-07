@@ -1,6 +1,6 @@
 import { registerSyncRuntime } from './sync';
 import { type SessionMessageV1, type SessionMessagesPageV1 } from '@happier-dev/protocol';
-import { projectSessionMetadataForWire } from '@happier-dev/protocol';
+import { projectSessionMetadataForWire } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
 import { projectComposerOptionsInputV1 } from '@happier-dev/protocol/embed';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import {
@@ -163,7 +163,7 @@ import {
     openTailDiscontinuityFromOpaqueSnapshot,
     type SessionMessagesTailDiscontinuity,
 } from '@/sync/runtime/sessionMessagesTailDiscontinuity';
-import { makeExternalSessionHistoricalImportLocalId } from '@happier-dev/protocol';
+import { makeExternalSessionHistoricalImportLocalId } from '@happier-dev/protocol/sessions/external/historicalImportIdentity';
 import {
     createInactiveSessionMessagesWindowState,
     resetSessionMessagesWindowForLiveTail,
@@ -322,7 +322,7 @@ import {
     catchUpTranscriptSourceWindow,
     readInitialTranscriptSourceWindow,
 } from '@happier-dev/agents';
-import { SessionViewerProjectionV1Schema } from '@happier-dev/protocol';
+import { SessionViewerProjectionV1Schema } from '@happier-dev/protocol/sessions/personal/viewer';
 import { isSessionPersonallyTrackedForViewer } from './domains/session/readState/sessionViewer';
 import { updateSessionMetadataWithRetry as updateSessionMetadataWithRetryRpc, type SessionMetadataUpdateRequest, type UpdateMetadataAck } from './domains/session/metadata/updateSessionMetadataWithRetry';
 import type { ArtifactBodyInput, ArtifactHeader, DecryptedArtifact } from './domains/artifacts/artifactTypes';
@@ -563,31 +563,22 @@ import { migrateLegacySessionDrafts } from '@/sync/domains/input/drafts/sessionD
 import { removeRunnerCreatorCustodyForRemovedDraft } from '@/sync/domains/ephemeralRunner/runnerCreatorDraftRemoval';
 import { publishMountedSessionDiscussionChanges } from '@/sync/domains/session/discussions/sessionDiscussionChangeWatch';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
-import {
-    SESSION_USER_MESSAGE_DELIVERY_INTENT_META_KEY,
-    decideExternalSessionTranscriptRefreshApplicationV1,
-    ExternalSessionOperationSharedPresentationV1Schema,
-    ExternalSessionRefreshCursorV1Schema,
-    externalSessionTranscriptRefreshBindingsEqualV1,
-    shouldResyncExternalSessionTranscriptReadAfterV1,
-    readPendingLocalId,
-    hasRawComposerAttachmentSelectionV1,
-    SessionUserMessageSendResponseSchema,
-    type ComposerContentHandleV1,
-    type HappierStructuredInputV1,
-    type RawIngressStructuredInputV1,
-    type ExternalSessionTranscriptInvalidationV1,
-    type PendingDeliveryBlockedReason,
-    type PendingRequestedActionV1,
-    type ParticipantRecipientV1,
-    type ExternalSessionTranscriptRawMessageV1,
-    type ExternalSessionsRpcErrorCode,
-    type SessionMetadataInactiveModelIntentExpectationV1,
-    type AutomationV3ClearRunHistoryResponse,
-    type AutomationV3Settings,
-    type AccountSettingMutationV1,
-    type ProviderBoundModelRef,
-} from '@happier-dev/protocol';
+import { SESSION_USER_MESSAGE_DELIVERY_INTENT_META_KEY } from '@happier-dev/protocol/sessions/messages/sessionMessageMeta';
+import { decideExternalSessionTranscriptRefreshApplicationV1, ExternalSessionRefreshCursorV1Schema, externalSessionTranscriptRefreshBindingsEqualV1, shouldResyncExternalSessionTranscriptReadAfterV1, type ExternalSessionTranscriptInvalidationV1 } from '@happier-dev/protocol/sessions/external/secureRefreshV1';
+import { ExternalSessionOperationSharedPresentationV1Schema } from '@happier-dev/protocol/sessions/external/operationV1';
+import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
+import { hasRawComposerAttachmentSelectionV1, type HappierStructuredInputV1, type RawIngressStructuredInputV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import { SessionUserMessageSendResponseSchema } from '@happier-dev/protocol/sessions/userMessageRpc';
+import type { ComposerContentHandleV1 } from '@happier-dev/protocol/runtime/input/composerContentV1';
+import type { PendingDeliveryBlockedReason } from '@happier-dev/protocol/sessions/messages/pendingDeliveryBlockedReason';
+import type { PendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
+import type { ParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
+import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
+import type { ExternalSessionsRpcErrorCode } from '@happier-dev/protocol/sessions/external/rpcErrorCodes';
+import type { SessionMetadataInactiveModelIntentExpectationV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import type { AutomationV3ClearRunHistoryResponse, AutomationV3Settings } from '@happier-dev/protocol/automations/automationApiV3';
+import type { AccountSettingMutationV1 } from '@happier-dev/protocol/account/settings/accountSettingMutationV1';
+import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
 import { createServerFetchAtEndpoint, StaleServerGenerationError, type ServerFetch } from './http/client';
 import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
 import { clearEmbedMemoryStorage } from '@/sync/domains/state/persistenceStorage';

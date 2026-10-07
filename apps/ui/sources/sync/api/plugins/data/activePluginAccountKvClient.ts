@@ -19,7 +19,7 @@ import {
     sealPluginAccountStoragePrivatePayloadV1,
     setPluginAccountKvEntryV1,
     type PluginAccountStorageRowV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/data/accountKvV1';
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import { mergeAbortSignals } from '@happier-dev/plugin-sdk/async';
 import type {

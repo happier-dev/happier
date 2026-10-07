@@ -1,15 +1,9 @@
 import * as React from 'react';
 
-import {
-    ComposerSurfaceMountBindingV1Schema,
-    type ComposerSnapshotV1,
-    type ComposerSurfaceInputV1,
-    type ComposerSurfaceRoleV1,
-    type DaemonPluginUiComposerSurfaceCatalogEntryV1,
-    type PluginContributionIdentityV1,
-    type PluginProjectionV2,
-    type SessionExecutionTargetV1,
-} from '@happier-dev/protocol';
+import { ComposerSurfaceMountBindingV1Schema, type ComposerSnapshotV1, type ComposerSurfaceInputV1, type ComposerSurfaceRoleV1 } from '@happier-dev/protocol/plugins/ui/composer';
+import type { DaemonPluginUiComposerSurfaceCatalogEntryV1, PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { SessionExecutionTargetV1 } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
 import type { PluginSurfaceTarget } from '@happier-dev/plugin-sdk/ui';
 
 import type { PluginProjectionEntry } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';

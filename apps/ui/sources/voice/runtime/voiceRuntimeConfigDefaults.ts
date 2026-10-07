@@ -2,7 +2,7 @@ import {
     VOICE_RUNTIME_STT_DEFAULTS,
     VOICE_RUNTIME_TTS_DEFAULTS,
     VOICE_RUNTIME_WARM_DEFAULTS,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/voice/runtimeConfig';
 
 export const VOICE_RUNTIME_CONFIG_DEFAULTS = {
     realtimeConversationHandleReadyTimeoutMs: 500,

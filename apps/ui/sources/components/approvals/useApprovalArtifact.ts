@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useIsFocused } from '@react-navigation/native';
-import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol';
+import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { storage, useArtifact } from '@/sync/domains/state/storage';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';

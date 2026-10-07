@@ -11,7 +11,7 @@ import {
 } from '@shopify/react-native-skia';
 import type { ImageProps } from 'expo-image';
 
-import { PET_ATLAS_V1 } from '@happier-dev/protocol';
+import { PET_ATLAS_V1 } from '@happier-dev/protocol/pets/constants';
 
 import type { ResolvedPetAnimationFrame } from '@/components/pets/contract/resolvePetAnimationFrame';
 

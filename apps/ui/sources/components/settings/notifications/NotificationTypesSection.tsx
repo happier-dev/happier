@@ -3,11 +3,8 @@ import * as React from 'react';
 import { Switch } from '@/components/ui/forms/Switch';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
-import {
-    resolveAttentionDeliveryPolicyDecision,
-    type AttentionDeliveryPolicyV1,
-    type RemoteAlertAttentionDeliveryEventId,
-} from '@happier-dev/protocol';
+import { resolveAttentionDeliveryPolicyDecision, type AttentionDeliveryPolicyV1 } from '@happier-dev/protocol/account/settings/accountSettings';
+import type { RemoteAlertAttentionDeliveryEventId } from '@happier-dev/protocol/account/settings/attentionDeliveryPolicy';
 import { SettingRow } from '@/components/settings/shell/SettingRow';
 import { NOTIFICATIONS_SETTINGS } from '@/components/settings/notifications/notificationsSettings';
 

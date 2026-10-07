@@ -1,10 +1,6 @@
-import {
-    isScmCommitPlanApplicationLocked,
-    type ScmCommitPlanApplication,
-    type ScmCommitPlanStep,
-    type ScmComparison,
-    type ScmDiffSummaryCommitPlan,
-} from '@happier-dev/protocol';
+import { isScmCommitPlanApplicationLocked, type ScmCommitPlanApplication, type ScmCommitPlanStep } from '@happier-dev/protocol/scm/diffSummaryCommitPlan';
+import type { ScmComparison } from '@happier-dev/protocol/scm/comparison';
+import type { ScmDiffSummaryCommitPlan } from '@happier-dev/protocol/scm/diffSummary';
 
 import { countHunkLines, locateComparisonOccurrences, type LocatedOccurrence } from '@/components/sessions/files/comparison/comparisonOccurrences';
 

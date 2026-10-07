@@ -6,7 +6,7 @@ import {
     type SimulatorPreviewActionResultV1,
     type SimulatorPreviewActionV1,
     type SimulatorPreviewSnapshotV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/devices/simulator/runtimeV1';
 import { isRpcMethodNotFoundResult, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';

@@ -1,10 +1,5 @@
-import {
-    applyAccountSettingsSavedSecretMutation,
-    eraseAccountSettingsPluginSecretBindings,
-    parseSavedSecretRefV1,
-    resolveAccountSettingsPluginSecretBinding,
-    resolveAccountSettingsPluginSecret,
-} from '@happier-dev/protocol';
+import { applyAccountSettingsSavedSecretMutation, eraseAccountSettingsPluginSecretBindings, resolveAccountSettingsPluginSecretBinding, resolveAccountSettingsPluginSecret } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 
 import type {
     ScopedPluginSettingsAccountTarget,

@@ -2,7 +2,7 @@ import {
     negotiateMachineLiveStreamCodecV1,
     type MachineLiveStreamCodecIdV1,
     type MachineLiveStreamCodecNegotiationResultV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/peer/mediation/stream/codecsV1';
 
 export function resolveMachineLiveStreamCodecPreference(input: Readonly<{
     sourceCodecs: readonly MachineLiveStreamCodecIdV1[];

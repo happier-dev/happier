@@ -1,11 +1,6 @@
-import {
-    buildQualifiedPluginContributionKey,
-    createPluginContributionIdentity,
-    PluginLocalizedStringV2Schema,
-    type PluginContributionIdentityV1,
-    type PluginLocalizedStringV2,
-    type PluginProjectionV2,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey, createPluginContributionIdentity, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { PluginLocalizedStringV2Schema, type PluginLocalizedStringV2 } from '@happier-dev/protocol/plugins/contributions/public-types';
+import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type {
     DaemonContributionRegistryProjection,
 } from '@/sync/api/daemon/daemonContributionRegistryProjectionProtocol';

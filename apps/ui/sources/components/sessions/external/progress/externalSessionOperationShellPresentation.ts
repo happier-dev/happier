@@ -1,4 +1,4 @@
-import { isExternalSessionOperationTerminalStatusV1 } from '@happier-dev/protocol';
+import { isExternalSessionOperationTerminalStatusV1 } from '@happier-dev/protocol/sessions/external/operationV1';
 import type {
     ExternalSessionOperationSharedPresentationV1,
 } from '@happier-dev/protocol';

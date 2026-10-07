@@ -2,7 +2,7 @@ import type {
     PluginConfigurationSettingFieldV2,
     PluginJsonValueV2,
 } from '@happier-dev/protocol';
-import { PluginJsonValueV2Schema } from '@happier-dev/protocol';
+import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 
 export type ConnectedAccountConfigurationControl =
     | 'text'

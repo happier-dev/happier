@@ -1,8 +1,6 @@
-import {
-    PluginJsonValueV2Schema,
-    type AutomationRunExecutionTargetV1,
-    type ComposerSnapshotV1,
-} from '@happier-dev/protocol';
+import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
+import type { AutomationRunExecutionTargetV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
+import type { ComposerSnapshotV1 } from '@happier-dev/protocol/plugins/ui/composer';
 import type { WorkflowAuthoringTarget } from './workflowProjectTarget';
 import type { WorkflowBlock } from '@happier-dev/protocol/workflows/workflowV1';
 

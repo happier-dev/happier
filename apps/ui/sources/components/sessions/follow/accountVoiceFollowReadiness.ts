@@ -1,4 +1,4 @@
-import { supportsMachineSessionFollowContextV1 } from '@happier-dev/protocol';
+import { supportsMachineSessionFollowContextV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import type { VoiceHostAuthoredContextScope } from '@/voice/session/types';
 
 export type AccountVoiceFollowReadiness = 'waiting_for_runtime' | 'runtime_unsupported' | 'provider_withheld' | 'waiting_encrypted' | 'pending' | 'eligible';

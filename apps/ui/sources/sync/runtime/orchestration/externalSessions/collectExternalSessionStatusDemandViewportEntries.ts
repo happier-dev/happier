@@ -2,7 +2,7 @@ import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionLis
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 import { resolveSessionListRowStoreScopeKey } from '@/components/sessions/shell/row/sessionListVisibleRowStoreScopes';
-import { EXTERNAL_SESSION_STATUS_DEMAND_MAX_ENTRIES_V1 } from '@happier-dev/protocol';
+import { EXTERNAL_SESSION_STATUS_DEMAND_MAX_ENTRIES_V1 } from '@happier-dev/protocol/sessions/external/statusDemandV1';
 
 import type { ExternalSessionStatusDemandViewportEntry } from './externalSessionStatusDemandCoordinator';
 

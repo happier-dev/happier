@@ -1,16 +1,11 @@
 import * as React from 'react';
-import {
-    projectReviewFindingsOverlay,
-    type ExecutionRunPublicState,
-    type ReviewCommentAnchorV1,
-    type ReviewFindingsOverlayReview,
-    type ReviewFindingsV1,
-    type ReviewFindingsV2,
-    type ScmComparison,
-    type ScmDiffSummaryOutputState,
-    type ScmDiffSummaryReviewRun,
-    type ScmDiffSummaryWalkthrough,
-} from '@happier-dev/protocol';
+import { projectReviewFindingsOverlay, type ReviewFindingsOverlayReview } from '@happier-dev/protocol/reviews/projectReviewFindingsOverlay';
+import type { ExecutionRunPublicState } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import type { ReviewCommentAnchorV1 } from '@happier-dev/protocol/reviews/comments/v1';
+import type { ReviewFindingsV1 } from '@happier-dev/protocol/messages/structured/reviewFindingsV1';
+import type { ReviewFindingsV2 } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
+import type { ScmComparison } from '@happier-dev/protocol/scm/comparison';
+import type { ScmDiffSummaryOutputState, ScmDiffSummaryReviewRun, ScmDiffSummaryWalkthrough } from '@happier-dev/protocol/scm/diffSummary';
 
 import { readReviewPayload } from '@/components/sessions/reviews/findings/useReviewGroupSiblings';
 import { useReviewRunsComments } from '@/components/sessions/reviews/findings/useReviewRunComments';

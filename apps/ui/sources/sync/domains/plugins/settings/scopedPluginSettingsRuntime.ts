@@ -1,12 +1,6 @@
-import {
-    AccountEncryptionModeResponseSchema,
-    openAccountScopedBlobCiphertext,
-    PluginAccountSettingsMutationResponseV1Schema,
-    PluginAccountSettingsReadResponseV1Schema,
-    PluginAccountSettingsStorageUnavailableV1Schema,
-    PluginAccountSettingsValuesV1Schema,
-    sealAccountScopedBlobCiphertext,
-} from '@happier-dev/protocol';
+import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
+import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { PluginAccountSettingsMutationResponseV1Schema, PluginAccountSettingsReadResponseV1Schema, PluginAccountSettingsStorageUnavailableV1Schema, PluginAccountSettingsValuesV1Schema } from '@happier-dev/protocol/plugins/settings/accountSettingsV1';
 
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { randomUUID } from '@/platform/randomUUID';

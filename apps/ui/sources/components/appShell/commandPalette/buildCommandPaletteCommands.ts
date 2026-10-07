@@ -1,6 +1,7 @@
-import { readSessionDirectoryKind } from '@happier-dev/protocol';
+import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import type { ActionId } from '@happier-dev/protocol';
-import { listActionSpecs, VoiceConversationActionResultSchema, type VoiceConversationActionId, type VoiceConversationStatus } from '@happier-dev/protocol';
+import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+import { VoiceConversationActionResultSchema, type VoiceConversationActionId, type VoiceConversationStatus } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 
 import type { Command } from './types';
 import type { KeyboardCommandId } from '@/keyboard';

@@ -1,7 +1,5 @@
-import {
-    SessionDiscussionSelectionSourceV1Schema,
-    type SessionDiscussionOpenedMessageV1,
-} from '@happier-dev/protocol';
+import { SessionDiscussionSelectionSourceV1Schema } from '@happier-dev/protocol/sessions/discussions/content';
+import type { SessionDiscussionOpenedMessageV1 } from '@happier-dev/protocol/sessions/discussions/actions';
 
 import type { AgentActivityEntry } from '@/sync/domains/session/agentActivity';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';

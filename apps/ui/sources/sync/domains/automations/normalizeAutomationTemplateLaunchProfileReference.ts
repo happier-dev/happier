@@ -1,8 +1,6 @@
-import {
-    readBackendTargetRefV2,
-    type AiLaunchProfile,
-    type ProviderSettingsMigrationStateV1,
-} from '@happier-dev/protocol';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { AiLaunchProfile } from '@happier-dev/protocol/profiles/read';
+import type { ProviderSettingsMigrationStateV1 } from '@happier-dev/protocol/providers/settings/v1';
 
 import { resolveLaunchProfileAuthoringIntent } from '@/sync/domains/profiles/resolveLaunchProfileAuthoringIntent';
 

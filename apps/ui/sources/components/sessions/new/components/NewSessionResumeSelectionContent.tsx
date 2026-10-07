@@ -8,7 +8,7 @@ import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t, tLoose } from '@/text';
 import { getClipboardStringSafe } from '@/utils/ui/clipboard';
-import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { Icon } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 

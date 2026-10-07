@@ -1,12 +1,8 @@
 import * as React from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import {
-    normalizeCheckpointAttributionScope,
-    type CheckpointOverlapObservation,
-    type RepositoryCheckpointTurnMetadata,
-    type SessionChangeAttribution,
-} from '@happier-dev/protocol';
+import { normalizeCheckpointAttributionScope } from '@happier-dev/protocol/sessions/changes/checkpointAttributionScope';
+import type { CheckpointOverlapObservation, RepositoryCheckpointTurnMetadata, SessionChangeAttribution } from '@happier-dev/protocol/sessions/changes/types';
 
 import { Popover } from '@/components/ui/popover/Popover';
 import { Text } from '@/components/ui/text/Text';

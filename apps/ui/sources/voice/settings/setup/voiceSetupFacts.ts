@@ -1,5 +1,6 @@
 import type { Message } from '@happier-dev/session-core/messages';
-import { readConversationTurnOriginV1FromMessageMeta, readVoiceAgentTurnPayloadFromMeta } from '@happier-dev/protocol';
+import { readConversationTurnOriginV1FromMessageMeta } from '@happier-dev/protocol/messages/structured/conversationTurnOriginV1';
+import { readVoiceAgentTurnPayloadFromMeta } from '@happier-dev/protocol/messages/structured/voiceAgentTurnLocalId';
 import type { VoiceRoleReadiness } from '@/voice/registry/readiness';
 import { readCanonicalVoiceTranscriptAttemptKey } from '@/voice/transcript/canonicalProjector';
 

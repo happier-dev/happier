@@ -1,9 +1,9 @@
-import {
-    ACTION_ID_FAMILIES_V1, getActionSpec, SessionOrganizationContentEnvelopeSchema,
-    CreateOrUpdateSessionOrganizationFolderRequestSchema, CreateOrUpdateSessionOrganizationTagRequestSchema,
-    DeleteSessionOrganizationFolderRequestSchema, DeleteSessionOrganizationTagRequestSchema,
-    type ActionExecutorDeps, type HomeDomainActionIdV1, type SessionOrganizationContentEnvelope,
-} from '@happier-dev/protocol';
+import { ACTION_ID_FAMILIES_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { SessionOrganizationContentEnvelopeSchema, type SessionOrganizationContentEnvelope } from '@happier-dev/protocol/sessions/organization/content';
+import { CreateOrUpdateSessionOrganizationFolderRequestSchema, CreateOrUpdateSessionOrganizationTagRequestSchema, DeleteSessionOrganizationFolderRequestSchema, DeleteSessionOrganizationTagRequestSchema } from '@happier-dev/protocol/sessions/organization/mutations';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import type { HomeDomainActionIdV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import type { SessionOrganizationDisplayState } from '@/sync/domains/session/organization';
 import { fetchAndApplySessionOrganizationSnapshot } from './fetchSessionOrganizationSnapshot';

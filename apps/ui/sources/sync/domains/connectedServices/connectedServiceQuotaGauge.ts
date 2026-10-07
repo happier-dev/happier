@@ -5,13 +5,10 @@ import type {
     ConnectedServiceQuotaSnapshotV1,
     SessionRuntimeIssueV1,
 } from '@happier-dev/protocol';
-import {
-    parseQualifiedPluginContributionKey,
-    readBuiltInLegacyConnectedAccountServiceKeyIngress,
-    readBuiltInLegacyConnectedServiceIdForQualifiedService,
-    readConnectedServiceLimitCategoryV1,
-    resolveConnectedServiceQuotaMeterLabel,
-} from '@happier-dev/protocol';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { readBuiltInLegacyConnectedAccountServiceKeyIngress, readBuiltInLegacyConnectedServiceIdForQualifiedService } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { readConnectedServiceLimitCategoryV1 } from '@happier-dev/protocol/connect/connected-service-limit-category';
+import { resolveConnectedServiceQuotaMeterLabel } from '@happier-dev/protocol/connect/connectedServiceQuotaMeterLabel';
 
 import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/registry/registryCore';
 import { clampQuotaPct, deriveQuotaUtilizationPct } from './deriveQuotaUtilizationPct';

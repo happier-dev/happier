@@ -1,12 +1,8 @@
 import * as React from 'react';
 
-import {
-    type ExecutionRunPublicState,
-    ReviewFindingsV1Schema,
-    ReviewFindingsV2Schema,
-    type ReviewFindingsV1,
-    type ReviewFindingsV2,
-} from '@happier-dev/protocol';
+import type { ExecutionRunPublicState } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { ReviewFindingsV1Schema, type ReviewFindingsV1 } from '@happier-dev/protocol/messages/structured/reviewFindingsV1';
+import { ReviewFindingsV2Schema, type ReviewFindingsV2 } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
 
 import { sessionExecutionRunGet, sessionExecutionRunList } from '@/sync/ops/sessionExecutionRuns';
 import { subscribeExecutionRunActivity } from '@/sync/runtime/executionRuns/executionRunActivityBus';

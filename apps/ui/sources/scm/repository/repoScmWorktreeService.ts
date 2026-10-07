@@ -1,11 +1,6 @@
-import {
-    SCM_OPERATION_ERROR_CODES,
-    SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN,
-    type ScmWorktree,
-    type ScmWorktreeCreateResponse,
-    type ScmWorktreePruneResponse,
-    type ScmWorktreeRemoveResponse,
-} from '@happier-dev/protocol';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
+import { SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN, type ScmWorktreeCreateResponse, type ScmWorktreePruneResponse, type ScmWorktreeRemoveResponse } from '@happier-dev/protocol/scm/worktrees';
+import type { ScmWorktree } from '@happier-dev/protocol/scm/workingSnapshot';
 
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { normalizeFileSystemPath } from '@/sync/domains/fileSystem/normalizeFileSystemPath';

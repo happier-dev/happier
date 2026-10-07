@@ -1,8 +1,6 @@
-import {
-    buildBackendTargetKeyV2,
-    resolveActionBackendTargetSelection,
-    type BackendTargetRefV1,
-} from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { resolveActionBackendTargetSelection } from '@happier-dev/protocol/actions/resolveActionBackendTargetSelection';
+import type { BackendTargetRefV1 } from '@happier-dev/protocol/backends/targets/backendTargetRef';
 import type { AgentExecutionTargetV1 } from '@happier-dev/protocol';
 import type { ConnectedServicesProfileOption } from '@happier-dev/agents';
 

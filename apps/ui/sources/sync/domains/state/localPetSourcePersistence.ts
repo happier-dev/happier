@@ -1,8 +1,6 @@
 import { z } from 'zod';
-import {
-    PetAssetMediaTypeV1Schema,
-    PetPackageManifestV1Schema,
-} from '@happier-dev/protocol';
+import { PetAssetMediaTypeV1Schema } from '@happier-dev/protocol/pets/accountLibrary';
+import { PetPackageManifestV1Schema } from '@happier-dev/protocol/pets/manifest';
 
 import type { LocalPetSourceMetadata } from '@/sync/domains/pets/localPetSourceTypes';
 

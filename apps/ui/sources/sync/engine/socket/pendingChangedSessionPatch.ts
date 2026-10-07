@@ -1,4 +1,4 @@
-import { ParticipantExecutionRunRecipientRoutingIdentityV1Schema } from '@happier-dev/protocol';
+import { ParticipantExecutionRunRecipientRoutingIdentityV1Schema } from '@happier-dev/protocol/messages/structured/participantMessageV1';
 
 import type { PendingMessage, Session } from '@/sync/domains/state/storageTypes';
 

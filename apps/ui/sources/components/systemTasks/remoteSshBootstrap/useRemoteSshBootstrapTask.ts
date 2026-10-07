@@ -1,13 +1,7 @@
 import * as React from 'react';
 import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
-import {
-    parseApproveRemoteProvisioningPromptData,
-    parseSshPasswordPromptData,
-    parseSshTrustPromptData,
-    type ReplaceRemoteBackgroundServicesPromptData,
-    type SshTrustPromptData,
-    type SystemTaskResult,
-} from '@happier-dev/protocol';
+import { parseApproveRemoteProvisioningPromptData, parseSshPasswordPromptData, parseSshTrustPromptData, type ReplaceRemoteBackgroundServicesPromptData, type SshTrustPromptData } from '@happier-dev/protocol/system/tasks/promptPayloadContracts';
+import type { SystemTaskResult } from '@happier-dev/protocol/system/tasks/spec';
 
 import { getSystemTasksRunner } from '@/components/systemTasks/systemTasksRuntime';
 import {

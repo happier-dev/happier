@@ -1,12 +1,6 @@
-import {
-    openSessionOwnerMetadataEnvelopeV1,
-    projectSessionOwnerCompatibilityViewV1,
-    validateSessionOwnerMetadataEnvelopeForAccountModeV1,
-    type AccountEncryptionCurrentnessResponse,
-    type SessionOwnerMetadataEnvelopeV1,
-    type SessionOwnerMetadataV1,
-    type SessionSharedMetadataV1,
-} from '@happier-dev/protocol';
+import { openSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
+import { projectSessionOwnerCompatibilityViewV1, validateSessionOwnerMetadataEnvelopeForAccountModeV1, type SessionOwnerMetadataEnvelopeV1, type SessionOwnerMetadataV1, type SessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
 
 import type { NormalizedSessionAccessProjection } from './normalizeSessionAccessProjection';
 import { ComposerOptionsInputV1Schema, projectComposerOptionsInputV1, type ComposerOptionsInputV1 } from '@happier-dev/protocol/embed';

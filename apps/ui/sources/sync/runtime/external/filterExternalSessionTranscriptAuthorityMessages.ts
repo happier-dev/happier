@@ -1,4 +1,4 @@
-import { EXTERNAL_SESSION_HISTORICAL_IMPORT_LOCAL_ID_PREFIX } from '@happier-dev/protocol';
+import { EXTERNAL_SESSION_HISTORICAL_IMPORT_LOCAL_ID_PREFIX } from '@happier-dev/protocol/sessions/external/historicalImportIdentity';
 
 import type { NormalizedMessage } from "@happier-dev/session-core/raw";
 

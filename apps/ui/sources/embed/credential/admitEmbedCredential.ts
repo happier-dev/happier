@@ -1,4 +1,5 @@
-import { ACCOUNT_API_TOKEN_SELF_HTTP_PATH_V1, AccountApiTokenSelfV1Schema, isOriginAllowedByApiTokenGrantV1, type AccountApiTokenSelfV1 } from '@happier-dev/protocol';
+import { ACCOUNT_API_TOKEN_SELF_HTTP_PATH_V1, AccountApiTokenSelfV1Schema, type AccountApiTokenSelfV1 } from '@happier-dev/protocol/auth/accountApiTokens';
+import { isOriginAllowedByApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type { ServerFetch } from '@/sync/http/client';
 
 export async function admitEmbedCredential(input: Readonly<{

@@ -1,12 +1,7 @@
-import {
-    buildRecoveryCreditConsumeIdempotencyKey,
-    ConnectedServiceQuotaRecoveryCreditConsumeRequestV1Schema,
-    ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema,
-    parseQualifiedPluginContributionKey,
-    type ConnectedServiceId,
-    type ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1,
-    type ConnectedServiceQuotaRecoveryCreditConsumeResponseV1,
-} from '@happier-dev/protocol';
+import { buildRecoveryCreditConsumeIdempotencyKey } from '@happier-dev/protocol/connect/recoveryCreditConsumeIdempotencyKey';
+import { ConnectedServiceQuotaRecoveryCreditConsumeRequestV1Schema, ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema, type ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1, type ConnectedServiceQuotaRecoveryCreditConsumeResponseV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { t } from '@/text';

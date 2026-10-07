@@ -7,7 +7,7 @@ import {
     type PluginPolicyExpressionV2,
     type PluginPolicyFactValueV2,
     type PluginPolicyFactsV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/contributions/public-types';
 
 /** Adapt host facts to Protocol's canonical contribution availability evaluator. */
 

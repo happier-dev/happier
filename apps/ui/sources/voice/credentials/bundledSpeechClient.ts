@@ -1,17 +1,5 @@
-import {
-  DAEMON_VOICE_SPEECH_INPUT_MAX_BYTES,
-  DaemonVoiceSpeechDownloadAbortResponseSchema,
-  DaemonVoiceSpeechDownloadChunkResponseSchema,
-  DaemonVoiceSpeechDownloadFinalizeResponseSchema,
-  DaemonVoiceSpeechSettingsActionResponseSchema,
-  DaemonVoiceSpeechSynthesizeResponseSchema,
-  DaemonVoiceSpeechTranscribeResponseSchema,
-  DaemonVoiceSpeechTranscribeUploadAbortResponseSchema,
-  DaemonVoiceSpeechTranscribeUploadChunkResponseSchema,
-  DaemonVoiceSpeechTranscribeUploadFinalizeResponseSchema,
-  DaemonVoiceSpeechTranscribeUploadInitResponseSchema,
-  VoiceProviderCatalogResponseSchema,
-} from '@happier-dev/protocol';
+import { DAEMON_VOICE_SPEECH_INPUT_MAX_BYTES, DaemonVoiceSpeechDownloadAbortResponseSchema, DaemonVoiceSpeechDownloadChunkResponseSchema, DaemonVoiceSpeechDownloadFinalizeResponseSchema, DaemonVoiceSpeechSettingsActionResponseSchema, DaemonVoiceSpeechSynthesizeResponseSchema, DaemonVoiceSpeechTranscribeResponseSchema, DaemonVoiceSpeechTranscribeUploadAbortResponseSchema, DaemonVoiceSpeechTranscribeUploadChunkResponseSchema, DaemonVoiceSpeechTranscribeUploadFinalizeResponseSchema, DaemonVoiceSpeechTranscribeUploadInitResponseSchema } from '@happier-dev/protocol/daemon/voiceSpeech';
+import { VoiceProviderCatalogResponseSchema } from '@happier-dev/protocol/voice/providerOperations';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { PluginSettingsActionResult } from '@happier-dev/plugin-sdk/settings';
 import type { LocalUploadSource } from '@/sync/runtime/files/localUploadSourceReader';

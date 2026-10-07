@@ -37,7 +37,7 @@ import {
     type AccountDirectoryLinkDeleteResponseV1,
     type AccountDirectoryLinkPutResponseV1,
     type AccountDirectoryErrorCodeV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/auth/accountDirectory';
 import { createServerFetchAtEndpoint } from '@/sync/http/client';
 import {
     normalizeAccountDirectoryEndpoint,

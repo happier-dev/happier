@@ -1,4 +1,4 @@
-import { HARD_OPENABLE_CONTENT_MAX_BYTES_V1 } from '@happier-dev/protocol';
+import { HARD_OPENABLE_CONTENT_MAX_BYTES_V1 } from '@happier-dev/protocol/plugins/openableContent';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 
 import { encodeBase64 } from '@/encryption/base64';

@@ -1,13 +1,6 @@
-import {
-    BrowserAnnotationStrokeV1Schema,
-    BrowserAnnotationStyleIntentV1Schema,
-    BrowserAnnotationTargetV1Schema,
-    type ActionExecuteResult,
-    type BrowserAnnotationStrokeV1,
-    type BrowserAnnotationStyleIntentV1,
-    type BrowserAnnotationTargetV1,
-    type RuntimeActionIdV1,
-} from '@happier-dev/protocol';
+import { BrowserAnnotationStrokeV1Schema, BrowserAnnotationStyleIntentV1Schema, BrowserAnnotationTargetV1Schema, type BrowserAnnotationStrokeV1, type BrowserAnnotationStyleIntentV1, type BrowserAnnotationTargetV1 } from '@happier-dev/protocol/browser/context/v1';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { RuntimeActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 
 import type {
     BrowserAnnotationViewportRect,

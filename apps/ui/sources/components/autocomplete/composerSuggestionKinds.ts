@@ -1,15 +1,11 @@
 import * as React from 'react';
 
-import {
-    DaemonPluginComposerReferenceSearchResponseSchema,
-    MENTION_KIND_V1,
-    buildMentionRefForKindV1,
-    type PluginContributionIdentityV1,
-    type PluginContributionIntrospectionPresentationV1,
-    type PluginLocalizedStringV2,
-    type PluginProjectionV2,
-    type SessionResponsibilityCandidateV1,
-} from '@happier-dev/protocol';
+import { DaemonPluginComposerReferenceSearchResponseSchema, type PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { MENTION_KIND_V1, buildMentionRefForKindV1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { PluginContributionIntrospectionPresentationV1 } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
+import type { PluginLocalizedStringV2 } from '@happier-dev/protocol/plugins/contributions/public-types';
+import type { SessionResponsibilityCandidateV1 } from '@happier-dev/protocol/sessions/access/sessionResponsibilityV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { FileMentionSuggestion } from '@/components/sessions/agentInput/components/AgentInputSuggestionView';

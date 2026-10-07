@@ -1,7 +1,5 @@
-import {
-  ConnectedAccountPurposeIdSchema,
-  VoiceProviderSettingsPresentationSchema,
-} from '@happier-dev/protocol';
+import { ConnectedAccountPurposeIdSchema } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
+import { VoiceProviderSettingsPresentationSchema } from '@happier-dev/protocol/plugins/contributions/voice';
 
 import { VOICE_PROVIDER_CONVERSATION_RETENTION_MS } from '@/voice/persistence/voiceProviderConversationRetention';
 

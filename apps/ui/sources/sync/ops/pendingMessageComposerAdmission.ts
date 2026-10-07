@@ -7,7 +7,7 @@ import {
     type SessionPendingMessageComposerAdmissionAbandonedRequestV1,
     type SessionPendingMessageComposerAdmissionPrepareRequestV1,
     type SessionPendingMessageComposerAdmissionPrepareResponseV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/userMessageRpc';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';

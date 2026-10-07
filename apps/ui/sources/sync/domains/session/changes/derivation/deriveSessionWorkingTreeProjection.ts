@@ -1,8 +1,6 @@
-import {
-    reconcileWithScmSnapshot,
-    type SessionChangeSet,
-    type ScmWorkingSnapshot as ProtocolScmWorkingSnapshot,
-} from '@happier-dev/protocol';
+import { reconcileWithScmSnapshot } from '@happier-dev/protocol/sessions/changes/reconcileWithScmSnapshot';
+import type { SessionChangeSet } from '@happier-dev/protocol/sessions/changes/types';
+import type { ScmWorkingSnapshot as ProtocolScmWorkingSnapshot } from '@happier-dev/protocol/scm/workingSnapshot';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { mergeScmCapabilities } from '@/scm/core/snapshotMappers';
 

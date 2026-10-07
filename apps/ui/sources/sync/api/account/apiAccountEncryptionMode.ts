@@ -17,7 +17,7 @@ import {
     type AccountEncryptionCurrentnessErrorResponse,
     type AccountEncryptionCurrentnessResponse,
     type AccountEncryptionModeResponse,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/encryptionMode';
 
 type AccountEncryptionMode = AccountEncryptionModeResponse['mode'];
 type AccountEncryptionModeResult = Readonly<{ mode: AccountEncryptionMode; updatedAt: number }>;

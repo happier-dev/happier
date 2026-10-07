@@ -12,7 +12,7 @@ import { nowServerMs } from '@/sync/runtime/time';
 import {
     computeContextPercentUsed,
     type SessionContextUsageSnapshotV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/usage/contextUsage';
 
 import { resolveContextWindowTokens } from '../resolveContextWarningWindowTokens';
 

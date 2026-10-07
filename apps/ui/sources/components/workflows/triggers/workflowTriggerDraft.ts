@@ -1,16 +1,8 @@
-import {
-    AutomationTriggerIdSchema,
-    sameStrictJsonValue,
-    type AutomationTriggerId,
-    type AutomationTriggerDefinition,
-    type AutomationTriggerDefinitionInput,
-    type JsonValue,
-    type WorkflowProjectTargetV1,
-    type WorkflowTriggerAddRequestV1,
-    type WorkflowTriggerRemoveRequestV1,
-    type WorkflowTriggerSetV1,
-    type WorkflowTriggerUpdateRequestV1,
-} from '@happier-dev/protocol';
+import { AutomationTriggerIdSchema, type AutomationTriggerId } from '@happier-dev/protocol/automations/automationTriggerIdentity';
+import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { AutomationTriggerDefinition, AutomationTriggerDefinitionInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
+import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
+import type { WorkflowTriggerAddRequestV1, WorkflowTriggerRemoveRequestV1, WorkflowTriggerSetV1, WorkflowTriggerUpdateRequestV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 
 import type { WorkflowTriggerWriteResult } from '@/sync/domains/workflows/workflowTriggerActions';
 

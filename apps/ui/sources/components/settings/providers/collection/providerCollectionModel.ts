@@ -1,7 +1,5 @@
-import {
-    canonicalizeProviderContributionKeyV1,
-    type ProviderDiscoveryCandidateV1,
-} from '@happier-dev/protocol';
+import { canonicalizeProviderContributionKeyV1 } from '@happier-dev/protocol/providers/contribution-identity';
+import type { ProviderDiscoveryCandidateV1 } from '@happier-dev/protocol/providers/detection/v1';
 import type { DaemonProviderConnectionsDescribeResponseV1 } from '@happier-dev/protocol/rpc';
 
 import {

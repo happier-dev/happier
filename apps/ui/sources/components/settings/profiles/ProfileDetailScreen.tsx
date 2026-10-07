@@ -2,13 +2,9 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet } from 'react-native-unistyles';
-import {
-    ActionApprovalRequestCreatedResultSchema,
-    LaunchProfileArtifactReferenceV1Schema,
-    isLaunchProfileV2,
-    readLaunchProfileArtifactV1,
-    type AiLaunchProfile,
-} from '@happier-dev/protocol';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { LaunchProfileArtifactReferenceV1Schema, readLaunchProfileArtifactV1 } from '@happier-dev/protocol/launchProfiles/launchProfileArtifactV1';
+import { isLaunchProfileV2, type AiLaunchProfile } from '@happier-dev/protocol/profiles/read';
 
 import { LaunchProfileEditForm } from '@/components/profiles/edit';
 import { isBuiltInLaunchProfile } from '@/components/profiles/edit/launchProfileSave';

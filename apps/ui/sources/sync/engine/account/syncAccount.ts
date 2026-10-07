@@ -23,7 +23,8 @@ import {
 } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { serverFetch, type ServerFetch } from '@/sync/http/client';
-import { isExpoPushNotificationChannelEnabled, readServerEnabledBit } from '@happier-dev/protocol';
+import { isExpoPushNotificationChannelEnabled } from '@happier-dev/protocol/account/settings/accountSettings';
+import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 import {
     clearLastRegisteredExpoPushToken,
     loadExpoPushTokensToUnregister,

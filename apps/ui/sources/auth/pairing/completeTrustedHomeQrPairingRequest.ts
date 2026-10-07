@@ -6,7 +6,7 @@ import { buildTerminalResponseV3, buildTerminalTokenOnlyResponseV3 } from '@/aut
 import {
     deriveHomeQrBindingKeyV2,
     type HomeQrInviteDirectionV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/crypto/qrProvisioningV2';
 
 export type TrustedHomeQrCompletionContext = Readonly<{
     direction: HomeQrInviteDirectionV2;

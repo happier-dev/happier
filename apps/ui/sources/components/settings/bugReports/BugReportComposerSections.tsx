@@ -1,6 +1,6 @@
 import React from 'react';
 
-import { parseDoctorSnapshotSafe } from '@happier-dev/protocol';
+import { parseDoctorSnapshotSafe } from '@happier-dev/protocol/diagnostics/doctorSnapshot';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Switch } from '@/components/ui/forms/Switch';

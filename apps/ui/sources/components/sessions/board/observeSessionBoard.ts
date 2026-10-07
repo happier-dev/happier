@@ -1,4 +1,6 @@
-import { SessionBoardLayoutV1StoredSchema, SessionSurfaceItemV1StoredSchema, type SessionBoardLayoutV1, type SessionSurfaceItemV1, type SessionSystemRecordStoredPageResponse } from '@happier-dev/protocol';
+import { SessionBoardLayoutV1StoredSchema, type SessionBoardLayoutV1 } from '@happier-dev/protocol/sessions/board/layout';
+import { SessionSurfaceItemV1StoredSchema, type SessionSurfaceItemV1 } from '@happier-dev/protocol/sessions/board/item';
+import type { SessionSystemRecordStoredPageResponse } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
 import { openSessionSystemRecord, type SessionSystemRecordPayloadResult } from '@/sync/domains/sessionSystemRecords/codec';
 import { projectSessionBoard, type SessionBoardOpenedRecord } from '@/sync/domains/session/board';
 import type {

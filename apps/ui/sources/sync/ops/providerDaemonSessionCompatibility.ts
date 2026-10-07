@@ -1,9 +1,5 @@
-import {
-    SessionModelSelectionIntentV1Schema,
-    readSessionProviderBindingMetadataStateV1,
-    type ProviderBoundModelRef,
-    type SessionModelSelectionV1,
-} from '@happier-dev/protocol';
+import { SessionModelSelectionIntentV1Schema, type ProviderBoundModelRef, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import { readSessionProviderBindingMetadataStateV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import {
     isRpcMethodNotAvailableError,
     isRpcMethodNotFoundError,

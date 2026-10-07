@@ -2,7 +2,7 @@ import {
     LegacyLastUsedProfileSchema,
     LegacyRecentMachinePathSchema,
     LegacyRememberedEngineSelectionsByScopeV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/settings/legacyAuthoringMemorySettingsV1';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { z } from 'zod';
 

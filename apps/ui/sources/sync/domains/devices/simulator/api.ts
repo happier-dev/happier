@@ -15,7 +15,7 @@ import {
     createSimulatorPreviewSetQualityEventV1,
     createSimulatorPreviewSidebandRequestEventV1,
     createSimulatorPreviewSnapshotRequestEventV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/devices/simulator/actionBuilders';
 
 export type SimulatorPreviewApiEvent = SimulatorPreviewActionV1;
 type SimulatorSetQualityControl = Extract<MachineLiveStreamControlSidebandV1, { kind: 'set_quality' }>;

@@ -1,28 +1,8 @@
-import {
-  QualifiedConnectedAccountConfigurationSnapshotV4Schema,
-  QualifiedConnectedAccountConfigurationTargetV4Schema,
-  QualifiedConnectedAccountCredentialSnapshotV4Schema,
-  QualifiedConnectedAccountGroupActiveAccountV4Schema,
-  QualifiedConnectedAccountGroupCreateV4Schema,
-  QualifiedConnectedAccountGroupDeleteV4Schema,
-  QualifiedConnectedAccountGroupListResponseV4Schema,
-  QualifiedConnectedAccountGroupMemberDeleteV4Schema,
-  QualifiedConnectedAccountGroupMemberMutationV4Schema,
-  QualifiedConnectedAccountGroupPatchV4Schema,
-  QualifiedConnectedAccountGroupRefSchema,
-  QualifiedConnectedAccountGroupResponseV4Schema,
-  QualifiedConnectedAccountQuotaResponseV4Schema,
-  QualifiedConnectedAccountRefSchema,
-  QualifiedConnectedAccountServiceRefSchema,
-  encodeQualifiedConnectedAccountV4StructuredQueryValue,
-  buildQualifiedConnectedAccountGroupMutationRequestV4,
-  type QualifiedConnectedAccountConfigurationSnapshotV4,
-  type QualifiedConnectedAccountCredentialSnapshotV4,
-  type QualifiedConnectedAccountGroupRef,
-  type QualifiedConnectedAccountGroupV4,
-  type QualifiedConnectedAccountRef,
-  type QualifiedConnectedAccountServiceRef,
-} from '@happier-dev/protocol';
+import { QualifiedConnectedAccountConfigurationSnapshotV4Schema, QualifiedConnectedAccountConfigurationTargetV4Schema, QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountGroupRefSchema, QualifiedConnectedAccountServiceRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import { QualifiedConnectedAccountGroupActiveAccountV4Schema, QualifiedConnectedAccountGroupCreateV4Schema, QualifiedConnectedAccountGroupDeleteV4Schema, QualifiedConnectedAccountGroupListResponseV4Schema, QualifiedConnectedAccountGroupMemberDeleteV4Schema, QualifiedConnectedAccountGroupMemberMutationV4Schema, QualifiedConnectedAccountGroupPatchV4Schema, QualifiedConnectedAccountGroupResponseV4Schema, QualifiedConnectedAccountQuotaResponseV4Schema, type QualifiedConnectedAccountConfigurationSnapshotV4, type QualifiedConnectedAccountCredentialSnapshotV4, type QualifiedConnectedAccountGroupRef, type QualifiedConnectedAccountGroupV4, type QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { QualifiedConnectedAccountRefSchema, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import { encodeQualifiedConnectedAccountV4StructuredQueryValue } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4QueryCodec';
+import { buildQualifiedConnectedAccountGroupMutationRequestV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountGroupRequestsV4';
 import type { ProtocolComposableSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import type { z } from 'zod';
 

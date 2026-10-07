@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { resolveAnchoredListMoveV1 } from '@happier-dev/protocol';
+import { resolveAnchoredListMoveV1 } from '@happier-dev/protocol/actions/anchoredListOrderV1';
 import { type EntityDragScopeV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';

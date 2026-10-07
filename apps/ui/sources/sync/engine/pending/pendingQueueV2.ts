@@ -44,44 +44,21 @@ import {
 } from '@/sync/domains/pending/pendingTranscriptProjection';
 import { settleReceivedSessionMessages } from '@/sync/engine/sessions/sessionMessageMaterializationBarrier';
 import { isDemoModeActive } from '@/demoMode/runtime/enterExitDemoMode';
-import {
-    ParticipantExecutionRunRecipientRoutingIdentityV1Schema,
-    SessionExecutionRunPendingEnqueueRequestV1Schema,
-    normalizeParticipantRecipientRoutingIdentityV1,
-    withParticipantRecipientV1,
-    readParticipantRecipientRoutingIdentityV1,
-    type ParticipantRecipientV1,
-    normalizePendingDeliveryStatusV1,
-    readPendingLocalId,
-    normalizePendingDeliveryBlockedReason,
-    parsePendingDeliveryStatusV1,
-    shouldExposePendingDeliveryInDiscardedHistoryV1,
-    PendingRequestedActionV1Schema,
-    DEFAULT_PENDING_REQUESTED_ACTION_V1,
-    HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1,
-    hasRawComposerAttachmentSelectionV1,
-    HappierStructuredInputV1Schema,
-    PendingMessageMutationFingerprintV1Schema,
-    RawIngressStructuredInputV1Schema,
-    SessionPendingMessageComposerAdmissionAcceptedRequestV1Schema,
-    SessionMediaMessageMetaV1Schema,
-    readIngressComposerAttachmentSelectionV1,
-    SessionStoredMessageContentSchema,
-    SessionAccessErrorCodeV1Schema,
-    SessionInputAdmissionRejectionCodeV1Schema,
-    type ComposerContentHandleV1,
-    type SessionPendingMessageComposerAdmissionAcceptedRequestV1,
-    type SessionPendingMessageComposerAdmissionPrepareResponseV1,
-    type RawIngressStructuredInputV1,
-    type HappierStructuredInputV1,
-    type PendingDeliveryBlockedReason,
-    type PendingDeliveryStatusV1,
-    type PendingRequestedActionV1,
-    type SessionStoredMessageContent,
-    type SessionMediaMessageMetaV1,
-    type SessionInputAdmissionRejectionCodeV1,
-    type ProviderBoundModelRef,
-} from '@happier-dev/protocol';
+import { ParticipantExecutionRunRecipientRoutingIdentityV1Schema, normalizeParticipantRecipientRoutingIdentityV1, withParticipantRecipientV1, readParticipantRecipientRoutingIdentityV1, type ParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
+import { SessionExecutionRunPendingEnqueueRequestV1Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingExecutionRunMachineAdmissionV2';
+import { normalizePendingDeliveryStatusV1, parsePendingDeliveryStatusV1, shouldExposePendingDeliveryInDiscardedHistoryV1, type PendingDeliveryStatusV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
+import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
+import { normalizePendingDeliveryBlockedReason, type PendingDeliveryBlockedReason } from '@happier-dev/protocol/sessions/messages/pendingDeliveryBlockedReason';
+import { PendingRequestedActionV1Schema, DEFAULT_PENDING_REQUESTED_ACTION_V1, type PendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
+import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1, SessionPendingMessageComposerAdmissionAcceptedRequestV1Schema, type SessionPendingMessageComposerAdmissionAcceptedRequestV1, type SessionPendingMessageComposerAdmissionPrepareResponseV1 } from '@happier-dev/protocol/sessions/userMessageRpc';
+import { hasRawComposerAttachmentSelectionV1, HappierStructuredInputV1Schema, RawIngressStructuredInputV1Schema, readIngressComposerAttachmentSelectionV1, type RawIngressStructuredInputV1, type HappierStructuredInputV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import { PendingMessageMutationFingerprintV1Schema } from '@happier-dev/protocol/sessions/pending/pendingMessageMutationFingerprintV1';
+import { SessionMediaMessageMetaV1Schema, type SessionMediaMessageMetaV1 } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
+import { SessionStoredMessageContentSchema, type SessionStoredMessageContent } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
+import { SessionAccessErrorCodeV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
+import { SessionInputAdmissionRejectionCodeV1Schema, type SessionInputAdmissionRejectionCodeV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
+import type { ComposerContentHandleV1 } from '@happier-dev/protocol/runtime/input/composerContentV1';
+import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
 import {
     admitMentionRefsV1ForText,
     readAdmittedHappierStructuredInputV1FromMeta,

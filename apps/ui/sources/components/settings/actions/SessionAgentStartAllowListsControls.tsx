@@ -4,7 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import {
     SessionAgentStartAllowListsV1Schema,
     type SessionAgentStartAllowListsV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/settings/sessionAgentStartAllowListsV1';
 
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { getEnabledAgentIds } from '@/agents/catalog/enabled';

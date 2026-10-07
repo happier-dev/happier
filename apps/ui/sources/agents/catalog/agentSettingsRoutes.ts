@@ -1,9 +1,5 @@
-import {
-    BackendTargetKeyV2Schema,
-    PluginContributionIdentityV1Schema,
-    buildBackendTargetKeyV2,
-    type PluginContributionIdentityV1,
-} from '@happier-dev/protocol';
+import { BackendTargetKeyV2Schema, buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { isBundledAgentId } from '@happier-dev/agents';
 
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';

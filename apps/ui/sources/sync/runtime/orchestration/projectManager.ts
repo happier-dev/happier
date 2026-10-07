@@ -27,7 +27,8 @@ import {
 } from './projectScmSelectionState';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { normalizeWorkspaceScopeBase, tryBuildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
-import { normalizeMachineHost, type ScmOperationErrorCode } from '@happier-dev/protocol';
+import { normalizeMachineHost } from '@happier-dev/protocol/machines/host/normalizeMachineHost';
+import type { ScmOperationErrorCode } from '@happier-dev/protocol/scm/operationError';
 import type { ScmOperationOutcome } from '@happier-dev/protocol/scm';
 import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';

@@ -2,7 +2,7 @@ import { createHappierSocket } from '@happier-dev/sync-client';
 import {
     CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
     buildAccountStoredContentCompatibilitySocketAuthV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 
 import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';

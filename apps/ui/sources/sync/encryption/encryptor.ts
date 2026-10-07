@@ -5,15 +5,8 @@ import { decodeUTF8, encodeUTF8 } from "@/encryption/text";
 import { decryptAESGCMString, encryptAESGCMString } from "@/encryption/aes";
 import { openAes256GcmBytes, sealAes256GcmBytes } from '@/encryption/aes256GcmBytes';
 import { getRandomBytes } from '@/platform/cryptoRandom';
-import {
-    frameSessionDataKeyBundleV0,
-    parseSessionDataKeyValue,
-    parseSerializedJsonValue,
-    readSessionDataKeyBundleV0,
-    serializeSessionDataKeyValue,
-    stringifySerializedJsonValue,
-    SESSION_DATA_KEY_NONCE_BYTES,
-} from '@happier-dev/protocol';
+import { frameSessionDataKeyBundleV0, parseSessionDataKeyValue, readSessionDataKeyBundleV0, serializeSessionDataKeyValue, SESSION_DATA_KEY_NONCE_BYTES } from '@happier-dev/protocol/crypto/sessionDataKeyBundleV0';
+import { parseSerializedJsonValue, stringifySerializedJsonValue } from '@happier-dev/protocol/crypto/serializedJsonValue';
 import { syncPerformanceTelemetry } from '../runtime/syncPerformanceTelemetry';
 import { yieldToEventLoop } from './cryptoBatchYield';
 import {

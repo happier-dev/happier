@@ -1,4 +1,4 @@
-import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol';
+import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessions/awareness/availability';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { getSessionStatus } from '@/utils/sessions/sessionUtils';
 

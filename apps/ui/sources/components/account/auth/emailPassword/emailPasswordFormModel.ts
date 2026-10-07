@@ -1,4 +1,5 @@
-import { acceptPasswordTextV1, normalizeVerifiedEmail } from '@happier-dev/protocol';
+import { acceptPasswordTextV1 } from '@happier-dev/protocol/auth/accountPasswordCredential';
+import { normalizeVerifiedEmail } from '@happier-dev/protocol/auth/verifiedEmail';
 
 import { t, tLoose } from '@/text';
 import {

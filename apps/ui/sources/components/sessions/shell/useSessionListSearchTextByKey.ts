@@ -1,4 +1,4 @@
-import { readSessionDirectoryKind } from '@happier-dev/protocol';
+import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import { t } from '@/text';
 import * as React from 'react';
 import { useShallow } from 'zustand/react/shallow';

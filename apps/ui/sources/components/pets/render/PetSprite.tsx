@@ -3,7 +3,7 @@ import { Platform, View, type StyleProp, type ViewProps, type ViewStyle } from '
 import { Image, type ImageProps } from 'expo-image';
 
 import type { ResolvedPetAnimationFrame } from '@/components/pets/animation/resolvePetAnimationTimeline';
-import { PET_ATLAS_V1 } from '@happier-dev/protocol';
+import { PET_ATLAS_V1 } from '@happier-dev/protocol/pets/constants';
 
 type PetSpriteDataProps = ViewProps & Readonly<{
     dataSet: Readonly<{ petState: ResolvedPetAnimationFrame['state'] }>;

@@ -1,12 +1,6 @@
-import {
-    AgentExecutionTargetV1Schema,
-    PluginContributionIdentityV1Schema,
-    readBackendTargetRefV2,
-    readPersistedAgentContributionIdentityV1,
-    type AgentExecutionTargetV1,
-    type BackendTargetRefV2,
-    type BackendTargetRefV2Input,
-} from '@happier-dev/protocol';
+import { AgentExecutionTargetV1Schema, type AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { PluginContributionIdentityV1Schema, readPersistedAgentContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { readBackendTargetRefV2, type BackendTargetRefV2, type BackendTargetRefV2Input } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 import { isBundledAgentId } from '@/agents/catalog/catalog';
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';

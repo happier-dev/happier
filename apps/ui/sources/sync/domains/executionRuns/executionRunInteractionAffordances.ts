@@ -3,4 +3,4 @@ export {
     NO_EXECUTION_RUN_INTERACTION,
     resolveExecutionRunInteractionAffordances,
     type ExecutionRunInteractionAffordances,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/execution/runs/interactionAffordances';

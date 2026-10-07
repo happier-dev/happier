@@ -5,4 +5,4 @@
 export {
     ACCOUNT_SETTING_ARTIFACTS,
     ACCOUNT_SETTING_DEFINITIONS,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/settings/accountSettings';

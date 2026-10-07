@@ -1,17 +1,9 @@
-import {
-    AutomationEventFilterV1Schema,
-    AutomationTriggerDefinitionInputSchema,
-    arePluginMachineExecutionOriginsEqual,
-    PluginMachineExecutionOriginV1Schema,
-    PluginWebhookEndpointIdV1Schema,
-    type AutomationEventFilterV1,
-    type AutomationPluginEventDefinitionTriggerInput,
-    type AutomationPluginEventObservationTransportInput,
-    type DaemonContributionRegistryProjectionAutomationEligibleEventV1,
-    type PluginEventAutomationSetupResultV1,
-    type PluginMachineExecutionOriginV1,
-    type PluginWebhookEndpointIdV1,
-} from '@happier-dev/protocol';
+import { AutomationEventFilterV1Schema, type AutomationEventFilterV1 } from '@happier-dev/protocol/automations/automationEventFilterV1';
+import { AutomationTriggerDefinitionInputSchema, type AutomationPluginEventDefinitionTriggerInput, type AutomationPluginEventObservationTransportInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
+import { arePluginMachineExecutionOriginsEqual, PluginMachineExecutionOriginV1Schema, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { PluginWebhookEndpointIdV1Schema, type PluginWebhookEndpointIdV1 } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
+import type { DaemonContributionRegistryProjectionAutomationEligibleEventV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { PluginEventAutomationSetupResultV1 } from '@happier-dev/protocol/automations/event-setup-result';
 
 import type { FreshPluginMachineExecutionOriginV1 } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
 import {

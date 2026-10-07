@@ -1,13 +1,7 @@
 import React from 'react';
 
-import {
-    WorkflowRunStartRequestV1Schema,
-    WorkflowRunStartResultV1Schema,
-    WorkflowRunGetResultV1Schema,
-    type WorkflowRunStartRequestV1,
-    type WorkflowRunStartResultV1,
-    type WorkflowProjectTargetV1,
-} from '@happier-dev/protocol';
+import { WorkflowRunStartRequestV1Schema, WorkflowRunStartResultV1Schema, WorkflowRunGetResultV1Schema, type WorkflowRunStartRequestV1, type WorkflowRunStartResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
+import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
 
 import {
     resolveWorkflowProblemPresentation,

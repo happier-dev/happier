@@ -1,14 +1,5 @@
-import {
-  VoiceAgentOutputEventV1Schema,
-  resolveVoiceAgentOutputSpeechSegmentLength,
-  VoiceAssistantActionSchema,
-  VOICE_OUTPUT_INCOMPLETE_TEXT,
-  canAppendVoiceAgentOutputEventsV1,
-  createVoiceAgentOutputTurnV1,
-  fitVoiceAgentOutputTextV1,
-  ingestVoiceAgentOutputEventV1,
-  type VoiceAgentOutputEventV1,
-} from '@happier-dev/protocol';
+import { VoiceAgentOutputEventV1Schema, resolveVoiceAgentOutputSpeechSegmentLength, VOICE_OUTPUT_INCOMPLETE_TEXT, canAppendVoiceAgentOutputEventsV1, createVoiceAgentOutputTurnV1, fitVoiceAgentOutputTextV1, ingestVoiceAgentOutputEventV1, type VoiceAgentOutputEventV1 } from '@happier-dev/protocol/voice/outputEvents';
+import { VoiceAssistantActionSchema } from '@happier-dev/protocol/voice/actions';
 
 import type { VoiceAgentTurnStreamEvent } from './types';
 

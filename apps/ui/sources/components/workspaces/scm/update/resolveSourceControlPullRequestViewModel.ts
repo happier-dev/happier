@@ -1,5 +1,5 @@
 import type { ScmFollowupAction } from '@happier-dev/protocol';
-import { resolveScmHostingProviderFollowupAllowedBaseUrl } from '@happier-dev/protocol';
+import { resolveScmHostingProviderFollowupAllowedBaseUrl } from '@happier-dev/protocol/scm/pullRequests';
 
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 

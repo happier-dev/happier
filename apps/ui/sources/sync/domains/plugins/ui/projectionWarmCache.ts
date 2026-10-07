@@ -1,7 +1,7 @@
 import {
     PluginProjectionV2Schema,
     type DaemonContributionRegistryProjectionMountedTargetV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type {
     PluginUiPlatformV1,
     PluginUiTargetedContributionsV1,

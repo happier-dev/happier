@@ -32,11 +32,9 @@ import type { WelcomeActionAdmission } from '@/components/onboarding/preAuth/Wel
 import { Modal } from '@/modal';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { createActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
-import {
-    maskEmailForNativeAuthPreview,
-    normalizeVerifiedEmail,
-    type AccountSecurityGetResponseV1,
-} from '@happier-dev/protocol';
+import { maskEmailForNativeAuthPreview } from '@happier-dev/protocol/auth/nativeAuthOneTimeOperation';
+import { normalizeVerifiedEmail } from '@happier-dev/protocol/auth/verifiedEmail';
+import type { AccountSecurityGetResponseV1 } from '@happier-dev/protocol/auth/accountSecurity';
 import { serverFetch } from '@/sync/http/client';
 import { captureActiveServerAccountScopeCurrentness, getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';

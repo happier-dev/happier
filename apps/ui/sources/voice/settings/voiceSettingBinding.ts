@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { resolveVoiceProviderLanguagePreference } from '@happier-dev/protocol';
+import { resolveVoiceProviderLanguagePreference } from '@happier-dev/protocol/plugins/contributions/voice';
 
 import type { SettingStorageBinding, SettingScalarValue } from '@/components/settings/catalog/settingDeclarations';
 import { SETTING_VALUE_UNAVAILABLE, parseSettingScalarValue, type SettingValue } from '@/components/settings/catalog/settingDeclarations';

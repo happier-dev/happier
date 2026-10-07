@@ -1,4 +1,4 @@
-import { HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol';
+import { HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import {
     subscribeHomeCredentialMutations,
     type HomeCredentialMutationEvent,

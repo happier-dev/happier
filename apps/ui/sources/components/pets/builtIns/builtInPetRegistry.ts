@@ -1,7 +1,5 @@
-import {
-    PET_ATLAS_V1,
-    type PetPackageManifestV1,
-} from '@happier-dev/protocol';
+import { PET_ATLAS_V1 } from '@happier-dev/protocol/pets/constants';
+import type { PetPackageManifestV1 } from '@happier-dev/protocol/pets/manifest';
 import type { ImageProps } from 'expo-image';
 
 export type BuiltInPetId = 'blink' | 'fury' | 'milo' | 'oli' | 'titi';

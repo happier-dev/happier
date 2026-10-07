@@ -1,7 +1,7 @@
 import { resolveSessionReadStateAction } from '@/sync/domains/session/readState/sessionReadState';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
-import { isSessionTerminalPermanentlyAbsent } from '@happier-dev/protocol';
+import { isSessionTerminalPermanentlyAbsent } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import {
     canContinueSessionWithFreshSpawn,

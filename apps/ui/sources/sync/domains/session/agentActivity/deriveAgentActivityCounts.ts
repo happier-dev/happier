@@ -1,4 +1,4 @@
-import { isInProgressAgentActivityStatus, type AgentActivityStatusV1 } from '@happier-dev/protocol';
+import { isInProgressAgentActivityStatus, type AgentActivityStatusV1 } from '@happier-dev/protocol/sessions/work/agentActivity/agentActivityStatusV1';
 
 import { collectAgentActivityGroupingIds } from './agentActivityGrouping';
 import type { AgentActivityEntry } from './types';

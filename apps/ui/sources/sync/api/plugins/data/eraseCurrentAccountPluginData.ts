@@ -1,11 +1,5 @@
-import {
-    PLUGIN_ACCOUNT_DATA_ERASE_HTTP_PATH_V1,
-    PLUGIN_DATA_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
-    PluginAccountDataEraseActionInputV1Schema,
-    PluginAccountDataEraseServerOutputV1Schema,
-    type PluginAccountDataEraseActionInputV1,
-    type PluginAccountDataEraseDataArmResultV1,
-} from '@happier-dev/protocol';
+import { PLUGIN_ACCOUNT_DATA_ERASE_HTTP_PATH_V1, PluginAccountDataEraseActionInputV1Schema, PluginAccountDataEraseServerOutputV1Schema, type PluginAccountDataEraseActionInputV1, type PluginAccountDataEraseDataArmResultV1 } from '@happier-dev/protocol/plugins/data/accountEraseV1';
+import { PLUGIN_DATA_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import {

@@ -4,7 +4,7 @@ import type {
     SessionRuntimeIssueV1,
     SessionUsageLimitRecoveryV1,
 } from '@happier-dev/protocol';
-import { SessionUsageLimitRecoveryV1Schema } from '@happier-dev/protocol';
+import { SessionUsageLimitRecoveryV1Schema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
 
 import type { AgentInputStatusBadge, AgentInputStatusBadgeTone } from '@/components/sessions/agentInput/agentInputContracts';
 import { summarizeConnectedServiceQuotaRecoveryCredits } from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';

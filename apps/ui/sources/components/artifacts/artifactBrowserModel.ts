@@ -1,7 +1,10 @@
-import { deriveArtifactExcerptV1, getArtifactUseTargetV1, isArtifactHtmlHeaderV1, type ArtifactWorkspaceSourceV1 } from '@happier-dev/protocol';
+import { deriveArtifactExcerptV1 } from '@happier-dev/protocol/artifacts/artifactExcerptV1';
+import { getArtifactUseTargetV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
+import { isArtifactHtmlHeaderV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
+import type { ArtifactWorkspaceSourceV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { WorkflowDefinitionArtifactBodyV1ReadSchema, WorkflowDefinitionArtifactHeaderV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { workflowDefinitionPreviewStepsV1 } from '@happier-dev/protocol/workflows';
-import { buildWorkBoardPreviewLayoutV1, WorkBoardPreviewLayoutV1Schema, readWorkBoardArtifactV1 } from '@happier-dev/protocol';
+import { buildWorkBoardPreviewLayoutV1, WorkBoardPreviewLayoutV1Schema, readWorkBoardArtifactV1 } from '@happier-dev/protocol/boards/workBoardArtifactV1';
 import type { HappierArtifactPreview } from '@happier-dev/plugin-ui/presentation';
 
 import { readBoardArtifactRoute } from '@/components/boards/boardsRoutes';

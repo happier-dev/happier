@@ -65,11 +65,9 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { CAPABILITIES_REQUEST_MACHINE_DETAILS } from '@/capabilities/requests';
 import { resolveTmuxAvailable } from '@/capabilities/tmuxAvailability';
 import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
-import {
-    hasProviderMachineStateV1,
-    readProviderSettingsFromAccountSettingsV1,
-    type DaemonExecutionRunEntry,
-} from '@happier-dev/protocol';
+import { hasProviderMachineStateV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
+import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
+import type { DaemonExecutionRunEntry } from '@happier-dev/protocol/daemon/executionRuns';
 import { ExecutionRunRow } from '@/components/sessions/runs/ExecutionRunRow';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { readExecutionRunSessionAssociation } from '@/components/sessions/runs/readExecutionRunSessionAssociation';

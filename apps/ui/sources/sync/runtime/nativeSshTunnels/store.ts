@@ -1,4 +1,4 @@
-import { buildSshTarget, parseSshTarget } from '@happier-dev/protocol';
+import { buildSshTarget, parseSshTarget } from '@happier-dev/protocol/ssh/sshTarget';
 
 import type { NativeSshTunnelRequest } from './types';
 

@@ -1,21 +1,17 @@
 import { MMKV } from 'react-native-mmkv';
 import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
-import {
-    MachineKindFromLegacyProjectionSchema,
-    ExternalSessionsSourceSchema,
-    normalizeLinkedExternalSessionMetadataV1,
-    parseSessionRuntimeActivityProjectionFields,
-    PluginAgentExternalSessionLinkDataSchema,
-    PluginProjectionV2Schema,
-    PrimaryTurnStatusV1Schema,
-    RuntimeDescriptorV1Schema,
-    SessionAccessAccountSummaryV1Schema,
-    SessionEffectiveAccessV1Schema,
-    SessionRuntimeActivityStateSchema,
-    SessionRuntimeIssueV1Schema,
-    SessionViewerProjectionV1Schema,
-    PendingActivationAuthorizationV1Schema,
-} from '@happier-dev/protocol';
+import { MachineKindFromLegacyProjectionSchema } from '@happier-dev/protocol/machines/machineKind';
+import { ExternalSessionsSourceSchema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
+import { normalizeLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import { parseSessionRuntimeActivityProjectionFields, SessionRuntimeActivityStateSchema } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
+import { PluginAgentExternalSessionLinkDataSchema } from '@happier-dev/protocol/plugins/contributions/agentExternalSessions';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { PrimaryTurnStatusV1Schema, SessionRuntimeIssueV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
+import { SessionAccessAccountSummaryV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessPrincipalV1';
+import { SessionEffectiveAccessV1Schema } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import { SessionViewerProjectionV1Schema } from '@happier-dev/protocol/sessions/personal/viewer';
+import { PendingActivationAuthorizationV1Schema } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import { PluginUiTargetedContributionsV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { z } from 'zod';
 

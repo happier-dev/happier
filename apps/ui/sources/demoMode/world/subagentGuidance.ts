@@ -1,4 +1,5 @@
-import { buildBackendTargetKeyV2, type RoleArtifactV1 } from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { RoleArtifactV1 } from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { DEMO_NOW_MS } from './constants';
 

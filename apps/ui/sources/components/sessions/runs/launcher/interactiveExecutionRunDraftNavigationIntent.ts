@@ -1,8 +1,5 @@
-import {
-    ExecutionRunDraftCorrelationIdSchema,
-    SessionDiscussionSelectionSourceV1Schema,
-    type SessionDiscussionSelectionSourceV1,
-} from '@happier-dev/protocol';
+import { ExecutionRunDraftCorrelationIdSchema } from '@happier-dev/protocol/execution/runs/index';
+import { SessionDiscussionSelectionSourceV1Schema, type SessionDiscussionSelectionSourceV1 } from '@happier-dev/protocol/sessions/discussions/content';
 
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';

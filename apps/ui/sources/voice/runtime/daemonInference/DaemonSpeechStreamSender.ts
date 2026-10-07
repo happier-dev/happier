@@ -8,7 +8,7 @@ import type {
   DaemonVoiceInferenceSttStreamStartResponse,
   VoiceSpeechDiagnosticsCaptureContextV1,
 } from '@happier-dev/protocol';
-import { DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT } from '@happier-dev/protocol';
+import { DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT } from '@happier-dev/protocol/daemon/voiceInference';
 
 import type { DaemonSpeechStreamTransportKind } from './daemonSpeechStreamDiagnostics';
 

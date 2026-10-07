@@ -6,28 +6,11 @@ import { serverFetch, type ServerFetch } from '@/sync/http/client';
 import { encodeBase64 } from '@/encryption/base64';
 import { ARTIFACT_UPLOAD_CONTENT_TYPE_V1, ARTIFACT_UPLOAD_PATH_V1, encodeArtifactUploadFrameV1,
     type ArtifactUploadDestinationV1 } from '@happier-dev/transfers';
-import {
-    ArtifactAccessErrorCodeV1Schema,
-    ArtifactAccessGrantsListResponseV1Schema,
-    ArtifactAccessGrantMutationResponseV1Schema,
-    ArtifactAccessRecipientCensusResponseV1Schema,
-    isPlainArtifactDataKeyMarker,
-    ArtifactRecipientKeyEnvelopeCommitResponseV1Schema,
-    ArtifactRevisionListResponseV1Schema,
-    ArtifactQuotaExceededV1Schema,
-    ArtifactRevisionV1Schema,
-    ArtifactStorageUsageV1Schema,
-    ArtifactBlobReadResponseV1Schema,
-    ArtifactHtmlPreviewResponseV1Schema,
-    ArtifactBlobAccountEncryptionStageV1Schema,
-    type ArtifactBlobStoredContentV1,
-    type ArtifactBlobAccountEncryptionStageV1,
-    type ArtifactRevisionV1,
-    type ArtifactAccessGrantsListInputV1,
-    type ArtifactAccessGrantSetInputV1,
-    type ArtifactAccessGrantRemoveInputV1,
-    type ArtifactRecipientKeyEnvelopeCommitInputV1,
-} from '@happier-dev/protocol';
+import { ArtifactAccessErrorCodeV1Schema, ArtifactAccessGrantsListResponseV1Schema, ArtifactAccessGrantMutationResponseV1Schema, ArtifactAccessRecipientCensusResponseV1Schema, ArtifactRecipientKeyEnvelopeCommitResponseV1Schema, type ArtifactAccessGrantsListInputV1, type ArtifactAccessGrantSetInputV1, type ArtifactAccessGrantRemoveInputV1, type ArtifactRecipientKeyEnvelopeCommitInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { isPlainArtifactDataKeyMarker } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { ArtifactRevisionListResponseV1Schema, ArtifactQuotaExceededV1Schema, ArtifactRevisionV1Schema, ArtifactStorageUsageV1Schema, type ArtifactRevisionV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { ArtifactBlobReadResponseV1Schema, ArtifactBlobAccountEncryptionStageV1Schema, type ArtifactBlobStoredContentV1, type ArtifactBlobAccountEncryptionStageV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
+import { ArtifactHtmlPreviewResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 
 /** The /v1/artifacts transport cursor; shared by complete sync and Action paging. */
 export function encodeArtifactListCursor(row: Readonly<{ artifactId: string; updatedAt: number }>): string {

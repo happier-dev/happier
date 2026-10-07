@@ -1,14 +1,8 @@
-import {
-    AccountApiTokenSelfV1Schema,
-    BackendTargetKeyV2Schema,
-    SessionCreationKeyV1Schema,
-    SessionSpawnNewInputV2Schema,
-    evaluateApiTokenGrantV1,
-    resolveEffectiveApiTokenModelRefV1,
-    resolveEffectiveApiTokenPermissionModeV1,
-    parseBackendTargetKeyV2,
-    type AccountApiTokenSelfV1,
-} from '@happier-dev/protocol';
+import { AccountApiTokenSelfV1Schema, type AccountApiTokenSelfV1 } from '@happier-dev/protocol/auth/accountApiTokens';
+import { BackendTargetKeyV2Schema, parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { SessionCreationKeyV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
+import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { evaluateApiTokenGrantV1, resolveEffectiveApiTokenModelRefV1, resolveEffectiveApiTokenPermissionModeV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 
 import type { EmbeddedNewSessionDraft } from '@/components/sessions/shell/embedded/embeddedSessionTarget';
 import type { StrictSessionSpawnNewInput } from '@/sync/ops/actions/sessionSpawnNewAction';

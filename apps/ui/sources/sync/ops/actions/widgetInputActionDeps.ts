@@ -1,8 +1,13 @@
-import { buildQualifiedPluginContributionKey, createActionExecutor, getActionSpec, VoiceTrackedSessionAddressV1Schema, type ActionExecutorDeps, type JsonValue, type PublicActionResultById } from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { getActionSpec, type PublicActionResultById } from '@happier-dev/protocol/actions/actionSpecs';
+import { VoiceTrackedSessionAddressV1Schema } from '@happier-dev/protocol/sessions/follow/voiceTrackedTargetsCompatibilityV1';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { createWidgetActionInputResolverV1, resolveConfiguredWidgetTargetInputV1, resolveWidgetViewerPurposeValuesV1, resolveWidgetConnectedAccountOptionsV1, isSameWidgetDefinitionV1, widgetCandidateDefinitionV1, type WidgetActionInputResolverV1 } from '@happier-dev/protocol/widgets';
 import { readInputPath } from '@happier-dev/protocol/inputs';
-import { sameStrictJsonValue } from '@happier-dev/protocol';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { admitWidgetViewerSelectionMetadataV1 } from '@/sync/domains/widgets/widgetViewerSelectionAdmission';

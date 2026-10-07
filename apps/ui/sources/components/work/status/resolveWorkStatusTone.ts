@@ -1,15 +1,9 @@
-import {
-    isInProgressAgentActivityStatus,
-    isTerminalAgentActivityStatus,
-    isTerminalAutomationRunStateV3,
-    readSessionAwarenessWorkStatusV1,
-    type AgentActivityStatusV1,
-    type SessionAwarenessProjectionV1,
-    type SessionOperationalReasonV1,
-    type WorkflowInvocationLifecycleV1,
-    type WorkflowRunStateV1,
-    type WorkerUpdateV1,
-} from '@happier-dev/protocol';
+import { isInProgressAgentActivityStatus, isTerminalAgentActivityStatus, type AgentActivityStatusV1 } from '@happier-dev/protocol/sessions/work/agentActivity/agentActivityStatusV1';
+import { isTerminalAutomationRunStateV3 } from '@happier-dev/protocol/automations/automationRunStateV3';
+import { readSessionAwarenessWorkStatusV1 } from '@happier-dev/protocol/sessions/awareness/presentationV1';
+import type { SessionAwarenessProjectionV1, SessionOperationalReasonV1 } from '@happier-dev/protocol/sessions/awareness/projectionV1';
+import type { WorkflowInvocationLifecycleV1, WorkflowRunStateV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import type { WorkerUpdateV1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
 
 import {
     HAPPIER_WORK_STATUS_SEMANTIC_TONE,

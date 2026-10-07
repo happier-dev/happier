@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { resolveVoiceSpeechDiagnosticsHealthPresentation } from '@happier-dev/protocol';
+import { resolveVoiceSpeechDiagnosticsHealthPresentation } from '@happier-dev/protocol/voice/diagnostics';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';

@@ -1,4 +1,4 @@
-import { readBackendTargetRefV2, type BackendTargetRefV2 } from '@happier-dev/protocol';
+import { readBackendTargetRefV2, type BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { isRecoveredHistoryTranscriptObservation, type Message } from '@happier-dev/session-core/messages';
 
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';

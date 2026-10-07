@@ -1,6 +1,6 @@
 import {
     ComposerTransactionResultV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/ui/composer';
 import type {
     ComposerTransactionResultV1,
     ComposerTransactionV1,

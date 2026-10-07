@@ -1,4 +1,5 @@
-import { normalizeSessionListFilterHomeIds, ScopeActionInputSchemas, type ScopeActionId, type ScopeActionInputById } from '@happier-dev/protocol';
+import { normalizeSessionListFilterHomeIds } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
+import { ScopeActionInputSchemas, type ScopeActionId, type ScopeActionInputById } from '@happier-dev/protocol/actions/scopeActionFamily';
 import type { SessionListViewFilterController } from '@/components/sessions/shell/search/useSessionListViewFilterController';
 import { resolveSessionListViewContextDefaults } from '@/components/sessions/shell/search/sessionListViewFilters';
 import { resolveSessionListFilterScopeAvailability } from '@/components/sessions/shell/search/sessionListFilterEditorModel';

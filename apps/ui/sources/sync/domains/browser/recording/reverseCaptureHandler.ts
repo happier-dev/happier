@@ -2,7 +2,7 @@ import {
     UiBrowserRecordingCaptureFrameRequestV1Schema,
     UiBrowserRecordingCaptureFrameResponseV1Schema,
     type UiBrowserRecordingCaptureFrameResponseV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/recording/reverseCaptureV1';
 
 import {
     captureDesktopBrowserRecordingFrame,

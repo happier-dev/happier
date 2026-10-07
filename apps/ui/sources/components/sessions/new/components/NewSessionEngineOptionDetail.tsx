@@ -1,12 +1,9 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
 
-import {
-    isNativeAutomaticModelSelectionInputV1,
-    readProviderSettingsFromAccountSettingsV1,
-    type PersistedBackendTargetRefV2,
-    type SessionModelSelectionV1,
-} from '@happier-dev/protocol';
+import { isNativeAutomaticModelSelectionInputV1, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
+import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 import { resolveCatalogAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';

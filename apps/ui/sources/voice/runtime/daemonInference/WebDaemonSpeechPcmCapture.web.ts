@@ -1,4 +1,4 @@
-import { VOICE_RUNTIME_DAEMON_STT_PCM_FORMAT } from '@happier-dev/protocol';
+import { VOICE_RUNTIME_DAEMON_STT_PCM_FORMAT } from '@happier-dev/protocol/voice/runtimeConfig';
 
 import {
   createWebPcmCapture,

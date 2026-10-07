@@ -1,6 +1,6 @@
-import { SessionReminderPresetsV1Schema } from '@happier-dev/protocol';
+import { SessionReminderPresetsV1Schema } from '@happier-dev/protocol/account/settings/sessionReminderPresetsV1';
 import type { SessionReminderPresetRule, SessionReminderPresetV1 } from '@happier-dev/protocol';
-export { SessionReminderPresetsV1Schema } from '@happier-dev/protocol';
+export { SessionReminderPresetsV1Schema } from '@happier-dev/protocol/account/settings/sessionReminderPresetsV1';
 export type { SessionReminderPresetRule, SessionReminderPresetV1 } from '@happier-dev/protocol';
 
 const MILLIS_PER_DAY = 24 * 60 * 60 * 1_000;

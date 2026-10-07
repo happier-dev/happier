@@ -1,22 +1,13 @@
-import {
-    DaemonPluginHostPresentedComposerCurrentIntentV1Schema,
-    PluginActionPlacementV2Schema,
-    PluginActionScopeV2Schema,
-    PluginContributionIdentityV1Schema,
-    QualifiedConnectedAccountRefSchema,
-    pluginSourceCustodyV1Equal,
-    sameQualifiedConnectedAccountRef,
-    buildQualifiedPluginContributionKey,
-    compilePluginJsonSchema,
-    isValidPluginJsonSchemaValue,
-    ActionInputHintsSchema,
-    type ActionInputHints,
-    type DaemonPluginHostPresentedComposerCurrentIntentV1,
-    type MessageActionReferenceV1,
-    type PluginActionPlacementV2,
-    type PluginActionScopeV2,
-    type PluginJsonSchemaV2,
-} from '@happier-dev/protocol';
+import { DaemonPluginHostPresentedComposerCurrentIntentV1Schema, type DaemonPluginHostPresentedComposerCurrentIntentV1 } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
+import { PluginActionPlacementV2Schema, PluginActionScopeV2Schema, type PluginActionPlacementV2, type PluginActionScopeV2 } from '@happier-dev/protocol/plugins/actions/v2';
+import { PluginContributionIdentityV1Schema, buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { QualifiedConnectedAccountRefSchema, sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import { ActionInputHintsSchema, type ActionInputHints } from '@happier-dev/protocol/inputs/inputFields';
+import type { MessageActionReferenceV1 } from '@happier-dev/protocol/sessions/messages/messageActionReferenceV1';
+import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import {
     PluginUiJsonValueV1Schema,
     type CurrentUiContextSnapshotV1,

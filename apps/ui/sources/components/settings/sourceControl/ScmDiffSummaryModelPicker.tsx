@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { getAgentCore, getAgentStaticModels } from '@happier-dev/agents';
-import { buildBackendTargetKeyV2, readBackendTargetRefV2, type BackendTargetRefV2, type AcpCatalogSettingsV1, type ScmDiffSummaryModelSelector } from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2, readBackendTargetRefV2, type BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { AcpCatalogSettingsV1 } from '@happier-dev/protocol/acp/catalog/settingsV1';
+import type { ScmDiffSummaryModelSelector } from '@happier-dev/protocol/scm/diffSummary';
 import { getResolvedBackendCatalogEntries, type ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';

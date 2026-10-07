@@ -1,8 +1,5 @@
-import {
-    selectConnectedServiceQuotaMetersForLimitSelection,
-    type ConnectedServiceQuotaLimitSelectionV1,
-    type ConnectedServiceQuotaSnapshotV1,
-} from '@happier-dev/protocol';
+import { selectConnectedServiceQuotaMetersForLimitSelection } from '@happier-dev/protocol/connect/connectedServiceQuotaLimitSelection';
+import type { ConnectedServiceQuotaLimitSelectionV1, ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 
 type QuotaSnapshot = Pick<ConnectedServiceQuotaSnapshotV1, 'meters'>;
 

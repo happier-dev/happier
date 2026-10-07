@@ -1,11 +1,7 @@
-import {
-    readMachineLiveStreamRelayCaps,
-    readServerEnabledBit,
-    resolveMachineRpcRelayFallbackDecision,
-    type FeaturesResponse,
-    type MachineRpcRelayFallbackDecision,
-    type MachineRpcRoutePolicyV1,
-} from '@happier-dev/protocol';
+import { readMachineLiveStreamRelayCaps } from '@happier-dev/protocol/features/payload/capabilities/machineLiveStreamCapabilities';
+import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
+import { resolveMachineRpcRelayFallbackDecision, type MachineRpcRelayFallbackDecision, type MachineRpcRoutePolicyV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import type { FeaturesResponse } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 
 import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
 

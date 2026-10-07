@@ -1,2 +1,1 @@
-export { getMissingRequiredConfigEnvVarNames } from '@happier-dev/protocol';
-
+export { getMissingRequiredConfigEnvVarNames } from '@happier-dev/protocol/profiles/profileRequirements';

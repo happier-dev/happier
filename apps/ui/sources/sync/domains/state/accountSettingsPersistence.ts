@@ -1,8 +1,6 @@
 import { applySettings, settingsDefaults, settingsParse, type Settings } from '@/sync/domains/settings/settings';
-import {
-    REMOTE_ALERT_ATTENTION_DELIVERY_EVENT_IDS,
-    resolveAttentionDeliveryPreviewBehavior,
-} from '@happier-dev/protocol';
+import { REMOTE_ALERT_ATTENTION_DELIVERY_EVENT_IDS } from '@happier-dev/protocol/account/settings/attentionDeliveryPolicy';
+import { resolveAttentionDeliveryPreviewBehavior } from '@happier-dev/protocol/account/settings/attentionDeliveryPolicyDecision';
 import { areAccountSettingsJsonValuesEqual } from '@/sync/domains/settings/accountSettingsStructuralEquality';
 import { stripMigratedSessionOrganizationSettings } from '@/sync/domains/settings/parse/accountSettingsLegacyCleanup';
 import {

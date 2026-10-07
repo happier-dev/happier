@@ -1,10 +1,6 @@
 import * as React from 'react';
-import {
-    normalizeSessionListFilterV1,
-    type SessionListFilterV1,
-    type WorkBoardIntentV1,
-    type WorkBoardV1,
-} from '@happier-dev/protocol';
+import { normalizeSessionListFilterV1, type SessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
+import type { WorkBoardIntentV1, WorkBoardV1 } from '@happier-dev/protocol/boards/workBoardV1';
 
 import {
     buildSessionListFilterAudienceOptions,

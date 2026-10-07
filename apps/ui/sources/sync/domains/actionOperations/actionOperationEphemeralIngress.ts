@@ -2,7 +2,7 @@ import {
     ActionOperationRevisionEphemeralV1Schema,
     ActionOperationSnapshotEphemeralV1Schema,
     type ActionOperationSnapshotEphemeralV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/actions/operations/v1';
 
 /**
  * Normalizes the released 0.2.11 envelope and the drain-only pre-release 0.3

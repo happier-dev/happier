@@ -1,5 +1,5 @@
 import type { DecryptedArtifact } from '../../domains/artifacts/artifactTypes';
-import { sameStrictJsonValue } from '@happier-dev/protocol';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { StoreGet, StoreSet } from './_shared';
 
 function retainOpenedContent(previous: DecryptedArtifact | undefined, incoming: DecryptedArtifact): DecryptedArtifact {

@@ -1,15 +1,7 @@
-import {
-    IrohMachineHandshakeV1Schema,
-    PeerTcpTunnelOpenV2Schema,
-    PeerTcpTunnelOpenResponseV1Schema,
-    PEER_TCP_TUNNEL_OPEN_PATH_V2,
-    PEER_TCP_TUNNEL_STREAM_PATH,
-    parseIrohEndpointDescriptorV1,
-    type IrohEndpointDescriptorV1,
-    type PeerTcpTunnelOpenV1,
-    type PeerTcpTunnelOpenV2,
-    type PeerTcpTunnelOpenResponseV1,
-} from '@happier-dev/protocol';
+import { IrohMachineHandshakeV1Schema } from '@happier-dev/protocol/connectivity/iroh/machineHandshakeV1';
+import { PeerTcpTunnelOpenV2Schema, PEER_TCP_TUNNEL_OPEN_PATH_V2, type PeerTcpTunnelOpenV2 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/openAuthorizationV2';
+import { PeerTcpTunnelOpenResponseV1Schema, PEER_TCP_TUNNEL_STREAM_PATH, type PeerTcpTunnelOpenV1, type PeerTcpTunnelOpenResponseV1 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/v1';
+import { parseIrohEndpointDescriptorV1, type IrohEndpointDescriptorV1 } from '@happier-dev/protocol/connectivity/iroh/endpointDescriptorV1';
 
 import { getIrohApplicationEndpoint, startIrohMachineHttpTunnel } from '@/sync/runtime/nativeIrohTunnels/machineTransferLifecycle';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';

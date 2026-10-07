@@ -1,12 +1,8 @@
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import {
-    type ComposerContentHandleV1,
-    type SessionAttachmentUploadInitRequestV1,
-    DIRECT_TRANSFER_SESSION_EXPIRES_AT_HEADER,
-    isSafeDirectTransferEndpointCandidate,
-    normalizeDirectPeerImportEndpointBaseUrl,
-    TransferEndpointCandidateSchema,
-} from '@happier-dev/protocol';
+import type { ComposerContentHandleV1 } from '@happier-dev/protocol/runtime/input/composerContentV1';
+import type { SessionAttachmentUploadInitRequestV1 } from '@happier-dev/protocol/transfers/sessions/sessionAttachmentUploadInitRequestV1';
+import { DIRECT_TRANSFER_SESSION_EXPIRES_AT_HEADER, isSafeDirectTransferEndpointCandidate, normalizeDirectPeerImportEndpointBaseUrl } from '@happier-dev/protocol/machines/transfer/directPeerUrls';
+import { TransferEndpointCandidateSchema } from '@happier-dev/protocol/machines/transfer/transferStream';
 
 import { readBoundedResponseBody } from '@/utils/system/readBoundedResponseBody';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';

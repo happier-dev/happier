@@ -3,15 +3,9 @@ import { sessionRpcWithServerAccountScope } from '@/sync/runtime/orchestration/s
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { isSocketIoAckTimeoutError } from '@happier-dev/sync-client';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
-import {
-  ExecutionRunActionResponseSchema,
-  ExecutionRunEnsureOrStartResponseSchema,
-  ExecutionRunStopResponseSchema,
-  ExecutionRunTurnStreamCancelResponseSchema,
-  ExecutionRunTurnStreamReadResponseSchema,
-  ExecutionRunTurnStreamStartResponseSchema,
-  ExecutionRunUserTranscriptCommitResponseSchema,
-} from '@happier-dev/protocol';
+import { ExecutionRunActionResponseSchema, ExecutionRunEnsureOrStartResponseSchema } from '@happier-dev/protocol/execution/runs/index';
+import { ExecutionRunStopResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { ExecutionRunTurnStreamCancelResponseSchema, ExecutionRunTurnStreamReadResponseSchema, ExecutionRunTurnStreamStartResponseSchema, ExecutionRunUserTranscriptCommitResponseSchema } from '@happier-dev/protocol/execution/runs/streaming';
 import type { ExecutionRunUserTranscriptDirective, VoiceAssistantAction } from '@happier-dev/protocol';
 
 import type { VoiceAgentClient, VoiceAgentStartParams, VoiceAgentStartResult, VoiceAgentTurnStreamEvent } from './types';

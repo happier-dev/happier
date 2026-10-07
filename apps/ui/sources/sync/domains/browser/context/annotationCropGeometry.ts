@@ -9,4 +9,4 @@ export {
     type AnnotationStrokePointViewport,
     type AnnotationViewportRect,
     type ResolveAnnotationCropClipInput,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/context/annotationCropGeometry';

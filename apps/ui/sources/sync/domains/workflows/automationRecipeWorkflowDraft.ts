@@ -1,13 +1,9 @@
-import {
-    LEGACY_AUTOMATION_WORKFLOW_STEP_ID,
-    buildWorkflowSelectionFromServerStartSpawnDraftV1,
-    buildBackendTargetKeyV2,
-    parseBackendTargetKeyV2,
-    AgentExecutionTargetV1Schema,
-    SessionPermissionModeInputSchema,
-    type AutomationRunExecutionTargetV1,
-    type AutomationRunTemplateV1,
-} from '@happier-dev/protocol';
+import { LEGACY_AUTOMATION_WORKFLOW_STEP_ID } from '@happier-dev/protocol/automations/automationLegacyWorkflowV1';
+import { buildWorkflowSelectionFromServerStartSpawnDraftV1 } from '@happier-dev/protocol/workflows/workflowSessionAuthoringV1';
+import { buildBackendTargetKeyV2, parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
+import { SessionPermissionModeInputSchema } from '@happier-dev/protocol/sessions/metadata/permission-modes';
+import type { AutomationRunExecutionTargetV1, AutomationRunTemplateV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 import type { WorkflowStepExecutionSelection } from '@happier-dev/protocol/workflows/workflowV1';
 
 import {

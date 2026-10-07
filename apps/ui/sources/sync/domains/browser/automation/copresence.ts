@@ -1,4 +1,6 @@
-import { BrowserActiveTargetV1Schema, browserViewKey, type BrowserAutomationControllerStateV1 } from '@happier-dev/protocol';
+import { BrowserActiveTargetV1Schema } from '@happier-dev/protocol/browser/events/activeTarget';
+import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
+import type { BrowserAutomationControllerStateV1 } from '@happier-dev/protocol/browser/automation/v1';
 
 /**
  * What the agent is doing in the page, as a person would say it. The narration vocabulary is small

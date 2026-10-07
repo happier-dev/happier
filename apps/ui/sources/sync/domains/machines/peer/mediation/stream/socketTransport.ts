@@ -1,10 +1,5 @@
-import {
-    MachineLiveStreamDecodedEnvelopeV1Schema, MachineLiveStreamRelayEnvelopeV1Schema,
-    MachineLiveStreamPayloadErrorV1, hasMachineLiveStreamSensitiveContentV1,
-    openMachineLiveStreamEnvelopeV1, sealMachineLiveStreamEnvelopeV1,
-    type MachineLiveStreamContentV1, type MachineLiveStreamRelayEnvelopeV1,
-    type MachineLiveStreamWireEnvelopeV1,
-} from '@happier-dev/protocol';
+import { MachineLiveStreamDecodedEnvelopeV1Schema, MachineLiveStreamRelayEnvelopeV1Schema, type MachineLiveStreamRelayEnvelopeV1, type MachineLiveStreamWireEnvelopeV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import { MachineLiveStreamPayloadErrorV1, hasMachineLiveStreamSensitiveContentV1, openMachineLiveStreamEnvelopeV1, sealMachineLiveStreamEnvelopeV1, type MachineLiveStreamContentV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/payloadV1';
 
 /** One framing owner for active and explicitly scoped viewer sockets. No keys live here. */
 export function createMachineLiveStreamSocketTransport(input: Readonly<{

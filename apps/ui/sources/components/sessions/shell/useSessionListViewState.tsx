@@ -6,7 +6,7 @@ import {
 import * as React from 'react';
 import { Platform, type ViewToken } from 'react-native';
 import { usePathname } from '@/components/appShell/workspace/destinationRoute';
-import { EXTERNAL_SESSION_STATUS_DEMAND_MAX_ENTRIES_V1 } from '@happier-dev/protocol';
+import { EXTERNAL_SESSION_STATUS_DEMAND_MAX_ENTRIES_V1 } from '@happier-dev/protocol/sessions/external/statusDemandV1';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { resolveWorkflowRunParentSessionId } from '@/sync/domains/session/listing/nestSessionListReports';
 import {

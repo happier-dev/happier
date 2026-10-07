@@ -9,7 +9,7 @@ import {
     type QualifiedTagAddress,
     type SessionListFilterV1,
     type SessionListFilterDefaultsInputV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 
 export { buildQualifiedAudienceSelectionKey, buildQualifiedTagAddressKey };
 export type { QualifiedAudienceSelection, QualifiedTagAddress };

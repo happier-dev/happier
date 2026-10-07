@@ -1,5 +1,5 @@
 import type { NewSessionAutomationDraft } from './automationDraft';
-import { AutomationTriggerDefinitionInputSchema } from '@happier-dev/protocol';
+import { AutomationTriggerDefinitionInputSchema } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 
 export function isAutomationSettingsDraftValid(
     draft: NewSessionAutomationDraft | null | undefined,

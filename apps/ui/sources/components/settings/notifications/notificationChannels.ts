@@ -1,16 +1,5 @@
-import {
-    BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
-    NotificationChannelsV1Schema,
-    WebhookNotificationChannelV1Schema,
-    AttentionDeliveryPolicyV1Schema,
-    deriveAttentionDeliveryPolicyFromLegacySettings,
-    resolveAttentionDeliveryPolicyDecision,
-    type AttentionDeliveryPolicyV1,
-    type NotificationChannelV1,
-    type NotificationChannelsV1,
-    type NotificationsSettingsV1,
-    type WebhookNotificationChannelV1,
-} from '@happier-dev/protocol';
+import { BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID, NotificationChannelsV1Schema, WebhookNotificationChannelV1Schema, type NotificationChannelV1, type NotificationChannelsV1, type WebhookNotificationChannelV1 } from '@happier-dev/protocol/account/settings/notificationChannels';
+import { AttentionDeliveryPolicyV1Schema, deriveAttentionDeliveryPolicyFromLegacySettings, resolveAttentionDeliveryPolicyDecision, type AttentionDeliveryPolicyV1, type NotificationsSettingsV1 } from '@happier-dev/protocol/account/settings/accountSettings';
 
 const LEGACY_NOTIFICATION_EVENT_IDS = [
     'ready',

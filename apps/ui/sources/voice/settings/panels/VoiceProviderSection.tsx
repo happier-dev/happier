@@ -12,12 +12,10 @@ import {
   PluginSettingSwitchField,
 } from '@/components/settings/plugins/detail/PluginSettingChoiceFields';
 import { PluginSettingTextField } from '@/components/settings/plugins/detail/PluginDetailGenericSettingsSection';
-import {
-  compilePluginJsonSchema,
-  isValidPluginJsonSchemaValue,
-  resolveRequiredRecipientContractApprovalDigestV1,
-  type VoiceCredentialSourceSelection,
-} from '@happier-dev/protocol';
+import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import { resolveRequiredRecipientContractApprovalDigestV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
+import type { VoiceCredentialSourceSelection } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import {
   resolvePluginProjectionEditableSettingsGroup,
   type PluginProjectionEditableSettingField,

@@ -29,10 +29,8 @@ import type {
     ProviderAccountUsageRecordId,
     QualifiedConnectedAccountQuotaSnapshotV4,
 } from '@happier-dev/protocol';
-import {
-    ConnectedServiceQuotaSnapshotV1Schema,
-    type ConnectedServiceId,
-} from '@happier-dev/protocol';
+import { ConnectedServiceQuotaSnapshotV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { useCredentialScopedAccountModeResolver } from './useCredentialScopedAccountModeResolver';
 import {
     buildQuotaSnapshotScopeKey,

@@ -1,4 +1,4 @@
-import { LocalServiceInventorySnapshotV1Schema } from '@happier-dev/protocol';
+import { LocalServiceInventorySnapshotV1Schema } from '@happier-dev/protocol/local/services/inventory/v1';
 
 import type { LocalServiceInventorySnapshot } from './store';
 

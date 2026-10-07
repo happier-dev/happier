@@ -6,7 +6,8 @@ import { Item } from '@/components/ui/lists/Item';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
-import { resolveCanonicalModelPackId, type ModelPackKind } from '@happier-dev/protocol';
+import { resolveCanonicalModelPackId } from '@happier-dev/protocol/voice/modelPacks/catalog';
+import type { ModelPackKind } from '@happier-dev/protocol/voice/modelPacks/manifest';
 
 import type { ModelCatalogRow } from './buildModelCatalogRows';
 import { buildModelCatalogRows } from './buildModelCatalogRows';

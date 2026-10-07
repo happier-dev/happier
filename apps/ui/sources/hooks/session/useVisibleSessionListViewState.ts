@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { usePathname } from 'expo-router';
-import { normalizeSessionListFilterV1, sameStrictJsonValue, type SessionListFilterV1 } from '@happier-dev/protocol';
+import { normalizeSessionListFilterV1, type SessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { useWorkflowRunWindow, type WorkflowRunWindow } from '@/components/workflows/library/workflowLibraryReads';
 import { useWorkflowsAvailability } from '@/components/workflows/gating/workflowsAvailability';
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';

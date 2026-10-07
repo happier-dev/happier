@@ -1,6 +1,7 @@
 import * as React from 'react';
 
-import { PromptBundleBodyV1Schema, PromptDocBodyV1Schema } from '@happier-dev/protocol';
+import { PromptBundleBodyV1Schema } from '@happier-dev/protocol/prompts/library/promptBundleSchemas';
+import { PromptDocBodyV1Schema } from '@happier-dev/protocol/prompts/library/promptDocV2';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';

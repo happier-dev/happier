@@ -30,7 +30,7 @@ import {
     type DaemonBrowserRecordingStopRequestV1,
     type DaemonBrowserRecordingStopResponseV1,
     type DaemonBrowserRecordingStopInputV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/recording/v1';
 import { isRpcMethodNotFoundResult, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';

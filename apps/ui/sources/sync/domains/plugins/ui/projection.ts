@@ -3,38 +3,16 @@ import type {
 } from '@/sync/api/daemon/daemonContributionRegistryProjectionProtocol';
 import { resolveLocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/platform';
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
-import {
-    PluginUiWidgetAreaDeclarationsV1Schema,
-    type PluginUiWidgetAreaDeclarationV1,
-    PluginLocalizedStringV2Schema,
-    PluginContributionLocalIdSchema,
-    PluginUiIconTokenV1Schema,
-    PluginPolicyExpressionV2Schema,
-    type PluginPolicyExpressionV2,
-    PluginContributionIdentityV1Schema,
-    OpenableContentViewerSelectorV1Schema,
-    RecipientContractV1Schema,
-    VoiceProviderContributionSchema,
-    PluginProjectedDragSourceEntryV1Schema,
-    PluginProjectedDropTargetEntryV1Schema,
-    type PluginProjectedDragSourceEntryV1,
-    type PluginProjectedDropTargetEntryV1,
-    buildQualifiedPluginContributionKey,
-    compilePluginJsonSchema,
-    createPluginContributionIdentity,
-    type PluginLocalizedStringV2,
-    type OpenableContentViewerSelectorV1,
-    type PluginContributionIdentityV1,
-    type PluginProjectionInstalledPackageV2,
-    type PluginProjectedActionV2,
-    type PluginProjectedResourceV2,
-    type PluginJsonSchemaValidator,
-    type PluginProjectedComposerAttachmentEntryV1,
-    type PluginProjectedComposerControlEntryV1,
-    type PluginProjectedComposerRegionEntryV1,
-    type PluginUiIconTokenV1,
-    type VoiceProviderContribution,
-} from '@happier-dev/protocol';
+import { PluginUiWidgetAreaDeclarationsV1Schema, type PluginUiWidgetAreaDeclarationV1 } from '@happier-dev/protocol/plugins/contributions/ui/widgetAreas';
+import { PluginLocalizedStringV2Schema, PluginPolicyExpressionV2Schema, type PluginPolicyExpressionV2, type PluginLocalizedStringV2 } from '@happier-dev/protocol/plugins/contributions/public-types';
+import { PluginContributionLocalIdSchema, PluginContributionIdentityV1Schema, buildQualifiedPluginContributionKey, createPluginContributionIdentity, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { PluginUiIconTokenV1Schema, type PluginUiIconTokenV1 } from '@happier-dev/protocol/plugins/contributions/ui/tokens';
+import { OpenableContentViewerSelectorV1Schema, type OpenableContentViewerSelectorV1 } from '@happier-dev/protocol/plugins/openableContentViewerV1';
+import { RecipientContractV1Schema } from '@happier-dev/protocol/plugins/recipientContractV1';
+import { VoiceProviderContributionSchema, type VoiceProviderContribution } from '@happier-dev/protocol/plugins/contributions/voice';
+import { PluginProjectedDragSourceEntryV1Schema, PluginProjectedDropTargetEntryV1Schema, type PluginProjectedDragSourceEntryV1, type PluginProjectedDropTargetEntryV1, type PluginProjectionInstalledPackageV2, type PluginProjectedActionV2, type PluginProjectedResourceV2, type PluginProjectedComposerAttachmentEntryV1, type PluginProjectedComposerControlEntryV1, type PluginProjectedComposerRegionEntryV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import type { PluginJsonSchemaValidator } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import {
     createPluginSessionInfoSectionRendererIdV1,
     isPluginUiSurfaceBindingPotentiallySupportedOnPlatformV1,

@@ -13,7 +13,7 @@ import type {
     ScmDiffSummaryResult,
 } from '@happier-dev/protocol';
 import { buildScmComparisonSourceKey } from '@happier-dev/protocol/scm';
-import { pluginJsonValuesEqual } from '@happier-dev/protocol';
+import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 
 export const SCM_DIFF_SUMMARY_GENERATE_ACTION_ID = 'scm.diffSummary.generate' as const;
 

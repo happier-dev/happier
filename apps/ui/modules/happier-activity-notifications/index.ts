@@ -1,5 +1,5 @@
 import { requireOptionalNativeModule } from 'expo-modules-core';
-import { ACTIVITY_REMOTE_ALERT_EVENT_TYPES_V1 } from '@happier-dev/protocol';
+import { ACTIVITY_REMOTE_ALERT_EVENT_TYPES_V1 } from '@happier-dev/protocol/push/activityRemoteAlert';
 
 /**
  * The alert categories a native consumer may present, mirroring

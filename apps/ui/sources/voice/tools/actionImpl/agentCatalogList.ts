@@ -1,13 +1,10 @@
 import { AGENT_IDS, getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
-import {
-    AgentsBackendsListOutputSchema,
-    readLegacyConfiguredAcpBackendId,
-    resolveActionBackendTargetSelection,
-    providerCatalogPermitsUnlistedModelIdV1,
-    readProviderSettingsFromAccountSettingsV1,
-    type AgentsBackendsListOutput,
-    type BackendTargetRefV1,
-} from '@happier-dev/protocol';
+import { AgentsBackendsListOutputSchema, type AgentsBackendsListOutput } from '@happier-dev/protocol/actions/agentBackendInventory';
+import { readLegacyConfiguredAcpBackendId } from '@happier-dev/protocol/backends/targets/compat/customAcp';
+import { resolveActionBackendTargetSelection } from '@happier-dev/protocol/actions/resolveActionBackendTargetSelection';
+import { providerCatalogPermitsUnlistedModelIdV1 } from '@happier-dev/protocol/providers/catalog/merge';
+import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
+import type { BackendTargetRefV1 } from '@happier-dev/protocol/backends/targets/backendTargetRef';
 import {
     getAgentStaticModels,
 } from '@happier-dev/agents';

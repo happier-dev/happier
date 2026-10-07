@@ -1,4 +1,4 @@
-import { classifyScmChangePath } from '@happier-dev/protocol';
+import { classifyScmChangePath } from '@happier-dev/protocol/scm/comparison';
 
 import { t } from '@/text';
 

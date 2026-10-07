@@ -1,16 +1,6 @@
-import {
-    AcpConfigOptionOverridesV1Schema,
-    buildBackendTargetKeyV2,
-    BackendTargetKeyV2Schema,
-    parseBackendTargetKeyV2,
-    readBackendTargetRefV2,
-    SessionModelSelectionV1Schema,
-    type AcpConfigOptionOverridesV1,
-    type BackendTargetRefV2Input,
-    type BackendTargetKeyV2,
-    type SessionModelSelectionV1,
-    type PersistedBackendTargetRefV2,
-} from '@happier-dev/protocol';
+import { AcpConfigOptionOverridesV1Schema, type AcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
+import { buildBackendTargetKeyV2, BackendTargetKeyV2Schema, parseBackendTargetKeyV2, readBackendTargetRefV2, type BackendTargetRefV2Input, type BackendTargetKeyV2, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { z } from 'zod';
 

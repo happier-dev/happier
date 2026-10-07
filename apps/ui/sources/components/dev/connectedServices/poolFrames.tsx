@@ -15,7 +15,7 @@ import type { QualifiedConnectedAccountUiGroup } from '@/sync/domains/connectedS
 import {
     ConnectedServiceAuthGroupPolicyV1Schema,
     type ConnectedServiceQuotaSnapshotV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/connected-service-schemas';
 
 import { ACCOUNTS, CLAUDE, CLAUDE_LAB, DAY, HOUR, LABELS, MIN } from './connectedServicesFixtures';
 

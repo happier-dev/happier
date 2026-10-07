@@ -1,16 +1,8 @@
 import * as React from 'react';
-import {
-    applyFeatureDependencies,
-    createFeatureDecision,
-    evaluateFeatureDecisionBase,
-    featureRequiresServerSnapshot,
-    getFeatureDependencies,
-    isFeatureServerRepresented,
-    readServerEnabledBit,
-    type FeatureDecision,
-    type FeatureDecisionScope,
-    type FeatureId,
-} from '@happier-dev/protocol';
+import { applyFeatureDependencies, evaluateFeatureDecisionBase } from '@happier-dev/protocol/features/featureDecisionEngine';
+import { createFeatureDecision, type FeatureDecision, type FeatureDecisionScope } from '@happier-dev/protocol/features/decision';
+import { featureRequiresServerSnapshot, getFeatureDependencies, isFeatureServerRepresented, type FeatureId } from '@happier-dev/protocol/features/catalog';
+import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import {

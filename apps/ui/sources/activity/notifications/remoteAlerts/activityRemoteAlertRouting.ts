@@ -1,9 +1,5 @@
-import {
-    ActivityRemoteAlertSchema,
-    resolveActivityRemoteAlertEventIdentity,
-    type ActivityRemoteAlert,
-    type SessionPersonalEventKindV1,
-} from '@happier-dev/protocol';
+import { ActivityRemoteAlertSchema, resolveActivityRemoteAlertEventIdentity, type ActivityRemoteAlert } from '@happier-dev/protocol/push/activityRemoteAlert';
+import type { SessionPersonalEventKindV1 } from '@happier-dev/protocol/sessions/personal/eventEligibility';
 
 import { resolveServerProfileForPortableIdentity } from '@/sync/domains/server/serverProfiles';
 import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';

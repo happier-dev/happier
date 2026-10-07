@@ -7,7 +7,7 @@ import {
     type ReplaceLocalBackgroundServicesPromptData,
     type ReplaceRemoteBackgroundServicesPromptData,
     type TakeOverManualRelayRuntimeForSetupPromptData,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/system/tasks/promptPayloadContracts';
 
 import type { SystemTaskPromptEnvelope } from './readLatestSystemTaskPrompt';
 

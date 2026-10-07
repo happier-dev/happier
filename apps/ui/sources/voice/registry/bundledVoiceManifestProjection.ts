@@ -1,9 +1,6 @@
-import {
-  PluginManifestV2Schema,
-  buildQualifiedPluginContributionKey,
-  createPluginContributionIdentity,
-  type VoiceProviderContribution,
-} from '@happier-dev/protocol';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
+import { buildQualifiedPluginContributionKey, createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { VoiceProviderContribution } from '@happier-dev/protocol/plugins/contributions/voice';
 
 import type { VoiceProviderPresentation, VoiceSpeechSettingsPresentation } from './voiceProviderPresentation';
 

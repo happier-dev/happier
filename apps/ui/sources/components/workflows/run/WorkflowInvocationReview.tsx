@@ -1,9 +1,10 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { WorkflowResultContractSchema, type JsonValue, type WorkflowDefinitionV1,
-    type WorkflowProgressEnvelopeV1, type WorkflowRunAcceptedContextV1,
-    type WorkflowRunInvocationIndexV1, type WorkflowRunSummaryV1, type WorkflowRunGetResultV1,
-    matchesWorkflowAcceptedDefinitionV1 } from '@happier-dev/protocol';
+import { WorkflowResultContractSchema, type WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
+import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { WorkflowProgressEnvelopeV1, WorkflowRunInvocationIndexV1, WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import type { WorkflowRunAcceptedContextV1, WorkflowRunGetResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
+import { matchesWorkflowAcceptedDefinitionV1 } from '@happier-dev/protocol/workflows/workflowValidationV1';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { workflowRunDetailActions } from '@/sync/domains/workflows/workflowRunDetailActions';
 import { buildWorkflowPlanReviewSeed, deriveWorkflowPlanRunId, readWorkflowPlanResult,

@@ -1,4 +1,4 @@
-import { normalizeProviderEndpointUrlSyntax } from '@happier-dev/protocol';
+import { normalizeProviderEndpointUrlSyntax } from '@happier-dev/protocol/providers/safety/url';
 
 export type SpeechEndpointConsentPatch = Readonly<{
   baseUrl: string;

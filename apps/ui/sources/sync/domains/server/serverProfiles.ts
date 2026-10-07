@@ -1,12 +1,8 @@
 import { MMKV } from 'react-native-mmkv';
 import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
-import {
-    HomeConnectionDescriptorV1Schema,
-    StoredHomeConnectionDescriptorV1Schema,
-    normalizeServerIdentityIdCapability,
-    type HomeConnectionDescriptorV1,
-} from '@happier-dev/protocol';
+import { HomeConnectionDescriptorV1Schema, StoredHomeConnectionDescriptorV1Schema, type HomeConnectionDescriptorV1 } from '@happier-dev/protocol/auth/accountDirectory';
+import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { DEFAULT_HAPPIER_CLOUD_SERVER_URL } from '@happier-dev/cli-common/happierCloud';
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';

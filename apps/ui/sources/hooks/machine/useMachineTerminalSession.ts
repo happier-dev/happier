@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { TERMINAL_STREAM_MAX_READ_BYTES, type DaemonTerminalLaunchIntent } from '@happier-dev/protocol';
+import { TERMINAL_STREAM_MAX_READ_BYTES } from '@happier-dev/protocol/terminal/stream';
+import type { DaemonTerminalLaunchIntent } from '@happier-dev/protocol/daemon/terminal';
 
 import { createEmptyTerminalSurfaceState, readTerminalSurfaceState } from '@/components/sessions/terminal/terminalSurfaceStateCache';
 import {

@@ -1,16 +1,10 @@
-import {
-    DIRECT_ROUTE_GRANT_TTL_MS,
-    PEER_MEDIATION_RECEIPTS,
-    PeerLoopbackEndpointCandidateV1Schema,
-    PeerMachineRpcDirectResponseV2Schema,
-    SignedDirectRouteGrantV2Schema,
-    createEphemeralPeerRouteProofHandleV2,
-    type PeerLoopbackEndpointCandidateV1,
-    type PeerMachineRpcDirectFallbackReasonCodeV1,
-    type PeerMachineRpcDirectRequestV2,
-    type PeerMachineRpcDirectResponseV2,
-    type SignedDirectRouteGrantV2,
-} from '@happier-dev/protocol';
+import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
+import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/mediation/receipts';
+import { PeerLoopbackEndpointCandidateV1Schema, type PeerLoopbackEndpointCandidateV1 } from '@happier-dev/protocol/machines/peer/mediation/loopbackEndpointV1';
+import { PeerMachineRpcDirectResponseV2Schema, type PeerMachineRpcDirectRequestV2, type PeerMachineRpcDirectResponseV2 } from '@happier-dev/protocol/machines/peer/mediation/rpc/directV2';
+import { SignedDirectRouteGrantV2Schema, type SignedDirectRouteGrantV2 } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
+import { createEphemeralPeerRouteProofHandleV2 } from '@happier-dev/protocol/machines/peer/mediation/ephemeralPeerRouteProofV2';
+import type { PeerMachineRpcDirectFallbackReasonCodeV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/directV1';
 
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { getRandomBytes } from '@/platform/cryptoRandom';

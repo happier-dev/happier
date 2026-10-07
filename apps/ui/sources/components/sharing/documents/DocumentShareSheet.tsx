@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { getArtifactKindPolicyV1 } from '@happier-dev/protocol';
+import { getArtifactKindPolicyV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';

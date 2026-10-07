@@ -4,7 +4,7 @@ import {
     SessionPermissionRemoteGrantRevokeOutputV1Schema,
     SessionPermissionRemoteGrantsListOutputV1Schema,
     type SessionPermissionRemoteGrantSummaryV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/permissions/v1';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';

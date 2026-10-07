@@ -1,9 +1,7 @@
-import {
-  readIngressComposerAttachmentSelectionV1,
-  SessionInputAdmissionRejectionCodeV1Schema,
-  type PendingRequestedActionV1,
-  type ParticipantRecipientV1,
-} from '@happier-dev/protocol';
+import { readIngressComposerAttachmentSelectionV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import { SessionInputAdmissionRejectionCodeV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
+import type { PendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
+import type { ParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
 
 import { areServerAccountScopesEqual, createServerAccountScope, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';

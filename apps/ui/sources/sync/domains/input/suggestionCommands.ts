@@ -4,7 +4,8 @@
  */
 
 import Fuse from 'fuse.js';
-import { isPromptInvocationAvailable, listActionSpecs, PromptInvocationsV1Schema } from '@happier-dev/protocol';
+import { isPromptInvocationAvailable, PromptInvocationsV1Schema } from '@happier-dev/protocol/prompts/library/promptInvocationsV1';
+import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import { storage } from '../state/storage';
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
 import { t } from '@/text';

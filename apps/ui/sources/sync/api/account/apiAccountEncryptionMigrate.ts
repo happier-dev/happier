@@ -12,9 +12,9 @@ import {
   AccountEncryptionMigrateSuccessResponseSchema,
   AccountEncryptionMigrateAnyErrorResponseSchema,
   type AccountEncryptionMigrateRequest,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/encryptionMigrate';
 
-export { AccountEncryptionMigrateRequestSchema, type AccountEncryptionMigrateRequest } from '@happier-dev/protocol';
+export { AccountEncryptionMigrateRequestSchema, type AccountEncryptionMigrateRequest } from '@happier-dev/protocol/account/encryptionMigrate';
 
 export type AccountEncryptionMigrationTarget = Readonly<{
   serverUrl: string;

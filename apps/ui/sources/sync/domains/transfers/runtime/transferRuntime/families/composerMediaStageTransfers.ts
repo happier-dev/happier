@@ -1,19 +1,8 @@
-import {
-    COMPOSER_MEDIA_CONTENT_CAPABILITY_V1,
-    ComposerContentHandleV1Schema,
-    ComposerContentInspectRequestV1Schema,
-    ComposerContentInspectWireResultV1Schema,
-    ComposerInstanceIdSchema,
-    ComposerRefV1Schema,
-    type ComposerContentHandleV1,
-    type ComposerContentInspectRequestV1,
-    type ComposerContentInspectWireResultV1,
-    type ComposerContentMediaKindV1,
-    type ComposerContentMimeTypeV1,
-    type ComposerRefV1,
-    type PluginContributionIdentityV1,
-    type SessionExecutionTargetV1,
-} from '@happier-dev/protocol';
+import { COMPOSER_MEDIA_CONTENT_CAPABILITY_V1, ComposerContentHandleV1Schema, ComposerContentInspectRequestV1Schema, ComposerContentInspectWireResultV1Schema, type ComposerContentHandleV1, type ComposerContentInspectRequestV1, type ComposerContentInspectWireResultV1, type ComposerContentMediaKindV1, type ComposerContentMimeTypeV1 } from '@happier-dev/protocol/runtime/input/composerContentV1';
+import { ComposerInstanceIdSchema } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import { ComposerRefV1Schema, type ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { SessionExecutionTargetV1 } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import type { TransferFileReader } from './sessionAttachmentTransfers';

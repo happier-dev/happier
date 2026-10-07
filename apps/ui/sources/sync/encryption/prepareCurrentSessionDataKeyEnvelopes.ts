@@ -1,15 +1,7 @@
-import {
-    ENCRYPTED_DATA_KEY_V1_BYTES,
-    prepareSessionDataKeyEnvelopeItemV1,
-    runSessionDataKeyPreparationPass,
-    type SessionDataKeyPreparationProgress,
-    type PatchSessionDataKeyEnvelopesResultV1,
-    type PatchSessionDataKeyEnvelopesV1,
-    type SessionDataKeyEnvelopeItemV1,
-    type SessionDataKeyEnvelopePageV1,
-    type SessionDataKeyEnvelopeSummaryV1,
-    type SessionDataKeyRecipientUnavailableReasonV1,
-} from '@happier-dev/protocol';
+import { ENCRYPTED_DATA_KEY_V1_BYTES } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { prepareSessionDataKeyEnvelopeItemV1 } from '@happier-dev/protocol/sessions/encryption/prepareSessionDataKeyEnvelopeItemV1';
+import { runSessionDataKeyPreparationPass, type SessionDataKeyPreparationProgress } from '@happier-dev/protocol/sessions/encryption/sessionDataKeyPreparationPass';
+import type { PatchSessionDataKeyEnvelopesResultV1, PatchSessionDataKeyEnvelopesV1, SessionDataKeyEnvelopeItemV1, SessionDataKeyEnvelopePageV1, SessionDataKeyEnvelopeSummaryV1, SessionDataKeyRecipientUnavailableReasonV1 } from '@happier-dev/protocol/sessions/encryption/sessionDataKeyEnvelopes';
 import { isCapturedEncryptionGenerationScopeCurrent } from './encryption';
 
 import { SESSION_DATA_KEY_SEAL_CHUNK_SIZE } from './directShareEncryption';

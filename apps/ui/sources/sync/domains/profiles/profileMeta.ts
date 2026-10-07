@@ -3,7 +3,7 @@ import { AGENT_IDS } from '@/agents/registry/registryCore';
 import {
     readBackendTargetRefV2,
     type BackendTargetRefV2Input,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { isProfileCompatibleWithAgent, type AIBackendProfile, type ProfileCompatibilitySummary } from './profileCompatibility';
 import { getBuiltInProfile } from './profileCatalog';
 

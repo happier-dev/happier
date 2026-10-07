@@ -15,7 +15,7 @@ import {
     type ConnectedAccountDaemonCommand,
     type ConnectedAccountDaemonControlCommand,
     type ConnectedAccountDaemonControlResponse,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 
 import {
     machineRpcWithServerScope,

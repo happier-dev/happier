@@ -9,7 +9,7 @@ import {
     MemoryEmbeddingsLocalTransformersConfigSchema,
     MemoryEmbeddingsOpenAiCompatibleConfigSchema,
     type MemorySettingsV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/memory/memorySettings';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { Item } from '@/components/ui/lists/Item';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';

@@ -11,11 +11,8 @@ import {
     getCurrentSessionViewingActivationId,
     holdManualUnreadForActivation,
 } from '@/sync/domains/session/readState/sessionManualUnreadHold';
-import {
-    SessionReadStateSetResultV1Schema,
-    SessionViewerProjectionV1Schema,
-    type SessionViewerProjectionV1,
-} from '@happier-dev/protocol';
+import { SessionReadStateSetResultV1Schema } from '@happier-dev/protocol/sessions/readState/actions';
+import { SessionViewerProjectionV1Schema, type SessionViewerProjectionV1 } from '@happier-dev/protocol/sessions/personal/viewer';
 import { storage } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { Metadata } from '@happier-dev/session-core/state';

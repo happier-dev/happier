@@ -1,7 +1,7 @@
 import {
     PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
     type PeerTcpTunnelEncoding,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/peer/mediation/tunnel/encoding';
 
 export type MachineStreamRouteKind = 'loopback_direct' | 'server_relay';
 export type MachineStreamDeliveryMode = 'demand_pull' | 'push_event' | 'input_append';

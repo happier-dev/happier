@@ -1,8 +1,5 @@
-import {
-    BrowserContextAttachmentV1Schema,
-    buildBrowserContextAnnotationStructuredBlock,
-    type BrowserContextAttachmentV1,
-} from '@happier-dev/protocol';
+import { BrowserContextAttachmentV1Schema, type BrowserContextAttachmentV1 } from '@happier-dev/protocol/browser/context/v1';
+import { buildBrowserContextAnnotationStructuredBlock } from '@happier-dev/protocol/browser/context/annotationStructuredBlock';
 
 import type { BrowserContextState } from './types';
 

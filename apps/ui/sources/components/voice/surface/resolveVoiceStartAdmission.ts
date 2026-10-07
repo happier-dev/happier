@@ -1,4 +1,4 @@
-import { VoiceRuntimePlatformSchema, type VoiceRuntimePlatform } from '@happier-dev/protocol';
+import { VoiceRuntimePlatformSchema, type VoiceRuntimePlatform } from '@happier-dev/protocol/voice/realtime/capabilities';
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import type { VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import {

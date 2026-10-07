@@ -1,8 +1,5 @@
-import {
-    DaemonVoiceClientRawCredentialMaterializeRequestV1Schema,
-    DaemonVoiceClientRawCredentialMaterializeResponseV1Schema,
-    type ConnectedServiceCredentialRevisionV1,
-} from '@happier-dev/protocol';
+import { DaemonVoiceClientRawCredentialMaterializeRequestV1Schema, DaemonVoiceClientRawCredentialMaterializeResponseV1Schema } from '@happier-dev/protocol/daemon/voiceCredentials';
+import type { ConnectedServiceCredentialRevisionV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { VoiceCredentialAccessPhase, VoiceRawCredentialAccess } from '@happier-dev/plugin-sdk/voice';

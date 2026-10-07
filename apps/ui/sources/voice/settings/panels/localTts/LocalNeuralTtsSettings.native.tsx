@@ -13,7 +13,7 @@ import {
   KOKORO_DEFAULT_TTS_PACK_ID,
   getModelPackCatalogEntry,
   isPublishedModelPackCatalogEntry,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/voice/modelPacks/catalog';
 import type { VoiceLocalTtsSettings } from '@/sync/domains/settings/voiceLocalTtsSettings';
 import { getKokoroAssetSetOptions } from '@/voice/kokoro/assets/kokoroAssetSets';
 import { resolveKokoroDaemonTtsPackId } from '@/voice/kokoro/assets/resolveKokoroDaemonTtsPackId';

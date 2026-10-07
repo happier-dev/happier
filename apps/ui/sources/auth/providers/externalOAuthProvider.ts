@@ -16,11 +16,8 @@ import type {
     TeamOAuthRequestContext,
     TeamOAuthStart,
 } from '@/auth/providers/types';
-import {
-    ExternalOAuthFinalizeConnectSuccessResponseSchema,
-    ExternalOAuthParamsResponseSchema,
-    type AuthProviderId,
-} from '@happier-dev/protocol';
+import { ExternalOAuthFinalizeConnectSuccessResponseSchema, ExternalOAuthParamsResponseSchema } from '@happier-dev/protocol/auth/externalOAuth';
+import type { AuthProviderId } from '@happier-dev/protocol/auth/providers';
 
 const OAUTH_NOT_CONFIGURED_ERROR = 'oauth_not_configured';
 

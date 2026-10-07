@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { machinePreviewEnv, type PreviewEnvValue } from '@/sync/ops';
-import { ProbedResourceCache } from '@happier-dev/protocol';
+import { ProbedResourceCache } from '@happier-dev/protocol/common/probedResourceCache';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 export type EnvPresenceMeta = Record<string, { isSet: boolean; display: PreviewEnvValue['display'] }>;

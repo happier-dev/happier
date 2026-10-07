@@ -1,5 +1,5 @@
 import { comparePendingRequestsByAge, type SessionPendingRequest } from '@happier-dev/session-core/pending';
-import { isPendingRequestAnswerableV1 } from '@happier-dev/protocol';
+import { isPendingRequestAnswerableV1 } from '@happier-dev/protocol/sessions/personal/attention';
 import { areSessionAddressesEqual, sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { resolveSessionPersonalAttentionForViewer } from '@/sync/domains/session/readState/sessionViewerAttention';

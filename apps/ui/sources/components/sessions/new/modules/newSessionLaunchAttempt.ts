@@ -1,5 +1,5 @@
 import { randomUUID } from '@/platform/randomUUID';
-import { buildSpawnedFirstTurnLocalId } from '@happier-dev/protocol';
+import { buildSpawnedFirstTurnLocalId } from '@happier-dev/protocol/sessions/messages/spawnedFirstTurn';
 
 export type NewSessionLaunchAttemptStatus =
     | 'idle'

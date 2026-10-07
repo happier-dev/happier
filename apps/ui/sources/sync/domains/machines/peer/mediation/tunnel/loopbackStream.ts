@@ -1,9 +1,5 @@
-import {
-    PEER_TCP_TUNNEL_STREAM_PATH,
-    type PeerTcpTunnelOpenResponseV1,
-    type PeerTcpTunnelOpenV1,
-    type PeerTcpTunnelOpenV2,
-} from '@happier-dev/protocol';
+import { PEER_TCP_TUNNEL_STREAM_PATH, type PeerTcpTunnelOpenResponseV1, type PeerTcpTunnelOpenV1 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/v1';
+import type { PeerTcpTunnelOpenV2 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/openAuthorizationV2';
 import {
     decodePeerTcpTunnelBinaryFrameForSession,
     decodePeerTcpTunnelBinarySubstreamFrame,

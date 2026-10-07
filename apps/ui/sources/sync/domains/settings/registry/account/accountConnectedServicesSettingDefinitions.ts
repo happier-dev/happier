@@ -1,4 +1,4 @@
-import { ConnectedServicesDefaultAuthByAgentIdV1Schema, ConnectedServicesProviderStateSharingSettingsV1Schema } from '@happier-dev/protocol';
+import { ConnectedServicesDefaultAuthByAgentIdV1Schema, ConnectedServicesProviderStateSharingSettingsV1Schema } from '@happier-dev/protocol/account/settings/connected-services';
 import { defineAccountSettingAnalytics } from './accountSettingAnalyticsPresentation';
 
 function objectKeyCount(value: unknown): number {

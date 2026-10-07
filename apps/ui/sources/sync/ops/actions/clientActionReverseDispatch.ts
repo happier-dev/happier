@@ -1,7 +1,7 @@
 import {
     UiActionDispatchRequestV1Schema,
     parseClientActionDispatchResult,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/actions/clientDispatchV1';
 import { createDefaultActionExecutor } from './defaultActionExecutor';
 
 /** Only the server-authenticated exact Machine may enter this admitted continuation. */

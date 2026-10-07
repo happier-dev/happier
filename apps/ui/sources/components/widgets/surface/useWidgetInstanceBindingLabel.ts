@@ -1,4 +1,4 @@
-import { VoiceTrackedSessionAddressV1Schema } from '@happier-dev/protocol';
+import { VoiceTrackedSessionAddressV1Schema } from '@happier-dev/protocol/sessions/follow/voiceTrackedTargetsCompatibilityV1';
 import type { WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
 
 import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';

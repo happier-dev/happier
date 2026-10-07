@@ -1,10 +1,7 @@
 import { isAcceptedHappierUrlProtocol, resolveAppUrlScheme } from '@/utils/url/appScheme';
-import {
-    normalizeServerIdentityIdCapability,
-    encodeTerminalConnectLinkV4Payload,
-    parseTerminalConnectLinkV4Parameters,
-    type HomeConnectionDescriptorV1,
-} from '@happier-dev/protocol';
+import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
+import { encodeTerminalConnectLinkV4Payload, parseTerminalConnectLinkV4Parameters } from '@happier-dev/protocol/auth/terminalConnectLinkV4';
+import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol/auth/accountDirectory';
 import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
 import { resolveEffectiveServerUrlOverride } from '@/sync/domains/server/url/serverUrlOverridePolicy';
 

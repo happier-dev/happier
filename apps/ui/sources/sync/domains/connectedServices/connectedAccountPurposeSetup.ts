@@ -1,5 +1,7 @@
-import { QualifiedConnectedAccountPurposeV1Schema, resolveConnectedAccountPurposeSelectedAccountV1,
-    type AccountProfile, type QualifiedConnectedAccountPurposeBindingTargetV1, type QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol';
+import { QualifiedConnectedAccountPurposeV1Schema, type QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
+import { resolveConnectedAccountPurposeSelectedAccountV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeSelectionV1';
+import type { AccountProfile } from '@happier-dev/protocol/account/profile';
+import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import type { PluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { areServerAccountScopesEqual, createServerAccountScope, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 

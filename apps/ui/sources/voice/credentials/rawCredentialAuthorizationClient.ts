@@ -1,11 +1,6 @@
-import {
-  DaemonVoiceClientRawCredentialAuthorizationInspectResponseV1Schema,
-  DaemonVoiceClientRawCredentialAuthorizationRequestResponseV1Schema,
-  type DaemonVoiceClientRawCredentialAuthorizationInspectResponseV1,
-  type DaemonVoiceClientRawCredentialAuthorizationRequestResponseV1,
-  type PluginContributionIdentityV1,
-  type VoiceRawCredentialGrantDeclaration,
-} from '@happier-dev/protocol';
+import { DaemonVoiceClientRawCredentialAuthorizationInspectResponseV1Schema, DaemonVoiceClientRawCredentialAuthorizationRequestResponseV1Schema, type DaemonVoiceClientRawCredentialAuthorizationInspectResponseV1, type DaemonVoiceClientRawCredentialAuthorizationRequestResponseV1 } from '@happier-dev/protocol/daemon/voiceCredentials';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { VoiceRawCredentialGrantDeclaration } from '@happier-dev/protocol/plugins/contributions/voice';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import {

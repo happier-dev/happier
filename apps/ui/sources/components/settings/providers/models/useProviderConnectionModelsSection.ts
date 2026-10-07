@@ -1,10 +1,7 @@
 import * as React from 'react';
-import {
-    createProviderErrorV1,
-    parseProviderManualModelInput,
-    type ModelVisibilityRefV1,
-    type ProviderErrorV1,
-} from '@happier-dev/protocol';
+import { createProviderErrorV1, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { parseProviderManualModelInput } from '@happier-dev/protocol/providers/manualModelInput';
+import type { ModelVisibilityRefV1 } from '@happier-dev/protocol/providers/model-selection';
 import type { DaemonProviderConnectionViewV1 } from '@happier-dev/protocol/rpc';
 
 import type { TextInput } from '@/components/ui/text/Text';

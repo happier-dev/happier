@@ -1,11 +1,7 @@
-import {
-    bindHomeDomainActionHttpRequestV1,
-    homeDomainActionOutputSchemaV1,
-    getActionSpec,
-    readHomeDomainActionErrorV1,
-    type ActionExecuteFailure,
-    type ActionExecutorDeps,
-} from '@happier-dev/protocol';
+import { bindHomeDomainActionHttpRequestV1, homeDomainActionOutputSchemaV1, readHomeDomainActionErrorV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import {
     HomeGovernanceErrorCodeV1Schema,
     homeGovernanceErrorHttpStatusV1,

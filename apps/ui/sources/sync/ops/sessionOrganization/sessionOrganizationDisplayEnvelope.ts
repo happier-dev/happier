@@ -1,16 +1,10 @@
-import {
-    openSessionOrganizationDisplayEnvelopeV1,
-    prepareSessionOrganizationDisplayEnvelopeForAccountModeV1,
-    SessionOrganizationContentEnvelopeSchema,
-    type AccountEncryptionMigrateSessionOrganizationDirective,
-    type SessionOrganizationAccountEncryptionMigrationInventory,
-    type SessionOrganizationContentEnvelope,
-    type SessionOrganizationDisplayState as ProtocolSessionOrganizationDisplayState,
-    type SessionOrganizationFolder,
-    type SessionOrganizationLabel,
-    type SessionOrganizationSnapshot,
-    type SessionOrganizationTag,
-} from '@happier-dev/protocol';
+import { openSessionOrganizationDisplayEnvelopeV1, prepareSessionOrganizationDisplayEnvelopeForAccountModeV1, SessionOrganizationContentEnvelopeSchema, type SessionOrganizationContentEnvelope, type SessionOrganizationDisplayState as ProtocolSessionOrganizationDisplayState } from '@happier-dev/protocol/sessions/organization/content';
+import type { AccountEncryptionMigrateSessionOrganizationDirective } from '@happier-dev/protocol/account/encryptionMigrate';
+import type { SessionOrganizationAccountEncryptionMigrationInventory } from '@happier-dev/protocol/sessions/organization/accountEncryptionMigrationInventory';
+import type { SessionOrganizationFolder } from '@happier-dev/protocol/sessions/organization/folders';
+import type { SessionOrganizationLabel } from '@happier-dev/protocol/sessions/organization/ordering';
+import type { SessionOrganizationSnapshot } from '@happier-dev/protocol/sessions/organization/snapshot';
+import type { SessionOrganizationTag } from '@happier-dev/protocol/sessions/organization/tags';
 
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import {

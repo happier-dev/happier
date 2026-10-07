@@ -1,4 +1,4 @@
-import { TemporaryComputerActivationRefV1Schema } from '@happier-dev/protocol';
+import { TemporaryComputerActivationRefV1Schema } from '@happier-dev/protocol/sessions/authoring/fieldCatalog';
 import * as React from 'react';
 
 import {

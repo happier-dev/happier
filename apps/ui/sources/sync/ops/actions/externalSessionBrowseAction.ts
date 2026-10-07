@@ -1,9 +1,5 @@
-import {
-    ExternalSessionCandidateDeleteRequestSchema,
-    ExternalSessionLinkEnsureRequestSchema,
-    ExternalSessionsCandidatesListRequestSchema,
-    type ActionExecutorDeps,
-} from '@happier-dev/protocol';
+import { ExternalSessionCandidateDeleteRequestSchema, ExternalSessionLinkEnsureRequestSchema, ExternalSessionsCandidatesListRequestSchema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import {
     ExternalSessionMaterializeActionInputV1Schema,
     ExternalSessionOperationReferenceV1Schema,

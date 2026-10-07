@@ -1,7 +1,7 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { ResolvedHomeAuthenticationTarget } from '@/auth/flows/resolveHomeAuthenticationTarget';
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
-import { acceptPasswordTextV1, encodePasswordCredentialFieldV1 } from '@happier-dev/protocol';
+import { acceptPasswordTextV1, encodePasswordCredentialFieldV1 } from '@happier-dev/protocol/auth/accountPasswordCredential';
 import { authenticatePlainPassword, preloginEmailPassword, unlockEmailPassword } from '@/sync/api/auth/emailPassword';
 import { createServerFetchAtEndpoint, type ServerFetch } from '@/sync/http/client';
 import { HappyError } from '@/utils/errors/errors';

@@ -1,4 +1,4 @@
-import { isLoopbackHostname } from '@happier-dev/protocol';
+import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
 
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { digest } from '@/platform/digest';

@@ -1,7 +1,5 @@
-import {
-  StrictJsonValueSchema,
-  type VoiceRealtimeJsonValue,
-} from '@happier-dev/protocol';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import type { VoiceRealtimeJsonValue } from '@happier-dev/protocol/voice/realtime/events';
 import type {
   VoiceRealtimeConnection,
   VoiceOutputFocusApplication,

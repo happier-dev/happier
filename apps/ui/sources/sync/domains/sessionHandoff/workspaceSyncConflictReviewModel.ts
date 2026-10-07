@@ -1,11 +1,5 @@
-import {
-    areWorkspaceSyncEntryExpectationsEqual,
-    projectWorkspaceSyncConflictPages,
-    WorkspaceSyncConflictResolutionV1Schema,
-    type WorkspaceSyncConflictInspectRpcResultV1,
-    type WorkspaceSyncConflictResolutionV1,
-    type WorkspaceSyncEntryExpectationV1,
-} from '@happier-dev/protocol';
+import { areWorkspaceSyncEntryExpectationsEqual, WorkspaceSyncConflictResolutionV1Schema, type WorkspaceSyncConflictInspectRpcResultV1, type WorkspaceSyncConflictResolutionV1, type WorkspaceSyncEntryExpectationV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { projectWorkspaceSyncConflictPages } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncConflictProjection';
 
 export function projectLoadedWorkspaceSyncConflicts(input: Parameters<typeof projectWorkspaceSyncConflictPages>[0]) {
     return projectWorkspaceSyncConflictPages(input);

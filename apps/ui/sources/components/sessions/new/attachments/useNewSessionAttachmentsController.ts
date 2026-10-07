@@ -4,7 +4,8 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { createReviewCommentsActionChip } from '@/components/sessions/agentInput/definitions/createReviewCommentsActionChip';
 import { resolveReviewCommentDraftAnchorsForPrompt } from '@/components/sessions/reviews/comments/resolveReviewCommentDraftAnchorsForPrompt';
 import { createAttachmentActionChip } from '@/components/sessions/agentInput/sessionActions/createAttachmentActionChip';
-import { RawIngressStructuredInputV1Schema, ReviewCommentDraftMessageV1Schema } from '@happier-dev/protocol';
+import { RawIngressStructuredInputV1Schema } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import { ReviewCommentDraftMessageV1Schema } from '@happier-dev/protocol/messages/structured/reviewCommentsV1';
 
 import type {
     AgentInputAttachmentsRowItem,

@@ -1,4 +1,5 @@
-import { UiBrowserAutomationDispatchRequestV1Schema, UiBrowserAutomationDispatchResultV1Schema, getActionSpec } from '@happier-dev/protocol';
+import { UiBrowserAutomationDispatchRequestV1Schema, UiBrowserAutomationDispatchResultV1Schema } from '@happier-dev/protocol/browser/automation/reverseDispatchV1';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 
 import { createBrowserRuntimeActionExecutor } from '../actions/runtimeActionExecutor';
 import { readRegisteredBrowserRuntimeAutomationAdapter, readRegisteredBrowserRuntimeControlAdapter } from '../actions/runtimeControlRegistry';

@@ -1,5 +1,6 @@
-import { isPendingDeliveryProviderEffectPossibleV1, normalizePendingDeliveryStatusV1,
-    resolveAnchoredListMoveV1, type PendingReorderInputV1 } from '@happier-dev/protocol';
+import { isPendingDeliveryProviderEffectPossibleV1, normalizePendingDeliveryStatusV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
+import { resolveAnchoredListMoveV1 } from '@happier-dev/protocol/actions/anchoredListOrderV1';
+import type { PendingReorderInputV1 } from '@happier-dev/protocol/actions/listReorderAction';
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { isPendingMessageForRecipient } from './pendingMessageRecipient';

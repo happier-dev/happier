@@ -1,12 +1,7 @@
-import {
-    arePluginMachineExecutionOriginsEqual,
-    arePluginMachineMaterializationRefsEqual,
-    isExactPluginMachineMaterializationReleaseCorrespondenceV1,
-    PluginMachineExecutionOriginV1Schema,
-    resolvePluginCollectionMigrationArtifactOwnerV1,
-    type PluginMachineExecutionOriginV1,
-    type PluginProjectionV2,
-} from '@happier-dev/protocol';
+import { arePluginMachineExecutionOriginsEqual, arePluginMachineMaterializationRefsEqual, PluginMachineExecutionOriginV1Schema, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { isExactPluginMachineMaterializationReleaseCorrespondenceV1 } from '@happier-dev/protocol/plugins/availability/v1';
+import { resolvePluginCollectionMigrationArtifactOwnerV1 } from '@happier-dev/protocol/plugins/data/collectionContributionV1';
+import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginReleaseFactsV1 } from '@happier-dev/protocol/plugins/availability';
 import {
     PluginUiArtifactsManifestEntryV2Schema,

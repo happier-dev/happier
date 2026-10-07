@@ -5,7 +5,7 @@ import {
     resolveScmUiPolicy,
     resolveSupportedDiffAreas,
 } from '@/scm/registry/scmUiBackendPlugin';
-import { inferScmRemoteTarget } from '@happier-dev/protocol';
+import { inferScmRemoteTarget } from '@happier-dev/protocol/scm';
 
 export const saplingScmUiPlugin: ScmUiBackendPlugin = {
     id: 'sapling',

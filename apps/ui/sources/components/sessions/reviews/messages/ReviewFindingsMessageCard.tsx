@@ -9,7 +9,8 @@ import type {
     ReviewQuestion,
     ReviewTriageStatus,
 } from '@happier-dev/protocol';
-import { REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1, renderReviewFindingsForVerifyV1, ReviewFollowUpFailureCodeSchema } from '@happier-dev/protocol';
+import { REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1, renderReviewFindingsForVerifyV1 } from '@happier-dev/protocol/reviews/reviewFindingsApplyInputV1';
+import { ReviewFollowUpFailureCodeSchema } from '@happier-dev/protocol/execution/runs/index';
 
 import { hasAgentIconMark } from '@/agents/catalog/catalog';
 import { AgentIcon } from '@/agents/registry/AgentIcon';

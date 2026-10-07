@@ -1,9 +1,5 @@
-import {
-    openSavedSecretResourceStoredContentV1,
-    type SavedSecretCatalogCorruptEntryV1,
-    type SavedSecretCatalogEntryV1,
-    type SavedSecretResourceMaterialV1,
-} from '@happier-dev/protocol';
+import { openSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import type { SavedSecretCatalogCorruptEntryV1, SavedSecretCatalogEntryV1, SavedSecretResourceMaterialV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 

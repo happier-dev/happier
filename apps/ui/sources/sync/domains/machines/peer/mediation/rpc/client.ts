@@ -1,18 +1,9 @@
-import {
-    PEER_MACHINE_RPC_DIRECT_PATH_V2,
-    PEER_MEDIATION_RECEIPTS,
-    PeerMachineRpcDirectResponseV2Schema,
-    createPeerMachineRpcRequestHashV1,
-    isMachineRpcDirectRoutePolicy,
-    resolveMachineRpcRelayFallbackDecision,
-    resolveMachineRpcRoutePolicy,
-    type MachineRpcRelayFallbackDecision,
-    type MachineRpcRoutePolicyV1,
-    type PeerMachineRpcDirectRequestV2,
-    type PeerMachineRpcDirectResponseV2,
-    type PeerRouteEphemeralProofV2,
-    type SignedDirectRouteGrantV2,
-} from '@happier-dev/protocol';
+import { PEER_MACHINE_RPC_DIRECT_PATH_V2, PeerMachineRpcDirectResponseV2Schema, type PeerMachineRpcDirectRequestV2, type PeerMachineRpcDirectResponseV2 } from '@happier-dev/protocol/machines/peer/mediation/rpc/directV2';
+import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/mediation/receipts';
+import { createPeerMachineRpcRequestHashV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/commandReceiptV1';
+import { isMachineRpcDirectRoutePolicy, resolveMachineRpcRelayFallbackDecision, resolveMachineRpcRoutePolicy, type MachineRpcRelayFallbackDecision, type MachineRpcRoutePolicyV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import type { PeerRouteEphemeralProofV2 } from '@happier-dev/protocol/machines/peer/mediation/ephemeralPeerRouteProofV2';
+import type { SignedDirectRouteGrantV2 } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
 import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/rpc';
 
 import { createMachineRpcPeerFallbackReceipt, type MachineRpcPeerFallbackReceipt } from './fallback';

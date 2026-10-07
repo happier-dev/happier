@@ -1,7 +1,7 @@
 import {
     ActionApprovalRequestCreatedResultSchema,
     type ActionExecuteResult,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
 import type { HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';

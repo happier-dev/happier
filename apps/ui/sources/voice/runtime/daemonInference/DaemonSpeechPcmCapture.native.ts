@@ -4,7 +4,8 @@ import {
   type VoicePcmCapture,
   type VoicePcmCaptureLease,
 } from '@happier-dev/audio-stream-native';
-import { decodeBase64, VOICE_RUNTIME_DAEMON_STT_PCM_FORMAT } from '@happier-dev/protocol';
+import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { VOICE_RUNTIME_DAEMON_STT_PCM_FORMAT } from '@happier-dev/protocol/voice/runtimeConfig';
 
 import { createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
 import { resolveVoicePcmCaptureAudioSession } from '@/voice/runtime/nativePcmAudioSession';

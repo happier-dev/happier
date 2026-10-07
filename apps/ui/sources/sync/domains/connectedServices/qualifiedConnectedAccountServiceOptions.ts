@@ -1,10 +1,7 @@
-import {
-    buildQualifiedPluginContributionKey,
-    type ConnectedAccountServiceKey,
-    type ConnectedServiceCredentialKind,
-    type QualifiedConnectedAccountGroupV4,
-    type QualifiedConnectedAccountProfileV4,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { ConnectedAccountServiceKey } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { ConnectedServiceCredentialKind } from '@happier-dev/protocol/connect/connectedServiceCredentialKind';
+import type { QualifiedConnectedAccountGroupV4, QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import type {
     ConnectedServicesAccountGroupOption,
     ConnectedServicesProfileOption,

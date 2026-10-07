@@ -1,12 +1,10 @@
 import React from 'react';
 
-import {
-    DelegateOutputV1Schema,
-    PlanOutputV1Schema,
-    ReviewFindingsV1Schema,
-    ReviewFindingsV2Schema,
-    ReviewFollowUpV1Schema,
-} from '@happier-dev/protocol';
+import { DelegateOutputV1Schema } from '@happier-dev/protocol/messages/structured/delegateOutputV1';
+import { PlanOutputV1Schema } from '@happier-dev/protocol/messages/structured/planOutputV1';
+import { ReviewFindingsV1Schema } from '@happier-dev/protocol/messages/structured/reviewFindingsV1';
+import { ReviewFindingsV2Schema } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
+import { ReviewFollowUpV1Schema } from '@happier-dev/protocol/messages/structured/reviewFollowUpV1';
 
 import { ReviewFindingsMessageCard } from '@/components/sessions/reviews/messages/ReviewFindingsMessageCard';
 import { ReviewFollowUpMessageCard } from '@/components/sessions/reviews/messages/ReviewFollowUpMessageCard';

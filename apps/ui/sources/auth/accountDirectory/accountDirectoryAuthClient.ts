@@ -19,11 +19,11 @@ import { normalizeInternalReturnPath } from '@/utils/path/routeUtils';
 import { HappyError } from '@/utils/errors/errors';
 import { isExplicitlyRetryableError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { AccountDirectoryRequestError, isAccountDirectoryRelinkConflict } from '@/sync/api/accountDirectory/accountDirectoryClient';
-import { AccountDirectoryRouteErrorResponseV1Schema } from '@happier-dev/protocol';
+import { AccountDirectoryRouteErrorResponseV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { authGetTokenAtEndpoint } from '@/auth/flows/getToken';
 import { loginEmailPassword } from '@/auth/password/loginEmailPassword';
 import { isServerFeaturesProbeRetryable, probeServerFeaturesAtUrl, type ServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
-import { AccountDirectoryCapabilitiesSchema, type AccountDirectoryCapabilities } from '@happier-dev/protocol';
+import { AccountDirectoryCapabilitiesSchema, type AccountDirectoryCapabilities } from '@happier-dev/protocol/features/payload/capabilities/accountDirectoryCapabilities';
 import {
     type ProjectedAuthenticationAction,
     type ProjectedAuthenticationCatalog,

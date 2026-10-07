@@ -1,11 +1,7 @@
-import {
-    ConnectedServiceBindingsV2IngressSchema,
-    buildQualifiedPluginContributionKey,
-    type BackendTargetRefV2,
-    type ConnectedServiceBindingsV2,
-    type PersistedBackendTargetRefV2,
-    type RuntimeDescriptorV1,
-} from '@happier-dev/protocol';
+import { ConnectedServiceBindingsV2IngressSchema, type ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { BackendTargetRefV2, PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { RuntimeDescriptorV1 } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import { getAgentModelConfig } from '@happier-dev/agents';
 
 import {

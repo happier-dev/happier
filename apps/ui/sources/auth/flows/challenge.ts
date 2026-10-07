@@ -9,7 +9,7 @@ import {
     createExpectedAccountKeyChallengeSigningInputV1,
     type KeyChallengeV2Audience,
     type KeyChallengeV2IssueResponse,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/auth/keyChallenge';
 
 export function deriveAccountSigningPublicKey(
     secret: Uint8Array,

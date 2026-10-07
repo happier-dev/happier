@@ -1,12 +1,7 @@
-import {
-    ACTION_ID_FAMILIES_V1,
-    DECISION_ACTION_IDS,
-    TOKEN_CONVERSATIONAL_INPUT_ACTION_IDS,
-    listActionSpecsForSurface,
-    type ActionIdFamilyV1,
-    type ActionSpec,
-    type ProviderBoundModelRef,
-} from '@happier-dev/protocol';
+import { ACTION_ID_FAMILIES_V1, type ActionIdFamilyV1 } from '@happier-dev/protocol/actions/actionIds';
+import { DECISION_ACTION_IDS, TOKEN_CONVERSATIONAL_INPUT_ACTION_IDS } from '@happier-dev/protocol/actions/decisionAuthority';
+import { listActionSpecsForSurface, type ActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
 import type {
     DaemonProviderModelProjectionGroupV1,
     DaemonProviderModelProjectionRowV1,

@@ -1,19 +1,11 @@
-import {
-    CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS,
-    CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
-    buildBackendTargetKeyV2,
-    buildQualifiedPluginContributionKey,
-    buildSystemSessionMetadataV1,
-    AgentSessionStartupInstructionsV1Schema,
-    isConnectedServiceUxDiagnosticSpawnErrorDetail,
-    readBackendTargetRefV2,
-    renderPromptPlanV1,
-    type AgentSessionStartupInstructionsV1,
-    type AgentSessionStartupInstructionsMarkerV1,
-    type ConnectedServiceBindingsV2,
-    type BackendTargetRefV2,
-    type PluginContributionIdentityV1,
-} from '@happier-dev/protocol';
+import { CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS, CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import { buildBackendTargetKeyV2, readBackendTargetRefV2, type BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/control/contract';
+import { AgentSessionStartupInstructionsV1Schema, type AgentSessionStartupInstructionsV1, type AgentSessionStartupInstructionsMarkerV1 } from '@happier-dev/protocol/runtime/agentSessionStartupInstructionsV1';
+import { isConnectedServiceUxDiagnosticSpawnErrorDetail } from '@happier-dev/protocol/spawnSession';
+import { renderPromptPlanV1 } from '@happier-dev/protocol/prompts/promptPlanV1';
+import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
 import {
     readPermissionModeIntentFromMetadata,
     buildGlobalVoiceAgentStartupInstructionsPlanV1,

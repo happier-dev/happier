@@ -3,7 +3,7 @@ import {
   normalizeRecipientContractV1,
   type RecipientContractDigestV1,
   type RecipientContractV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/recipientContractV1';
 
 import { t } from '@/text';
 

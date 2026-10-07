@@ -1,9 +1,5 @@
-import {
-    ConnectedServiceBindingsV2Schema,
-    classifyRunnerConnectedServiceSelectionV1,
-    type ConnectedServiceBindingsV2,
-    type RunnerConnectedServiceReviewBindingsV1,
-} from '@happier-dev/protocol';
+import { ConnectedServiceBindingsV2Schema, type ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { classifyRunnerConnectedServiceSelectionV1, type RunnerConnectedServiceReviewBindingsV1 } from '@happier-dev/protocol/ephemeralRunner/runnerConnectedServices';
 
 export class RunnerConnectedServiceIncompatibilityError extends Error {
     readonly code = 'runner_connected_service_not_portable' as const;

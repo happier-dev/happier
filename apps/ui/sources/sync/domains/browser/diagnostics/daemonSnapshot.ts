@@ -1,6 +1,7 @@
 import * as React from 'react';
 
-import { browserViewKey, type BrowserDiagnosticEventV1 } from '@happier-dev/protocol';
+import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
+import type { BrowserDiagnosticEventV1 } from '@happier-dev/protocol/browser/diagnostics/v1';
 
 import type { BrowserControlViewState } from '@/sync/domains/browser/control';
 

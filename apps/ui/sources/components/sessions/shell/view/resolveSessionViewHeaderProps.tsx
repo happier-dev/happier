@@ -28,7 +28,7 @@ import { readSessionPresentationAgentId } from '@/sync/domains/session/presentat
 import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { formatPathRelativeToHome, getSessionAvatarId, getSessionName, getSessionStatus, getSessionSubtitle, resolveLockedSessionTitle } from '@/utils/sessions/sessionUtils';
-import { readSessionDirectoryKind } from '@happier-dev/protocol';
+import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import { LruMap } from '@/utils/cache/lruMap';
 
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';

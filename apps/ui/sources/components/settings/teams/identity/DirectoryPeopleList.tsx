@@ -4,7 +4,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useTeamPagedList } from '@/hooks/teams/useTeamPagedList';
-import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol';
+import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import type { TeamDirectoryPeoplePageV1 } from '@happier-dev/protocol/teams';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';

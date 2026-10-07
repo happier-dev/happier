@@ -22,7 +22,7 @@ import type {
     BrowserDiagnosticsUiStore,
 } from '@/sync/domains/browser/diagnostics';
 import { selectBrowserDiagnosticsForView } from '@/sync/domains/browser/diagnostics';
-import { browserViewKey } from '@happier-dev/protocol';
+import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
 import type { StoreApi } from 'zustand/vanilla';
 import { t } from '@/text';
 

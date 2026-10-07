@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { PromptInvocationEntryV1Schema, type PromptLibraryListItem } from '@happier-dev/protocol';
+import { PromptInvocationEntryV1Schema } from '@happier-dev/protocol/prompts/library/promptInvocationsV1';
+import type { PromptLibraryListItem } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 
 import { PromptPickerView, type PromptPickerLibrarySnapshot } from '@/components/sessions/agentInput/commandMenu/AgentInputPromptPicker';
 import { AgentInputFieldAccessories } from '@/components/sessions/agentInput/components/AgentInputFieldAccessories';

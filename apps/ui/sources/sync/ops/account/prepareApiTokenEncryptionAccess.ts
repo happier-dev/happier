@@ -1,10 +1,7 @@
-import {
-    computeAccountEncryptionMigrateKeyFingerprintV1,
-    openApiTokenEncryptionAccessV1,
-    wrapApiTokenEncryptionAccessV1,
-    type AccountEncryptionCurrentnessResponse,
-    type AccountApiTokenEncryptionAccessV1,
-} from '@happier-dev/protocol';
+import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import { openApiTokenEncryptionAccessV1, wrapApiTokenEncryptionAccessV1 } from '@happier-dev/protocol/crypto/apiTokenEncryptionAccess';
+import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
+import type { AccountApiTokenEncryptionAccessV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import { encodeBase64 } from '@/encryption/base64';

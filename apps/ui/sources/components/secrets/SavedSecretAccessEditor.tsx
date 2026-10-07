@@ -1,10 +1,6 @@
 import * as React from 'react';
-import {
-    parseSavedSecretCatalogReferenceV1,
-    type SavedSecret,
-    type SavedSecretCatalogEntryV1,
-    type SavedSecretResourceEnvelopeCensusRecipientV1,
-} from '@happier-dev/protocol';
+import { parseSavedSecretCatalogReferenceV1, type SavedSecretCatalogEntryV1, type SavedSecretResourceEnvelopeCensusRecipientV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import type { SavedSecret } from '@happier-dev/protocol/profiles/backendProfileSchema';
 
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';

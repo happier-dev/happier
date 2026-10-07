@@ -4,7 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { CodeView } from '@/components/ui/media/CodeView';
-import { maybeParseJson } from '@happier-dev/protocol';
+import { maybeParseJson } from '@happier-dev/protocol/activity/parseJson';
 import { ToolFindText, useToolFindState } from '../core/ToolFindText';
 import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
 import { t } from '@/text';

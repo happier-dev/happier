@@ -1,7 +1,5 @@
-import {
-    isApprovalRequiredByActionsSettings,
-    normalizeActionsSettingsV1,
-} from '@happier-dev/protocol';
+import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 
 import { useSettingsSelector } from '@/sync/store/hooks';
 

@@ -16,7 +16,8 @@ import {
     type NativeCryptoWorkerOperation,
     type NativeCryptoWorkerSecretboxJsonItem,
 } from './types';
-import { CRYPTO_GOLDEN_VECTORS, parseSerializedJsonValue } from '@happier-dev/protocol';
+import { CRYPTO_GOLDEN_VECTORS } from '@happier-dev/protocol/crypto/cryptoGoldenVectors';
+import { parseSerializedJsonValue } from '@happier-dev/protocol/crypto/serializedJsonValue';
 
 export type NativeCryptoWorkerProbeCheckStatus = 'pass' | 'fail' | 'skipped';
 

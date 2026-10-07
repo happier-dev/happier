@@ -1,6 +1,11 @@
 import { TokenStorage, subscribeHomeCredentialMutations } from '@/auth/storage/tokenStorage';
 import { readCredentialAuthorityKind } from '@/auth/context/credentialAuthority';
-import { ArtifactAccessRecipientCensusResponseV1Schema, isArtifactHtmlHeaderV1, loadAiLaunchProfileArtifacts, readAiLaunchProfileCollection, type ArtifactCallerAccessV1, type ArtifactAccessActionTransportV1, type ArtifactActionInputV1, type ArtifactSavedByV1, type ArtifactWorkspaceSourceV1 } from '@happier-dev/protocol';
+import { ArtifactAccessRecipientCensusResponseV1Schema, type ArtifactCallerAccessV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { isArtifactHtmlHeaderV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
+import { loadAiLaunchProfileArtifacts, readAiLaunchProfileCollection } from '@happier-dev/protocol/profiles/read';
+import type { ArtifactAccessActionTransportV1 } from '@happier-dev/protocol/actions/executor/artifactAccessActions';
+import type { ArtifactActionInputV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import type { ArtifactSavedByV1, ArtifactWorkspaceSourceV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import type { ArtifactPublicLinkKeyholdingResourceV1, WorkflowDefinitionArtifactOperations } from '@happier-dev/protocol/actions';
 import type { getActionSpec } from '@happier-dev/protocol';
 import type { HomeHubArtifactTransportV1 } from '@happier-dev/protocol/home';

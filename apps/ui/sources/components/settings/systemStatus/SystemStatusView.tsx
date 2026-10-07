@@ -3,10 +3,8 @@ import { Platform, View } from 'react-native';
 import Constants from 'expo-constants';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useUnistyles } from 'react-native-unistyles';
-import {
-  sanitizeBugReportUrl,
-  sanitizeDoctorDiagnosticErrorMessage,
-} from '@happier-dev/protocol';
+import { sanitizeBugReportUrl } from '@happier-dev/protocol/bugs/reports/sanitize';
+import { sanitizeDoctorDiagnosticErrorMessage } from '@happier-dev/protocol/diagnostics/doctorSnapshot';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';

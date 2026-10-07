@@ -1,25 +1,12 @@
-import {
-    AutomationRunTriggerEvidenceV1Schema,
-    convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
-    createAccountScopedCryptoMaterialSnapshotV1,
-    createCanonicalJsonSigningInput,
-    inspectAutomationRunExecutionRecipeOuterV1,
-    materializeAutomationRunExecutionRecipeV1,
-    openAccountScopedBlobCiphertext,
-    openAutomationRunFailureDetailStoredEnvelopeV1,
-    openAutomationRunResultStoredEnvelopeV1,
-    parseAutomationRunFailureDetailStoredEnvelopeV1,
-    parseAutomationRunResultStoredEnvelopeV1,
-    parseAutomationRunExecutionRecipeV1,
-    type AccountEncryptionCurrentnessResponse,
-    type AccountScopedCryptoMaterial,
-    type AutomationRunExecutionRecipeMaterializationResultV1,
-    type AutomationRunResultCorrespondenceV1,
-    type AutomationRunResultV1,
-    type AutomationRunFailureDetailCorrespondenceV1,
-    type AutomationRunTriggerEvidenceV1,
-    type AutomationV3RunDetail,
-} from '@happier-dev/protocol';
+import { AutomationRunTriggerEvidenceV1Schema, inspectAutomationRunExecutionRecipeOuterV1, materializeAutomationRunExecutionRecipeV1, parseAutomationRunExecutionRecipeV1, type AutomationRunExecutionRecipeMaterializationResultV1, type AutomationRunTriggerEvidenceV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
+import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import { createAccountScopedCryptoMaterialSnapshotV1, openAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
+import { openAutomationRunFailureDetailStoredEnvelopeV1, parseAutomationRunFailureDetailStoredEnvelopeV1, type AutomationRunFailureDetailCorrespondenceV1 } from '@happier-dev/protocol/automations/automationRunFailureDetailStoredContent';
+import { openAutomationRunResultStoredEnvelopeV1, parseAutomationRunResultStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationReplyHandoffStoredContent';
+import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
+import type { AutomationRunResultCorrespondenceV1, AutomationRunResultV1 } from '@happier-dev/protocol/automations/event';
+import type { AutomationV3RunDetail } from '@happier-dev/protocol/automations/automationApiV3';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { isDataKeyAuthCredentials } from '@/auth/storage/tokenStorage';

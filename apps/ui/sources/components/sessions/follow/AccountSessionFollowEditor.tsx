@@ -1,10 +1,7 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
-import {
-    projectAccountSessionFollowEditorStateV1,
-    type SessionFollowNotificationLevel,
-    type SetSessionFollowRequest,
-} from '@happier-dev/protocol';
+import { projectAccountSessionFollowEditorStateV1, type SessionFollowNotificationLevel } from '@happier-dev/protocol/sessions/follow/accountFollow';
+import type { SetSessionFollowRequest } from '@happier-dev/protocol/sessions/follow/api';
 
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';

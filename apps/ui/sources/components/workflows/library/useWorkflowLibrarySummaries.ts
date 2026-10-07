@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import type { WorkflowRunSummariesResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
-import { sameStrictJsonValue } from '@happier-dev/protocol';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 import { captureActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';

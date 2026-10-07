@@ -8,7 +8,7 @@ import {
 } from './scmUiBackendPlugin';
 import { gitScmUiPlugin } from '@/scm/backends/git/plugin';
 import { saplingScmUiPlugin } from '@/scm/backends/sapling/plugin';
-import { inferScmRemoteTarget } from '@happier-dev/protocol';
+import { inferScmRemoteTarget } from '@happier-dev/protocol/scm';
 import { createScmContributionCatalog, type ScmContributionCatalog } from './scmContributionCatalog';
 import { getFirstPartyScmBackendQualifiedId } from './firstPartyScmBackendIdentity';
 

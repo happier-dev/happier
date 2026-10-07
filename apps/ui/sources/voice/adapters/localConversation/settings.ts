@@ -3,12 +3,10 @@ import {
   PERMISSION_INTENTS,
   parsePermissionIntentAlias,
 } from '@happier-dev/agents';
-import {
-  BackendTargetKeyV2Schema,
-  PluginContributionIdentityV1Schema,
-  ProviderBoundModelRefSchema,
-  ProviderConnectionIdSchema,
-} from '@happier-dev/protocol';
+import { BackendTargetKeyV2Schema } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
+import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import { z } from 'zod';
 
 import { VoiceLocalSttSchema } from '@/sync/domains/settings/voiceLocalSttSettings';

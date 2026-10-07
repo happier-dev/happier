@@ -1,14 +1,8 @@
-import {
-    HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1,
-    RawIngressStructuredInputV1Schema,
-    sameStrictJsonValue,
-    sanitizeSessionUserMessageSendMeta,
-    type ComposerAttachmentDraftV1,
-    type ComposerAttachmentInputV1,
-    type ComposerSnapshotV1,
-    type JsonValue,
-    type RawIngressStructuredInputV1,
-} from '@happier-dev/protocol';
+import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1, sanitizeSessionUserMessageSendMeta } from '@happier-dev/protocol/sessions/userMessageRpc';
+import { RawIngressStructuredInputV1Schema, type RawIngressStructuredInputV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { ComposerAttachmentDraftV1, ComposerAttachmentInputV1 } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import type { ComposerSnapshotV1 } from '@happier-dev/protocol/plugins/ui/composer';
 import {
     admitMentionRefsV1ForText,
     hasRawStructuredInputSemanticContentV1,

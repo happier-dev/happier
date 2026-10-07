@@ -1,14 +1,7 @@
-import {
-  VoiceCredentialBindingV1Schema,
-  VoiceProviderSettingsEnvelopeV1Schema,
-  VoiceSpeechDiagnosticsSettingsV1Schema,
-  SecretStringV1Schema,
-  normalizePredecessorVoiceProviderIdV1,
-  type VoiceCredentialBindingV1,
-  type VoiceProviderSettingsEnvelopeV1,
-  type VoiceProviderSettingsJsonValueV1,
-  type VoiceSpeechDiagnosticsSettingsV1,
-} from '@happier-dev/protocol';
+import { VoiceCredentialBindingV1Schema, VoiceProviderSettingsEnvelopeV1Schema, type VoiceCredentialBindingV1, type VoiceProviderSettingsEnvelopeV1, type VoiceProviderSettingsJsonValueV1 } from '@happier-dev/protocol/voice/realtime/providerSettings';
+import { VoiceSpeechDiagnosticsSettingsV1Schema, type VoiceSpeechDiagnosticsSettingsV1 } from '@happier-dev/protocol/voice/diagnostics';
+import { SecretStringV1Schema } from '@happier-dev/protocol/crypto/settingsSecretStringSchemasV1';
+import { normalizePredecessorVoiceProviderIdV1 } from '@happier-dev/protocol/voice/providerContributionIdentity';
 import {
   VoiceProviderIdSchema as QualifiedVoiceProviderIdSchema,
 } from '@happier-dev/protocol/voice/realtime';

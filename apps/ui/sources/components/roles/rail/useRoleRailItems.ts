@@ -5,7 +5,8 @@ import { useRoleEnginePresentation } from '@/components/roles/catalog/useRoleEng
 import { describeRolePurpose } from '@/sync/domains/roles/roleCatalog';
 
 import type { RoleRailItem } from './rolesRailTypes';
-import { resolveRoleSelectionV1, type WorkflowRoleV1 } from '@happier-dev/protocol';
+import { resolveRoleSelectionV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
+import type { WorkflowRoleV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
 
 /** The reader's enabled roles as rail rows, read when the rail opens. */
 export function useRoleRailItems(workflowRoles?: readonly WorkflowRoleV1[], serverId?: string | null): ReadonlyArray<RoleRailItem> {

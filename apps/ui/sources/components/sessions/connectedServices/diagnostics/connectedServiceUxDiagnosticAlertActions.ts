@@ -1,4 +1,4 @@
-import { CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS } from '@happier-dev/protocol';
+import { CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 
 import type { AlertButton } from '@/modal';
 import type { TranslationKey } from '@/text';

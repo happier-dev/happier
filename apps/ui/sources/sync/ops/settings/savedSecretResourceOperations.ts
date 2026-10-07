@@ -1,21 +1,9 @@
-import {
-    computeContentPublicKeyFingerprint,
-    formatSavedSecretCatalogReferenceV1,
-    listAccountSettingsSavedSecretReferences,
-    type AccountSettingsSavedSecretReference,
-    openSavedSecretResourceStoredContentV1,
-    promotePersonalSavedSecretReference,
-    sealSavedSecretResourceStoredContentV1,
-    SharedSavedSecretDeleteOutputV1Schema,
-    SharedSavedSecretMutationOutputV1Schema,
-    SavedSecretResourceEnvelopeCensusRequestV1Schema,
-    SavedSecretResourceEnvelopeCensusResponseV1Schema,
-    SavedSecretResourceEnvelopeRepairOutputV1Schema,
-    SharedSavedSecretPromoteOutputV1Schema,
-    type SavedSecret,
-    type SavedSecretResourceEnvelopeCensusRecipientV1,
-    type SavedSecretResourceMaterialV1,
-} from '@happier-dev/protocol';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import { formatSavedSecretCatalogReferenceV1, SavedSecretResourceEnvelopeCensusRequestV1Schema, SavedSecretResourceEnvelopeCensusResponseV1Schema, type SavedSecretResourceEnvelopeCensusRecipientV1, type SavedSecretResourceMaterialV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { listAccountSettingsSavedSecretReferences, type AccountSettingsSavedSecretReference, promotePersonalSavedSecretReference } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import { openSavedSecretResourceStoredContentV1, sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import { SharedSavedSecretDeleteOutputV1Schema, SharedSavedSecretMutationOutputV1Schema, SavedSecretResourceEnvelopeRepairOutputV1Schema, SharedSavedSecretPromoteOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import type { SavedSecret } from '@happier-dev/protocol/profiles/backendProfileSchema';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 
 import { readSavedSecretCatalog } from '@/sync/api/account/apiSavedSecretCatalog';

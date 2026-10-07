@@ -106,7 +106,7 @@ export function resolveWorkspaceEntityDrop(input: Readonly<{
 
 /** The UI Action executor retains Account custody, policy and the mounted workspace adapter. */
 export async function executeWorkspaceEntityDrop(effect: EntityDropEffectV1, scope: EntityDragScopeV1): Promise<EntityDropOutcomeV1> {
-    const { isWorkspaceActionId } = await import('@happier-dev/protocol');
+    const { isWorkspaceActionId } = await import('@happier-dev/protocol/actions/workspaceActionFamily');
     if (!isWorkspaceActionId(effect.actionId)) return { status: 'refused', reason: { code: 'unsupported_action', message: t('common.unavailable') } };
     const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
     try {

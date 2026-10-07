@@ -1,10 +1,8 @@
 import * as React from 'react';
-import {
-    ActionApprovalRequestCreatedResultSchema,
-    ArtifactActionOutputSchemasV1,
-    type ArtifactPublicLinkIssuedV1,
-    type StoredContentPublicShareV1,
-} from '@happier-dev/protocol';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ArtifactActionOutputSchemasV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import type { ArtifactPublicLinkIssuedV1 } from '@happier-dev/protocol/actions/executor/artifactPublicLinkActions';
+import type { StoredContentPublicShareV1 } from '@happier-dev/protocol/sharing/storedContentPublicShareV1';
 import { createActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { useDestinationRouter } from '@/components/appShell/workspace/DestinationInstanceHost';

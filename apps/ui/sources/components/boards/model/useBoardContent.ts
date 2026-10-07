@@ -7,7 +7,7 @@ import {
     type BoardItemRefV1,
     type WorkBoardV1,
     type WorkBoardWidgetPlacementV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/boards/workBoardV1';
 
 import { useInboxModelWhen } from '@/hooks/inbox/useInboxModel';
 import { useSessionListSelectionState } from '@/hooks/session/useSessionListSelectionState';

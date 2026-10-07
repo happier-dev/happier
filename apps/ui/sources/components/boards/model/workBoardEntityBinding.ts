@@ -6,7 +6,7 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { t } from '@/text';
 import { workBoardWidgetSurface, type WorkBoardEntityContext } from './workBoardEntityDrop';
 import { useDispatchWorkBoardIntent } from './useWorkBoards';
-import { WorkBoardActionInputSchemasV1 } from '@happier-dev/protocol';
+import { WorkBoardActionInputSchemasV1 } from '@happier-dev/protocol/boards/actionsV1';
 import { useWidgetMovementAdmission } from '@/components/widgets/surface/useWidgetMovementAdmission';
 import { executeWidgetEntityMovement } from '@/sync/ops/actions/widgetEntityMovement';
 

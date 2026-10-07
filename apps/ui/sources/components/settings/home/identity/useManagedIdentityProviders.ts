@@ -1,9 +1,6 @@
 import * as React from 'react';
-import {
-    TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1,
-    type ManagedIdentityProviderOwnerV1,
-    type ManagedIdentityProviderV1,
-} from '@happier-dev/protocol';
+import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
+import type { ManagedIdentityProviderOwnerV1, ManagedIdentityProviderV1 } from '@happier-dev/protocol/identity/providers';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';

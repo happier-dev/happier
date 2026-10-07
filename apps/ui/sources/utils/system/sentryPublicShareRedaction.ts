@@ -1,4 +1,4 @@
-import { redactPublicShareCapabilityUrl } from '@happier-dev/protocol';
+import { redactPublicShareCapabilityUrl } from '@happier-dev/protocol/crypto/publicShareCapabilityUrl';
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
     if (!value || typeof value !== 'object') return false;

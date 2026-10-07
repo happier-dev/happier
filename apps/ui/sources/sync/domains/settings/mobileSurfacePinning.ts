@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { resolveAnchoredListMoveV1, type AnchoredListPositionV1 } from '@happier-dev/protocol';
+import { resolveAnchoredListMoveV1, type AnchoredListPositionV1 } from '@happier-dev/protocol/actions/anchoredListOrderV1';
 
 /** Device-local placement policy shared by the app and workspace rails and the Session bar. */
 export type NavigationPlacement = 'pinned' | 'overflow' | 'hidden';

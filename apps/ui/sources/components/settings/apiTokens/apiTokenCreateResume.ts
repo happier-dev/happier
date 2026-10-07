@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ApiTokenGrantV1Schema } from '@happier-dev/protocol';
+import { ApiTokenGrantV1Schema } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { EmbedConfigV1Schema } from '@happier-dev/protocol/embed';
 
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';

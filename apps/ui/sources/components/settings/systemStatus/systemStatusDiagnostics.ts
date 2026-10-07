@@ -1,4 +1,4 @@
-import { sanitizeBugReportUrl } from '@happier-dev/protocol';
+import { sanitizeBugReportUrl } from '@happier-dev/protocol/bugs/reports/sanitize';
 
 import type { ActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 

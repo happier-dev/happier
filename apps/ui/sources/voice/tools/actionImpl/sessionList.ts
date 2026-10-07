@@ -1,12 +1,8 @@
 import { readStoredSessionMessages } from "@happier-dev/session-core/messages";
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import { storage } from '@/sync/domains/state/storage';
-import {
-  buildSessionAwarenessListResultV1,
-  markSessionListQueryResultV1,
-  type SessionListQueryV1,
-  type SessionListViewV1,
-} from '@happier-dev/protocol';
+import { buildSessionAwarenessListResultV1, markSessionListQueryResultV1, type SessionListViewV1 } from '@happier-dev/protocol/sessions/awareness/action';
+import type { SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
 import { fetchSessionListQueryPageForHome, readOrdinarySessionListLifecycle } from '@/sync/domains/session/listing/sessionListQueryRuntime';
 import { findSessionListLookupSession } from '@/sync/domains/session/listing/sessionListLookupState';
 import { projectUiSessionAwareness } from '@/sync/domains/session/awareness/sessionAwareness';

@@ -1,6 +1,9 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { getBuiltinWorkflowCatalogV1, type BuiltinWorkflowCatalogEntryV1, type JsonValue, type RoleOverrideV1, type WorkflowPluginSourceV1 } from '@happier-dev/protocol';
+import { getBuiltinWorkflowCatalogV1, type BuiltinWorkflowCatalogEntryV1 } from '@happier-dev/protocol/workflows/builtins/catalog';
+import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { RoleOverrideV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
+import type { WorkflowPluginSourceV1 } from '@happier-dev/protocol/workflows/workflowPluginSourceContractV1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';

@@ -1,7 +1,7 @@
 import {
   VoiceProviderSettingsEnvelopeV1Schema,
   type VoiceProviderSettingsJsonValueV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/voice/realtime/providerSettings';
 
 const GOOGLE_GEMINI_STT_ID = 'happier.voice.google/gemini-stt';
 const GOOGLE_CLOUD_TTS_ID = 'happier.voice.google/google-cloud-tts';

@@ -1,5 +1,5 @@
 import type { DetailsTab } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
-import { resolveWorkspaceSyncRelationshipEndpointRoles } from '@happier-dev/protocol';
+import { resolveWorkspaceSyncRelationshipEndpointRoles } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import type { WorkspaceSyncRelationshipSummary } from '@/sync/domains/sessionHandoff/workspaceSyncRelationshipModel';
 import { resolveWorkspaceSyncStatusScope } from '@/sync/domains/sessionHandoff/useWorkspaceSyncRelationshipSummaries';
 import { t } from '@/text';

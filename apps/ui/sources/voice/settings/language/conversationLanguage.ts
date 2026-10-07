@@ -10,7 +10,7 @@ import type { VoiceProviderSettingsPresentation } from '@happier-dev/protocol';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import type { VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import { getExternalVoiceProviderProjectionAuthority, getExternalVoiceProviderRegistration } from '@/voice/registry/externalVoiceProviderRegistrations';
-import { resolveVoiceProviderLanguagePreference } from '@happier-dev/protocol';
+import { resolveVoiceProviderLanguagePreference } from '@happier-dev/protocol/plugins/contributions/voice';
 
 const languageRegistry = createDefaultVoiceProviderRegistry();
 type ServiceLanguage = NonNullable<VoiceProviderSettingsPresentation['language']>;

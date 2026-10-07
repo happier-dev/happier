@@ -1,11 +1,7 @@
-import {
-    isPersistentMachine,
-    supportsMachineSessionFollowContextV1,
-    supportsMachineSessionFollowWakeOnHumanChangeV1,
-    type SessionFollowSourceKeyPreparationWaitingReasonV1,
-    type SessionFollowSourceModeV1,
-    type SessionFollowSourceDeliveryStateV1,
-} from '@happier-dev/protocol';
+import { isPersistentMachine } from '@happier-dev/protocol/machines/machineKind';
+import { supportsMachineSessionFollowContextV1, supportsMachineSessionFollowWakeOnHumanChangeV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
+import type { SessionFollowSourceKeyPreparationWaitingReasonV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceKeyPreparationV1';
+import type { SessionFollowSourceModeV1, SessionFollowSourceDeliveryStateV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourcesApi';
 
 import { t } from '@/text';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';

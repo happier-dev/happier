@@ -1,13 +1,7 @@
-import {
-    DIRECT_ROUTE_GRANT_TTL_MS,
-    MachineLiveStreamRelayAuthorizationV1Schema,
-    PeerLoopbackEndpointCandidateV1Schema,
-    SignedDirectRouteGrantV2Schema,
-    DirectRouteGrantRequestV2Schema,
-    type MachineLiveStreamRelayAuthorizationV1,
-    type PeerLoopbackEndpointCandidateV1,
-    type SignedDirectRouteGrantV2,
-} from '@happier-dev/protocol';
+import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
+import { MachineLiveStreamRelayAuthorizationV1Schema, type MachineLiveStreamRelayAuthorizationV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import { PeerLoopbackEndpointCandidateV1Schema, type PeerLoopbackEndpointCandidateV1 } from '@happier-dev/protocol/machines/peer/mediation/loopbackEndpointV1';
+import { SignedDirectRouteGrantV2Schema, DirectRouteGrantRequestV2Schema, type SignedDirectRouteGrantV2 } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import {

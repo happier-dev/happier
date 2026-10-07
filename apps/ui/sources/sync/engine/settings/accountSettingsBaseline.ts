@@ -2,11 +2,9 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { Encryption } from '@/sync/encryption/encryption';
 import { HappyError } from '@/utils/errors/errors';
 import { openAccountSettingsStoredContent } from '@/sync/domains/settings/accountSettingsNormalization';
-import {
-    AccountSettingsV2GetResponseSchema,
-    type AccountScopedCiphertextFormat,
-    type AccountSettingsStoredContentEnvelope,
-} from '@happier-dev/protocol';
+import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import type { AccountScopedCiphertextFormat } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import type { AccountSettingsStoredContentEnvelope } from '@happier-dev/protocol/account/settings/accountSettingsStoredContentEnvelope';
 
 /**
  * Shared Account Settings baseline read seam.

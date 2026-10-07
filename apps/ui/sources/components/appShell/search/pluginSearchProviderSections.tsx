@@ -1,10 +1,6 @@
 import * as React from 'react';
-import {
-    arePluginMachineExecutionOriginsEqual,
-    PluginSearchQueryV1Schema,
-    PluginSearchResultV1Schema,
-    MAX_PLUGIN_SEARCH_ITEMS_V1,
-} from '@happier-dev/protocol';
+import { arePluginMachineExecutionOriginsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { PluginSearchQueryV1Schema, PluginSearchResultV1Schema, MAX_PLUGIN_SEARCH_ITEMS_V1 } from '@happier-dev/protocol/plugins/contributions/search-providers';
 import {
     normalizePluginUiSemanticCommandV1,
     type CurrentUiContextSnapshotV1,

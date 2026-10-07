@@ -1,15 +1,5 @@
-import {
-    SessionDraftPrivatePayloadV2Schema,
-    SessionDraftStoredContentEnvelopeV2Schema,
-    createSessionDraftPrivatePayloadV2,
-    canonicalSessionDraftAddressV2,
-    openAccountScopedBlobCiphertext,
-    sealAccountScopedBlobCiphertext,
-    type AccountScopedCryptoMaterial,
-    type SessionDraftAddressV2,
-    type SessionDraftDocumentV2,
-    type SessionDraftStoredContentEnvelopeV2,
-} from '@happier-dev/protocol';
+import { SessionDraftPrivatePayloadV2Schema, SessionDraftStoredContentEnvelopeV2Schema, createSessionDraftPrivatePayloadV2, canonicalSessionDraftAddressV2, type SessionDraftAddressV2, type SessionDraftDocumentV2, type SessionDraftStoredContentEnvelopeV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
+import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 
 import type { SessionDraftRepositoryCipher } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { SessionDraftContextUnavailableError } from '@/sync/ops/sessionDrafts/sessionDraftCipherError';

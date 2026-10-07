@@ -1,7 +1,5 @@
-import {
-    approvalArtifactBodyMatchesHeaderV1,
-    type ApprovalRequest,
-} from '@happier-dev/protocol';
+import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 import type { DecryptedArtifact } from './artifactTypes';
 import { sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';

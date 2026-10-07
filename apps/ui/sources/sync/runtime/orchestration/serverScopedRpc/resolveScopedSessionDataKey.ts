@@ -1,4 +1,4 @@
-import { type V2SessionByIdResponse, V2SessionByIdResponseSchema } from '@happier-dev/protocol';
+import { type V2SessionByIdResponse, V2SessionByIdResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
 import {

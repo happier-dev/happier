@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { DaemonPluginSettingsMutationSchema } from '@happier-dev/protocol';
+import { DaemonPluginSettingsMutationSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import type { PluginProjectionEditableSettingField } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';

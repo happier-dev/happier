@@ -2,7 +2,7 @@ import {
     QUIET_SESSION_PERSONAL_ATTENTION_V1,
     resolveSessionPersonalAttentionV1,
     type SessionPersonalAttentionProjectionV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/personal/attention';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { Message } from "@happier-dev/session-core/messages";
 import {

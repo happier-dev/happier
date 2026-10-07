@@ -1,7 +1,7 @@
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex } from '@noble/hashes/utils';
 import { ArtifactBlobReferenceV1Schema, ArtifactBlobStoredContentV1Schema,
-    type ArtifactBlobReferenceV1, type ArtifactBlobStoredContentV1 } from '@happier-dev/protocol';
+    type ArtifactBlobReferenceV1, type ArtifactBlobStoredContentV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import type { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
 import { HappyError } from '@/utils/errors/errors';

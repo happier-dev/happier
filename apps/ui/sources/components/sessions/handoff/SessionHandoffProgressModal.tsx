@@ -3,17 +3,10 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierProgress } from '@happier-dev/plugin-ui/presentation';
 import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
-import {
-    SessionHandoffProgressCheckpointSchema,
-    SessionHandoffActionResultV1Schema,
-    SESSION_HANDOFF_PROGRESS_FULL_TIMELINE,
-    SESSION_HANDOFF_PROGRESS_FULL_TIMELINE_WITH_SOURCE_SCAN,
-    resolveSessionHandoffProgressTimeline,
-    type ActionOperationSnapshotV1,
-    type HandoffWorkspaceOutcomeV1,
-    type SessionHandoffProgressCheckpoint,
-    type SessionHandoffStatus,
-} from '@happier-dev/protocol';
+import { SessionHandoffProgressCheckpointSchema, SessionHandoffActionResultV1Schema } from '@happier-dev/protocol/sessions/control/handoff/handoffSchemas';
+import { SESSION_HANDOFF_PROGRESS_FULL_TIMELINE, SESSION_HANDOFF_PROGRESS_FULL_TIMELINE_WITH_SOURCE_SCAN, resolveSessionHandoffProgressTimeline, type SessionHandoffProgressCheckpoint, type SessionHandoffStatus } from '@happier-dev/protocol/sessions/control/handoff/handoffStatus';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+import type { HandoffWorkspaceOutcomeV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
 import type { CustomModalInjectedProps } from '@/modal';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';

@@ -1,15 +1,5 @@
-import {
-    AuthoringMemoryValueV1Schema,
-    AuthoringMemoryPrivatePayloadV1Schema,
-    StoredAuthoringMemoryPrivatePayloadV1Schema,
-    assertAuthoringMemoryContentForModeV1,
-    AUTHORING_MEMORY_ACCOUNT_SCOPED_BLOB_KIND_V1,
-    openAccountScopedBlobCiphertext,
-    sealAccountScopedBlobCiphertext,
-    type AccountScopedCryptoMaterial,
-    type AuthoringMemoryContentV1,
-    type AuthoringMemoryValueV1,
-} from '@happier-dev/protocol';
+import { AuthoringMemoryValueV1Schema, AuthoringMemoryPrivatePayloadV1Schema, StoredAuthoringMemoryPrivatePayloadV1Schema, assertAuthoringMemoryContentForModeV1, AUTHORING_MEMORY_ACCOUNT_SCOPED_BLOB_KIND_V1, type AuthoringMemoryContentV1, type AuthoringMemoryValueV1 } from '@happier-dev/protocol/account/authoringMemory';
+import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 
 export type AuthoringMemoryCipher = Readonly<{
     seal(key: string, value: AuthoringMemoryValueV1): AuthoringMemoryContentV1;

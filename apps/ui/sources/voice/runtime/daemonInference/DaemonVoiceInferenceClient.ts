@@ -31,7 +31,7 @@ import {
     type DaemonVoiceInferenceSttTranscribeResponse,
     type DaemonVoiceInferenceSttStreamChunkResponse,
     type DaemonVoiceInferenceNormalizationDecision,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/voiceInference';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { isRuntimeFeatureEnabled } from '@/sync/domains/features/featureDecisionInputs';

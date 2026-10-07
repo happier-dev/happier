@@ -1,4 +1,7 @@
-import { createHostPluginSettingsActionInvoker, pluginJsonValuesEqual, VoiceRealtimeJsonValueSchema, type VoiceProviderSettingsActionDeclaration } from '@happier-dev/protocol';
+import { createHostPluginSettingsActionInvoker } from '@happier-dev/protocol/plugins/settingsActionInvoker';
+import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
+import { VoiceRealtimeJsonValueSchema } from '@happier-dev/protocol/voice/realtime/events';
+import type { VoiceProviderSettingsActionDeclaration } from '@happier-dev/protocol/plugins/contributions/voice';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { storage } from '@/sync/domains/state/storage';

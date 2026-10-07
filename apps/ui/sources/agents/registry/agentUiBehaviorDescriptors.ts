@@ -12,11 +12,8 @@ import {
     readMetadataAliasValue,
     SESSION_CONFIG_OPTION_OVERRIDES_KEY,
 } from '@happier-dev/agents';
-import {
-    mergeSpawnConfigOptionAliases,
-    type AgentUiSettingReferenceV1,
-    type SpawnConfigOptionValue,
-} from '@happier-dev/protocol';
+import { mergeSpawnConfigOptionAliases, type SpawnConfigOptionValue } from '@happier-dev/protocol/actions/sessionSpawnConfigOptions';
+import type { AgentUiSettingReferenceV1 } from '@happier-dev/protocol/plugins/contributions/agentUiGrammar';
 
 import type {
     AgentSessionComposerNonSteerablePayloadContext,

@@ -3,7 +3,7 @@ import {
     AuthEntryProjectionV1Schema,
     type AuthEntryRequestV1,
     type AuthEntryProjectionV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/auth/entry';
 
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';

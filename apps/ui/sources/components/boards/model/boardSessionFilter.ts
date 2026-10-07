@@ -1,4 +1,4 @@
-import { normalizeSessionListFilterV1, type SessionListFilterV1 } from '@happier-dev/protocol';
+import { normalizeSessionListFilterV1, type SessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 
 import type { SessionListViewFilters } from '@/components/sessions/shell/search/sessionListViewFilters';
 

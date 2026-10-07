@@ -1,5 +1,6 @@
 import { randomUUID } from '@/platform/randomUUID';
-import { SESSION_TERMINAL_ACTION_INPUT_SCHEMAS, type SessionTerminalActionId, type SessionTerminalTargetV1 } from '@happier-dev/protocol';
+import { SESSION_TERMINAL_ACTION_INPUT_SCHEMAS, type SessionTerminalActionId } from '@happier-dev/protocol/actions/sessionTerminalActionFamily';
+import type { SessionTerminalTargetV1 } from '@happier-dev/protocol/terminal/workspace';
 import { parseSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { dispatchSessionTerminalWorkspaceCommand, getSplitMeasurementsForScope, openSessionTerminalInDetailsForScope, readSessionTerminalWorkspaceForScope, resizeSessionTerminalSplitForScope } from './sessionTerminalWorkspaceRuntime';
 import { reduceSessionTerminalWorkspace, type SessionTerminalWorkspaceCommand } from './sessionTerminalWorkspace';

@@ -16,7 +16,7 @@ export {
     isMachineReplaced,
     normalizeMachineIdentityString,
     type CanonicalMachineResolution,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/identity/canonicalMachineId';
 
 export type MachineTargetResolution = Readonly<{
     machineId: string;

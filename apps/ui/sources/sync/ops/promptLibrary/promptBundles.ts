@@ -1,11 +1,5 @@
-import {
-  PromptBundleBodyV1Schema,
-  updatePromptBundleInLibrary,
-  validatePromptBundleBodyV1AgainstSchemaId,
-  type PromptBundleBodyV1,
-  type PromptBundleEntryV1,
-  type PromptBundleSchemaIdV1,
-} from '@happier-dev/protocol';
+import { PromptBundleBodyV1Schema, validatePromptBundleBodyV1AgainstSchemaId, type PromptBundleBodyV1, type PromptBundleEntryV1, type PromptBundleSchemaIdV1 } from '@happier-dev/protocol/prompts/library/promptBundleSchemas';
+import { updatePromptBundleInLibrary } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 
 import { encodeBase64, decodeBase64 } from '@/encryption/base64';
 import { sync } from '@/sync/sync';

@@ -1,8 +1,6 @@
-import {
-    ComposerAttachmentDraftV1Schema,
-    StrictJsonValueSchema,
-    type StrictJsonValue,
-} from '@happier-dev/protocol';
+import { ComposerAttachmentDraftV1Schema } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import type { StrictJsonValue } from '@happier-dev/protocol/drafts/sessionDrafts';
 import { isPermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import {
     projectPredecessorSessionDraftAuthoringFields,

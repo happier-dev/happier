@@ -14,7 +14,7 @@ import { getRandomBytes } from '@/platform/cryptoRandom';
 import { HappyError } from '@/utils/errors/errors';
 import {
     computeAccountEncryptionMigrateKeyFingerprintV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 
 type PreparedAccountEncryptionMigrateToE2eeKey = Readonly<{
     credentials: LegacyAuthCredentials;

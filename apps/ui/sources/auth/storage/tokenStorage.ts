@@ -2,11 +2,9 @@ import { Platform } from 'react-native';
 import { z } from 'zod';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import type { AccountContinuationIntent } from '@happier-dev/cli-common/accountService';
-import {
-    AccountEncryptionMigrateRequestBindingDigestV1Schema,
-    AuthEntryProviderPresentationV1Schema,
-    TeamInvitationPostAuthContinuationV1Schema,
-} from '@happier-dev/protocol';
+import { AccountEncryptionMigrateRequestBindingDigestV1Schema } from '@happier-dev/protocol/account/encryptionMigrate';
+import { AuthEntryProviderPresentationV1Schema } from '@happier-dev/protocol/auth/entry';
+import { TeamInvitationPostAuthContinuationV1Schema } from '@happier-dev/protocol/teams/invitation';
 import type { AuthEntryProviderPresentationV1, TeamInvitationPostAuthContinuationV1 } from '@happier-dev/protocol';
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
 import { normalizeInternalReturnPath } from '@/utils/path/routeUtils';

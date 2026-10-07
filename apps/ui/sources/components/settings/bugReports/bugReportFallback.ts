@@ -1,12 +1,5 @@
-import {
-    buildBugReportFallbackIssueUrl,
-    formatBugReportFallbackIssueBody,
-    normalizeBugReportReproductionSteps,
-    type BugReportDeploymentType,
-    type BugReportEnvironmentPayload,
-    type BugReportFrequency,
-    type BugReportSeverity,
-} from '@happier-dev/protocol';
+import { buildBugReportFallbackIssueUrl, formatBugReportFallbackIssueBody, normalizeBugReportReproductionSteps } from '@happier-dev/protocol/bugs/reports/fallback';
+import type { BugReportDeploymentType, BugReportEnvironmentPayload, BugReportFrequency, BugReportSeverity } from '@happier-dev/protocol/bugs/reports/types';
 
 export type {
     BugReportDeploymentType,

@@ -1,5 +1,7 @@
 import * as React from 'react';
-import { BUILTIN_WORKFLOW_CATALOG_V1, type WorkflowDefinitionV1, type WorkflowRunStartRequestV1 } from '@happier-dev/protocol';
+import { BUILTIN_WORKFLOW_CATALOG_V1 } from '@happier-dev/protocol/workflows/builtins/catalog';
+import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
+import type { WorkflowRunStartRequestV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import { SelectionList, type SelectionListStep } from '@/components/ui/selectionList';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { View } from 'react-native';

@@ -1,9 +1,5 @@
-import {
-    ConnectedServiceQuotaSnapshotV1Schema,
-    ProviderAccountUsageSnapshotV1Schema,
-    buildProviderAccountUsageRecordId,
-    type ProviderAccountUsageSnapshotV1,
-} from '@happier-dev/protocol';
+import { ConnectedServiceQuotaSnapshotV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { ProviderAccountUsageSnapshotV1Schema, buildProviderAccountUsageRecordId, type ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { vi } from 'vitest';
 
 import type { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';

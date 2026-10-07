@@ -4,7 +4,7 @@ import { Platform, Pressable, View } from 'react-native';
 import {
   VoiceRuntimePlatformSchema,
   type VoiceRuntimePlatform,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/voice/realtime/capabilities';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 

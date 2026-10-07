@@ -4,13 +4,8 @@ import { HappyError } from '@/utils/errors/errors';
 import { backoff } from '@/utils/timing/time';
 import { z } from 'zod';
 
-import {
-  SealedConnectedServiceCredentialV1Schema,
-  readConnectedServiceCredentialRevisionBoundaryV1,
-  type ConnectedServiceCredentialRevisionBoundaryV1,
-  type ConnectedServiceId,
-  type SealedConnectedServiceCredentialV1,
-} from '@happier-dev/protocol';
+import { SealedConnectedServiceCredentialV1Schema, readConnectedServiceCredentialRevisionBoundaryV1, type ConnectedServiceCredentialRevisionBoundaryV1, type SealedConnectedServiceCredentialV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
+import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
 
 const ConnectedServiceCredentialSealedResponseSchema = z.object({
   sealed: SealedConnectedServiceCredentialV1Schema,

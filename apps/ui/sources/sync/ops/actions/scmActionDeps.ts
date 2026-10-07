@@ -1,6 +1,7 @@
-import { getActionSpec, ScmDiffSummaryResultClearInputSchema, ScmDiffSummaryResultClearResponseSchema,
-    ScmDiffSummaryResultResponseSchema, isScmCommitPlanApplicationLocked,
-    type ScmDiffSummaryResultClearResponse, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { ScmDiffSummaryResultClearInputSchema, ScmDiffSummaryResultClearResponseSchema, ScmDiffSummaryResultResponseSchema, type ScmDiffSummaryResultClearResponse } from '@happier-dev/protocol/scm/diffSummaryResult';
+import { isScmCommitPlanApplicationLocked } from '@happier-dev/protocol/scm/diffSummaryCommitPlan';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { runMachineScmRpcWithFallback } from '@/sync/ops/scm/machineScm';
 import { runSessionScmRpc } from '@/sync/ops/sessionScm';

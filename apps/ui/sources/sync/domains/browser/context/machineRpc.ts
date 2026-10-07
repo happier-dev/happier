@@ -1,9 +1,5 @@
-import {
-    DaemonBrowserContextDispatchRequestV1Schema,
-    DaemonBrowserContextDispatchResponseV1Schema,
-    type BrowserContextRouteResultV1,
-    type RuntimeActionIdV1,
-} from '@happier-dev/protocol';
+import { DaemonBrowserContextDispatchRequestV1Schema, DaemonBrowserContextDispatchResponseV1Schema, type BrowserContextRouteResultV1 } from '@happier-dev/protocol/browser/context/v1';
+import type { RuntimeActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { isRpcMethodNotFoundResult, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';

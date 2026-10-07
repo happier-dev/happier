@@ -2,14 +2,9 @@ import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import {
-    readSessionRolesV1,
-    type ResolvedRoleV1,
-    type RoleArtifactV1,
-    type RoleEngineV1,
-    type RoleInstructionsOverrideV1,
-    type SessionRolesV1,
-} from '@happier-dev/protocol';
+import { readSessionRolesV1, type SessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
+import type { ResolvedRoleV1, RoleInstructionsOverrideV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
+import type { RoleArtifactV1, RoleEngineV1 } from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
 
 import { useRoleCatalog } from '@/components/roles/catalog/useRoleCatalog';
 import { useRoleEnginePresentation } from '@/components/roles/catalog/useRoleEnginePresentation';

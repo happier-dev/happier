@@ -1,5 +1,5 @@
 import type { Machine, Session } from '../../domains/state/storageTypes';
-import { isPersistentMachine } from '@happier-dev/protocol';
+import { isPersistentMachine } from '@happier-dev/protocol/machines/machineKind';
 import {
     areMachineDisplayRenderablesEqual,
     buildMachineDisplayRenderableFromMachine,

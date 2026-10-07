@@ -1,11 +1,7 @@
-import {
-    IrohEndpointDescriptorV1Schema,
-    readMachineIrohEndpointAuthorityV1,
-    readServerEnabledBit,
-    supportsMachineOperationProtocolCapabilityV1,
-    type FeaturesResponse as ServerFeatures,
-    type IrohEndpointDescriptorV1,
-} from '@happier-dev/protocol';
+import { IrohEndpointDescriptorV1Schema, type IrohEndpointDescriptorV1 } from '@happier-dev/protocol/connectivity/iroh/endpointDescriptorV1';
+import { readMachineIrohEndpointAuthorityV1, supportsMachineOperationProtocolCapabilityV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
+import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
+import type { FeaturesResponse as ServerFeatures } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import type { HomeApplicationCarrierEligibility } from '@happier-dev/cli-common/homeEnrollment';
 
 export type MachineCarrierHostEligibility =

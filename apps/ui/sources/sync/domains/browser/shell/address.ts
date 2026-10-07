@@ -1,7 +1,7 @@
 import {
     BrowserExternalUrlTargetV1Schema,
     type BrowserViewTargetV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/target/v1';
 
 export type BrowserAddressNormalizationOptions = Readonly<{
     /** A `{query}` template; omitted means the default engine below. */

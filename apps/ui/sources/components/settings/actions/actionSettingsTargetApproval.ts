@@ -1,4 +1,5 @@
-import { isApprovalRequiredByActionsSettings, setActionApprovalOverride, type ActionSettingsActionId, type ActionsSettingsV1 } from '@happier-dev/protocol';
+import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { setActionApprovalOverride, type ActionSettingsActionId, type ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 
 import { normalizeActionsSettings } from './normalizeActionsSettings';
 import {

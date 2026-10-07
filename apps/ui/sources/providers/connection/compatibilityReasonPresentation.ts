@@ -1,7 +1,7 @@
 import {
     ProviderCompatibilityReasonCodeV1Schema,
     type ProviderCompatibilityReasonCodeV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/providers/compatibility/v1';
 
 import type { TranslationKeyNoParams } from '@/text';
 

@@ -1,5 +1,7 @@
 import * as React from 'react';
-import { readServerEnabledBit, type MachineKind, type MachinePoolViewV1 } from '@happier-dev/protocol';
+import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
+import type { MachineKind } from '@happier-dev/protocol/machines/machineKind';
+import type { MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
 import { useServerFeaturesMainSelectionSnapshot } from '@/sync/domains/features/featureDecisionRuntime';

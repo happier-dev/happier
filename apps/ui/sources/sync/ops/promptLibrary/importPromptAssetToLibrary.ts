@@ -1,11 +1,7 @@
-import {
-  computePromptBundleDigestV1,
-  computePromptDocDigestV1,
-  type PromptAssetReadResponseV1,
-  type PromptBundleSchemaIdV1,
-  type PromptExternalLinkEntryV1,
-  type PromptExternalLinksV1,
-} from '@happier-dev/protocol';
+import { computePromptBundleDigestV1, computePromptDocDigestV1 } from '@happier-dev/protocol/prompts/library/promptLibraryDigests';
+import type { PromptAssetReadResponseV1 } from '@happier-dev/protocol/prompts/library/promptAssetsV1';
+import type { PromptBundleSchemaIdV1 } from '@happier-dev/protocol/prompts/library/promptBundleSchemas';
+import type { PromptExternalLinkEntryV1, PromptExternalLinksV1 } from '@happier-dev/protocol/prompts/library/promptExternalLinksV1';
 
 import { randomUUID } from '@/platform/randomUUID';
 

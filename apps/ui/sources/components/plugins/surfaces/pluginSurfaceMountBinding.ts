@@ -13,7 +13,7 @@ import type {
     DaemonPluginUiComposerSurfaceCatalogEntryV1,
     DaemonPluginUiTargetedSurfaceMountV1,
 } from '@happier-dev/protocol';
-import { readDaemonPluginUiTargetedSurfaceMountV1 } from '@happier-dev/protocol';
+import { readDaemonPluginUiTargetedSurfaceMountV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 /**
  * The minimum producer facts the host needs to verify a destination mount.

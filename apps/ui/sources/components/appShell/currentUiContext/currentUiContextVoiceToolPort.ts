@@ -1,18 +1,13 @@
 import * as React from 'react';
 
-import {
-    arePluginMachineExecutionOriginsEqual,
-    buildQualifiedPluginContributionKey,
-    formatQualifiedPluginActionId,
-    parseQualifiedPluginActionId,
-    UiContributedActionExecuteRequestV1Schema,
-    UiContributedActionExecuteResponseV1Schema,
-    PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE,
-    type ActionDefinitionSummaryV1,
-    type PluginContributionIdentityV1,
-    type PluginJsonSchemaV2,
-    type PluginProjectedActionV2,
-} from '@happier-dev/protocol';
+import { arePluginMachineExecutionOriginsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { UiContributedActionExecuteRequestV1Schema, UiContributedActionExecuteResponseV1Schema } from '@happier-dev/protocol/plugins/actions/clientInvocationV1';
+import { PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
+import type { ActionDefinitionSummaryV1 } from '@happier-dev/protocol/actions/actionDefinitionV1';
+import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
+import type { PluginProjectedActionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type {
     PluginUiHostApiErrorCodeV1,
     PluginUiJsonValueV1,

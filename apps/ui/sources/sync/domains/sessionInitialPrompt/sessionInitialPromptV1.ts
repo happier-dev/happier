@@ -2,7 +2,7 @@ import type { Metadata } from '@happier-dev/session-core/state';
 import {
     SessionDiscussionSelectionSourceV1Schema,
     type SessionDiscussionSelectionSourceV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/discussions/content';
 
 export type SessionInitialPromptV1 = Readonly<{
     v: 1;

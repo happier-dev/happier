@@ -1,11 +1,5 @@
-import {
-    SessionEffectiveAccessV1Schema,
-    SessionShareSchema,
-    projectLegacySessionAccessCapabilitiesV1,
-    readSessionAccessProjectionRoleV1,
-    type SessionAccessCapabilitiesV1,
-    type SessionEffectiveAccessV1,
-} from '@happier-dev/protocol';
+import { SessionEffectiveAccessV1Schema, projectLegacySessionAccessCapabilitiesV1, readSessionAccessProjectionRoleV1, type SessionAccessCapabilitiesV1, type SessionEffectiveAccessV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import { SessionShareSchema } from '@happier-dev/protocol/sessions/control/contract';
 
 export type NormalizedSessionAccessProjection = Readonly<{
     role: 'owner' | 'recipient';

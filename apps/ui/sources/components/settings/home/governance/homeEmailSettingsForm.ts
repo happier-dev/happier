@@ -1,8 +1,6 @@
-import {
-    SERVER_CONFIG,
-    validateServerConfigText,
-    type ServerConfigEntryInput,
-} from '@happier-dev/protocol';
+import { SERVER_CONFIG } from '@happier-dev/protocol/serverConfig/registry';
+import { validateServerConfigText } from '@happier-dev/protocol/serverConfig/serverConfigCodec';
+import type { ServerConfigEntryInput } from '@happier-dev/protocol/serverConfig/serverConfigEntry';
 import type {
     HomeSettingEntryV1,
     HomeSettingSecretWriteV1,

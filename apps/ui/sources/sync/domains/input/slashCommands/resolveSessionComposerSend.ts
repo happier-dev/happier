@@ -1,6 +1,6 @@
 import { parseSessionSlashCommand } from './parseSessionSlashCommand';
 import type { ActionId, PromptInvocationBehaviorV1, PromptInvocationsV1 } from '@happier-dev/protocol';
-import { isPromptInvocationAvailable, normalizePromptInvocationTokenV1 } from '@happier-dev/protocol';
+import { isPromptInvocationAvailable, normalizePromptInvocationTokenV1 } from '@happier-dev/protocol/prompts/library/promptInvocationsV1';
 import { findBuiltInPrompt } from './builtInPrompts';
 import { renderPromptTemplateTextV1 } from './renderPromptTemplateTextV1';
 

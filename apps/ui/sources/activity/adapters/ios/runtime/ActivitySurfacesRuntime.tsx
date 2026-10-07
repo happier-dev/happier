@@ -6,11 +6,9 @@ import * as React from 'react';
 import { AppState, Platform } from 'react-native';
 import { router } from 'expo-router';
 import { addUserInteractionListener } from 'expo-widgets';
-import {
-    HAPPIER_FOCUS_LIVE_ACTIVITY_NAME,
-    type ActionId,
-    type FeatureId,
-} from '@happier-dev/protocol';
+import { HAPPIER_FOCUS_LIVE_ACTIVITY_NAME } from '@happier-dev/protocol/activity/live/remoteUpdates';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import type { FeatureId } from '@happier-dev/protocol/features/catalog';
 
 import {
     type ActivityInteractionIdentity,

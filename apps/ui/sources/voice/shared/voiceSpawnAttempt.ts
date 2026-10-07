@@ -3,7 +3,7 @@ import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
 import {
     SessionCreationKeyV1Schema,
     type SessionCreationKeyV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 

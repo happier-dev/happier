@@ -1,4 +1,6 @@
-import { PUBLIC_ACTION_INPUT_SCHEMAS, type ActionExecuteResult, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { PUBLIC_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 
 import { requestRegisteredComposerPromptPicker } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 

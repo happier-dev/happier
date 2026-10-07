@@ -1,18 +1,6 @@
-import {
-    AccountEmailChangeRequestResponseV1Schema,
-    AccountPasswordMutationResponseV1Schema,
-    AccountSecurityGetResponseV1Schema,
-    AccountTerminalPresentUserPolicySetResponseV1Schema,
-    type ActionExecuteResult,
-    type AccountTerminalPresentUserPolicySetResponseV1,
-    type TerminalPresentUserPolicy,
-    type AccountEmailChangeRequestResponseV1,
-    type AccountPasswordMutationResponseV1,
-    type AccountPasswordChangeRequestV1,
-    type AccountPasswordEnrollRequestV1,
-    type AccountPasswordRemoveRequestV1,
-    type AccountSecurityGetResponseV1,
-} from '@happier-dev/protocol';
+import { AccountEmailChangeRequestResponseV1Schema, AccountPasswordMutationResponseV1Schema, AccountSecurityGetResponseV1Schema, AccountTerminalPresentUserPolicySetResponseV1Schema, type AccountTerminalPresentUserPolicySetResponseV1, type AccountEmailChangeRequestResponseV1, type AccountPasswordMutationResponseV1, type AccountPasswordChangeRequestV1, type AccountPasswordEnrollRequestV1, type AccountPasswordRemoveRequestV1, type AccountSecurityGetResponseV1 } from '@happier-dev/protocol/auth/accountSecurity';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { TerminalPresentUserPolicy } from '@happier-dev/protocol/actions/invocationAuthority';
 
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { HappyError } from '@/utils/errors/errors';

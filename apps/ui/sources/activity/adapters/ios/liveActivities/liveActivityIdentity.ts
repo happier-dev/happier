@@ -1,4 +1,4 @@
-import { HAPPIER_FOCUS_LIVE_ACTIVITY_NAME } from '@happier-dev/protocol';
+import { HAPPIER_FOCUS_LIVE_ACTIVITY_NAME } from '@happier-dev/protocol/activity/live/remoteUpdates';
 
 import { activityInstanceKey } from '@/sync/domains/session/sessionAddress';
 

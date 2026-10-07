@@ -1,4 +1,10 @@
-import { ArtifactActionInputSchemasV1, ArtifactDocumentV1Schema, artifactSavedByFromActionContextV1, createArtifactPublicLinkActionsV1, listArtifactHeadersV1, prepareArtifactWorkspaceFileV1, isArtifactHtmlHeaderV1, type ActionExecutorContext, type ArtifactPublicLinkIssuedV1, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { ArtifactActionInputSchemasV1, ArtifactDocumentV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { artifactSavedByFromActionContextV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
+import { createArtifactPublicLinkActionsV1, type ArtifactPublicLinkIssuedV1 } from '@happier-dev/protocol/actions/executor/artifactPublicLinkActions';
+import { listArtifactHeadersV1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
+import { prepareArtifactWorkspaceFileV1 } from '@happier-dev/protocol/artifacts/artifactWorkspaceFileV1';
+import { isArtifactHtmlHeaderV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
+import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { ArtifactQuotaExceededError } from '@/sync/api/artifacts/apiArtifacts';
 import { HappyError } from '@/utils/errors/errors';

@@ -1,6 +1,7 @@
 import * as React from 'react';
 
-import { compareTurnChangeSetChronology, type SessionChangeSet, type TurnChangeSet } from '@happier-dev/protocol';
+import { compareTurnChangeSetChronology } from '@happier-dev/protocol/sessions/changes/mergeTurnChangeSets';
+import type { SessionChangeSet, TurnChangeSet } from '@happier-dev/protocol/sessions/changes/types';
 
 import { useSession, useSessionMessages } from '@/sync/domains/state/storage';
 import { readStoredSessionMessagesForAddress } from '@/sync/domains/messages/readStoredSessionMessagesForAddress';

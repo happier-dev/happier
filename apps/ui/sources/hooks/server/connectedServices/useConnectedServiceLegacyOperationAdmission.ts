@@ -1,13 +1,9 @@
 import * as React from 'react';
 
-import {
-    BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
-    assertConnectedAccountOperationTransportV1,
-    type BuiltInLegacyConnectedAccountOperation,
-    type ConnectedServiceId,
-    type PluginContributionIdentityV1,
-    type ConnectedAccountExpectedOperationTransport,
-} from '@happier-dev/protocol';
+import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID, type BuiltInLegacyConnectedAccountOperation } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
+import { assertConnectedAccountOperationTransportV1, type ConnectedAccountExpectedOperationTransport } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
+import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import {

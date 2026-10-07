@@ -1,4 +1,4 @@
-import { isMachineReplaced } from '@happier-dev/protocol';
+import { isMachineReplaced } from '@happier-dev/protocol/machines/identity/canonicalMachineId';
 
 const DEFAULT_MACHINE_ONLINE_GRACE_MS = 60_000;
 const MAX_MACHINE_ONLINE_GRACE_MS = 5 * 60_000;

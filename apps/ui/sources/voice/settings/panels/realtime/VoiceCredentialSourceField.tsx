@@ -7,7 +7,7 @@ import type {
   VoiceCredentialSourceSelection,
   VoiceProviderContribution,
 } from '@happier-dev/protocol';
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import {

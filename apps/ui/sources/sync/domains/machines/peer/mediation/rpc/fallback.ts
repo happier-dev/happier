@@ -1,7 +1,5 @@
-import {
-    PEER_MEDIATION_RECEIPTS,
-    type PeerMachineRpcDirectFallbackReasonCodeV1,
-} from '@happier-dev/protocol';
+import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/mediation/receipts';
+import type { PeerMachineRpcDirectFallbackReasonCodeV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/directV1';
 
 export type MachineRpcPeerFallbackReceipt = Readonly<{
     receipt: typeof PEER_MEDIATION_RECEIPTS.routeFallback | typeof PEER_MEDIATION_RECEIPTS.rpcFellBackToServer;

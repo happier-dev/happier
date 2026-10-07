@@ -1,10 +1,6 @@
 import * as React from 'react';
-import {
-    readBundledProviderWireProtocolFactV1,
-    type BundledProviderWireProtocol,
-    type ProviderErrorV1,
-    type ProviderWireProtocol,
-} from '@happier-dev/protocol';
+import { readBundledProviderWireProtocolFactV1, type BundledProviderWireProtocol, type ProviderWireProtocol } from '@happier-dev/protocol/providers/capabilities/v1';
+import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type { DaemonProviderContributionAuthoringPreviewV1 } from '@happier-dev/protocol/rpc';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
