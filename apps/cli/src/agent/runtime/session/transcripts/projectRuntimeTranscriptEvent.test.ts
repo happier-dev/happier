@@ -40,6 +40,45 @@ function canonicalRuntimeEvent(input: Readonly<Record<string, unknown>>): AgentS
 }
 
 describe('projectRuntimeTranscriptEvent', () => {
+  it('preserves provider message identities from live deltas through durable commit and cold reconciliation', async () => {
+    const { createKeyedStreamedTranscriptBridge } = await import('@/api/session/createKeyedStreamedTranscriptBridge');
+    const { projectRuntimeTranscriptEvent } = await import('./projectRuntimeTranscriptEvent');
+    const { buildOpenCodeRuntimeTranscriptLocalId } = await import('../../../../../../../packages/plugins/opencode/src/agent/runtime/server/transcript/identity');
+    const { openCodeTranscriptIdentityCodec } = await import('../../../../../../../packages/plugins/opencode/src/agent/runtime/server/transcript/committedIdentities');
+    const stored = new Map<string, CommittedAgentMessageBody>();
+    const liveIds: string[] = [];
+    const session = {
+      sessionId: 'session-1',
+      sendAgentMessageEphemeral: (_provider: unknown, _body: unknown, opts: { localId: string }) => {
+        liveIds.push(opts.localId);
+        return { accepted: true as const, epoch: 0 };
+      },
+      enqueueAgentMessageCommitted: async (_provider: unknown, body: CommittedAgentMessageBody, opts: { localId: string }) => {
+        stored.set(opts.localId, body);
+        return { persisted: true, delivered: false };
+      },
+    };
+    const bridge = createKeyedStreamedTranscriptBridge({ provider: 'opencode', createSessionForStream: () => session });
+    const ids = ['assistant-one', 'assistant-two'].map((id) => buildOpenCodeRuntimeTranscriptLocalId('native-session', id));
+    for (const [index, messageId] of ids.entries()) {
+      for (const text of ['Live ', String(index)]) {
+        await projectRuntimeTranscriptEvent({ session, provider: 'opencode', runtimeMessageDeltaBridge: bridge,
+          event: canonicalRuntimeEvent({ kind: 'message-delta', sessionId: 'session-1', emittedAtMs: 1,
+            turnId: 'same-host-turn', messageId, channel: 'assistant', text }) });
+      }
+    }
+    expect(liveIds).toEqual(expect.arrayContaining(ids));
+    await projectRuntimeTranscriptEvent({ session, provider: 'opencode', runtimeMessageDeltaBridge: bridge,
+      event: canonicalRuntimeEvent({ kind: 'turn-complete', sessionId: 'session-1', emittedAtMs: 2, turnId: 'same-host-turn' }) });
+    expect([...stored.entries()]).toEqual(ids.map((id, index) => [id, { type: 'message', message: `Live ${index}` }]));
+    const facts = ids.map((localId, index) => ({ localId, sourceMessageId: ['assistant-one', 'assistant-two'][index]!, role: 'assistant' as const }));
+    expect(openCodeTranscriptIdentityCodec.reconcile({ providerSessionId: 'native-session', facts, metadata: {},
+      baseline: { complete: true, rows: [...stored.keys()].map((localId) => ({ localId, role: 'agent' as const, meta: {} })) } })).toEqual({
+      committedSourceMessageIds: ['assistant-one', 'assistant-two'], hostAuthoredUserMessageIds: [],
+      coverage: { complete: true, unmappedUsers: 0, unmappedAgents: 0 },
+    });
+  });
+
   it('persists typed completion evidence when a turn completes without streamed output', async () => {
     const { createKeyedStreamedTranscriptBridge } = await import('@/api/session/createKeyedStreamedTranscriptBridge');
     const { projectRuntimeTranscriptEvent } = await import('./projectRuntimeTranscriptEvent');

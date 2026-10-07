@@ -23,11 +23,13 @@ type RuntimeMessageDeltaBridge = Readonly<{
     streamKey: string;
     sidechainId: string | null;
     deltaText: string;
+    messageId?: string;
   }>) => void;
   appendThinkingDelta: (args: Readonly<{
     streamKey: string;
     sidechainId: string | null;
     deltaText: string;
+    messageId?: string;
   }>) => void;
   flushAll: (args: Readonly<{
     reason: 'tool-call-boundary' | 'turn-end' | 'abort';
@@ -463,9 +465,10 @@ export async function projectRuntimeTranscriptEvent(params: Readonly<{
       ? params.runtimeMessageDeltaBridge.appendThinkingDelta
       : params.runtimeMessageDeltaBridge.appendAssistantDelta;
     appendDelta({
-      streamKey: event.turnId,
+      streamKey: event.messageId ? JSON.stringify([event.turnId, event.channel, event.messageId]) : event.turnId,
       sidechainId: event.sidechainId ?? null,
       deltaText,
+      ...(event.messageId ? { messageId: event.messageId } : {}),
     });
     return { projected: true, kind: event.kind };
   }
