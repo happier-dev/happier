@@ -110,7 +110,7 @@ export type DaemonWorkspaceSyncRuntimeDependencies = Readonly<{
   resolveInstalledComponentPaths?: (input: Readonly<{ componentId: 'mutagen-engine'; channel: PublicReleaseRingId }>) => InstalledPaths;
   ensureInstalledComponent?: typeof ensureInstalledFirstPartyComponent;
   resolveArtifactPaths?: (payloadRoot: string, targetTriple: MutagenEngineArtifactTarget) => ArtifactPaths;
-  assertArtifactPayload?: (input: Readonly<{ payloadRoot: string; targetTriple: MutagenEngineArtifactTarget; engineVersion?: string }>) => ArtifactManifest;
+  assertArtifactPayload?: (input: Readonly<{ payloadRoot: string; targetTriple: MutagenEngineArtifactTarget; engineVersion?: string }>) => ArtifactManifest | Promise<ArtifactManifest>;
   resolveArtifactTarget?: () => MutagenEngineArtifactTarget;
   resolveDataLayout?: (input: Readonly<{ daemonDataRoot: string; stackDevTargetMutagenDataDir?: string | null }>) => DataLayout;
   platform?: NodeJS.Platform;
@@ -182,9 +182,10 @@ export function createDaemonWorkspaceSyncRuntime(
         engineVersion: MUTAGEN_ENGINE_VERSION,
       });
       let installed: InstalledPaths;
+      let manifest: ArtifactManifest;
       try {
         installed = resolveInstalled({ componentId: 'mutagen-engine', channel: dependencies.releaseChannel });
-        validatePayload(installed.resolvedCurrentPath ?? installed.currentPath);
+        manifest = await validatePayload(installed.resolvedCurrentPath ?? installed.currentPath);
       } catch {
         installed = await ensureInstalled({
           componentId: 'mutagen-engine',
@@ -192,10 +193,10 @@ export function createDaemonWorkspaceSyncRuntime(
           versionId: MUTAGEN_ENGINE_VERSION,
           validatePayload,
         });
+        manifest = await validatePayload(installed.resolvedCurrentPath ?? installed.currentPath);
       }
       const payloadRoot = installed.resolvedCurrentPath ?? installed.currentPath;
       const paths = resolvePaths(payloadRoot, targetTriple);
-      const manifest = assertPayload({ payloadRoot, targetTriple, engineVersion: MUTAGEN_ENGINE_VERSION });
       return { managerPath: paths.managerPath, agentPath: paths.agentPath, dataDir: layout.dataDir, brokerDir: layout.brokerDir, manifest };
     });
     verifiedRuntime = pending;

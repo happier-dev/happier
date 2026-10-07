@@ -1,10 +1,34 @@
 import { describe, expect, it } from 'vitest';
 import { isPluginError } from '@happier-dev/plugin-sdk';
 
+import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
 import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 import { createAgentCliSystemToolService } from './agentCliBinding';
 
 describe('Agent CLI system-tool startup prerequisite', () => {
+    it('resolves an explicitly selected path through the canonical Agent CLI launch owner', async () => {
+        const home = createTempDirSync('happier-selected-agent-system-tool-');
+        try {
+            const selected = writeExecutableShimSync({ dir: home, fileName: process.platform === 'win32' ? 'selected.cmd' : 'selected',
+                contents: process.platform === 'win32' ? '@echo off\r\nexit /b 0\r\n' : '#!/bin/sh\nexit 0\n' });
+            const service = createAgentCliSystemToolService({
+                agentId: 'fixture',
+                runtimeSpec: {
+                    id: 'fixture', title: 'Fixture', binaryName: 'missing-agent',
+                    knownUserBinDirSuffixes: [], sourcePreferenceDefault: 'system-first',
+                    managedInstall: null, manualInstallKind: 'none', manualInstallRecipes: null,
+                    acceptsJavaScriptFileOverride: false,
+                },
+                binding: { toolId: 'agent-cli' },
+                definition: { toolId: 'agent-cli', displayName: 'Agent CLI', lookupNames: ['missing-agent'] },
+                processEnv: { PATH: '', HOME: home, USERPROFILE: home, HAPPIER_HOME_DIR: home },
+                delegate: { async resolve() { throw new Error('Selected Agent CLI must use its canonical owner'); } },
+            });
+            await expect(service.resolve({ toolId: 'agent-cli', purpose: 'Inspect Agent', preferredPath: selected }))
+                .resolves.toMatchObject({ executablePath: selected });
+        } finally { removeTempDirSync(home); }
+    });
+
     it('reports a missing CLI through the public PluginError contract with safe remediation', async () => {
         const home = createTempDirSync('happier-missing-agent-system-tool-');
         const agentId = 'private-agent-identity';
