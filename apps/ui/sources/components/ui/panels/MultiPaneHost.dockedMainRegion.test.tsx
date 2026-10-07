@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
 import { MultiPaneHost } from './MultiPaneHost';
+import type { ResolvedPaneLayout } from './paneBreakpoints';
 
 
 declare global {
@@ -105,6 +106,41 @@ describe('MultiPaneHost (docked main region)', () => {
         expect(tracker.mounts.main).toBe(1);
         expect(tracker.unmounts.main ?? 0).toBe(0);
     });
+
+    it.each(['details', 'right'] as const)('preserves the %s editor draft and mount while its pane docks, overlays, and docks again', async (pane) => {
+        const tracker = createMountTracker();
+        const editor = <DraftEditor tracker={tracker} name={pane} />;
+        const tree = (overlay: boolean) => {
+            const layout: ResolvedPaneLayout = {
+                kind: overlay ? 'overlayStack' : 'twoPane',
+                right: pane === 'right' ? (overlay ? 'overlay' : 'docked') : 'hidden',
+                details: pane === 'details' ? (overlay ? 'overlay' : 'docked') : 'hidden',
+            };
+            return <MultiPaneHost
+                main={<Tracked tracker={tracker} name="main" />}
+                rightPane={pane === 'right' ? editor : null}
+                detailsPane={pane === 'details' ? editor : null}
+                layout={layout}
+                rightDockWidthPx={390}
+                detailsDockWidthPx={390}
+                onCloseRight={() => {}}
+                onCloseDetails={() => {}}
+                onCommitRightDockWidthPx={() => {}}
+                onCommitDetailsDockWidthPx={() => {}}
+            />;
+        };
+        const screen = await renderScreen(tree(false));
+        await act(async () => { screen.root.findByType('DraftEditor').props.onChangeText('Unsubmitted work'); });
+        expect(screen.root.findByType('DraftEditor').props.value).toBe('Unsubmitted work');
+        expect(tracker.mounts[pane]).toBe(1);
+        for (const overlay of [true, false]) {
+            await screen.update(tree(overlay));
+            expect(screen.root.findByType('DraftEditor').props.value).toBe('Unsubmitted work');
+            expect(tracker.mounts[pane]).toBe(1);
+            expect(tracker.unmounts[pane] ?? 0).toBe(0);
+            expect(tracker.mounts.main).toBe(1);
+        }
+    });
 });
 
 function Main() {
@@ -132,6 +168,17 @@ function Tracked(props: Readonly<{ tracker: MountTracker; name: string }>) {
         };
     }, [props.name, props.tracker]);
     return React.createElement(props.name);
+}
+
+function DraftEditor(props: Readonly<{ tracker: MountTracker; name: string }>) {
+    const [value, onChangeText] = React.useState('');
+    React.useEffect(() => {
+        props.tracker.mounts[props.name] = (props.tracker.mounts[props.name] ?? 0) + 1;
+        return () => {
+            props.tracker.unmounts[props.name] = (props.tracker.unmounts[props.name] ?? 0) + 1;
+        };
+    }, [props.name, props.tracker]);
+    return React.createElement('DraftEditor', { value, onChangeText });
 }
 
 function findAncestorWithStyle(

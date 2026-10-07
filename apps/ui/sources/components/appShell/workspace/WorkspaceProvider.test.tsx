@@ -120,8 +120,10 @@ describe('consumed workspace navigation owner', () => {
         expect(screen.root.findAllByType('ExpoOwnedBody')).toHaveLength(1);
         expect(boundary.mirrors).toEqual([]);
     });
-    it.each(['agents/custom', 'connected-services/connect', 'embeds/new', 'account/api-tokens/token-a', 'voice/service', 'personalize'])('retains the %s editor across mobile-web/desktop hosting changes', async pageId => {
-        const pathname = pageId === 'personalize' ? '/personalize' : `/settings/${pageId}`;
+    it.each(['agents/custom', 'connected-services/connect', 'embeds/new', 'account/api-tokens/token-a', 'voice/service', 'personalize',
+        'artifacts/new', 'artifacts/edit/document-a', 'workflows/new', 'workflows/edit', 'automations/new', 'boards/board-a', 'inbox'])('retains the %s editor across mobile-web/desktop hosting changes', async pageId => {
+        const appPage = /^(artifacts|workflows|automations|boards|inbox)(\/|$)/.test(pageId);
+        const pathname = pageId === 'personalize' || appPage ? `/${pageId}` : `/settings/${pageId}`;
         const search = pageId === 'personalize' ? '?page=conversation' : '';
         boundary.platform = 'web'; boundary.pathname = pathname; boundary.params = {};
         const location = { pathname, search, hash: '' };
@@ -133,24 +135,33 @@ describe('consumed workspace navigation owner', () => {
         vi.stubGlobal('window', { location, history: browserHistory, sessionStorage: { getItem: () => 'main' }, addEventListener: () => {}, removeEventListener: () => {} });
         const moduleName = pageId === 'agents/custom' ? 'agents/custom/index'
             : pageId === 'account/api-tokens/token-a' ? 'account/api-tokens/[tokenId]' : pageId;
-        const moduleKey = pageId === 'personalize' ? './(app)/personalize.tsx' : `./(app)/settings/${moduleName}.tsx`;
+        const appModule = pageId === 'artifacts/edit/document-a' ? 'artifacts/edit/[id]'
+            : pageId === 'boards/board-a' ? 'boards/[boardId]' : pageId === 'inbox' ? 'inbox/index' : pageId;
+        const moduleKey = pageId === 'personalize' || appPage ? `./(app)/${appModule}.tsx` : `./(app)/settings/${moduleName}.tsx`;
         const modules: Record<string, unknown> = {
             './(app)/settings/_layout.tsx': { default: ResizeLayout },
             './(app)/index.tsx': { WorkspaceRouteBody: () => null },
             [moduleKey]: { WorkspaceRouteBody: ResizeEditor },
         };
         registerWorkspaceRouteContext(Object.assign((key: string) => modules[key], { keys: () => Object.keys(modules) }));
-        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
-        let desktop = false;
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: true, workflows: true, friends: false } });
+        let desktop = true;
         const element = () => <WorkspaceProvider enabled={desktop} phone={!desktop} catalog={catalog}>
             {navigation => <>{React.createElement('WorkspaceOwner', { navigation })}<WorkspaceShell catalog={catalog} /></>}
         </WorkspaceProvider>;
         const screen = await renderScreen(element());
         const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
         expect(navigation().active).toBe(true);
+        // Supply native layout events so the real retained canvas admits its visible body.
+        await act(async () => {
+            invokeTestInstanceHandler(screen.findByTestId('split-canvas-host'), 'onLayout',
+                { nativeEvent: { layout: { width: 1440, height: 900 } } });
+            invokeTestInstanceHandler(screen.findByTestId(`split-canvas-content-slot-${navigation().state.focusedGroupId}`), 'onLayout',
+                { nativeEvent: { layout: { x: 0, y: 0, width: 1440, height: 900 } } });
+        });
         await act(async () => { screen.root.findByType('ResizeEditor').props.setDraft('unsaved draft'); });
         const tabId = navigation().state.groups[navigation().state.focusedGroupId].activeTabId;
-        for (const next of [true, false, true]) {
+        for (const next of [false, true, false]) {
             desktop = next;
             await act(async () => { screen.update(element()); });
             expect(navigation().active).toBe(true);

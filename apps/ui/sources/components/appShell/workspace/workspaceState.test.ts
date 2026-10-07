@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { collectSplitCanvasLeafIds } from '../splitCanvas/model/splitCanvasSelectors';
-import { createWorkspaceState, reduceWorkspaceState, WORKSPACE_RECENTLY_CLOSED_LIMIT } from './workspaceState';
+import { createWorkspaceState, reduceWorkspaceState } from './workspaceState';
 import type { WorkspaceTab } from './workspaceState';
 import { parseWorkspaceLayout, serializeWorkspaceLayout, readScopedWorkspaceLayout, writeScopedWorkspaceLayout, workspaceLayoutScopeKey } from './workspacePersistence';
 
@@ -51,18 +51,18 @@ describe('workspace state', () => {
         expect(reordered.tabs.b).toBe(state.tabs.b);
     });
 
-    it('retains the owner-bounded most recent undo entries without limiting open tabs', () => {
+    it('keeps explicitly closed tabs available to reopen throughout the window lifetime', () => {
         let state = createWorkspaceState(tab('a'));
-        for (let index = 0; index <= WORKSPACE_RECENTLY_CLOSED_LIMIT; index++) {
+        for (let index = 0; index < 25; index++) {
             const nextTab = tab(`closed:${index}`);
             state = reduceWorkspaceState(state, { type: 'openTab', groupId: 'group:1', tab: nextTab });
             state = reduceWorkspaceState(state, { type: 'closeTab', groupId: 'group:1', tabId: nextTab.id, newTab: tab('blank', 'newTab') });
         }
-        expect(state.recentlyClosed).toHaveLength(WORKSPACE_RECENTLY_CLOSED_LIMIT);
-        expect(state.recentlyClosed[0].tab.id).toBe(`closed:${WORKSPACE_RECENTLY_CLOSED_LIMIT}`);
-        expect(state.recentlyClosed.some(entry => entry.tab.id === 'closed:0')).toBe(false);
-        expect(reduceWorkspaceState(state, { type: 'reopenTab', tabId: 'closed:0' })).toBe(state);
-        expect(reduceWorkspaceState(state, { type: 'reopenTab', tabId: 'closed:1' }).tabs['closed:1']).toBeDefined();
+        expect(state.recentlyClosed).toHaveLength(25);
+        expect(state.recentlyClosed[0].tab.id).toBe('closed:24');
+        const reopened = reduceWorkspaceState(state, { type: 'reopenTab', tabId: 'closed:0' });
+        expect(reopened.tabs['closed:0']).toBeDefined();
+        expect(reopened.recentlyClosed).toHaveLength(24);
     });
     it('reopens an explicitly closed preview as a kept tab at its former position without replacing the current preview', () => {
         let state = createWorkspaceState(tab('a'));

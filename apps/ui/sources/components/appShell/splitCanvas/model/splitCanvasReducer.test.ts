@@ -75,7 +75,6 @@ describe('splitCanvasReduce', () => {
         let state = createSplitCanvasState({
             root: createLeaf('leaf-a'),
             focusedLeafId: 'leaf-a',
-            maxLeaves: 4,
         });
 
         state = splitCanvasReduce(state, {
@@ -101,7 +100,6 @@ describe('splitCanvasReduce', () => {
         let state = createSplitCanvasState({
             root: createLeaf('leaf-a'),
             focusedLeafId: 'leaf-a',
-            maxLeaves: 4,
         });
 
         state = splitCanvasReduce(state, {
@@ -124,7 +122,6 @@ describe('splitCanvasReduce', () => {
         const state = createSplitCanvasState({
             root: createLeaf('leaf-a'),
             focusedLeafId: 'leaf-a',
-            maxLeaves: 4,
         });
 
         const nextState = splitCanvasReduce(state, {
@@ -139,7 +136,6 @@ describe('splitCanvasReduce', () => {
         let state = createSplitCanvasState({
             root: createLeaf('leaf-a'),
             focusedLeafId: 'leaf-a',
-            maxLeaves: 6,
         });
 
         state = splitCanvasReduce(state, {
@@ -172,7 +168,6 @@ describe('splitCanvasReduce', () => {
         let state = createSplitCanvasState({
             root: createLeaf('leaf-a'),
             focusedLeafId: 'leaf-a',
-            maxLeaves: 4,
         });
 
         state = splitCanvasReduce(state, {
@@ -221,31 +216,15 @@ describe('splitCanvasReduce', () => {
         expect(state.maximizedLeafId).toBeNull();
     });
 
-    it('enforces the configured maximum leaf count', () => {
-        let state = createSplitCanvasState({
-            root: createLeaf('leaf-a'),
-            focusedLeafId: 'leaf-a',
-            maxLeaves: 2,
-        });
-
-        state = splitCanvasReduce(state, {
-            type: 'splitLeaf',
-            targetLeafId: 'leaf-a',
-            axis: 'row',
-            placement: 'after',
-            newLeaf: createLeaf('leaf-b'),
-        });
-
-        const limited = splitCanvasReduce(state, {
-            type: 'splitLeaf',
-            targetLeafId: 'leaf-b',
-            axis: 'column',
-            placement: 'after',
-            newLeaf: createLeaf('leaf-c'),
-        });
-
-        expect(limited).toBe(state);
-        expect(collectSplitCanvasLeafIds(limited)).toEqual(['leaf-a', 'leaf-b']);
+    it('keeps unmeasured legacy split requests free of an arbitrary pane-count ceiling', () => {
+        let state = createSplitCanvasState({ root: createLeaf('leaf-0') });
+        for (let index = 1; index < 10; index++) {
+            state = splitCanvasReduce(state, {
+                type: 'splitLeaf', targetLeafId: `leaf-${index - 1}`, axis: 'row', placement: 'after',
+                newLeaf: createLeaf(`leaf-${index}`),
+            });
+        }
+        expect(collectSplitCanvasLeafIds(state)).toHaveLength(10);
     });
 
     it('admits a ninth nested leaf when its measured view minimums fit', () => {
@@ -302,7 +281,6 @@ describe('splitCanvasReduce', () => {
         let state = createSplitCanvasState({
             root: createLeaf('leaf-a'),
             focusedLeafId: 'leaf-a',
-            maxLeaves: 8,
         });
 
         state = splitCanvasReduce(state, {

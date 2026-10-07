@@ -36,7 +36,7 @@ export function sessionTerminalTabToSplitCanvas(tab: SessionTerminalTabV1): Spli
         : { id: node.id, kind: 'split', axis: 'row', ratio: node.ratio, first: toCanvas(node.first), second: toCanvas(node.second) };
     return {
         root: toCanvas(tab.root),
-        focusedLeafId: tab.focusedTerminalId, maximizedLeafId: null, maxLeaves: Number.POSITIVE_INFINITY,
+        focusedLeafId: tab.focusedTerminalId, maximizedLeafId: null,
     };
 }
 

@@ -29,7 +29,6 @@ describe('useSplitCanvasKeyboard', () => {
         const state = createSplitCanvasState({
             root: createLeaf('leaf-a'),
             focusedLeafId: 'leaf-a',
-            maxLeaves: 4,
         });
 
         const hook = await renderHook(({ tick }: { tick: number }) => {
@@ -63,7 +62,6 @@ describe('useSplitCanvasKeyboard', () => {
         const state = createSplitCanvasState({
             root: createLeaf('leaf-a'),
             focusedLeafId: 'leaf-a',
-            maxLeaves: 4,
         });
 
         const { KeyboardShortcutProvider } = await import('@/keyboard');
@@ -125,7 +123,6 @@ describe('useSplitCanvasKeyboard', () => {
         const state = createSplitCanvasState({
             root: createLeaf('leaf-a'),
             focusedLeafId: 'leaf-a',
-            maxLeaves: 4,
         });
 
         await renderHook(() => useSplitCanvasKeyboard({
@@ -180,7 +177,6 @@ describe('useSplitCanvasKeyboard', () => {
         const state = createSplitCanvasState({
             root: createLeaf('leaf-a'),
             focusedLeafId: 'leaf-a',
-            maxLeaves: 4,
         });
 
         await renderHook(() => useSplitCanvasKeyboard({
@@ -249,7 +245,6 @@ describe('useSplitCanvasKeyboard', () => {
         const state = createSplitCanvasState({
             root: createLeaf('leaf-a'),
             focusedLeafId: 'leaf-a',
-            maxLeaves: 4,
         });
 
         await renderHook(() => useSplitCanvasKeyboard({
@@ -310,7 +305,6 @@ describe('useSplitCanvasKeyboard', () => {
         const state = createSplitCanvasState({
             root: createLeaf('leaf-a'),
             focusedLeafId: 'leaf-a',
-            maxLeaves: 4,
         });
 
         await renderHook(() => useSplitCanvasKeyboard({
@@ -375,7 +369,6 @@ describe('useSplitCanvasKeyboard', () => {
             root: createLeaf('leaf-a'),
             focusedLeafId: 'leaf-a',
             maximizedLeafId: 'leaf-a',
-            maxLeaves: 4,
         });
 
         await renderHook(() => useSplitCanvasKeyboard({
