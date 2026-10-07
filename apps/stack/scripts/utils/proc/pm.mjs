@@ -11,10 +11,12 @@ import { coerceHappyMonorepoRootFromPath, getDefaultAutostartPaths, getHappyStac
 import { resolveInstalledPath, resolveInstalledCliRoot } from '../paths/runtime.mjs';
 import { expandHome } from '../paths/canonical_home.mjs';
 import { resolveCliDistBuildLockPath, withCliDistBuildLock } from './cliDistBuildLock.mjs';
-import { withDependencyRefresh } from './dependency_refresh.mjs';
+import { resolveDependencyInstallRoot, withDependencyRefresh } from './dependency_refresh.mjs';
+export { resolveDependencyInstallRoot } from './dependency_refresh.mjs';
 import { ensureUiPostinstallOutputs as prepareUiPostinstallOutputs } from './ui_postinstall.mjs';
 import { createWorkspaceBuildWaitNotifier } from './workspaceBuildWaitNotifier.mjs';
 import { resolveWorkspaceToolBinDirs } from './workspace_tool_bins.mjs';
+import { resolvePackageManagerCachePaths } from './package_manager_cache.mjs';
 import { probeCliDistRuntimeImport, readCliDistIntegrity } from '../cli/cliDistIntegrity.mjs';
 export { isCliDistBuildLockActive } from './cliDistBuildLock.mjs';
 
@@ -213,15 +215,6 @@ function formatPmCommand(pm, args) {
       return /^[a-zA-Z0-9_./:@%+=,-]+$/.test(value) ? value : JSON.stringify(value);
     })
     .join(' ');
-}
-
-export function resolveDependencyInstallRoot(componentDir) {
-  const monorepoRoot = coerceHappyMonorepoRootFromPath(componentDir);
-  if (!monorepoRoot) {
-    return componentDir;
-  }
-  const rootPkgJson = join(monorepoRoot, 'package.json');
-  return existsSync(rootPkgJson) ? monorepoRoot : componentDir;
 }
 
 export function createCommandDependencyAdmission({
@@ -616,19 +609,10 @@ export async function applyStackCacheEnv(baseEnv) {
     }
   }
 
-  if (!(env.XDG_CACHE_HOME ?? '').toString().trim()) {
-    env.XDG_CACHE_HOME = join(stackCacheBase, 'xdg');
-  }
-  if (!(env.YARN_CACHE_FOLDER ?? '').toString().trim()) {
-    env.YARN_CACHE_FOLDER = join(stackCacheBase, 'yarn');
-  }
-  if (!(env.npm_config_cache ?? '').toString().trim()) {
-    env.npm_config_cache = join(stackCacheBase, 'npm');
-  }
   // Corepack caches downloaded package managers (like Yarn) under COREPACK_HOME.
   // In stack mode we want this to be stable and writable so first-run downloads don't prompt/hang in TUI.
-  if (!(env.COREPACK_HOME ?? '').toString().trim()) {
-    env.COREPACK_HOME = join(stackCacheBase, 'corepack');
+  for (const [key, path] of Object.entries(resolvePackageManagerCachePaths(stackCacheBase))) {
+    if (!(env[key] ?? '').toString().trim()) env[key] = path;
   }
   // Avoid Corepack mutating package.json by auto-adding a packageManager field.
   // (This is safe and reduces noise when Corepack is used implicitly.)
@@ -693,12 +677,24 @@ export async function ensureDepsInstalled(
       await ensureYarnReady({ dir: installDir, env, quiet, pm });
     }
   };
-  const guardedDependencyReadyAction = onDependenciesReady
+  const guardedDependencyReadyAction = onDependenciesReady || prepareComponentOutputs
     ? async () => {
         await ensureCanonicalYarnReady();
-        await onDependenciesReady();
+        if (onDependenciesReady) await onDependenciesReady();
+        if (prepareComponentOutputs) {
+          await ensureComponentPrerequisites(componentDir, label, { quiet, env, pm });
+        }
       }
     : null;
+  const prepareWithoutInstall = async () => {
+    if (!prepareComponentOutputs) return;
+    if (pm.name === 'yarn') {
+      await withDependencyRefresh({ installDir, componentDir, env,
+        refreshExisting: false, onDependenciesReady: guardedDependencyReadyAction }, async () => {});
+    } else {
+      await ensureComponentPrerequisites(componentDir, label, { quiet, env, pm });
+    }
+  };
   const installArgs = buildDependencyInstallArgs(pm.name, {
     // A dev target is a one-way synchronized replica. Its dependency tree is
     // mutable, but dependency inputs remain owned by the source checkout.
@@ -724,9 +720,7 @@ export async function ensureDepsInstalled(
       if (onDependenciesReady) {
         throw new Error(`[local] cannot run ${label} dependency-ready actions while dependency refresh is disabled`);
       }
-      if (prepareComponentOutputs) {
-        await ensureComponentPrerequisites(componentDir, label, { quiet, env, pm });
-      }
+      await prepareWithoutInstall();
       return;
     }
 
@@ -740,9 +734,7 @@ export async function ensureDepsInstalled(
       if (onDependenciesReady) {
         throw new Error(`[local] cannot run ${label} dependency-ready actions in a service without dependency refresh permission`);
       }
-      if (prepareComponentOutputs) {
-        await ensureComponentPrerequisites(componentDir, label, { quiet, env, pm });
-      }
+      await prepareWithoutInstall();
       return;
     }
 
@@ -762,7 +754,7 @@ export async function ensureDepsInstalled(
       });
     }
 
-    if (prepareComponentOutputs) {
+    if (prepareComponentOutputs && pm.name !== 'yarn') {
       await ensureComponentPrerequisites(componentDir, label, { quiet, env, pm });
     }
     return;
@@ -789,7 +781,7 @@ export async function ensureDepsInstalled(
   } else {
     await installFirstRun();
   }
-  await ensureComponentPrerequisites(componentDir, label, { quiet, env, pm });
+  if (pm.name !== 'yarn') await ensureComponentPrerequisites(componentDir, label, { quiet, env, pm });
 }
 
 async function runStackWorkspacePackageScript(packageDir, script, { env, quiet, timeoutMs, captureFailureDiagnostic = quiet }) {

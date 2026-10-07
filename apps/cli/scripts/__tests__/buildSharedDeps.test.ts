@@ -265,6 +265,9 @@ function materializeWorkspaceRuntimeDependencyOwner(repoRoot: string): void {
 }
 
 function materializeCliCommonWorkspacesLoader(repoRoot: string): void {
+  const cachedFileDigestRelativePath = 'apps/stack/scripts/utils/fs/cached_file_digest.mjs';
+  mkdirSync(dirname(resolve(repoRoot, cachedFileDigestRelativePath)), { recursive: true });
+  cpSync(resolve(sourceRepoRoot, cachedFileDigestRelativePath), resolve(repoRoot, cachedFileDigestRelativePath));
   cpSync(
     resolve(workspaceScriptsSourceDir, 'buildInputConvergence.mjs'),
     resolve(repoRoot, 'scripts', 'workspaces', 'buildInputConvergence.mjs'),
@@ -548,6 +551,53 @@ describe('buildSharedDeps', () => {
     }
   });
 
+  it('admits a certified materialized QA publication without a current readiness stamp', () => {
+    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happier-cli-unstamped-qa-publication-');
+    try {
+      writeCliBundledHostPackage({ happyCliDir, bundledDependencies: ['@happier-dev/protocol'] });
+      const packageDir = writeWorkspacePackageFixture({
+        repoRoot, workspacePath: 'packages/protocol', packageName: '@happier-dev/protocol',
+        files: {
+          'src/index.ts': 'export const source = 1;\n', 'tsconfig.json': '{}\n',
+          'dist/index.d.ts': 'export {};\n',
+        },
+      });
+      markFixtureWorkspaceOutputsCurrent(packageDir);
+      const installedDir = resolve(happyCliDir, 'node_modules', '@happier-dev', 'protocol');
+      mkdirSync(dirname(installedDir), { recursive: true });
+      cpSync(packageDir, installedDir, { recursive: true });
+      writeFileSync(resolve(packageDir, 'src', 'index.ts'), 'export const source = 2;\n');
+      const inspect = () => inspectUsableSourceDevSharedDepsLastGreen({
+        repoRoot, workspaceNames: ['protocol'], includeRuntimeDependencies: false,
+        requireExactOutputs: true, verifyMaterializedOutputs: true,
+      });
+
+      // Source-dev deliberately withholds current-source readiness after source
+      // drift. The package build record, not that stamp, certifies retained QA bytes.
+      expect(inspect()).toMatchObject({ usable: true, reason: 'recorded-outputs-complete' });
+      expect(inspectSourceDevSharedDepsForSourceDev({
+        repoRoot, workspaceNames: ['protocol'], includeRuntimeDependencies: false,
+      })).toMatchObject({ current: false });
+
+      writeFileSync(resolve(installedDir, 'dist', 'index.js'), 'export const broken = true;\n');
+      expect(inspect()).toMatchObject({ usable: false });
+      cpSync(resolve(packageDir, 'dist'), resolve(installedDir, 'dist'), { recursive: true });
+      expect(inspect()).toMatchObject({ usable: true });
+      rmSync(resolve(installedDir, 'dist', 'index.d.ts'));
+      expect(inspect()).toMatchObject({ usable: false });
+      cpSync(resolve(packageDir, 'dist'), resolve(installedDir, 'dist'), { recursive: true });
+      const buildRecordPath = resolve(packageDir, 'dist', '.happier-build-inputs.json');
+      const buildRecord = readFileSync(buildRecordPath);
+      rmSync(buildRecordPath);
+      expect(inspect()).toMatchObject({ usable: false });
+      writeFileSync(buildRecordPath, buildRecord);
+      expect(inspect()).toMatchObject({ usable: true });
+      writeFileSync(resolve(packageDir, 'dist', 'index.js'), 'export const uncertified = true;\n');
+      cpSync(resolve(packageDir, 'dist'), resolve(installedDir, 'dist'), { recursive: true });
+      expect(inspect()).toMatchObject({ usable: false });
+    } finally { cleanup(); }
+  });
+
   it('admits a stale complete source-dev publication but rejects one missing a recorded runtime file', () => {
     const repoRoot = createTempDirSync('happier-cli-source-dev-last-green-');
     try {
@@ -778,7 +828,7 @@ describe('buildSharedDeps', () => {
       const expectedPreparationEnv = {
         PATH: '/repo/bin',
         HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: 'compiler-input-lease',
-        HAPPIER_WORKSPACE_BUILD_MODE: 'qa-runtime',
+        HAPPIER_WORKSPACE_BUILD_MODE: 'source-dev',
       };
       await syncSharedDepsForSourceDev({
         repoRoot,

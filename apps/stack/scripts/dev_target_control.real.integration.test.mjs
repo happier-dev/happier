@@ -169,7 +169,7 @@ test('native sync check accepts a healthy session from the real Mutagen public t
     'active',
   ]);
   assert.match(nativeFields[12], /^[1-9][0-9]*$/u);
-  assert.deepEqual(nativeFields.slice(13), ['ok', '0', '0']);
+  assert.deepEqual(nativeFields.slice(13, 16), ['ok', '0', '0']);
 
   for (const content of ['written immediately before the native barrier\n', 'newer demand after the previous success\n']) {
     await writeFile(join(alpha, 'healthy.txt'), content);

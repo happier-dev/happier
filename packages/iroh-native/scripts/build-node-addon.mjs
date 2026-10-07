@@ -9,7 +9,7 @@
 // platform-arch because one host has exactly one libc).
 import { spawnSync } from "node:child_process";
 import { copyFileSync, mkdirSync, rmSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const packageDir = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -18,7 +18,7 @@ const crateDir = join(packageDir, "rust", "happier-iroh-node");
 // artifacts beneath the workspace target directory rather than `crateDir`.
 // Set it explicitly so artifact discovery does not depend on Cargo's workspace
 // root inference or the process working directory.
-const cargoTargetDir = join(packageDir, "rust", "target");
+const cargoTargetDir = resolve(process.env.CARGO_TARGET_DIR || join(packageDir, "rust", "target"));
 const nativeDir = join(packageDir, "native");
 const nativeTestDir = join(packageDir, "native-test");
 const crateLibName = "happier_iroh_node";

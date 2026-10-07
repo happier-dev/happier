@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { expect, test } from 'vitest';
+import { buildServerRuntimeSupportPayload } from './buildServerBinaryArtifactPayload.js';
 
 import {
   readServerRuntimeSupportIdentity,
@@ -124,6 +125,45 @@ test('server provider capability is independent of the behavior preset', () => {
   expect(serverRuntimeSupportNeedsPackagedMigration('postgresql')).toBe(true);
   expect(serverRuntimeSupportNeedsPackagedMigration('mysql')).toBe(true);
   expect(serverRuntimeSupportNeedsPackagedMigration('all')).toBe(true);
+});
+
+test('server support ignores workspace build evidence and stages only the runtime output', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'server-support-build-evidence-'));
+  const packageRoot = join(root, 'packages', 'iroh-native');
+  const dist = join(packageRoot, 'dist');
+  const target = { os: 'linux', arch: 'x64', bunTarget: 'bun-linux-x64-baseline', exeExt: '' };
+  try {
+    await mkdir(dist, { recursive: true });
+    await mkdir(join(packageRoot, 'scripts'), { recursive: true });
+    await writeFile(join(packageRoot, 'package.json'), '{"name":"@happier-dev/iroh-native"}\n');
+    await writeFile(join(dist, 'nodeNative.js'), 'export const runtime = 1;\n');
+    const buildRecord = join(dist, '.happier-build-inputs.json');
+    await writeFile(buildRecord, JSON.stringify({ builtAt: 'first preparation' }));
+    const entries = await resolveIrohNativeServerSidecarEntries({ repoRoot: root, target });
+    const identityOptions = { entries, target, serverComponent: 'happier-server-light' as const, buildDbProviders: 'sqlite' };
+    const first = await readServerRuntimeSupportIdentity(identityOptions);
+    await writeFile(buildRecord, JSON.stringify({ builtAt: 'second preparation' }));
+    expect((await readServerRuntimeSupportIdentity(identityOptions)).fingerprint).toBe(first.fingerprint);
+    await writeFile(join(dist, 'nodeNative.js'), 'export const runtime = 2;\n');
+    expect((await readServerRuntimeSupportIdentity(identityOptions)).fingerprint).not.toBe(first.fingerprint);
+
+    const client = join(root, 'client');
+    await mkdir(client);
+    await writeFile(join(client, 'libquery_engine-debian-openssl-3.0.x.so.node'), 'engine');
+    const payloadDir = join(root, 'payload');
+    await buildServerRuntimeSupportPayload({
+      payloadDir, target, buildDbProviders: 'sqlite',
+      entries: [...entries,
+        { sourcePath: client, targetPath: join('node_modules', '.prisma', 'client') },
+        { sourcePath: client, targetPath: join('generated', 'sqlite-client') },
+      ],
+    });
+    const stagedDist = join(payloadDir, 'node_modules', '@happier-dev', 'iroh-native', 'dist');
+    await expect(readFile(join(stagedDist, '.happier-build-inputs.json'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await readFile(join(stagedDist, 'nodeNative.js'), 'utf8')).toBe('export const runtime = 2;\n');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('server runtime support identity changes for Prisma/native contents and target inputs', async () => {

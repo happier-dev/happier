@@ -1,12 +1,15 @@
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { lstat, readFile, readdir, readlink, realpath, unlink } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import { pathExists } from '../fs/fs.mjs';
 import { readJsonIfExists, writeJsonAtomic } from '../fs/json.mjs';
 import { coerceHappyMonorepoRootFromPath, getHappyStacksHomeDir } from '../paths/paths.mjs';
-import { withJsonOwnerFileLock } from './jsonOwnerFileLock.mjs';
+import { isJsonOwnerFileLockActive, withJsonOwnerFileLock } from './jsonOwnerFileLock.mjs';
 import { collectWorkspacePackageJsonPaths } from './workspace_package_manifests.mjs';
+import { stopExpoDependencyConsumers } from '../expo/dependency_barrier.mjs';
+import { inspectUiPostinstallOutputs } from './ui_postinstall.mjs';
 
 // v5 could publish an --ignore-scripts bootstrap as a complete install.
 const REFRESH_STATE_VERSION = 6;
@@ -16,6 +19,11 @@ const REFRESH_MARKER = '.happier-stack-dependencies-ready';
 const DEPENDENCY_INSTALL_MODE = 'development-full-ui-postinstall-v1';
 // Scriptless workspace lifecycle admission still completes mandatory UI outputs.
 export const SCRIPTLESS_DEPENDENCY_INSTALL_MODE = 'development-scriptless-ui-postinstall-v1';
+
+export function resolveDependencyInstallRoot(componentDir) {
+  const monorepoRoot = coerceHappyMonorepoRootFromPath(componentDir);
+  return monorepoRoot && existsSync(join(monorepoRoot, 'package.json')) ? monorepoRoot : componentDir;
+}
 
 function installDirLockKey(installDir) {
   return createHash('sha256').update(resolve(installDir), 'utf-8').digest('hex');
@@ -27,6 +35,20 @@ function resolveDependencyRefreshLockPath(installDir, env = process.env) {
     return join(monorepoRoot, '.project', 'tmp', 'dependency-install.lock');
   }
   return join(getHappyStacksHomeDir(env), 'cache', 'dependencies', `${installDirLockKey(installDir)}.lock`);
+}
+
+export async function withDependencyRefreshLock({ installDir, env = process.env }, action) {
+  return await withJsonOwnerFileLock(action, {
+    lockPath: resolveDependencyRefreshLockPath(installDir, env),
+    errorLabel: 'dependency refresh lock',
+    allowLiveOwnerStaleReclaim: true,
+  });
+}
+
+export function isDependencyRefreshLockActive({ installDir, env = process.env }) {
+  return isJsonOwnerFileLockActive(resolveDependencyRefreshLockPath(installDir, env), {
+    allowLiveOwnerStaleReclaim: true,
+  });
 }
 
 async function collectPatchPaths(installDir) {
@@ -235,6 +257,9 @@ export async function inspectDependencyRefresh({ installDir, componentDir = inst
     && Array.isArray(markerState.inputs)
   ) {
     return {
+      admitted: nodeModulesPresent && selfReferentialNodeModulesLinkPath === null && markerState.superseded !== true,
+      admittedState: nodeModulesPresent && selfReferentialNodeModulesLinkPath === null && markerState.superseded !== true
+        ? markerState : null,
       required: !nodeModulesPresent
         || selfReferentialNodeModulesLinkPath !== null
         || markerState.superseded === true
@@ -247,6 +272,8 @@ export async function inspectDependencyRefresh({ installDir, componentDir = inst
     };
   }
   return {
+    admitted: false,
+    admittedState: null,
     required: true,
     inputPaths,
     inputSnapshot,
@@ -263,6 +290,7 @@ export async function withDependencyRefresh({
   onDependenciesReady = null,
   runtimeIdentity,
   installMode,
+  refreshExisting = true,
 }, refresh) {
   if (typeof refresh !== 'function') throw new TypeError('withDependencyRefresh requires a refresh callback');
   if (onDependenciesReady != null && typeof onDependenciesReady !== 'function') {
@@ -272,7 +300,7 @@ export async function withDependencyRefresh({
   const beforeLock = await inspectDependencyRefresh({ installDir, componentDir, runtimeIdentity, installMode });
   if (!beforeLock.required && !shouldRunDependencyReadyAction) return { refreshed: false, reason: 'up-to-date' };
 
-  return await withJsonOwnerFileLock(async () => {
+  return await withDependencyRefreshLock({ installDir, env }, async () => {
     const afterDependencyLock = await inspectDependencyRefresh({ installDir, componentDir, runtimeIdentity, installMode });
     if (!afterDependencyLock.required && !shouldRunDependencyReadyAction) return { refreshed: false, reason: 'up-to-date' };
     const mutate = async () => {
@@ -288,8 +316,27 @@ export async function withDependencyRefresh({
           };
         }
       }
-      if (beforeMutation.required) {
-        await refresh({});
+      if (beforeMutation.required || onDependenciesReady) {
+        // A ready action can repair generated/patch outputs even on a warm
+        // install. Withdraw admission before either mutation, and publish only
+        // after every prerequisite succeeds under the same writer lock.
+        await unlink(beforeMutation.markerPath).catch(error => {
+          if (error?.code !== 'ENOENT') throw error;
+        });
+        const didRefresh = beforeMutation.required && refreshExisting;
+        if (didRefresh) await refresh({});
+        if (onDependenciesReady) await onDependenciesReady();
+        // Ready-only repairs preserve callers' explicit no-install policy.
+        // They cannot certify stale dependency inputs as newly installed.
+        if (beforeMutation.required && !didRefresh) {
+          // Last-green consumers may repair mandatory outputs without
+          // installing newer source inputs. Restore only the prior coherent
+          // admission: the normal installer must still see those inputs stale.
+          if (beforeMutation.admittedState) {
+            await writeJsonAtomic(beforeMutation.markerPath, beforeMutation.admittedState);
+          }
+          return { ...result, reason: 'refresh-disabled' };
+        }
         const refreshedInputPaths = await collectDependencyInputPaths({ installDir, componentDir });
         const refreshedInputSnapshot = await readInputSnapshot({
           inputPaths: refreshedInputPaths,
@@ -308,17 +355,21 @@ export async function withDependencyRefresh({
           inputs: superseded ? beforeMutation.inputSnapshot : refreshedInputSnapshot,
           superseded,
         });
-        result = { refreshed: true, reason: 'stale-inputs' };
-      }
-      if (onDependenciesReady) {
-        await onDependenciesReady();
+        if (didRefresh) result = { refreshed: true, reason: 'stale-inputs' };
       }
       return result;
     };
+    const uiPrerequisites = onDependenciesReady
+      ? await inspectUiPostinstallOutputs(join(installDir, 'apps', 'ui'), installDir)
+      : [];
+    const componentPrerequisites = onDependenciesReady && resolve(componentDir) !== resolve(join(installDir, 'apps', 'ui'))
+      ? await inspectUiPostinstallOutputs(componentDir, installDir)
+      : [];
+    if ((afterDependencyLock.required && refreshExisting)
+      || afterDependencyLock.selfReferentialNodeModulesLinkPath !== null
+      || uiPrerequisites.length > 0 || componentPrerequisites.length > 0) {
+      await stopExpoDependencyConsumers({ installDir, env });
+    }
     return await mutate();
-  }, {
-    lockPath: resolveDependencyRefreshLockPath(installDir, env),
-    errorLabel: 'dependency refresh lock',
-    allowLiveOwnerStaleReclaim: true,
   });
 }

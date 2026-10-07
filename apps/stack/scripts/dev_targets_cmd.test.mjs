@@ -61,7 +61,7 @@ test('dev-targets status exposes read-only admission holder progress and observa
   await writeFile(join(root, 'repo-test', 'dev-targets.json'), JSON.stringify({ version: 1,
     targets: [{ name: 'linux', platform: 'posix', ssh: 'linux', repoDir: '/repo', cliHomeDir: '/state' }] }));
   const { binDir } = writeFakeBin({ root, name: 'mutagen', content: '#!/bin/sh\nprintf \'[{"name":"happier-linux","paused":false,"status":"watching","successfulCycles":1,"alpha":{"connected":true,"scanned":true},"beta":{"connected":true,"scanned":true}}]\\n\'\n' });
-  writeFakeBin({ root, name: 'ssh', content: '#!/bin/sh\n[ "${OBSERVATION_FAIL-}" != 1 ] || exit 255\nprintf \'{"state":"observed","sampledAtMs":9000,"owners":[{"pid":42,"token":"11","className":"validation","ageSeconds":14400,"cpuSeconds":3,"recentCpuPercent":0}]}\\n\'\n' });
+  writeFakeBin({ root, name: 'ssh', content: '#!/bin/sh\ncase "$*" in *__HAPPIER_WORKER_POWER__*) printf \'__HAPPIER_WORKER_POWER__={"ok":true,"detail":"masked"}\\n\'; exit 0;; esac\n[ "${OBSERVATION_FAIL-}" != 1 ] || exit 255\nprintf \'{"state":"observed","sampledAtMs":9000,"owners":[{"pid":42,"token":"11","className":"validation","ageSeconds":14400,"cpuSeconds":3,"recentCpuPercent":0}]}\\n\'\n' });
   const env = { PATH: `${binDir}:${process.env.PATH}` };
   const status = await run(['status', 'linux', '--stack=repo-test'], root, env);
   assert.equal(status.admission?.state, 'observed');
@@ -88,7 +88,7 @@ test('status and doctor report an idle no-watch first cycle as needs-flush witho
     '  flush) echo unexpected-flush >&2; exit 9 ;;',
     'esac',
   ].join('\n') });
-  writeFakeBin({ root, name: 'ssh', content: '#!/bin/sh\nexit 0\n' });
+  writeFakeBin({ root, name: 'ssh', content: '#!/bin/sh\ncase "$*" in *__HAPPIER_WORKER_POWER__*) printf \'__HAPPIER_WORKER_POWER__={"ok":true,"detail":"masked"}\\n\';; esac\nexit 0\n' });
   const env = { PATH: `${binDir}:${process.env.PATH}` };
   assert.equal((await run(['status', 'linux', '--stack=repo-test'], root, env)).status.state, 'needs-flush');
   const doctor = await run(['doctor', 'linux', '--stack=repo-test'], root, env);
@@ -382,6 +382,7 @@ test('dev-targets status, sync, and exec share the moving mirror with a pre-laun
         '#!/bin/sh',
         'printf "ssh|%s\\n" "$*" >> "$DEV_TARGET_COMMAND_LOG"',
         'case "$*" in',
+        '  *__HAPPIER_WORKER_POWER__*) printf \'__HAPPIER_WORKER_POWER__={"ok":true,"detail":"masked"}\\n\'; exit 0 ;;',
         '  *getconf*) printf "8 1 0.066667 22000000 20 0 28000000 30000000 0 0 0 0 0 0 0 darwin\\n"; exit 0 ;;',
         '  *command\\ -v*|*-MNf*|*-O\\ exit*) exit 0 ;;',
         'esac',
@@ -557,6 +558,7 @@ test('dev-targets status reports managed Lima lifecycle health alongside mirror 
       ].join('\n'),
     );
     await writeFile(join(binDir, 'uname'), '#!/bin/sh\nprintf "Darwin\\n"\n');
+    writeFakeBin({ root, name: 'ssh', content: '#!/bin/sh\nprintf \'__HAPPIER_WORKER_POWER__={"ok":true,"detail":"masked"}\\n\'\n' });
     await writeFile(
       join(binDir, 'limactl'),
       [
@@ -836,4 +838,20 @@ test('automatic worker power setup excludes manual targets and exposes OS permis
     assert.equal(denied.code, 1);
     assert.equal(JSON.parse(denied.stdout).results[0].results[0].ok, false);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('dev-targets status exposes failed power policy health independently of healthy sync', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-power-status-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, 'repo-test'), { recursive: true });
+  await writeFile(join(root, 'repo-test', 'dev-targets.json'), JSON.stringify({ version: 1,
+    targets: [{ name: 'linux', platform: 'posix', ssh: 'linux', repoDir: '/repo', cliHomeDir: '/state' }] }));
+  const { binDir } = writeFakeBin({ root, name: 'mutagen', content: '#!/bin/sh\nprintf \'[{"name":"happier-linux","paused":false,"status":"watching","successfulCycles":1,"alpha":{"connected":true,"scanned":true},"beta":{"connected":true,"scanned":true}}]\\n\'\n' });
+  writeFakeBin({ root, name: 'ssh', content: '#!/bin/sh\nprintf \'__HAPPIER_WORKER_POWER__={"ok":false,"detail":"sleep.target is not masked"}\\n\'\n' });
+  const result = await runRaw(['status', 'linux', '--stack=repo-test', '--json'], root, { PATH: `${binDir}:${process.env.PATH}` });
+  const status = JSON.parse(result.stdout);
+  assert.equal(status.status.state, 'ready');
+  assert.equal(status.powerPolicy?.ok, false);
+  assert.equal(status.powerPolicy?.results[0].detail, 'sleep.target is not masked');
+  assert.equal(result.code, 1);
 });

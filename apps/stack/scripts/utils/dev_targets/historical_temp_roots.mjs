@@ -8,14 +8,16 @@ const historicalAgeMs = 24 * 60 * 60 * 1000;
 const knownRoot = /^(?:happier-|hstack-|docs-check-)/;
 const identity = info => `${info.dev}:${info.ino}`;
 
-function inspectTree(path) {
+function inspectTree(path, countedInodes = new Set()) {
   const info = lstatSync(path);
   let newestMtimeMs = info.mtimeMs;
-  let bytes = info.blocks * 512;
-  const identities = new Set([identity(info)]);
+  const key = identity(info);
+  let bytes = countedInodes.has(key) ? 0 : info.blocks * 512;
+  countedInodes.add(key);
+  const identities = new Set([key]);
   if (info.isDirectory()) {
     for (const name of readdirSync(path)) {
-      const child = inspectTree(join(path, name));
+      const child = inspectTree(join(path, name), countedInodes);
       newestMtimeMs = Math.max(newestMtimeMs, child.newestMtimeMs);
       bytes += child.bytes;
       for (const key of child.identities) identities.add(key);
@@ -64,16 +66,30 @@ function hasUser(directory, tree, references) {
     || [...tree.identities].some(key => references.identities.has(key));
 }
 
-export function reapHistoricalTempRoots(tempParent, procRoot = '/proc') {
+export function reapHistoricalTempRoots(tempParent, procRoot = '/proc', {
+  candidateNames, ownerUid = process.getuid(), minimumAgeMs = historicalAgeMs,
+} = {}) {
   const result = { reclaimedBytes: 0, reclaimedRoots: 0, retainedRoots: 0, observationUnavailable: null };
   const parent = realpathSync(tempParent);
-  const cutoff = Date.now() - historicalAgeMs;
+  const cutoff = Date.now() - minimumAgeMs;
   const candidates = [];
-  for (const name of readdirSync(parent).filter(name => knownRoot.test(name))) {
+  const isChildName = name => typeof name === 'string' && name && name !== '.' && name !== '..' && !/[\\/\0]/.test(name);
+  const names = candidateNames ?? readdirSync(parent).filter(name => {
+    if (!knownRoot.test(name)) return false;
+    if (isChildName(name)) return true;
+    result.retainedRoots++;
+    return false;
+  });
+  // Lifecycle owners may nominate exact regenerable staging children. Never
+  // let a nominated name escape its owning parent or become a broad root.
+  if (names.some(name => !isChildName(name))) {
+    throw new Error('historical cleanup candidate must be a direct child name');
+  }
+  for (const name of names) {
     const directory = join(parent, name);
     try {
       const info = lstatSync(directory);
-      if (!info.isDirectory() || info.uid !== process.getuid() || info.mtimeMs >= cutoff) continue;
+      if (!info.isDirectory() || info.uid !== ownerUid || info.mtimeMs >= cutoff) continue;
       const tree = inspectTree(directory);
       if (tree.newestMtimeMs < cutoff) candidates.push({ directory, tree });
     } catch (error) {

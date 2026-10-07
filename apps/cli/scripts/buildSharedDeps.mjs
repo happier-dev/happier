@@ -1709,17 +1709,10 @@ export function inspectUsableSourceDevSharedDepsLastGreen(opts = {}) {
 
   const stampPath = opts.stampPath ?? resolveSourceDevSharedDepsStampPath(repoRoot);
   const stamp = readSourceDevSharedDepsStamp(stampPath, readFile);
-  if (
-    stamp?.version !== SOURCE_DEV_SHARED_DEPS_STAMP_VERSION
-    || !stamp.entries
-    || typeof stamp.entries !== 'object'
-    || Array.isArray(stamp.entries)
-  ) {
-    return { usable: false, reason: 'readiness-unavailable' };
-  }
-
+  const hasReadinessHistory = stamp?.version === SOURCE_DEV_SHARED_DEPS_STAMP_VERSION
+    && stamp.entries && typeof stamp.entries === 'object' && !Array.isArray(stamp.entries);
   const requiredWorkspaceNames = new Set(workspaceNames.map((workspaceName) => String(workspaceName)));
-  const candidates = Object.values(stamp.entries)
+  const candidates = Object.values(hasReadinessHistory ? stamp.entries : {})
     .filter((entry) => {
       const signatureWorkspaceNames = new Set(
         (entry?.signature?.workspaceNames ?? []).map((workspaceName) => String(workspaceName)),
@@ -1727,8 +1720,9 @@ export function inspectUsableSourceDevSharedDepsLastGreen(opts = {}) {
       return [...requiredWorkspaceNames].every((workspaceName) => signatureWorkspaceNames.has(workspaceName));
     })
     .sort((left, right) => Number(right?.syncedAtMs ?? 0) - Number(left?.syncedAtMs ?? 0));
+  const recordedCandidateCount = candidates.length;
 
-  for (const entry of candidates) {
+  const inspectPublication = (entry) => {
     if (!sourceDevWorkspaceOutputsContainRecordedPublication({
       repoRoot,
       signature: entry.signature,
@@ -1737,23 +1731,43 @@ export function inspectUsableSourceDevSharedDepsLastGreen(opts = {}) {
       readDir,
       stat,
       requireExactOutputs: opts.requireExactOutputs === true,
-    })) continue;
+    })) return null;
     if (opts.verifyMaterializedOutputs === true && !sourceDevSharedDepsOutputsExist({
       repoRoot, signature: entry.signature, exists, readFile, readDir, stat,
       requireExactOutputs: opts.requireExactOutputs === true,
       includeRuntimeDependencies: opts.includeRuntimeDependencies !== false,
-    })) continue;
+    })) return null;
     return {
       usable: true,
       reason: 'recorded-outputs-complete',
       syncedAtMs: Number(entry.syncedAtMs ?? 0),
       ...(opts.requireExactOutputs === true ? { signature: entry.signature } : {}),
     };
+  };
+  for (const entry of candidates) {
+    const publication = inspectPublication(entry);
+    if (publication) return publication;
+  }
+
+  // A coherent QA capture can be published after newer source arrives without
+  // stamping that source current. Exact source + installed-output verification
+  // can admit those bytes through their canonical package build records; a
+  // stale materialization history must not become a second build authority.
+  if (opts.requireExactOutputs === true && opts.verifyMaterializedOutputs === true) {
+    const publication = inspectPublication({
+      signature: computeSourceDevSharedDepsSignature({
+        repoRoot, workspaceNames, includeDevDependencies: false,
+        existsSync: exists, readFileSync: readFile, readdirSync: readDir, statSync: stat,
+      }),
+      // This is output admission, not evidence of a current-source sync time.
+      syncedAtMs: 0,
+    });
+    if (publication) return publication;
   }
 
   return {
     usable: false,
-    reason: candidates.length > 0 ? 'recorded-outputs-incomplete' : 'readiness-unavailable',
+    reason: recordedCandidateCount > 0 ? 'recorded-outputs-incomplete' : 'readiness-unavailable',
   };
 }
 
@@ -1762,7 +1776,7 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
   const inheritedEnv = opts.env ?? process.env;
   const env = { ...inheritedEnv, [WORKSPACE_BUILD_MODE_ENV]: resolveWorkspaceBuildMode({
     env: inheritedEnv,
-    buildMode: inheritedEnv[WORKSPACE_BUILD_MODE_ENV] ?? 'qa-runtime',
+    buildMode: inheritedEnv[WORKSPACE_BUILD_MODE_ENV] ?? 'source-dev',
   }) };
   const exists = opts.existsSync ?? existsSync;
   const mkdir = opts.mkdirSync ?? mkdirSync;
@@ -2011,8 +2025,22 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
     }
   }
 
+  const canPublishPreparedWorkspaceDist = (workspaceName) => {
+    if (!sourceChangedWorkspaceNames.has(workspaceName)) return true;
+    // The package owner certifies QA captures independently of later source
+    // edits. Consume that coherent output, but leave readiness unstamped so
+    // the next request still rebuilds. Plugin projections also consume authored
+    // manifests, so their existing source-coherence fence remains necessary.
+    return env[WORKSPACE_BUILD_MODE_ENV] === 'qa-runtime'
+      && !workspaceName.startsWith(PLUGINS_WORKSPACE_PREFIX)
+      && isWorkspacePackageOutputValid(resolveBundledWorkspacePackageDir({ repoRoot, workspaceName }), {
+        monorepoRoot: repoRoot,
+        dependencyDirs: resolveSourceDevWorkspaceDependencyDirs({ repoRoot, workspaceNames, workspaceName, readFile }),
+      });
+  };
+
   const rebuiltWorkspaceNames = prebuildResult.builtWorkspaceNames.filter(
-    (workspaceName) => !sourceChangedWorkspaceNames.has(workspaceName),
+    canPublishPreparedWorkspaceDist,
   );
   const pluginFailures = [
     ...(opts.pluginFailures ?? []),
@@ -2209,7 +2237,7 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
     const workspaceNamesToSync = workspaceNamesToSyncBeforeIncrementalPublication.filter(
       (workspaceName) => (
         !failedPluginWorkspaceNames.has(workspaceName)
-        && !sourceChangedWorkspaceNames.has(workspaceName)
+        && canPublishPreparedWorkspaceDist(workspaceName)
         && !unpreparedStaleWorkspaceNames.has(workspaceName)
       ),
     );

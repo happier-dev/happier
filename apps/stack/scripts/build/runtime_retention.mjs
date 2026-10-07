@@ -279,14 +279,15 @@ export async function pruneComponentArtifacts({
   keepCount,
   runtimeSnapshotKeepCount = DEFAULT_RETENTION_COUNT,
   externalReferenceStorageRoot = '',
+  unusedArtifactProcRoot,
 }) {
   return await withWorkspaceBundleLock(() => pruneComponentArtifactsUnderLock({
-    stackBaseDir, component, keepCount, runtimeSnapshotKeepCount, externalReferenceStorageRoot,
+    stackBaseDir, component, keepCount, runtimeSnapshotKeepCount, externalReferenceStorageRoot, unusedArtifactProcRoot,
   }), { lockPath: resolveStackRuntimePaths({ stackBaseDir }).lockPath,
     errorLabel: 'runtime artifact retention lock' });
 }
 
-async function pruneComponentArtifactsUnderLock({ stackBaseDir, component, keepCount, runtimeSnapshotKeepCount, externalReferenceStorageRoot }) {
+async function pruneComponentArtifactsUnderLock({ stackBaseDir, component, keepCount, runtimeSnapshotKeepCount, externalReferenceStorageRoot, unusedArtifactProcRoot }) {
   const componentDir = join(resolveStackArtifactsDir({ stackBaseDir }), String(component ?? '').trim());
   const artifactIds = await listChildDirectories(componentDir);
   const retainedFingerprintsByComponent = await collectRetainedComponentArtifactFingerprints({
@@ -297,14 +298,25 @@ async function pruneComponentArtifactsUnderLock({ stackBaseDir, component, keepC
   const keep = new Set(retainedFingerprintsByComponent.get(String(component ?? '').trim()) ?? []);
   const validArtifacts = [];
   const removedEntries = [];
+  const removeArtifact = async artifactId => {
+    if (unusedArtifactProcRoot) {
+      const { reapHistoricalTempRoots } = await import('../utils/dev_targets/historical_temp_roots.mjs');
+      // Artifact count/reference retention owns eligibility; custody owns the
+      // additional worker proof that no process holds the selected directory.
+      const result = reapHistoricalTempRoots(componentDir, unusedArtifactProcRoot, {
+        candidateNames: [artifactId], minimumAgeMs: 0,
+      });
+      if (!result.reclaimedRoots) { keep.add(artifactId); return; }
+    } else await rm(join(componentDir, artifactId), { recursive: true, force: true });
+    removedEntries.push(artifactId);
+  };
 
   for (const artifactId of artifactIds) {
     const artifactDir = join(componentDir, artifactId);
     const manifest = await readArtifactManifest({ artifactDir });
     const validation = validateArtifactManifest(manifest);
     if (!validation.ok) {
-      await rm(artifactDir, { recursive: true, force: true });
-      removedEntries.push(artifactId);
+      await removeArtifact(artifactId);
       continue;
     }
     validArtifacts.push({
@@ -321,8 +333,7 @@ async function pruneComponentArtifactsUnderLock({ stackBaseDir, component, keepC
 
   for (const artifact of validArtifacts) {
     if (keep.has(artifact.id)) continue;
-    await rm(artifact.dir, { recursive: true, force: true });
-    removedEntries.push(artifact.id);
+    await removeArtifact(artifact.id);
   }
 
   return {

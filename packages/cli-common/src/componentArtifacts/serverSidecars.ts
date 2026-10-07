@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { lstat, mkdir, readFile, readdir, readlink, stat, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
+import { WORKSPACE_PACKAGE_BUILD_INPUT_RECORD } from '../../packageBuildOutputTargets.mjs';
 
 import { commandExists, execOrThrow, resolveYarnCommand, type RunCommand } from './commands.js';
 import type { BinaryTarget } from './targets.js';
@@ -18,6 +19,11 @@ export type ServerRuntimeSupportIdentity = {
   fingerprint: string;
   entryCount: number;
 };
+
+/** Preparation evidence changes on rebuild; it is not a server runtime input. */
+export function isServerRuntimeSupportPayloadPath(path: string): boolean {
+  return basename(path) !== WORKSPACE_PACKAGE_BUILD_INPUT_RECORD || basename(dirname(path)) !== 'dist';
+}
 
 /**
  * The server support artifact's generated Prisma/native closure is selected by
@@ -606,6 +612,7 @@ async function hashServerRuntimeSupportPath({
   relativePath: string;
 }): Promise<void> {
   const path = relativePath ? join(rootPath, relativePath) : rootPath;
+  if (!isServerRuntimeSupportPayloadPath(path)) return;
   const info = await lstat(path);
   const normalizedPath = relativePath.replaceAll('\\', '/') || '.';
   if (info.isDirectory()) {

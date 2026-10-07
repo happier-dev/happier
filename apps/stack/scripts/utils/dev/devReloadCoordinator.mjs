@@ -213,7 +213,7 @@ export function startDevReloadCoordinator(
   let inFlight = false;
   let inFlightPromise = null;
   let pending = false;
-  let pendingNamedChange = false;
+  const pendingNamedChangeTargets = new Set();
   let cycle = 0;
   let retryTimer = null;
   let retryTimerGeneration = 0;
@@ -269,7 +269,15 @@ export function startDevReloadCoordinator(
       ? resolve(event.watchPath)
       : null;
     if (watchPath && !generationInvalidatingWatchPaths.has(watchPath)) return false;
-    pendingNamedChange = true;
+    const affectedDescriptors = watchPath
+      ? normalizedDescriptors.filter((descriptor) => descriptorIdsByWatchPath.get(watchPath)?.has(descriptor.id))
+      : normalizedDescriptors;
+    for (const descriptor of affectedDescriptors) {
+      if (descriptor.invalidatesGeneration === false) continue;
+      for (const target of executorsByTarget.keys()) {
+        if (descriptorAffectsTarget(descriptor, target)) pendingNamedChangeTargets.add(target);
+      }
+    }
     return true;
   };
 
@@ -407,23 +415,25 @@ export function startDevReloadCoordinator(
     }
     let staleGenerationLogged = false;
     let lastRevalidatedSignatures = nextSignatures;
-    context.revalidateGeneration = async () => {
+    const revalidateGeneration = async (target) => {
       if (closed || isShuttingDown?.()) return false;
       const currentSignatures = await sampleSignatures();
       lastRevalidatedSignatures = currentSignatures;
+      const targetDescriptors = normalizedDescriptors.filter((descriptor) => descriptorAffectsTarget(descriptor, target));
       const signatureInitializationChangedSinceAdmission = (
         (!signatureInitializationFallbackAllAtAdmission && signatureInitializationFallbackAll)
-        || Array.from(signatureInitializationPendingDescriptorIds).some((descriptorId) => (
-          !signatureInitializationDescriptorIdsAtAdmission.has(descriptorId)
+        || targetDescriptors.some((descriptor) => (
+          signatureInitializationPendingDescriptorIds.has(descriptor.id)
+          && !signatureInitializationDescriptorIdsAtAdmission.has(descriptor.id)
         ))
       );
       const current = !closed
         && !isShuttingDown?.()
-        && forcedTargets.size === 0
-        && !pendingNamedChange
+        && !forcedTargets.has(target)
+        && !pendingNamedChangeTargets.has(target)
         && !signatureInitializationChangedSinceAdmission
-        && serializeGenerationSignatures(normalizedDescriptors, currentSignatures)
-          === serializeGenerationSignatures(normalizedDescriptors, nextSignatures);
+        && serializeGenerationSignatures(targetDescriptors, currentSignatures)
+          === serializeGenerationSignatures(targetDescriptors, nextSignatures);
       if (!current) {
         pending = true;
         if (!staleGenerationLogged) {
@@ -433,10 +443,14 @@ export function startDevReloadCoordinator(
       }
       return current;
     };
+    const contextForTarget = (target) => ({
+      ...context,
+      revalidateGeneration: () => revalidateGeneration(target),
+    });
 
     for (const target of targets) {
       const executor = executorsByTarget.get(target);
-      const plan = executor?.createPlan?.(context);
+      const plan = executor?.createPlan?.(contextForTarget(target));
       if (plan) context.reloadPlans[target] = plan;
       await executor?.publishLifecycle?.({ phase: 'planned', plan });
     }
@@ -505,9 +519,10 @@ export function startDevReloadCoordinator(
       const target = targets[targetIndex];
       if (closed || isShuttingDown?.()) return;
       const executor = executorsByTarget.get(target);
+      const targetContext = contextForTarget(target);
       let buildResult;
       try {
-        buildResult = await executor?.build?.(context);
+        buildResult = await executor?.build?.(targetContext);
       } catch (error) {
         if (closed || isShuttingDown?.()) return;
         await handleTargetFailure({ target, error, stage: 'build' });
@@ -521,17 +536,16 @@ export function startDevReloadCoordinator(
         buildResult?.allowSupersededActivation === true
         && buildResult?.skipped !== true
       );
-      if (!await context.revalidateGeneration() && !mayActivateSuperseded) {
-        const canceledTargets = targets.slice(targetIndex);
-        await publishIdleForTargets(canceledTargets);
-        preserveForcedTargetsForTrailingCycle(canceledTargets);
-        return;
+      if (!await targetContext.revalidateGeneration() && !mayActivateSuperseded) {
+        await publishIdleForTargets([target]);
+        preserveForcedTargetsForTrailingCycle([target]);
+        continue;
       }
 
       if (buildResult?.skipped !== true) {
         try {
           const result = await executor?.restart?.({
-            ...context,
+            ...targetContext,
             allowSupersededActivation: mayActivateSuperseded,
           });
           if (result?.skipped === true && result?.reason === 'backoff') {
@@ -550,10 +564,9 @@ export function startDevReloadCoordinator(
         }
       }
 
-      if (!await context.revalidateGeneration()) {
-        await publishIdleForTargets(targets.slice(targetIndex + 1));
-        preserveForcedTargetsForTrailingCycle(targets.slice(targetIndex + 1));
-        return;
+      if (!await targetContext.revalidateGeneration()) {
+        preserveForcedTargetsForTrailingCycle([target]);
+        continue;
       }
 
       commitTargetObservationBaseline({
@@ -597,7 +610,7 @@ export function startDevReloadCoordinator(
       try {
         do {
           pending = false;
-          pendingNamedChange = false;
+          pendingNamedChangeTargets.clear();
           await runCycle();
         } while (pending && !closed && !isShuttingDown?.());
       } catch (error) {

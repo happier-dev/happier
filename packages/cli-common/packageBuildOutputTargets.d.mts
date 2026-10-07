@@ -1,5 +1,7 @@
 export type PackageBuildOutputTarget = string;
 
+export const WORKSPACE_PACKAGE_BUILD_INPUT_RECORD: '.happier-build-inputs.json';
+
 export type ResolvePackageBuildOutputTargetPathOptions = Readonly<{
   packageDir: string;
   outputDir: string;

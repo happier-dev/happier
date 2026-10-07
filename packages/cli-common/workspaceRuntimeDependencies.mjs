@@ -304,6 +304,20 @@ export function publishStagedDirectoryMountedSync({
   let rollbackFailed = false;
 
   try {
+    let liveStats = null;
+    try {
+      liveStats = lstat(liveDir);
+    } catch (error) {
+      if (!isMissingPathError(error)) throw error;
+    }
+    // Only physical consumer directories are mounted. A workspace link points
+    // at producer inputs; publishing through it would rewrite that producer.
+    if (liveStats?.isSymbolicLink()) {
+      const entry = recordLivePathForRollbackSync({ livePath: liveDir, liveStats,
+        rollbackDir, rollbackEntries, mkdir });
+      entry.mutated = true;
+      removePathSync(liveDir, remove);
+    }
     reconcileStagedDirectoryIntoLiveDirectorySync({
       stagedDir,
       liveDir,
@@ -435,18 +449,41 @@ export function assertPhysicalPathWithinApprovedRoot({
 }) {
   const physicalApprovedRoot = realpathSyncImpl(approvedRootDir);
   const physicalSourcePath = realpathSyncImpl(sourcePath);
-  const relativeSourcePath = relative(physicalApprovedRoot, physicalSourcePath);
-  if (
-    relativeSourcePath === '..'
-    || relativeSourcePath.startsWith(`..${sep}`)
-    || isAbsolute(relativeSourcePath)
-  ) {
-    throw new Error(
-      `${errorPrefix ?? `Resolved runtime dependency ${dependencyName} is outside the caller-approved root`}: `
-        + `${physicalSourcePath} (root: ${physicalApprovedRoot})`,
-    );
+  const containsSource = (root) => {
+    const relativeSourcePath = relative(root, physicalSourcePath);
+    return relativeSourcePath !== '..'
+      && !relativeSourcePath.startsWith(`..${sep}`)
+      && !isAbsolute(relativeSourcePath);
+  };
+  if (containsSource(physicalApprovedRoot)) return physicalSourcePath;
+
+  // Captured builds mount the source checkout's installed dependencies. Only
+  // the capture's repository-wide boundary can approve that source repository;
+  // inherited identity must not widen a package-local or unrelated copy root.
+  // A worker or nested capture can have a physical source distinct from the
+  // original producer identity, while external installs still resolve there.
+  const captureRepoDir = process.env.HAPPIER_STACK_REPO_DIR;
+  const identityRepoDir = process.env.HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR;
+  const captureSourceRepoDir = process.env.HAPPIER_WORKSPACE_CAPTURE_SOURCE_REPO_DIR;
+  if (captureRepoDir && (captureSourceRepoDir || identityRepoDir)) {
+    try {
+      if (realpathSyncImpl(captureRepoDir) === physicalApprovedRoot) {
+        for (const root of new Set([captureSourceRepoDir, identityRepoDir].filter(Boolean))) {
+          try {
+            if (containsSource(realpathSyncImpl(root))) return physicalSourcePath;
+          } catch (error) {
+            if (error?.code !== 'ENOENT' && error?.code !== 'ENOTDIR') throw error;
+          }
+        }
+      }
+    } catch (error) {
+      if (error?.code !== 'ENOENT' && error?.code !== 'ENOTDIR') throw error;
+    }
   }
-  return physicalSourcePath;
+  throw new Error(
+    `${errorPrefix ?? `Resolved runtime dependency ${dependencyName} is outside the caller-approved root`}: `
+      + `${physicalSourcePath} (root: ${physicalApprovedRoot})`,
+  );
 }
 
 export function resolveInstalledRuntimePackage({

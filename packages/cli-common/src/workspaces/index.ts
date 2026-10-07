@@ -17,6 +17,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path';
 import {
+  assertPhysicalPathWithinApprovedRoot,
   assertResolvedRuntimeDependencyMatchesDeclaration,
   collectExternalRuntimeDependencies,
   copyDirDereferenceContainedSync,
@@ -484,18 +485,13 @@ export function copyDirSafeSync(
   ): void => {
     const sourceLstat = lstatSyncImpl(sourcePath);
     if (dereference && sourceLstat.isSymbolicLink()) {
-      const resolvedTargetPath = realpathSyncImpl(sourcePath);
-      const relativeTargetPath = relative(physicalDereferenceRoot, resolvedTargetPath);
-      if (
-        relativeTargetPath === '..'
-        || relativeTargetPath.startsWith(`..${sep}`)
-        || isAbsolute(relativeTargetPath)
-      ) {
-        throw new Error(
-          `Dereferenced symlink target escapes copy source root: `
-          + `${sourcePath} -> ${resolvedTargetPath} (root: ${physicalDereferenceRoot})`,
-        );
-      }
+      assertPhysicalPathWithinApprovedRoot({
+        approvedRootDir: physicalDereferenceRoot,
+        sourcePath,
+        dependencyName: sourcePath,
+        errorPrefix: 'Dereferenced symlink target escapes copy source root',
+        realpathSyncImpl,
+      });
     }
     const sourceStats = dereference ? statSyncImpl(sourcePath) : sourceLstat;
     if (sourceStats.isDirectory()) {

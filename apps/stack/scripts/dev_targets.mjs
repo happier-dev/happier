@@ -1,4 +1,4 @@
-import { configureDevTargetPower } from './utils/dev_targets/worker_power.mjs';
+import { configureDevTargetPower, inspectDevTargetPower } from './utils/dev_targets/worker_power.mjs';
 import { provisionManagedWslDevTarget } from './utils/dev_targets/managed_wsl.mjs';
 import './utils/env/env.mjs';
 import { loadControlledRuntimeConfig } from './utils/dev_targets/service_placement.mjs';
@@ -498,7 +498,7 @@ async function main() {
   }
   if (command === 'status') {
     const target = requireTarget(loaded.config.targets, positionals[1], command);
-    const [status, managedRuntime, admission] = await Promise.all([
+    const [status, managedRuntime, admission, powerPolicy] = await Promise.all([
       inspectDevTargetSync({
         target,
         stackBaseDir: dirname(loaded.path),
@@ -508,6 +508,7 @@ async function main() {
         ? doctorManagedDevTargetRuntime({ target, env: process.env })
         : null,
       inspectDevTargetAdmission({ target, env: process.env }),
+      inspectDevTargetPower({ target, env: process.env }),
     ]);
     printResult({
       json,
@@ -517,17 +518,19 @@ async function main() {
         target,
         status,
         admission,
+        powerPolicy,
         ...(managedRuntime ? { managedRuntime } : {}),
       },
       text: [
         formatSyncStatus(target, status),
         `[dev-targets] ${target.name} admission\t${admission.state}${admission.state === 'observed' ? '\t' + (renderAdmissionOwnerProgress(admission) || 'no live owners') : admission.error ? '\t' + admission.error : ''}`,
+        ...powerPolicy.results.map(result => `[dev-targets] ${target.name} ${result.role} power\t${result.ok ? 'ok' : 'failed'}${result.detail ? '\t' + result.detail : ''}`),
         ...(managedRuntime
           ? [`[dev-targets] ${target.name} managed ${target.managedRuntime.kind}\t${managedRuntime.status}\t${managedRuntime.ok ? 'ok' : 'failed'}`]
           : []),
       ].join('\n'),
     });
-    if (!['ready', 'needs-flush'].includes(status.state) || managedRuntime?.ok === false) process.exitCode = 1;
+    if (!['ready', 'needs-flush'].includes(status.state) || managedRuntime?.ok === false || !powerPolicy.ok) process.exitCode = 1;
     return;
   }
   if (command === 'capacity') {

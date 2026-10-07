@@ -95,7 +95,7 @@ export function readWorkspaceBuildInputs(packageDir, {
   for (const entry of entries) {
     if (
       (entry.isDirectory() && SOURCE_ROOTS.includes(entry.name))
-      || (entry.isFile() && (isWorkspaceBuildConfigFile(entry.name) || /\.(?:mjs|cjs|js)$/.test(entry.name)))
+      || (entry.isFile() && (isWorkspaceBuildConfigFile(entry.name) || /\.(?:mjs|cjs|js)$|\.d\.[cm]?ts$/.test(entry.name)))
     ) visit(join(packageDir, entry.name));
   }
   visit(join(packageDir, '.happier-plugin', 'plugin.json'));

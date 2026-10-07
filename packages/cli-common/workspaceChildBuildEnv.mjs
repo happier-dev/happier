@@ -2,12 +2,13 @@ export const WORKSPACE_PACKAGE_PREREQUISITES_READY_ENV_VAR =
   'HAPPIER_WORKSPACE_PACKAGE_PREREQUISITES_READY';
 export const WORKSPACE_BUILD_MODE_ENV = 'HAPPIER_WORKSPACE_BUILD_MODE';
 
-// The same explicit mode governs package fallback, CLI checking and reuse.
+// Source-dev emits in place; QA/runtime publication emits from a capture.
+// Both retain coherent last-green output; strict mode requires checked output.
 // Publication lifecycle entrypoints always force strict compilation.
 export function resolveWorkspaceBuildMode({ buildMode, env = {} } = {}) {
   if (/^(?:prepack|pack|publish|prepublishOnly)$/.test(String(env.npm_lifecycle_event ?? ''))) return 'strict';
   const mode = buildMode ?? env[WORKSPACE_BUILD_MODE_ENV] ?? 'strict';
-  if (mode !== 'strict' && mode !== 'qa-runtime') throw new Error(`[workspace-build] invalid build mode: ${mode}`);
+  if (mode !== 'strict' && mode !== 'qa-runtime' && mode !== 'source-dev') throw new Error(`[workspace-build] invalid build mode: ${mode}`);
   return mode;
 }
 

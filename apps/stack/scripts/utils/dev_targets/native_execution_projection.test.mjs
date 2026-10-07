@@ -140,6 +140,8 @@ test('native command decision artifact is current and executes the canonical cla
     { args: ['node', '--test', 'apps/stack/scripts/config.test.mjs'] },
     { args: ['nodejs', '--test', 'owner.test.mjs'], cwd: 'apps/stack2' },
     { args: ['node', '-e', 'console.log("control")'] },
+    { args: ['yarn', '--cwd', 'apps/cli', '-s', 'vitest:local', 'run', '--config=vitest.source.integration.config.ts'] },
+    { args: ['yarn', '--cwd', 'apps/ui', '-s', 'vitest:local', 'run', '--config=vitest.source.integration.config.ts'] },
     { args: ['apps/stack/bin/hstack-exec', '--heavyweight-admission', '--class=compilation', '--', 'node', '-e', 'console.log("native-build")'], expectedHeavyClass: 'compilation' },
     { args: ['apps/stack/bin/hstack-exec', '--heavyweight-admission', '--class=runtime-build', '--', 'node', '-e', 'console.log("runtime-build")'], expectedHeavyClass: 'runtime-build' },
     { args: ['apps/stack/bin/hstack-exec', '--heavyweight-admission', '--class=compilation', '--class=dependency-install', '--', 'node', '-e', 'console.log("install")'], expectedHeavyClass: 'dependency-install' },

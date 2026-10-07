@@ -204,6 +204,9 @@ native_command_policy_finish() {
   if { [ "$policy_kind" = 'runtime' ]; } && { [ "$policy_runnerKnown" = '1' ]; } && { [ "$policy_component" = 'apps/cli' ] || [ "$policy_component" = 'apps/ui' ] || [ "$policy_component" = 'packages/plugins/triage' ]; } && { [ "$policy_config" = 'vitest.config.ts' ]; } && { [ "$policy_resolverOverride" = '0' ]; }; then
     policy_kind='source-test'
   fi
+  if { [ "$policy_kind" = 'runtime' ]; } && { [ "$policy_runnerKnown" = '1' ]; } && { [ "$policy_component" = 'apps/cli' ]; } && { [ "$policy_config" = 'vitest.source.integration.config.ts' ]; } && { [ "$policy_resolverOverride" = '0' ]; }; then
+    policy_kind='source-test'
+  fi
 }
 native_package_manager() { case "$1" in npm|npx|pnpm|yarn) return 0 ;; *) return 1 ;; esac; }
 

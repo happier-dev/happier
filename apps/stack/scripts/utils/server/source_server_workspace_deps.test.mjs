@@ -23,7 +23,7 @@ test('ensureSourceServerWorkspacePackagesBuilt validates source-backed server pa
   assert.deepEqual(calls, [
     {
       dir: '/repo/apps/server',
-      options: { quiet: true, env: { TEST_ENV: '1' }, buildMode: 'qa-runtime' },
+      options: { quiet: true, env: { TEST_ENV: '1' }, buildMode: 'source-dev' },
     },
   ]);
   assert.deepEqual(result, { ran: true, reason: 'source-server', result: { ok: true, built: ['@happier-dev/protocol'], skipped: [] } });
@@ -73,7 +73,7 @@ test('spawnSourceServerScript validates source-backed server package exports bef
 
   assert.equal(result, child);
   assert.deepEqual(calls, [
-    ['workspace', '/repo/apps/server', { quiet: true, env: { PORT: '34567' }, buildMode: 'qa-runtime' }],
+    ['workspace', '/repo/apps/server', { quiet: true, env: { PORT: '34567' }, buildMode: 'source-dev' }],
     ['spawn', { label: 'server', dir: '/repo/apps/server', script: 'start', env: { PORT: '34567' } }],
   ]);
 });

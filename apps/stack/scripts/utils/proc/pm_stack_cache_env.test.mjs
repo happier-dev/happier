@@ -287,6 +287,7 @@ async function writeYarnUiPostinstallStub({
   postinstallSourcePath = null,
   assetSourcePath = null,
   assetOutputPath = null,
+  dependencyLockPath = null,
 }) {
   await mkdir(binDir, { recursive: true });
   const yarnPath = join(binDir, 'yarn');
@@ -306,6 +307,9 @@ async function writeYarnUiPostinstallStub({
         'fi',
       ] : []),
       'if [[ "$*" == "-s workspace @happier-dev/app postinstall:real" ]]; then',
+      ...(dependencyLockPath ? [
+        `  [[ -f ${shellSingleQuote(dependencyLockPath)} ]] || { echo 'postinstall escaped dependency mutation lock' >&2; exit 44; }`,
+      ] : []),
       '  [[ "${HAPPIER_TEST_UI_POSTINSTALL_FAIL:-0}" != "1" ]] || exit 43',
       ...(forcedRepairMarkerPath ? [
         `  [[ -f ${JSON.stringify(forcedRepairMarkerPath)} ]] || exit 42`,
@@ -1350,7 +1354,8 @@ test('ensureDepsInstalled repairs missing UI postinstall outputs on a warm depen
 
   const binDir = join(root, 'bin');
   const outputPath = join(root, 'argv.txt');
-  await writeYarnUiPostinstallStub({ binDir, outputPath, requiredOutputPath });
+  await writeYarnUiPostinstallStub({ binDir, outputPath, requiredOutputPath,
+    dependencyLockPath: join(root, '.project', 'tmp', 'dependency-install.lock') });
   const env = {
     ...process.env,
     PATH: `${binDir}:/usr/bin:/bin`,

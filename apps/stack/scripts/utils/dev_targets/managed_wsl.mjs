@@ -31,7 +31,7 @@ export async function runManagedWslOperation(
   const result = await runCaptureResult('ssh', [
     '-T', '-F', runtime.host.sshConfigFile, '-o', 'BatchMode=yes',
     runtime.host.ssh, remoteCommand,
-  ], { env, input, streamLabel: 'wsl:' + target.name });
+  ], { env, input, ...(action === 'Doctor' ? {} : { streamLabel: 'wsl:' + target.name }) });
   if (result.exitCode !== 0) {
     throw new Error('[dev-targets] WSL ' + action + ' failed: ' + String(result.err ?? result.out ?? '').trim());
   }

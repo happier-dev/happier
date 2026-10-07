@@ -673,7 +673,7 @@ export async function buildRuntimeArtifactComponents({
 
 // Imported and locally constructed payloads use the same producer retention
 // graph, including references held by other named consumer stacks.
-export async function retainBuiltRuntimeArtifacts({ stackBaseDir, artifacts, target, env, retentionPolicy, pruneComponentArtifactsImpl = pruneComponentArtifacts }) {
+export async function retainBuiltRuntimeArtifacts({ stackBaseDir, artifacts, target, env, retentionPolicy, unusedArtifactProcRoot, pruneComponentArtifactsImpl = pruneComponentArtifacts }) {
   // Another target can have unpublished staging or completed support bytes in
   // this store. Its existing live demand protects that work until publication.
   // Defer pruning rather than interpreting its staging tree as corrupt output.
@@ -691,6 +691,7 @@ export async function retainBuiltRuntimeArtifacts({ stackBaseDir, artifacts, tar
         keepCount: retentionPolicy.artifactKeepCount,
         runtimeSnapshotKeepCount: retentionPolicy.runtimeSnapshotKeepCount,
         externalReferenceStorageRoot: getStacksStorageRoot(env),
+        ...(unusedArtifactProcRoot ? { unusedArtifactProcRoot } : {}),
       });
     }
   }

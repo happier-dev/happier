@@ -2029,6 +2029,16 @@ not assume that a source process came from `dist`. Its daemon status preserves t
 reported as stale or dead; Machine RPC readiness remains separately true, false, or unknown.
 The former diagnostic environment flags no longer bypass Machine sync or Automation worker startup.
 
+In current 0.3 development, `daemon start` uses its existing wait budget as a
+reporting checkpoint while the observed startup process remains alive.
+It reports that startup is continuing and waits for control-server readiness;
+elapsed time alone does not establish failure. Stack passes its readiness
+budget to that foreground wait. On Windows, the launch adapter preserves the
+detached daemon PID returned by PowerShell and observes it through the shared
+process-liveness owner; the launcher's own exit does not establish daemon failure.
+When no live child can be observed, control-state inspection can still return
+the existing background `starting` result after the foreground wait.
+
 Doctor repair's auth context uses the process's selected Home unless an explicit
 `--server` target is supplied; reading a scoped report does not change the terminal's
 saved selection. It probes only that Home's API endpoint and renders other stored
@@ -2129,9 +2139,24 @@ The source stack may start from a valid last-green runtime while changed source 
 
 For development services placed on a remote target, the target supervisor owns the worker and its independent SSH tunnel. Worker recovery retains a healthy tunnel and rechecks its lifetime at dispatch, replacing a tunnel that exited during backoff or retirement. Remote Expo readiness reports a degraded service at the existing readiness deadline, including with an attended TUI, and continues readiness recovery through the supervisor. Standalone attended Metro waits retain their cancellation-controlled checkpoints. An Expo heap failure is handled separately by the existing Expo process restart policy; it does not select a different host or start a local duplicate.
 
-Remote dependency bootstrap installs tools without general workspace lifecycle scripts before loading the package-manager owner. Every install that materializes the shared UI dependency tree, including source-test and stage-zero refreshes, completes the canonical UI postinstall under the existing dependency-refresh lock. The dependency-free `utils/proc/ui_postinstall.mjs` owner serves both bootstrap and full package-manager preparation; the UI verifier also loads without compiled Stack packages. The mandatory password-worker asset producer compiles the canonical Protocol codec source directly, so cold UI postinstall does not require or consume stale Protocol dist. Scriptless admission still does not certify other runtime lifecycle prerequisites. UI patches and asset-generator sources participate through `apps/ui/package.json`'s `happier.installFreshnessInputs`; changing either reruns postinstall even when Yarn reuses installed packages. Postinstall failure leaves admission stale and fails preparation; an unchanged source-test preparation reuses completed outputs. This prevents a validation install from leaving an already-running Expo with unpatched dependencies.
+Remote dependency bootstrap installs tools without general workspace lifecycle scripts before loading the package-manager owner. Every install that materializes the shared UI dependency tree, including source-test and stage-zero refreshes, completes the canonical UI postinstall under the existing dependency-refresh lock, before publishing the ready marker. Warm prerequisite repair uses the same lock and withdraws admission until repair succeeds. The dependency-free `utils/proc/ui_postinstall.mjs` owner serves both bootstrap and full package-manager preparation; the UI verifier also loads without compiled Stack packages. The mandatory password-worker asset producer compiles the canonical Protocol codec source directly, so cold UI postinstall does not require or consume stale Protocol dist. Scriptless admission still does not certify other runtime lifecycle prerequisites. UI patches and asset-generator sources participate through `apps/ui/package.json`'s `happier.installFreshnessInputs`; changing either reruns postinstall even when Yarn reuses installed packages. Postinstall failure leaves admission stale and fails preparation; an unchanged source-test preparation reuses completed outputs.
+
+In current 0.3 development, a dependency writer stops verified managed Metro consumers before changing their shared tree. Final Metro launch and existing PID-state publication acquire the same install lock; the existing Expo supervisor restarts only after complete dependency admission is available. The UI verifier prevents unchanged warm preparation from stopping a healthy Metro. A legacy running supervisor without this guarded restart capability causes dependency mutation to fail closed with a restart-required error; changing source does not retrofit an already-loaded supervisor. No new PID registry or suspended-process custody is introduced. Last-green launch requires a previously admitted coherent installed tree, not equality with newer source inputs: a successful no-install repair retains the old admission inputs, while the normal installer still sees those newer inputs as stale. Failed preparation never admits a replacement against a partial tree.
+
+Remote validation bootstrap has the target's explicit package-manager cache context even when it does not inherit the running Stack environment. Both dispatchers provide `cache=<targetHome>/cache`; consumer discovery uses that target home through the same `dev_targets/stack_paths.mjs` owner as managed worker state, including its `stack-state` directory. It must not search only the remote account's default local Stack home. Planned dependency stops preserve the existing crash-restart budget, while a crash before successful PID publication remains an ordinary startup failure; user shutdown remains authoritative.
 
 In 0.3 web development, `apps/ui/metro.config.js` rewrites development bundle, source-map and HMR entry requests to `lazy=false`. Dynamic imports are included in the initial graph and still resolve asynchronously; `inlineRequires` defers module evaluation. This prevents Metro from retaining overlapping transitive graphs for each large optional presentation entry. Native development and production lazy bundling retain Expo's existing behavior. Web Babel uses Expo's existing `import.meta` transform so optional dependencies remain valid in Metro's script bundles; the Metro cache-version bump invalidates older transforms on restart. App and vendor source maps remain intact. A running Metro must be restarted to load this configuration change.
+
+In current development source, the reload coordinator revalidates each service
+against its own consumed descriptors. A daemon-only edit cannot revoke a server
+build or activation. Shared-input edits still revoke every affected service,
+and edits arriving during preparation coalesce into the existing trailing cycle.
+Package currentness and dependency ordering remain with the workspace build owner.
+Its scheduling graph shares the manifests already read during workspace discovery
+within one pass. Fresh package admission, transitive input/output fingerprints,
+lock-wait rechecks, and publication fences are not memoized through that graph.
+Manifest movement re-enters the existing single trailing pass with a fresh graph;
+no scheduling observation survives an invocation.
 
 ## Implementation references
 - CLI entry: `apps/cli/src/index.ts`

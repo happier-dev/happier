@@ -32,7 +32,79 @@ for (const os of ['Darwin', 'Linux']) {
   });
 }
 
+test('power inspection reads macOS policy without changing it and rejects battery sleep', { skip: process.platform === 'win32' }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-worker-power-health-' });
+  const bin = fixture.path('bin'); await mkdir(bin);
+  for (const [name, body] of Object.entries({
+    uname: 'printf Darwin',
+    pmset: '[ "$*" = "-g custom" ] || exit 9; printf "Battery Power:\\n sleep %s\\nAC Power:\\n sleep 0\\n" "$BATTERY_SLEEP"',
+  })) {
+    const path = join(bin, name); await writeFile(path, '#!/bin/sh\n' + body + '\n'); await chmod(path, 0o755);
+  }
+  const probe = () => execute('sh', ['-c', buildRemoteWorkerPowerCommand({ platform: 'posix' }, { action: 'inspect' })],
+    { env: { ...process.env, PATH: bin + ':' + process.env.PATH, BATTERY_SLEEP: '1' } });
+  const result = await probe();
+  assert.match(result.stdout, /__HAPPIER_WORKER_POWER__=/);
+  const health = JSON.parse(result.stdout.match(/__HAPPIER_WORKER_POWER__=(.+)/)[1]);
+  assert.equal(health.ok, false);
+  assert.match(health.detail, /sudo pmset -a sleep 0/);
+  const healthy = await execute('sh', ['-c', buildRemoteWorkerPowerCommand({ platform: 'posix' }, { action: 'inspect' })],
+    { env: { ...process.env, PATH: bin + ':' + process.env.PATH, BATTERY_SLEEP: '0' } });
+  assert.equal(JSON.parse(healthy.stdout.match(/__HAPPIER_WORKER_POWER__=(.+)/)[1]).ok, true);
+});
+
 // Optional native Windows OS validation; credentials remain on the controller.
+test('Windows worker power persists one boot and logon task with an unlimited keep-awake request', {
+  skip: !process.env.HAPPIER_STACK_TEST_WINDOWS_SSH_CONFIG,
+}, async () => {
+  const script = `
+$ErrorActionPreference='Stop'
+$ProgressPreference='SilentlyContinue'
+$fixture=Join-Path $env:TEMP ('happier-power-test-'+[guid]::NewGuid().ToString())
+$env:ProgramData=$fixture
+$script:tasks=@{}
+$script:starts=0
+function powercfg.exe { $global:LASTEXITCODE=0; if ($args[0] -in @('/query','/qh') -and ($args[0] -eq '/qh' -or $args[3] -notin @('7bc4a2f9-d8fc-4469-b07b-33eb785aaca0','5ca83367-6e45-459f-a27b-476b1d01c936'))) { 'Minimum: 0x00000000'; 'Maximum: 0xffffffff'; 'Current AC: 0x00000000'; 'Current DC: 0x00000000' }; if ($args[0] -eq '/requests') { $script:requestReason } }
+function icacls.exe { $global:LASTEXITCODE=0 }
+function New-ScheduledTaskAction { param($Execute,$Argument) return @{Execute=$Execute;Arguments=$Argument} }
+function New-ScheduledTaskTrigger { param([switch]$AtStartup,[switch]$AtLogOn) return @{Enabled=$true;Kind=$(if($AtStartup){'boot'}else{'logon'});CimClass=@{CimClassName=$(if($AtStartup){'MSFT_TaskBootTrigger'}else{'MSFT_TaskLogonTrigger'})}} }
+function New-ScheduledTaskPrincipal { param($UserId,$LogonType,$RunLevel) return @{UserId=$UserId;LogonType=$LogonType;RunLevel=$RunLevel} }
+function New-ScheduledTaskSettingsSet { param($ExecutionTimeLimit,[switch]$StartWhenAvailable,[switch]$AllowStartIfOnBatteries,[switch]$DontStopIfGoingOnBatteries,$MultipleInstances) return @{ExecutionTimeLimit=$ExecutionTimeLimit;StartWhenAvailable=[bool]$StartWhenAvailable;AllowStartIfOnBatteries=[bool]$AllowStartIfOnBatteries;DontStopIfGoingOnBatteries=[bool]$DontStopIfGoingOnBatteries;MultipleInstances=$MultipleInstances} }
+function Register-ScheduledTask { param($TaskName,$Action,$Trigger,$Principal,$Settings,[switch]$Force) $state=if($script:tasks[$TaskName]){$script:tasks[$TaskName].State}else{'Ready'}; $script:tasks[$TaskName]=@{State=$state;Actions=@($Action);Triggers=@($Trigger);Principal=$Principal;Settings=$Settings} }
+function Get-ScheduledTask { param($TaskName,$ErrorAction) return $script:tasks[$TaskName] }
+function Start-ScheduledTask { param($TaskName) $script:tasks[$TaskName].State='Running';$script:starts++ }
+function Stop-ScheduledTask { param($TaskName) $script:tasks[$TaskName].State='Ready' }
+try {
+  $program={ ${buildWorkerPowerScript('windows', { action: 'install' })} }
+  & $program
+  & $program
+  if ($script:tasks.Count -ne 1) { throw 'No persistent worker power task was installed' }
+  $task=$script:tasks['Happier-Worker-Power']
+  if ($task.State -ne 'Running' -or $script:starts -ne 1) { throw 'Repeated setup restarted or failed to start the owned task' }
+  if ($task.Principal.UserId -ne 'SYSTEM' -or $task.Principal.RunLevel -ne 'Highest') { throw 'Power task cannot run unattended at boot' }
+  if (@($task.Triggers | Where-Object {$_.Kind -eq 'boot'}).Count -ne 1 -or @($task.Triggers | Where-Object {$_.Kind -eq 'logon'}).Count -ne 1) { throw 'Power task lacks boot/logon triggers' }
+  if ($task.Settings.ExecutionTimeLimit -ne [TimeSpan]::Zero -or !$task.Settings.AllowStartIfOnBatteries -or !$task.Settings.DontStopIfGoingOnBatteries) { throw 'Scheduler can terminate the no-sleep request' }
+  $installed=Get-Content -Raw -LiteralPath (Join-Path $fixture 'Happier/worker-power/keep-awake.ps1')
+  if ($installed -notmatch 'PowerSetRequest' -or $installed -notmatch 'Set-WorkerPowerSetting' -or $installed -notmatch 'Test-WorkerPowerSettings') { throw 'Boot task does not reapply, verify and hold the power policy' }
+  $probe={ ${buildWorkerPowerScript('windows', { action: 'inspect' })} }
+  $script:requestReason='None.'
+  $missing=(& $probe) -replace '^__HAPPIER_WORKER_POWER__=','' | ConvertFrom-Json
+  if ($missing.ok) { throw 'Running task without a power request was reported healthy' }
+  $script:requestReason='Happier worker no-sleep'
+  $healthy=(& $probe) -replace '^__HAPPIER_WORKER_POWER__=','' | ConvertFrom-Json
+  if (!$healthy.ok) { throw ('Held boot request was reported unhealthy: '+$healthy.detail) }
+  $task.Settings.ExecutionTimeLimit='PT72H'
+  $expiring=(& $probe) -replace '^__HAPPIER_WORKER_POWER__=','' | ConvertFrom-Json
+  if ($expiring.ok) { throw 'A keep-awake task with a scheduler deadline was reported healthy' }
+  Write-Output 'WINDOWS_BOOT_POWER_CONTRACT_PASSED'
+} finally { Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue }
+`;
+  const command = buildRemotePowerShellCommand('& ([ScriptBlock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([Console]::In.ReadLine()))))');
+  const result = await runCaptureResult('ssh', ['-T', '-F', process.env.HAPPIER_STACK_TEST_WINDOWS_SSH_CONFIG, process.env.HAPPIER_STACK_TEST_WINDOWS_SSH_ALIAS, command], { input: Buffer.from(script).toString('base64') + '\n' });
+  assert.equal(result.exitCode, 0, result.err);
+  assert.match(result.out, /WINDOWS_BOOT_POWER_CONTRACT_PASSED/);
+});
+
 test('Windows worker power configuration disables idle, unattended and lid sleep', {
   skip: !process.env.HAPPIER_STACK_TEST_WINDOWS_SSH_CONFIG,
 }, async () => {

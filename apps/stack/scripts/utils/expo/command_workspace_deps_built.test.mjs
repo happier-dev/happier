@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 
 import { expoExec, expoSpawn, resolveExpoBin } from './command.mjs';
+import { withDependencyRefresh } from '../proc/dependency_refresh.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -229,6 +230,11 @@ test('expoSpawn can launch last-green workspace bytes without refreshing changed
     npm_execpath: '',
     HAPPIER_STACK_ENV_FILE: '',
   };
+  // Last-green means a previously admitted dependency tree. The source can
+  // advance while explicit workspacePrepared startup retains those bytes.
+  await writeFile(join(root, 'yarn.lock'), '# admitted lockfile\n', 'utf8');
+  await withDependencyRefresh({ installDir: root, env }, async () => {});
+  await writeFile(join(root, 'yarn.lock'), '# changed lockfile\n', 'utf8');
   const child = await expoSpawn({
     label: 'expo-last-green',
     dir: uiDir,

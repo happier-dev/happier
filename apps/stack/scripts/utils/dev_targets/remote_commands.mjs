@@ -7,6 +7,7 @@ import { buildStackStableScopeId } from '../auth/stable_scope_id.mjs';
 import { REQUIRED_MANAGED_LIMA_GUEST_TOOLCHAIN } from '../managed_lima/provisioner.mjs';
 import { resolveEffectiveDbProvider } from '../server/effective_db_provider.mjs';
 import { renderNativeHeavyweightPressureCadence } from './heavyweight_pressure_cadence.mjs';
+import { resolveRemoteStackStorageDir } from './stack_paths.mjs';
 export { resolveHeavyweightPressureRetryMilliseconds } from './heavyweight_pressure_cadence.mjs';
 
 export const DEFAULT_REMOTE_STACK_STARTUP_TIMEOUT_MS = 30 * 60_000;
@@ -96,6 +97,7 @@ const FINAL_COMMAND_RULES = [
   })),
   { when: { command: ['hstack-exec'], admissionClass: ['targeted-validation', 'full-validation'] }, set: { heavyClass: 'validation' } },
   { when: { kind: ['runtime'], runnerKnown: ['1'], component: REMOTE_COMMAND_CLASSIFICATION.sourceTestComponents, config: REMOTE_COMMAND_CLASSIFICATION.sourceTestConfigs, resolverOverride: ['0'] }, set: { kind: 'source-test' } },
+  { when: { kind: ['runtime'], runnerKnown: ['1'], component: ['apps/cli'], config: ['vitest.source.integration.config.ts'], resolverOverride: ['0'] }, set: { kind: 'source-test' } },
 ];
 function commandBasename(value) {
   return String(value ?? '').trim().replaceAll('\\', '/').split('/').at(-1);
@@ -849,7 +851,7 @@ export function resolveRemoteStackStatePaths(target, { stackName, runtimeMode = 
     }
   }
   const remoteStackName = runtimeMode === 'controlled' ? stackName : resolveRemoteTargetStackName(target, { stackName });
-  const stackStorageDir = `${String(target.cliHomeDir).replace(/[\\/]+$/, '')}/stack-state`;
+  const stackStorageDir = resolveRemoteStackStorageDir(target.cliHomeDir);
   const stackBaseDir = `${stackStorageDir}/${remoteStackName}`;
   return {
     activeServerId: buildStackStableScopeId({

@@ -114,7 +114,6 @@ test('queued demands share a later-started flush while a demand during that flus
   t.after(() => rm(root, { recursive: true, force: true }));
   const binDir = join(root, 'bin');
   const dataDir = join(root, 'mutagen', 'data');
-  const stateDir = join(root, 'command-state', 'sync-control');
   const invocationLog = join(root, 'mutagen-invocations');
   const sourceFile = join(root, 'source.txt');
   const started = join(root, 'flush-started');
@@ -143,7 +142,6 @@ test('queued demands share a later-started flush while a demand during that flus
     ...process.env,
     PATH: `${binDir}:${process.env.PATH ?? ''}`,
     MUTAGEN_DATA_DIRECTORY: dataDir,
-    HAPPIER_DEV_TARGET_CONTROL_STATE_DIR: stateDir,
     DBUS_SESSION_BUS_ADDRESS: '',
   };
   const args = ['--sync-flush', 'happier-linux', '--', 'mutagen', 'sync', 'flush', 'happier-linux'];
@@ -183,7 +181,6 @@ test('failed and canceled flushes cannot satisfy queued demand, and later reques
       const root = await mkdtemp(join(tmpdir(), 'happier-dev-target-control-recovery-'));
       const binDir = join(root, 'bin');
       const dataDir = join(root, 'mutagen', 'data');
-      const stateDir = join(root, 'sync-control');
       const source = join(root, 'source');
       const log = join(root, 'flushes');
       const started = join(root, 'started');
@@ -218,7 +215,6 @@ test('failed and canceled flushes cannot satisfy queued demand, and later reques
         ...process.env,
         PATH: `${binDir}:${process.env.PATH ?? ''}`,
         MUTAGEN_DATA_DIRECTORY: dataDir,
-        HAPPIER_DEV_TARGET_CONTROL_STATE_DIR: stateDir,
         DBUS_SESSION_BUS_ADDRESS: '',
       };
       const launch = () => {
@@ -249,7 +245,7 @@ test('a waiter joining a successful flush still rejects fresh session problems',
 }, async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-dev-target-control-join-health-'));
   const binDir = join(root, 'bin');
-  const stateDir = join(root, 'sync-control');
+  const stateDir = join(root, 'mutagen', 'hstack-control');
   const lockStarted = join(root, 'lock-started');
   const lockRelease = join(root, 'lock-release');
   const flushLog = join(root, 'flushes');
@@ -289,7 +285,6 @@ test('a waiter joining a successful flush still rejects fresh session problems',
     ...process.env,
     PATH: `${binDir}:${process.env.PATH ?? ''}`,
     MUTAGEN_DATA_DIRECTORY: join(root, 'mutagen', 'data'),
-    HAPPIER_DEV_TARGET_CONTROL_STATE_DIR: stateDir,
     DBUS_SESSION_BUS_ADDRESS: '',
   };
   const launch = () => {
@@ -391,7 +386,6 @@ test('the no-flock platform path still performs a fresh post-flush health check'
   t.after(() => rm(root, { recursive: true, force: true }));
   const binDir = join(root, 'bin');
   const dataDir = join(root, 'mutagen', 'data');
-  const stateDir = join(root, 'command-state', 'sync-control');
   const flushMarker = join(root, 'flush-ran');
   await mkdir(binDir, { recursive: true });
   await mkdir(dataDir, { recursive: true });
@@ -415,7 +409,6 @@ test('the no-flock platform path still performs a fresh post-flush health check'
       env: {
         PATH: binDir,
         MUTAGEN_DATA_DIRECTORY: dataDir,
-        HAPPIER_DEV_TARGET_CONTROL_STATE_DIR: stateDir,
         DBUS_SESSION_BUS_ADDRESS: '',
       },
       encoding: 'utf8',
@@ -434,7 +427,6 @@ test('critical-slice placement runs the requested flush in the protected slice',
   t.after(() => rm(root, { recursive: true, force: true }));
   const binDir = join(root, 'bin');
   const dataDir = join(root, 'mutagen', 'data');
-  const stateDir = join(root, 'command-state', 'sync-control');
   const invocationLog = join(root, 'mutagen-invocations');
   const scopeLog = join(root, 'systemd-scopes');
   const started = join(root, 'flush-started');
@@ -470,7 +462,6 @@ test('critical-slice placement runs the requested flush in the protected slice',
     ...process.env,
     PATH: `${binDir}:${process.env.PATH ?? ''}`,
     MUTAGEN_DATA_DIRECTORY: dataDir,
-    HAPPIER_DEV_TARGET_CONTROL_STATE_DIR: stateDir,
   };
   const args = ['--sync-flush', 'happier-linux', '--', 'mutagen', 'sync', 'flush', 'happier-linux'];
   const first = spawn(controlExecutable, args, { env, stdio: 'ignore' });

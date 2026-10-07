@@ -7,6 +7,10 @@
 # command crosses this boundary, including commands used while the JavaScript
 # runtime is busy.
 
+# Parse before execution so a source edit during a sync wait cannot change the
+# remaining program. Braces keep control placement and traps in the same shell.
+{
+
 case "$0" in
   /*) control_path=$0 ;;
   */*) control_path="$PWD/${0#./}" ;;
@@ -23,10 +27,8 @@ usage() {
 }
 
 sync_control_state_dir() {
-  if [ -n "${HAPPIER_DEV_TARGET_CONTROL_STATE_DIR-}" ]; then
-    printf '%s\n' "$HAPPIER_DEV_TARGET_CONTROL_STATE_DIR"
-    return
-  fi
+  # Startup, explicit sync and dispatch address the same daemon/session. A
+  # caller-selected directory would split their lock and causal flight record.
   printf '%s\n' "${MUTAGEN_DATA_DIRECTORY%/data}/hstack-control"
 }
 
@@ -329,3 +331,4 @@ case "${1-}" in
     ;;
   *) usage ;;
 esac
+}

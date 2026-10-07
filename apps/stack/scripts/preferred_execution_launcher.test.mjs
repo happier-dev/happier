@@ -6,6 +6,8 @@ import { spawn, spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { renderNativeExecutionProjection } from './utils/dev_targets/native_execution_projection.mjs';
 import { installNativeAdmissionFixture } from './testkit/core/native_admission_fixture.mjs';
+import { flushDevTargetSync } from './utils/dev_targets/sync_project.mjs';
+import { syncDevTarget } from './utils/dev_targets/executor.mjs';
 
 const repoRoot = resolve(import.meta.dirname, '..', '..', '..');
 const launcher = join(repoRoot, 'apps', 'stack', 'bin', 'hstack-exec');
@@ -177,12 +179,38 @@ test('all-busy runtime placement preserves the real waiting head and backfill ch
   assert.doesNotMatch(runtime.stderr, /running locally/);
 });
 
+test('native runtime transfer gate holds no reservation before upload and still waits for actual admission before READY', { skip: process.platform !== 'linux', timeout: 30000 }, async t => {
+  const fixture = await runtimeAdmissionTransportFixture(t);
+  const runtime = startRuntimeController(t, fixture, { HSTACK_EXEC_RUNTIME_SOURCE_UPLOAD: '1' });
+  await waitForRuntime(() => runtime.stdout.includes('HAPPIER_RUNTIME_BUILD_PREPARE={"worker":"starved"}'), () => runtime.stderr);
+  const admissionRoot = fixture.workers.starved.admissionRoot;
+  assert.deepEqual(await readdir(join(admissionRoot, 'owners')).catch(() => []), []);
+  assert.deepEqual(await readdir(join(admissionRoot, 'waiters')).catch(() => []), []);
+  assert.doesNotMatch(runtime.stdout, /HAPPIER_RUNTIME_BUILD_READY=/);
+  runtime.child.stdin.write('{"prepareWorker":"starved"}\n');
+  await waitForRuntime(async () => (await readdir(join(admissionRoot, 'waiters')).catch(() => [])).length === 1, () => runtime.stderr);
+  assert.deepEqual(await readdir(join(admissionRoot, 'owners')).catch(() => []), []);
+  assert.doesNotMatch(runtime.stdout, /HAPPIER_RUNTIME_BUILD_READY=/);
+  await writeFile(fixture.workers.starved.sample, '8 0.1 0.9 22000000 20 0 28000000 28311552 0 0 0 0 0 0 0 linux\n');
+  await waitForRuntime(() => runtime.stdout.includes('HAPPIER_RUNTIME_BUILD_READY='), () => runtime.stderr);
+  assert.equal((await readdir(join(admissionRoot, 'owners'))).length, 1);
+  runtime.child.stdin.write('{"requestPath":"/tmp/runtime-request"}\n');
+  assert.equal((await runtime.completion).code, 0, runtime.stderr);
+  assert.deepEqual(await readdir(join(admissionRoot, 'owners')), []);
+});
+
 test('runtime placement switches only after an alternative is actually admitted and cancels the original queue', { skip: process.platform !== 'linux', timeout: 30000 }, async t => {
   const fixture = await runtimeAdmissionTransportFixture(t);
-  const runtime = startRuntimeController(t, fixture);
+  const runtime = startRuntimeController(t, fixture, { HSTACK_EXEC_RUNTIME_SOURCE_UPLOAD: '1' });
+  await waitForRuntime(() => runtime.stdout.includes('HAPPIER_RUNTIME_BUILD_PREPARE={"worker":"starved"}'), () => runtime.stderr);
+  runtime.child.stdin.write('{"prepareWorker":"starved"}\n');
   const waiters = join(fixture.workers.starved.admissionRoot, 'waiters');
   await waitForRuntime(async () => (await readdir(waiters).catch(() => [])).length === 1, () => runtime.stderr);
   await writeFile(fixture.workers.roomy.sample, '8 12 0.9 22000000 20 0 28000000 28311552 0 0 0 0 0 0 0 linux\n');
+  await waitForRuntime(() => runtime.stdout.includes('HAPPIER_RUNTIME_BUILD_PREPARE={"worker":"roomy"}'), () => runtime.stderr);
+  assert.equal((await readdir(waiters)).length, 1, 'source-transfer readiness cannot release the original admission waiter');
+  assert.doesNotMatch(runtime.stdout, /HAPPIER_RUNTIME_BUILD_READY=/);
+  runtime.child.stdin.write('{"prepareWorker":"roomy"}\n');
   await waitForRuntime(() => runtime.stdout.includes('"worker":"roomy"'), () => runtime.stderr);
   assert.doesNotMatch(runtime.stdout, /BODY:/);
   await waitForRuntime(async () => (await readdir(waiters).catch(() => [])).length === 0, () => runtime.stderr);
@@ -4869,6 +4897,7 @@ test('native launcher exact target blocks dispatch when a clean cached probe is 
   await executable(join(binDir, 'ssh'), [
     '#!/bin/sh',
     'case "$*" in',
+    '  *"&& command -v "*) exit 0 ;;',
     '  *-MNf*|*-O\\ exit*) exit 0 ;;',
     `  *) : > "${remoteMarker}"; printf 'remote:%s\\n' "$*" ;;`,
     'esac',
@@ -4894,7 +4923,7 @@ test('native launcher exact target blocks dispatch when a clean cached probe is 
   await assert.rejects(readFile(localMarker), { code: 'ENOENT' });
 });
 
-test('a queued exact-target command dispatches only after its own flush observes the newest source bytes', async (t) => {
+test('startup and explicit sync share the command dispatch barrier and preserve newer source bytes', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-causal-flush-'));
   const binDir = join(root, 'bin');
   const storageDir = join(root, 'stacks');
@@ -4905,8 +4934,13 @@ test('a queued exact-target command dispatches only after its own flush observes
   const firstFlushStarted = join(root, 'first-flush-started');
   const releaseFirstFlush = join(root, 'release-first-flush');
   const flushLog = join(root, 'flush-log');
+  const startupLock = join(stackDir, 'mutagen', 'hstack-control', 'happier-linux.lock');
+  const queuedLog = join(root, 'queued');
+  const releaseLock = join(root, 'release-lock');
   const children = [];
+  const outputs = [];
   t.after(async () => {
+    await Promise.all([writeFile(releaseLock, ''), writeFile(releaseFirstFlush, '')]);
     for (const child of children) {
       if (child.exitCode == null && child.signalCode == null) child.kill('SIGTERM');
     }
@@ -4916,6 +4950,7 @@ test('a queued exact-target command dispatches only after its own flush observes
   await mkdir(binDir, { recursive: true });
   await mkdir(join(stackDir, 'mutagen', 'data'), { recursive: true });
   await mkdir(cacheDir, { recursive: true });
+  await mkdir(join(stackDir, 'mutagen', 'hstack-control'), { recursive: true });
   await writeFile(join(stackDir, 'dev-targets.json'), '{}\n');
   await writeFile(sourceBytes, 'X\n');
   const cachedAt = Math.floor(Date.now() / 1_000);
@@ -4931,7 +4966,7 @@ test('a queued exact-target command dispatches only after its own flush observes
     "target_1_name='linux'",
     "target_1_ssh='linux-host'",
     "target_1_ssh_config=''",
-    "target_1_sync_name='named-linux-sync'",
+    "target_1_sync_name='happier-linux'",
     "target_1_repo_dir='/remote/repo'",
     "target_1_cli_home='/remote/home'",
     "target_1_remote_path='/usr/bin:/bin'",
@@ -4942,7 +4977,7 @@ test('a queued exact-target command dispatches only after its own flush observes
     '#!/bin/sh',
     'case "$2" in',
     `  flush) cp "${sourceBytes}" "${mirrorBytes}"; tr -d '\\n' < "${mirrorBytes}" >> "${flushLog}"; printf '\\n' >> "${flushLog}"; if grep -qx X "${mirrorBytes}" && [ ! -e "${releaseFirstFlush}" ]; then : > "${firstFlushStarted}"; while [ ! -e "${releaseFirstFlush}" ]; do sleep 0.02; done; fi ;;`,
-    '  list) printf "%s|Watching|false|true|1|0/0|0/0|true|1|0/0|0/0|active|2|ok|0|0\\n" "$3" ;;',
+    '  list) if [ "$5" = "{{json .}}" ]; then printf \'[{"name":"happier-linux","paused":false,"status":"watching","successfulCycles":2,"alpha":{"connected":true,"scanned":true},"beta":{"connected":true,"scanned":true}}]\\n\'; else printf "%s|Watching|false|true|1|0/0|0/0|true|1|0/0|0/0|active|2|ok|0|0\\n" "$3"; fi ;;',
     '  *) exit 92 ;;',
     'esac',
     '',
@@ -4950,6 +4985,7 @@ test('a queued exact-target command dispatches only after its own flush observes
   await executable(join(binDir, 'ssh'), [
     '#!/bin/sh',
     'case "$*" in',
+    '  *"&& command -v "*) exit 0 ;;',
     '  *-MNf*|*-O\\ exit*) exit 0 ;;',
     `  *) printf 'mirror:'; cat "${mirrorBytes}" ;;`,
     'esac',
@@ -4963,7 +4999,10 @@ test('a queued exact-target command dispatches only after its own flush observes
     HAPPIER_STACK_STORAGE_DIR: storageDir,
     PATH: `${binDir}:/usr/bin:/bin`,
     TMPDIR: root,
+    DBUS_SESSION_BUS_ADDRESS: '',
   };
+  // Observe the external flock boundary; all domain and admission logic is real.
+  await executable(join(binDir, 'flock'), `#!/bin/sh\ncase "$*" in *--locked-sync-flush*) printf 'queued\\n' >> ${JSON.stringify(queuedLog)} ;; esac\nexec /usr/bin/flock "$@"\n`);
   const launch = (label) => {
     const child = spawn(
       '/bin/sh',
@@ -4974,11 +5013,11 @@ test('a queued exact-target command dispatches only after its own flush observes
     return child;
   };
   const collect = (child) => new Promise((resolveResult) => {
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.stderr.on('data', (chunk) => { stderr += chunk; });
-    child.once('exit', (code, signal) => resolveResult({ code, signal, stdout, stderr }));
+    const output = { stdout: '', stderr: '' };
+    outputs.push(output);
+    child.stdout.on('data', (chunk) => { output.stdout += chunk; });
+    child.stderr.on('data', (chunk) => { output.stderr += chunk; });
+    child.once('exit', (code, signal) => resolveResult({ code, signal, ...output }));
   });
   const waitForFile = async (path) => {
     for (let attempt = 0; attempt < 250; attempt += 1) {
@@ -4989,7 +5028,7 @@ test('a queued exact-target command dispatches only after its own flush observes
         await new Promise((resolveWait) => setTimeout(resolveWait, 20));
       }
     }
-    throw new Error(`timed out waiting for ${path}`);
+    throw new Error(`timed out waiting for ${path}: ${JSON.stringify(outputs)}`);
   };
 
   const first = launch('first');
@@ -5005,6 +5044,32 @@ test('a queued exact-target command dispatches only after its own flush observes
   assert.equal(secondCompleted.code, 0, secondCompleted.stderr);
   assert.equal(secondCompleted.stdout, 'mirror:Y\n');
   assert.deepEqual((await readFile(flushLog, 'utf8')).trim().split('\n'), ['X', 'Y']);
+
+  const held = spawn('/usr/bin/flock', [startupLock, 'sh', '-c', `: > ${JSON.stringify(root)}/lock-held; while [ ! -e ${JSON.stringify(releaseLock)} ]; do sleep 0.02; done`], { stdio: ['ignore', 'pipe', 'pipe'] });
+  children.push(held);
+  const heldResult = collect(held);
+  await waitForFile(join(root, 'lock-held'));
+  await writeFile(sourceBytes, 'Z\n');
+  await writeFile(queuedLog, '');
+  const startup = flushDevTargetSync({ target: { name: 'linux' }, env: { ...env, MUTAGEN_DATA_DIRECTORY: join(stackDir, 'mutagen', 'data') } });
+  const explicit = syncDevTarget({ target: { name: 'linux' }, stackBaseDir: stackDir, env });
+  const command = collect(launch('shared'));
+  let prematureDispatch;
+  try {
+    for (let attempt = 0; attempt < 250; attempt++) {
+      if ((await readFile(queuedLog, 'utf8')).trim().split('\n').filter(Boolean).length >= 3) break;
+      await new Promise(resolveWait => setTimeout(resolveWait, 20));
+    }
+    assert.equal((await readFile(queuedLog, 'utf8')).trim().split('\n').filter(Boolean).length, 3, 'all three callers reached lock admission before release');
+    prematureDispatch = (await readFile(flushLog, 'utf8')).trim().split('\n');
+  } finally {
+    await writeFile(releaseLock, '');
+  }
+  const [, , completed] = await Promise.all([startup, explicit, command, heldResult]);
+  assert.deepEqual(prematureDispatch, ['X', 'Y'], 'all paths must wait behind the same session barrier');
+  assert.equal(completed.code, 0, completed.stderr);
+  assert.equal(completed.stdout, 'mirror:Z\n');
+  assert.deepEqual((await readFile(flushLog, 'utf8')).trim().split('\n'), ['X', 'Y', 'Z'], 'all pre-start demands share one fresh flush');
 });
 
 
@@ -5071,6 +5136,7 @@ test('native launcher flushes an automatically selected mirror and retries anoth
   ].join('\n'));
   await executable(join(binDir, 'ssh'), [
     '#!/bin/sh',
+    'case "$*" in *"&& command -v "*) exit 0 ;; esac',
     `if [ ! -e "${freshMarker}" ]; then printf '%s\\n' 'remote dispatch attempted before sync flush' >&2; exit 74; fi`,
     'case "$*" in',
     '  *-MNf*|*-O\\ exit*) exit 0 ;;',
@@ -5126,9 +5192,8 @@ test('native launcher exact target flushes the selected Mutagen session before r
   await mkdir(mutagenSshPath, { recursive: true });
   await mkdir(cacheDir, { recursive: true });
   await writeFile(join(stackDir, 'dev-targets.json'), '{}\n');
-  // Keep automatic placement entirely on its fresh load and command caches.
-  // The first SSH in this test must therefore be the selected-target dispatch
-  // path, which is the stale-byte boundary the flush protects.
+  // Cached load keeps placement separate from prerequisite inspection. Only
+  // payload execution requires the source flush, not the SSH tool preflight.
   const cachedAt = Math.floor(Date.now() / 1_000);
   await writeFile(join(cacheDir, 'linux.cache'), `${cachedAt} 1 0.000000 4\n`);
   await writeFile(join(cacheDir, 'linux.command.2560848116.cache'), `${cachedAt} 1\n`);
@@ -5163,6 +5228,7 @@ test('native launcher exact target flushes the selected Mutagen session before r
   ].join('\n'));
   await executable(join(binDir, 'ssh'), [
     '#!/bin/sh',
+    'case "$*" in *"&& command -v "*) exit 0 ;; esac',
     `if [ ! -e "${remoteMarker}.fresh" ]; then printf '%s\\n' 'remote dispatch attempted before sync flush' >&2; exit 74; fi`,
     'case "$*" in',
     '  *-MNf*|*-O\\ exit*) exit 0 ;;',
@@ -5747,6 +5813,55 @@ test('native launcher does not derive a fixed heavyweight job count from the wor
       if (child && child.exitCode == null) child.kill('SIGTERM');
     }
   }
+});
+
+test('native admission reaps dead waiters and owners on a check even when memory prevents admission', {
+  skip: process.platform !== 'linux',
+}, async t => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-dead-admission-records-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const fixture = await installNativeAdmissionFixture({ root });
+  const bin = join(root, 'bin');
+  await mkdir(bin);
+  await executable(join(bin, 'awk'), '#!/bin/sh\ncase "$*" in */proc/meminfo*) printf "1048576 28311552\\n" ;; */proc/loadavg*|*/proc/pressure/*) printf "0\\n" ;; *) exec /usr/bin/awk "$@" ;; esac\n');
+  const processStat = await readFile(`/proc/${process.pid}/stat`, 'utf8');
+  const token = processStat.slice(processStat.lastIndexOf(') ') + 2).trim().split(/\s+/)[19];
+  const deadWaiter = join(fixture.admissionRoot, 'waiters/99999998-1');
+  const deadOwner = join(fixture.admissionRoot, 'owners/99999999-1');
+  const liveWaiter = join(fixture.admissionRoot, `waiters/${process.pid}-${token}`);
+  const reusedOwner = join(fixture.admissionRoot, `owners/${process.pid}-${Number(token) + 1}`);
+  const reusedWaiter = join(fixture.admissionRoot, `waiters/${process.pid}-${Number(token) + 1}`);
+  await mkdir(join(fixture.admissionRoot, 'waiters'), { recursive: true });
+  await mkdir(deadOwner, { recursive: true });
+  await mkdir(reusedOwner, { recursive: true });
+  await writeFile(join(reusedOwner, 'process'), `${process.pid} ${Number(token) + 1}\n`);
+  await writeFile(join(reusedOwner, 'class'), 'runtime-build\n');
+  await writeFile(reusedWaiter, `${process.pid} ${Number(token) + 1} 1 runtime-build 0\n`);
+  await writeFile(join(deadOwner, 'process'), '99999999 1\n');
+  await writeFile(join(deadOwner, 'class'), 'runtime-build\n');
+  await writeFile(deadWaiter, '99999998 1 1 runtime-build 0\n');
+  await writeFile(liveWaiter, `${process.pid} ${token} 2 runtime-build 0\n`);
+  const result = spawnSync('/bin/sh', [fixture.launcher, '--heavyweight-admission', '--class=validation',
+    '--machine=fixture', '--no-wait', '--', '/usr/bin/printf', 'must not run'], {
+    cwd: repoRoot, encoding: 'utf8', env: { ...executionNeutralEnv, PATH: `${bin}:/usr/bin:/bin` },
+  });
+  assert.equal(result.status, 75, result.stderr);
+  assert.equal(result.stdout, '');
+  await assert.rejects(access(deadOwner), { code: 'ENOENT' });
+  await assert.rejects(access(deadWaiter), { code: 'ENOENT' });
+  await assert.rejects(access(reusedOwner), { code: 'ENOENT' });
+  await assert.rejects(access(reusedWaiter), { code: 'ENOENT' });
+  assert.equal(await readFile(liveWaiter, 'utf8'), `${process.pid} ${token} 2 runtime-build 0\n`, 'live queue age and backfill stay intact');
+  await mkdir(deadOwner, { recursive: true });
+  await writeFile(join(deadOwner, 'process'), '99999999 1\n');
+  await writeFile(deadWaiter, '99999998 1 1 runtime-build 0\n');
+  const checked = spawnSync('/bin/sh', [fixture.launcher, '--heavyweight-admission-check', '--class=validation', '--machine=fixture'], {
+    cwd: repoRoot, encoding: 'utf8', env: { ...executionNeutralEnv, PATH: `${bin}:/usr/bin:/bin` },
+  });
+  assert.equal(checked.status, 1, checked.stderr);
+  await assert.rejects(access(deadOwner), { code: 'ENOENT' });
+  await assert.rejects(access(deadWaiter), { code: 'ENOENT' });
+  assert.equal(await readFile(liveWaiter, 'utf8'), `${process.pid} ${token} 2 runtime-build 0\n`);
 });
 
 test('native launcher does not admit a newer heavyweight waiter ahead of an older fitting live waiter', {

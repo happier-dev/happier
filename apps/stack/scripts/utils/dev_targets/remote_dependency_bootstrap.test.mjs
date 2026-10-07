@@ -460,7 +460,7 @@ test('remote dependency bootstrap builds the dependency-owner closure before loa
   await bootstrapRemoteDependencies({
     repoDir: '/remote/happier',
     componentRelativeDir: 'apps/stack',
-    env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache' },
+    env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache', HAPPIER_WORKSPACE_BUILD_MODE: 'strict' },
     packageExists: () => false,
     installInitialDependencies: async (options) => calls.push(['initial', options]),
     withDependencyRefresh: runDependencyRefreshImmediately,
@@ -486,19 +486,19 @@ test('remote dependency bootstrap builds the dependency-owner closure before loa
   assert.deepEqual(calls, [
     ['initial', {
       repoDir: '/remote/happier',
-      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache' },
+      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache', HAPPIER_WORKSPACE_BUILD_MODE: 'strict' },
     }],
     ['build-owner', '/remote/happier', ['@happier-dev/cli-common'], {
-      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache' },
+      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache', HAPPIER_WORKSPACE_BUILD_MODE: 'strict' },
       includeDevDependencies: false,
     }],
     ['load-owner'],
     ['ensure', '/remote/happier/apps/stack', 'remote Happier workspace', {
-      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache' },
+      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache', HAPPIER_WORKSPACE_BUILD_MODE: 'strict' },
       hasDependencyReadyAction: false,
     }],
     ['workspace', '/remote/happier/apps/stack', {
-      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache' },
+      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache', HAPPIER_WORKSPACE_BUILD_MODE: 'strict' },
     }],
   ]);
 });
@@ -508,7 +508,7 @@ test('remote dependency bootstrap leaves unrelated workspace publication to comp
 
   await bootstrapRemoteDependencies({
     repoDir: '/remote/happier',
-    env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache' },
+    env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache', HAPPIER_WORKSPACE_BUILD_MODE: 'strict' },
     packageExists: () => false,
     installInitialDependencies: async (options) => calls.push(['initial', options]),
     withDependencyRefresh: runDependencyRefreshImmediately,
@@ -530,10 +530,10 @@ test('remote dependency bootstrap leaves unrelated workspace publication to comp
   assert.deepEqual(calls, [
     ['initial', {
       repoDir: '/remote/happier',
-      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache' },
+      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache', HAPPIER_WORKSPACE_BUILD_MODE: 'strict' },
     }],
     ['build-owner', '/remote/happier', ['@happier-dev/cli-common'], {
-      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache' },
+      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache', HAPPIER_WORKSPACE_BUILD_MODE: 'strict' },
       includeDevDependencies: false,
     }],
     ['ensure:begin'],
@@ -616,7 +616,7 @@ test('remote dependency bootstrap refreshes the Stack component workspace closur
   await bootstrapRemoteDependencies({
     repoDir: '/remote/happier',
     componentRelativeDir: 'apps/stack',
-    env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache' },
+    env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache', HAPPIER_WORKSPACE_BUILD_MODE: 'strict' },
     packageExists: () => true,
     loadDependencyOwner: async () => ({
       ensureDepsInstalled: async () => calls.push('dependencies'),
@@ -629,7 +629,7 @@ test('remote dependency bootstrap refreshes the Stack component workspace closur
   assert.deepEqual(calls, [
     'dependencies',
     ['workspace', '/remote/happier/apps/stack', {
-      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache' },
+      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache', HAPPIER_WORKSPACE_BUILD_MODE: 'strict' },
     }],
   ]);
 });
@@ -639,7 +639,7 @@ test('remote dependency bootstrap repairs a scriptless install whose dependency 
 
   await bootstrapRemoteDependencies({
     repoDir: '/remote/happier',
-    env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache' },
+    env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache', HAPPIER_WORKSPACE_BUILD_MODE: 'strict' },
     packageExists: (path) => path === '/remote/happier/node_modules/.yarn-integrity',
     installInitialDependencies: async () => calls.push(['initial']),
     withDependencyRefresh: async () => ({ refreshed: false, reason: 'up-to-date' }),
@@ -658,7 +658,7 @@ test('remote dependency bootstrap repairs a scriptless install whose dependency 
 
   assert.deepEqual(calls, [
     ['build-owner', '/remote/happier', ['@happier-dev/cli-common'], {
-      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache' },
+      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache', HAPPIER_WORKSPACE_BUILD_MODE: 'strict' },
       includeDevDependencies: false,
     }],
     ['ensure'],

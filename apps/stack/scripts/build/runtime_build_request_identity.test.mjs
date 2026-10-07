@@ -363,3 +363,17 @@ test('server-only request identity has no web artifact dependency', async () => 
   });
   assert.equal(result.snapshotId, null);
 });
+
+test('workspace build inputs admit hand-authored root declarations beside root ESM/CJS sources', async (t) => {
+  const packageDir = await mkdtemp(join(tmpdir(), 'workspace-root-declarations-'));
+  t.after(() => rm(packageDir, { recursive: true, force: true }));
+  await mkdir(join(packageDir, 'src'), { recursive: true });
+  await writeFile(join(packageDir, 'package.json'), JSON.stringify({ name: '@happier-dev/fixture' }));
+  await writeFile(join(packageDir, 'src/index.ts'), "export { lock } from '../lock.mjs';");
+  await writeFile(join(packageDir, 'lock.mjs'), 'export const lock = 1;');
+  await writeFile(join(packageDir, 'lock.d.mts'), 'export declare const lock: number;');
+  await writeFile(join(packageDir, 'legacy.cjs'), 'module.exports = 1;');
+  await writeFile(join(packageDir, 'legacy.d.cts'), 'declare const value: number; export = value;');
+  const inputs = readWorkspaceBuildInputs(packageDir);
+  for (const path of ['lock.mjs', 'lock.d.mts', 'legacy.cjs', 'legacy.d.cts']) assert.ok(inputs.includes(path), `${path} is a build input`);
+});
