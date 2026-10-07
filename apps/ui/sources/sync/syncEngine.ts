@@ -349,8 +349,6 @@ import {
     updateAutomationSettings,
     type AutomationRequestContext,
 } from './api/automations/apiAutomations';
-import type { AutomationEditorDraft } from './domains/automations/automationEditorDraft';
-import { saveAutomationEditorDraft as saveAutomationEditorDraftOwner } from './domains/automations/automationEditorWriter';
 import { kvBulkGet } from './api/account/apiKv';
 import { FeedItem } from './domains/social/feedTypes';
 import { UserProfile } from './domains/social/friendTypes';
@@ -7643,29 +7641,6 @@ class Sync {
             this.automationRunTraversalTokensByAutomationId.set(automationId, result.traversalToken);
         }
         return { nextCursor: result.nextCursor };
-    }
-
-    /** One plural writer serves every Automation and Session authoring surface. */
-    public async saveAutomationEditorDraft(
-        draft: AutomationEditorDraft,
-        options: Readonly<{ isCurrent?: () => boolean }> = {},
-    ): Promise<AutomationDefinition> {
-        if (!this.credentials) {
-            throw new Error('Not authenticated');
-        }
-        const { requestContext, shouldContinue } = this.prepareAppliedAutomationExecution();
-        const updated = await saveAutomationEditorDraftOwner({
-            credentials: this.credentials,
-            draft,
-            requestContext,
-            isCurrent: () => shouldContinue() && (options.isCurrent?.() ?? true),
-            ...(this.encryption ? {
-                sealAutomationTriggerDefinition: (params) => (
-                    this.encryption!.sealAutomationTriggerDefinition(params)
-                ),
-            } : {}),
-        });
-        return this.projectAndUpsertAutomationDefinition(updated, shouldContinue, { replaceEqualRevision: true });
     }
 
     public async replaceAutomationAssignments(
