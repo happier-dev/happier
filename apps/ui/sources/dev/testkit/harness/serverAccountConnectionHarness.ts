@@ -8,7 +8,7 @@ const socketBoundary = vi.hoisted(() => ({ configure: undefined as ConfigureSock
 /** Also reusable by cross-package suites whose host imports Socket before the UI harness. */
 export async function createSocketIoClientBoundary(importOriginal: <T>() => Promise<T>) {
     const actual = await importOriginal<typeof import('socket.io-client')>();
-    return { ...actual, io: (...args: Parameters<typeof actual.io>) => {
+    const createSocket = (...args: Parameters<typeof actual.io>) => {
         const socket = actual.io(...args);
         vi.spyOn(socket, 'connect').mockReturnValue(socket);
         // This cold SDK fixture never opens an Engine.IO connection or creates
@@ -22,7 +22,11 @@ export async function createSocketIoClientBoundary(importOriginal: <T>() => Prom
         });
         socketBoundary.configure?.(socket, args[0]);
         return socket;
-    } };
+    };
+    // Socket.IO publishes one callable namespace through io/connect/default in
+    // both ESM and CommonJS. Keep every alias on this same transport boundary.
+    const factory = Object.assign(createSocket, actual.io, { io: createSocket, connect: createSocket });
+    return { ...actual, io: factory, connect: factory, default: factory };
 }
 
 /** Keep the real Socket and Sync owners; only the external transport is replaced. */

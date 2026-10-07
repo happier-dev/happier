@@ -1,9 +1,11 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SessionDiscussionOpenedSummaryV1Schema } from '@happier-dev/protocol';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema, MACHINE_PLAIN_DATA_KEY_MARKER, PluginProjectionV2Schema, SessionDiscussionOpenedSummaryV1Schema } from '@happier-dev/protocol';
+import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { z } from 'zod';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
-import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { createMachineFixture, flushHookEffects, renderScreen } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { storage } from '@/sync/domains/state/storageStore';
 import type { BrowserLaunchpadRow } from '@/sync/domains/browser/targets';
@@ -11,15 +13,43 @@ import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiSurfacePlacementProjection } f
 import type { DetailsSurfaceRenderInputV1 } from '@/components/appShell/panes/details/surfaces';
 import type { DetailsTabState } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
 import type { MountedSessionBoardController } from '@/components/sessions/board/SessionBoardControllerProvider';
+import type { SessionDetailsPanelPluginRuntimeState } from './useSessionDetailsPanelPluginRuntime';
 import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
 import { installSessionPaneRuntimeTestHarness } from './sessionPaneRuntimeTestHarness';
 import { createSessionBoardDetailsTab, createSessionCommitDetailsTab, createSessionDiscussionDetailsTab, createSessionFileDetailsTab } from './details/sessionDetailsTabBuilders';
 
+vi.mock('socket.io-client', async (importOriginal) =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 installSessionDetailsPanelCommonModuleMocks();
 const runtime = installSessionPaneRuntimeTestHarness({
     features: () => createRootLayoutFeaturesResponse({ features: {
         browser: { enabled: true, viewTargets: { enabled: true } },
     } }),
+    request: async (url, init) => {
+        if ((init?.method ?? 'GET') === 'GET' && new URL(String(url)).pathname === '/v1/machines/machine-1') {
+            return Response.json({ machine: { id: 'machine-1', kind: 'persistent', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } });
+        }
+        return null;
+    },
+    configureSocket: socket => {
+        vi.mocked(socket.connect).mockImplementation(() => {
+            socket.connected = true;
+            socket.id = 'browser-pane-socket';
+            for (const listener of socket.listeners('connect')) listener();
+            return socket;
+        });
+        vi.spyOn(socket, 'emit').mockReturnValue(socket);
+        vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event, payload) => {
+            if (event !== 'rpc-call') throw new Error(`Unexpected Browser pane transport event: ${event}`);
+            const request = z.object({ method: z.string(), params: z.unknown() }).passthrough().parse(payload);
+            if (request.method === `machine-1:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`) {
+                return { ok: true, result: DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+                    protocolVersion: 1, projection: PluginProjectionV2Schema.parse({ v: 2, generation: 9, familiesById: {} }),
+                }) };
+            }
+            return { ok: false, error: 'Method not found', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
+        });
+    },
 });
 beforeEach(async () => {
     vi.stubGlobal('location', { origin: 'https://pane-browser-client.test' });
@@ -51,6 +81,7 @@ async function renderers(overrides: Partial<Parameters<typeof import('./surfaces
 
 describe('SessionDetailsPanel browser product mount', () => {
     it('opens a pinned browser launchpad and retains its recording model when another destination is active', async () => {
+        storage.getState().applyMachines([createMachineFixture({ id: 'machine-1', activeAt: Date.now() })]);
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
         const { BrowserDetailsSurface, createBrowserLaunchpadDetailsTab } = await import('@/components/browser/surfaces');
         const { DetailsSurfaceHost } = await import('@/components/appShell/panes/details/surfaces');
@@ -174,6 +205,14 @@ describe('SessionDetailsPanel browser product mount', () => {
     });
 
     it('carries the real exact-Home caller runtime into Board and retires it when Session access disappears', async () => {
+        const { createHappierSocket } = await import('@happier-dev/sync-client');
+        const boundary = createHappierSocket({ endpoint: 'https://session-pane.test', token: 'socket-boundary-precondition', clientType: 'user-scoped' });
+        try {
+            expect(vi.isMockFunction(boundary.socket.connect), 'Happier Socket must consume the configured SDK network boundary').toBe(true);
+        } finally {
+            await boundary.transport.destroy();
+        }
+        storage.getState().applyMachines([createMachineFixture({ id: 'machine-1', activeAt: Date.now() })]);
         const { resolveServerCredentialAccountScope } = await import('@/sync/domains/scope/serverCredentialAccountScope');
         expect(await resolveServerCredentialAccountScope(runtime.serverId)).toMatchObject({
             kind: 'bound', scope: { serverId: runtime.serverIdentityId, accountId: 'account-a' },
@@ -181,12 +220,16 @@ describe('SessionDetailsPanel browser product mount', () => {
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
         const { SessionBoardDetailsSurface } = await import('@/components/sessions/board/SessionBoardDetailsSurface');
         const { SessionBoardControllerProvider, useMountedSessionBoardController } = await import('@/components/sessions/board/SessionBoardControllerProvider');
+        const { useSessionDetailsPanelPluginRuntime } = await import('./useSessionDetailsPanelPluginRuntime');
         let mounted: MountedSessionBoardController | null = null;
+        let projected: SessionDetailsPanelPluginRuntimeState | null = null;
         function Probe() {
             mounted = useMountedSessionBoardController({ serverId: runtime.serverId, sessionId: 's1' });
+            projected = useSessionDetailsPanelPluginRuntime({ sessionId: 's1', routeServerId: runtime.serverId });
             return null;
         }
         const readMounted = () => mounted;
+        const readProjected = () => projected;
         const screen = await renderScreen(<runtime.Wrapper><SessionBoardControllerProvider serverId={runtime.serverId} sessionId="s1">
             <Probe /><SessionDetailsPanel sessionId="s1" routeServerId={runtime.serverId} scopeId="session:s1" />
         </SessionBoardControllerProvider></runtime.Wrapper>);
@@ -198,13 +241,47 @@ describe('SessionDetailsPanel browser product mount', () => {
         expect(caller.serverIdentityId).toBe(runtime.serverIdentityId);
         expect(caller.accountId).toBe('account-a');
         expect(caller.lifetime.isCurrent()).toBe(true);
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { isServerReachabilityNetworkAllowed, peekServerReachabilityState } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+        const { isMachineOnline } = await import('@/utils/sessions/machineUtils');
+        const state = storage.getState();
+        const machine = state.machines['machine-1'];
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        const demandQualification = {
+            endpointStatus: state.endpointStatus, endpointReason: state.endpointReason,
+            machinePresent: Boolean(machine), machineOnline: machine ? isMachineOnline(machine) : false,
+            accountScope: lifetime?.scope ?? null, accountCurrent: lifetime?.isCurrent() ?? null,
+            networkAllowed: isServerReachabilityNetworkAllowed(),
+            reachability: peekServerReachabilityState('https://session-pane.test'),
+        };
+        expect(readProjected(), `Projection qualification: ${JSON.stringify(demandQualification)}`).toMatchObject({
+            phase: 'current', interactionEnabled: true, machineId: 'machine-1', serverId: runtime.serverId,
+            pluginUiProjection: { generation: 9 },
+        });
+        expect(caller.admittedHostMethods).toEqual(expect.arrayContaining(['readResource', 'watchResource']));
         expect(screen.tree.findByType(SessionBoardDetailsSurface).props.callerHostedHtmlRuntime).toBe(caller);
+        const controller = caller.createRequestController(() => {});
+        const currentMachine = storage.getState().machines['machine-1'];
+        if (!currentMachine) throw new Error('Expected the current Session Machine');
+        await act(async () => storage.getState().applyMachines([{ ...currentMachine, active: false }]));
+        await flushHookEffects();
+        // An inactive Session RPC target is unavailable; it must not retain resource authority.
+        expect(readProjected()).toMatchObject({ phase: 'unavailable', interactionEnabled: false, machineId: null });
+        expect(caller.lifetime.isCurrent()).toBe(true);
+        expect(readMounted()?.callerHostedHtmlRuntime?.admittedHostMethods).not.toEqual(expect.arrayContaining(['readResource', 'watchResource']));
+        await expect(controller.handleRequest({
+            requestId: 'offline-resource', method: 'readResource', payload: { resource: { pluginId: 'acme.review', localId: 'status' } },
+        })).rejects.toThrow('caller_surface_retired');
+        controller.dispose();
         const session = storage.getState().sessions.s1;
         const access = session.access;
         if (!access) throw new Error('Expected canonical Session access');
         await act(async () => storage.getState().applySessions([{ ...session, access: {
             ...access, capabilities: { ...access.capabilities, readTranscript: false },
         } }]));
+        expect(storage.getState().sessions.s1.access?.capabilities.readTranscript,
+            'The canonical Session producer must publish read-access revocation').toBe(false);
+        await flushHookEffects();
         expect(caller.lifetime.isCurrent()).toBe(false);
     });
 
@@ -215,6 +292,8 @@ describe('SessionDetailsPanel browser product mount', () => {
             kind: 'discussion', address: { serverId: runtime.serverId, sessionId: 's1' }, discussionId: 'discussion-1',
         });
         await act(async () => runtime.pane.openDetailsTab(tab, { intent: 'pinned' }));
+        // Linked discussions need a visible fallback before their Home title arrives.
+        expect(runtime.pane.scopeState!.details.tabs[0].title.trim().length).toBeGreaterThan(0);
         const input = await renderInput(runtime.pane.scopeState!.details.tabs[0]);
         const renderer = (await renderers()).find(candidate => candidate.id === 'session-discussion');
         const element = renderer?.render(input);

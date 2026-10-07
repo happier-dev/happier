@@ -126,6 +126,7 @@ export function areStoredSessionsEqual(
         && (previous.owner ?? null) === (next.owner ?? null)
         && (previous.accessLevel ?? null) === (next.accessLevel ?? null)
         && (previous.canApprovePermissions ?? null) === (next.canApprovePermissions ?? null)
+        && areSessionValueEqual(previous.access ?? null, next.access ?? null)
         && areSessionValueEqual(previous.metadata, next.metadata)
         && areSessionValueEqual(previous.ownerMetadataView ?? null, next.ownerMetadataView ?? null)
         && areSessionValueEqual(previous.agentState, next.agentState)
