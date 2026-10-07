@@ -13,11 +13,16 @@ import {
     LoadingState,
     Screen,
     ScrollArea,
+    SetupBlockGrid,
+    SetupBlockTile,
+    SetupSteps,
     Stack,
     Status,
+    StatusCell,
     Text,
     TextField,
     useLivePluginResource,
+    VoiceMarkArt,
     WidgetSurface,
 } from '@happier-dev/plugin-ui';
 
@@ -90,12 +95,33 @@ function ReviewFrame({
     );
 }
 
-function ReviewOverview({ pinnedArea }: Readonly<{ pinnedArea: boolean }>) {
+export function ReviewOverview({ pinnedArea }: Readonly<{ pinnedArea: boolean }>) {
     const [draft, setDraft] = React.useState('Example review transcript');
     return (
         <ReviewFrame>
             {/* The page's declared `pinned` area: the host draws the widgets, gallery and layout. */}
             {pinnedArea ? <WidgetSurface area="pinned" /> : null}
+            <SetupBlockGrid testID="review.dictation.intro" columns={1} items={[{
+                id: 'review-dictation',
+                renderTile: ({ open }) => <SetupBlockTile testID="review.dictation.tile" layout="row"
+                    glyph={<VoiceMarkArt pose="mic" size={32} still />}
+                    title="Dictate a review"
+                    subtitle="Add spoken notes to your transcript, then review them before summarizing."
+                    action={{ label: 'How it works', testID: 'review.dictation.how', onPress: open }} />,
+                renderPanel: ({ close }) => <Stack gap="medium">
+                    <SetupSteps testID="review.dictation.steps" steps={[
+                        { key: 'speak', title: 'Tap Dictate in the transcript field',
+                            detail: 'Allow microphone access when asked. Your selected Dictation engine hears the notes.' },
+                        { key: 'review', title: 'Review the words',
+                            detail: 'Dictation adds editable text. It never sends the transcript.',
+                            body: <><StatusCell kind="needs_you" label="Review the transcript before summarizing" still />
+                                <Text value="You decide what stays in the review." tone="secondary" /></> },
+                        { key: 'summarize', title: 'Summarize when you are ready',
+                            detail: 'The review action runs only when you press Summarize review.' },
+                    ]} />
+                    <Button title="Back to the review" variant="plain" onPress={close} />
+                </Stack>,
+            }]} fallback={<Text value="Dictation adds editable notes to the transcript. Review them before summarizing." tone="secondary" />} />
             <Card padding="large">
                 <Stack gap="small">
                     <Status tone="success" label="Review assistant ready" />
