@@ -18,7 +18,7 @@ export const AgentRuntimeDaemonServiceTurnWitnessV1Schema =
       z.number().int().nonnegative().nullable(),
     userMessageSeqs: z.array(
       z.number().int().nonnegative(),
-    ).max(4_096),
+    ),
     causalPermissionAuthority:
       HostSessionInputCausalPermissionAuthorityV1Schema.optional(),
     callerPermissionMode:
@@ -51,7 +51,7 @@ export type AgentRuntimeDaemonServiceTurnWitnessInputV1 =
   }>;
 
 /**
- * Projects the strict active-turn identity and its bounded permission facts
+ * Projects the strict active-turn identity and its complete permission facts
  * onto the private runner-to-daemon loopback request. The daemon Session owner
  * consumes these facts; plugin input can neither author nor replace them.
  */

@@ -10,6 +10,8 @@ import { ProviderBrokerConsumerV1Schema } from '@happier-dev/protocol/providers/
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { TeamCredentialRouteV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import { SessionIdSchema } from '@happier-dev/protocol/sessions/idsV1';
+import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';
 
 import {
   AgentRuntimeDaemonModelTransitionAuthorizationResultV1Schema,
@@ -117,7 +119,7 @@ export const AgentRuntimeDaemonServiceRequestV1Schema = z.object({
   v: z.literal(1),
   context: z.object({
     token: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
-    sessionId: OpaqueIdSchema,
+    sessionId: asHostProtocolZod(SessionIdSchema),
   }).strict(),
   operation: z.discriminatedUnion('kind', [
     ...RUNNER_AGENT_DAEMON_FACET_OPERATION_SCHEMAS,

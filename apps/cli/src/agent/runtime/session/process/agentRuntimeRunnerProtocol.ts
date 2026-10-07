@@ -26,6 +26,7 @@ import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol/models/de
 import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import { SessionExecutionTargetV1Schema } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
 import { PluginSourceKindV1Schema } from '@happier-dev/protocol/plugins/source-spec';
+import { SessionIdSchema } from '@happier-dev/protocol/sessions/idsV1';
 import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';
 
 /**
@@ -459,7 +460,7 @@ const ConnectedAccountSchema = z.object({
 }).strict();
 
 const AgentSessionOpenBaseSchema = z.object({
-  sessionId: BoundedIdSchema,
+  sessionId: asHostProtocolZod(SessionIdSchema),
   cwd: BoundedPathSchema,
   sessionDirectoryKind: z.enum(['path', 'managed']).optional(),
   launchEnvironment: AgentLaunchEnvironmentV1Schema.optional(),
@@ -489,7 +490,7 @@ export const AgentRuntimeDaemonSessionOpenRequestV1Schema =
     AgentSessionOpenBaseSchema.extend({
       kind: z.literal('fork'),
       source: z.object({
-        sessionId: BoundedIdSchema,
+        sessionId: asHostProtocolZod(SessionIdSchema),
         providerSessionId: BoundedIdSchema,
         cwd: BoundedPathSchema,
         target: z.object({
@@ -517,7 +518,7 @@ export const AgentRuntimeDaemonSessionOpenAttestationRequestV1Schema =
     AgentSessionOpenBaseSchema.extend({
       kind: z.literal('fork'),
       source: z.object({
-        sessionId: BoundedIdSchema,
+        sessionId: asHostProtocolZod(SessionIdSchema),
         providerSessionId: BoundedIdSchema,
         cwd: BoundedPathSchema,
         target: z.object({
