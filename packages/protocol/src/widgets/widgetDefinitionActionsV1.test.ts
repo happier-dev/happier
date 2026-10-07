@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '../actions/actionExecutor.js';
 import { createWorkBoardArtifactBoundary } from '../boards/workBoardArtifactV1.testkit.js';
 import { createWidgetDefinitionArtifactPortV1 } from './widgetDefinitionArtifactV1.js';
@@ -111,5 +111,30 @@ describe('widget definition semantic Actions', () => {
         expect(SessionSurfaceItemV1Schema.safeParse({ ...raw, source: { kind: 'widget', instance: { ...instance, definition: { kind: 'inline', definition: { ...definition,
             inputs: { fields: [{ path: 'connection', title: 'Connection', widget: 'select', options: [{ label: 'Author connection', value: { service: { pluginId: 'com.acme.test', localId: 'cloud' }, accountId: 'private' } }] }] },
         } } } } }).success).toBe(false);
+    });
+
+    it('records who made a definition and when, and lists both in its readable summary', async () => {
+        const b = createWorkBoardArtifactBoundary();
+        const port = createWidgetDefinitionArtifactPortV1({ ...b.transport,
+            read: async (...args) => { const row = await b.transport.read(...args); return row ? { ...row, ownerAccountId: 'owner' } : null; },
+            list: async args => { const page = await b.transport.list(args); return { ...page, items: page.items.map(row => ({ ...row, ownerAccountId: 'owner' })) }; },
+        }, { accountId: 'owner' });
+        const executor = createActionExecutor({ widgetAccountScope: () => account, widgetDefinitionArtifacts: port });
+        const draft = { name: 'Signups', ...descriptor, body: { kind: 'installed', surface: { pluginId: 'com.acme.test', localId: 'signups' } } };
+        vi.useFakeTimers();
+        try {
+            vi.setSystemTime(Date.UTC(2026, 9, 3, 9, 30));
+            expect(await executor.execute('widgets.definition.create', { account, artifactId: 'by-agent', definition: draft },
+                { surface: 'agent', serverId: 'home', bypassApprovals: true })).toMatchObject({ ok: true });
+            vi.setSystemTime(Date.UTC(2026, 9, 4, 12, 0));
+            expect(await executor.execute('widgets.definition.create', { account, artifactId: 'by-person', definition: { ...draft, name: 'Mine' } },
+                { surface: 'ui', serverId: 'home', authority: 'present_user', bypassApprovals: true })).toMatchObject({ ok: true });
+        } finally { vi.useRealTimers(); }
+        const listed = await executor.execute('widgets.definition.list', { account }, { surface: 'ui', serverId: 'home', authority: 'present_user' });
+        expect(listed).toMatchObject({ ok: true, result: { definitions: expect.arrayContaining([
+            expect.objectContaining({ artifactId: 'by-agent', author: { kind: 'agent' }, createdAt: Date.UTC(2026, 9, 3, 9, 30) }),
+            expect.objectContaining({ artifactId: 'by-person', author: { kind: 'person' }, createdAt: Date.UTC(2026, 9, 4, 12, 0) }),
+        ]) } });
+        expect((await port.get('by-agent'))?.provenance).toMatchObject({ author: { kind: 'agent' }, createdAt: Date.UTC(2026, 9, 3, 9, 30) });
     });
 });

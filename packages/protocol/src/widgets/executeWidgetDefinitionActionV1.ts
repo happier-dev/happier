@@ -2,11 +2,21 @@ import type { ActionExecuteResult } from '../actions/actionExecutionResult.js';
 import type { ActionExecutorContext } from '../actions/executor/types.js';
 import { WidgetDefinitionActionInputSchemasV1, WidgetDefinitionActionOutputSchemasV1,
     type WidgetDefinitionActionDepsV1, type WidgetDefinitionActionIdV1 } from './definitionActionsV1.js';
-import { WidgetDefinitionV1Schema } from './widgetDefinitionV1.js';
+import { WidgetDefinitionV1Schema, type WidgetDefinitionAuthorV1 } from './widgetDefinitionV1.js';
 import { projectWidgetDefinitionPromotionBindingsV1 } from './widgetDefinitionPromotionV1.js';
 import { admitWidgetActionSurfaceV1 } from './widgetActionScopeV1.js';
 
 const failure = (errorCode: string): ActionExecuteResult => ({ ok: false, errorCode, error: errorCode });
+
+/**
+ * Who is making a definition, from the host-stamped invocation (never Action input): an agent
+ * (its own surface, an MCP client or an admitted Session caller), a trusted plugin, or the person.
+ */
+function resolveWidgetDefinitionAuthorV1(context: ActionExecutorContext): WidgetDefinitionAuthorV1 {
+    if (context.surface === 'plugin') return { kind: 'plugin' };
+    if (context.surface === 'agent' || context.surface === 'mcp' || context.actionCaller?.kind === 'session') return { kind: 'agent' };
+    return { kind: 'person' };
+}
 /** The Action front door and captured Account port share this admission, prior to any read. */
 export async function executeWidgetDefinitionActionV1(deps: WidgetDefinitionActionDepsV1,
     actionId: WidgetDefinitionActionIdV1, rawInput: unknown, context: ActionExecutorContext): Promise<ActionExecuteResult> {
@@ -35,7 +45,8 @@ export async function executeWidgetDefinitionActionV1(deps: WidgetDefinitionActi
             case 'widgets.definition.create': {
                 const args = WidgetDefinitionActionInputSchemasV1[actionId].parse(input);
                 return accept({ definition: await port.create(WidgetDefinitionV1Schema.parse({ v: 1, id: args.artifactId,
-                    ...args.definition, provenance: { authorAccountId: scope.accountId, source: { kind: 'authored' } } }), context.signal) });
+                    ...args.definition, provenance: { authorAccountId: scope.accountId, author: resolveWidgetDefinitionAuthorV1(context),
+                        createdAt: Date.now(), source: { kind: 'authored' } } }), context.signal) });
             }
             case 'widgets.definition.update': {
                 const args = WidgetDefinitionActionInputSchemasV1[actionId].parse(input);
@@ -60,7 +71,8 @@ export async function executeWidgetDefinitionActionV1(deps: WidgetDefinitionActi
                 // field is configurable rather than a hard-coded execution target.
                 const suggestedBindings = projectWidgetDefinitionPromotionBindingsV1(source.definition, source.bindings);
                 const definition = await port.create(WidgetDefinitionV1Schema.parse({ v: 1, id: args.artifactId, ...source.definition,
-                    ...(args.name ? { name: args.name } : {}), provenance: { source: { kind: 'session', ...args.session, itemId: args.itemId } } }), context.signal);
+                    ...(args.name ? { name: args.name } : {}), provenance: { author: resolveWidgetDefinitionAuthorV1(context), createdAt: Date.now(),
+                        source: { kind: 'session', ...args.session, itemId: args.itemId } } }), context.signal);
                 return accept({ definition, suggestedBindings });
             }
         }

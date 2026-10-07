@@ -15,7 +15,7 @@ const nativeMetadata = {
     local_services: { title: 'Local services', titleKey: 'widgetGlances.localServicesTitle', icon: 'hard-drives' },
 } as const;
 
-const inputs: InputHints = { fields: [{ path: 'session', title: 'Session', widget: 'json', required: true, optionsSourceId: 'sessions' }] };
+const inputs: InputHints = { fields: [{ path: 'session', title: 'Session', description: 'The session it shows; it reads that session where it runs.', widget: 'json', required: true, optionsSourceId: 'sessions' }] };
 const sessionInputs: WidgetInputDescriptorV1 = {
     inputs,
     sessionInputPath: 'session',
