@@ -11,6 +11,7 @@ import {
 } from '@happier-dev/plugin-sdk/sessions/work-state';
 
 import { createClaudeNativeSdkQueryContext } from '../sdk/nativeExec.js';
+import { readClaudeCodeNativeCredentialPayload } from '../auth/services/native/credentials.js';
 import {
   createClaudeWorkflowSystemRecordBridge,
 } from '../workflowRecords/workflowRuntime.js';
@@ -169,7 +170,25 @@ export function createClaudeNativeAgentSdkContext(
               if (!isNativeConnectedServiceId(nativeRequest.serviceId)) {
                 return unavailable(`runtime authentication service ${nativeRequest.serviceId}`);
               }
-              return await sessionAuth.services.refreshRuntimeAuth(nativeRequest, options);
+              const refreshed = await sessionAuth.services.refreshRuntimeAuth(nativeRequest, options);
+              if (refreshed.status !== 'refreshed' || nativeRequest.serviceId !== 'claude-subscription') return refreshed;
+              const proof = refreshed.result;
+              const credentialRevision = proof && typeof proof === 'object' && !Array.isArray(proof)
+                && 'credentialRevision' in proof && typeof proof.credentialRevision === 'string'
+                ? proof.credentialRevision : null;
+              if (!credentialRevision) return { status: 'failed', reason: 'runtime_auth_credential_revision_unavailable' };
+              // The host settles only after this exact home is rematerialized. Decode the native
+              // access token here; rotation remains exclusively owned by the daemon coordinator.
+              let credential: ReturnType<typeof readClaudeCodeNativeCredentialPayload> = null;
+              try {
+                const bytes = (await services.nativeHome?.readFiles(['.credentials.json']))?.['.credentials.json'];
+                credential = readClaudeCodeNativeCredentialPayload(bytes ? JSON.parse(new TextDecoder().decode(bytes)) as unknown : null);
+              } catch {
+                return { status: 'failed', reason: 'runtime_auth_native_materialization_unavailable' };
+              }
+              options?.signal?.throwIfAborted();
+              if (!credential) return { status: 'failed', reason: 'runtime_auth_native_materialization_unavailable' };
+              return { status: 'refreshed', result: { accessToken: credential.claudeAiOauth.accessToken, credentialRevision } };
             },
           },
         },
