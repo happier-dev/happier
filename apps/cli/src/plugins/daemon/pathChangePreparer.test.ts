@@ -338,7 +338,18 @@ describe('createDaemonPathPluginChangePreparer', () => {
         : phase === 'runtimeUnavailable' ? 'plugin_development_runtime_unavailable'
         : 'plugin_change_preparation_failed';
       expect(log).toContain(expectedCode);
-      expect(log.match(/\[WARN\]/g)).toHaveLength(1);
+      const timedPhase = {
+        dependencies: 'dependency prep',
+        ui: 'build',
+        compile: 'evaluate',
+        runtime: 'adopt',
+        admission: null,
+        runtimeUnavailable: null,
+      }[phase];
+      if (timedPhase) {
+        expect(log).toContain(`${timedPhase} failed in `);
+        expect(log).toMatch(/"elapsedMs":\d/u);
+      }
       expect(log).toContain(JSON.stringify(pluginRoot).slice(1, -1));
       if (phase === 'dependencies' || phase === 'ui' || phase === 'runtime') expect(log).toContain(JSON.stringify(missingPath).slice(1, -1));
       if (phase === 'compile') {

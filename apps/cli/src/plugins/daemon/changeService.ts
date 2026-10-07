@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { runPluginAuthorPhase } from '@/plugins/authoring/phaseLog';
 
 import type {
   PluginChangeDecision,
@@ -273,12 +274,17 @@ export function createDaemonPluginChangeService(params: Readonly<{
     }
     try {
       if (isDevelopmentCandidate(prepared)) {
-        if (!params.applyDevelopment) {
+        const applyDevelopment = params.applyDevelopment;
+        if (!applyDevelopment) {
           return failedPluginChange('plugin_development_runtime_unavailable', undefined, prepared.sourceAuthority.canonicalRoot);
         }
-        const result = await params.applyDevelopment(prepared, decision ? {
+        const result = await runPluginAuthorPhase({
+          phase: 'adopt',
+          projectRoot: prepared.sourceAuthority.canonicalRoot,
+          pluginId: prepared.pluginId,
+        }, async () => applyDevelopment(prepared, decision ? {
           optionalSelections: decision.optionalSelections ?? [],
-        } : undefined);
+        } : undefined), (result) => result.kind === 'committed');
         return result.kind === 'failed'
           ? failedPluginChange(result.code, result.message, prepared.sourceAuthority.canonicalRoot)
           : result;

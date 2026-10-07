@@ -6,6 +6,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { runPluginAuthorPhase } from './phaseLog';
 
 import {
   buildManagedPnpmEnvironment,
@@ -1016,59 +1017,61 @@ export async function runPluginUiArtifactBuild(
     return { ok: true, projectRoot, built: false };
   }
 
-  const runtimeCommand = await deps.ensureManagedJavaScriptRuntimeCommand(deps.processEnv);
-  if (
-    !runtimeCommand
-    || !isApprovedManagedJavaScriptRuntimeCommand(
-      runtimeCommand,
-      deps.managedJavaScriptRuntimeBinPath(deps.processEnv),
-    )
-  ) {
-    return {
-      ok: false,
-      projectRoot,
-      diagnostics: [createDiagnostic(
-        'plugin_author_managed_tool_unavailable',
-        'The Happier-managed JavaScript runtime is unavailable',
-      )],
-    };
-  }
-
-  // Development evaluates code in place; it has no emitted cold manifest.
-  // Give the same UI compiler that evaluated declaration without publishing a
-  // second manifest into the author's tree or bundling their daemon runtime.
-  const manifestDirectory = params.manifest
-    ? await mkdtemp(join(tmpdir(), 'happier-plugin-ui-manifest-'))
-    : null;
-  let result: PluginAuthorToolchainSpawnResult;
-  try {
-    const manifestPath = manifestDirectory ? join(manifestDirectory, 'plugin.json') : null;
-    if (manifestPath && params.manifest) {
-      await writeFile(manifestPath, serializeCanonicalPluginManifest(params.manifest), 'utf8');
-    }
-    result = await deps.spawn({
-      command: runtimeCommand,
-      args: [uiBuildBin, '--project-root', projectRoot, ...(manifestPath ? ['--manifest-path', manifestPath] : [])],
-      cwd: projectRoot,
-      env: deps.processEnv,
-      ...(params.signal ? { signal: params.signal } : {}),
-    });
-  } finally {
-    if (manifestDirectory) await rm(manifestDirectory, { recursive: true, force: true });
-  }
-  if (result.exitCode !== 0 || result.signal !== null) {
-    return {
-      ok: false,
-      projectRoot,
-      diagnostics: [processFailureDiagnostic({
-        operation: 'build',
+  return runPluginAuthorPhase({ phase: 'build', projectRoot }, async (): Promise<PluginUiArtifactBuildResult> => {
+    const runtimeCommand = await deps.ensureManagedJavaScriptRuntimeCommand(deps.processEnv);
+    if (
+      !runtimeCommand
+      || !isApprovedManagedJavaScriptRuntimeCommand(
+        runtimeCommand,
+        deps.managedJavaScriptRuntimeBinPath(deps.processEnv),
+      )
+    ) {
+      return {
+        ok: false,
         projectRoot,
-        code: 'plugin_author_tool_failed',
-        result,
-      })],
-    };
-  }
-  return { ok: true, projectRoot, built: true };
+        diagnostics: [createDiagnostic(
+          'plugin_author_managed_tool_unavailable',
+          'The Happier-managed JavaScript runtime is unavailable',
+        )],
+      };
+    }
+
+    // Development evaluates code in place; it has no emitted cold manifest.
+    // Give the same UI compiler that evaluated declaration without publishing a
+    // second manifest into the author's tree or bundling their daemon runtime.
+    const manifestDirectory = params.manifest
+      ? await mkdtemp(join(tmpdir(), 'happier-plugin-ui-manifest-'))
+      : null;
+    let result: PluginAuthorToolchainSpawnResult;
+    try {
+      const manifestPath = manifestDirectory ? join(manifestDirectory, 'plugin.json') : null;
+      if (manifestPath && params.manifest) {
+        await writeFile(manifestPath, serializeCanonicalPluginManifest(params.manifest), 'utf8');
+      }
+      result = await deps.spawn({
+        command: runtimeCommand,
+        args: [uiBuildBin, '--project-root', projectRoot, ...(manifestPath ? ['--manifest-path', manifestPath] : [])],
+        cwd: projectRoot,
+        env: deps.processEnv,
+        ...(params.signal ? { signal: params.signal } : {}),
+      });
+    } finally {
+      if (manifestDirectory) await rm(manifestDirectory, { recursive: true, force: true });
+    }
+    if (result.exitCode !== 0 || result.signal !== null) {
+      return {
+        ok: false,
+        projectRoot,
+        diagnostics: [processFailureDiagnostic({
+          operation: 'build',
+          projectRoot,
+          code: 'plugin_author_tool_failed',
+          result,
+        })],
+      };
+    }
+    return { ok: true, projectRoot, built: true };
+  }, (result) => result.ok);
 }
 
 export async function runPluginAuthorToolchain(
