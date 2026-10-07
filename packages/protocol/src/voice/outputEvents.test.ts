@@ -4,9 +4,44 @@ import {
   VoiceAgentOutputEventV1Schema,
   createVoiceAgentOutputTurnV1,
   ingestVoiceAgentOutputEventV1,
+  resolveVoiceAgentOutputSpeechSegmentLength,
 } from './outputEvents.js';
 
 describe('VoiceAgentOutputEventV1', () => {
+  it('keeps words intact when a semantic segment needs more than one wire event', () => {
+    const text = 'word '.repeat(5_000);
+    const length = resolveVoiceAgentOutputSpeechSegmentLength(text, {
+      force: true, firstSegment: true, targetChars: 20_000,
+    });
+    expect(/\s$/u.test(text.slice(0, length))).toBe(true);
+    expect(/^word /u.test(text.slice(length))).toBe(true);
+  });
+
+  it('packs a large semantic segment into accepted wire events without dropping text or splitting Unicode', () => {
+    const text = `${'x'.repeat(16_383)}😀${'y'.repeat(5_000)}`;
+    let remaining = text;
+    let spoken = '';
+    let state = createVoiceAgentOutputTurnV1('turn-1');
+    while (remaining) {
+      const length = resolveVoiceAgentOutputSpeechSegmentLength(remaining, {
+        force: true, firstSegment: !spoken, targetChars: 20_000,
+      });
+      const segment = remaining.slice(0, length);
+      expect(segment).not.toMatch(/[\ud800-\udbff]$|^[\udc00-\udfff]/u);
+      const result = ingestVoiceAgentOutputEventV1(state, {
+        v: 1, kind: 'speech_segment', turnId: 'turn-1', seq: state.nextSeq,
+        segmentId: `segment-${state.nextSeq}`, text: segment,
+      });
+      state = result.state;
+      spoken += result.effects.filter((effect) => effect.kind === 'speak').map((effect) => effect.text).join('');
+      remaining = remaining.slice(length);
+    }
+    expect(spoken).toBe(text);
+    expect(ingestVoiceAgentOutputEventV1(state, {
+      v: 1, kind: 'turn_final', turnId: 'turn-1', seq: state.nextSeq, text,
+    }).effects).toEqual([{ kind: 'persist_final', text }]);
+  });
+
   it('accepts the four provider-neutral output channels and rejects unbounded identifiers/text', () => {
     const events = [
       { v: 1, kind: 'speech_segment', turnId: 'turn-1', seq: 0, segmentId: 'seg-1', text: 'Hello' },
