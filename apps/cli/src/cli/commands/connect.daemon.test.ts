@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
 
@@ -172,6 +172,9 @@ function describedCodex(
 }
 
 describe('handleConnectCommand daemon facade', () => {
+  beforeEach(() => {
+    authenticateMock.mockResolvedValue({ status: 'cancelled', attemptId: 'attempt-1' });
+  });
   afterEach(() => {
     authenticateMock.mockReset();
     controlMock.mockReset();
@@ -423,8 +426,12 @@ describe('handleConnectCommand daemon facade', () => {
       const rendered = output.logs.join('\n').replace(/\u001b\[[0-9;]*m/gu, '');
       expect(rendered).toContain('ABCD-1234');
       expect(rendered).toContain('account-device');
-      expect(authenticateMock).toHaveBeenLastCalledWith({
+      expect(authenticateMock).toHaveBeenNthCalledWith(3, {
         operation: 'pollDevice',
+        attemptId: 'attempt-device',
+      });
+      expect(authenticateMock).toHaveBeenLastCalledWith({
+        operation: 'cancel',
         attemptId: 'attempt-device',
       });
     } finally {

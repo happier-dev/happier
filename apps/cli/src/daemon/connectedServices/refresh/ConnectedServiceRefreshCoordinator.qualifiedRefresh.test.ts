@@ -222,6 +222,27 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
     const registry = await resolveExecutablePluginRuntimeRegistry({
       happyHomeDir,
       pluginIds: [service.pluginId],
+      resolveDevelopmentSourceAuthority: ({ pluginId, rootPath }) => ({
+        kind: 'development', registeredRootId: `qualified-coordinator:${pluginId}`,
+        canonicalRoot: rootPath, observedRevision: 1,
+      }),
+      networkDependencies: {
+        resolveNetworkAddresses: async () => ['8.8.8.8'],
+        openPinnedStream: async (request) => {
+          const response = await fetch(request.url);
+          const body = new Uint8Array(await response.arrayBuffer());
+          let delivered = false;
+          return {
+            status: response.status, headers: {}, contentLength: body.length,
+            read: async () => {
+              if (delivered) return null;
+              delivered = true;
+              return body;
+            },
+            cancel() {},
+          };
+        },
+      },
     });
     createdRegistries.push(registry);
     const credentials: Credentials = {
@@ -543,6 +564,10 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
     });
     const registry = await resolveExecutablePluginRuntimeRegistry({
       happyHomeDir,
+      resolveDevelopmentSourceAuthority: ({ pluginId, rootPath }) => ({
+        kind: 'development', registeredRootId: `qualified-coordinator:${pluginId}`,
+        canonicalRoot: rootPath, observedRevision: 1,
+      }),
     });
     createdRegistries.push(registry);
     const novelService = Object.freeze({

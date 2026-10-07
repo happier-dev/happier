@@ -1,18 +1,11 @@
 import { parseOptionalBooleanEnv } from '@happier-dev/protocol/env/parseBooleanEnv';
 
-function parseTimeoutMs(raw: unknown): number | null {
+function parsePositiveInt(raw: unknown, maximum = 2_147_483_647): number | null {
   const value = String(raw ?? '').trim();
   if (!value) return null;
   const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed)) return null;
-  return parsed;
-}
-
-function parsePositiveInt(raw: unknown): number | null {
-  const value = String(raw ?? '').trim();
-  if (!value) return null;
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed)) return null;
+  // Timer options use the native delay ceiling; counts use the safe integer domain.
+  if (!Number.isSafeInteger(parsed) || parsed <= 0 || parsed > maximum) return null;
   return parsed;
 }
 
@@ -25,33 +18,38 @@ function parseFloatValue(raw: unknown): number | null {
 }
 
 export function resolveConnectedServiceQuotasDaemonOptions(env: NodeJS.ProcessEnv): Readonly<{
-  fetchTimeoutMs: number;
+  fetchTimeoutMs?: number;
+  quotaPersistenceMaxConsecutiveFailures?: number;
   discoveryEnabled: boolean;
   discoveryIntervalMs: number;
   failureBackoffMinMs: number;
   failureBackoffMaxMs: number;
   failureBackoffJitterPct: number;
 }> {
-  const parsed = parseTimeoutMs(env.HAPPIER_CONNECTED_SERVICES_QUOTAS_FETCH_TIMEOUT_MS);
-  const timeoutMs = parsed === null ? 15_000 : Math.max(1_000, Math.min(120_000, Math.trunc(parsed)));
+  const timeoutMs = parsePositiveInt(env.HAPPIER_CONNECTED_SERVICES_QUOTAS_FETCH_TIMEOUT_MS);
+  const quotaPersistenceMaxConsecutiveFailures = parsePositiveInt(
+    env.HAPPIER_CONNECTED_SERVICES_QUOTA_IN_BAND_MAX_CONSECUTIVE_FAILURES,
+    Number.MAX_SAFE_INTEGER,
+  );
 
   const discoveryEnabled = parseOptionalBooleanEnv(env.HAPPIER_CONNECTED_SERVICES_QUOTAS_DISCOVERY_ENABLED);
   const discoveryIntervalParsed = parsePositiveInt(env.HAPPIER_CONNECTED_SERVICES_QUOTAS_DISCOVERY_INTERVAL_MS);
   const discoveryIntervalMs =
-    discoveryIntervalParsed === null ? 15 * 60_000 : Math.max(5_000, Math.min(30 * 60_000, Math.trunc(discoveryIntervalParsed)));
+    discoveryIntervalParsed ?? 15 * 60_000;
 
   const failureMinParsed = parsePositiveInt(env.HAPPIER_CONNECTED_SERVICES_QUOTAS_FAILURE_BACKOFF_MIN_MS);
-  const failureBackoffMinMs = failureMinParsed === null ? 30_000 : Math.max(1_000, Math.min(30 * 60_000, Math.trunc(failureMinParsed)));
+  const failureBackoffMinMs = failureMinParsed ?? 30_000;
 
   const failureMaxParsed = parsePositiveInt(env.HAPPIER_CONNECTED_SERVICES_QUOTAS_FAILURE_BACKOFF_MAX_MS);
-  const failureBackoffMaxMsRaw = failureMaxParsed === null ? 10 * 60_000 : Math.max(1_000, Math.min(30 * 60_000, Math.trunc(failureMaxParsed)));
+  const failureBackoffMaxMsRaw = failureMaxParsed ?? 10 * 60_000;
   const failureBackoffMaxMs = Math.max(failureBackoffMinMs, failureBackoffMaxMsRaw);
 
   const jitterParsed = parseFloatValue(env.HAPPIER_CONNECTED_SERVICES_QUOTAS_FAILURE_BACKOFF_JITTER_PCT);
   const failureBackoffJitterPct = jitterParsed === null ? 0.2 : Math.min(1, Math.max(0, jitterParsed));
 
   return {
-    fetchTimeoutMs: timeoutMs,
+    ...(timeoutMs === null ? {} : { fetchTimeoutMs: timeoutMs }),
+    ...(quotaPersistenceMaxConsecutiveFailures === null ? {} : { quotaPersistenceMaxConsecutiveFailures }),
     discoveryEnabled: discoveryEnabled === null ? true : discoveryEnabled,
     discoveryIntervalMs,
     failureBackoffMinMs,

@@ -1,8 +1,6 @@
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
-import { isQualifiedConnectedAccountProfileActiveV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { VoiceTrackedSessionAddressV1Schema } from '@happier-dev/protocol/sessions/follow/voiceTrackedTargetsCompatibilityV1';
 import type { ActionExecutorDeps, AccountProfile, ConnectedAccountUiProjectionEntryV1, PluginContributionIdentityV1, PluginProjectedResourceV2, QualifiedConnectedAccountPurposeBindingsV1, JsonValue, PublicActionResultById } from '@happier-dev/protocol';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
@@ -10,7 +8,7 @@ import { readBuiltinWidgetDescriptorV1, isSameWidgetDefinitionV1, widgetCandidat
 import { readWidgetDefinitionResourcesV1 } from '@happier-dev/protocol/widgets/widgetDefinitionV1';
 import { createWidgetActionInputResolverV1 } from '@happier-dev/protocol/widgets/widgetActionInputResolverV1';
 import { resolveConfiguredWidgetTargetInputV1 } from '@happier-dev/protocol/widgets/widgetInputAdmissionV1';
-import { resolveWidgetViewerPurposeValuesV1, resolveWidgetConnectedAccountOptionsV1 } from '@happier-dev/protocol/widgets/widgetViewerPurposeV1';
+import { isWidgetConnectedAccountSelectionEligibleV1, resolveWidgetViewerPurposeValuesV1, resolveWidgetConnectedAccountOptionsV1 } from '@happier-dev/protocol/widgets/widgetViewerPurposeV1';
 import type { WidgetCandidateIdentityV1, WidgetActionInputResolverV1, WidgetInputDescriptorV1 } from '@happier-dev/protocol/widgets';
 import { readInputPath } from '@happier-dev/protocol/inputs/inputPredicates';
 
@@ -122,22 +120,23 @@ export function createCliWidgetInputActionDepsV1(input: Readonly<{
             ? await input.getDeps().resolveInputType?.(field.inputType, { ...request.context,
                 ...(request.signal ? { signal: request.signal } : {}) }) ?? null : null,
         validateValue: async (field, value, request) => {
-            if (request.instance.bindings[field.path]?.kind === 'viewer') {
+            const binding = request.instance.bindings[field.path];
+            if (binding?.kind === 'viewer') {
                 const supplied = QualifiedConnectedAccountRefSchema.safeParse(value);
                 const current = await readViewerPurpose(request);
                 const own = current?.values[field.path];
                 if (!supplied.success) return { status: 'invalid', reasonCode: 'widgets_viewer_selection_invalid' };
-                if (!own) return { status: 'unavailable', reasonCode: current?.fields.find(issue => issue.path === field.path)?.reasonCode ?? 'widget_viewer_connection_missing' };
-                return sameQualifiedConnectedAccountRef(own, supplied.data)
+                if (!current || !own) return { status: 'unavailable', reasonCode: current?.fields.find(issue => issue.path === field.path)?.reasonCode ?? 'widget_viewer_connection_missing' };
+                return isWidgetConnectedAccountSelectionEligibleV1({ field, binding, surface: request.ref.surface,
+                    selection: supplied.data, viewerValues: current.values, profile: null, now: Date.now() })
                     ? { status: 'valid' } : { status: 'denied', reasonCode: 'widgets_viewer_selection_unavailable' };
             }
             if (field.connectedAccountOptions) {
                 const supplied = QualifiedConnectedAccountRefSchema.safeParse(value);
                 if (!supplied.success) return { status: 'invalid', reasonCode: 'widgets_viewer_selection_invalid' };
                 const current = await input.readViewerPurposeContext?.(request.signal);
-                if (request.ref.surface.owner.kind === 'sessionBoard' || !current || current.profile.id !== input.accountId
-                    || !current.profile.connectedAccountsV4.some(account => sameQualifiedConnectedAccountRef(account.ref, supplied.data)
-                        && isQualifiedConnectedAccountProfileActiveV4(account, Date.now())))
+                if (!current || current.profile.id !== input.accountId || !isWidgetConnectedAccountSelectionEligibleV1({ field, binding,
+                    surface: request.ref.surface, selection: supplied.data, viewerValues: {}, profile: current.profile, now: Date.now() }))
                     return { status: 'denied', reasonCode: 'widgets_viewer_selection_unavailable' };
                 return { status: 'valid' };
             }

@@ -50,6 +50,10 @@ async function createHarness(input: Readonly<{
   createdDirectories.push(happyHomeDir);
   const registry = await resolveExecutablePluginRuntimeRegistry({
     happyHomeDir,
+    resolveDevelopmentSourceAuthority: ({ pluginId, rootPath }) => ({
+      kind: 'development', registeredRootId: `qualified-status:${pluginId}`,
+      canonicalRoot: rootPath, observedRevision: 1,
+    }),
     pluginIds: input.pluginEnabled === false
       ? []
       : [openAiService.pluginId],

@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { isDeepStrictEqual } from 'node:util';
 
 import type { PluginContributionRef } from '@happier-dev/plugin-sdk';
 import type { PendingConnectedAccountAttemptTransaction } from '@/api/client/connectedAccountAttemptTransactionApi';
@@ -229,8 +228,6 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
             account: QualifiedConnectedAccountRef;
         }>): Promise<void>;
     }>;
-    maxAttempts?: number;
-    attemptTtlMs?: number;
     createAttemptId?: () => string;
     createAccountId?: () => string;
     now?: () => number;
@@ -252,15 +249,14 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
     const runtime: AttemptOwnerParams['runtime'] = Object.freeze({
         async admit(input) {
             let registryLease = await params.reloadController.acquireRuntimeRegistry();
+            let retained = false;
             try {
-                const original = registryLease.registry.connectedAccountContributions?.describe(input.service);
                 let contribution: ConnectedAccountRuntimeLease | null | undefined;
                 try {
                     contribution = await registryLease.registry.resolveConnectedAccountRuntime?.(input.service);
                 } catch (error) {
                     if (
                         !(error instanceof ConnectedAccountRuntimeInvocationNotStartedError)
-                        || !original
                         || params.reloadController.isRuntimeRegistryCurrent(registryLease.registry)
                     ) throw error;
                     // Lazy activation yielded across publication, before a provider
@@ -268,15 +264,6 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
                     await registryLease.release();
                     registryLease = await params.reloadController.acquireRuntimeRegistry();
                     contribution = await registryLease.registry.resolveConnectedAccountRuntime?.(input.service);
-                    if (
-                        !contribution
-                        || !sameService(contribution.ref, original.ref)
-                        || !pluginSourceCustodyV1Equal(contribution.sourceCustody, original.sourceCustody)
-                        || !isDeepStrictEqual(
-                            contribution.descriptor.authentication.modes.find((mode) => mode.id === input.modeId),
-                            original.descriptor.authentication.modes.find((mode) => mode.id === input.modeId),
-                        )
-                    ) throw error;
                 }
                 if (!contribution) {
                     throw new Error('Connected-account service runtime is unavailable');
@@ -286,6 +273,39 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
                 if (!descriptor) {
                     throw new Error('Connected-account authentication mode is unavailable');
                 }
+                const invoker = registryLease.registry.connectedAccountRuntimeInvoker;
+                const capturedRegistryLease = registryLease;
+                let activeInvocations = 0;
+                let releaseRequested = false;
+                let releasePromise: Promise<void> | null = null;
+                const releaseRegistry = () => {
+                    releasePromise ??= capturedRegistryLease.release();
+                    return releasePromise;
+                };
+                const runtimeCustody = Object.freeze({
+                    lease: contribution,
+                    async invoke(invocation: ConnectedAccountAttemptProviderInvocation) {
+                        if (!invoker) throw new Error('Connected-account host runtime invoker is unavailable');
+                        activeInvocations += 1;
+                        try {
+                            return await invoker.invokeAuthentication({
+                                ...invocation,
+                                isConfigurationCurrent: configuration.isCurrent,
+                                configurationRevocationSignal: configuration.currentnessSignal,
+                            });
+                        } finally {
+                            activeInvocations -= 1;
+                            if (releaseRequested && activeInvocations === 0) await releaseRegistry();
+                        }
+                    },
+                    async release() {
+                        releaseRequested = true;
+                        // Cancellation completes locally while entered callbacks keep
+                        // their existing registry custody until they leave.
+                        if (activeInvocations === 0) await releaseRegistry();
+                    },
+                });
+                retained = true;
                 return Object.freeze({
                     service: contribution.ref,
                     descriptor,
@@ -296,9 +316,10 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
                             : 'multiple' as const,
                     occurrenceId: contribution.occurrenceId,
                     sourceCustody: contribution.sourceCustody,
+                    runtimeCustody,
                 });
             } finally {
-                await registryLease.release();
+                if (!retained) await registryLease.release();
             }
         },
         async isCurrent(admission) {
@@ -327,25 +348,11 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
             }
         },
         async invoke(input: ConnectedAccountAttemptProviderInvocation) {
-            const registryLease = await params.reloadController.acquireRuntimeRegistry();
-            try {
-                const invoker = registryLease.registry.connectedAccountRuntimeInvoker;
-                if (!invoker) {
-                    throw new Error('Connected-account host runtime invoker is unavailable');
-                }
-                return await invoker.invokeAuthentication({
-                    ...input,
-                    isConfigurationCurrent: configuration.isCurrent,
-                    configurationRevocationSignal: configuration.currentnessSignal,
-                });
-            } finally {
-                await registryLease.release();
-            }
+            if (!input.admission.runtimeCustody) throw new Error('Connected-account runtime custody is unavailable');
+            return await input.admission.runtimeCustody.invoke(input);
         },
     });
     const attempts = createConnectedAccountAuthenticationAttemptOwner({
-        maxAttempts: params.maxAttempts ?? 64,
-        attemptTtlMs: params.attemptTtlMs ?? 15 * 60_000,
         createAttemptId: params.createAttemptId ?? (() => `caa_${randomUUID()}`),
         createAccountId: params.createAccountId ?? (() => `ca_${randomUUID()}`),
         now: params.now ?? Date.now,
@@ -940,7 +947,16 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
                         ...(options?.signal ? { signal: options.signal } : {}),
                     });
                 case 'cancel':
-                    return await attempts.cancel({ attemptId: command.attemptId });
+                    {
+                        const cancelled = await attempts.cancel({ attemptId: command.attemptId });
+                        // Cancel closes this consumer's demand. Uncertain prepared
+                        // settlements retain their recovery state, but a terminal
+                        // response no longer needs lost-reply custody.
+                        if (cancelled.status !== 'outcomeUnknown' && cancelled.status !== 'cleanupPending') {
+                            attempts.releaseTerminalResponse(command.attemptId);
+                        }
+                        return cancelled;
+                    }
                 case 'read':
                     return await attempts.read({
                         attemptId: command.attemptId,

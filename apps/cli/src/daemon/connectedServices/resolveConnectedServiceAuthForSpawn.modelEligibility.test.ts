@@ -40,7 +40,8 @@ describe('spawn pool model eligibility', () => {
         await expect(resolveConnectedServiceAuthForSpawn({ ...request, modelId: 'requested-model' }))
             .rejects.toMatchObject({ code: 'connected_service_run_model_unavailable', modelId: 'requested-model' });
         expect(readCredential).not.toHaveBeenCalled();
-        await expect(resolveConnectedServiceAuthForSpawn({ ...request, modelId: 'other-model' })).rejects.toThrow();
-        expect(readCredential).toHaveBeenCalledWith(expect.objectContaining({ profileId: 'primary' }));
+        await expect(resolveConnectedServiceAuthForSpawn({ ...request, modelId: 'other-model' }))
+            .rejects.toMatchObject({ code: 'connected_service_qualified_purpose_authority_unavailable' });
+        expect(readCredential).not.toHaveBeenCalled();
     });
 });

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
-import type { ConnectedServiceCredentialRevisionV1 } from '@happier-dev/protocol';
+import { ConnectedServiceCredentialRevisionV1Schema, type ConnectedServiceCredentialRevisionV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
 
 import type {
   ConnectedServiceDaemonAuthBridgeRefreshResult,
@@ -91,7 +92,7 @@ export type SessionConnectedServiceRuntimeAuthRefreshHandler = (
   input: SessionConnectedServiceRuntimeAuthRefreshInput,
 ) => Promise<SessionConnectedServiceRuntimeAuthRefreshResult>;
 
-type ResolveDaemonAuthBridge = (
+export type ResolveDaemonAuthBridge = (
   serviceId: ConnectedServiceRuntimeAuthRefreshSelection['serviceId'],
 ) => Promise<Readonly<{
   pluginId?: string;
@@ -106,14 +107,15 @@ function readBridgeRegistration(
   return typeof value.refresh === 'function' ? value : null;
 }
 
-function resolveCurrentRefreshSelection(input: Readonly<{
+export function resolveCurrentRefreshSelection(input: Readonly<{
   target: ConnectedServiceRuntimeTarget;
   serviceId: ConnectedServiceRuntimeAuthRefreshSelection['serviceId'];
 }>): Readonly<{
   selection: ConnectedServiceRuntimeAuthRefreshSelection;
   credentialRevision: ConnectedServiceCredentialRevisionV1;
 }> | null {
-  const current = input.target.connectedServiceSelections.find((candidate) => candidate.serviceId === input.serviceId);
+  const serviceId = readBuiltInLegacyConnectedAccountServiceKeyIngress(input.serviceId);
+  const current = input.target.connectedServiceSelections.find((candidate) => candidate.serviceId === serviceId);
   if (!current?.credentialRevision) return null;
   if (current.kind === 'profile') {
     return {
@@ -138,17 +140,21 @@ function resolveCurrentRefreshSelection(input: Readonly<{
   };
 }
 
-export function createSessionConnectedServiceRuntimeAuthRefreshHandler(input: Readonly<{
-  registry: ConnectedServiceRuntimeRegistry;
+export async function refreshConnectedServiceRuntimeAuthForTarget(input: Readonly<{
+  target: ConnectedServiceRuntimeTarget;
+  request: Omit<SessionConnectedServiceRuntimeAuthRefreshInput, 'sessionId'>;
+  scope: Readonly<{ sessionId: string }> | Readonly<{ runId: string }>;
+  authority?: object;
+  acceptSettledCredentialRevision?(revision: ConnectedServiceCredentialRevisionV1): ConnectedServiceRuntimeTarget | null;
+  isCurrent(): boolean;
   resolveDaemonAuthBridge: ResolveDaemonAuthBridge;
-}>): SessionConnectedServiceRuntimeAuthRefreshHandler {
-  return async (request) => {
-    const target = input.registry.getBySessionId(request.sessionId);
+}>): Promise<SessionConnectedServiceRuntimeAuthRefreshResult> {
+    const { target, request } = input;
     const current = target ? resolveCurrentRefreshSelection({
       target,
       serviceId: request.selection.serviceId,
     }) : null;
-    if (!target || !current || !runtimeTargetOwnsConnectedServiceRuntimeAuthRefreshSelection({
+    if (!input.isCurrent() || !current || !runtimeTargetOwnsConnectedServiceRuntimeAuthRefreshSelection({
       target,
       selection: current.selection,
     })) {
@@ -156,7 +162,7 @@ export function createSessionConnectedServiceRuntimeAuthRefreshHandler(input: Re
     }
 
     const resolvedBridge = await input.resolveDaemonAuthBridge(current.selection.serviceId);
-    if (input.registry.getBySessionId(request.sessionId) !== target) {
+    if (!input.isCurrent()) {
       return { ok: false, errorCode: 'connected_service_session_refresh_forbidden' };
     }
     const bridge = readBridgeRegistration(resolvedBridge);
@@ -167,28 +173,70 @@ export function createSessionConnectedServiceRuntimeAuthRefreshHandler(input: Re
     let bridgeSettlement: ConnectedServiceDaemonAuthBridgeRefreshResult;
     try {
       bridgeSettlement = await bridge.refresh({
-        sessionId: request.sessionId,
+        ...input.scope,
         refreshAttemptId: request.refreshAttemptId,
         selection: current.selection,
         ...(request.planType === undefined ? {} : { planType: request.planType }),
         ...(request.failingAccessTokenFingerprint === undefined
           ? {}
           : { failingAccessTokenFingerprint: request.failingAccessTokenFingerprint }),
-        expectedCredentialRevision: current.credentialRevision,
+        expectedCredentialRevision: 'runId' in input.scope ? request.expectedCredentialRevision : current.credentialRevision,
         ...(request.reason === undefined ? {} : { reason: request.reason }),
         forceRefresh: true,
-      });
+      }, { target, authority: input.authority ?? target, isCurrent: input.isCurrent,
+        acceptSettledCredentialRevision: input.acceptSettledCredentialRevision });
     } catch (error) {
       const failureCode = readCredentialRefreshFailureCode(error);
       if (!failureCode) throw error;
       bridgeSettlement = { status: 'failed', reason: failureCode };
     }
-    if (input.registry.getBySessionId(request.sessionId) !== target) {
+    if (!input.isCurrent()) {
       return { ok: false, errorCode: 'connected_service_session_refresh_forbidden' };
     }
     return {
       ok: true,
       result: parseDaemonAuthBridgeRefreshSettlement(bridgeSettlement, request.refreshAttemptId),
     };
+}
+
+export function createSessionConnectedServiceRuntimeAuthRefreshHandler(input: Readonly<{
+  registry: ConnectedServiceRuntimeRegistry;
+  resolveDaemonAuthBridge: ResolveDaemonAuthBridge;
+  captureSessionAuthority?(target: ConnectedServiceRuntimeTarget): Readonly<{ identity: object; isCurrent(): boolean }> | null;
+}>): SessionConnectedServiceRuntimeAuthRefreshHandler {
+  return async (request) => {
+    let target = input.registry.getBySessionId(request.sessionId);
+    if (!target) return { ok: false, errorCode: 'connected_service_session_refresh_forbidden' };
+    const authority = input.captureSessionAuthority?.(target);
+    if (input.captureSessionAuthority && (!authority || !authority.isCurrent())) {
+      return { ok: false, errorCode: 'connected_service_session_refresh_forbidden' };
+    }
+    const isCurrent = () => (!authority || authority.isCurrent()) && input.registry.getBySessionId(request.sessionId) === target;
+    const result = await refreshConnectedServiceRuntimeAuthForTarget({
+      target, request, scope: { sessionId: request.sessionId },
+      authority: authority?.identity,
+      isCurrent,
+      ...(authority ? { acceptSettledCredentialRevision: (revision: ConnectedServiceCredentialRevisionV1) => {
+        if (!authority.isCurrent() || !target) return null;
+        const selection = resolveCurrentRefreshSelection({ target, serviceId: request.selection.serviceId });
+        if (!selection) return null;
+        const current = input.registry.resolveExactSessionCredentialRevisionTarget({ target,
+          serviceId: selection.selection.serviceId, expectedCredentialRevision: selection.credentialRevision,
+          credentialRevision: revision });
+        if (!authority.isCurrent() || !current) return null;
+        target = current;
+        return current;
+      } } : {}),
+      resolveDaemonAuthBridge: input.resolveDaemonAuthBridge,
+    });
+    if (result.ok && result.result.status === 'refreshed' && 'credentialRevision' in result.result.result) {
+      const revision = ConnectedServiceCredentialRevisionV1Schema.safeParse(result.result.result.credentialRevision);
+      const current = resolveCurrentRefreshSelection({ target, serviceId: request.selection.serviceId });
+      if (!revision.success || !current || !input.registry.adoptExactCredentialRevisionForTarget({
+        target, serviceId: current.selection.serviceId, expectedCredentialRevision: current.credentialRevision,
+        credentialRevision: revision.data,
+      })) return { ok: false, errorCode: 'connected_service_session_refresh_forbidden' };
+    }
+    return result;
   };
 }

@@ -9,6 +9,10 @@ import { createPluginReloadController, type PluginReloadController } from '@/plu
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
 import { logger } from '@/ui/logger';
+import { createConnectedAccountHostRuntimeInvoker } from '@/plugins/runtime/connectedAccounts/runtimeInvoker';
+import type { ConnectedAccountOAuthCallbackCompletion } from '@/plugins/runtime/connectedAccounts/authenticationAttemptOwner';
+import { createLoggerAndEventsAvailablePluginInvocationServiceBinding } from '@/plugins/runtime/invocation/services/factory';
+import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 import {
   createConnectedAccountContributionRegistry,
   type ConnectedAccountRuntimeRegistration,
@@ -89,6 +93,162 @@ const descriptor = PluginConnectedAccountDescriptorContributionV2Schema.parse({
 });
 
 describe('ConnectedAccountDaemonRuntime control facade', () => {
+  it.each(['manual', 'oauth', 'device', 'cancelledManual', 'cancelledOAuthCreate', 'invalidMode', 'configurationFailure', 'disposedDuringAdmission'] as const)('retains the admitted %s callback and state through successor publication, then releases it at cleanup', async (scenario) => {
+    const authentication = scenario === 'oauth' || scenario === 'cancelledOAuthCreate' ? 'oauth' : scenario === 'device' ? 'device' : 'manual';
+    let now = 1_000;
+    let oldDisposed = false;
+    let callbackEntered = false;
+    let releaseCallback!: () => void;
+    const callbackGate = new Promise<void>((resolve) => { releaseCallback = resolve; });
+    let configurationReadEntered = false;
+    let releaseConfiguration!: () => void;
+    const configurationGate = new Promise<void>((resolve) => { releaseConfiguration = resolve; });
+    let transactionCreateEntered = false;
+    let transactionClosed = false;
+    const createRegistry = (successor: boolean) => {
+      const identity = { ...runtimeIdentity, occurrenceId: createPluginRuntimeOccurrenceId(service.pluginId) };
+      let current = true;
+      const authenticationMode = authentication === 'manual'
+        ? { id: authentication, kind: 'manual', outcomeReconciliation: 'none', fields: [{ id: successor ? 'apiKey' : 'token', title: 'Secret', schema: { type: 'string' }, secret: true }] }
+        : { id: authentication, kind: authentication === 'oauth' ? 'oauthAuthorizationCode' : 'oauthDeviceCode', outcomeReconciliation: 'none', ...(authentication === 'oauth' ? { pkce: 'required' } : {}) };
+      const definition = PluginConnectedAccountDescriptorContributionV2Schema.parse({ id: service.localId, title: 'Work', authentication: { defaultModeId: authentication, modes: [{ ...authenticationMode,
+        ...(['configurationFailure', 'disposedDuringAdmission'].includes(scenario) ? { configuration: { scope: 'service', changeBehavior: 'refresh', fields: [{ id: 'endpoint', title: 'Endpoint', schema: { type: 'string' }, required: true }] } } : {}),
+      }] } });
+      const complete: Extract<ConnectedAccountRuntimeRegistration['runtime']['authentication']['modes'][string], { kind: 'manual' }>['complete'] = async (_input, context) => {
+        if (successor) return { status: 'rejected', diagnostic: { code: 'successor_entered', severity: 'error' } };
+        if (scenario === 'cancelledManual') {
+          callbackEntered = true;
+          await callbackGate;
+        }
+        if (authentication !== 'manual') expect(await context.attemptCredentials.get('challenge')).toBe('original-challenge');
+        return { status: 'connected', displayName: 'Original account', scopes: [] };
+      };
+      const modes: ConnectedAccountRuntimeRegistration['runtime']['authentication']['modes'] = authentication === 'manual'
+        ? { manual: { kind: 'manual', complete } }
+        : authentication === 'oauth'
+          ? { oauth: { kind: 'oauthAuthorizationCode', begin: async (_input, context) => {
+            await context.attemptCredentials.set('challenge', 'original-challenge');
+            return { status: 'awaitingOAuthRedirect', authorizationUrl: 'https://provider.example/authorize', expiresAtMs: 61_000 };
+          }, complete: async (_input, context) => complete({ fields: {} }, context), cancel: async () => {} } }
+          : { device: { kind: 'oauthDeviceCode', begin: async (context) => {
+            await context.attemptCredentials.set('challenge', 'original-challenge');
+            return { status: 'awaitingDeviceAuthorization', verificationUri: 'https://provider.example/device', userCode: 'ABCD', expiresAtMs: 61_000, pollIntervalMs: 5_000 };
+          }, poll: async (context) => complete({ fields: {} }, context), cancel: async () => {} } };
+      const registeredRuntime: ConnectedAccountRuntimeRegistration['runtime'] = {
+        authentication: { modes }, refresh: async () => ({ status: 'connected' }), revoke: async () => ({ status: 'remoteUnsupported' }),
+        status: async () => ({ status: 'connected' }), materialize: async () => ({ kind: 'environment', env: {} }),
+      };
+      const contributions = createConnectedAccountContributionRegistry({
+        descriptors: [{ provenance: 'external', source: { kind: 'path' }, pluginId: service.pluginId, definition }],
+        readPluginOccurrenceId: () => identity.occurrenceId, readPluginSourceCustody: () => identity.sourceCustody,
+        isPluginOccurrenceCurrent: () => current, activateOnDemand: async () => {},
+        readRegistrations: () => [{ pluginId: service.pluginId, localId: service.localId, occurrenceId: identity.occurrenceId, runtime: registeredRuntime }],
+      });
+      const invoker = createConnectedAccountHostRuntimeInvoker({
+        resolveRuntime: contributions.resolve, resolvePlugin: () => ({ version: '1.0.0', hostAccessRequests: [] }),
+        resolveHostPolicy: () => ({ hostAccess: [], serviceBinding: createLoggerAndEventsAvailablePluginInvocationServiceBinding(identity.occurrenceId, 'producer', []) }),
+        createServices: () => createUnavailablePluginServices(), registerRawForRedaction: () => {}, resolveHostOwnedConfiguredEndpoints: () => [],
+      });
+      // Unrelated registry catalogs are inert fixture data; publication, leases,
+      // auth invocation and configuration admission all execute their real owners.
+      return {
+        contributes: { agents: [], providers: [], actions: [], resources: [], activationTargets: [] },
+        pluginDiagnosticsByPluginId: { [service.pluginId]: [] }, activatedPluginIds: new Set<string>(),
+        readPluginOccurrenceId: () => identity.occurrenceId, readPluginSourceCustody: () => identity.sourceCustody,
+        connectedAccountContributions: contributions, resolveConnectedAccountRuntime: contributions.resolve, connectedAccountRuntimeInvoker: invoker,
+        fencePluginConsumers: () => { current = false; }, retirePluginConsumers: async () => { current = false; },
+        dispose: async () => { contributions.dispose(); if (!successor) oldDisposed = true; },
+      } as unknown as ResolvedExecutablePluginRuntimeRegistry;
+    };
+    const initial = createRegistry(false);
+    const reloadController = createPluginReloadController({ resolveRuntimeRegistry: async () => initial });
+    const daemon = createConnectedAccountDaemonRuntime({
+      reloadController, now: () => now, createAttemptId: () => 'attempt-custody', createAccountId: () => 'account-custody',
+      persistence: {
+        profiles: { list: async () => [] },
+        configuration: { read: async () => {
+          if (scenario === 'configurationFailure') throw new Error('database unavailable');
+          if (scenario === 'disposedDuringAdmission') {
+            configurationReadEntered = true;
+            await configurationGate;
+            return { revision: 'config-1', values: { endpoint: 'https://provider.example' }, secretRefs: {} };
+          }
+          return null;
+        }, replace: async () => ({ status: 'conflict' }), destroyAttempt: async () => {}, secrets: { admit: async () => {}, has: async () => false, read: async () => null } },
+        attempts: {
+          accounts: { readExact: async () => null },
+          oauth: { create: async () => {
+            transactionCreateEntered = true;
+            if (scenario === 'cancelledOAuthCreate') await callbackGate;
+            return { request: { callbackUrl: 'http://127.0.0.1/callback', state: 'oauth-state', pkce: { challenge: 'challenge', method: 'S256' as const } }, acceptCompletion: async (completion: ConnectedAccountOAuthCallbackCompletion) => ({ ...completion, pkceVerifier: 'verifier' }), close: async () => { transactionClosed = true; } };
+          } },
+          settlement: { settle: async (request) => ({ status: 'connected', account: { service, accountId: request.accountId } }) },
+        },
+      },
+      configurationConsequences: { assertAvailable: async () => {}, apply: async () => {} }, revocation: {} as never,
+    });
+    try {
+      if (scenario === 'invalidMode' || scenario === 'configurationFailure') {
+        const admission = daemon.execute({ operation: 'beginConnect', service, modeId: scenario === 'invalidMode' ? 'absent-mode' : authentication });
+        if (scenario === 'configurationFailure') await expect(admission).rejects.toThrow('database unavailable');
+        else expect((await admission).status).toBe('unavailable');
+        await reloadController.adoptPreparedRuntimeRegistry({ registry: createRegistry(true), changedPluginIds: [service.pluginId], runningSessionDisposition: 'retainRunningSessions' });
+        await vi.waitFor(() => expect(oldDisposed).toBe(true));
+        expect(callbackEntered).toBe(false);
+        return;
+      }
+      if (scenario === 'disposedDuringAdmission') {
+        const admission = daemon.execute({ operation: 'beginConnect', service, modeId: authentication });
+        await vi.waitFor(() => expect(configurationReadEntered).toBe(true));
+        daemon.dispose();
+        releaseConfiguration();
+        expect((await admission).status).toBe('unavailable');
+        await reloadController.adoptPreparedRuntimeRegistry({ registry: createRegistry(true), changedPluginIds: [service.pluginId], runningSessionDisposition: 'retainRunningSessions' });
+        await vi.waitFor(() => expect(oldDisposed).toBe(true));
+        expect(callbackEntered).toBe(false);
+        return;
+      }
+      const begun = await daemon.execute({ operation: 'beginConnect', service, modeId: authentication });
+      expect(begun).toMatchObject({ status: authentication === 'manual' ? 'awaitingManual' : 'starting', attemptId: 'attempt-custody' });
+      if (scenario === 'cancelledOAuthCreate') {
+        await vi.waitFor(() => expect(transactionCreateEntered).toBe(true));
+        await expect(daemon.execute({ operation: 'cancel', attemptId: 'attempt-custody' })).resolves.toMatchObject({ status: 'cancelled' });
+        releaseCallback();
+        await vi.waitFor(() => expect(transactionClosed).toBe(true));
+        await vi.waitFor(async () => expect(await daemon.execute({ operation: 'read', attemptId: 'attempt-custody' })).toMatchObject({ status: 'unavailable', code: 'connected_account_attempt_not_found' }));
+        await reloadController.adoptPreparedRuntimeRegistry({ registry: createRegistry(true), changedPluginIds: [service.pluginId], runningSessionDisposition: 'retainRunningSessions' });
+        await vi.waitFor(() => expect(oldDisposed).toBe(true));
+        return;
+      }
+      if (authentication !== 'manual') await vi.waitFor(async () => expect(await daemon.execute({ operation: 'read', attemptId: 'attempt-custody' })).toMatchObject({ status: authentication === 'oauth' ? 'awaitingOAuth' : 'awaitingDeviceAuthorization' }));
+      if (scenario === 'cancelledManual') {
+        const completion = daemon.execute({ operation: 'submitManual', attemptId: 'attempt-custody', fields: { token: 'original-secret' } });
+        await vi.waitFor(() => expect(callbackEntered).toBe(true));
+        await reloadController.adoptPreparedRuntimeRegistry({ registry: createRegistry(true), changedPluginIds: [service.pluginId], runningSessionDisposition: 'retainRunningSessions' });
+        await expect(daemon.execute({ operation: 'cancel', attemptId: 'attempt-custody' })).resolves.toMatchObject({ status: 'cancelled' });
+        expect(oldDisposed).toBe(false);
+        releaseCallback();
+        expect((await completion).status).not.toBe('connected');
+        await vi.waitFor(() => expect(oldDisposed).toBe(true));
+        await expect(daemon.execute({ operation: 'read', attemptId: 'attempt-custody' })).resolves.toMatchObject({ status: 'unavailable', code: 'connected_account_attempt_not_found' });
+        return;
+      }
+      await reloadController.adoptPreparedRuntimeRegistry({ registry: createRegistry(true), changedPluginIds: [service.pluginId], runningSessionDisposition: 'retainRunningSessions' });
+      expect(oldDisposed).toBe(false);
+      now = 6_000;
+      const result = await daemon.execute(authentication === 'manual'
+        ? { operation: 'submitManual', attemptId: 'attempt-custody', fields: { token: 'original-secret' } }
+        : authentication === 'oauth'
+          ? { operation: 'completeOAuth', attemptId: 'attempt-custody', completion: { callbackUrl: 'http://127.0.0.1/callback', state: 'oauth-state', code: 'code' } }
+          : { operation: 'pollDevice', attemptId: 'attempt-custody' });
+      expect(result).toMatchObject({ status: 'connected', account: { service, accountId: 'account-custody' } });
+      await vi.waitFor(() => expect(oldDisposed).toBe(true));
+      await expect(daemon.execute({ operation: 'read', attemptId: 'attempt-custody' })).resolves.toEqual(result);
+      await expect(daemon.execute({ operation: 'reconcile', attemptId: 'attempt-custody' })).resolves.toEqual(result);
+      await expect(daemon.execute({ operation: 'cancel', attemptId: 'attempt-custody' })).resolves.toEqual(result);
+      await expect(daemon.execute({ operation: 'read', attemptId: 'attempt-custody' })).resolves.toMatchObject({ status: 'unavailable', code: 'connected_account_attempt_not_found' });
+    } finally { releaseCallback(); releaseConfiguration(); daemon.dispose(); await reloadController.shutdown(); }
+  });
   it.each(['beginConnect', 'beginReconnect'] as const)(
     'fails %s at persistence admission before acquiring or invoking plugin runtime',
     async (operation) => {
@@ -1248,14 +1408,12 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
       return { daemon, activations };
     }
 
-    it.each([false, true])('refreshes initial lazy admission only for unchanged source (changed: %s)', async (changed) => {
+    it.each([false, true])('resolves the current runtime after lazy activation publishes a successor (source changed: %s)', async (changed) => {
       const { daemon } = createDaemonOverRealRegistry({
         published: true, generationCurrent: () => true, replaceDuringActivation: true, replaceSourceDuringActivation: changed,
       });
       await expect(daemon.execute({ operation: 'beginConnect', service, modeId: 'oauth' }))
-        .resolves.toMatchObject(changed
-          ? { status: 'conflict', code: 'connected_account_runtime_generation_changed' }
-          : { status: 'configurationRequired', missingFieldIds: expect.arrayContaining(['endpoint', 'clientSecret']) });
+        .resolves.toMatchObject({ status: 'configurationRequired', missingFieldIds: expect.arrayContaining(['endpoint', 'clientSecret']) });
       daemon.dispose();
     });
 

@@ -72,7 +72,7 @@ export function createKeyedLatestWorkScheduler<TKey extends string, TPayload>(
     minKeyIntervalMs: number;
     maxKeys: number;
     maxKeyAgeMs: number;
-    maxPendingPayloadAgeMs: number;
+    maxPendingPayloadAgeMs?: number;
     now?: () => number;
     isConnected?: () => boolean;
     backoff?: KeyedBackoffTracker;
@@ -86,7 +86,9 @@ export function createKeyedLatestWorkScheduler<TKey extends string, TPayload>(
   const minKeyIntervalMs = normalizeNonNegativeMs(options.minKeyIntervalMs);
   const maxKeys = normalizePositiveInteger(options.maxKeys);
   const maxKeyAgeMs = normalizeNonNegativeMs(options.maxKeyAgeMs);
-  const maxPendingPayloadAgeMs = normalizeNonNegativeMs(options.maxPendingPayloadAgeMs);
+  const maxPendingPayloadAgeMs = options.maxPendingPayloadAgeMs === undefined
+    ? null
+    : normalizeNonNegativeMs(options.maxPendingPayloadAgeMs);
   const now = options.now ?? Date.now;
   const isConnected = options.isConnected ?? (() => true);
   const shouldRetry = options.shouldRetry ?? (() => options.backoff !== undefined);
@@ -134,7 +136,7 @@ export function createKeyedLatestWorkScheduler<TKey extends string, TPayload>(
   function pruneExpiredEntries(nowMs: number): void {
     for (const [key, entry] of entries) {
       if (entry.inFlight) continue;
-      if (entry.pending && nowMs - entry.pending.enqueuedAtMs > maxPendingPayloadAgeMs) {
+      if (entry.pending && maxPendingPayloadAgeMs !== null && nowMs - entry.pending.enqueuedAtMs > maxPendingPayloadAgeMs) {
         clearEntryTimer(entry);
         entry.queued = false;
         removeFromReadyQueue(key);
@@ -234,7 +236,7 @@ export function createKeyedLatestWorkScheduler<TKey extends string, TPayload>(
     }
     const nowMs = now();
     entry.lastTouchedAtMs = nowMs;
-    if (nowMs - entry.pending.enqueuedAtMs > maxPendingPayloadAgeMs) {
+    if (maxPendingPayloadAgeMs !== null && nowMs - entry.pending.enqueuedAtMs > maxPendingPayloadAgeMs) {
       clearEntryTimer(entry);
       dropPending(key, entry, 'pending_payload_stale');
       return;

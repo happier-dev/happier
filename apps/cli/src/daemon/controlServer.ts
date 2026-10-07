@@ -34,6 +34,9 @@ import {
   CONNECTED_SERVICE_RUN_GENERATION_CURRENT_PATH,
   CONNECTED_SERVICE_RUN_RELEASE_PATH,
   CONNECTED_SERVICE_RUN_REJECTED_START_PATH,
+  CONNECTED_SERVICE_RUN_REFRESH_RUNTIME_AUTH_PATH,
+  ConnectedServiceRunRuntimeAuthRefreshRequestSchema,
+  type ConnectedServiceRunRuntimeAuthRefreshHandler,
   ConnectedServiceRunRejectedStartRequestSchema,
   ConnectedServiceRunRejectedStartResultSchema,
   type ConnectedServiceRunRejectedStartHandler,
@@ -152,6 +155,7 @@ import {
   type ConnectedServiceRuntimeFailureClassification,
 } from './connectedServices/runtimeAuth/types';
 import { sanitizeConnectedServiceRuntimeFailureClassification } from './connectedServices/runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
+import { ConnectedServiceRuntimeAuthRefreshSelectionSchema, ConnectedServiceRuntimeAuthRefreshServiceIdSchema } from './connectedServices/runtimeAuthRefreshAuthorization';
 
 export type AgentRuntimeDaemonServiceRoutes = Readonly<{
   dispatch(
@@ -261,20 +265,11 @@ function resolveDaemonControlListenPort(env: NodeJS.ProcessEnv): number {
   return port;
 }
 
-const ConnectedServiceRuntimeAuthRefreshSelectionSchema = z.discriminatedUnion('kind', [
-  z.object({
-    kind: z.literal('profile'),
-    serviceId: ConnectedServiceIdSchema,
-    profileId: ConnectedServiceProfileIdSchema,
-  }),
-  z.object({
-    kind: z.literal('group'),
-    serviceId: ConnectedServiceIdSchema,
-    groupId: ConnectedServiceAuthGroupIdSchema,
-    activeProfileId: ConnectedServiceProfileIdSchema,
-    fallbackProfileId: ConnectedServiceProfileIdSchema,
-    generation: z.number().int().nonnegative(),
-  }),
+// Session SDK callbacks carry non-authoritative launch hints. Its incumbent ingress drops
+// extras; Run identity envelopes use the same canonical schema with strict unknown handling.
+const SessionConnectedServiceRuntimeAuthRefreshSelectionSchema = z.discriminatedUnion('kind', [
+  ConnectedServiceRuntimeAuthRefreshSelectionSchema.options[0].strip(),
+  ConnectedServiceRuntimeAuthRefreshSelectionSchema.options[1].strip(),
 ]);
 
 
@@ -653,6 +648,7 @@ export function createDaemonControlApp({
   verifyRunMaterializeToken,
   materializeConnectedServicesForExecutionRun,
   recoverConnectedServicesRejectedStartForExecutionRun,
+  refreshConnectedServiceRuntimeAuthForExecutionRun,
   checkConnectedServicesGenerationForExecutionRun,
   releaseConnectedServicesForExecutionRun,
   sshTunnels,
@@ -740,6 +736,7 @@ export function createDaemonControlApp({
    */
   materializeConnectedServicesForExecutionRun?: ConnectedServiceRunMaterializationHandler;
   recoverConnectedServicesRejectedStartForExecutionRun?: ConnectedServiceRunRejectedStartHandler;
+  refreshConnectedServiceRuntimeAuthForExecutionRun?: ConnectedServiceRunRuntimeAuthRefreshHandler;
   checkConnectedServicesGenerationForExecutionRun?: ConnectedServiceRunGenerationCurrentHandler;
   /**
    * Unregisters the run from the canonical runtime registry and runs the retained materialization
@@ -1548,9 +1545,9 @@ export function createDaemonControlApp({
     schema: {
       body: z.object({
         sessionId: z.string().trim().min(1),
-        serviceId: ConnectedServiceIdSchema,
+        serviceId: ConnectedServiceRuntimeAuthRefreshServiceIdSchema,
         refreshAttemptId: z.string().trim().min(1),
-        selection: ConnectedServiceRuntimeAuthRefreshSelectionSchema,
+        selection: SessionConnectedServiceRuntimeAuthRefreshSelectionSchema,
         planType: z.string().trim().min(1).nullable().optional(),
         failingAccessTokenFingerprint: z.string().trim().min(1).nullable().optional(),
         expectedCredentialRevision: ConnectedServiceCredentialRevisionV1Schema,
@@ -2506,6 +2503,24 @@ export function createDaemonControlApp({
         registration: result.registration,
       },
     };
+  });
+
+  typed.post(CONNECTED_SERVICE_RUN_REFRESH_RUNTIME_AUTH_PATH, {
+    schema: {
+      body: ConnectedServiceRunRuntimeAuthRefreshRequestSchema,
+      response: {
+        200: z.object({ ok: z.literal(true), result: ConnectedServiceDaemonAuthBridgeRefreshResultSchema }).strict(),
+        401: authSchema401,
+      },
+    },
+    preHandler: requireRunMaterializeAuth,
+  }, async (request) => {
+    const result = isDaemonQuiescing()
+      ? { status: 'unavailable' as const, reason: 'daemon_shutting_down' }
+      : refreshConnectedServiceRuntimeAuthForExecutionRun
+        ? await refreshConnectedServiceRuntimeAuthForExecutionRun(request.body)
+        : { status: 'unavailable' as const, reason: 'connected_service_daemon_auth_bridge_unavailable' };
+    return { ok: true as const, result };
   });
 
   typed.post(CONNECTED_SERVICE_RUN_REJECTED_START_PATH, {
@@ -3641,6 +3656,7 @@ export function createDaemonControlApp({
     if (!timeoutMs) return await observe();
     // One containing deadline, including recovered-admission I/O. No cadence.
     return await new Promise<z.infer<typeof SpawnSessionNonceControlResponseSchema>>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
       const cleanup = () => {
         ended = true;
         clearTimeout(timer);
@@ -3649,7 +3665,13 @@ export function createDaemonControlApp({
         if (terminal) terminal.activeWaits -= 1;
       };
       const finish = () => { if (!ended) { cleanup(); resolve(readSpawnNonceSnapshot(normalizedNonce)); } };
-      const timer = setTimeout(finish, Math.max(0, deadlineMs - Date.now()));
+      const armDeadline = () => {
+        timer = setTimeout(() => {
+          if (Date.now() < deadlineMs) { armDeadline(); return; }
+          finish();
+        }, Math.min(2_147_483_647, Math.max(0, deadlineMs - Date.now())));
+      };
+      armDeadline();
       request.raw.once('aborted', finish);
       reply.raw.once('close', finish);
       void observe().then(() => { if (!ended) finish(); }, (error: unknown) => {
@@ -3983,6 +4005,7 @@ export function startDaemonControlServer({
   verifyRunMaterializeToken,
   materializeConnectedServicesForExecutionRun,
   recoverConnectedServicesRejectedStartForExecutionRun,
+  refreshConnectedServiceRuntimeAuthForExecutionRun,
   checkConnectedServicesGenerationForExecutionRun,
   releaseConnectedServicesForExecutionRun,
   requestSelfRestart,
@@ -4029,6 +4052,7 @@ export function startDaemonControlServer({
   /** Execution-run connected-services materialization handler (see createDaemonControlApp). */
   materializeConnectedServicesForExecutionRun?: ConnectedServiceRunMaterializationHandler;
   recoverConnectedServicesRejectedStartForExecutionRun?: ConnectedServiceRunRejectedStartHandler;
+  refreshConnectedServiceRuntimeAuthForExecutionRun?: ConnectedServiceRunRuntimeAuthRefreshHandler;
   /** Exact run-key current-generation admission check before provider Send/Steer. */
   checkConnectedServicesGenerationForExecutionRun?: ConnectedServiceRunGenerationCurrentHandler;
   /** Execution-run connected-services release handler (see createDaemonControlApp). */
@@ -4133,6 +4157,7 @@ export function startDaemonControlServer({
       verifyRunMaterializeToken,
       materializeConnectedServicesForExecutionRun,
       recoverConnectedServicesRejectedStartForExecutionRun,
+      refreshConnectedServiceRuntimeAuthForExecutionRun,
       checkConnectedServicesGenerationForExecutionRun,
       releaseConnectedServicesForExecutionRun,
       sshTunnels,

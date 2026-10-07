@@ -8,7 +8,7 @@ describe('createConnectedServiceQuotaFetchers', () => {
     const descriptorCalls: ConnectedServiceQuotaFetcherDescriptorParams[] = [];
 
     const fetchers = createConnectedServiceQuotaFetchers({
-      HAPPIER_CONNECTED_SERVICES_QUOTAS_STALE_AFTER_MS: '120000',
+      HAPPIER_CONNECTED_SERVICES_QUOTAS_STALE_AFTER_MS: '999999999',
       HAPPIER_CONNECTED_SERVICES_QUOTAS_USER_AGENT: 'happier-test',
       HAPPIER_CONNECTED_SERVICES_OPENAI_CODEX_USAGE_URL: 'https://provider-owned.example.test/ignored-by-core',
     }, [{
@@ -25,7 +25,7 @@ describe('createConnectedServiceQuotaFetchers', () => {
     expect(fetchers).toHaveLength(1);
     expect(descriptorCalls).toEqual([
       expect.objectContaining({
-        staleAfterMs: 120_000,
+        staleAfterMs: 999999999,
         userAgent: 'happier-test',
         env: expect.objectContaining({
           HAPPIER_CONNECTED_SERVICES_OPENAI_CODEX_USAGE_URL: 'https://provider-owned.example.test/ignored-by-core',

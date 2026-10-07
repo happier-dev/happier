@@ -381,7 +381,7 @@ export function createHostScmHostingProviderRuntimeServices(
         if (deployment.origin !== origin) return null;
         const binding = await owner.getBinding({ ...authorization, signal });
         assertHostingAuthCurrent(authority, signal);
-        if (!binding) return null;
+        if (!binding) return { kind: 'unbound' as const };
         const listed = await owner.listAccounts({ ...authorization, limit: CONNECTED_ACCOUNT_METADATA_LIST_MAX_LIMIT, signal });
         assertHostingAuthCurrent(authority, signal);
         const selected = listed.accounts.find((account) => sameQualifiedConnectedAccountRef(account.account, binding.account));
@@ -398,7 +398,7 @@ export function createHostScmHostingProviderRuntimeServices(
         // Fixed-origin services may publish no configured base. Only a bare
         // origin can use that retained seam: the canonical account runtime still
         // validates origin, and expectedAccount pins its exact selected identity.
-        return binding.account;
+        return { kind: 'account' as const, account: binding.account };
     }
     const systemToolContext = createDaemonSpawnToolResolutionContext({ processEnv: process.env });
     const executableResolver = createStableManagedExecutableResolver({
@@ -453,11 +453,23 @@ export function createHostScmHostingProviderRuntimeServices(
                 input.resolveConnectedAccountPurposeBindingOwner?.() ?? null;
             if (!owner) return { kind: 'missing', reason: 'credential_unavailable' };
             const signal = options?.signal ?? new AbortController().signal;
-            const expectedAccount = await resolveBoundHostingAccount(owner, authorization, requestSnapshot, origin, authority, signal);
-            if (!expectedAccount) return { kind: 'missing', reason: 'credential_unavailable' };
+            const target = await resolveBoundHostingAccount(owner, authorization, requestSnapshot, origin, authority, signal);
+            if (!target) return { kind: 'missing', reason: 'credential_unavailable' };
+            const nativeService = target.kind === 'unbound'
+                ? authorization.serviceRefs.find((service) => (
+                    (input.contributes.connectedAccountDescriptors ?? []).some((descriptor) => (
+                        descriptor.pluginId === service.pluginId
+                        && descriptor.definition.id === service.localId
+                        && descriptor.definition.authentication.native !== undefined
+                    ))
+                ))
+                : undefined;
+            if (target.kind === 'unbound' && !nativeService) {
+                return { kind: 'missing', reason: 'credential_unavailable' };
+            }
             const result = await owner.materialize({
                 ...authorization,
-                expectedAccount,
+                ...(target.kind === 'account' ? { expectedAccount: target.account } : { nativeService }),
                 request: createScmConnectedAccountMaterializationRequest(origin),
                 signal,
             });
@@ -502,11 +514,11 @@ export function createHostScmHostingProviderRuntimeServices(
                 input.resolveConnectedAccountPurposeBindingOwner?.() ?? null;
             if (!owner) return { kind: 'missing', reason: 'credential_unavailable' };
             const signal = options?.signal ?? new AbortController().signal;
-            const expectedAccount = await resolveBoundHostingAccount(owner, authorization, requestSnapshot, origin, authority, signal);
-            if (!expectedAccount) return { kind: 'missing', reason: 'credential_unavailable' };
+            const target = await resolveBoundHostingAccount(owner, authorization, requestSnapshot, origin, authority, signal);
+            if (target?.kind !== 'account') return { kind: 'missing', reason: 'credential_unavailable' };
             const result = await owner.materialize({
                 ...authorization,
-                expectedAccount,
+                expectedAccount: target.account,
                 request: createScmConnectedAccountMaterializationRequest(origin),
                 signal,
             });

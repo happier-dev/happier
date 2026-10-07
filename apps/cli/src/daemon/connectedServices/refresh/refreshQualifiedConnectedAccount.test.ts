@@ -41,6 +41,28 @@ async function createHarness() {
   const registry = await resolveExecutablePluginRuntimeRegistry({
     happyHomeDir,
     pluginIds: [service.pluginId],
+    resolveDevelopmentSourceAuthority: ({ pluginId, rootPath }) => ({
+      kind: 'development', registeredRootId: `qualified-refresh:${pluginId}`,
+      canonicalRoot: rootPath, observedRevision: 1,
+    }),
+    networkDependencies: {
+      resolveNetworkAddresses: async () => ['8.8.8.8'],
+      // The provider transport is the boundary; keep plugin refresh and K real.
+      openPinnedStream: async (request) => {
+        const response = await fetch(request.url);
+        const body = new Uint8Array(await response.arrayBuffer());
+        let delivered = false;
+        return {
+          status: response.status, headers: {}, contentLength: body.length,
+          read: async () => {
+            if (delivered) return null;
+            delivered = true;
+            return body;
+          },
+          cancel() {},
+        };
+      },
+    },
   });
   createdRegistries.push(registry);
   let generationCurrent = true;
@@ -206,7 +228,7 @@ describe('refreshQualifiedConnectedAccount', () => {
       credentialRevision: nextCredentialRevision,
       result: {
         status: 'connected',
-        displayName: 'account-1',
+        displayName: 'ChatGPT',
       },
     });
 
@@ -236,7 +258,7 @@ describe('refreshQualifiedConnectedAccount', () => {
       refreshLeaseOwnerId: 'machine-1:runtime-1',
       metadata: {
         providerIdentity: { accountId: 'account-1' },
-        displayName: 'account-1',
+        displayName: 'ChatGPT',
         scopes: ['openid', 'profile', 'email', 'offline_access'],
       },
     });

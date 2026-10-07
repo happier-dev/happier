@@ -499,7 +499,7 @@ beforeEach(() => {
           definition: {
             connectedAccounts: [{
               purpose: 'primary',
-              service: 'openai-codex',
+              service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
               required: false,
               materializationKinds: ['files'],
             }],
@@ -925,7 +925,7 @@ describe('foreground admission composed real Provider authorization seam', () =>
     expect(resolveConnectedServiceAuthForSpawn).toHaveBeenCalledWith(
       expect.objectContaining({
         connectedServicesBindingsRaw: {
-          v: 1,
+          v: 2,
           bindingsByServiceId: {},
         },
       }),
@@ -1105,7 +1105,7 @@ describe('foreground admission composed real Provider authorization seam', () =>
       connectedServicesBindings: {
         v: 2 as const,
         bindingsByServiceId: {
-          'openai-codex': {
+          'happier.agent.codex/openai-codex': {
             source: 'connected' as const,
             selection: 'profile' as const,
             profileId: 'foreground-explicit',
@@ -1166,8 +1166,8 @@ describe('foreground admission composed real Provider authorization seam', () =>
       connectedAccountRequestAuthRegistry,
       resolveConnectedAccountRequestAuthHttpPort: () => 43123,
     });
+    if (!admitted.ok) throw new Error(JSON.stringify(admitted.error));
     expect(admitted.ok).toBe(true);
-    if (!admitted.ok) throw new Error(admitted.error.code);
     expect(activateSessionPurposeBindings).not.toHaveBeenCalled();
     expect(connectedAccountRequestAuthRegistry.activate).not.toHaveBeenCalled();
 
@@ -1313,7 +1313,7 @@ describe('foreground admission composed real Provider authorization seam', () =>
           connectedServicesBindings: {
             v: 2,
             bindingsByServiceId: {
-              'openai-codex': {
+              'happier.agent.codex/openai-codex': {
                 source: 'connected',
                 selection: 'profile',
                 profileId: 'legacy-account',
@@ -1327,8 +1327,8 @@ describe('foreground admission composed real Provider authorization seam', () =>
         }),
         resolveDaemonSpawnHooks: async () => null,
       });
+      if (!admitted.ok) throw new Error(JSON.stringify(admitted.error));
       expect(admitted.ok).toBe(true);
-      if (!admitted.ok) throw new Error(admitted.error.code);
       const claimed = await admitted.prepared.claim({
         canonicalSessionId: 'canonical-legacy-root',
         httpPort: 40123,
@@ -2210,6 +2210,7 @@ describe('foreground admission composed real Provider authorization seam', () =>
       resolveDaemonSpawnHooks,
     });
 
+    if (!admitted.ok) throw new Error(JSON.stringify(admitted.error));
     expect(admitted.ok).toBe(true);
     expect(resolveConnectedServiceAuthForSpawn).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -2217,7 +2218,7 @@ describe('foreground admission composed real Provider authorization seam', () =>
         connectedServicesBindingsRaw: {
           v: 2,
           bindingsByServiceId: {
-            'openai-codex': {
+            'happier.agent.codex/openai-codex': {
               source: 'connected',
               selection: 'profile',
               profileId: 'external-profile',
@@ -2262,7 +2263,7 @@ describe('foreground admission composed real Provider authorization seam', () =>
         const connectedServicesBindings = {
           v: 2,
           bindingsByServiceId: {
-            'openai-codex': {
+            'happier.agent.codex/openai-codex': {
               source: 'connected',
               selection: 'profile',
               profileId: 'foreground-explicit',
@@ -2283,8 +2284,8 @@ describe('foreground admission composed real Provider authorization seam', () =>
       },
       resolveDaemonSpawnHooks: async () => null,
     });
+    if (!admitted.ok) throw new Error(JSON.stringify(admitted.error));
     expect(admitted.ok).toBe(true);
-    if (!admitted.ok) throw new Error(admitted.error.code);
 
     boundaries.processIdentityAvailable = false;
     await expect(admitted.prepared.claim({
@@ -2303,78 +2304,6 @@ describe('foreground admission composed real Provider authorization seam', () =>
     expect(purposeBindingLeaseDispose).toHaveBeenCalledTimes(1);
     expect(boundaries.connectedServiceCleanupOnFailure).toHaveBeenCalledTimes(1);
     expect(boundaries.connectedServiceCleanupOnExit).not.toHaveBeenCalled();
-  });
-
-  it('carries exact-old bounded one-shot env without activating ongoing purpose or request-auth authority', async () => {
-    boundaries.connectedServiceChildEnvironmentMode = 'authEnv';
-    const activateSessionPurposeBindings = vi.fn(() => ({
-      subjectId: 'session:must-not-activate',
-      isCurrent: () => true,
-      resolvePurposeBinding: () => null,
-      listPurposeBindings: () => [],
-      dispose: vi.fn(),
-    }));
-    const connectedAccountRequestAuthRegistry = {
-      activate: vi.fn(),
-      retire: vi.fn(),
-    };
-    const admitted = await prepareForegroundAgentRuntimeAdmission(request({
-      profileId: undefined,
-      accountSettingsScopeKey: undefined,
-      accountSettingsVersion: undefined,
-      selection: undefined,
-      connectedServices: {
-        v: 1,
-        bindingsByServiceId: {
-          'openai-codex': {
-            source: 'connected',
-            selection: 'profile',
-            profileId: 'exact-old-one-shot',
-          },
-        },
-      },
-    }), {
-      activateSessionPurposeBindings,
-      resolveConnectedServiceAuthForSpawn: async () => ({
-        env: { LEGACY_CONNECTED_TOKEN: 'one-shot-token' },
-        cleanupOnFailure: vi.fn(),
-        cleanupOnExit: vi.fn(),
-        connectedServicesBindings: {
-          v: 2,
-          bindingsByServiceId: {
-            'openai-codex': {
-              source: 'connected',
-              selection: 'profile',
-              profileId: 'exact-old-one-shot',
-            },
-          },
-        },
-        qualifiedPurposeBindingSnapshot: null,
-        ongoingRuntimeRegistrationAllowed: false as const,
-      }),
-      resolveDaemonSpawnHooks: async () => null,
-      connectedAccountRequestAuthRegistry,
-      resolveConnectedAccountRequestAuthHttpPort: () => 43123,
-    });
-    expect(admitted.ok).toBe(true);
-    if (!admitted.ok) throw new Error(admitted.error.code);
-
-    const claimed = await admitted.prepared.claim({
-      canonicalSessionId: 'canonical-session-exact-old',
-      httpPort: 40123,
-      foregroundSatisfiedProfileSecretRequirementNames: [],
-    });
-    expect(claimed).toMatchObject({
-      ok: true,
-      environment: {
-        LEGACY_CONNECTED_TOKEN: 'one-shot-token',
-      },
-    });
-    expect(activateSessionPurposeBindings).not.toHaveBeenCalled();
-    expect(connectedAccountRequestAuthRegistry.activate).not.toHaveBeenCalled();
-    await admitted.prepared.cleanup();
-    expect(boundaries.connectedServiceCleanupOnExit).toHaveBeenCalledTimes(1);
-    expect(boundaries.connectedServiceCleanupOnFailure).not.toHaveBeenCalled();
   });
 
   it('refuses a Connected Services admission whose selected service is missing from the leased manifest projection', async () => {

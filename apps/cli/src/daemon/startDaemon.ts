@@ -251,7 +251,6 @@ import {
   createQualifiedConnectedAccountDaemonPersistence,
 } from './connectedServices/qualifiedConnectedAccountDaemonPersistence';
 import {
-  createRevisionedLegacyConnectedAccountMaterializationOwner,
   createQualifiedConnectedAccountEstablishedRuntimeOwner,
 } from './connectedServices/qualifiedConnectedAccountEstablishedRuntimeOwner';
 import {
@@ -1044,7 +1043,6 @@ export async function startDaemon(
           apiMachineForSessions
             ?.getSessionSyncPendingInputServerContractResult()
             ?? null,
-        legacyCredentialApi: api,
         secrets: createActiveAccountSettingsConnectedAccountSecrets({
           expectedScopeKey: resolveAccountSettingsScopeKey(credentials),
         }),
@@ -1072,14 +1070,6 @@ export async function startDaemon(
         configuration: connectedAccountPersistence.configuration,
         configurationOwner: connectedAccountConfigurationOwner,
       });
-    const revisionedLegacyConnectedAccountMaterializationOwner =
-      createRevisionedLegacyConnectedAccountMaterializationOwner({
-        reloadController: pluginReloadController,
-        credentials,
-        api,
-        getAccountEncryptionMode: () => api.getAccountEncryptionMode(),
-        configuration: connectedAccountPersistence.configuration,
-      });
     const teamCredentialDirectMaterialClient = createHttpTeamCredentialDirectMaterialClient({
       token: credentials.token,
       serverUrl: resolveServerHttpBaseUrl(),
@@ -1098,22 +1088,9 @@ export async function startDaemon(
       },
     });
     const connectedAccountPurposeBindingRuntime = createDaemonConnectedAccountPurposeBindingRuntime({
-        workerMachineId: machineId,
-      api,
+      workerMachineId: machineId,
       establishedRuntimeOwner: establishedConnectedAccountRuntimeOwner,
       openTeamDirect: teamCredentialDirectMaterialClient.open,
-      revisionedLegacyMaterializationOwner:
-        revisionedLegacyConnectedAccountMaterializationOwner,
-      resolveQualifiedConnectedAccountMaterializationTransport: (service) =>
-        resolveQualifiedConnectedAccountPeerOperationTransport({
-          snapshot: serverFeaturesSnapshotStore.getSnapshot(),
-          serverContract:
-            apiMachineForSessions
-              ?.getSessionSyncPendingInputServerContractResult()
-              ?? null,
-          service,
-          operation: 'one_shot_materialization',
-        }),
       resolveQualifiedConnectedAccountV4Support: () =>
         resolveQualifiedConnectedAccountAtomicV4Negotiation(
           serverFeaturesSnapshotStore.getSnapshot(),

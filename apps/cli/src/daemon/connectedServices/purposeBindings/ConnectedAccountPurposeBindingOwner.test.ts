@@ -5,6 +5,7 @@ import type {
   QualifiedConnectedAccountPurposeBindingTargetV1,
 } from '@happier-dev/protocol';
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { CONNECTED_ACCOUNT_METADATA_LIST_MAX_LIMIT } from '@/plugins/runtime/invocation/services/connectedAccounts';
 
 import {
   composeConnectedAccountSessionPurposeBindingSnapshot,
@@ -66,6 +67,7 @@ function createOwner(input: Readonly<{
     'resolveCredentialRevision'
   ];
   materializeAccount?: ConnectedAccountPurposeBindingOwnerDependencies['materializeAccount'];
+  materializeNative?: ConnectedAccountPurposeBindingOwnerDependencies['materializeNative'];
 }> = {}) {
   const store = input.store ?? memoryStore();
   const materializeAccount = vi.fn(input.materializeAccount ?? (async ({ account, request }) => {
@@ -97,6 +99,7 @@ function createOwner(input: Readonly<{
           }),
     resolveCredentialRevision: input.resolveCredentialRevision,
     materializeAccount,
+    materializeNative: input.materializeNative,
     async projectTargetAccounts() {
       throw new Error('target-scoped listing is outside this binding-lifecycle fixture');
     },
@@ -114,6 +117,98 @@ const authorized = {
 } as const;
 
 describe('ConnectedAccountPurposeBindingOwner', () => {
+  it('materializes an unbound native service without persisting credentials and keeps explicit accounts authoritative', async () => {
+    const materializeNative = vi.fn(async () => ({ kind: 'httpHeaders' as const, headers: { authorization: 'Bearer native-secret' } }));
+    const { owner, store } = createOwner({
+      materializeNative,
+      materializeAccount: async ({ account }) => ({ kind: 'httpHeaders', headers: { authorization: `Bearer ${account.accountId}` } }),
+    });
+    const input = { ...authorized, nativeService: service, request: { kind: 'httpHeaders' as const, origin: 'https://api.example.test', headerNames: ['authorization'] }, signal: new AbortController().signal };
+    await expect(owner.materialize(input)).resolves.toEqual({ kind: 'httpHeaders', headers: { authorization: 'Bearer native-secret' } });
+    expect(store.current()).toEqual({ v: 1, bindings: [] });
+    await owner.requestSelection({ ...authorized, reason: 'explicit', signal: input.signal });
+    await expect(owner.materialize(input)).resolves.toEqual({ kind: 'httpHeaders', headers: { authorization: 'Bearer fixed' } });
+    expect(materializeNative).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(store.current())).not.toContain('secret');
+  });
+
+  it('preserves failed explicit intent through ordinary reads and repeated native materialization until explicitly cleared', async () => {
+    let available = true;
+    const materializeNative = vi.fn(async () => ({ kind: 'environment' as const, env: { TOKEN: 'native-secret' } }));
+    const { owner, store } = createOwner({ materializeNative, resolveAvailable: () => available });
+    const signal = new AbortController().signal;
+    await owner.requestSelection({ ...authorized, reason: 'explicit', signal });
+    available = false;
+    const nativeInput = { ...authorized, nativeService: service, request: { kind: 'environment' as const, keys: ['TOKEN'] }, signal };
+    await expect(owner.materialize(nativeInput)).rejects.toMatchObject({ code: 'plugin_host_access_resource_not_selected' });
+    await expect(owner.listAccounts({ ...authorized, limit: CONNECTED_ACCOUNT_METADATA_LIST_MAX_LIMIT, signal })).rejects.toMatchObject({ code: 'plugin_host_access_resource_not_selected' });
+    await expect(owner.getBinding({ ...authorized, signal })).resolves.toBeNull();
+    await expect(owner.materialize({ ...authorized, request: nativeInput.request, signal })).rejects.toMatchObject({ code: 'plugin_host_access_resource_not_selected' });
+    await expect(owner.materialize(nativeInput)).rejects.toMatchObject({ code: 'plugin_host_access_resource_not_selected' });
+    expect(store.current().bindings).toHaveLength(1);
+    expect(materializeNative).not.toHaveBeenCalled();
+
+    // The Account Settings writer explicitly clears the user's durable selection.
+    await store.update((current) => ({ ...current, bindings: [] }), signal);
+    await expect(owner.materialize(nativeInput)).resolves.toEqual({ kind: 'environment', env: { TOKEN: 'native-secret' } });
+    expect(store.current().bindings).toEqual([]);
+  });
+
+  it('preserves explicit intent for a still-declared purpose across service-scope contraction', async () => {
+    const materializeNative = vi.fn(async () => ({ kind: 'environment' as const, env: { TOKEN: 'native-secret' } }));
+    const { owner, store } = createOwner({ materializeNative });
+    const signal = new AbortController().signal;
+    await owner.requestSelection({ ...authorized, reason: 'explicit', signal });
+    await owner.reconcileAuthorizedPurposes({
+      consumerScopes: [{ consumer: purpose.consumer, authorizedPurposes: [{ purpose, serviceRefs: [otherService] }] }],
+      signal,
+      publish: () => undefined,
+    });
+    const contracted = { ...authorized, serviceRefs: [otherService], signal };
+    await expect(owner.getBinding(contracted)).resolves.toBeNull();
+    await expect(owner.materialize({ ...contracted, nativeService: otherService, request: { kind: 'environment', keys: ['TOKEN'] } })).rejects.toMatchObject({ code: 'plugin_host_access_resource_not_selected' });
+    expect(store.current().bindings).toHaveLength(1);
+    expect(materializeNative).not.toHaveBeenCalled();
+  });
+
+  it('refuses a native result when an explicit binding appears while materialization is pending', async () => {
+    let finish!: () => void;
+    const materializeNative = vi.fn(async () => {
+      await new Promise<void>((resolve) => { finish = resolve; });
+      return { kind: 'environment' as const, env: { TOKEN: 'native-secret' } };
+    });
+    const { owner } = createOwner({ materializeNative });
+    const signal = new AbortController().signal;
+    const pending = owner.materialize({ ...authorized, nativeService: service, request: { kind: 'environment', keys: ['TOKEN'] }, signal });
+    const observed = pending.then(() => null, (error: unknown) => error);
+    await vi.waitFor(() => expect(materializeNative).toHaveBeenCalledOnce());
+    await owner.requestSelection({ ...authorized, reason: 'explicit', signal });
+    finish();
+    expect(await observed).toMatchObject({ code: 'plugin_host_access_resource_not_selected' });
+  });
+
+  it('refuses native materialization outside service authority or with account revision preconditions', async () => {
+    const materializeNative = vi.fn(async () => ({ kind: 'environment' as const, env: { TOKEN: 'native-secret' } }));
+    const { owner } = createOwner({ materializeNative });
+    const input = { ...authorized, request: { kind: 'environment' as const, keys: ['TOKEN'] }, signal: new AbortController().signal };
+    await expect(owner.materialize({ ...input, nativeService: otherService })).rejects.toMatchObject({ code: 'plugin_connected_account_binding_out_of_scope' });
+    await expect(owner.materialize({ ...input, nativeService: service, expectedAccount: { service, accountId: 'fixed' } })).rejects.toMatchObject({ code: 'plugin_connected_account_binding_out_of_scope' });
+    await expect(owner.materialize({ ...input, nativeService: service, credentialRevisionBasis: { expectedCredentialRevision: null, captureCredentialRevision() {} } })).rejects.toMatchObject({ code: 'plugin_connected_account_binding_out_of_scope' });
+    expect(materializeNative).not.toHaveBeenCalled();
+  });
+
+  it('refuses native disclosure from a retired explicitly unbound operation subject', async () => {
+    const materializeNative = vi.fn(async () => ({ kind: 'environment' as const, env: { TOKEN: 'native-secret' } }));
+    const { owner } = createOwner({ materializeNative });
+    const lease = owner.activatePurposeBindings({
+      subject: { kind: 'operation', operationId: 'native-operation', consumer: purpose.consumer, isCurrent: () => true },
+      purposes: [purpose], bindings: [],
+    });
+    lease.dispose();
+    await expect(owner.materialize({ ...authorized, exactPurposeBindingSubjectId: lease.subjectId, nativeService: service, request: { kind: 'environment', keys: ['TOKEN'] }, signal: new AbortController().signal })).rejects.toMatchObject({ code: 'plugin_host_access_resource_not_selected' });
+    expect(materializeNative).not.toHaveBeenCalled();
+  });
+
   it('materializes each widget Resource through that viewer own purpose selection and refuses a missing or revoked choice', async () => {
     const widgetPurpose = { consumer: { pluginId: 'acme.metrics', localId: 'metrics' }, purpose: 'read' };
     const viewers = await Promise.all(['A', 'B'].map(async accountId => {
@@ -1001,7 +1096,7 @@ describe('ConnectedAccountPurposeBindingOwner', () => {
     }]);
   });
 
-  it('revalidates stale-read cleanup so it cannot erase a later same-target reselection', async () => {
+  it('revalidates an unavailable target so a later same-target reselection can resolve', async () => {
     let resolveCount = 0;
     let markStaleResolveStarted!: () => void;
     const staleResolveStarted = new Promise<void>((resolve) => {
@@ -1355,7 +1450,7 @@ describe('ConnectedAccountPurposeBindingOwner', () => {
     expect(listener).toHaveBeenCalledOnce();
   });
 
-  it('compare-and-deletes a persisted binding when its account is removed', async () => {
+  it('retains a persisted selection when its account is unavailable', async () => {
     let available = true;
     const { owner, store } = createOwner({ resolveAvailable: () => available });
     const signal = new AbortController().signal;
@@ -1364,7 +1459,7 @@ describe('ConnectedAccountPurposeBindingOwner', () => {
 
     available = false;
     await expect(owner.getBinding({ ...authorized, signal })).resolves.toBeNull();
-    expect(store.current().bindings).toEqual([]);
+    expect(store.current().bindings).toHaveLength(1);
   });
 
   it('does not leave a selected target persisted when immediate resolution fails', async () => {
@@ -1411,7 +1506,7 @@ describe('ConnectedAccountPurposeBindingOwner', () => {
     await expect(owner.getBinding({ ...authorized, signal })).resolves.toBeNull();
   });
 
-  it('preserves continuously compatible purposes while deleting an incompatible service scope in the same owner update', async () => {
+  it('preserves selections for still-declared purposes when their service scope changes', async () => {
     const store = memoryStore();
     const first = createOwner({ store });
     const secondPurpose = {
@@ -1448,6 +1543,12 @@ describe('ConnectedAccountPurposeBindingOwner', () => {
     });
 
     expect(store.current().bindings).toEqual([{
+      purpose: secondPurpose,
+      target: {
+        kind: 'account',
+        account: { service, accountId: 'fixed' },
+      },
+    }, {
       purpose,
       target: {
         kind: 'account',
@@ -1661,7 +1762,7 @@ describe('ConnectedAccountPurposeBindingOwner', () => {
     expect(store.current().bindings).toEqual([]);
   });
 
-  it('returns unbound after a durable service-scope shrink and compare-deletes only the exact stale target', async () => {
+  it('refuses a durable selection outside the current service scope without mutating it', async () => {
     const store = memoryStore();
     const initial = createOwner({ store });
     const signal = new AbortController().signal;
@@ -1676,64 +1777,20 @@ describe('ConnectedAccountPurposeBindingOwner', () => {
       serviceRefs: [otherService],
       signal,
     })).resolves.toBeNull();
-    expect(store.current().bindings).toEqual([]);
-
-    await initial.owner.requestSelection({
-      ...authorized,
-      reason: 'Choose the original account again',
-      signal,
-    });
-    let replaceBeforeDelete = true;
-    const interleavingStore: ReturnType<typeof memoryStore> = {
-      ...store,
-      async update(mutate, updateSignal) {
-        if (replaceBeforeDelete) {
-          replaceBeforeDelete = false;
-          await store.update((current) => ({
-            v: 1,
-            bindings: current.bindings.map((binding) => ({
-              ...binding,
-              target: {
-                kind: 'account' as const,
-                account: {
-                  service: otherService,
-                  accountId: 'replacement',
-                },
-              },
-            })),
-          }), updateSignal);
-        }
-        return await store.update(mutate, updateSignal);
-      },
-    };
-    const replacement = createOwner({ store: interleavingStore });
-
-    await expect(replacement.owner.getBinding({
-      purpose,
-      serviceRefs: [otherService],
-      signal,
-    })).resolves.toBeNull();
     expect(store.current().bindings).toEqual([{
       purpose,
       target: {
         kind: 'account',
-        account: {
-          service: otherService,
-          accountId: 'replacement',
-        },
+        account: { service, accountId: 'fixed' },
       },
     }]);
-    await expect(replacement.owner.getBinding({
-      purpose,
-      serviceRefs: [otherService],
-      signal,
-    })).resolves.toEqual({
+    await expect(initial.owner.getBinding({ ...authorized, signal })).resolves.toEqual({
       purpose: purpose.purpose,
-      service: otherService,
-      account: { service: otherService, accountId: 'replacement' },
+      service,
+      account: { service, accountId: 'fixed' },
       target: {
         kind: 'account',
-        displayName: 'Account replacement',
+        displayName: 'Account fixed',
       },
     });
   });

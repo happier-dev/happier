@@ -178,22 +178,6 @@ export function resolveQualifiedConnectedAccountAtomicV4Negotiation(
     return "indeterminate";
 }
 
-function resolveLegacyServiceId(
-    service: QualifiedConnectedAccountServiceRef,
-): BuiltInLegacyConnectedServiceId | null {
-    for (const [serviceId, compatibility] of Object.entries(
-        BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
-    )) {
-        if (
-            compatibility.service.pluginId === service.pluginId
-            && compatibility.service.localId === service.localId
-        ) {
-            return serviceId as BuiltInLegacyConnectedServiceId;
-        }
-    }
-    return null;
-}
-
 function isExactLegacyUnfencedServer(
     snapshot: CliServerFeaturesSnapshot | undefined,
     serverContract:
@@ -229,16 +213,9 @@ export function resolveQualifiedConnectedAccountPeerClass(
     if (exactLegacy && negotiation === "advertised") {
         return "indeterminate";
     }
-    if (exactLegacy) return "exact_v0_2_1";
     if (negotiation === "advertised") return "advertised_v4";
-    if (negotiation === "indeterminate") return "indeterminate";
-    if (
-        snapshot?.status === "ready"
-        && snapshot.features.capabilities.connectedServices
-            ?.credentialDelete?.revisionGuard === true
-    ) {
-        return "revisioned_v2_v3";
-    }
+    // Retained 0.2 credential content is opened by the current V4 reader.
+    // Old-server wire evidence does not authorize a scalar transport.
     return "indeterminate";
 }
 
@@ -270,11 +247,8 @@ export type QualifiedConnectedAccountPeerOperationTransport =
     }>;
 
 /**
- * Canonical peer-class/operation negotiation owner.
- *
- * A known service with no operation at all for the selected peer is not an
- * accepted peer identity. A service accepted for other operations receives
- * the narrower operation-unsupported result.
+ * Canonical current transport owner. Retained-content compatibility never
+ * selects an older server's scalar wire protocol.
  */
 export function resolveQualifiedConnectedAccountPeerOperationTransport(
     params: Readonly<{
@@ -285,48 +259,26 @@ export function resolveQualifiedConnectedAccountPeerOperationTransport(
         operation: BuiltInLegacyConnectedAccountOperation;
     }>,
 ): QualifiedConnectedAccountPeerOperationTransport {
-    const service =
-        QualifiedConnectedAccountServiceRefSchema.parse(params.service);
+    return resolveCurrentQualifiedConnectedAccountTransport(params);
+}
+
+function resolveCurrentQualifiedConnectedAccountTransport(
+    params: Readonly<{
+        snapshot: CliServerFeaturesSnapshot | undefined;
+        serverContract?: SessionSyncPendingInputServerContractResult | null;
+        service: QualifiedConnectedAccountServiceRef;
+    }>,
+): Readonly<{ kind: "v4" }> {
+    QualifiedConnectedAccountServiceRefSchema.parse(params.service);
     const peerClass =
         resolveQualifiedConnectedAccountPeerClass(
             params.snapshot,
             params.serverContract,
         );
     if (peerClass === "advertised_v4") return { kind: "v4" };
-    if (peerClass === "indeterminate") {
-        throw new QualifiedConnectedAccountCompatibilityError(
-            "connected_account_capability_indeterminate",
-        );
-    }
-    const serviceId = resolveLegacyServiceId(service);
-    if (!serviceId) {
-        throw new QualifiedConnectedAccountCompatibilityError(
-            "connected_account_service_identity_unsupported",
-        );
-    }
-    const compatibility =
-        BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[
-            serviceId
-        ];
-    const peerOperations: readonly BuiltInLegacyConnectedAccountOperation[] =
-        peerClass === "exact_v0_2_1"
-            ? compatibility.peerOperations.exactV0_2_1
-            : compatibility.peerOperations.revisionedV2V3;
-    if (peerOperations.length === 0) {
-        throw new QualifiedConnectedAccountCompatibilityError(
-            "connected_account_service_identity_unsupported",
-        );
-    }
-    if (!peerOperations.includes(params.operation)) {
-        throw new QualifiedConnectedAccountCompatibilityError(
-            "connected_account_legacy_operation_unsupported",
-        );
-    }
-    return {
-        kind: "legacy",
-        peerClass,
-        serviceId,
-    };
+    throw new QualifiedConnectedAccountCompatibilityError(
+        "connected_account_capability_indeterminate",
+    );
 }
 
 type QualifiedConnectedAccountLegacyCapableOperationKind =
@@ -336,8 +288,10 @@ export type QualifiedConnectedAccountNegotiatedOperation =
     | Readonly<{ kind: "account_list" }>
     | Readonly<{
         kind: QualifiedConnectedAccountLegacyCapableOperationKind;
-        configurationState: "unconfigured" | "configured";
-        authenticationModeCardinality: "single" | "multiple";
+        // Current V4 admission depends on the advertised transport, not the
+        // retired scalar projection's configuration or mode-cardinality limits.
+        configurationState?: "unconfigured" | "configured";
+        authenticationModeCardinality?: "single" | "multiple";
     }>
     | Readonly<{
         kind:
@@ -364,47 +318,11 @@ export function resolveQualifiedConnectedAccountOperationTransport(
         operation: QualifiedConnectedAccountNegotiatedOperation;
     }>,
 ): QualifiedConnectedAccountOperationTransport {
-    const peerClass =
-        resolveQualifiedConnectedAccountPeerClass(
-            params.snapshot,
-            params.serverContract,
-        );
-    if (peerClass === "advertised_v4") {
-        return { kind: "v4" };
-    }
-    if (peerClass === "indeterminate") {
-        throw new QualifiedConnectedAccountCompatibilityError(
-            "connected_account_capability_indeterminate",
-        );
-    }
-    if (params.operation.kind === "account_list") {
-        return resolveQualifiedConnectedAccountPeerOperationTransport({
-            snapshot: params.snapshot,
-            serverContract: params.serverContract,
-            service: params.service,
-            operation: "account_list",
-        });
-    }
-    if (
-        !("configurationState" in params.operation)
-        || params.operation.configurationState !== "unconfigured"
-        || params.operation.authenticationModeCardinality !== "single"
-    ) {
-        throw new QualifiedConnectedAccountCompatibilityError(
-            "connected_account_legacy_operation_unsupported",
-        );
-    }
-    return resolveQualifiedConnectedAccountPeerOperationTransport({
-        snapshot: params.snapshot,
-        serverContract: params.serverContract,
-        service: params.service,
-        operation: params.operation.kind,
-    });
+    return resolveCurrentQualifiedConnectedAccountTransport(params);
 }
 
 export async function executeQualifiedConnectedAccountNegotiatedOperation<
     V4Result,
-    LegacyResult,
 >(
     params: Readonly<{
         snapshot: CliServerFeaturesSnapshot | undefined;
@@ -413,16 +331,9 @@ export async function executeQualifiedConnectedAccountNegotiatedOperation<
         service: QualifiedConnectedAccountServiceRef;
         operation: QualifiedConnectedAccountNegotiatedOperation;
         executeV4(): Promise<V4Result>;
-        executeLegacy(
-            serviceId: BuiltInLegacyConnectedServiceId,
-        ): Promise<LegacyResult>;
     }>,
-): Promise<V4Result | LegacyResult> {
-    const transport =
-        resolveQualifiedConnectedAccountOperationTransport(params);
-    if (transport.kind === "legacy") {
-        return await params.executeLegacy(transport.serviceId);
-    }
+): Promise<V4Result> {
+    resolveQualifiedConnectedAccountOperationTransport(params);
     try {
         return await params.executeV4();
     } catch (error) {

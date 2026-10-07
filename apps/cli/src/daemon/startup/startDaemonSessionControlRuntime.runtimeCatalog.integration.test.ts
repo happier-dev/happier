@@ -6052,7 +6052,16 @@ describe('startDaemonSessionControlRuntime', () => {
         }
     });
 
-    it('passes the qualified V4 group API to automatic auth-generation application', async () => {
+    it('normalizes legacy credential-update ingress before the real qualified auth-generation application', async () => {
+        const actualSwitchOwner = await vi.importActual<typeof import('../connectedServices/sessionAuthSwitch/switchSessionConnectedServiceAuth')>(
+            '../connectedServices/sessionAuthSwitch/switchSessionConnectedServiceAuth',
+        );
+        applyConnectedServiceAuthGenerationToTrackedSessionMock.mockImplementationOnce(
+            actualSwitchOwner.applyConnectedServiceAuthGenerationToTrackedSession,
+        );
+        // The external Account API refuses the missing group; domain normalization,
+        // catalog admission and auth-generation application remain real.
+        const groupRead = vi.spyOn(axios, 'get').mockResolvedValue({ status: 404, data: null });
         const tracked: TrackedSession = {
             startedBy: 'daemon',
             happySessionId: 'sess-qualified-generation-apply',
@@ -6127,7 +6136,7 @@ describe('startDaemonSessionControlRuntime', () => {
                         reason: 'account_changed',
                         executionAuthority: 'runtime_recovery',
                     }),
-            ).resolves.toEqual({ status: 'hot_applied' });
+            ).resolves.toEqual({ status: 'failed', errorCode: 'group_missing' });
 
             expect(applyConnectedServiceAuthGenerationToTrackedSessionMock)
                 .toHaveBeenCalledWith(expect.objectContaining({
@@ -6136,7 +6145,9 @@ describe('startDaemonSessionControlRuntime', () => {
                         listAccounts: expect.any(Function),
                     }),
                 }));
+            expect(groupRead).toHaveBeenCalledWith(expect.stringContaining('/v4/connect/qualified/group?'), expect.anything());
         } finally {
+            groupRead.mockRestore();
             await runtime.stopControlServer();
         }
     });

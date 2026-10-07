@@ -1,7 +1,9 @@
 import type { ConnectedAccountServiceKey, ConnectedServiceCredentialRevisionV1 } from '@happier-dev/protocol';
+import type { ConnectedServiceRuntimeTarget } from './runtimeRegistry/target';
 
 export type ConnectedServiceDaemonAuthBridgeRefreshRequest = Readonly<{
-  sessionId: string;
+  sessionId?: string;
+  runId?: string;
   refreshAttemptId?: string;
   selection: unknown;
   forceRefresh: boolean;
@@ -19,5 +21,11 @@ export type ConnectedServiceDaemonAuthBridgeRegistration = Readonly<{
   serviceId: ConnectedAccountServiceKey;
   refresh: (
     request: ConnectedServiceDaemonAuthBridgeRefreshRequest,
+    context?: Readonly<{
+      target: ConnectedServiceRuntimeTarget;
+      authority: object;
+      isCurrent(): boolean;
+      acceptSettledCredentialRevision?(revision: ConnectedServiceCredentialRevisionV1): ConnectedServiceRuntimeTarget | null;
+    }>,
   ) => Promise<ConnectedServiceDaemonAuthBridgeRefreshResult>;
 }>;

@@ -436,6 +436,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                 ...(opts.happierSessionId ? { happierSessionId: opts.happierSessionId } : {}),
                 ...(opts.sessionInteractionHost ? { sessionInteractionHost: opts.sessionInteractionHost } : {}),
                 ...(opts.sessionOwnedRunScope ? { sessionOwnedRunScope: opts.sessionOwnedRunScope } : {}),
+                ...(connectedServicesEnv ? { connectedServiceRuntimeAuthRefresh: connectedServicesEnv.refreshRuntimeAuth } : {}),
                 ...(Object.keys(isolationEnv).length > 0
                     || (providerLaunch?.unsetEnvKeys.length ?? 0) > 0
                     ? {

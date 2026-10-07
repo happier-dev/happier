@@ -43,7 +43,8 @@ describe('CLI widget existing viewer purpose selection', () => {
             const request = { ref: { surface: { serverId: 'home', accountId, owner: { kind: 'home' as const } }, instanceId: 'copy' },
                 instance: { v: 1 as const, id: 'copy', definition: { kind: 'installed' as const, surface }, bindings: { connection: { kind: 'viewer' as const, purpose: 'read' } } }, context: { surface: 'cli' as const } };
             return { selected, request, resolve: () => deps.widgetInputs!.resolve(request),
-                pin: (value: typeof selected) => deps.widgetInputs!.resolve({ ...request,
+                pin: (value: typeof selected, shared = false) => deps.widgetInputs!.resolve({ ...request,
+                    ref: { ...request.ref, surface: { ...request.ref.surface, owner: shared ? { kind: 'sessionBoard', sessionId: 'shared' } : request.ref.surface.owner } },
                     instance: { ...request.instance, bindings: { connection: { kind: 'value', value } } }, admission: 'configuration' }),
                 unrelatedService: () => {
                     const other = { service: { ...service, localId: 'other-cloud' }, accountId: selected.accountId };
@@ -54,6 +55,7 @@ describe('CLI widget existing viewer purpose selection', () => {
                 revoke: () => { profile = AccountProfileSchema.parse({ ...profile, connectedAccountsV4: [{ ...profile.connectedAccountsV4[0], status: 'needs_reauth' }] }); },
                 clear: () => { purposeBindings = { v: 1, bindings: [] }; },
                 retire: () => { retired = true; },
+                retireAccount: () => { profile = AccountProfileSchema.parse({ ...profile, id: 'retired-account' }); },
                 group: () => {
                     profile = AccountProfileSchema.parse({ ...profile, connectedAccountGroupsV4: [{ v: 1, ref: { service, groupId: 'default' },
                         incarnation: 'viewer-group', displayName: 'Default', policy: {}, activeConnectedAccountId: selected.accountId, generation: 1, runtimeStateRevision: 1,
@@ -70,6 +72,7 @@ describe('CLI widget existing viewer purpose selection', () => {
         expect(await a.resolve()).toEqual({ status: 'ready', input: { connection: a.selected } });
         expect(await b.resolve()).toEqual({ status: 'ready', input: { connection: b.selected } });
         expect(await b.pin(b.selected)).toEqual({ status: 'ready', input: { connection: b.selected } });
+        expect(await b.pin(b.selected, true)).toMatchObject({ status: 'denied' });
         expect(await b.pin(a.selected)).toMatchObject({ status: 'denied' });
         expect(await b.pin(b.unrelatedService())).toMatchObject({ status: 'invalid', fields: [{ reasonCode: 'widget_input_option_unavailable' }] });
         expect(await b.draft(a.selected)).toEqual({ status: 'ready', input: { connection: b.selected } });
@@ -81,5 +84,8 @@ describe('CLI widget existing viewer purpose selection', () => {
         expect(await a.pin(a.selected)).toEqual({ status: 'ready', input: { connection: a.selected } });
         expect(await a.draft(b.selected)).toMatchObject({ status: 'selection_required', fields: [{ reasonCode: 'widget_viewer_connection_missing' }] });
         b.retire(); expect(await b.resolve()).toMatchObject({ status: 'unavailable', fields: [{ reasonCode: 'widget_viewer_purpose_undeclared' }] });
+        a.retireAccount();
+        expect(await a.resolve()).toMatchObject({ status: 'selection_required' });
+        expect(await a.pin(a.selected)).toMatchObject({ status: 'denied' });
     });
 });

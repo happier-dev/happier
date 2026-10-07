@@ -1,13 +1,9 @@
-import { PluginDiagnosticDataV1Schema } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
-import { ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
-import { ProviderAccountSubscriptionV1Schema } from '@happier-dev/protocol/connect/accountSubscription';
 import type {
     ConnectedAccountHealthResult as PluginConnectedAccountHealthResult,
     ConnectedAccountMaterialization as PluginConnectedAccountMaterialization,
     ConnectedAccountRuntime as PluginConnectedAccountRuntime,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 
-import { clonePluginPlainData } from '../plainData';
 import type {
     ConnectedAccountRuntimeEstablishedOperation,
     ConnectedAccountRuntimeEstablishedResult,
@@ -19,37 +15,6 @@ type PluginConnectedAccountRefreshResult = Awaited<
 type PluginConnectedAccountRevocationResult = Awaited<
     ReturnType<PluginConnectedAccountRuntime['revoke']>
 >;
-type PluginConnectedAccountQuotaSnapshot = Awaited<
-    ReturnType<NonNullable<PluginConnectedAccountRuntime['quota']>>
->;
-type RecoveryFacet = NonNullable<PluginConnectedAccountRuntime['recoveryCredits']>;
-type RecoveryInventory = Awaited<ReturnType<RecoveryFacet['read']>>;
-type RecoveryOutcome = Awaited<ReturnType<RecoveryFacet['consume']>>;
-
-function snapshotRecoveryResult(raw: unknown, operation: 'recoveryCredits.read' | 'recoveryCredits.consume'): RecoveryInventory | RecoveryOutcome | null {
-    const value = cloneStrictJsonResult(raw, operation);
-    if (operation === 'recoveryCredits.consume') {
-        const result = readStrictConnectedAccountProducerRecord(value, ['status'], ['status']);
-        if (!result || !['consumed', 'already_consumed', 'not_available', 'nothing_to_reset'].includes(String(result.status))) return null;
-        return Object.freeze({ status: result.status as RecoveryOutcome['status'] });
-    }
-    const result = readStrictConnectedAccountProducerRecord(value, ['observedAtMs', 'availableCount', 'credits'], ['observedAtMs', 'availableCount', 'credits']);
-    if (!result || !Number.isSafeInteger(result.observedAtMs) || Number(result.observedAtMs) < 0
-        || !Number.isSafeInteger(result.availableCount) || Number(result.availableCount) < 0 || !Array.isArray(result.credits)) return null;
-    const credits: RecoveryInventory['credits'][number][] = [];
-    const ids = new Set<string>();
-    for (const rawCredit of result.credits) {
-        const credit = readStrictConnectedAccountProducerRecord(rawCredit, ['providerCreditId', 'status', 'expiresAtMs'], ['providerCreditId', 'status']);
-        if (!credit || typeof credit.providerCreditId !== 'string'
-            || !ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1Schema.shape.providerCreditId.unwrap().safeParse(credit.providerCreditId).success
-            || ids.has(credit.providerCreditId.trim()) || (credit.status !== 'available' && credit.status !== 'unavailable')
-            || (credit.expiresAtMs !== undefined && (!Number.isSafeInteger(credit.expiresAtMs) || Number(credit.expiresAtMs) < 0))) return null;
-        ids.add(credit.providerCreditId.trim());
-        credits.push(Object.freeze({ providerCreditId: credit.providerCreditId.trim(), status: credit.status,
-            ...(credit.expiresAtMs === undefined ? {} : { expiresAtMs: Number(credit.expiresAtMs) }) }));
-    }
-    return Object.freeze({ observedAtMs: Number(result.observedAtMs), availableCount: Number(result.availableCount), credits: Object.freeze(credits) });
-}
 
 export type ConnectedAccountProducerResultErrorCode =
     | 'connected_account_producer_result_invalid'
@@ -74,14 +39,6 @@ export class ConnectedAccountProducerResultError extends Error {
     }
 }
 
-function invalidResult(
-    operation: ConnectedAccountRuntimeEstablishedOperation['kind'],
-): ConnectedAccountProducerResultError {
-    return new ConnectedAccountProducerResultError(
-        'connected_account_producer_result_invalid',
-        operation,
-    );
-}
 
 export function staleConnectedAccountProducerResult(
     operation: ConnectedAccountRuntimeEstablishedOperation['kind'],
@@ -92,56 +49,7 @@ export function staleConnectedAccountProducerResult(
     );
 }
 
-export function readStrictConnectedAccountProducerRecord(
-    value: unknown,
-    allowedKeys: readonly string[] | null,
-    requiredKeys: readonly string[],
-): Readonly<Record<string, unknown>> | null {
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-        return null;
-    }
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) return null;
-    const keys = Reflect.ownKeys(value);
-    if (
-        keys.some((key) => (
-            typeof key !== 'string'
-            || (allowedKeys !== null && !allowedKeys.includes(key))
-        ))
-        || requiredKeys.some((key) => !keys.includes(key))
-    ) {
-        return null;
-    }
-    const output: Record<string, unknown> =
-        Object.create(null) as Record<string, unknown>;
-    for (const key of keys as string[]) {
-        const property = Object.getOwnPropertyDescriptor(value, key);
-        if (
-            !property
-            || !property.enumerable
-            || !('value' in property)
-        ) {
-            return null;
-        }
-        Object.defineProperty(output, key, {
-            value: property.value,
-            enumerable: true,
-            writable: false,
-            configurable: false,
-        });
-    }
-    return Object.freeze(output);
-}
 
-function cloneStrictJsonResult(
-    value: unknown,
-    operation: ConnectedAccountRuntimeEstablishedOperation['kind'],
-): unknown {
-    return clonePluginPlainData(value, {
-        path: `Connected Account ${operation} result`,
-        invalid: () => invalidResult(operation),
-    });
-}
 
 type RedactConnectedAccountDiagnosticText = (value: string) => string;
 
@@ -151,10 +59,8 @@ type RedactConnectedAccountDiagnosticDetailsTask = Readonly<{
 }>;
 
 /**
- * The surrounding diagnostic has already passed the Protocol schema before
- * this runs. This is intentionally a redaction projection, not another JSON
- * validator: the existing strict clone and schema remain the only admission
- * owner for Connected Account diagnostics.
+ * Project diagnostic text through the credential-redaction owner before it
+ * leaves the invocation. Wire readers retain their own schema admission.
  */
 function redactConnectedAccountDiagnosticDetails(
     value: unknown,
@@ -227,456 +133,36 @@ function redactConnectedAccountDiagnosticDetails(
     return output;
 }
 
-export function cloneBoundedConnectedAccountDiagnostic(
+function snapshotConnectedAccountDiagnostic(
     value: unknown,
     redactDiagnosticText?: RedactConnectedAccountDiagnosticText,
 ): Readonly<Record<string, unknown>> | null {
     try {
-        const snapshot = clonePluginPlainData(value, {
-            path: 'Connected Account diagnostic',
-            invalid: () => new TypeError('Invalid Connected Account diagnostic'),
+        const snapshot = structuredClone(value) as Readonly<Record<string, unknown>>;
+        return Object.freeze({
+            ...snapshot,
+            ...(redactDiagnosticText === undefined ? {} : {
+                ...(typeof snapshot.message === 'string' ? { message: redactDiagnosticText(snapshot.message) } : {}),
+                ...(snapshot.details === undefined ? {} : {
+                    details: redactConnectedAccountDiagnosticDetails(snapshot.details, redactDiagnosticText),
+                }),
+            }),
         });
-        const parsed = PluginDiagnosticDataV1Schema.safeParse(snapshot);
-        if (!parsed.success) return null;
-        const redacted = redactDiagnosticText === undefined
-            ? parsed.data
-            : {
-                ...parsed.data,
-                ...(parsed.data.message === undefined
-                    ? {}
-                    : { message: redactDiagnosticText(parsed.data.message) }),
-                ...(parsed.data.details === undefined
-                    ? {}
-                    : {
-                        details: redactConnectedAccountDiagnosticDetails(
-                            parsed.data.details,
-                            redactDiagnosticText,
-                        ),
-                    }),
-            };
-        const redactedParsed = PluginDiagnosticDataV1Schema.safeParse(redacted);
-        if (!redactedParsed.success) return null;
-        return clonePluginPlainData(redactedParsed.data, {
-            path: 'Connected Account diagnostic',
-            invalid: () => new TypeError('Invalid Connected Account diagnostic'),
-        }) as Readonly<Record<string, unknown>>;
     } catch {
+        // An unavailable redaction projection must never publish credential text.
         return null;
     }
 }
 
-/**
- * Authentication-result shape and outcome semantics remain with the attempt
- * owner. While the invocation's credential-redaction scope is still active,
- * this producer boundary replaces an admitted diagnostic with the canonical
- * diagnostic snapshot. Results without a safe own diagnostic reach that owner
- * unchanged; an admitted diagnostic that cannot be redacted fails closed.
- */
 export function redactConnectedAccountAuthenticationResultDiagnostic(
     value: unknown,
     redactDiagnosticText: RedactConnectedAccountDiagnosticText,
 ): unknown {
-    const record = readStrictConnectedAccountProducerRecord(value, null, []);
-    if (
-        record === null
-        || !Object.prototype.hasOwnProperty.call(record, 'diagnostic')
-    ) {
-        return value;
-    }
-    const diagnostic = cloneBoundedConnectedAccountDiagnostic(
-        record.diagnostic,
-        redactDiagnosticText,
-    );
-    if (diagnostic === null) {
-        throw new TypeError('Connected Account diagnostic redaction failed');
-    }
-    const output: Record<string, unknown> =
-        Object.create(null) as Record<string, unknown>;
-    for (const key of Reflect.ownKeys(record)) {
-        if (typeof key !== 'string') {
-            throw new TypeError('Connected Account authentication result has a non-string key');
-        }
-        Object.defineProperty(output, key, {
-            value: key === 'diagnostic' ? diagnostic : record[key],
-            enumerable: true,
-            writable: false,
-            configurable: false,
-        });
-    }
-    return Object.freeze(output);
-}
-
-function hasExactKeys(
-    value: Readonly<Record<string, unknown>>,
-    keys: readonly string[],
-): boolean {
-    const expected = new Set(keys);
-    const actual = Reflect.ownKeys(value);
-    return actual.length === expected.size
-        && actual.every((key) => (
-            typeof key === 'string' && expected.has(key)
-        ));
-}
-
-function isBoundedString(
-    value: unknown,
-    maxLength = 4_096,
-): value is string {
-    return typeof value === 'string'
-        && value.length > 0
-        && value.length <= maxLength;
-}
-
-function snapshotScopes(
-    value: unknown,
-): readonly string[] | null {
-    if (
-        !Array.isArray(value)
-        || value.length > 128
-        || !value.every((scope) => isBoundedString(scope, 256))
-        || new Set(value).size !== value.length
-    ) {
-        return null;
-    }
-    return Object.freeze([...(value as string[])]);
-}
-
-function snapshotHealthResult(
-    raw: unknown,
-    operation: 'refresh' | 'status',
-    allowOutcomeUnknown: boolean,
-    redactDiagnosticText?: RedactConnectedAccountDiagnosticText,
-): PluginConnectedAccountRefreshResult | null {
-    const snapshot = cloneStrictJsonResult(raw, operation);
-    const record = readStrictConnectedAccountProducerRecord(
-        snapshot,
-        ['status', 'displayName', 'scopes', 'diagnostic'],
-        ['status'],
-    );
-    if (!record || typeof record.status !== 'string') return null;
-    if (allowOutcomeUnknown && record.status === 'outcomeUnknown') {
-        if (!hasExactKeys(record, ['status', 'diagnostic'])) return null;
-        const diagnostic =
-            cloneBoundedConnectedAccountDiagnostic(
-                record.diagnostic,
-                redactDiagnosticText,
-            );
-        return diagnostic
-            ? Object.freeze({
-                status: 'outcomeUnknown' as const,
-                diagnostic,
-            }) as PluginConnectedAccountRefreshResult
-            : null;
-    }
-    if (
-        record.status !== 'connected'
-        && record.status !== 'expired'
-        && record.status !== 'reconnectRequired'
-        && record.status !== 'unavailable'
-        && record.status !== 'rejected'
-    ) {
-        return null;
-    }
-    if (
-        record.status === 'rejected'
-        && !hasExactKeys(record, ['status', 'diagnostic'])
-    ) {
-        return null;
-    }
-    if (
-        record.displayName !== undefined
-        && !isBoundedString(record.displayName, 512)
-    ) {
-        return null;
-    }
-    const scopes = record.scopes === undefined
-        ? undefined
-        : snapshotScopes(record.scopes);
-    if (record.scopes !== undefined && !scopes) return null;
-    const diagnostic = record.diagnostic === undefined
-        ? undefined
-        : cloneBoundedConnectedAccountDiagnostic(
-            record.diagnostic,
-            redactDiagnosticText,
-        ) ?? undefined;
-    if (record.status === 'rejected' && diagnostic === undefined) {
-        return null;
-    }
-    return Object.freeze({
-        status: record.status,
-        ...(record.displayName === undefined
-            ? {}
-            : { displayName: record.displayName }),
-        ...(scopes === undefined ? {} : { scopes }),
-        ...(diagnostic === undefined ? {} : { diagnostic }),
-    }) as PluginConnectedAccountHealthResult;
-}
-
-function snapshotRevocationResult(
-    raw: unknown,
-    redactDiagnosticText?: RedactConnectedAccountDiagnosticText,
-): PluginConnectedAccountRevocationResult | null {
-    const snapshot = cloneStrictJsonResult(raw, 'revoke');
-    const record = readStrictConnectedAccountProducerRecord(
-        snapshot,
-        ['status', 'diagnostic'],
-        ['status'],
-    );
-    if (!record || typeof record.status !== 'string') return null;
-    if (
-        record.status !== 'remoteRevoked'
-        && record.status !== 'remoteUnsupported'
-        && record.status !== 'outcomeUnknown'
-    ) {
-        return null;
-    }
-    const diagnostic = record.diagnostic === undefined
-        ? undefined
-        : cloneBoundedConnectedAccountDiagnostic(
-            record.diagnostic,
-            redactDiagnosticText,
-        ) ?? undefined;
-    if (record.status === 'outcomeUnknown' && diagnostic === undefined) {
-        return null;
-    }
-    return Object.freeze({
-        status: record.status,
-        ...(diagnostic === undefined ? {} : { diagnostic }),
-    }) as PluginConnectedAccountRevocationResult;
-}
-
-function snapshotQuotaResult(
-    raw: unknown,
-): PluginConnectedAccountQuotaSnapshot | null {
-    const snapshot = cloneStrictJsonResult(raw, 'quota');
-    const record = readStrictConnectedAccountProducerRecord(
-        snapshot,
-        ['observedAtMs', 'limits', 'subscription'],
-        ['observedAtMs', 'limits'],
-    );
-    if (
-        !record
-        || !Number.isSafeInteger(record.observedAtMs)
-        || Number(record.observedAtMs) < 0
-        || !Array.isArray(record.limits)
-        || record.limits.length > 128
-    ) {
-        return null;
-    }
-    const subscription = record.subscription === undefined
-        ? undefined
-        : ProviderAccountSubscriptionV1Schema.safeParse(record.subscription);
-    if (subscription && !subscription.success) return null;
-    const ids = new Set<string>();
-    const limits: Array<Readonly<{
-        id: string;
-        providerLimitId?: string;
-        used?: number;
-        remaining?: number;
-        resetsAtMs?: number;
-    }>> = [];
-    for (const rawLimit of record.limits) {
-        const limit = readStrictConnectedAccountProducerRecord(
-            rawLimit,
-            ['id', 'providerLimitId', 'used', 'remaining', 'resetsAtMs'],
-            ['id'],
-        );
-        if (
-            !limit
-            || !isBoundedString(limit.id, 256)
-            || (limit.providerLimitId !== undefined && !isBoundedString(limit.providerLimitId, 256))
-            || ids.has(limit.id)
-            || (
-                limit.used !== undefined
-                && (
-                    !Number.isFinite(limit.used)
-                    || Number(limit.used) < 0
-                )
-            )
-            || (
-                limit.remaining !== undefined
-                && (
-                    !Number.isFinite(limit.remaining)
-                    || Number(limit.remaining) < 0
-                )
-            )
-            || (
-                limit.resetsAtMs !== undefined
-                && (
-                    !Number.isSafeInteger(limit.resetsAtMs)
-                    || Number(limit.resetsAtMs) < 0
-                )
-            )
-        ) {
-            return null;
-        }
-        ids.add(limit.id);
-        limits.push(Object.freeze({
-            id: limit.id,
-            ...(typeof limit.providerLimitId === 'string' ? { providerLimitId: limit.providerLimitId } : {}),
-            ...(limit.used === undefined
-                ? {}
-                : { used: Number(limit.used) }),
-            ...(limit.remaining === undefined
-                ? {}
-                : { remaining: Number(limit.remaining) }),
-            ...(limit.resetsAtMs === undefined
-                ? {}
-                : { resetsAtMs: Number(limit.resetsAtMs) }),
-        }));
-    }
-    return Object.freeze({
-        observedAtMs: Number(record.observedAtMs),
-        limits: Object.freeze(limits),
-        ...(subscription?.success ? {
-            subscription: clonePluginPlainData(subscription.data, {
-                path: 'Connected Account quota subscription',
-                invalid: () => invalidResult('quota'),
-            }),
-        } : {}),
-    });
-}
-
-function snapshotStringMaterializationRecord(input: Readonly<{
-    value: unknown;
-    requestedKeys: readonly string[];
-    caseInsensitive: boolean;
-    rejectNewlines: boolean;
-}>): Readonly<Record<string, string>> | null {
-    const record = readStrictConnectedAccountProducerRecord(
-        input.value,
-        null,
-        [],
-    );
-    if (!record) return null;
-    const requested = new Set(input.requestedKeys.map((key) => (
-        input.caseInsensitive ? key.toLowerCase() : key
-    )));
-    const returned = new Set<string>();
-    const output: Record<string, string> =
-        Object.create(null) as Record<string, string>;
-    for (const key of Reflect.ownKeys(record)) {
-        if (typeof key !== 'string') return null;
-        const normalizedKey = input.caseInsensitive
-            ? key.toLowerCase()
-            : key;
-        const value = record[key];
-        if (
-            !isBoundedString(key, 256)
-            || !requested.has(normalizedKey)
-            || returned.has(normalizedKey)
-            || typeof value !== 'string'
-            || (input.rejectNewlines && /[\r\n]/u.test(value))
-        ) {
-            return null;
-        }
-        returned.add(normalizedKey);
-        Object.defineProperty(output, key, {
-            value,
-            enumerable: true,
-            writable: false,
-            configurable: false,
-        });
-    }
-    return Object.freeze(output);
-}
-
-function snapshotFileMaterialization(
-    raw: unknown,
-    request: Extract<
-        ConnectedAccountRuntimeEstablishedOperation,
-        { kind: 'materialize' }
-    >['request'],
-): PluginConnectedAccountMaterialization | null {
-    if (request.kind !== 'files') return null;
-    const result = readStrictConnectedAccountProducerRecord(
-        raw,
-        ['kind', 'files'],
-        ['kind', 'files'],
-    );
-    if (!result || result.kind !== 'files') return null;
-    const files = readStrictConnectedAccountProducerRecord(
-        result.files,
-        null,
-        [],
-    );
-    if (!files) return null;
-    const requested = new Set(request.fileIds);
-    const output: Record<string, Uint8Array> =
-        Object.create(null) as Record<string, Uint8Array>;
-    for (const fileId of Reflect.ownKeys(files)) {
-        if (typeof fileId !== 'string') return null;
-        const bytes = files[fileId];
-        if (
-            !isBoundedString(fileId, 256)
-            || !requested.has(fileId)
-            || !(bytes instanceof Uint8Array)
-        ) {
-            return null;
-        }
-        // Construct a plain Uint8Array so a Buffer/subclass species cannot
-        // leak its prototype into the host-owned snapshot.
-        const copied = new Uint8Array(bytes);
-        Object.defineProperty(output, fileId, {
-            value: copied,
-            enumerable: true,
-            writable: false,
-            configurable: false,
-        });
-    }
-    return Object.freeze({
-        kind: 'files' as const,
-        files: Object.freeze(output),
-    });
-}
-
-function snapshotMaterializationResult(
-    raw: unknown,
-    request: Extract<
-        ConnectedAccountRuntimeEstablishedOperation,
-        { kind: 'materialize' }
-    >['request'],
-): PluginConnectedAccountMaterialization | null {
-    if (request.kind === 'files') {
-        return snapshotFileMaterialization(raw, request);
-    }
-    const snapshot = cloneStrictJsonResult(raw, 'materialize');
-    const result = readStrictConnectedAccountProducerRecord(
-        snapshot,
-        request.kind === 'httpHeaders'
-            ? ['kind', 'headers']
-            : ['kind', 'env'],
-        request.kind === 'httpHeaders'
-            ? ['kind', 'headers']
-            : ['kind', 'env'],
-    );
-    if (!result || result.kind !== request.kind) return null;
-    if (request.kind === 'httpHeaders') {
-        const headers = snapshotStringMaterializationRecord({
-            value: result.headers,
-            requestedKeys: request.headerNames,
-            caseInsensitive: true,
-            rejectNewlines: true,
-        });
-        return headers
-            ? Object.freeze({
-                kind: 'httpHeaders' as const,
-                headers,
-            })
-            : null;
-    }
-    const env = snapshotStringMaterializationRecord({
-        value: result.env,
-        requestedKeys: request.keys,
-        caseInsensitive: false,
-        rejectNewlines: false,
-    });
-    return env
-        ? Object.freeze({
-            kind: 'environment' as const,
-            env,
-        })
-        : null;
+    const result = value as Readonly<Record<string, unknown>>;
+    if (result.diagnostic === undefined) return value;
+    const diagnostic = snapshotConnectedAccountDiagnostic(result.diagnostic, redactDiagnosticText);
+    if (diagnostic === null) throw new TypeError('Connected Account diagnostic redaction failed');
+    return Object.freeze({ ...result, diagnostic });
 }
 
 export function snapshotConnectedAccountEstablishedResult<
@@ -689,68 +175,35 @@ export function snapshotConnectedAccountEstablishedResult<
         redactDiagnosticText?: RedactConnectedAccountDiagnosticText;
     }>,
 ): ConnectedAccountRuntimeEstablishedResult<TOperation> {
-    try {
-        let snapshot:
-            | PluginConnectedAccountRefreshResult
-            | PluginConnectedAccountHealthResult
-            | PluginConnectedAccountQuotaSnapshot
-            | PluginConnectedAccountRevocationResult
-            | PluginConnectedAccountMaterialization
-            | RecoveryInventory
-            | RecoveryOutcome
-            | null;
-        switch (operation.kind) {
-            case 'recoveryCredits.read':
-            case 'recoveryCredits.consume':
-                snapshot = options.quotaLeafUnavailable ? null : snapshotRecoveryResult(raw, operation.kind);
-                break;
-            case 'refresh':
-                snapshot = snapshotHealthResult(
-                    raw,
-                    'refresh',
-                    true,
-                    options.redactDiagnosticText,
-                );
-                break;
-            case 'status':
-                snapshot = snapshotHealthResult(
-                    raw,
-                    'status',
-                    false,
-                    options.redactDiagnosticText,
-                );
-                break;
-            case 'quota':
-                snapshot = options.quotaLeafUnavailable
-                    ? null
-                    : snapshotQuotaResult(raw);
-                break;
-            case 'revoke':
-                snapshot = snapshotRevocationResult(
-                    raw,
-                    options.redactDiagnosticText,
-                );
-                break;
-            case 'materialize':
-                snapshot = snapshotMaterializationResult(
-                    raw,
-                    operation.request,
-                );
-                break;
+    // Runtime registration owns the SDK ABI. These values come from trusted
+    // executable code; wire and persistence owners parse their own boundaries.
+    if (options.quotaLeafUnavailable) return null as ConnectedAccountRuntimeEstablishedResult<TOperation>;
+    if (operation.kind === 'materialize') {
+        const result = raw as PluginConnectedAccountMaterialization;
+        if (result.kind === 'files') {
+            return Object.freeze({
+                kind: 'files',
+                files: Object.freeze(Object.fromEntries(Object.entries(result.files)
+                    .map(([id, bytes]) => [id, new Uint8Array(bytes)]))),
+            }) as ConnectedAccountRuntimeEstablishedResult<TOperation>;
         }
-        if (
-            snapshot === null
-            && !(
-                (operation.kind === 'quota' || operation.kind === 'recoveryCredits.read' || operation.kind === 'recoveryCredits.consume')
-                && options.quotaLeafUnavailable
-                && raw === null
-            )
-        ) {
-            throw invalidResult(operation.kind);
-        }
-        return snapshot as ConnectedAccountRuntimeEstablishedResult<TOperation>;
-    } catch (error) {
-        if (error instanceof ConnectedAccountProducerResultError) throw error;
-        throw invalidResult(operation.kind);
+        return Object.freeze(result.kind === 'httpHeaders'
+            ? { kind: result.kind, headers: Object.freeze({ ...result.headers }) }
+            : { kind: result.kind, env: Object.freeze({ ...result.env }) }) as ConnectedAccountRuntimeEstablishedResult<TOperation>;
     }
+    if (operation.kind === 'quota' || operation.kind === 'recoveryCredits.read'
+        || operation.kind === 'recoveryCredits.consume') {
+        return structuredClone(raw) as ConnectedAccountRuntimeEstablishedResult<TOperation>;
+    }
+    const result = raw as PluginConnectedAccountRefreshResult | PluginConnectedAccountHealthResult | PluginConnectedAccountRevocationResult;
+    const diagnostic = result.diagnostic === undefined ? undefined
+        : snapshotConnectedAccountDiagnostic(result.diagnostic, options.redactDiagnosticText);
+    if (result.diagnostic !== undefined && diagnostic === null) {
+        throw new TypeError('Connected Account diagnostic redaction failed');
+    }
+    return Object.freeze({
+        ...result,
+        ...('scopes' in result && result.scopes !== undefined ? { scopes: Object.freeze([...result.scopes]) } : {}),
+        ...(diagnostic === undefined ? {} : { diagnostic }),
+    }) as ConnectedAccountRuntimeEstablishedResult<TOperation>;
 }

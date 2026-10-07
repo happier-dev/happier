@@ -583,8 +583,6 @@ describe('executable plugin runtime Connected Accounts integration', () => {
             });
             const settle = vi.fn();
             const attempts = createConnectedAccountAuthenticationAttemptOwner({
-                maxAttempts: 4,
-                attemptTtlMs: 60_000,
                 createAttemptId: () => 'oauth-attempt-1',
                 createAccountId: () => 'account-1',
                 now: () => 1_000,

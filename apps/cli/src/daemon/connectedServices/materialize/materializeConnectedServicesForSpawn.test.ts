@@ -32,6 +32,10 @@ beforeAll(async () => {
   runtimeRegistryLease = await pluginReloadController.acquireRuntimeRegistry({
     resolveRuntimeRegistry: async () => await resolveExecutablePluginRuntimeRegistry({
       contributes: getResolvedContributionRegistry(),
+      resolveDevelopmentSourceAuthority: ({ pluginId, rootPath }) => ({
+        kind: 'development', registeredRootId: `spawn-materialization:${pluginId}`,
+        canonicalRoot: rootPath, observedRevision: 1,
+      }),
       pluginIds: [
         'happier.agent.claude',
         'happier.agent.codex',

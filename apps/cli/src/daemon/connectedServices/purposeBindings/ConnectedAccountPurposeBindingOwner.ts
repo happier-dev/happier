@@ -107,6 +107,12 @@ export type ConnectedAccountPurposeBindingOwnerDependencies = Readonly<{
     request: ConnectedAccountMaterializationRequest;
     signal: AbortSignal;
   }>): Promise<PluginConnectedAccountMaterialization>;
+  /** Machine-owned native credential boundary; material is never written to the binding store. */
+  materializeNative?(input: Readonly<{
+    service: PluginContributionRef;
+    request: ConnectedAccountMaterializationRequest;
+    signal: AbortSignal;
+  }>): Promise<PluginConnectedAccountMaterialization>;
   materializeTeamDirect?(input: Readonly<{
     origin: ConnectedAccountTeamDirectMaterialOrigin;
     consumer: Readonly<
@@ -1108,20 +1114,6 @@ export function createConnectedAccountPurposeBindingOwner(
     });
   };
 
-  const replaceTargetIfStillCurrent = async (input: Readonly<{
-    purpose: QualifiedConnectedAccountPurposeV1;
-    expectedTarget: QualifiedConnectedAccountPurposeBindingTargetV1;
-    replacementTarget: QualifiedConnectedAccountPurposeBindingTargetV1 | null;
-    signal: AbortSignal;
-  }>): Promise<void> => {
-    await dependencies.store.update((current) => {
-      const observed = readPurposeBinding(current, input.purpose);
-      return observed && targetKey(observed) === targetKey(input.expectedTarget)
-        ? replacePurposeBinding(current, input.purpose, input.replacementTarget)
-        : current;
-    }, input.signal);
-  };
-
   const readAuthorizedResolvedLocked = async (input: Readonly<{
     purpose: QualifiedConnectedAccountPurposeV1;
     serviceRefs: readonly PluginContributionRef[];
@@ -1182,14 +1174,8 @@ export function createConnectedAccountPurposeBindingOwner(
     try {
       assertTargetAuthorized(target, input.serviceRefs);
     } catch {
-      // A declaration/service-scope replacement must not let an older durable selection regain
-      // authority later. Contract the incompatible entry through the one canonical writer.
-      await replaceTargetIfStillCurrent({
-        purpose,
-        expectedTarget: target,
-        replacementTarget: null,
-        signal: input.signal,
-      });
+      // Scope controls disclosure, not user intent. Erasing an explicit selection here
+      // would let a later request silently substitute a native credential.
       return null;
     }
     const resolved = await dependencies.resolveTarget(target, input.signal);
@@ -1212,12 +1198,7 @@ export function createConnectedAccountPurposeBindingOwner(
         assertResolvedTargetMatchesIntent(revalidatedTarget, revalidatedResolved);
         return { target: revalidatedTarget, resolved: revalidatedResolved, directMaterialOrigin: null };
       }
-      await replaceTargetIfStillCurrent({
-        purpose,
-        expectedTarget: revalidatedTarget,
-        replacementTarget: null,
-        signal: input.signal,
-      });
+      // Unavailable credential truth does not clear the user's standing selection.
       return null;
     }
     assertResolvedTargetMatchesIntent(target, resolved);
@@ -1319,6 +1300,13 @@ export function createConnectedAccountPurposeBindingOwner(
   const materialize = async (
     input: Parameters<StablePluginConnectedAccountsOwner['materialize']>[0],
   ): Promise<PluginConnectedAccountMaterialization> => {
+    if (input.nativeService && (input.expectedAccount || input.credentialRevisionBasis)) throw bindingOutOfScope();
+    const nativeService = input.nativeService
+      ? PluginContributionIdentityV1Schema.safeParse(input.nativeService)
+      : null;
+    if (nativeService && (!nativeService.success || !input.serviceRefs.some((ref) => (
+      contributionKey(ref) === contributionKey(nativeService.data)
+    )))) throw bindingOutOfScope();
     const authorizationInput = Object.freeze({
       purpose: input.purpose,
       serviceRefs: input.serviceRefs,
@@ -1328,9 +1316,47 @@ export function createConnectedAccountPurposeBindingOwner(
       ...(input.sessionId ? { sessionId: input.sessionId } : {}),
       signal: input.signal,
     });
+    const hasExplicitSelectionLocked = async (): Promise<boolean> => {
+      if (input.exactPurposeBindingSubjectId) {
+        const state = purposeBindingsBySubjectId.get(input.exactPurposeBindingSubjectId);
+        let current = false;
+        try {
+          current = state?.isSubjectCurrent() === true
+            && state.coveredPurposeKeys.has(qualifiedPurposeKey(input.purpose));
+        } catch {
+          current = false;
+        }
+        if (!current) throw resourceNotSelected(input.purpose);
+      }
+      const session = readSessionPurposeBinding(authorizationInput);
+      if (session.covered) return session.binding !== null;
+      const durable = await dependencies.store.read(input.signal);
+      input.signal.throwIfAborted();
+      return readPurposeBinding(durable, input.purpose) !== null
+        || readPurposeTeamResourceSelection(durable, input.purpose) !== null;
+    };
     const readMaterializationTarget = async () => await readAuthorizedResolved(authorizationInput);
-    const resolved = await readMaterializationTarget();
-    if (!resolved) throw resourceNotSelected(input.purpose);
+    const before = input.nativeService
+      ? await withSerializedConsumerMutations(
+          [contributionKey(input.purpose.consumer)],
+          async () => ({
+            explicit: await hasExplicitSelectionLocked(),
+            resolved: await readAuthorizedResolvedLocked(authorizationInput),
+          }),
+        )
+      : { explicit: false, resolved: await readMaterializationTarget() };
+    const resolved = before.resolved;
+    if (!resolved) {
+      if (before.explicit || !input.nativeService || !dependencies.materializeNative) throw resourceNotSelected(input.purpose);
+      if (!nativeService?.success) throw bindingOutOfScope();
+      const service = Object.freeze(nativeService.data);
+      const materialization = await dependencies.materializeNative({ service, request: input.request, signal: input.signal });
+      input.signal.throwIfAborted();
+      await withSerializedConsumerMutations([contributionKey(input.purpose.consumer)], async () => {
+        if (await hasExplicitSelectionLocked()) throw resourceNotSelected(input.purpose);
+      });
+      return materialization;
+    }
     if (
       input.expectedAccount
       && !sameQualifiedConnectedAccountRef(input.expectedAccount, resolved.resolved.account)
@@ -1691,10 +1717,7 @@ export function createConnectedAccountPurposeBindingOwner(
     materializeRequestAuthBearer,
     async reconcileAuthorizedPurposes(input) {
       input.signal.throwIfAborted();
-      const authorizedByConsumerKey = new Map<
-        string,
-        ReadonlyMap<string, ReadonlySet<string>>
-      >();
+      const authorizedByConsumerKey = new Map<string, ReadonlySet<string>>();
       // Validate the complete candidate before entering the one durable mutation.
       for (const consumerScope of input.consumerScopes) {
         const consumer = PluginContributionIdentityV1Schema.parse(
@@ -1706,10 +1729,7 @@ export function createConnectedAccountPurposeBindingOwner(
             'connected_account_purpose_reconciliation_duplicate_consumer',
           );
         }
-        const authorizedServiceKeysByPurposeKey = new Map<
-          string,
-          ReadonlySet<string>
-        >();
+        const authorizedPurposeKeys = new Set<string>();
         for (const scope of consumerScope.authorizedPurposes) {
           const purpose = QualifiedConnectedAccountPurposeV1Schema.parse(
             scope.purpose,
@@ -1720,21 +1740,16 @@ export function createConnectedAccountPurposeBindingOwner(
             );
           }
           const purposeKey = qualifiedPurposeKey(purpose);
-          if (authorizedServiceKeysByPurposeKey.has(purposeKey)) {
+          if (authorizedPurposeKeys.has(purposeKey)) {
             throw new Error(
               'connected_account_purpose_reconciliation_duplicate_purpose',
             );
           }
-          authorizedServiceKeysByPurposeKey.set(
-            purposeKey,
-            new Set(
-              scope.serviceRefs.map((service) => contributionKey(service)),
-            ),
-          );
+          authorizedPurposeKeys.add(purposeKey);
         }
         authorizedByConsumerKey.set(
           consumerKey,
-          authorizedServiceKeysByPurposeKey,
+          authorizedPurposeKeys,
         );
       }
       if (authorizedByConsumerKey.size === 0) {
@@ -1751,17 +1766,14 @@ export function createConnectedAccountPurposeBindingOwner(
             return QualifiedConnectedAccountPurposeBindingsV1Schema.parse({
               ...current,
               bindings: current.bindings.filter((binding) => {
-                const authorizedServiceKeysByPurposeKey =
+                const authorizedPurposeKeys =
                   authorizedByConsumerKey.get(
                     contributionKey(binding.purpose.consumer),
                   );
-                if (!authorizedServiceKeysByPurposeKey) return true;
-                const authorizedServices = authorizedServiceKeysByPurposeKey.get(
-                  qualifiedPurposeKey(binding.purpose),
-                );
-                return authorizedServices?.has(
-                  contributionKey(targetService(binding.target)),
-                ) === true;
+                if (!authorizedPurposeKeys) return true;
+                // Only removal of the purpose retires its durable intent. A service-scope
+                // change refuses disclosure without reopening native fallback.
+                return authorizedPurposeKeys.has(qualifiedPurposeKey(binding.purpose));
               }),
             });
         }, input.signal);
@@ -1775,8 +1787,8 @@ export function createConnectedAccountPurposeBindingOwner(
         // The Account Settings boundary is the same missing truth the startup
         // warmer and the retained-materialization scan both already treat as
         // non-fatal. This prune is durable cleanup, not the authorization gate:
-        // every read re-checks `assertTargetAuthorized` and contracts an
-        // out-of-scope entry through `replaceTargetIfStillCurrent`. Escalating
+        // every read re-checks `assertTargetAuthorized` and refuses an
+        // out-of-scope entry without erasing explicit intent. Escalating
         // here instead left the candidate registry unpublished and the daemon
         // unable to start at all, with no cache to recover from on a fresh host.
         logger.debug(

@@ -3,6 +3,8 @@ import { rm } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
+import { createSessionStartupReadinessHandler } from './sessionStartupReadiness';
+
 import type { ApiMachineClient, ConnectedServicesProjectionNotification } from '@/api/apiMachine';
 import type { Metadata, SessionCreationOutcome } from '@/api/types';
 import { fetchAccountProfile } from '@/api/accountProfile';
@@ -92,7 +94,6 @@ import { resolveConnectedServiceTargetMaterializedRoot } from '@/daemon/connecte
 import { createConnectedServiceRuntimeAuthNativeHome } from '@/daemon/connectedServices/runtimeAuth/createRuntimeAuthNativeHome';
 import type {
     CatalogAgentId,
-    ConnectedServiceDaemonAuthBridgeRefresh,
     ConnectedServiceSwitchEffectiveBinding,
 } from '@/agent/catalog/types';
 import {
@@ -700,6 +701,7 @@ import {
     type SessionConnectedServiceAuthSwitchDiagnostics,
     type SessionConnectedServiceAuthSwitchResult,
 } from '../connectedServices/sessionAuthSwitch/switchSessionConnectedServiceAuth';
+import { readConnectedServiceBindingsOrEmpty, readConnectedServiceCredentialApplicationState } from '../connectedServices/sessionAuthSwitch/credentialApplicationState';
 import { resolveTrackedConnectedServiceSwitchContinuityContext } from '../connectedServices/sessionAuthSwitch/resolveTrackedConnectedServiceSwitchContinuityContext';
 import { resolveCommittedGenerationFromRuntimeAuthRecovery } from '../connectedServices/sessionAuthSwitch/resolveCommittedGenerationFromRuntimeAuthRecovery';
 import { dispatchConnectedServiceAccountSwitchNotificationAsync } from '../connectedServices/notifications/dispatchConnectedServiceAccountSwitchNotification';
@@ -1204,11 +1206,6 @@ function logConnectedServiceAuthSwitchResult(input: Readonly<{
                 diagnostics: input.result.diagnostics,
             }),
     });
-}
-
-function readConnectedServiceBindingsOrEmpty(raw: unknown): ConnectedServiceBindingsV2 {
-    const parsed = ConnectedServiceBindingsV2IngressSchema.safeParse(raw);
-    return parsed.success ? parsed.data : { v: 2, bindingsByServiceId: {} };
 }
 
 function connectedServiceAuthGroupGenerationApplyFailure(input: Readonly<{
@@ -5207,10 +5204,15 @@ export async function startDaemonSessionControlRuntime(
         if (!agentId) {
             return await signalRestartWithoutConfirmedApply();
         }
-        const previousBindings = tracked
-            ? readConnectedServiceBindingsOrEmpty(resolveTrackedConnectedServiceBindingsRaw(tracked))
-            : readConnectedServiceBindingsOrEmpty(inactiveContext?.connectedServices);
-        const previousBinding = previousBindings.bindingsByServiceId[restartInput.serviceId];
+        const applicationState = readConnectedServiceCredentialApplicationState({
+            serviceId: restartInput.serviceId,
+            connectedServicesBindingsRaw: tracked ? resolveTrackedConnectedServiceBindingsRaw(tracked) : inactiveContext?.connectedServices,
+            connectedServiceSelectionsEnv: tracked?.spawnOptions?.environmentVariables,
+        });
+        if (!applicationState) return await signalRestartWithoutConfirmedApply();
+        restartInput = { ...restartInput, serviceId: applicationState.serviceId };
+        const previousBindings = applicationState.bindings;
+        const previousBinding = applicationState.binding;
         const nextProfileId = normalizeOptionalString(restartInput.activeProfileId)
             || (previousBinding?.source === 'connected' ? previousBinding.profileId : '');
         const nextGroupId = normalizeOptionalString(restartInput.groupId);
@@ -5593,9 +5595,13 @@ export async function startDaemonSessionControlRuntime(
             if (!sessionId || !tracked) {
                 return { status: 'failed' as const, errorCode: 'session_not_found' };
             }
-            const childSelection = readConnectedServiceChildSelectionsFromEnv(
-                tracked.spawnOptions?.environmentVariables ?? {},
-            )?.get(input.serviceId);
+            const applicationState = readConnectedServiceCredentialApplicationState({
+                serviceId: input.serviceId,
+                connectedServicesBindingsRaw: resolveTrackedConnectedServiceBindingsRaw(tracked),
+                connectedServiceSelectionsEnv: tracked.spawnOptions?.environmentVariables,
+            });
+            if (!applicationState) return { status: 'failed' as const, errorCode: 'unsupported_service' };
+            const childSelection = applicationState.childSelection;
             const groupSelection = childSelection?.kind === 'group'
                 && childSelection.activeProfileId === input.profileId
                 ? childSelection
@@ -5608,7 +5614,7 @@ export async function startDaemonSessionControlRuntime(
                 executionAuthority: input.executionAuthority,
             })({
                 sessionId,
-                serviceId: input.serviceId,
+                serviceId: applicationState.serviceId,
                 groupId: groupSelection?.groupId ?? null,
                 activeProfileId: input.profileId,
                 generation: groupSelection?.generation ?? null,
@@ -5760,11 +5766,6 @@ export async function startDaemonSessionControlRuntime(
                             credentialRefreshService:
                                 params.getConnectedServiceRefreshCoordinator(),
                             resumeReachabilityRequired,
-                            allowLegacyUnfencedOneShotMaterialization: true,
-                            serverContract:
-                                params.getApiMachineForSessions()
-                                    ?.getSessionSyncPendingInputServerContractResult()
-                                ?? null,
                         });
                     },
                     resolveDaemonSpawnHooks: async (agentId) => {
@@ -7569,6 +7570,11 @@ export async function startDaemonSessionControlRuntime(
                                 return await withCurrentGlobalExternalSessions(
                                     async (service) =>
                                         await service.list(query, options),
+                                );
+                            },
+                            async closeList(cursor, options) {
+                                await withCurrentGlobalExternalSessions(
+                                    async (service) => await service.closeList(cursor, options),
                                 );
                             },
                             async attach(ref, options) {
@@ -9739,13 +9745,6 @@ export async function startDaemonSessionControlRuntime(
             logger.debug('[DAEMON RUN] Failed to stop iOS simulator helper session', error);
         });
     };
-    async function releaseDaemonAuthBridgeRegistryLease(
-        lease: Awaited<ReturnType<typeof acquireAuthoritativePluginRuntimeRegistryLease>>,
-    ): Promise<void> {
-        await lease.release().catch((error: unknown) => {
-            logger.debug('[DAEMON RUN] Failed to release daemon auth bridge runtime registry lease', error);
-        });
-    }
     const resolveDaemonAuthBridge = async (serviceId: ConnectedAccountServiceKey): Promise<Readonly<{
         pluginId: string;
         registration: ConnectedServiceDaemonAuthBridgeRegistration;
@@ -9753,62 +9752,54 @@ export async function startDaemonSessionControlRuntime(
         const legacyServiceId =
             resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(serviceId);
         if (!legacyServiceId) return null;
-        let lease: Awaited<ReturnType<typeof acquireAuthoritativePluginRuntimeRegistryLease>> | null = null;
-        try {
-            lease = await acquireAuthoritativePluginRuntimeRegistryLease({
-                happyHomeDir: configuration.happyHomeDir,
-            });
-            const candidates = await Promise.all(
-                Object.entries(lease.registry.contributes.catalogEntriesById)
-                    .filter(([, entry]) => entry.connectedServiceIds?.includes(legacyServiceId) === true)
-                    .map(async ([pluginId, entry]) => {
-                        const refresh: ConnectedServiceDaemonAuthBridgeRefresh | null = await (
-                            entry.getConnectedServiceDaemonAuthBridgeRefresh?.(legacyServiceId) ?? null
-                        );
-                        return refresh ? Object.freeze({ pluginId, refresh }) : null;
-                    }),
-            );
-            const bridges = candidates.filter((candidate): candidate is NonNullable<typeof candidate> => (
-                candidate !== null
-            ));
-            if (bridges.length !== 1) return null;
-            const bridge = bridges[0]!;
-            return Object.freeze({
-                pluginId: bridge.pluginId,
+        const service = resolveQualifiedConnectedAccountServiceForIngressServiceId(serviceId);
+        if (!service) return null;
+        return Object.freeze({
+                pluginId: service.pluginId,
                 registration: Object.freeze({
                     serviceId,
-                    refresh: async (request: Parameters<ConnectedServiceDaemonAuthBridgeRegistration['refresh']>[0]) => {
+                    refresh: async (request, context) => {
                         const refreshCoordinator = params.getConnectedServiceRefreshCoordinator();
-                        if (!refreshCoordinator) {
-                            throw new Error('connected_service_daemon_auth_bridge_refresh_handler_unavailable');
+                        if (!refreshCoordinator || !context || !context.isCurrent()) {
+                            return { status: 'unavailable' as const, reason: 'connected_service_daemon_auth_bridge_unavailable' };
                         }
-                        return await bridge.refresh({
-                            serviceId: legacyServiceId,
-                            request,
-                            refreshCoordinator,
+                        const selection = context.target.connectedServiceSelections.find((candidate) => candidate.serviceId === serviceId);
+                        if (!selection?.credentialRevision || !request.expectedCredentialRevision || !request.refreshAttemptId) {
+                            return { status: 'unavailable' as const, reason: 'connected_service_runtime_auth_target_unavailable' };
+                        }
+                        return await refreshCoordinator.refreshConnectedServiceCredentialForRuntimeAuthBridge({
+                            target: context.target, isCurrent: context.isCurrent, serviceId,
+                            acceptSettledCredentialRevision: context.acceptSettledCredentialRevision,
+                            profileId: selection.kind === 'profile' ? selection.profileId : selection.activeProfileId,
+                            expectedCredentialRevision: request.expectedCredentialRevision,
+                            refreshAttemptId: request.refreshAttemptId,
+                            authority: request.runId ? context.authority
+                                : params.pidToTrackedSession.get(context.target.pid) ?? context.authority,
                         });
                     },
-                }),
+                } satisfies ConnectedServiceDaemonAuthBridgeRegistration),
             });
-        } catch (error) {
-            logger.debug('[DAEMON RUN] Failed to resolve daemon auth bridge from plugin runtime registry', error);
-            return null;
-        } finally {
-            if (lease) {
-                await releaseDaemonAuthBridgeRegistryLease(lease);
-            }
-        }
     };
     const handleSessionConnectedServiceRuntimeAuthRefresh =
         createSessionConnectedServiceRuntimeAuthRefreshHandler({
             registry: connectedServiceRuntimeRegistry,
             resolveDaemonAuthBridge,
+            captureSessionAuthority: (target) => {
+                const tracked = params.pidToTrackedSession.get(target.pid);
+                if (!tracked || !target.sessionId || tracked.happySessionId !== target.sessionId) return null;
+                return { identity: tracked, isCurrent: () => params.pidToTrackedSession.get(target.pid) === tracked
+                    && tracked.happySessionId === target.sessionId };
+            },
         });
     // Execution-run connected-services bridge: runners (which spawn run backends in-process) ask
     // the daemon to resolve + materialize via the canonical spawn-auth owner with a RUN-scoped
     // materialization key, and the run registers into the canonical runtime registry so its
     // refresh/quota views cover materialized run homes without either coordinator owning writes.
     const executionRunConnectedServicesBridge = createExecutionRunConnectedServicesBridge({
+        getRunRuntimeTarget: (runKey) => connectedServiceRuntimeRegistry.getRunTargetByRunKey(runKey),
+        adoptRunCredentialRevision: (input) => connectedServiceRuntimeRegistry.adoptExactCredentialRevisionForRun(input),
+        resolveRunCredentialRevisionTarget: (input) => connectedServiceRuntimeRegistry.resolveExactRunCredentialRevisionTarget(input),
+        resolveDaemonAuthBridge,
         recoverRejectedStart: async ({ selection, modelId, isCurrent }) => {
             const service = resolveQualifiedConnectedAccountServiceForIngressServiceId(selection.serviceId);
             if (!service || !selection.credentialRevision || !isCurrent()
@@ -9843,10 +9834,6 @@ export async function startDaemonSessionControlRuntime(
             accountSettings: getActiveAccountSettingsSnapshot()?.settings ?? null,
             processEnv: params.processEnv ?? process.env,
             credentialRefreshService: params.getConnectedServiceRefreshCoordinator(),
-            serverContract:
-                params.getApiMachineForSessions()
-                    ?.getSessionSyncPendingInputServerContractResult()
-                ?? null,
         }),
         registerRunTargets: (registration) => {
             const canonicalTrackedSessionId = resolveCanonicalTrackedSessionId(registration.runnerPid);
@@ -9858,6 +9845,7 @@ export async function startDaemonSessionControlRuntime(
                 materializationKey: registration.materializationKey,
                 connectedServicesBindingsRaw: registration.connectedServicesBindingsRaw,
                 connectedServiceSelectionsEnv: registration.connectedServiceSelectionsEnv,
+                exactPurposeBindingSubjectId: registration.exactPurposeBindingSubjectId,
                 sessionId,
                 sessionDirectory: registration.sessionDirectory,
             });
@@ -11228,10 +11216,8 @@ export async function startDaemonSessionControlRuntime(
     );
     const externalActionTranscriptFollowLeaseRegistry = externalActionAccountId
         ? createSessionTranscriptFollowLeaseRegistry({
-            // This matches the established CLI Action executor capacity. The
-            // registry is daemon-lifetime so retained follow leases are not
-            // lost between finite HTTP requests.
-            maxLeases: 16,
+            // The registry is daemon-lifetime so retained follow leases are
+            // not lost between finite HTTP requests.
             idleTtlMs: DEFAULT_SESSION_TRANSCRIPT_FOLLOW_LEASE_IDLE_TTL_MS,
         })
         : null;
@@ -11680,86 +11666,85 @@ export async function startDaemonSessionControlRuntime(
                     : [],
             );
         },
-        onHappySessionWebhook: async (
-            sessionId,
-            sessionMetadata,
-            _reconcileCanonicalReadiness,
-            sessionCreationOutcome,
-        ) => {
-            await params.onHappySessionWebhook(
-                sessionId,
-                sessionMetadata,
-                async (tracked) => {
-                    if (!tracked.agentRuntimeDaemonServiceAuthorityFilePath) {
-                        return;
-                    }
-                    const canonicalSessionId =
-                        normalizeOptionalString(tracked.happySessionId);
-                    if (!canonicalSessionId) {
-                        throw new Error(
-                            'Runner Agent canonical session authority is unavailable',
-                        );
-                    }
-                    await refreshTrackedRunnerAgentAuthority(
-                        tracked,
-                        canonicalSessionId,
-                        controlPort,
+        onHappySessionWebhook: createSessionStartupReadinessHandler({
+            onHappySessionWebhook: params.onHappySessionWebhook,
+            reconcileCanonicalReadiness: async (tracked) => {
+                if (!tracked.agentRuntimeDaemonServiceAuthorityFilePath) {
+                    return;
+                }
+                const canonicalSessionId =
+                    normalizeOptionalString(tracked.happySessionId);
+                if (!canonicalSessionId) {
+                    throw new Error(
+                        'Runner Agent canonical session authority is unavailable',
                     );
-                },
-                sessionCreationOutcome,
-            );
-            void queueHostedWebStaticAssetSync('session_webhook');
-            const normalizedSessionId = normalizeOptionalString(sessionId);
-            if (!normalizedSessionId) return;
-            rememberPersistedConnectedServiceSwitchSessionMetadata(normalizedSessionId, sessionMetadata);
-            const tracked = [...params.pidToTrackedSession.values()]
-                .find((candidate) => normalizeOptionalString(candidate.happySessionId) === normalizedSessionId);
-            if (tracked) {
-                await publishReportedTerminalControlServiceability({
+                }
+                await refreshTrackedRunnerAgentAuthority(
                     tracked,
-                    readTerminalAttachmentInfo: async (reportedSessionId) =>
-                        await readTerminalHostAttachmentInfo({
-                            happyHomeDir: configuration.happyHomeDir,
-                            sessionId: reportedSessionId,
-                        }),
-                    probeSessionRunnerServiceability: async (reportedSessionId) =>
-                        await probeSessionRunnerServiceability({
-                            sessionId: reportedSessionId,
-                            trackedSessions: params.pidToTrackedSession.values(),
-                            probeCapability: async () =>
-                                await probeAlreadyRunningExistingSessionServiceability({
-                                    sessionId: reportedSessionId,
-                                    credentials: params.credentials,
-                                    abortSignal: shutdownCancellationDomains.daemonWorkSignal,
-                                    ...(params.isShuttingDown ? { isShuttingDown: params.isShuttingDown } : {}),
-                                }),
-                        }),
-                    publishSessionRunnerControlServiceability: async (reportedSessionId, probe) => {
-                        if (probe.state !== 'runner_present') return false;
-                        return await publishCurrentTerminalControlServiceability({
-                            credentials: params.credentials,
-                            happyHomeDir: configuration.happyHomeDir,
-                            sessionId: reportedSessionId,
-                            serviceability: probe.control,
-                        });
-                    },
-                });
-            }
-            void rehydrateConnectedServiceRuntimeIdentityForSessionReport({
-                credentials: params.credentials,
-                quotaCoordinator: params.getConnectedServiceQuotasCoordinator(),
-                sessionId: normalizedSessionId,
-                tracked: tracked ?? null,
-            }).catch((error) => {
-                logger.debug('[DAEMON RUN] Failed to rehydrate connected-service runtime identity after session report', {
+                    canonicalSessionId,
+                    controlPort,
+                );
+            },
+            reconcileFollowUp: async (sessionId, sessionMetadata) => {
+                void queueHostedWebStaticAssetSync('session_webhook');
+                const normalizedSessionId = normalizeOptionalString(sessionId);
+                if (!normalizedSessionId) return;
+                rememberPersistedConnectedServiceSwitchSessionMetadata(normalizedSessionId, sessionMetadata);
+                const tracked = [...params.pidToTrackedSession.values()]
+                    .find((candidate) => normalizeOptionalString(candidate.happySessionId) === normalizedSessionId);
+                if (tracked) {
+                    await publishReportedTerminalControlServiceability({
+                        tracked,
+                        readTerminalAttachmentInfo: async (reportedSessionId) =>
+                            await readTerminalHostAttachmentInfo({
+                                happyHomeDir: configuration.happyHomeDir,
+                                sessionId: reportedSessionId,
+                            }),
+                        probeSessionRunnerServiceability: async (reportedSessionId) =>
+                            await probeSessionRunnerServiceability({
+                                sessionId: reportedSessionId,
+                                trackedSessions: params.pidToTrackedSession.values(),
+                                probeCapability: async () =>
+                                    await probeAlreadyRunningExistingSessionServiceability({
+                                        sessionId: reportedSessionId,
+                                        credentials: params.credentials,
+                                        abortSignal: shutdownCancellationDomains.daemonWorkSignal,
+                                        ...(params.isShuttingDown ? { isShuttingDown: params.isShuttingDown } : {}),
+                                    }),
+                            }),
+                        publishSessionRunnerControlServiceability: async (reportedSessionId, probe) => {
+                            if (probe.state !== 'runner_present') return false;
+                            return await publishCurrentTerminalControlServiceability({
+                                credentials: params.credentials,
+                                happyHomeDir: configuration.happyHomeDir,
+                                sessionId: reportedSessionId,
+                                serviceability: probe.control,
+                            });
+                        },
+                    });
+                }
+                void rehydrateConnectedServiceRuntimeIdentityForSessionReport({
+                    credentials: params.credentials,
+                    quotaCoordinator: params.getConnectedServiceQuotasCoordinator(),
                     sessionId: normalizedSessionId,
+                    tracked: tracked ?? null,
+                }).catch((error) => {
+                    logger.debug('[DAEMON RUN] Failed to rehydrate connected-service runtime identity after session report', {
+                        sessionId: normalizedSessionId,
+                        error: serializeAxiosErrorForLog(error),
+                    });
+                });
+                const currentTarget = connectedServiceRuntimeRegistry.getBySessionId(normalizedSessionId);
+                if (!currentTarget) return;
+                await scheduleRuntimeTargetGenerationReconciliation(currentTarget, sessionMetadata, true);
+            },
+            onFollowUpError: (error, sessionId) => {
+                logger.debug('[DAEMON RUN] Failed to reconcile session startup follow-up', {
+                    sessionId,
                     error: serializeAxiosErrorForLog(error),
                 });
-            });
-            const currentTarget = connectedServiceRuntimeRegistry.getBySessionId(normalizedSessionId);
-            if (!currentTarget) return;
-            await scheduleRuntimeTargetGenerationReconciliation(currentTarget, sessionMetadata, true);
-        },
+            },
+        }),
         onSessionStartupFailure,
         ...(params.admitPersistedTakeover
             ? { admitPersistedTakeover: params.admitPersistedTakeover }
@@ -14025,6 +14010,7 @@ export async function startDaemonSessionControlRuntime(
         verifyRunMaterializeToken: (provided) => isValidConnectedServiceRunMaterializeToken(provided, controlToken),
         materializeConnectedServicesForExecutionRun: executionRunConnectedServicesBridge.materialize,
         recoverConnectedServicesRejectedStartForExecutionRun: executionRunConnectedServicesBridge.recoverRejectedStart,
+        refreshConnectedServiceRuntimeAuthForExecutionRun: executionRunConnectedServicesBridge.refreshRuntimeAuth,
         checkConnectedServicesGenerationForExecutionRun: async ({
             runId,
             runnerPid,

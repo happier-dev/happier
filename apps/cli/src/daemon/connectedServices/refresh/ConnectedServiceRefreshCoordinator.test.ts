@@ -3,17 +3,21 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AxiosError, AxiosHeaders } from 'axios';
+import { afterAll, beforeAll, afterEach, describe, expect, it, vi } from 'vitest';
+import axios, { AxiosError, AxiosHeaders } from 'axios';
 
 import {
   ConnectedServiceBindingsV2IngressSchema,
   FeaturesResponseSchema,
   QualifiedConnectedAccountCredentialSnapshotV4Schema,
   sealAccountScopedBlobCiphertext,
+  openQualifiedConnectedAccountContentEnvelope,
 } from '@happier-dev/protocol';
+import { parseQualifiedConnectedAccountCredentialPlaintextV1, projectQualifiedConnectedAccountCredentialPlaintextV1 } from '@happier-dev/protocol/connect/legacyConnectedServiceCompatibility';
+import { QualifiedConnectedAccountCredentialHealthPatchV4Schema, QualifiedConnectedAccountCredentialMutationV4Schema, QualifiedConnectedAccountCredentialMutationSuccessV4Schema, QualifiedConnectedAccountRefreshLeaseV4Schema, QualifiedConnectedAccountRefreshLeaseResponseV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import type {
   ConnectedServiceCredentialRevisionV1,
+  QualifiedConnectedAccountCredentialSnapshotV4,
   QualifiedConnectedAccountGroupV4,
 } from '@happier-dev/protocol';
 
@@ -22,9 +26,6 @@ import type { ApiClient } from '@/api/api';
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type { materializeConnectedServicesForSpawn } from '../materialize/materializeConnectedServicesForSpawn';
 import { logger } from '@/ui/logger';
-import {
-  resolveQualifiedConnectedAccountPeerOperationTransport,
-} from '@/api/client/qualifiedConnectedAccountApi';
 import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '../connectedServiceChildEnvironment';
 import {
@@ -40,6 +41,42 @@ import {
 import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { resolveQualifiedPurposeBindingSnapshotForAgentSpawn } from '../requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
+import { resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey } from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
+import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID, type BuiltInLegacyConnectedAccountCompatibility } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
+import { ConnectedServiceCredentialRecordV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
+import { createQualifiedConnectedAccountEstablishedRuntimeOwner } from '../qualifiedConnectedAccountEstablishedRuntimeOwner';
+
+let pluginLease: PluginRuntimeRegistryLease;
+beforeAll(async () => {
+  pluginLease = await pluginReloadController.acquireRuntimeRegistry({
+    resolveRuntimeRegistry: () => resolveExecutablePluginRuntimeRegistry({
+      contributes: getResolvedContributionRegistry(),
+      pluginIds: ['happier.agent.codex', 'happier.agent.claude'],
+      resolveDevelopmentSourceAuthority: ({ pluginId, rootPath }) => ({ kind: 'development', registeredRootId: `refresh-fixture:${pluginId}`, canonicalRoot: rootPath, observedRevision: 1 }),
+      networkDependencies: {
+        resolveNetworkAddresses: async () => ['8.8.8.8'],
+        openPinnedStream: async (request) => {
+          const response = await globalThis.fetch(request.url, {
+            method: request.method, headers: request.headers,
+            body: request.body ? new TextDecoder().decode(request.body) : undefined,
+            signal: request.signal,
+          });
+          const body = new Uint8Array(await response.arrayBuffer());
+          let delivered = false;
+          return { status: response.status, headers: Object.fromEntries(response.headers.entries()), contentLength: body.length,
+            read: async () => { if (delivered) return null; delivered = true; return body; }, cancel() {} };
+        },
+      },
+    }),
+  });
+});
+afterAll(async () => {
+  await pluginLease?.release();
+  await pluginReloadController.shutdown({ timeoutMs: 5_000 });
+});
 
 const {
   materializeConnectedServicesForSpawnOverride,
@@ -98,6 +135,7 @@ vi.mock('../materialize/materializeConnectedServicesForSpawn', async (importOrig
 afterEach(() => {
   materializeConnectedServicesForSpawnOverride.mockReset();
   getConnectedServiceMaterializedHomeFreshnessOverride.mockReset();
+  vi.restoreAllMocks();
 });
 
 type LegacyFetchResponseFixture = Readonly<{
@@ -128,15 +166,43 @@ function installGlobalFetchMock<TArgs extends readonly unknown[]>(
   });
 }
 
-const credentialAuthorityRuntimeByApi =
-  new WeakMap<ApiClient, QualifiedConnectedAccountRefreshRuntime>();
+const qualifiedCredentialBoundaryApis = new WeakSet<ApiClient>();
+const qualifiedCredentialBoundaryMetadata = new WeakMap<ApiClient, Map<string, QualifiedConnectedAccountCredentialSnapshotV4['metadata']>>();
 
 function createRefreshCoordinator(
   params: ConstructorParameters<typeof ConnectedServiceRefreshCoordinator>[0],
 ): ConnectedServiceRefreshCoordinator {
-  const qualifiedConnectedAccountRuntime =
+  // Plugins and the host share the same genuine clock boundary.
+  vi.spyOn(Date, 'now').mockImplementation(params.now);
+  let qualifiedConnectedAccountRuntime =
     params.qualifiedConnectedAccountRuntime
-    ?? credentialAuthorityRuntimeByApi.get(params.api);
+    ?? (qualifiedCredentialBoundaryApis.has(params.api) ? createQualifiedServerBoundary(params) : undefined);
+  if (qualifiedConnectedAccountRuntime?.resolvePeerClass() === 'advertised_v4' && !qualifiedConnectedAccountRuntime.readCredential) {
+    // The fake server's V4 read projects its same retained row. Only the HTTP
+    // boundary is substituted; qualified identity, mode and content opening stay real.
+    qualifiedConnectedAccountRuntime = { ...qualifiedConnectedAccountRuntime, readCredential: async ({ ref }) => {
+      const serviceId = resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(`${ref.service.pluginId}/${ref.service.localId}`);
+      if (!serviceId) throw new Error('Fixture service has no retained credential row');
+      const binding = { serviceId, profileId: ref.accountId };
+      const mode = await params.api.getAccountEncryptionMode();
+      const stored = mode === 'plain'
+        ? await params.api.getConnectedServiceCredentialPlain(binding)
+        : await params.api.getConnectedServiceCredentialSealed(binding);
+      if (!stored) return null;
+      const plain = 'content' in stored ? ConnectedServiceCredentialRecordV1Schema.parse(stored.content.v) : null;
+      const kind = plain?.kind ?? ('metadata' in stored ? stored.metadata?.kind : undefined);
+      if (kind !== 'oauth' && kind !== 'token') throw new Error('Fixture credential kind is unavailable');
+      const compatibility: BuiltInLegacyConnectedAccountCompatibility = BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[serviceId];
+      return QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+        ref,
+        authenticationModeId: compatibility.authenticationModeByCredentialKind[kind],
+        revisionSemantics: stored.revisionSemantics, credentialRevision: stored.credentialRevision,
+        configurationRevision: null,
+        content: 'content' in stored ? stored.content : { t: 'encrypted', c: stored.sealed.ciphertext },
+        metadata: { scopes: [] },
+      });
+    } };
+  }
   const resolveQualifiedPurposeBindingSnapshot =
     params.resolveQualifiedPurposeBindingSnapshot
     ?? (async (input: Readonly<{
@@ -263,30 +329,71 @@ function completeCredentialAuthorityBoundaryFixture(api: ApiClient): void {
     });
   }
 
-  // These legacy API boundary fixtures model a revisioned V2/V3 peer. The
-  // canonical runtime is present in production, but its V4 methods are
-  // unreachable for this peer class; keep those methods fail-closed if a test
-  // accidentally crosses the compatibility boundary.
-  credentialAuthorityRuntimeByApi.set(api, {
-    resolvePeerClass: () => 'revisioned_v2_v3',
-    establishedRuntimeOwner: {
-      invokeWithReceipt: vi.fn(async () => {
-        throw new Error('revisioned V2/V3 fixture cannot invoke a V4 plugin leaf');
-      }),
+  qualifiedCredentialBoundaryApis.add(api);
+}
+
+function createQualifiedServerBoundary(params: ConstructorParameters<typeof ConnectedServiceRefreshCoordinator>[0]): QualifiedConnectedAccountRefreshRuntime {
+  // These methods are the fake server storage adapter, not a selected HTTP
+  // transport. Its retained rows are surfaced only as qualified V4 snapshots.
+  const api = params.api;
+  const qualifiedMetadata = qualifiedCredentialBoundaryMetadata.get(api)
+    ?? new Map<string, QualifiedConnectedAccountCredentialSnapshotV4['metadata']>();
+  qualifiedCredentialBoundaryMetadata.set(api, qualifiedMetadata);
+  const nativeBinding = (ref: { service: { pluginId: string; localId: string }; accountId: string }) => {
+    const serviceId = resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(`${ref.service.pluginId}/${ref.service.localId}`);
+    if (!serviceId) throw new Error('Fixture service has no storage row');
+    return { serviceId, profileId: ref.accountId };
+  };
+  const readCredential: QualifiedConnectedAccountRefreshRuntime['readCredential'] = async ({ ref }) => {
+    const binding = nativeBinding(ref);
+    const mode = await api.getAccountEncryptionMode();
+    const stored = mode === 'plain' ? await api.getConnectedServiceCredentialPlain(binding) : await api.getConnectedServiceCredentialSealed(binding);
+    if (!stored) return null;
+    const kind = 'content' in stored ? ConnectedServiceCredentialRecordV1Schema.parse(stored.content.v).kind : stored.metadata?.kind;
+    if (kind !== 'token' && kind !== 'oauth') throw new Error('Fixture kind unavailable');
+    const compatibility: BuiltInLegacyConnectedAccountCompatibility = BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[binding.serviceId];
+    return QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+      ref, authenticationModeId: compatibility.authenticationModeByCredentialKind[kind],
+      revisionSemantics: stored.revisionSemantics, credentialRevision: stored.credentialRevision, configurationRevision: null,
+      content: 'content' in stored ? stored.content : { t: 'encrypted', c: stored.sealed.ciphertext },
+      metadata: qualifiedMetadata.get(`${binding.serviceId}:${binding.profileId}`) ?? { scopes: [] },
+    });
+  };
+  const establishedRuntimeOwner = createQualifiedConnectedAccountEstablishedRuntimeOwner({
+    credentials: params.credentials, reloadController: pluginReloadController,
+    getAccountEncryptionMode: () => api.getAccountEncryptionMode(), readCredential,
+    configuration: { read: async () => null, secrets: { admit: async () => undefined, has: async () => false, read: async () => null } },
+  });
+  return {
+    resolvePeerClass: () => 'advertised_v4', establishedRuntimeOwner, readCredential,
+    acquireRefreshLease: async ({ lease }) => {
+      const input = QualifiedConnectedAccountRefreshLeaseV4Schema.parse(lease);
+      const result = await api.acquireConnectedServiceRefreshLease({ ...nativeBinding(input.ref), machineId: params.machineIdProvider(), ownerId: input.ownerId, expectedCredentialRevision: input.expectedCredentialRevision, leaseMs: input.ttlMs });
+      return QualifiedConnectedAccountRefreshLeaseResponseV4Schema.parse({ ...result, ownerId: result.ownerId ?? input.ownerId, credentialRevision: result.credentialRevision ?? input.expectedCredentialRevision });
     },
-    mutateCredentialHealth: vi.fn(async () => {
-      throw new Error('revisioned V2/V3 fixture cannot mutate V4 credential health');
-    }),
-    readCredential: vi.fn(async () => {
-      throw new Error('revisioned V2/V3 fixture cannot read a V4 credential');
-    }),
-    acquireRefreshLease: vi.fn(async () => {
-      throw new Error('revisioned V2/V3 fixture cannot acquire a V4 refresh lease');
-    }),
-    mutateCredential: vi.fn(async () => {
-      throw new Error('revisioned V2/V3 fixture cannot mutate a V4 credential');
-    }),
-  } as unknown as QualifiedConnectedAccountRefreshRuntime);
+    mutateCredentialHealth: async ({ patch }) => {
+      const input = QualifiedConnectedAccountCredentialHealthPatchV4Schema.parse(patch);
+      await api.updateConnectedServiceCredentialHealth?.({ ...nativeBinding(input.ref), health: input.health, expectedCredentialRevision: input.expectedCredentialRevision });
+      return { credentialRevision: input.expectedCredentialRevision, configurationRevision: input.expectedConfigurationRevision };
+    },
+    mutateCredential: async ({ mutation }) => {
+      const input = QualifiedConnectedAccountCredentialMutationV4Schema.parse(mutation);
+      const mode = await api.getAccountEncryptionMode();
+      if (mode === 'unknown') throw new Error('Fixture account mode unavailable');
+      const material = params.credentials.encryption;
+      const opened = mode === 'plain'
+        ? openQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'plain', envelope: input.content })
+        : openQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'e2ee', material: material!, envelope: input.content });
+      const payload = parseQualifiedConnectedAccountCredentialPlaintextV1({ ref: input.ref, authenticationModeId: input.authenticationModeId, metadata: input.metadata, plaintext: opened });
+      const record = ConnectedServiceCredentialRecordV1Schema.parse(projectQualifiedConnectedAccountCredentialPlaintextV1({ ref: input.ref, authenticationModeId: input.authenticationModeId, payload, metadata: input.metadata, now: params.now() }));
+      const binding = nativeBinding(input.ref);
+      qualifiedMetadata.set(`${binding.serviceId}:${binding.profileId}`, input.metadata);
+      const result = mode === 'plain'
+        ? await api.registerConnectedServiceCredentialPlain({ ...binding, content: { t: 'plain', v: record }, expectedCredentialRevision: input.expectedCredentialRevision, refreshLeaseOwnerId: input.refreshLeaseOwnerId })
+        : await api.registerConnectedServiceCredentialSealed({ ...binding, sealed: { format: 'account_scoped_v1', ciphertext: sealAccountScopedBlobCiphertext({ kind: 'connected_service_credential', material: material!, payload: record, randomBytes }) }, metadata: { kind: record.kind, expiresAt: record.expiresAt, providerAccountId: record.oauth?.providerAccountId ?? null, providerEmail: record.oauth?.providerEmail ?? null }, expectedCredentialRevision: input.expectedCredentialRevision, refreshLeaseOwnerId: input.refreshLeaseOwnerId });
+      return QualifiedConnectedAccountCredentialMutationSuccessV4Schema.parse({ ...result, configurationRevision: null });
+    },
+  };
 }
 
 function createNeedsReauthRefreshHarness(params: Readonly<{
@@ -317,7 +424,7 @@ function createNeedsReauthRefreshHarness(params: Readonly<{
     oauth: {
       accessToken: 'old-access',
       refreshToken: 'old-refresh',
-      idToken: null,
+      idToken: 'fixture-id',
       scope: null,
       tokenType: null,
       providerAccountId: 'acct',
@@ -391,6 +498,28 @@ function createNeedsReauthRefreshHarness(params: Readonly<{
 }
 
 describe('ConnectedServiceRefreshCoordinator', () => {
+  it('refuses an indeterminate qualified reader before any scalar read or mutation', async () => {
+    const scalarRead = vi.fn(async () => { throw new Error('Scalar credential read forbidden'); });
+    const network = vi.spyOn(axios, 'get').mockRejectedValue(new Error('HTTP read must not occur before qualified admission'));
+    const readCredential = vi.fn(async () => null);
+    const mutateCredential = vi.fn();
+    const coordinator = createRefreshCoordinator({
+      credentials: { token: 'fixture', encryption: null },
+      api: { getAccountEncryptionMode: async () => 'plain', getConnectedServiceCredentialPlain: scalarRead } as unknown as ApiClient,
+      machineIdProvider: () => 'fixture-machine', activeServerDir: '/tmp/qualified-read', baseDir: '/tmp/qualified-read',
+      refreshWindowMs: 60_000, refreshLeaseMs: 30_000, now: () => 1_000,
+      qualifiedConnectedAccountRuntime: {
+        resolvePeerClass: () => 'indeterminate', establishedRuntimeOwner: { invokeWithReceipt: vi.fn() },
+        readCredential, mutateCredential, acquireRefreshLease: vi.fn(), mutateCredentialHealth: vi.fn(),
+      },
+    });
+    await expect(coordinator.refreshConnectedServiceCredentialForQuota({ serviceId: 'openai-codex', profileId: 'work', force: true }))
+      .rejects.toMatchObject({ code: 'connected_account_capability_indeterminate' });
+    expect(scalarRead).not.toHaveBeenCalled();
+    expect(network).not.toHaveBeenCalled();
+    expect(readCredential).not.toHaveBeenCalled();
+    expect(mutateCredential).not.toHaveBeenCalled();
+  });
   it('sanitizes qualified refresh exceptions and omits provider-defined account identity', async () => {
     const service = { pluginId: 'acme.provider', localId: 'accounts' } as const;
     const accountId = 'person@example.test';
@@ -444,153 +573,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
     expect(logged).not.toContain('at ');
   });
 
-  it('does not run any refresh transport for revisioned Bitbucket when its generated peer operation set is empty', async () => {
-    const now = 1_000_000;
-    const service = {
-      pluginId: 'happier.scm.forge.bitbucket',
-      localId: 'bitbucket-account',
-    } as const;
-    const snapshot = {
-      status: 'ready' as const,
-      features: FeaturesResponseSchema.parse({
-        features: {},
-        capabilities: {
-          connectedServices: {
-            credentialDelete: { revisionGuard: true },
-          },
-        },
-      }),
-    };
-    const getConnectedServiceCredentialPlain = vi.fn(
-      async () => null,
-    );
-    const acquireConnectedServiceRefreshLease = vi.fn();
-    const registerConnectedServiceCredentialPlain = vi.fn();
-    const updateConnectedServiceCredentialHealth = vi.fn();
-    const invokeWithReceipt = vi.fn();
-    const coordinator = createRefreshCoordinator({
-      api: {
-        getAccountEncryptionMode:
-          vi.fn(async () => 'plain' as const),
-        getConnectedServiceCredentialPlain,
-        acquireConnectedServiceRefreshLease,
-        registerConnectedServiceCredentialPlain,
-        updateConnectedServiceCredentialHealth,
-      } as unknown as ApiClient,
-      credentials: {
-        token: 'happy-token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array(32).fill(31),
-        },
-      },
-      machineIdProvider: () => 'machine-1',
-      activeServerDir: '/tmp/happier-active',
-      baseDir: '/tmp/happier-base',
-      refreshWindowMs: 60_000,
-      refreshLeaseMs: 30_000,
-      now: () => now,
-      qualifiedConnectedAccountRuntime: {
-        resolvePeerClass: () => 'revisioned_v2_v3',
-        resolveOperationTransport: ({ operation }) =>
-          resolveQualifiedConnectedAccountPeerOperationTransport({
-            snapshot,
-            serverContract: null,
-            service,
-            operation,
-          }),
-        establishedRuntimeOwner: { invokeWithReceipt },
-        mutateCredentialHealth: vi.fn(),
-        readCredential: vi.fn(),
-        acquireRefreshLease: vi.fn(),
-        mutateCredential: vi.fn(),
-      },
-    });
-    coordinator.registerSpawnTarget({
-      pid: 123,
-      agentId: 'codex',
-      sessionId: 'session-1',
-      materializationKey: 'materialization-1',
-      connectedServicesBindingsRaw: {
-        v: 1,
-        bindingsByServiceId: {
-          bitbucket: {
-            source: 'connected',
-            profileId: 'work',
-          },
-        },
-      },
-    });
-
-    await coordinator.tickOnce();
-
-    expect(getConnectedServiceCredentialPlain).not.toHaveBeenCalled();
-    expect(acquireConnectedServiceRefreshLease).not.toHaveBeenCalled();
-    expect(
-      registerConnectedServiceCredentialPlain,
-    ).not.toHaveBeenCalled();
-    expect(
-      updateConnectedServiceCredentialHealth,
-    ).not.toHaveBeenCalled();
-    expect(invokeWithReceipt).not.toHaveBeenCalled();
-  });
-
-  it('fails closed before lease acquisition when an exact v0.2.1 credential has no revision fence', async () => {
-    const now = 1_000_000;
-    const credentials: Credentials = {
-      token: 'happy-token',
-      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(31) },
-    };
-    const record = buildConnectedServiceCredentialRecord({
-      now,
-      serviceId: 'openai-codex',
-      profileId: 'work',
-      kind: 'oauth',
-      expiresAt: now - 1,
-      oauth: {
-        accessToken: 'old-access',
-        refreshToken: 'old-refresh',
-        idToken: null,
-        scope: null,
-        tokenType: null,
-        providerAccountId: 'acct',
-        providerEmail: null,
-      },
-    });
-    const api = {
-      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
-      getConnectedServiceCredentialPlain: vi.fn(async () => ({
-        content: { t: 'plain' as const, v: record },
-        revisionSemantics: 'legacy_unfenced' as const,
-        credentialRevision: null,
-      })),
-      acquireConnectedServiceRefreshLease: vi.fn(),
-      registerConnectedServiceCredentialPlain: vi.fn(),
-    } as unknown as ApiClient;
-
-    const coordinator = createRefreshCoordinator({
-      api,
-      credentials,
-      machineIdProvider: () => 'machine-1',
-      activeServerDir: '/tmp/happier-active',
-      baseDir: '/tmp/happier-base',
-      refreshWindowMs: 60_000,
-      refreshLeaseMs: 30_000,
-      now: () => now,
-    });
-
-    const result = await coordinator.refreshConnectedServiceCredentialForQuota({
-      serviceId: 'openai-codex',
-      profileId: 'work',
-      force: true,
-    });
-
-    expect(result).toBeNull();
-    expect(api.acquireConnectedServiceRefreshLease).not.toHaveBeenCalled();
-    expect(api.registerConnectedServiceCredentialPlain).not.toHaveBeenCalled();
-  });
-
-  it('classifies a revisioned GitHub PAT as non-OAuth before any lease or provider effect', async () => {
+  it('classifies a qualified retained GitHub PAT as non-OAuth before any lease or provider effect', async () => {
     const now = 1_000_000;
     const credentialRevision =
       'csr_0123456789ABCDEFGHJKMNPQRS';
@@ -625,7 +608,10 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       registerConnectedServiceCredentialPlain,
     } as unknown as ApiClient;
     const invokeWithReceipt = vi.fn();
-    const readCredential = vi.fn();
+    const readCredential = vi.fn(async ({ ref }: Parameters<QualifiedConnectedAccountRefreshRuntime['readCredential']>[0]) => QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+      ref, authenticationModeId: 'fine-grained-pat', revisionSemantics: 'revisioned', credentialRevision,
+      configurationRevision: null, content: { t: 'plain', v: record }, metadata: { scopes: [] },
+    }));
     const acquireRefreshLease = vi.fn();
     const mutateCredential = vi.fn();
     const mutateCredentialHealth = vi.fn();
@@ -642,7 +628,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       refreshLeaseMs: 30_000,
       now: () => now,
       qualifiedConnectedAccountRuntime: {
-        resolvePeerClass: () => 'revisioned_v2_v3',
+        resolvePeerClass: () => 'advertised_v4',
         establishedRuntimeOwner: {
           invokeWithReceipt,
         } as never,
@@ -664,7 +650,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
     expect(acquireConnectedServiceRefreshLease).not.toHaveBeenCalled();
     expect(registerConnectedServiceCredentialPlain).not.toHaveBeenCalled();
     expect(invokeWithReceipt).not.toHaveBeenCalled();
-    expect(readCredential).not.toHaveBeenCalled();
+    expect(readCredential).toHaveBeenCalled();
     expect(acquireRefreshLease).not.toHaveBeenCalled();
     expect(mutateCredential).not.toHaveBeenCalled();
     expect(mutateCredentialHealth).not.toHaveBeenCalled();
@@ -762,7 +748,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: {
         accessToken: 'old-access',
         refreshToken: 'old-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: null,
         tokenType: null,
         providerAccountId: 'acct',
@@ -845,7 +831,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: {
         accessToken: 'old-access',
         refreshToken: 'old-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: null,
         tokenType: null,
         providerAccountId: 'acct',
@@ -938,7 +924,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: {
         accessToken: 'old-access',
         refreshToken: 'old-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: null,
         tokenType: null,
         providerAccountId: 'acct',
@@ -1026,7 +1012,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: {
         accessToken: 'old-access',
         refreshToken: 'old-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: null,
         tokenType: null,
         providerAccountId: 'acct',
@@ -1116,7 +1102,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: {
         accessToken: 'old-access',
         refreshToken: 'old-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: null,
         tokenType: null,
         providerAccountId: 'acct',
@@ -1206,7 +1192,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: {
         accessToken: 'old-access',
         refreshToken: 'old-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: null,
         tokenType: null,
         providerAccountId: 'acct',
@@ -1286,7 +1272,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       kind: 'oauth',
       expiresAt: null,
       oauth: {
-        accessToken: 'rev3-access', refreshToken: 'rev3-refresh', idToken: null,
+        accessToken: 'rev3-access', refreshToken: 'rev3-refresh', idToken: 'fixture-id',
         scope: null, tokenType: null, providerAccountId: 'acct', providerEmail: null,
       },
     });
@@ -1350,7 +1336,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       now,
       serviceId: 'openai-codex', profileId: 'work', kind: 'oauth', expiresAt: null,
       oauth: {
-        accessToken: 'rev3-access', refreshToken: 'rev3-refresh', idToken: null,
+        accessToken: 'rev3-access', refreshToken: 'rev3-refresh', idToken: 'fixture-id',
         scope: null, tokenType: null, providerAccountId: 'acct', providerEmail: null,
       },
     });
@@ -1409,7 +1395,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: {
         accessToken: 'store-already-rotated-access',
         refreshToken: 'current-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: null,
         tokenType: null,
         providerAccountId: 'acct',
@@ -1474,7 +1460,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: {
         accessToken: 'current-rev3-access',
         refreshToken: 'current-rev3-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: null,
         tokenType: null,
         providerAccountId: 'acct',
@@ -1536,7 +1522,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: {
         accessToken: 'current-valid-access',
         refreshToken: 'current-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: null,
         tokenType: null,
         providerAccountId: 'acct',
@@ -1615,7 +1601,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: {
         accessToken: 'old-access',
         refreshToken: 'old-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: null,
         tokenType: null,
         providerAccountId: 'acct',
@@ -1706,7 +1692,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: {
         accessToken: 'old-access',
         refreshToken: 'old-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: null,
         tokenType: null,
         providerAccountId: 'acct',
@@ -1806,7 +1792,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: {
         accessToken: 'old-access',
         refreshToken: 'old-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: null,
         tokenType: null,
         providerAccountId: 'acct',
@@ -1895,7 +1881,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: {
         accessToken: 'narrow-access',
         refreshToken: 'narrow-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: 'user:inference',
         tokenType: 'Bearer',
         providerAccountId: 'acct',
@@ -2023,7 +2009,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: {
         accessToken: 'fresh-store-access',
         refreshToken: 'fresh-store-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: 'user:inference',
         tokenType: 'Bearer',
         providerAccountId: 'acct',
@@ -2126,7 +2112,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: {
         accessToken,
         refreshToken: `${profileId}-refresh`,
-        idToken: null,
+        idToken: 'fixture-id',
         scope: 'user:inference user:profile user:sessions:claude_code',
         tokenType: 'Bearer',
         providerAccountId: `acct-${profileId}`,
@@ -2368,7 +2354,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: {
         accessToken: 'fresh-store-access',
         refreshToken: 'fresh-store-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: null,
         tokenType: 'Bearer',
         providerAccountId: 'acct',
@@ -2485,7 +2471,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: {
         accessToken: 'fresh-store-access',
         refreshToken: 'fresh-store-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: null,
         tokenType: 'Bearer',
         providerAccountId: 'acct',
@@ -2590,7 +2576,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: {
         accessToken: 'codex-access',
         refreshToken: 'codex-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: null,
         tokenType: null,
         providerAccountId: 'codex-acct',
@@ -2606,7 +2592,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: {
         accessToken: 'claude-narrow-access',
         refreshToken: 'claude-narrow-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: 'user:inference',
         tokenType: 'Bearer',
         providerAccountId: 'claude-acct',
@@ -2693,6 +2679,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
     expect(updateConnectedServiceCredentialHealth).toHaveBeenCalledWith({
       serviceId: 'openai-codex',
       profileId: 'work',
+      expectedCredentialRevision: (await api.getConnectedServiceCredentialSealed({ serviceId: 'openai-codex', profileId: 'work' }))?.credentialRevision,
       health: expect.objectContaining({
         v: 1,
         status: 'refresh_failed_retryable',
@@ -2723,7 +2710,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: {
         accessToken: 'old-primary-access',
         refreshToken: 'old-primary-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: null,
         tokenType: null,
         providerAccountId: 'acct',
@@ -2902,7 +2889,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: {
         accessToken: 'old-access',
         refreshToken: 'invalid-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: null,
         tokenType: null,
         providerAccountId: 'acct',
@@ -2979,8 +2966,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       profileId: 'work',
     });
 
-    expect(result.status).toBe('refresh_failed');
-    expect(result.diagnostic.category).toBe('invalid_grant');
+    expect(result.status).toBe('blocked_by_credential_health');
     expect(api.updateConnectedServiceCredentialHealth).toHaveBeenCalledWith({
       serviceId: 'openai-codex',
       profileId: 'work',
@@ -2988,31 +2974,21 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       health: expect.objectContaining({
         status: 'needs_reauth',
         reconnectRequired: true,
-        lastRefreshFailureKind: 'invalid_grant',
-        providerHttpStatus: 400,
-        providerErrorCode: 'invalid_grant',
+        providerErrorCode: 'openai_codex_oauth_rejected',
       }),
     });
     expect(onCredentialHealthNotification).toHaveBeenCalledWith(expect.objectContaining({
       diagnostic: expect.objectContaining({
-        serviceId: 'openai-codex',
-        profileId: 'work',
-        status: 'refresh_failed',
-        category: 'invalid_grant',
-        providerStatus: 400,
-        providerErrorCode: 'invalid_grant',
+        status: 'blocked_by_credential_health',
+        providerErrorCode: 'openai_codex_oauth_rejected',
       }),
       healthStatus: 'reconnect_required',
-      affectedTargets: [expect.objectContaining({
-        pid: 123,
-        agentId: 'codex',
-        sessionId: 'happy-session-1',
-      })],
+      affectedTargets: [expect.objectContaining({ pid: 123, sessionId: 'happy-session-1' })],
     }));
     expect(JSON.stringify(onCredentialHealthNotification.mock.calls)).not.toContain('secret-refresh-token');
   });
 
-  it('revision-guards missing-refresh-token health against a superseding credential', async () => {
+  it('revision-guards expired qualified credential health against a superseding credential', async () => {
     const now = 1_000_000;
     const leasedRevision = 'csr_abcdefghijklmnopqrstuv';
     const credentials: Credentials = {
@@ -3027,8 +3003,8 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       expiresAt: now - 1,
       oauth: {
         accessToken: 'old-access',
-        refreshToken: ' ',
-        idToken: null,
+        refreshToken: 'valid-refresh',
+        idToken: 'fixture-id',
         scope: null,
         tokenType: null,
         providerAccountId: 'acct',
@@ -3078,12 +3054,12 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       profileId: 'work',
     });
 
-    expect(result.status).toBe('refresh_failed');
+    expect(result.status).toBe('blocked_by_credential_health');
     expect(updateConnectedServiceCredentialHealth).toHaveBeenCalledWith(expect.objectContaining({
       expectedCredentialRevision: leasedRevision,
       health: expect.objectContaining({
         status: 'needs_reauth',
-        lastRefreshFailureKind: 'missing_refresh_token',
+        providerErrorCode: 'openai_codex_access_token_expired',
       }),
     }));
     expect(onCredentialHealthNotification).not.toHaveBeenCalled();
@@ -3097,14 +3073,10 @@ describe('ConnectedServiceRefreshCoordinator', () => {
         throw new Error('notify failed Authorization: Bearer NOTIFY_SECRET');
       }),
     });
-    api.listConnectedServiceProfiles.mockResolvedValueOnce({
-      serviceId: 'openai-codex',
-      profiles: [{ profileId: 'work', status: 'connected' }],
-    });
     fetchMock.mockResolvedValueOnce({
       ok: false,
-      status: 400,
-      statusText: 'Bad Request',
+      status: 500,
+      statusText: 'Server Error',
       text: async () => JSON.stringify({ error: 'invalid_grant' }),
     });
 
@@ -3120,14 +3092,14 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       expect.objectContaining({
         serviceId: 'openai-codex',
         status: 'refresh_failed',
-        category: 'invalid_grant',
+        category: 'unknown',
       }),
     );
     expect(warnSpy.mock.calls.at(-1)?.[1]).not.toHaveProperty('profileId');
     expect(JSON.stringify(warnSpy.mock.calls.at(-1)?.[1])).not.toContain('NOTIFY_SECRET');
   });
 
-  it('returns an honest cached-health block from spawn preflight before the expiry-window shortcut', async () => {
+  it('uses current qualified credential status instead of stale scalar cached health before the expiry shortcut', async () => {
     const { coordinator, api, fetchMock } = createNeedsReauthRefreshHarness({
       expiresAt: 1_000_000 + 10 * 60_000,
     });
@@ -3137,25 +3109,29 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       profileId: 'work',
     });
 
-    expect(result.status).toBe('blocked_by_credential_health');
+    expect(result.status).toBe('not_needed');
     expect(result.diagnostic).toMatchObject({
       reason: 'spawn_preflight',
       expiresAt: 1_000_000 + 10 * 60_000,
     });
     expect(result.diagnostic.category).toBeUndefined();
-    expect(api.listConnectedServiceProfiles).toHaveBeenCalledWith({ serviceId: 'openai-codex' });
+    expect(api.listConnectedServiceProfiles).not.toHaveBeenCalled();
+    expect(api.updateConnectedServiceCredentialHealth).toHaveBeenCalledWith(expect.objectContaining({
+      expectedCredentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+      health: expect.objectContaining({ status: 'connected', reconnectRequired: false }),
+    }));
     expect(api.acquireConnectedServiceRefreshLease).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('redacts profile-health read failures before refresh', async () => {
+  it('redacts current qualified status health-settlement failures before refresh', async () => {
     const { coordinator, api } = createNeedsReauthRefreshHarness({
       expiresAt: 1_000_000 + 10 * 60_000,
     });
-    api.listConnectedServiceProfiles.mockRejectedValueOnce(
+    vi.mocked(api.updateConnectedServiceCredentialHealth).mockRejectedValueOnce(
       new AxiosError('Request failed with Authorization: Bearer MESSAGE_SECRET', 'ERR_BAD_RESPONSE', {
         method: 'get',
-        url: 'https://api.example.test/v3/connect/openai-codex/profiles?token=QUERY_SECRET',
+        url: 'https://api.example.test/v4/connect/qualified/credential/health?token=QUERY_SECRET',
         headers: new AxiosHeaders({ Authorization: 'Bearer HEADER_SECRET' }),
         data: { access_token: 'BODY_SECRET' },
       }),
@@ -3165,7 +3141,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
     await expect(coordinator.refreshConnectedServiceCredentialForSpawnPreflight({
       serviceId: 'openai-codex',
       profileId: 'work',
-    })).resolves.toEqual(expect.objectContaining({ status: 'not_needed' }));
+    })).resolves.toEqual(expect.objectContaining({ status: 'blocked_by_credential_health' }));
 
     const payload = JSON.stringify(warnSpy.mock.calls.at(-1)?.[1]);
     expect(payload).toContain('ERR_BAD_RESPONSE');
@@ -3194,7 +3170,11 @@ describe('ConnectedServiceRefreshCoordinator', () => {
 
     await coordinator.tickOnce();
 
-    expect(api.listConnectedServiceProfiles).toHaveBeenCalledWith({ serviceId: 'openai-codex' });
+    expect(api.listConnectedServiceProfiles).not.toHaveBeenCalled();
+    expect(api.updateConnectedServiceCredentialHealth).toHaveBeenCalledWith(expect.objectContaining({
+      expectedCredentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+      health: expect.objectContaining({ status: 'connected', reconnectRequired: false }),
+    }));
     expect(api.acquireConnectedServiceRefreshLease).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -3233,7 +3213,11 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: expect.objectContaining({ accessToken: 'new-access' }),
     }));
 
-    expect(api.listConnectedServiceProfiles).toHaveBeenCalledWith({ serviceId: 'openai-codex' });
+    expect(api.listConnectedServiceProfiles).not.toHaveBeenCalled();
+    expect(api.updateConnectedServiceCredentialHealth).toHaveBeenCalledWith(expect.objectContaining({
+      expectedCredentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+      health: expect.objectContaining({ status: 'connected', reconnectRequired: false }),
+    }));
     expect(api.acquireConnectedServiceRefreshLease).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -3286,7 +3270,11 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       reason: 'runtime_auth_failure',
     });
     expect(result.diagnostic.category).toBeUndefined();
-    expect(api.listConnectedServiceProfiles).toHaveBeenCalledWith({ serviceId: 'openai-codex' });
+    expect(api.listConnectedServiceProfiles).not.toHaveBeenCalled();
+    expect(api.updateConnectedServiceCredentialHealth).toHaveBeenCalledWith(expect.objectContaining({
+      expectedCredentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+      health: expect.objectContaining({ status: 'connected', reconnectRequired: false }),
+    }));
     expect(api.acquireConnectedServiceRefreshLease).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -3313,7 +3301,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: {
         accessToken: 'old-access',
         refreshToken: 'old-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: 'user:inference user:profile user:sessions:claude_code',
         tokenType: 'Bearer',
         providerAccountId: 'acct',
@@ -3431,7 +3419,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: {
         accessToken: 'old-access',
         refreshToken: 'old-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: 'user:inference user:profile user:sessions:claude_code',
         tokenType: 'Bearer',
         providerAccountId: 'acct',
@@ -3544,7 +3532,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: {
         accessToken: 'old-access',
         refreshToken: 'old-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: 'user:inference user:profile user:sessions:claude_code',
         tokenType: 'Bearer',
         providerAccountId: 'acct',
@@ -3668,7 +3656,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: {
         accessToken: 'old-access',
         refreshToken: 'old-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: 'user:inference user:profile user:sessions:claude_code',
         tokenType: 'Bearer',
         providerAccountId: 'acct',
@@ -3797,11 +3785,11 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       serviceId: 'openai-codex',
       profileId: 'primary',
       kind: 'oauth',
-      expiresAt: now - 1_000,
+      expiresAt: now + 30_000,
       oauth: {
         accessToken: 'old-access',
         refreshToken: 'old-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: null,
         tokenType: 'Bearer',
         providerAccountId: 'acct',
@@ -3823,7 +3811,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
           kind: 'oauth',
           providerEmail: 'user@example.com',
           providerAccountId: 'acct',
-          expiresAt: now - 1_000,
+          expiresAt: now + 30_000,
         },
       })),
       acquireConnectedServiceRefreshLease: vi.fn(async () => ({ acquired: true, leaseUntil: now + 60_000 })),
@@ -3896,6 +3884,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
     expect(updateConnectedServiceCredentialHealth).toHaveBeenLastCalledWith({
       serviceId: 'openai-codex',
       profileId: 'primary',
+      expectedCredentialRevision: (await api.getConnectedServiceCredentialSealed({ serviceId: 'openai-codex', profileId: 'primary' }))?.credentialRevision,
       health: expect.objectContaining({
         v: 1,
         status: 'refresh_failed_retryable',
@@ -3926,7 +3915,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: {
         accessToken: 'old-access',
         refreshToken: 'old-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: null,
         tokenType: null,
         providerAccountId: 'acct',
@@ -3942,7 +3931,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: {
         accessToken: 'backup-old-access',
         refreshToken: 'backup-old-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: null,
         tokenType: null,
         providerAccountId: null,
@@ -4061,7 +4050,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: {
         accessToken: 'old-access',
         refreshToken: 'old-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: null,
         tokenType: null,
         providerAccountId: 'acct',
@@ -4159,7 +4148,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: {
         accessToken: 'current-access',
         refreshToken: 'current-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: null,
         tokenType: null,
         providerAccountId: 'acct',
@@ -4192,12 +4181,13 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       }),
     } as unknown as ApiClient;
     completeCredentialAuthorityBoundaryFixture(api);
-    installGlobalFetchMock(vi.fn(async () => ({
+    const fetchMock = vi.fn(async () => ({
       ok: false,
       status: 400,
       statusText: 'Bad Request',
       text: async () => JSON.stringify({ error: 'invalid_grant' }),
-    })));
+    }));
+    installGlobalFetchMock(fetchMock);
     const coordinator = createRefreshCoordinator({
       api,
       credentials,
@@ -4231,10 +4221,12 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       await Promise.all([owner, joiner]);
     }
     await expect(Promise.all([owner, joiner])).resolves.toEqual([
-      expect.objectContaining({ status: 'refresh_failed' }),
-      expect.objectContaining({ status: 'refresh_failed' }),
+      expect.objectContaining({ status: 'blocked_by_credential_health' }),
+      expect.objectContaining({ status: 'blocked_by_credential_health' }),
     ]);
-    expect(api.updateConnectedServiceCredentialHealth).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(api.updateConnectedServiceCredentialHealth).mock.calls
+      .filter(([input]) => input.health.status === 'needs_reauth')).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('re-reads the canonical credential after a two-controller lease handoff and never submits the consumed predecessor', async () => {
@@ -4254,7 +4246,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: {
         accessToken: 'predecessor-access',
         refreshToken: 'predecessor-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: null,
         tokenType: null,
         providerAccountId: 'acct',
@@ -4355,7 +4347,10 @@ describe('ConnectedServiceRefreshCoordinator', () => {
     expect(resultB?.oauth?.accessToken).toBe('rotated-access');
     expect(submittedRefreshTokens).toEqual(['predecessor-refresh']);
     expect(api.registerConnectedServiceCredentialPlain).toHaveBeenCalledTimes(1);
-    expect(updateConnectedServiceCredentialHealth).toHaveBeenCalledTimes(2);
+    expect(updateConnectedServiceCredentialHealth).toHaveBeenCalledWith(expect.objectContaining({
+      expectedCredentialRevision: (await api.getConnectedServiceCredentialPlain({ serviceId: 'openai-codex', profileId: 'work' }))?.credentialRevision,
+      health: expect.objectContaining({ status: 'connected', reconnectRequired: false }),
+    }));
     for (const [healthUpdate] of updateConnectedServiceCredentialHealth.mock.calls) {
       expect(healthUpdate).toEqual(expect.objectContaining({
         expectedCredentialRevision: expect.any(String),
@@ -4383,7 +4378,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: {
         accessToken: 'old-access',
         refreshToken: 'old-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: null,
         tokenType: null,
         providerAccountId: 'acct',
@@ -4484,7 +4479,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
         oauth: {
           accessToken: 'connected-access',
           refreshToken: 'connected-refresh',
-          idToken: null,
+          idToken: 'fixture-id',
           scope: null,
           tokenType: 'Bearer',
           providerAccountId: 'acct',
@@ -4499,6 +4494,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
           credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
         })),
       } as unknown as ApiClient;
+      completeCredentialAuthorityBoundaryFixture(api);
       const contributions = getResolvedContributionRegistry();
       const onAuthUpdated = vi.fn();
       const resolveQualifiedPurposeBindingSnapshot = vi.fn(async (input: Readonly<{
@@ -4552,7 +4548,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
 
       expect(resolveQualifiedPurposeBindingSnapshot).toHaveBeenCalledWith({
         agentId,
-        connectedServicesBindingsRaw,
+        connectedServicesBindingsRaw: { ...connectedServicesBindingsRaw, v: 2 },
       });
       expect(onAuthUpdated).toHaveBeenCalledWith({
         binding: { serviceId: 'openai-codex', profileId: 'work' },
@@ -4600,7 +4596,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
         oauth: {
           accessToken: 'connected-access',
           refreshToken: 'connected-refresh',
-          idToken: null,
+          idToken: 'fixture-id',
           scope: null,
           tokenType: 'Bearer',
           providerAccountId: 'acct',
@@ -4626,6 +4622,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
         },
       };
       const contributions = getResolvedContributionRegistry();
+      completeCredentialAuthorityBoundaryFixture(api);
       const validSnapshot = resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
         agentId: 'codex',
         bindings: ConnectedServiceBindingsV2IngressSchema.parse(connectedServicesBindingsRaw),
@@ -4713,7 +4710,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       oauth: {
         accessToken: 'old-access',
         refreshToken: 'old-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: 'user:inference user:profile user:sessions:claude_code',
         tokenType: null,
         providerAccountId: 'acct',
@@ -4823,7 +4820,8 @@ describe('ConnectedServiceRefreshCoordinator', () => {
 
     expect(forcedResult.status).toBe('refreshed');
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1);
-    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'GET')).toHaveLength(1);
+    // Current status reads credential material locally, not a fabricated provider GET.
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'GET')).toHaveLength(0);
     expect(api.acquireConnectedServiceRefreshLease).toHaveBeenCalledTimes(1);
     expect(materializerCalls).toBe(1);
     expect(onAuthUpdated).toHaveBeenCalledTimes(1);
@@ -4904,7 +4902,7 @@ describe('ConnectedServiceRefreshCoordinator Claude subscription bridge', () => 
       oauth: {
         accessToken: 'old-claude-access',
         refreshToken: 'old-claude-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: null,
         tokenType: null,
         providerAccountId: 'claude-acct',
@@ -4975,7 +4973,7 @@ describe('ConnectedServiceRefreshCoordinator Claude subscription bridge', () => 
       oauth: {
         accessToken: 'store-already-rotated-access',
         refreshToken: 'store-current-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: null,
         tokenType: null,
         providerAccountId: 'claude-acct',
@@ -5043,7 +5041,7 @@ describe('ConnectedServiceRefreshCoordinator Claude subscription bridge', () => 
       oauth: {
         accessToken: 'store-already-rotated-access',
         refreshToken: 'store-current-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: null,
         tokenType: null,
         providerAccountId: 'claude-acct',
@@ -5106,7 +5104,7 @@ describe('ConnectedServiceRefreshCoordinator Claude subscription bridge', () => 
       oauth: {
         accessToken: 'current-valid-claude-access',
         refreshToken: 'current-claude-refresh',
-        idToken: null,
+        idToken: 'fixture-id',
         scope: null,
         tokenType: null,
         providerAccountId: 'claude-acct',
