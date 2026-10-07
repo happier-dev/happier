@@ -91,7 +91,7 @@ describe('ReviewProfile', () => {
       expect(narration.provenance).toMatchObject({ reviewedRuns: [{ reviewOutcome: 'partial' }] });
     } finally { await rm(cwd, { recursive: true, force: true }); }
   });
-  it('publishes findings before a second structured turn on the same review Run and saves narration at the canonical result owner', async () => {
+  it.each([false, true])('publishes findings before narration, including when its saved generator is replaced (%s)', async (replaced) => {
     const cwd = await mkdtemp(join(tmpdir(), 'happier-review-walkthrough-'));
     const comparison = ScmComparisonSchema.parse({ id: 'review-comparison', source: { kind: 'workingTree' },
       repository: { rootPath: cwd }, endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } });
@@ -105,10 +105,23 @@ describe('ReviewProfile', () => {
       const started = await ReviewProfile.onStarted?.({ start, rawText: '', finishedAtMs: 1 });
       const pending = ScmDiffSummaryGenerateOutputSchema.parse(started?.toolResultOutput);
       const profileStart = { ...start, intentInput: { ...start.intentInput as Record<string, unknown>, resultId: pending.resultId } };
+      const scope = { cwd, sessionId: start.sessionId!, resultId: pending.resultId! };
+      if (replaced) {
+        const replacement = await scmDiffSummaryResultStore.bindRun({ ...scope, expectedRevision: pending.revision!, runId: 'replacement-narrator' });
+        if (!replacement.success) throw new Error(replacement.error);
+      }
       const first = await ReviewProfile.onTurnComplete?.({ start: profileStart, turnId: 'findings-turn',
         inputIds: [`initial:${start.runId}`], rawText: JSON.stringify({
         summary: 'No findings in this captured comparison.', findings: [], overviewMarkdown: 'Review completed.' }), finishedAtMs: 2 });
       expect(first?.structuredMeta?.kind).toBe('review_findings.v2');
+      if (replaced) {
+        expect(first?.structuredMeta?.payload).toMatchObject({ summary: 'No findings in this captured comparison.', findings: [] });
+        expect(first?.nextInput).toBeUndefined();
+        expect(first?.toolResultMeta).toMatchObject({ reviewNarration: { phase: 'failed', errorCode: 'review_narration_failed' } });
+        expect(await scmDiffSummaryResultStore.read(scope)).toMatchObject({ success: true,
+          result: { output: { runId: 'replacement-narrator', outputs: { walkthrough: { state: 'pending' } } } } });
+        return;
+      }
       expect(first?.nextInput).toBeDefined();
       expect(first?.nextInput?.instructions).toContain('walkthrough');
       expect(await scmDiffSummaryResultStore.readInput({ cwd, sessionId: start.sessionId!, resultId: pending.resultId!,

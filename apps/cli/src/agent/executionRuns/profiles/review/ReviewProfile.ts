@@ -99,15 +99,22 @@ export const ReviewProfile: ExecutionRunIntentProfile = {
       backendId: params.start.backendId, status: completed.status, hasOutput: findings?.success === true,
       reviewOutcome: findings?.success ? findings.data.reviewOutcome ?? 'complete' : 'unavailable', comparisonId: comparison.id }],
       narrationMode: 'continued_review', comparisonFreshness: 'unchanged' } satisfies ScmDiffSummaryReviewProvenance;
-    const nextInput = await prepareSavedReviewWalkthroughInput({ ...params.start, intentInput: {
-      ...readScmDiffSummaryIntent(params.start.intentInput), reviewNarration: {
-        reviewFindings: findings?.success ? [findings.data] : [],
-        reviewStatus: completed.status,
-      },
-    } }, provenance, 'Use the latest published findings and review provenance supplied by the host input context.');
-    return { ...completed, nextInput, toolResultMeta: { ...completed.toolResultMeta,
-      reviewNarration: { phase: 'writing', resultId: nextInput.intentInput.resultId,
-        runId: params.start.runId, ...provenance } } };
+    try {
+      const nextInput = await prepareSavedReviewWalkthroughInput({ ...params.start, intentInput: {
+        ...input, reviewNarration: {
+          reviewFindings: findings?.success ? [findings.data] : [],
+          reviewStatus: completed.status,
+        },
+      } }, provenance, 'Use the latest published findings and review provenance supplied by the host input context.');
+      return { ...completed, nextInput, toolResultMeta: { ...completed.toolResultMeta,
+        reviewNarration: { phase: 'writing', resultId: nextInput.intentInput.resultId,
+          runId: params.start.runId, ...provenance } } };
+    } catch (error) {
+      return { ...completed, toolResultMeta: { ...completed.toolResultMeta,
+        reviewNarration: { phase: 'failed', errorCode: 'review_narration_failed',
+          error: error instanceof Error ? error.message : 'Review narration preparation failed',
+          resultId: input.resultId, runId: params.start.runId, ...provenance } } };
+    }
   },
   onTurnFailed: (params) => requestsWalkthrough(params.start.intentInput) ? ScmDiffSummaryProfile.onTurnFailed!(params) : null,
   onTerminal: (params) => requestsWalkthrough(params.start.intentInput) ? ScmDiffSummaryProfile.onTerminal!(params) : null,
