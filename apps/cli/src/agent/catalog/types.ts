@@ -1,3 +1,4 @@
+import type { AgentCliSessionCommandPluginSettingsV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { CommandHandler } from '@/cli/commandRegistry';
 import type { DaemonSpawnHooks } from '@/daemon/spawnHooks';
 import type {
@@ -406,6 +407,7 @@ export type AgentCatalogEntry = Readonly<{
    * on provider ids in shared handlers.
    */
   needsAccountSettingsForProbes?: boolean;
+  resolveProbePluginSettings?: (options?: Readonly<{ signal?: AbortSignal }>) => Promise<AgentCliSessionCommandPluginSettingsV1 | null>;
   /**
    * Optional cache-variant shaper for the dynamic models probe.
    *
@@ -417,6 +419,7 @@ export type AgentCatalogEntry = Readonly<{
     runtimeKindOverride?: string;
     probeKind?: PreflightSessionControlsProbeKind;
     accountSettings?: Readonly<Record<string, unknown>> | null;
+    pluginSettings?: AgentCliSessionCommandPluginSettingsV1;
     env?: NodeJS.ProcessEnv;
   }>) => string | null;
   /**
@@ -432,6 +435,7 @@ export type AgentCatalogEntry = Readonly<{
     runtimeKindOverride?: string;
     probeKind: PreflightSessionControlsProbeKind;
     accountSettings?: Readonly<Record<string, unknown>> | null;
+    pluginSettings?: AgentCliSessionCommandPluginSettingsV1;
     env?: NodeJS.ProcessEnv;
   }>) => string | null;
   /**

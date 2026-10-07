@@ -1,6 +1,7 @@
+import type { SecretReferenceOverlayV1 } from '@happier-dev/protocol';
 import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
 import type { StoredCredentials } from '@/persistence';
-import { resolveForegroundProfileSavedSecretEnvironment } from '@/daemon/agentRuntime/resolveForegroundProfileSavedSecretEnvironment';
+import { readForegroundProfileRequiredSecretNamesMissingBinding, resolveForegroundProfileSavedSecretEnvironment } from '@/daemon/agentRuntime/resolveForegroundProfileSavedSecretEnvironment';
 import {
   buildProfileEnvOverlay,
   expandProfileEnvOverlay,
@@ -16,6 +17,7 @@ export type ProfileProbeEnvironment = Readonly<{
 export async function resolveProfileProbeEnvironment(params: Readonly<{
   agentId: CatalogAgentLookupId;
   profileId?: unknown;
+  secretReferenceOverlay?: SecretReferenceOverlayV1;
   accountSettings: Readonly<Record<string, unknown>> | null;
   credentials: StoredCredentials | null;
   processEnv: NodeJS.ProcessEnv;
@@ -32,13 +34,10 @@ export async function resolveProfileProbeEnvironment(params: Readonly<{
     throw new Error(`Profile "${profileId}" is unavailable for this preflight probe`);
   }
   const requiredSecretRequirementNamesMissingBinding = new Set(
-    profile.envVarRequirements
-      ?.filter((requirement) =>
-        (requirement.kind ?? 'secret') === 'secret'
-        && requirement.required === true
-        && !profileSnapshot.secretBindingsByProfileId[profile.id]?.[requirement.name],
-      )
-      .map((requirement) => requirement.name) ?? [],
+    readForegroundProfileRequiredSecretNamesMissingBinding({
+      profile, accountSettings: params.accountSettings,
+      secretReferenceOverlay: params.secretReferenceOverlay,
+    }),
   );
   const overlay = await buildProfileEnvOverlay({
     agentId: params.agentId,
@@ -53,6 +52,7 @@ export async function resolveProfileProbeEnvironment(params: Readonly<{
     accountSettings: params.accountSettings,
     settingsSecretsReadKeys: deriveSettingsSecretsReadKeysForCredentials(params.credentials),
     foregroundSatisfiedSecretRequirementNames: overlay.foregroundSatisfiedSecretRequirementNames,
+    secretReferenceOverlay: params.secretReferenceOverlay,
   });
   const expandedOverlay = expandProfileEnvOverlay({
     profile,

@@ -8,6 +8,10 @@
     "tsBuildInfoFile": "node_modules/.cache/tsc/cli.source.typecheck.tsbuildinfo"
   },
   "files": [
+    "../../packages/plugins/claude/src/agent/preflight/catalogs.ts",
+    "../../packages/plugins/claude/src/agent/transcripts/nativeCommands.ts",
+    "../../packages/plugins/devin/src/agent/acp/preflight.ts",
+    "../../packages/plugins/opencode/src/agent/preflight/catalogs.ts",
     "../../packages/plugins/antigravity/src/agent/cliPrint/conversationStore.ts",
     "../../packages/plugins/antigravity/src/agent/cliPrint/externalSessions.ts",
     "../../packages/plugins/antigravity/src/agent/cliPrint/observation.ts",

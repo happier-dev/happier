@@ -222,6 +222,20 @@ function retainedRunnerInputs(params: Readonly<{
     return Object.freeze({ binding, hostAccessRequests });
 }
 
+describe('ready-only preflight executable resolution', () => {
+    it('reports an unavailable declared dependency without installing it', async () => {
+        const install = vi.fn(async () => ({ ok: true as const, logPath: '/redacted/install.log' }));
+        const host = hostFor([descriptor('native-acp')], async () => adapter('native-acp', {
+            resolveLaunchCommand: async () => ({ ok: false, errorMessage: 'Not installed', canAutoInstall: true }),
+            detectLaunchResolution: async () => ({ availability: { ok: false, errorMessage: 'Not installed' }, canAutoInstall: true, canBackgroundAutoUpdate: false }),
+            installOrUpgrade: install,
+        }));
+        await expect(host.resolveExecutable({ kind: 'managedDependency', id: 'native-acp' }, 'acme.plugin', { requireReady: true }))
+            .rejects.toMatchObject({ code: 'plugin_managed_dependency_executable_unavailable' });
+        expect(install).not.toHaveBeenCalled();
+    });
+});
+
 describe('stable plugin managed dependencies host', () => {
     it('retains bundled dependencies from the runner snapshot across a daemon snapshot change', () => {
         const daemonCustody = {

@@ -9,7 +9,7 @@ vi.mock('@/cli/runBackendSessionCliCommand', () => ({
     runBackendSessionCliCommand,
 }));
 
-import { projectManifestAgentContribution } from './projectManifestAgentContribution';
+import { projectManifestAgentAcpCatalogPreflight, projectManifestAgentContribution } from './projectManifestAgentContribution';
 
 function project(definition: unknown, provenance: 'external' | 'first_party' = 'external') {
     return projectManifestAgentContribution({
@@ -37,6 +37,26 @@ function sessionAgent(open: readonly ('create' | 'resume' | 'fork')[]) {
 }
 
 describe('projectManifestAgentContribution', () => {
+    it('does not create ACP preflight controls for a surface-only Agent', () => {
+        const declaration = PluginAgentContributionV2Schema.parse({
+            id: 'acme-external',
+            title: 'Acme External',
+            capabilities: { surfaces: ['externalSessions'] },
+            surfaces: {
+                externalSession: {
+                    sources: [{
+                        sourceKind: 'fixture',
+                        schema: { fields: [{ name: 'kind', kind: 'literal', value: 'fixture' }] },
+                        key: { segments: [{ kind: 'literal', value: 'fixture' }] },
+                        instances: [{ kind: 'default', constants: {} }],
+                    }],
+                },
+            },
+        });
+
+        expect(projectManifestAgentAcpCatalogPreflight(declaration, 'com.acme.agent')).toBeNull();
+    });
+
     it('projects a session-capable manifest Agent without CLI metadata into the catalog and generic host session command', async () => {
         const contribution = project(sessionAgent(['create', 'resume']));
 

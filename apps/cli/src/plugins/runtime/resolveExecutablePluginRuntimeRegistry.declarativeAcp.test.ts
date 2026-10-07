@@ -1,3 +1,5 @@
+import { writeCommittedLocalPathPluginFixture } from '@/plugins/store/state.testkit';
+import { createLocalPathPluginDistributionIdentity, createPluginTrustRecord } from '@/plugins/store/install/trustIdentity';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,26 +11,43 @@ import type {
 import {
     buildQualifiedPluginContributionKey,
     type PluginAgentContributionV2,
+    type PluginManifestV2,
 } from '@happier-dev/protocol';
 
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import {
-    createImmutablePluginGenerationRecordFromSource,
-    prepareImmutablePluginGeneration,
+    readCurrentCommittedPluginGenerations,
 } from '@/plugins/store/registry/generationStore';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 
 import { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 import { loadRetainedAgentRuntimeLeaf } from './runner/loadRetainedAgentRuntimeLeaf';
 
+
+async function commitNativePluginFixture(params: Readonly<{ happyHomeDir: string; pluginId: string; pluginRoot: string }>) {
+    const distribution = await createLocalPathPluginDistributionIdentity(params.pluginRoot);
+    return await writeCommittedLocalPathPluginFixture({
+        happyHomeDir: params.happyHomeDir, pluginId: params.pluginId, sourceRootPath: params.pluginRoot,
+        plugin: {
+            source: { kind: 'path', locator: params.pluginRoot, trustPolicy: 'local_trusted', installPolicy: 'link',
+                resolvedPath: params.pluginRoot, manifestPath: join(params.pluginRoot, '.happier-plugin', 'plugin.json') },
+            compatibility: { status: 'unknown', diagnostics: [] },
+            install: { mode: 'link', manifestVersion: '1.0.0', installedPath: null,
+                trust: createPluginTrustRecord({ pluginId: params.pluginId, distribution, approvedAtMs: 1 }) },
+            state: { enabled: true },
+        },
+    });
+}
+
 describe('resolveExecutablePluginRuntimeRegistry declarative ACP admission', () => {
     it.each([
         {
-            label: 'installed external',
+            label: 'installed local link',
+            checkRetainedIdentity: true,
             pluginId: 'acme.declarative-acp-installed',
             provenance: 'external' as const,
-            sourceKind: 'package' as const,
+            sourceKind: 'path' as const,
             sourceSpec: {
                 kind: 'package' as const,
                 locator: '@acme/declarative-acp-installed',
@@ -38,7 +57,8 @@ describe('resolveExecutablePluginRuntimeRegistry declarative ACP admission', () 
             },
         },
         {
-            label: 'local development',
+            label: 'local development selection',
+            checkRetainedIdentity: false,
             pluginId: 'acme.declarative-acp-local',
             provenance: 'external' as const,
             sourceKind: 'path' as const,
@@ -56,6 +76,7 @@ describe('resolveExecutablePluginRuntimeRegistry declarative ACP admission', () 
         provenance,
         sourceKind,
         sourceSpec,
+        checkRetainedIdentity,
     }) => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-declarative-runner-home-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-declarative-runner-plugin-'));
@@ -109,23 +130,10 @@ describe('resolveExecutablePluginRuntimeRegistry declarative ACP admission', () 
                 'utf8',
             );
             const paths = resolvePluginStorePaths({ happyHomeDir });
-            const record = await createImmutablePluginGenerationRecordFromSource({
-                pluginId,
-                sourceRootPath: pluginRoot,
-                manifestRelativePath: '.happier-plugin/plugin.json',
-                distribution: {
-                    kind: 'localPath',
-                    canonicalPath: pluginRoot,
-                },
-                updatePolicy: 'allowed',
-                createdAtMs: 1,
-                immutableGenerationId: `declarative-${sourceKind}-generation`,
-            });
-            const prepared = await prepareImmutablePluginGeneration({
-                paths,
-                sourceRootPath: pluginRoot,
-                record,
-            });
+            const prepared = await commitNativePluginFixture({ happyHomeDir, pluginId, pluginRoot });
+            const generationAuthority = await readCurrentCommittedPluginGenerations(paths);
+            const record = generationAuthority?.generations.get(pluginId)?.record;
+            if (!record) throw new Error('Expected real committed native plugin generation');
             const contributes = createResolvedContributionRegistry({
                 agents: [{
                     id: agentId,
@@ -143,7 +151,7 @@ describe('resolveExecutablePluginRuntimeRegistry declarative ACP admission', () 
                     },
                     pluginId,
                     hostAccess: { required: [], optional: [] },
-                    sourceSpec,
+                    sourceSpec: { ...sourceSpec, kind: 'path', locator: pluginRoot, trustPolicy: 'local_trusted', installPolicy: 'link' },
                 }],
                 activationTargets: [],
             });
@@ -151,17 +159,7 @@ describe('resolveExecutablePluginRuntimeRegistry declarative ACP admission', () 
                 happyHomeDir,
                 contributes,
                 generation: 1,
-                generationAuthority: {
-                    commit: null,
-                    generations: new Map([[pluginId, {
-                        pluginId,
-                        immutableGenerationId: record.immutableGenerationId,
-                        rootPath: prepared.rootPath,
-                        record,
-                    }]]),
-                    rejectedGenerations: new Map(),
-                    isCurrent: async () => true,
-                },
+                generationAuthority: generationAuthority ?? undefined,
             });
 
             const lease = runtimeRegistry.agentRuntimesByAgentId.get(agentId);
@@ -176,7 +174,7 @@ describe('resolveExecutablePluginRuntimeRegistry declarative ACP admission', () 
                 agentId,
                 qualifiedAgentId: `${pluginId}/agents/${localAgentId}`,
                 localAgentId,
-                immutableGenerationId: record.immutableGenerationId,
+                sourceCustody: { kind: 'managed', immutableGenerationId: prepared.immutableGenerationId },
             });
             expect(binding).not.toHaveProperty('manifestDigest');
             expect(binding).not.toHaveProperty('runtimeBindingDigest');
@@ -256,7 +254,7 @@ describe('resolveExecutablePluginRuntimeRegistry declarative ACP admission', () 
             expect(record.files.map((file) => file.relativePath)).toEqual([
                 '.happier-plugin/plugin.json',
             ]);
-            if (sourceKind === 'package') {
+            if (checkRetainedIdentity) {
                 if (!('kind' in binding)) {
                     throw new Error('Expected a host declarative ACP binding');
                 }
@@ -285,7 +283,7 @@ describe('resolveExecutablePluginRuntimeRegistry declarative ACP admission', () 
                     }],
                     ['immutable generation', {
                         ...hostBinding,
-                        immutableGenerationId: 'substituted-generation',
+                        sourceCustody: { ...hostBinding.sourceCustody, immutableGenerationId: 'substituted-generation' },
                     }],
                     ['adapter ABI', {
                         ...hostBinding,
@@ -309,76 +307,40 @@ describe('resolveExecutablePluginRuntimeRegistry declarative ACP admission', () 
 
     it('admits invocation services for an entrypoint-free Agent from the normalized catalog', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-declarative-agent-services-home-'));
-        const agentId = 'novel-declarative-acp-agent';
+        const pluginRoot = join(happyHomeDir, 'plugin');
+        const localAgentId = 'novel-declarative-acp-agent';
         const pluginId = 'acme.declarative-acp-proof';
+        const agentId = buildQualifiedPluginContributionKey({ pluginId, localId: localAgentId });
+        const definition = {
+            id: localAgentId, title: 'Novel Declarative ACP Agent', primary: 'sessions',
+            runtime: { kind: 'acp', transport: { kind: 'stdio', executable: { kind: 'systemTool', id: 'fixture-acp' } } },
+            capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+        } satisfies PluginAgentContributionV2;
+        const hostAccess = { required: [{ id: 'agent-process', capability: 'process', reason: 'Run the native fixture', scope: { executables: [{ kind: 'systemTool', id: 'fixture-acp' }] } }], optional: [] } satisfies NonNullable<PluginManifestV2['hostAccess']>;
+        await mkdir(join(pluginRoot, '.happier-plugin'), { recursive: true });
+        await writeFile(join(pluginRoot, '.happier-plugin', 'plugin.json'), JSON.stringify(createPluginManifestV2Fixture({
+            id: pluginId, entrypoints: undefined, hostAccess, contributes: { agents: [definition] },
+        })));
+        await commitNativePluginFixture({ happyHomeDir, pluginId, pluginRoot });
         const runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({
             happyHomeDir,
-            contributes: createResolvedContributionRegistry({
-                agents: [{
-                    id: agentId,
-                    identity: { pluginId, localId: agentId },
-                    provenance: 'external',
-                    source: { kind: 'path' },
-                    definition: { kindVersion: 1, id: agentId, ownedBackendIds: [] },
-                    richDefinition: {
-                        provenance: 'external',
-                        definition: {
-                            id: agentId,
-                            title: 'Novel Declarative ACP Agent',
-                            runtime: {
-                                kind: 'acp',
-                                transport: {
-                                    kind: 'stdio',
-                                    executable: { kind: 'systemTool', id: 'fixture-acp' },
-                                },
-                            },
-                            primary: 'sessions',
-                            capabilities: {
-                                sessions: { open: ['create'], delivery: ['newTurn'], cancel: true },
-                            },
-                        },
-                    },
-                    pluginId,
-                    hostAccess: {
-                        required: [{
-                            id: 'agent-process',
-                            capability: 'process',
-                            reason: 'Run the declared Agent executable',
-                            scope: { executables: [{ kind: 'systemTool', id: 'fixture-acp' }] },
-                        }],
-                        optional: [],
-                    },
-                    sourceSpec: {
-                        kind: 'path',
-                        locator: '/plugins/acme.declarative-acp-proof',
-                        trustPolicy: 'local_trusted',
-                        installPolicy: 'link',
-                        resolvedVersion: '1.0.0',
-                    },
-                }],
-                activationTargets: [],
-            }),
+            contributes: createResolvedContributionRegistry({ agents: [{
+                id: agentId, identity: { pluginId, localId: localAgentId }, provenance: 'external', source: { kind: 'path' },
+                definition: { kindVersion: 1, id: agentId, ownedBackendIds: [] },
+                richDefinition: { provenance: 'external', definition }, pluginId, hostAccess,
+                sourceSpec: { kind: 'path', locator: pluginRoot, trustPolicy: 'local_trusted', installPolicy: 'link', resolvedVersion: '1.0.0' },
+            }], activationTargets: [] }),
             generation: 17,
-            generationAuthority: {
-                commit: null,
-                generations: new Map(),
-                rejectedGenerations: new Map(),
-                isCurrent: async () => true,
-            },
+            generationAuthority: await readCurrentCommittedPluginGenerations(resolvePluginStorePaths({ happyHomeDir })) ?? undefined,
         });
-
         try {
             const lease = runtimeRegistry.agentRuntimesByAgentId.get(agentId);
-            expect(lease).toMatchObject({ pluginId, agentId, occurrenceId: '17' });
+            expect(lease).toMatchObject({ pluginId, agentId });
+            if (!lease) throw new Error('Expected admitted native ACP occurrence');
             const services = await runtimeRegistry.createAgentInvocationServices({
-                pluginId,
-                pluginVersion: '1.0.0',
-                agentId,
-                occurrenceId: '17',
-                correlationId: 'declarative-agent-services',
-                cwd: happyHomeDir,
-                signal: new AbortController().signal,
-                isOccurrenceCurrent: () => true,
+                pluginId, pluginVersion: '1.0.0', agentId, occurrenceId: lease.occurrenceId,
+                correlationId: 'declarative-agent-services', cwd: happyHomeDir,
+                signal: new AbortController().signal, isOccurrenceCurrent: lease.isCurrent,
             });
             await expect(services.storage.daemon.set('proof', 'catalog-owned')).resolves.toBeUndefined();
             await expect(services.storage.daemon.get('proof')).resolves.toBe('catalog-owned');

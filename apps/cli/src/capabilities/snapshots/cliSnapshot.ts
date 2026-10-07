@@ -6,6 +6,7 @@ import { AGENTS } from '@/agent/catalog/registry';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import type { CliDetectSpec } from '@/agent/catalog/types';
 import type { CliAuthSpec, CliAuthStatus } from '@/capabilities/cliAuth/types';
+import { CapabilityError } from '@/capabilities/errors';
 import { detectNativeAgentCliAuthStatus } from '@/capabilities/cliAuth/detectNativeAgentCliAuthStatus';
 import {
     resolveAgentCliCommandForRuntime,
@@ -63,6 +64,8 @@ export interface DetectCliRequest {
 
 export interface DetectCliEntry {
     available: boolean;
+    /** Internal observation failure; capability projection emits the existing typed error result. */
+    detectionError?: { code: 'cli-detection-timeout' | 'cli-detection-failed'; message: string };
     /** Own CLI execution, never inferred from an installed dependency. */
     installed?: boolean;
     signIn?: MachineAgentInventoryItem['signIn'];
@@ -316,20 +319,19 @@ async function resolveCliAuthSpec(name: DetectCliName): Promise<CliAuthSpec | nu
     return spec;
 }
 
-function resolveCliVersionExecTimeoutMs(snapshotProbeTimeoutMs: number): number {
-    return Math.max(500, snapshotProbeTimeoutMs - 100);
-}
-
-async function probeCliExecution(params: { name: DetectCliName; resolvedPath: string; timeoutMs: number; env?: NodeJS.ProcessEnv; signal?: AbortSignal; execFile?: typeof execFileWithDeadline }): Promise<Readonly<{ installed: boolean; version: string | null }>> {
+async function probeCliExecution(params: { name: DetectCliName; resolvedPath: string; timeoutMs: number; env?: NodeJS.ProcessEnv; signal?: AbortSignal; execFile?: typeof execFileWithDeadline }): Promise<Readonly<{ installed?: boolean; version: string | null; detectionError?: DetectCliEntry['detectionError'] }>> {
     let installed = false;
+    let interrupted = false;
     let detectedVersion: string | null = null;
-    const result = (version: string | null) => ({ installed, version });
+    const result = (version: string | null) => !installed && interrupted
+        ? { version, detectionError: { code: 'cli-detection-timeout' as const, message: 'Agent CLI detection did not complete' } }
+        : { installed, version };
     // Ordinary probe failures are best-effort; cancellation and failed containment must escape.
     try {
         // Keep this within the outer snapshot probe budget. JS-backed CLIs can take
         // noticeably longer to start under load, so this must not use a smaller
         // hidden timeout than the configured snapshot budget.
-        const timeoutMs = resolveCliVersionExecTimeoutMs(params.timeoutMs);
+        const timeoutMs = params.timeoutMs;
         const isWindows = process.platform === 'win32';
         const isCmdScript = isWindows && /\.(cmd|bat)$/i.test(params.resolvedPath);
         const needsJavaScriptRuntime = agentCliPathRequiresJavaScriptRuntime(params.resolvedPath);
@@ -350,9 +352,9 @@ async function probeCliExecution(params: { name: DetectCliName; resolvedPath: st
 
         const isTransientExecFileError = (error: unknown): boolean => {
             if (!error || typeof error !== 'object' || Array.isArray(error)) return false;
-            const code = (error as any).code;
+            const code = Reflect.get(error, 'code');
             if (typeof code === 'string' && ['EAGAIN', 'EMFILE', 'ENFILE', 'ETXTBSY'].includes(code)) return true;
-            if ((error as any).killed === true) return true;
+            if (Reflect.get(error, 'killed') === true) return true;
             return false;
         };
 
@@ -368,6 +370,7 @@ async function probeCliExecution(params: { name: DetectCliName; resolvedPath: st
             } catch (error) {
                 if (error instanceof ExecFileTerminationError) throw error;
                 params.signal?.throwIfAborted();
+                if (isTransientExecFileError(error)) interrupted = true;
                 // For non-zero exit codes, execFile still provides stdout/stderr on the error object.
                 const maybeStdout = asString((error as any)?.stdout);
                 const maybeStderr = asString((error as any)?.stderr);
@@ -483,7 +486,16 @@ export async function probeAgentCliForInstall(params: Readonly<{
         signal: params.signal,
         execFile: params.execFile,
     });
-    return { available: probe.installed, installed: probe.installed, resolvedPath: resolution.command, resolutionSource: resolution.source, ...(probe.version ? { version: probe.version } : {}) };
+    if (probe.detectionError) {
+        throw new CapabilityError(probe.detectionError.message, probe.detectionError.code);
+    }
+    return {
+        available: probe.installed === true,
+        ...(probe.installed !== undefined ? { installed: probe.installed } : {}),
+        resolvedPath: resolution.command,
+        resolutionSource: resolution.source,
+        ...(probe.version ? { version: probe.version } : {}),
+    };
 }
 
 async function detectTmuxVersion(params: { resolvedPath: string }): Promise<string | null> {
@@ -633,10 +645,9 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest): Pro
             const { resolvedPath, resolutionSource } = resolved;
 
             const [versionResult, authStatusResult, resolvedCommandResult] = await Promise.all([
-                withCliSnapshotProbeTimeout(
-                    probeCliExecution({ name, resolvedPath, timeoutMs: probeTimeoutMs }),
-                    probeTimeoutMs,
-                ),
+                // The process boundary owns the deadline and drains finished output after a
+                // stalled loop. A competing timer here would discard that successful result.
+                probeCliExecution({ name, resolvedPath, timeoutMs: probeTimeoutMs }),
                 includeLoginStatus
                     ? withCliSnapshotProbeTimeout(
                         detectCliAuthStatus({ name, resolvedPath }),
@@ -670,7 +681,7 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest): Pro
                         : null)
                 : null;
 
-            const installed = versionResult !== CLI_SNAPSHOT_PROBE_TIMEOUT && versionResult.installed;
+            const installed = versionResult.installed;
             const platform = resolvePlatformFromNodePlatform(process.platform);
             const update = installed && platform
                 ? classifyAgentCliInstall({ runtimeSpec: resolveAgentCliRuntimeSpecForLookupId(name), command: resolvedPath, source: resolutionSource, platform, env: process.env })
@@ -678,7 +689,8 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest): Pro
 
             const entry: DetectCliEntry = {
                 available: true,
-                installed,
+                ...(installed !== undefined ? { installed } : {}),
+                ...(versionResult.detectionError ? { detectionError: versionResult.detectionError } : {}),
                 ...setupFacts,
                 signIn: {
                     status: authStatus?.state === 'logged_in' ? 'signedIn' : authStatus?.state === 'logged_out' ? 'signedOut' : 'unknown',
@@ -691,7 +703,7 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest): Pro
                 ...(resolvedCommandResult !== CLI_SNAPSHOT_PROBE_TIMEOUT && typeof resolvedCommandResult === 'string'
                     ? { resolvedCommand: resolvedCommandResult }
                     : {}),
-                ...(versionResult !== CLI_SNAPSHOT_PROBE_TIMEOUT && versionResult.version
+                ...(versionResult.version
                     ? { version: versionResult.version }
                     : {}),
                 ...(includeLoginStatus ? { isLoggedIn } : {}),
@@ -732,13 +744,22 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest): Pro
         windowsTerminal,
     };
     }).then((snapshot) => {
-        cliSnapshotCache.setSuccess(cacheKey, snapshot);
+        // Incomplete observations must be retried when the loop/process recovers. They are
+        // not a successful negative install fact and must not acquire the success TTL.
+        if (Object.values(snapshot.clis).some((entry) => entry.detectionError)) {
+            cliSnapshotCache.setError(cacheKey);
+        } else {
+            cliSnapshotCache.setSuccess(cacheKey, snapshot);
+        }
         return snapshot;
     }).catch(() => {
         // Best-effort: never throw from a snapshot helper.
         cliSnapshotCache.setError(cacheKey);
         const names = Object.keys(AGENTS) as DetectCliName[];
-        const clis = Object.fromEntries(names.map((name) => [name, { available: false } satisfies DetectCliEntry])) as Record<DetectCliName, DetectCliEntry>;
+        const clis = Object.fromEntries(names.map((name) => [name, {
+            available: false,
+            detectionError: { code: 'cli-detection-failed', message: 'Agent CLI detection failed' },
+        } satisfies DetectCliEntry])) as Record<DetectCliName, DetectCliEntry>;
         return { path: pathEnv, clis, tmux: { available: false }, windowsTerminal: { available: false } };
     });
 }

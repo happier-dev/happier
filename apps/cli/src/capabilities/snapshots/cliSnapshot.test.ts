@@ -8,6 +8,7 @@ import { applyEnvValues, restoreEnvValues, snapshotEnvValues } from '@/testkit/e
 import { resolveSystemJavaScriptRuntimeBinary, writeExecutableShimSync } from '@/testkit/fs/executableShim';
 import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 import { projectPath } from '@/projectPath';
+import { buildCliCapabilityData } from '@/capabilities/probes/cliBase';
 
 const SCOPED_ENV_KEYS = [
   'HOME',
@@ -134,6 +135,33 @@ describe('detectCliSnapshotOnDaemonPath', () => {
     setEnv('HAPPIER_CODEX_PATH', codexPath);
     const snapshot = await detectCliSnapshotOnDaemonPath({ requestedCliNames: ['codex'] });
     expect(snapshot.clis.codex.installed).toBe(false);
+  });
+
+  it.skipIf(process.platform === 'win32')('reports a timed-out CLI probe as unavailable observation and retries after recovery', async () => {
+    const codexPath = makeExecutableShim({
+      dir: workDir,
+      name: 'codex-slow',
+      stdout: 'exec /bin/sleep 2',
+    });
+    setEnv('HAPPIER_CODEX_PATH', codexPath);
+    setEnv('HAPPIER_CLI_SNAPSHOT_PROBE_TIMEOUT_MS', '100');
+
+    const snapshot = await detectCliSnapshotOnDaemonPath({ requestedCliNames: ['codex'] });
+    expect(snapshot.clis.codex.installed).toBeUndefined();
+    expect(() => buildCliCapabilityData({ request: { id: 'cli.codex' }, entry: snapshot.clis.codex }))
+      .toThrow(expect.objectContaining({ code: 'cli-detection-timeout' }));
+    await expect(probeAgentCliForInstall({
+      runtimeSpec: {
+        id: 'codex', title: 'Codex', binaryName: 'codex',
+        sourcePreferenceDefault: 'system-first', managedInstall: null,
+        manualInstallKind: 'none', manualInstallRecipes: null, acceptsJavaScriptFileOverride: false,
+      },
+      env: process.env,
+    })).rejects.toMatchObject({ code: 'cli-detection-timeout' });
+
+    writeFileSync(codexPath, '#!/bin/sh\necho "codex 1.2.3"\n', { mode: 0o755 });
+    const recovered = await detectCliSnapshotOnDaemonPath({ requestedCliNames: ['codex'] });
+    expect(recovered.clis.codex).toMatchObject({ installed: true, version: '1.2.3' });
   });
 
   it('invalidates native sign-in facts when a manifest-declared env key changes', async () => {

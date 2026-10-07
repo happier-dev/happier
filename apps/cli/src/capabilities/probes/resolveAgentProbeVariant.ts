@@ -1,3 +1,4 @@
+import type { AgentCliSessionCommandPluginSettingsV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { RuntimeDescriptorV1 } from '@happier-dev/protocol';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import { AGENTS } from '@/agent/catalog/registry';
@@ -16,6 +17,7 @@ export async function resolveAgentProbeVariant(params: Readonly<{
   runtimeDescriptorV1?: RuntimeDescriptorV1;
   runtimeKindOverride?: string;
   accountSettings?: Readonly<Record<string, unknown>> | null;
+  pluginSettings?: AgentCliSessionCommandPluginSettingsV1;
   env?: NodeJS.ProcessEnv;
 }>): Promise<string> {
   const configuredAcpVariant = await resolveConfiguredAcpProbeCacheVariant({
@@ -33,9 +35,10 @@ export async function resolveAgentProbeVariant(params: Readonly<{
     runtimeKindOverride: params.runtimeKindOverride,
     probeKind,
     accountSettings: params.accountSettings ?? null,
+    pluginSettings: params.pluginSettings,
     env: params.env,
   }) ?? null;
   const variant = configuredAcpVariant ?? entryVariant ?? `${params.agentId}:default`;
-  return params.runtimeCacheKey || params.runtimeDescriptorV1 || params.runtimeKindOverride !== undefined
-    ? JSON.stringify([params.runtimeCacheKey ?? null, variant, params.runtimeDescriptorV1 ?? null, params.runtimeKindOverride ?? null]) : variant;
+  return params.runtimeCacheKey || params.runtimeDescriptorV1 || params.runtimeKindOverride !== undefined || params.pluginSettings !== undefined
+    ? JSON.stringify([params.runtimeCacheKey ?? null, variant, params.runtimeDescriptorV1 ?? null, params.runtimeKindOverride ?? null, params.pluginSettings ?? null]) : variant;
 }
