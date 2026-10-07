@@ -7,6 +7,7 @@ import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/proc
 import { isPidAlive } from '../proc/pids.mjs';
 import { isTcpPortFree, listListenPids } from '../net/ports.mjs';
 import { runCapture } from '../proc/proc.mjs';
+import { STACK_LISTENER_OBSERVATION_TIMEOUT_MS } from '../server/listener_ownership.mjs';
 
 export { isPidAlive };
 
@@ -14,17 +15,20 @@ function resolveMetroStatusTimeoutMsFromEnv(env = process.env) {
   const raw = (env.HAPPIER_STACK_EXPO_METRO_STATUS_TIMEOUT_MS ?? '').toString().trim();
   const n = raw ? Number(raw) : null;
   if (Number.isFinite(n) && n > 0) return n;
-  return 800;
+  return STACK_LISTENER_OBSERVATION_TIMEOUT_MS;
 }
 
 export async function looksLikeExpoMetro({ port, timeoutMs = null } = {}) {
   const p = Number(port);
   if (!Number.isFinite(p) || p <= 0) return false;
   const ms = Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0 ? Number(timeoutMs) : resolveMetroStatusTimeoutMsFromEnv();
+  const deadline = Date.now() + ms;
   const probeHosts = ['127.0.0.1', 'localhost', '[::1]'];
   async function fetchText(url) {
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    const timeout = setTimeout(() => controller?.abort(), ms);
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) throw new Error('Metro observation deadline expired');
+    const timeout = setTimeout(() => controller?.abort(), remainingMs);
     try {
       const res = await fetch(url, { signal: controller?.signal });
       const txt = await res.text().catch(() => '');
@@ -123,13 +127,15 @@ export async function waitForExpoMetroRunning(
     if (signal?.aborted) {
       return { ok: false, reason: 'aborted', probes };
     }
-    if (nowMsImpl() - checkpointStartMs > resolvedTimeoutMs) {
+    let elapsedMs = nowMsImpl() - checkpointStartMs;
+    if (elapsedMs > resolvedTimeoutMs) {
       if (!continueOnTimeout) break;
       onTimeoutCheckpoint?.({ timeoutMs: resolvedTimeoutMs, port: p, probes });
       checkpointStartMs = nowMsImpl();
+      elapsedMs = 0;
     }
     // eslint-disable-next-line no-await-in-loop
-    const ok = await looksLikeExpoMetroImpl({ port: p });
+    const ok = await looksLikeExpoMetroImpl({ port: p, timeoutMs: Math.min(STACK_LISTENER_OBSERVATION_TIMEOUT_MS, Math.max(1, resolvedTimeoutMs - elapsedMs)) });
     probes += 1;
     if (ok) {
       return { ok: true, probes };
@@ -282,7 +288,7 @@ export async function isStateProcessRunning(statePath) {
     if (!Number.isFinite(p) || p <= 0) return false;
     if (!raw) return false;
     const needle = resolve(raw);
-    const pids = await listListenPids(p, { timeoutMs: 4000 }).catch(() => []);
+    const pids = await listListenPids(p).catch(() => []);
     for (const listenPid of pids) {
       // eslint-disable-next-line no-await-in-loop
       const line = await runCapture('ps', ['-o', 'command=', '-p', String(listenPid)]).catch(() => '');

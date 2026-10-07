@@ -6,6 +6,7 @@ import { listAllStackNames } from './utils/stack/stacks.mjs';
 import { resolvePublicServerUrl } from './tailscale.mjs';
 import { resolveStackServerEndpoint, getPublicServerUrlEnvOverride, getWebappUrlEnvOverride } from './utils/server/urls.mjs';
 import { fetchHappierHealth, waitForHappierHealthOk } from './utils/server/server.mjs';
+import { STACK_LISTENER_OBSERVATION_TIMEOUT_MS } from './utils/server/listener_ownership.mjs';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -107,7 +108,7 @@ function resolveAuthStackCliHomeDir({ stackName }) {
 }
 
 async function resolveWebappUrlFromRunningExpo({ rootDir, stackName, env = process.env }) {
-  return await resolveBestExpoWebappUrlForAuth({ rootDir, stackName, env, timeoutMs: 250 });
+  return await resolveBestExpoWebappUrlForAuth({ rootDir, stackName, env, timeoutMs: STACK_LISTENER_OBSERVATION_TIMEOUT_MS });
 }
 
 function resolveAuthCredentialValidationAttempts(env = process.env) {

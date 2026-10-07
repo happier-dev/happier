@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runNodeCapture } from './testkit/stack_script_command_testkit.mjs';
@@ -177,7 +177,7 @@ test('hstack stack happier <name> preserves the caller cwd for relative CLI path
 
   const out = JSON.parse(res.stdout.trim());
   assert.equal(out.message, 'caller-cwd');
-  assert.equal(out.cwd, callerCwd);
+  assert.equal(out.cwd, await realpath(callerCwd));
   assert.deepEqual(out.args, ['plugins', 'dev', 'build', '.']);
 });
 
@@ -238,7 +238,7 @@ test('hstack stack happier <name> ignores stale cloud settings defaults and keep
   assert.equal(out.stack, fixture.stackName);
   assert.equal(out.homeDir, join(fixture.storageDir, fixture.stackName, 'cli'));
   assert.equal(out.serverUrl, `http://127.0.0.1:${fixture.serverPort}`);
-  assert.equal(out.webappUrl, `http://localhost:${fixture.serverPort}`);
+  assert.equal(out.webappUrl, `http://happier-${fixture.stackName}.localhost:${fixture.serverPort}`);
 });
 
 test('hstack stack happier <name> refreshes its named server profile through the CLI contract', async (t) => {
@@ -284,11 +284,11 @@ test('hstack stack happier <name> refreshes its named server profile through the
     // The profile's canonical `serverUrl` is what pairing links advertise, so it carries the
     // stack's public address while the loopback address stays on `--local-server-url`.
     '--server-url',
-    `http://localhost:${fixture.serverPort}`,
+    `http://happier-${fixture.stackName}.localhost:${fixture.serverPort}`,
     '--local-server-url',
     `http://127.0.0.1:${fixture.serverPort}`,
     '--webapp-url',
-    `http://localhost:${fixture.serverPort}`,
+    `http://happier-${fixture.stackName}.localhost:${fixture.serverPort}`,
     '--json',
   ]]);
 });
@@ -307,9 +307,9 @@ test('hstack stack happier <name> selects the stable stack scope without copying
         'stack-local': {
           id: 'stack-local',
           name: 'Stack local',
-          serverUrl: `http://localhost:${serverPort}`,
+          serverUrl: `http://happier-exp-test.localhost:${serverPort}`,
           localServerUrl: `http://127.0.0.1:${serverPort}`,
-          webappUrl: `http://localhost:${serverPort}`,
+          webappUrl: `http://happier-exp-test.localhost:${serverPort}`,
           createdAt: 1,
           updatedAt: 1,
           lastUsedAt: 1,
@@ -503,7 +503,7 @@ test('hstack happier (HAPPIER_STACK_STACK set) uses stack.runtime.json ports whe
   assert.equal(out.message, 'runtime-ports-env');
   assert.equal(out.stack, fixture.stackName);
   assert.equal(out.serverUrl, `http://127.0.0.1:${fixture.serverPort}`);
-  assert.equal(out.webappUrl, `http://localhost:${fixture.serverPort}`);
+  assert.equal(out.webappUrl, `http://happier-${fixture.stackName}.localhost:${fixture.serverPort}`);
 });
 
 test('hstack happier (HAPPIER_STACK_STACK set) session create preflights the stack daemon before invoking the CLI command', async (t) => {
@@ -705,7 +705,7 @@ test('hstack happier keeps the stable scope when another settings profile matche
   assert.ok(String(out.envFile).endsWith(`/${fixture.stackName}/env`), `expected envFile to end with /${fixture.stackName}/env, got: ${out.envFile}`);
   assert.equal(out.homeDir, join(fixture.storageDir, fixture.stackName, 'cli'));
   assert.equal(out.serverUrl, `http://127.0.0.1:${fixture.serverPort}`);
-  assert.equal(out.webappUrl, `http://localhost:${fixture.serverPort}`);
+  assert.equal(out.webappUrl, `http://happier-${fixture.stackName}.localhost:${fixture.serverPort}`);
   assert.equal(out.activeServerId, buildStackStableScopeId({ stackName: fixture.stackName, cliIdentity: 'default' }));
 });
 

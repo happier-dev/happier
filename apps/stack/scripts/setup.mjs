@@ -10,6 +10,7 @@ import { getCanonicalHomeDir } from './utils/env/config.mjs';
 import { ensureEnvLocalUpdated } from './utils/env/env_local.mjs';
 import { run, runCapture } from './utils/proc/proc.mjs';
 import { waitForHappierHealthOk } from './utils/server/server.mjs';
+import { STACK_LISTENER_OBSERVATION_TIMEOUT_MS } from './utils/server/listener_ownership.mjs';
 import { tailscaleServeEnable, tailscaleServeHttpsUrlForInternalServerUrl } from './tailscale.mjs';
 import { getRuntimeDir } from './utils/paths/runtime.mjs';
 import { homedir } from 'node:os';
@@ -376,7 +377,7 @@ async function detectDockerSupport() {
   if (!installed) return { installed: false, running: false };
   try {
     // `docker info` returns non-zero quickly when the daemon isn't running.
-    await runCapture('docker', ['info'], { timeoutMs: 2500 });
+    await runCapture('docker', ['info'], { timeoutMs: STACK_LISTENER_OBSERVATION_TIMEOUT_MS });
     return { installed: true, running: true };
   } catch {
     return { installed: true, running: false };

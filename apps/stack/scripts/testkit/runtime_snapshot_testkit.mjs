@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { runNodeCapture } from './core/run_node_capture.mjs';
 import { writeRuntimeSnapshotLayout } from './core/runtime_snapshot_layout.mjs';
 import { createTempFixture } from './core/temp_fixture.mjs';
+import { buildStubHappierServerSetSource } from './core/stub_happier_cli_server_set.mjs';
 
 export const runNode = runNodeCapture;
 
@@ -21,7 +22,11 @@ export async function createRuntimeSnapshotFixture(
   const storageDir = join(root, 'storage');
   const stackDir = join(storageDir, stackName);
   const cliRuntimeSource = cliEntrypoint.endsWith('.mjs') || cliEntrypoint.endsWith('.js') || cliEntrypoint.endsWith('.cjs')
-    ? (cliSource || `process.stdout.write(${JSON.stringify(`${cliStdout}\n`)});\n`)
+    ? `{
+const args = process.argv.slice(2);
+${buildStubHappierServerSetSource()}
+}
+${cliSource || `process.stdout.write(${JSON.stringify(`${cliStdout}\n`)});\n`}`
     : `#!/bin/sh\necho ${cliStdout}\n`;
   const { snapshotDir } = await writeRuntimeSnapshotLayout({
     stackDir,

@@ -11,6 +11,7 @@ import {
   resolveServerReadyTimeoutMs,
   waitForHappierHealthOk,
   waitForServerReady,
+  waitForHttpOk,
 } from './server.mjs';
 
 async function listenServer(handler) {
@@ -48,6 +49,31 @@ test('fetchHappierHealth accepts the canonical Happier health payload only', asy
     assert.equal(health.ok, true);
     assert.equal(health.status, 200);
     assert.deepEqual(health.json, { status: 'ok', service: 'happier-server' });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('Stack readiness permits a healthy response beyond the old private probe cutoff', async () => {
+  const fixture = await listenServer((_req, res) => {
+    setTimeout(() => {
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ status: 'ok', service: 'happier-server' }));
+    }, 1_650);
+  });
+  try {
+    assert.equal((await fetchHappierHealth(fixture.url)).ready, true);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('HTTP readiness spends the remaining observation budget rather than the polling interval', async () => {
+  const fixture = await listenServer((_req, res) => {
+    setTimeout(() => res.end('ready'), 600);
+  });
+  try {
+    await waitForHttpOk(fixture.url, { timeoutMs: 1_200 });
   } finally {
     await fixture.close();
   }

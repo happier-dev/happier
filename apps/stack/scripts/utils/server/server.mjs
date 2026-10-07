@@ -1,4 +1,5 @@
 import { setTimeout as delay } from 'node:timers/promises';
+import { STACK_LISTENER_OBSERVATION_TIMEOUT_MS } from './listener_ownership.mjs';
 
 const DEFAULT_SERVER_MIGRATION_TIMEOUT_MS = 30 * 60_000;
 const MAX_SERVER_MIGRATION_TIMEOUT_MS = 24 * 60 * 60_000;
@@ -31,12 +32,12 @@ export function getServerComponentName({ kv } = {}) {
   return raw;
 }
 
-export async function fetchHappierHealth(baseUrl, { signal } = {}) {
+export async function fetchHappierHealth(baseUrl, { signal, timeoutMs = STACK_LISTENER_OBSERVATION_TIMEOUT_MS } = {}) {
   const ctl = new AbortController();
   const abortForCaller = () => ctl.abort(signal?.reason);
   if (signal?.aborted) abortForCaller();
   else signal?.addEventListener('abort', abortForCaller, { once: true });
-  const t = setTimeout(() => ctl.abort(), 1500);
+  const t = setTimeout(() => ctl.abort(), timeoutMs);
   try {
     const url = baseUrl.replace(/\/+$/, '') + '/health';
     const res = await fetch(url, { method: 'GET', signal: ctl.signal });
@@ -71,7 +72,7 @@ export async function waitForHappierHealthOk(baseUrl, { timeoutMs = 60_000, inte
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     // eslint-disable-next-line no-await-in-loop
-    const health = await fetchHappierHealth(baseUrl);
+    const health = await fetchHappierHealth(baseUrl, { timeoutMs: Math.min(STACK_LISTENER_OBSERVATION_TIMEOUT_MS, Math.max(1, deadline - Date.now())) });
     if (health.ok) return true;
     // eslint-disable-next-line no-await-in-loop
     await delay(intervalMs);
@@ -227,7 +228,10 @@ export async function waitForServerReady(url, {
       // the root route serves the app shell instead of the legacy welcome page.
       // Prefer that contract, but keep the older root-page probe as a fallback for source/dev flows.
       // eslint-disable-next-line no-await-in-loop
-      const health = await fetchHappierHealth(url, { signal });
+      const health = await fetchHappierHealth(url, {
+        signal,
+        timeoutMs: Math.min(STACK_LISTENER_OBSERVATION_TIMEOUT_MS, Math.max(1, deadline.getDeadlineMs() - Date.now())),
+      });
       throwIfAborted();
       if (health.ready) {
         return;
@@ -270,7 +274,7 @@ export async function waitForHttpOk(url, { timeoutMs = 15_000, intervalMs = 250 
   while (Date.now() < deadline) {
     try {
       const ctl = new AbortController();
-      const t = setTimeout(() => ctl.abort(), Math.min(2500, Math.max(250, intervalMs)));
+      const t = setTimeout(() => ctl.abort(), Math.min(STACK_LISTENER_OBSERVATION_TIMEOUT_MS, Math.max(1, deadline - Date.now())));
       try {
         const res = await fetch(url, { method: 'GET', signal: ctl.signal });
         if (res.status >= 100 && res.status < 600) {

@@ -1,7 +1,7 @@
 import './utils/env/env.mjs';
 import { run, runCapture } from './utils/proc/proc.mjs';
 import { getComponentDir, getDefaultAutostartPaths, getRootDir, getSystemdUnitInfo, resolveStackEnvPath } from './utils/paths/paths.mjs';
-import { getInternalServerUrl, getPublicServerUrlEnvOverride } from './utils/server/urls.mjs';
+import { resolveStackServerEndpoint, getPublicServerUrlEnvOverride } from './utils/server/urls.mjs';
 import { resolveServerUrls } from './utils/server/urls.mjs';
 import { installService as installManagedService, uninstallService as uninstallManagedService } from './utils/service/service_manager.mjs';
 import { getCanonicalHomeDir } from './utils/env/config.mjs';
@@ -345,7 +345,7 @@ async function startLaunchAgent({ persistent }) {
 
 async function postStartDiagnostics() {
   const rootDir = getRootDir(import.meta.url);
-  const internalUrl = getInternalServerUrl({ env: process.env, defaultPort: 3005 }).internalServerUrl;
+  const { internalServerUrl: internalUrl } = await resolveStackServerEndpoint();
 
   const cliHomeDir = process.env.HAPPIER_STACK_CLI_HOME_DIR?.trim()
     ? expandHome(process.env.HAPPIER_STACK_CLI_HOME_DIR.trim())
@@ -569,7 +569,7 @@ async function waitForLaunchAgentStopped({ timeoutMs = 8000 } = {}) {
 
 async function showStatus() {
   const { plistPath, stdoutPath, stderrPath, label } = getDefaultAutostartPaths();
-  const internalUrl = getInternalServerUrl({ env: process.env, defaultPort: 3005 }).internalServerUrl;
+  const { internalServerUrl: internalUrl } = await resolveStackServerEndpoint();
 
   console.log('');
   console.log(banner('service', { subtitle: 'Autostart (launchd/systemd user).' }));
@@ -767,7 +767,7 @@ async function main() {
       return;
     case 'status':
       if (json) {
-        const internalUrl = getInternalServerUrl({ env: process.env, defaultPort: 3005 }).internalServerUrl;
+        const { internalServerUrl: internalUrl } = await resolveStackServerEndpoint();
         let health = null;
         try {
           const res = await fetch(`${internalUrl}/health`, { method: 'GET' });

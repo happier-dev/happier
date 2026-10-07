@@ -37,7 +37,6 @@ import { copyAuthFromStackIntoNewStack } from './stack/copy_auth_from_stack.mjs'
 import {
   createStackEnv,
   configureSharedDatabasePreset,
-  getRuntimePortExtraEnv,
   parseServerComponentFromEnv,
   readStackEnvObject,
   resolveDefaultRepoEnv,
@@ -2201,10 +2200,8 @@ async function cmdPrStack({ rootDir, argv }) {
       ...(authLink ? ['--link'] : []),
     ];
     if (json) {
-      const extraEnv = await getRuntimePortExtraEnv(stackName);
       auth = await withStackEnv({
         stackName,
-        ...(extraEnv ? { extraEnv } : {}),
         fn: async ({ env }) => {
           const stdout = await runCapture(process.execPath, [join(rootDir, 'scripts', 'auth.mjs'), ...args, '--json'], { cwd: rootDir, env });
           return stdout.trim() ? JSON.parse(stdout.trim()) : null;

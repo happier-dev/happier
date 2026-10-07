@@ -11,6 +11,7 @@ import { resolveServerDevScript } from '../server/flavor_scripts.mjs';
 import { resolveServerShutdownGraceMs } from '../server/shutdown_grace.mjs';
 import {
   createListenerOwnershipObservationScope,
+  STACK_LISTENER_OBSERVATION_TIMEOUT_MS,
   resolveSpawnedProcessGroupListenPid,
   resolveStackOwnedListenPid,
 } from '../server/listener_ownership.mjs';
@@ -593,7 +594,7 @@ export async function stopStackOwnedServerForRestart(
   if (!stopPid) {
     const availability = await observeTcpPortAvailabilityImpl(serverPort, {
       host: '127.0.0.1',
-      timeoutMs: 1_000,
+      timeoutMs: STACK_LISTENER_OBSERVATION_TIMEOUT_MS,
     });
     if (availability?.status === 'inconclusive') {
       assertTcpPortReleased(availability, { port: serverPort, pid: recordedPid, scope: 'server port' });
@@ -1173,7 +1174,7 @@ export function createDevServerReloadExecutor({
     try {
       const observation = await listListenPidsWithStatusImpl(
         proxyController ? activeBackendPort : serverPort,
-        { timeoutMs: 1_000 },
+        { timeoutMs: STACK_LISTENER_OBSERVATION_TIMEOUT_MS },
       );
       return observation?.status === 'ok' && observation.pids.length === 0;
     } catch {

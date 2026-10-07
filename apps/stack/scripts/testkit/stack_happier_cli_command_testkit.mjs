@@ -42,6 +42,10 @@ export async function createStackHappierCliCommandFixture(
   const monoRoot = join(workspaceDir, 'happier');
   const stackCliHome = join(storageDir, stackName, 'cli');
 
+  // An existing Home config prevents env.mjs from loading the checkout's
+  // env.local, which can otherwise replace this fixture's selected CLI repo.
+  await mkdir(homeDir, { recursive: true });
+  await writeFile(join(homeDir, '.env'), '', 'utf-8');
   await ensureMinimalMonorepoLayout(monoRoot);
   const { cliDir } = await writeStubHappierCliFiles(monoRoot, {
     distIndexScript,
@@ -95,7 +99,11 @@ export async function createStackHappierCliCommandFixture(
       HAPPIER_STACK_HOME_DIR: homeDir,
       HAPPIER_STACK_STORAGE_DIR: storageDir,
       HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
+      HAPPIER_STACK_REPO_DIR: monoRoot,
       HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
+      // This fixture substitutes the CLI process; dependency publication is
+      // covered by its own owner tests, not by command passthrough tests.
+      HAPPIER_STACK_SYNC_BUNDLED_WORKSPACES: '0',
       HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '5000',
       HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '25',
       HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',

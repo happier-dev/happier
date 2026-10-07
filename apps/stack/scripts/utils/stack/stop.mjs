@@ -29,6 +29,7 @@ import {
 import { withJsonOwnerFileLock } from '../proc/jsonOwnerFileLock.mjs';
 import { coercePort } from '../server/port.mjs';
 import { resolveServerShutdownGraceMs } from '../server/shutdown_grace.mjs';
+import { STACK_LISTENER_OBSERVATION_TIMEOUT_MS } from '../server/listener_ownership.mjs';
 import { daemonControlPost, pingDaemon } from './daemonControlClient.mjs';
 
 function resolveServerComponentFromStackEnv(env) {
@@ -225,7 +226,7 @@ async function reclaimLegacyDevTargetTunnels({
   ));
   if (targetSsh.length === 0) return { swept: [], skipped: [] };
 
-  const listeners = await listListenPidsWithStatusImpl(localExpoPort, { timeoutMs: 1_000, env });
+  const listeners = await listListenPidsWithStatusImpl(localExpoPort, { timeoutMs: STACK_LISTENER_OBSERVATION_TIMEOUT_MS, env });
   if (listeners?.status !== 'ok') return { swept: [], skipped: [] };
 
   const opensshConfigPath = join(baseDir, 'mutagen', 'openssh', 'config');
