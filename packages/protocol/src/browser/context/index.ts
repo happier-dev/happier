@@ -1,6 +1,7 @@
 export { buildBrowserContextAnnotationStructuredBlock } from './annotationStructuredBlock.js';
 export {
   resolveBrowserContextPrivacyDenial,
+  browserContextSensitiveFieldsExpression,
   type BrowserContextPrivacyDenial,
   type BrowserContextPrivacyState,
 } from './privacy.js';

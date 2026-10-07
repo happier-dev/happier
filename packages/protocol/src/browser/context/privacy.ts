@@ -1,4 +1,8 @@
 import type { BrowserContextLifecycleStateV1 } from './v1.js';
+import sensitiveFieldsExpression from './sensitiveFieldsExpression.json' with { type: 'json' };
+
+/** Source-owned presence-only probe shared by CDP and the native WebView capture producer. */
+export const browserContextSensitiveFieldsExpression: string = sensitiveFieldsExpression;
 
 export type BrowserContextPrivacyState = Extract<
   BrowserContextLifecycleStateV1,
