@@ -1,4 +1,4 @@
-import { buildChangedFilesOutlineTree } from '@/components/workspaces/files/repositoryTree/buildChangedFilesOutlineTree';
+import { countChangedFilesOutlineRootFolders } from '@/components/workspaces/files/repositoryTree/buildChangedFilesOutlineTree';
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 
 export type TurnChangesSummary = Readonly<{
@@ -20,7 +20,7 @@ export function summarizeTurnChanges(files: readonly ScmFileStatus[]): TurnChang
         added += Math.max(0, file.linesAdded ?? 0);
         removed += Math.max(0, file.linesRemoved ?? 0);
     }
-    const folderCount = buildChangedFilesOutlineTree(files).filter((node) => node.kind === 'dir').length;
+    const folderCount = countChangedFilesOutlineRootFolders(files);
     return { fileCount: files.length, folderCount, added, removed, linesKnown };
 }
 

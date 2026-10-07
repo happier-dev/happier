@@ -24,7 +24,7 @@ import type { ChangedFilesReviewFindModel } from './useChangedFilesReviewFind';
  * that file in the stream below. Drawn only when the change set is small enough to stream; a large
  * one keeps the one-file-at-a-time list, so this never lays out thousands of rows.
  */
-export const ChangedFilesReviewIndex = React.memo(function ChangedFilesReviewIndex(props: Readonly<{
+type ChangedFilesReviewIndexProps = Readonly<{
     files: readonly ScmFileStatus[];
     findModel?: ChangedFilesReviewFindModel;
     activePath: string | null;
@@ -44,41 +44,12 @@ export const ChangedFilesReviewIndex = React.memo(function ChangedFilesReviewInd
     placement?: 'stream' | 'rail' | 'comparisonStream';
     /** Where the files live (the tree's identity); only the tree reads it, and it reads no listing. */
     rootPath?: string | null;
-}>) {
-    const { theme } = useUnistyles();
+}>;
+
+export const ChangedFilesReviewIndex = React.memo(function ChangedFilesReviewIndex(props: ChangedFilesReviewIndexProps) {
     const styles = stylesheet;
-    const siblingPaths = React.useMemo(() => props.files.map((file) => file.fullPath), [props.files]);
     const rail = props.placement === 'rail' || props.placement === 'comparisonStream';
-    const rows = (
-        <>
-            {props.files.map((file) => {
-                const comments = props.commentCountByPath.get(file.fullPath) ?? 0;
-                return (
-                    <ScmChangeRow
-                        key={file.fullPath}
-                        theme={theme}
-                        file={file}
-                        layout="compact"
-                        statusTone="neutral"
-                        tag={rail ? resolveScmChangePathTag(file.fullPath) : null}
-                        siblingPaths={siblingPaths}
-                        highlighted={props.activePath === file.fullPath}
-                        activeReviewFileKey={props.activeReviewFileKey ?? null}
-                        onPress={() => props.onFocusPath(file.fullPath)}
-                        leadingElement={props.renderCommitToggle ? props.renderCommitToggle(file) : null}
-                        trailingElement={<View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                            <ChangedFilesReviewFindCount model={props.findModel} path={file.fullPath} />
-                            {comments > 0 ? (
-                            <View style={styles.comments} accessibilityLabel={t('detailsSurface.review.comments', { count: comments })}>
-                                <Icon name="chat-circle" size={12} color={theme.colors.state.active.foreground} />
-                                <Text style={[styles.count, { color: theme.colors.state.active.foreground }]}>{String(comments)}</Text>
-                            </View>
-                        ) : null}</View>}
-                    />
-                );
-            })}
-        </>
-    );
+    const rows = <ChangedFilesReviewRows {...props} rail={rail} />;
     if (!rail) {
         return (
             <View testID="scm-review-index" style={styles.index} onLayout={props.onLayout}>
@@ -97,6 +68,7 @@ export const ChangedFilesReviewIndex = React.memo(function ChangedFilesReviewInd
             files={props.files}
             findModel={props.findModel}
             rows={rows}
+            activePath={props.activePath}
             inline={props.placement === 'comparisonStream'}
             onLayout={props.onLayout}
             rootPath={props.rootPath ?? null}
@@ -106,11 +78,50 @@ export const ChangedFilesReviewIndex = React.memo(function ChangedFilesReviewInd
     );
 });
 
+/** List-only projection: tree presentation never builds discarded list metadata or row elements. */
+function ChangedFilesReviewRows(props: ChangedFilesReviewIndexProps & Readonly<{ rail: boolean }>) {
+    const { theme } = useUnistyles();
+    const styles = stylesheet;
+    const siblingPaths = React.useMemo(() => props.files.map((file) => file.fullPath), [props.files]);
+    const rows = (
+        <>
+            {props.files.map((file) => {
+                const comments = props.commentCountByPath.get(file.fullPath) ?? 0;
+                return (
+                    <ScmChangeRow
+                        key={file.fullPath}
+                        theme={theme}
+                        file={file}
+                        layout="compact"
+                        statusTone="neutral"
+                        tag={props.rail ? resolveScmChangePathTag(file.fullPath) : null}
+                        siblingPaths={siblingPaths}
+                        highlighted={props.activePath === file.fullPath}
+                        activeReviewFileKey={props.activeReviewFileKey ?? null}
+                        onPress={() => props.onFocusPath(file.fullPath)}
+                        leadingElement={props.renderCommitToggle ? props.renderCommitToggle(file) : null}
+                        trailingElement={<View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                            <ChangedFilesReviewFindCount model={props.findModel} path={file.fullPath} />
+                            {comments > 0 ? (
+                            <View style={styles.comments} accessibilityLabel={t('detailsSurface.review.comments', { count: comments })}>
+                                <Icon name="chat-circle" size={12} color={theme.colors.state.active.foreground} />
+                                <Text style={[styles.count, { color: theme.colors.state.active.foreground }]}>{String(comments)}</Text>
+                            </View>
+                        ) : null}</View>}
+                    />
+                );
+            })}
+        </>
+    );
+    return rows;
+}
+
 /** The rail reads the list | tree preference only where the switch is drawn. */
 const ChangedFilesReviewRail = React.memo(function ChangedFilesReviewRail(props: Readonly<{
     files: readonly ScmFileStatus[];
     findModel?: ChangedFilesReviewFindModel;
     rows: React.ReactNode;
+    activePath: string | null;
     /** In the stream (narrow): rows in place, no scroll of its own, no switch in the caption. */
     inline: boolean;
     onLayout?: (event: LayoutChangeEvent) => void;
@@ -133,6 +144,7 @@ const ChangedFilesReviewRail = React.memo(function ChangedFilesReviewRail(props:
                         findModel={props.findModel}
                         rootPath={props.rootPath}
                         activeReviewFileKey={props.activeReviewFileKey}
+                        activePath={props.activePath}
                         onFocusPath={props.onFocusPath}
                         inline
                     />
@@ -154,6 +166,7 @@ const ChangedFilesReviewRail = React.memo(function ChangedFilesReviewRail(props:
                     findModel={props.findModel}
                     rootPath={props.rootPath}
                     activeReviewFileKey={props.activeReviewFileKey}
+                    activePath={props.activePath}
                     onFocusPath={props.onFocusPath}
                 />
             ) : (
@@ -178,11 +191,13 @@ const ChangedFilesReviewRailTree = React.memo(function ChangedFilesReviewRailTre
     findModel?: ChangedFilesReviewFindModel;
     rootPath: string | null;
     activeReviewFileKey: string | null;
+    activePath: string | null;
     onFocusPath: (path: string) => void;
     inline?: boolean;
 }>) {
     const { theme } = useUnistyles();
-    const activePath = useActiveReviewFilePath(props.activeReviewFileKey);
+    const scopedActivePath = useActiveReviewFilePath(props.activeReviewFileKey);
+    const activePath = props.activeReviewFileKey ? scopedActivePath : props.activePath;
     const snapshot = React.useMemo(
         () => projectChangedFilesAsScmSnapshot(props.files, { projectKey: `review:${props.rootPath ?? ''}`, rootPath: props.rootPath }),
         [props.files, props.rootPath],

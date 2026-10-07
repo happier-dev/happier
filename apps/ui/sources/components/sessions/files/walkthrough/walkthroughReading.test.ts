@@ -3,7 +3,7 @@ import type { ScmComparison, ScmReviewedMarksRecord } from '@happier-dev/protoco
 import { createTwoFilesPatch, parsePatch } from 'diff';
 import { SPECIMEN_COMPARISON, SPECIMEN_WALKTHROUGH } from '@/components/dev/changes/walkthroughSpecimenFixture';
 
-import { buildWalkthroughReading, type WalkthroughReadingInput } from './walkthroughReading';
+import { buildWalkthroughReading, buildWalkthroughReadingProgress, type WalkthroughReadingInput } from './walkthroughReading';
 
 const A_DIFF = [
     'diff --git a/src/a.ts b/src/a.ts',
@@ -96,11 +96,70 @@ function input(overrides: Partial<WalkthroughReadingInput> = {}): WalkthroughRea
 }
 
 describe('buildWalkthroughReading', () => {
-    it('makes malformed captured evidence unavailable rather than sending a broken slice to the renderer', () => {
+    it('projects the Board next stop and personal progress without reading 214 files of diff evidence', () => {
+        let evidenceReads = 0;
+        const files = Array.from({ length: 214 }, (_, index) => {
+            const path = `src/file-${index}.ts`;
+            return {
+                ...COMPARISON.inventory.files[0]!, path,
+                evidence: { state: 'available' as const, get unifiedDiff() { evidenceReads += 1; return A_DIFF; } },
+                occurrences: [{ ...COMPARISON.inventory.files[0]!.occurrences[0]!, id: `change-${index}`, path }],
+            };
+        });
+        const comparison = { ...COMPARISON, inventory: { ...COMPARISON.inventory, files } };
+        const value = { ...WALKTHROUGH, stops: files.map((file, index) => ({
+            id: `stop-${index}`, title: `Stop ${index}`, explanationMarkdown: 'Explanation', changeRefs: [file.occurrences[0]!.id],
+        })), otherChangeRefs: [] };
+        const projected = buildWalkthroughReadingProgress(input({ comparison, walkthrough: { state: 'complete', value },
+            reviewed: { v: 1, comparisonId: comparison.id, reviewedChangeRefs: ['change-0'] } }));
+        expect(projected).toMatchObject({ phase: 'complete', title: WALKTHROUGH.title, reviewedCount: 1 });
+        expect(projected.stops.find((stop) => !stop.reviewed)?.title).toBe('Stop 1');
+        expect(evidenceReads).toBe(0);
+        const updated = buildWalkthroughReadingProgress(input({ comparison, walkthrough: { state: 'complete', value },
+            reviewed: { v: 1, comparisonId: comparison.id, reviewedChangeRefs: ['change-0', 'change-1'] } }));
+        expect(updated.reviewedCount).toBe(2);
+        expect(updated.stops.find((stop) => !stop.reviewed)?.title).toBe('Stop 2');
+        expect(evidenceReads).toBe(0);
+    });
+
+    it.each(['stops', 'otherChanges'] as const)('keeps malformed captured evidence unavailable and out of complete totals in %s', (placement) => {
         const unifiedDiff = A_DIFF.replace('@@ -1,3 +1,4 @@', '@@ -1,30 +1,40 @@');
         const file = { ...COMPARISON.inventory.files[0]!, evidence: { state: 'available' as const, unifiedDiff } };
-        const reading = buildWalkthroughReading(input({ comparison: { ...COMPARISON, inventory: { ...COMPARISON.inventory, files: [file] } } }));
-        expect(reading.stops[0]!.files[0]).toMatchObject({ unifiedDiff: '', unavailableReason: 'invalid_diff' });
+        const reading = buildWalkthroughReading(input({ comparison: { ...COMPARISON, inventory: { ...COMPARISON.inventory, files: [file] } },
+            walkthrough: { state: 'complete', value: placement === 'stops' ? WALKTHROUGH : {
+                ...WALKTHROUGH, stops: [], otherChangeRefs: file.occurrences.map((occurrence) => occurrence.id),
+            } },
+        }));
+        if (placement === 'stops') {
+            expect(reading.stops[0]!.files[0]).toMatchObject({ unifiedDiff: '', unavailableReason: 'invalid_diff' });
+            expect(reading.stops[1]!.files[0]!.unifiedDiff).not.toBe('');
+            expect(reading.stops[1]!.files[0]!.unavailableReason).toBeNull();
+        } else expect(reading.others[0]).toMatchObject({ unavailableReason: 'invalid_diff' });
+        expect(reading.source.linesKnown).toBe(false);
+        expect(reading.inventory[0]!.reading).toBe('unavailable');
+    });
+
+    it('classifies each captured file once when many stops explain its evidence', () => {
+        let evidenceStateReads = 0;
+        const occurrences = Array.from({ length: 80 }, (_, index) => ({
+            id: `change-${index}`, alias: `c${index}`, path: 'src/a.ts', position: index,
+            before: range(index * 10 + 1, 1), after: range(index * 10 + 1, 1),
+        }));
+        const file = { ...COMPARISON.inventory.files[0]!, occurrences, evidence: {
+            get state() { evidenceStateReads += 1; return 'available' as const; },
+            unifiedDiff: ['diff --git a/src/a.ts b/src/a.ts', '--- a/src/a.ts', '+++ b/src/a.ts',
+                ...occurrences.map((occurrence) => `@@ -${occurrence.before.startLine} +${occurrence.after.startLine} @@\n-before\n+after`),
+            ].join('\n') + '\n',
+        } };
+        const comparison = { ...COMPARISON, inventory: { ...COMPARISON.inventory, files: [file] } };
+        const reading = buildWalkthroughReading(input({ comparison, walkthrough: { state: 'complete', value: {
+            ...WALKTHROUGH, stops: Array.from({ length: 80 }, (_, index) => ({
+                id: `stop-${index}`, title: `Stop ${index}`, explanationMarkdown: 'Shared exact evidence.', changeRefs: [occurrences[index]!.id],
+            })), otherChangeRefs: [],
+        } } }));
+        expect(reading.stops).toHaveLength(80);
+        expect(reading.stops.every((stop) => stop.files[0]!.unifiedDiff !== '')).toBe(true);
+        expect(evidenceStateReads).toBe(1);
     });
     it('preserves real patch whitespace and no-newline markers when selecting a hunk', () => {
         const unifiedDiff = createTwoFilesPatch('src/a.ts', 'src/a.ts', 'before\n \n', 'after\n \n');

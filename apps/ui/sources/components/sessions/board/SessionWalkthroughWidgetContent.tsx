@@ -9,7 +9,7 @@ import { Typography } from '@/constants/Typography';
 import { buildSessionDetailsHref } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { useSessionScmWalkthrough } from '@/components/sessions/files/walkthrough/useSessionScmWalkthrough';
 import { useWalkthroughReviewedMarks } from '@/components/sessions/files/walkthrough/useWalkthroughReviewedMarks';
-import { buildWalkthroughReading, type WalkthroughReading } from '@/components/sessions/files/walkthrough/walkthroughReading';
+import { buildWalkthroughReadingProgress, type WalkthroughReadingProgress } from '@/components/sessions/files/walkthrough/walkthroughReading';
 import { t } from '@/text';
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -20,7 +20,7 @@ const stylesheet = StyleSheet.create((theme) => ({
 
 /** A read-only projection inside the existing Board frame; it never persists personal progress. */
 export function WalkthroughWidgetContentView(props: Readonly<{
-    reading: WalkthroughReading | null;
+    reading: WalkthroughReadingProgress | null;
     marksLoaded: boolean;
     onOpen?: () => void;
     testID: string;
@@ -55,9 +55,9 @@ export function SessionWalkthroughWidgetContent(props: Readonly<{
     const result = useSessionScmWalkthrough(props.sessionId, comparison, 'walkthrough', props.serverId);
     const captured = result?.comparison ?? null;
     const marks = useWalkthroughReviewedMarks({ comparison: captured, serverId: props.serverId });
-    const reading = React.useMemo(() => captured ? buildWalkthroughReading({ comparison: captured,
-        walkthrough: result?.outputs?.walkthrough ?? null, analysis: result?.analysis ?? null, reviewed: marks.record,
-    }) : null, [captured, result?.outputs?.walkthrough, result?.analysis, marks.record]);
+    const reading = React.useMemo(() => captured ? buildWalkthroughReadingProgress({ comparison: captured,
+        walkthrough: result?.outputs?.walkthrough ?? null, reviewed: marks.record,
+    }) : null, [captured, result?.outputs?.walkthrough, marks.record]);
     const router = useRouter();
     const onOpen = React.useCallback(() => router.push(buildSessionDetailsHref({
         sessionId: props.sessionId, serverId: props.serverId,

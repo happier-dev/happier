@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 
@@ -19,6 +19,30 @@ function file(fullPath: string, linesAdded: number, linesRemoved: number, extra:
 }
 
 describe('summarizeTurnChanges', () => {
+    it('counts 214 files and their root folder without building or sorting file rows', () => {
+        const files = Array.from({ length: 214 }, (_, index) => file(`src/File${String(index).padStart(3, '0')}.ts`, 1, 2));
+        // Call-through observation of real sort work; the outline and summary implementations stay real.
+        const compare = vi.spyOn(String.prototype, 'localeCompare');
+        let comparisons = 0;
+        let summary: ReturnType<typeof summarizeTurnChanges>;
+        try {
+            summary = summarizeTurnChanges(files);
+            comparisons = compare.mock.calls.length;
+        } finally { compare.mockRestore(); }
+        expect(summary).toEqual({ fileCount: 214, folderCount: 1, added: 214, removed: 428, linesKnown: true });
+        expect(comparisons).toBe(0);
+    });
+
+    it('uses the tree folder identity for trimmed and mixed-separator paths', () => {
+        const summary = summarizeTurnChanges([
+            file(' src\\nested\\one.ts ', 1, 0),
+            file('src//nested/two.ts', 1, 0),
+            file('/docs\\guide.md', 1, 0),
+            file('root.ts', 1, 0),
+        ]);
+        expect(summary).toEqual({ fileCount: 4, folderCount: 2, added: 4, removed: 0, linesKnown: true });
+    });
+
     it('totals every file and counts the folders the tree opens with', () => {
         const summary = summarizeTurnChanges([
             file('apps/ui/sources/app/(app)/settings.tsx', 2, 2),
