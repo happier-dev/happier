@@ -114,6 +114,10 @@ export type WidgetsActionInputById = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
+                        author?: {
+                            kind: 'person' | 'agent' | 'plugin';
+                        } | undefined;
+                        createdAt?: number | undefined;
                     };
                     sizeDeclaration: {
                         sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -925,6 +929,10 @@ export type WidgetsActionResultById = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
+                        author?: {
+                            kind: 'person' | 'agent' | 'plugin';
+                        } | undefined;
+                        createdAt?: number | undefined;
                     };
                     sizeDeclaration: {
                         sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -1082,6 +1090,10 @@ export type WidgetsActionResultById = {
                                 itemId: string;
                             };
                             authorAccountId?: string | undefined;
+                            author?: {
+                                kind: 'person' | 'agent' | 'plugin';
+                            } | undefined;
+                            createdAt?: number | undefined;
                         };
                         sizeDeclaration: {
                             sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -1224,6 +1236,10 @@ export type WidgetsActionResultById = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
+                        author?: {
+                            kind: 'person' | 'agent' | 'plugin';
+                        } | undefined;
+                        createdAt?: number | undefined;
                     };
                     sizeDeclaration: {
                         sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -1362,6 +1378,10 @@ export type WidgetsActionResultById = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
+                        author?: {
+                            kind: 'person' | 'agent' | 'plugin';
+                        } | undefined;
+                        createdAt?: number | undefined;
                     };
                     sizeDeclaration: {
                         sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -1500,6 +1520,10 @@ export type WidgetsActionResultById = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
+                        author?: {
+                            kind: 'person' | 'agent' | 'plugin';
+                        } | undefined;
+                        createdAt?: number | undefined;
                     };
                     sizeDeclaration: {
                         sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -1666,6 +1690,10 @@ export type WidgetsActionResultById = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
+                        author?: {
+                            kind: 'person' | 'agent' | 'plugin';
+                        } | undefined;
+                        createdAt?: number | undefined;
                     };
                     sizeDeclaration: {
                         sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -1804,6 +1832,10 @@ export type WidgetsActionResultById = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
+                        author?: {
+                            kind: 'person' | 'agent' | 'plugin';
+                        } | undefined;
+                        createdAt?: number | undefined;
                     };
                     sizeDeclaration: {
                         sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -1942,6 +1974,10 @@ export type WidgetsActionResultById = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
+                        author?: {
+                            kind: 'person' | 'agent' | 'plugin';
+                        } | undefined;
+                        createdAt?: number | undefined;
                     };
                     sizeDeclaration: {
                         sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -2134,6 +2170,10 @@ export type WidgetsActionResultById = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
+                        author?: {
+                            kind: 'person' | 'agent' | 'plugin';
+                        } | undefined;
+                        createdAt?: number | undefined;
                     };
                     sizeDeclaration: {
                         sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -2272,6 +2312,10 @@ export type WidgetsActionResultById = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
+                        author?: {
+                            kind: 'person' | 'agent' | 'plugin';
+                        } | undefined;
+                        createdAt?: number | undefined;
                     };
                     sizeDeclaration: {
                         sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -2438,6 +2482,10 @@ export type WidgetsActionResultById = {
                                 itemId: string;
                             };
                             authorAccountId?: string | undefined;
+                            author?: {
+                                kind: 'person' | 'agent' | 'plugin';
+                            } | undefined;
+                            createdAt?: number | undefined;
                         };
                         sizeDeclaration: {
                             sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -2580,6 +2628,10 @@ export type WidgetsActionResultById = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
+                        author?: {
+                            kind: 'person' | 'agent' | 'plugin';
+                        } | undefined;
+                        createdAt?: number | undefined;
                     };
                     sizeDeclaration: {
                         sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -2719,6 +2771,10 @@ export type WidgetsActionResultById = {
                 };
                 nativeServicePath?: string | undefined;
             }[] | undefined;
+            author?: {
+                kind: 'person' | 'agent' | 'plugin';
+            } | undefined;
+            createdAt?: number | undefined;
             sourceDefinition?: {
                 kind: 'installed';
                 surface: {
@@ -2740,6 +2796,10 @@ export type WidgetsActionResultById = {
                     itemId: string;
                 };
                 authorAccountId?: string | undefined;
+                author?: {
+                    kind: 'person' | 'agent' | 'plugin';
+                } | undefined;
+                createdAt?: number | undefined;
             };
             sizeDeclaration: {
                 sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -2849,6 +2909,10 @@ export type WidgetsActionResultById = {
                     itemId: string;
                 };
                 authorAccountId?: string | undefined;
+                author?: {
+                    kind: 'person' | 'agent' | 'plugin';
+                } | undefined;
+                createdAt?: number | undefined;
             };
             sizeDeclaration: {
                 sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -2928,6 +2992,10 @@ export type WidgetsActionResultById = {
                     itemId: string;
                 };
                 authorAccountId?: string | undefined;
+                author?: {
+                    kind: 'person' | 'agent' | 'plugin';
+                } | undefined;
+                createdAt?: number | undefined;
             };
             sizeDeclaration: {
                 sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -3007,6 +3075,10 @@ export type WidgetsActionResultById = {
                     itemId: string;
                 };
                 authorAccountId?: string | undefined;
+                author?: {
+                    kind: 'person' | 'agent' | 'plugin';
+                } | undefined;
+                createdAt?: number | undefined;
             };
             sizeDeclaration: {
                 sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -3090,6 +3162,10 @@ export type WidgetsActionResultById = {
                     itemId: string;
                 };
                 authorAccountId?: string | undefined;
+                author?: {
+                    kind: 'person' | 'agent' | 'plugin';
+                } | undefined;
+                createdAt?: number | undefined;
             };
             sizeDeclaration: {
                 sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];

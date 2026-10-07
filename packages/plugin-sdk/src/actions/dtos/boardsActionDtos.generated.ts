@@ -69,6 +69,10 @@ export type BoardsActionInputById = {
                                 itemId: string;
                             };
                             authorAccountId?: string | undefined;
+                            author?: {
+                                kind: 'person' | 'agent' | 'plugin';
+                            } | undefined;
+                            createdAt?: number | undefined;
                         };
                         sizeDeclaration: {
                             sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -239,6 +243,10 @@ export type BoardsActionInputById = {
                                 itemId: string;
                             };
                             authorAccountId?: string | undefined;
+                            author?: {
+                                kind: 'person' | 'agent' | 'plugin';
+                            } | undefined;
+                            createdAt?: number | undefined;
                         };
                         sizeDeclaration: {
                             sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -651,6 +659,10 @@ export type BoardsActionResultById = {
                                     itemId: string;
                                 };
                                 authorAccountId?: string | undefined;
+                                author?: {
+                                    kind: 'person' | 'agent' | 'plugin';
+                                } | undefined;
+                                createdAt?: number | undefined;
                             };
                             sizeDeclaration: {
                                 sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -834,6 +846,10 @@ export type BoardsActionResultById = {
                                     itemId: string;
                                 };
                                 authorAccountId?: string | undefined;
+                                author?: {
+                                    kind: 'person' | 'agent' | 'plugin';
+                                } | undefined;
+                                createdAt?: number | undefined;
                             };
                             sizeDeclaration: {
                                 sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];

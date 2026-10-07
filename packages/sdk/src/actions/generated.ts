@@ -171,6 +171,7 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "machines.agents.signIn.cancel",
   "machines.agents.signIn.restart",
   "machines.agents.signIn.start",
+  "machines.command.run",
   "machines.pairing.create",
   "machines.pools.create",
   "machines.pools.delete",
@@ -427,6 +428,7 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "ui.voice_global.start",
   "ui.voice_global.turn_control",
   "voice_agent.start",
+  "webhooks.call",
   "widgets.area.layout.update",
   "widgets.definition.create",
   "widgets.definition.delete",
@@ -918,6 +920,9 @@ export type GeneratedActions = Readonly<{
         readonly start: (input: PublicActionInputById["machines.agents.signIn.start"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.agents.signIn.start">>;
         readonly status: (input: PublicActionInputById["machines.agents.signIn.status"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.agents.signIn.status">>;
       }> ;
+    }> ;
+    readonly command: Readonly<{
+      readonly run: (input: PublicActionInputById["machines.command.run"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.command.run">>;
     }> ;
     readonly list: (input: PublicActionInputById["machines.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.list">>;
     readonly pairing: Readonly<{
@@ -1724,6 +1729,9 @@ export type GeneratedActions = Readonly<{
     readonly start: (input: PublicActionInputById["voice_agent.start"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"voice_agent.start">>;
   }> ;
   readonly wait: (input: PublicActionInputById["wait"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"wait">>;
+  readonly webhooks: Readonly<{
+    readonly call: (input: PublicActionInputById["webhooks.call"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"webhooks.call">>;
+  }> ;
   readonly widgets: Readonly<{
     readonly area: Readonly<{
       readonly layout: Readonly<{
@@ -2296,6 +2304,9 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
           start: (input: PublicActionInputById["machines.agents.signIn.start"], options?: ActionExecutionOptions) => execute("machines.agents.signIn.start", input, options),
           status: (input: PublicActionInputById["machines.agents.signIn.status"], options?: ActionExecutionOptions) => execute("machines.agents.signIn.status", input, options),
         },
+      },
+      command: {
+        run: (input: PublicActionInputById["machines.command.run"], options?: ActionExecutionOptions) => execute("machines.command.run", input, options),
       },
       list: (input: PublicActionInputById["machines.list"], options?: ActionExecutionOptions) => execute("machines.list", input, options),
       pairing: {
@@ -3102,6 +3113,9 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
       start: (input: PublicActionInputById["voice_agent.start"], options?: ActionExecutionOptions) => execute("voice_agent.start", input, options),
     },
     wait: (input: PublicActionInputById["wait"], options?: ActionExecutionOptions) => execute("wait", input, options),
+    webhooks: {
+      call: (input: PublicActionInputById["webhooks.call"], options?: ActionExecutionOptions) => execute("webhooks.call", input, options),
+    },
     widgets: {
       area: {
         layout: {

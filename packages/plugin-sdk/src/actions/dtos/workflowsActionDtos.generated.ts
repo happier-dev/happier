@@ -118,6 +118,7 @@ export type WorkflowsActionInputById = {
         states?: ('queued' | 'claimed' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'expired' | 'dispatch_failed' | 'skipped' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'interrupted' | 'waiting_for_review')[] | undefined;
         attention?: 'required' | undefined;
         originSessionId?: string | undefined;
+        targetSessionId?: string | undefined;
         automationId?: string | undefined;
         machineId?: string | undefined;
     };
@@ -7759,6 +7760,16 @@ export type WorkflowsActionResultById = {
                 accountId: string;
                 sessionId?: string | undefined;
             } | undefined;
+            destinations?: {
+                targetSessionIds: string[];
+                usesOriginSession: boolean;
+                unresolvedWorkflowRefs: string[];
+                leaves: {
+                    sourceKey: string;
+                    blockId: string;
+                    sessionIds: string[];
+                }[];
+            } | undefined;
         } | {
             kind: 'workflow-definition.v1';
             definitionId: string;
@@ -8375,6 +8386,16 @@ export type WorkflowsActionResultById = {
             description?: string | undefined;
         };
         access: 'owner' | 'view' | 'edit' | 'admin';
+        destinations?: {
+            targetSessionIds: string[];
+            usesOriginSession: boolean;
+            unresolvedWorkflowRefs: string[];
+            leaves: {
+                sourceKey: string;
+                blockId: string;
+                sessionIds: string[];
+            }[];
+        } | undefined;
         savedBy?: {
             kind: 'person';
             accountId: string;
@@ -8664,6 +8685,16 @@ export type WorkflowsActionResultById = {
             description?: string | undefined;
         };
         access: 'owner' | 'view' | 'edit' | 'admin';
+        destinations?: {
+            targetSessionIds: string[];
+            usesOriginSession: boolean;
+            unresolvedWorkflowRefs: string[];
+            leaves: {
+                sourceKey: string;
+                blockId: string;
+                sessionIds: string[];
+            }[];
+        } | undefined;
         savedBy?: {
             kind: 'person';
             accountId: string;
@@ -8953,6 +8984,16 @@ export type WorkflowsActionResultById = {
             description?: string | undefined;
         };
         access: 'owner' | 'view' | 'edit' | 'admin';
+        destinations?: {
+            targetSessionIds: string[];
+            usesOriginSession: boolean;
+            unresolvedWorkflowRefs: string[];
+            leaves: {
+                sourceKey: string;
+                blockId: string;
+                sessionIds: string[];
+            }[];
+        } | undefined;
         savedBy?: {
             kind: 'person';
             accountId: string;
@@ -10028,6 +10069,16 @@ export type WorkflowsActionResultById = {
                     kind: 'originating_session';
                 } | undefined;
             } | undefined;
+            destinations?: {
+                targetSessionIds: string[];
+                usesOriginSession: boolean;
+                unresolvedWorkflowRefs: string[];
+                leaves: {
+                    sourceKey: string;
+                    blockId: string;
+                    sessionIds: string[];
+                }[];
+            } | undefined;
         }[];
     };
     readonly "workflow.trigger.add": {
@@ -10811,6 +10862,16 @@ export type WorkflowsActionResultById = {
                 onComplete?: {
                     kind: 'originating_session';
                 } | undefined;
+            } | undefined;
+            destinations?: {
+                targetSessionIds: string[];
+                usesOriginSession: boolean;
+                unresolvedWorkflowRefs: string[];
+                leaves: {
+                    sourceKey: string;
+                    blockId: string;
+                    sessionIds: string[];
+                }[];
             } | undefined;
         };
         triggerId?: (string) | undefined;
@@ -11598,6 +11659,16 @@ export type WorkflowsActionResultById = {
                     kind: 'originating_session';
                 } | undefined;
             } | undefined;
+            destinations?: {
+                targetSessionIds: string[];
+                usesOriginSession: boolean;
+                unresolvedWorkflowRefs: string[];
+                leaves: {
+                    sourceKey: string;
+                    blockId: string;
+                    sessionIds: string[];
+                }[];
+            } | undefined;
         };
         triggerId?: (string) | undefined;
         triggerRevision?: number | undefined;
@@ -12384,6 +12455,16 @@ export type WorkflowsActionResultById = {
                     kind: 'originating_session';
                 } | undefined;
             } | undefined;
+            destinations?: {
+                targetSessionIds: string[];
+                usesOriginSession: boolean;
+                unresolvedWorkflowRefs: string[];
+                leaves: {
+                    sourceKey: string;
+                    blockId: string;
+                    sessionIds: string[];
+                }[];
+            } | undefined;
         };
         triggerId?: (string) | undefined;
         triggerRevision?: number | undefined;
@@ -13169,6 +13250,16 @@ export type WorkflowsActionResultById = {
                 onComplete?: {
                     kind: 'originating_session';
                 } | undefined;
+            } | undefined;
+            destinations?: {
+                targetSessionIds: string[];
+                usesOriginSession: boolean;
+                unresolvedWorkflowRefs: string[];
+                leaves: {
+                    sourceKey: string;
+                    blockId: string;
+                    sessionIds: string[];
+                }[];
             } | undefined;
         }[];
         sessionId: string;
@@ -13963,6 +14054,16 @@ export type WorkflowsActionResultById = {
                     kind: 'originating_session';
                 } | undefined;
             } | undefined;
+            destinations?: {
+                targetSessionIds: string[];
+                usesOriginSession: boolean;
+                unresolvedWorkflowRefs: string[];
+                leaves: {
+                    sourceKey: string;
+                    blockId: string;
+                    sessionIds: string[];
+                }[];
+            } | undefined;
         };
         triggerId?: (string) | undefined;
         triggerRevision?: number | undefined;
@@ -14749,6 +14850,16 @@ export type WorkflowsActionResultById = {
                     kind: 'originating_session';
                 } | undefined;
             } | undefined;
+            destinations?: {
+                targetSessionIds: string[];
+                usesOriginSession: boolean;
+                unresolvedWorkflowRefs: string[];
+                leaves: {
+                    sourceKey: string;
+                    blockId: string;
+                    sessionIds: string[];
+                }[];
+            } | undefined;
         };
         triggerId?: (string) | undefined;
         triggerRevision?: number | undefined;
@@ -15534,6 +15645,16 @@ export type WorkflowsActionResultById = {
                 onComplete?: {
                     kind: 'originating_session';
                 } | undefined;
+            } | undefined;
+            destinations?: {
+                targetSessionIds: string[];
+                usesOriginSession: boolean;
+                unresolvedWorkflowRefs: string[];
+                leaves: {
+                    sourceKey: string;
+                    blockId: string;
+                    sessionIds: string[];
+                }[];
             } | undefined;
         };
         triggerId?: (string) | undefined;

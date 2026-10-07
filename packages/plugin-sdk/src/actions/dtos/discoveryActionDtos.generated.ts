@@ -72,6 +72,10 @@ export type DiscoveryActionInputById = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
+                        author?: {
+                            kind: 'person' | 'agent' | 'plugin';
+                        } | undefined;
+                        createdAt?: number | undefined;
                     };
                     sizeDeclaration: {
                         sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -259,7 +263,7 @@ export type DiscoveryActionResultById = {
                     exportName?: string | undefined;
                     registrationId?: string | undefined;
                 } | undefined;
-                transport?: 'rpc' | 'api' | 'plugin' | 'host' | undefined;
+                transport?: 'plugin' | 'rpc' | 'api' | 'host' | undefined;
                 routing?: string | undefined;
                 approvalPolicy?: string | undefined;
                 resultSchema?: Record<string, unknown> | undefined;
@@ -369,7 +373,7 @@ export type DiscoveryActionResultById = {
                     exportName?: string | undefined;
                     registrationId?: string | undefined;
                 } | undefined;
-                transport?: 'rpc' | 'api' | 'plugin' | 'host' | undefined;
+                transport?: 'plugin' | 'rpc' | 'api' | 'host' | undefined;
                 routing?: string | undefined;
                 approvalPolicy?: string | undefined;
                 resultSchema?: Record<string, unknown> | undefined;

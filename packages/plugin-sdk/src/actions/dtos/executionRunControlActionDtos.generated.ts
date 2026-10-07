@@ -1211,6 +1211,7 @@ export type ExecutionRunControlActionInputById = {
                 ioMode: 'request_response' | 'streaming';
                 status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
                 startedAtMs: number;
+                originWorkflowRunId?: string | undefined;
                 display?: {
                     [x: string]: unknown;
                     title?: string | undefined;
@@ -1405,6 +1406,7 @@ export type ExecutionRunControlActionResultById = {
                     ioMode: 'request_response' | 'streaming';
                     status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
                     startedAtMs: number;
+                    originWorkflowRunId?: string | undefined;
                     display?: {
                         [x: string]: unknown;
                         title?: string | undefined;
@@ -1612,6 +1614,7 @@ export type ExecutionRunControlActionResultById = {
                     ioMode: 'request_response' | 'streaming';
                     status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
                     startedAtMs: number;
+                    originWorkflowRunId?: string | undefined;
                     display?: {
                         [x: string]: unknown;
                         title?: string | undefined;
@@ -1823,6 +1826,7 @@ export type ExecutionRunControlActionResultById = {
                     ioMode: 'request_response' | 'streaming';
                     status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
                     startedAtMs: number;
+                    originWorkflowRunId?: string | undefined;
                     display?: {
                         [x: string]: unknown;
                         title?: string | undefined;
@@ -2029,6 +2033,7 @@ export type ExecutionRunControlActionResultById = {
                     ioMode: 'request_response' | 'streaming';
                     status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
                     startedAtMs: number;
+                    originWorkflowRunId?: string | undefined;
                     display?: {
                         [x: string]: unknown;
                         title?: string | undefined;
@@ -2248,6 +2253,7 @@ export type ExecutionRunControlActionResultById = {
             ioMode: 'request_response' | 'streaming';
             status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
             startedAtMs: number;
+            originWorkflowRunId?: string | undefined;
             display?: {
                 [x: string]: unknown;
                 title?: string | undefined;
@@ -2445,6 +2451,7 @@ export type ExecutionRunControlActionResultById = {
             ioMode: 'request_response' | 'streaming';
             status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
             startedAtMs: number;
+            originWorkflowRunId?: string | undefined;
             display?: {
                 [x: string]: unknown;
                 title?: string | undefined;
@@ -2756,6 +2763,7 @@ export type ExecutionRunControlActionResultById = {
                 ioMode: 'request_response' | 'streaming';
                 status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
                 startedAtMs: number;
+                originWorkflowRunId?: string | undefined;
                 display?: {
                     [x: string]: unknown;
                     title?: string | undefined;
@@ -2963,6 +2971,7 @@ export type ExecutionRunControlActionResultById = {
                 ioMode: 'request_response' | 'streaming';
                 status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
                 startedAtMs: number;
+                originWorkflowRunId?: string | undefined;
                 display?: {
                     [x: string]: unknown;
                     title?: string | undefined;
@@ -3174,6 +3183,7 @@ export type ExecutionRunControlActionResultById = {
                 ioMode: 'request_response' | 'streaming';
                 status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
                 startedAtMs: number;
+                originWorkflowRunId?: string | undefined;
                 display?: {
                     [x: string]: unknown;
                     title?: string | undefined;
@@ -3380,6 +3390,7 @@ export type ExecutionRunControlActionResultById = {
                 ioMode: 'request_response' | 'streaming';
                 status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
                 startedAtMs: number;
+                originWorkflowRunId?: string | undefined;
                 display?: {
                     [x: string]: unknown;
                     title?: string | undefined;
