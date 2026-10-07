@@ -1763,9 +1763,11 @@ describe('production workflow coordinator', () => {
       id: runId, dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
       ownerAccountId: accountId, access: 'owner', encryptionMode: 'plain',
       headerVersion: version, bodyVersion: version, seq: version, createdAt: 1, updatedAt: version,
+      provenance: encodePlainArtifactStoredContent({ v: 1, artifactId: runId, bodyVersion: version,
+        provenance: { savedBy: { kind: 'person', accountId } },
+      }),
       header: encodePlainArtifactStoredContent({ kind: 'workflow-definition.v1', definitionId: runId,
         revision: { headerVersion: version, bodyVersion: version }, metadata: { title: 'Live source' },
-        savedBy: { kind: 'person', accountId },
       }),
       body: encodePlainArtifactStoredContent({ body: JSON.stringify({ kind: 'workflow-definition.v1',
         definition: { version: 1, inputs: [], defaults: {

@@ -454,12 +454,15 @@ describe('workflow Session step executor', () => {
     expect(depths).toEqual([3, 3, 2, 3]);
   });
 
-  it('titles only freshly created step Sessions from the canonical prompt label and frozen member ordinal', async () => {
+  it('titles only freshly created named step Sessions with the authored name and frozen sibling ordinal', async () => {
     // Session/process creation is the external boundary; conversation binding
     // and title selection remain the production owner's real internal path.
     const createFreshConversation = vi.fn(async (_input: Parameters<Parameters<typeof createProductionWorkflowConversationOwner>[0]['createFreshConversation']>[0]) => ({
       sessionId: 'fresh', machineId: 'machine-1', directory: '/repo',
     }));
+    const personallyRenamed = { sessionId: 'shared', machineId: 'machine-1', directory: '/repo', title: 'My own title',
+      agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+      runtimeSelection: { connectedServices: { v: 2 as const, bindingsByServiceId: {} } } };
     const conversations = createProductionWorkflowConversationOwner({
       machineId: 'machine-1', createFreshConversation,
       resolveSharedRunConversation: async () => ({ sessionId: 'shared', machineId: 'machine-1', directory: '/repo',
@@ -468,13 +471,11 @@ describe('workflow Session step executor', () => {
       resolveProducerConversation: async () => ({ sessionId: 'shared', machineId: 'machine-1', directory: '/repo',
         agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
         runtimeSelection: { connectedServices: { v: 2, bindingsByServiceId: {} } } }),
-      resolveExistingSessionConversation: async ({ sessionId, machineId }) => ({ sessionId, machineId, directory: '/repo',
-        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
-        runtimeSelection: { connectedServices: { v: 2, bindingsByServiceId: {} } } }),
+      resolveExistingSessionConversation: async () => personallyRenamed,
     });
     const base = {
       runId: 'run-1', memberOrdinal: '2',
-      step: { kind: 'step', id: 'work', document: { text: '\n  Implement\nDetails', references: [], attachments: [] }, input: [], result: { kind: 'text' } },
+      step: { kind: 'step', id: 'work', name: 'Implement', document: { text: 'A different prompt', references: [], attachments: [] }, input: [], result: { kind: 'text' } },
       invocation: { kind: 'happier.workflow-progress.v1', blockKind: 'step', invocationPath: { blockId: 'work', scope: [] }, attempt: '0', logicalInvocationRecordId: 'logical' },
       input: { text: 'Implement', references: [], attachments: [], values: [] },
       execution: { conversation: { kind: 'fresh' }, agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } }, connectedServices: { v: 2, bindingsByServiceId: {} } },
@@ -486,7 +487,14 @@ describe('workflow Session step executor', () => {
     const fresh = base;
     await conversations.materialize(await conversations.prepare(fresh), fresh);
     expect(createFreshConversation).toHaveBeenLastCalledWith(expect.objectContaining({ initialTitle: '3 · Implement' }));
-    const empty = { ...fresh, step: { ...fresh.step, document: { ...fresh.step.document, text: '  \n  ' } } };
+    const scalarItem = { ...fresh, item: { value: 'parser.ts', index: 3, position: 4, count: 8 } };
+    await conversations.materialize(await conversations.prepare(scalarItem), scalarItem);
+    expect(createFreshConversation).toHaveBeenLastCalledWith(expect.objectContaining({ initialTitle: '3 · Implement · parser.ts' }));
+    const structuredItem = { ...fresh, item: { value: { name: 'Not a label' }, index: 3, position: 4, count: 8 } };
+    await conversations.materialize(await conversations.prepare(structuredItem), structuredItem);
+    expect(createFreshConversation).toHaveBeenLastCalledWith(expect.objectContaining({ initialTitle: '3 · Implement · 4' }));
+    const { name: _name, ...unnamedStep } = fresh.step;
+    const empty = { ...scalarItem, step: unnamedStep };
     await conversations.materialize(await conversations.prepare(empty), empty);
     expect(createFreshConversation).toHaveBeenLastCalledWith(expect.not.objectContaining({ initialTitle: expect.any(String) }));
     const shared = { ...fresh, execution: { ...fresh.execution, conversation: { kind: 'shared_run' as const } } };
@@ -497,7 +505,12 @@ describe('workflow Session step executor', () => {
     await conversations.materialize(await conversations.prepare(fromStep), fromStep);
     const existing = { ...fresh, execution: { ...fresh.execution,
       conversation: { kind: 'existing_session' as const, sessionId: 'shared', machineId: 'machine-1' } } };
-    await conversations.materialize(await conversations.prepare(existing), existing);
+    expect(await conversations.materialize(await conversations.prepare(existing), existing)).toBe(personallyRenamed);
+    const retained = { ...fresh,
+      recoveryPreviousExecution: { kind: 'session' as const, sessionId: 'shared', localInputId: 'prior-input' },
+      invocation: { ...fresh.invocation, recovery: { conversation: 'same_conversation' as const, input: { kind: 'original' as const } } } };
+    expect(await conversations.materialize(await conversations.prepare(retained), retained)).toBe(personallyRenamed);
+    expect(personallyRenamed.title).toBe('My own title');
     expect(createFreshConversation).not.toHaveBeenCalled();
   });
 

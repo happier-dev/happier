@@ -349,6 +349,14 @@ export function mergeSessionMetadataForStartup(opts: {
     };
 
     if (mode === 'attach') {
+        // Process startup titles are birth seeds, not display-title mutations.
+        // Keep the stored value and stamp, including an empty or removed title.
+        if (opts.current.summary !== undefined) {
+            merged.summary = opts.current.summary;
+        } else {
+            delete merged.summary;
+        }
+
         // When attaching to an existing session, preserve machine/workspace identity fields from the
         // already-persisted metadata. The "next" metadata is derived from the currently-running CLI
         // process (often in a different working directory), and should not overwrite the session's

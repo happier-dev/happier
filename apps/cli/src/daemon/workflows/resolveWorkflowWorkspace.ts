@@ -27,6 +27,7 @@ import {
 } from './coordinator';
 import type { WorkflowProducerBinding } from './workflowScopeBinding';
 import type { WorkflowConversationBinding } from './workflowConversation';
+import { walkWorkflowBlocks } from './workflowDefinitionTraversal';
 
 export type WorkflowWorkspaceDescriptor = WorkflowWorkspaceDescriptorV1;
 export type WorkflowWorkspaceCreationIntent = WorkflowWorkspaceCreationIntentV1;
@@ -156,17 +157,12 @@ function workflowUsesOriginalCommittedRevision(definition: WorkflowDefinitionV1)
     selection?.kind === 'new_worktree' && selection.source.kind === 'original'
   );
   if (selectionUsesOriginal(definition.defaults.workspace)) return true;
-  const visit = (blocks: WorkflowDefinitionV1['blocks']): boolean => blocks.some((block) => {
+  for (const block of walkWorkflowBlocks(definition.blocks)) {
     if (block.kind === 'step' || block.kind === 'action' || block.kind === 'wait' || block.kind === 'workflow') {
-      return selectionUsesOriginal(block.execution?.workspace);
+      if (selectionUsesOriginal(block.execution?.workspace)) return true;
     }
-    if (block.kind === 'parallel') return block.branches.some((branch) => visit(branch.blocks));
-    if (block.kind === 'if') return visit(block.then) || visit(block.otherwise);
-    return visit(block.body)
-      || (block.repetition.kind === 'evaluate'
-        && selectionUsesOriginal(block.repetition.evaluator.execution?.workspace));
-  });
-  return visit(definition.blocks);
+  }
+  return false;
 }
 
 /** Canonicalizes only the signed target fields; it performs no filesystem effect. */

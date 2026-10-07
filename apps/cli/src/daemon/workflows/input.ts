@@ -221,21 +221,53 @@ export async function evaluateWorkflowCondition(
   condition: WorkflowCondition,
   runtime: WorkflowValueResolutionRuntime,
 ): Promise<boolean> {
+  // Definitions have no nesting limit. Keep traversal off the JavaScript call
+  // stack while retaining authored order and all/any short-circuiting.
+  const pending: (
+    | Readonly<{ kind: 'not' }>
+    | Readonly<{ kind: 'all' | 'any'; conditions: readonly WorkflowCondition[]; next: number }>
+  )[] = [];
+  let current = condition;
+  let result: boolean;
+  for (;;) {
+    switch (current.kind) {
+      case 'not':
+        pending.push({ kind: 'not' });
+        current = current.condition;
+        continue;
+      case 'all':
+      case 'any':
+        if (current.conditions.length > 0) {
+          pending.push({ kind: current.kind, conditions: current.conditions, next: 1 });
+          current = current.conditions[0]!;
+          continue;
+        }
+        result = current.kind === 'all';
+        break;
+      default:
+        result = await evaluateWorkflowConditionLeaf(current, runtime);
+    }
+    for (;;) {
+      const parent = pending.pop();
+      if (!parent) return result;
+      if (parent.kind === 'not') {
+        result = !result;
+      } else if (result === (parent.kind === 'all') && parent.next < parent.conditions.length) {
+        pending.push({ ...parent, next: parent.next + 1 });
+        current = parent.conditions[parent.next]!;
+        break;
+      }
+    }
+  }
+}
+
+async function evaluateWorkflowConditionLeaf(
+  condition: Exclude<WorkflowCondition, { kind: 'all' | 'any' | 'not' }>,
+  runtime: WorkflowValueResolutionRuntime,
+): Promise<boolean> {
   switch (condition.kind) {
     case 'exists':
       return await referenceExists(condition.value, runtime);
-    case 'all':
-      for (const child of condition.conditions) {
-        if (!await evaluateWorkflowCondition(child, runtime)) return false;
-      }
-      return true;
-    case 'any':
-      for (const child of condition.conditions) {
-        if (await evaluateWorkflowCondition(child, runtime)) return true;
-      }
-      return false;
-    case 'not':
-      return !await evaluateWorkflowCondition(condition.condition, runtime);
     case 'compare': {
       const left = await resolveConditionValue(condition.left, runtime);
       const right = await resolveConditionValue(condition.right, runtime);
