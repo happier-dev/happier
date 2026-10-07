@@ -97,19 +97,31 @@ export const en = {
 } as const;
 ```
 
+Locale roots compose feature copy from `translations/features/<locale>.ts`. Each feature scope
+contains only that locale's values; English overlays and shared formatter builders live beside
+their domain in `translations/*.shared.ts`. The original domain modules aggregate all locales
+for translation tooling. Product consumers should use `t(...)` or a locale root, not those
+all-locale tooling aggregates. `_all.ts` remains the supported-language authority.
+
 ### `_types.ts`
 Contains the TypeScript types derived from the English translation structure.
 
 This keeps the canonical translation object (`translations/en.ts`) separate from the type-level API:
 - `Translations` / `TranslationStructure` are derived from `en` and used to type-check other locales.
-- `TranslationKey` / `TranslationParams<K>` are derived from `Translations` (in `index.ts`) to type `t(...)`.
+- `TranslationKey` / `TranslationParams<K>` are derived from `Translations` (in `i18n.ts`) to type `t(...)`.
 
-### `index.ts`
-Main module with the `t` function and utilities:
+### `i18n.ts` and `index.ts`
+`i18n.ts` owns language selection and synchronous lookup; `index.ts` re-exports its API:
 - `t()` - Main translation function with strict typing
 - `hasTranslation()` - Check if a key exists
 - `getAllTranslationKeys()` - Get all available keys (development)
 - `getTranslationValue()` - Get raw value (debugging)
+
+Boot awaits `preloadTranslations()` after local settings restoration and before first paint.
+Language settings await `preloadTranslationsForSettings(value)` before committing a change.
+`t(...)` remains synchronous: readiness belongs to these existing activation owners, not to
+individual text consumers. An explicit `preloadTranslations(language)` loads an alternate
+language, such as a Voice greeting language, without changing the active UI language.
 
 ## Key Benefits
 
