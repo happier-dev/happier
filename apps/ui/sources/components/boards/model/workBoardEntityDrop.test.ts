@@ -59,7 +59,11 @@ describe('WorkBoard shared entity owner', () => {
                 if (!input || typeof input !== 'object' || Array.isArray(input) || !('intent' in input)) throw new Error('invalid effect');
                 const { WorkBoardIntentV1Schema } = await import('@happier-dev/protocol');
                 const outcome = await store.queue.dispatch(WorkBoardIntentV1Schema.parse(input.intent));
-                return outcome.status === 'applied' ? { status: 'applied' } : { status: outcome.status, reason: { code: outcome.code, message: outcome.code } };
+                if (outcome.status === 'applied') return { status: 'applied' };
+                return {
+                    status: outcome.status === 'refused' ? 'refused' : 'unknown',
+                    reason: { code: outcome.code, message: outcome.code },
+                };
             } });
         const carry = runtime.begin('session')!;
         carry.move({ x: 50, y: 50 });

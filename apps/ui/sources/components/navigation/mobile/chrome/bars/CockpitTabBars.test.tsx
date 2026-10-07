@@ -2,11 +2,13 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
+import { MetadataSchema } from '@happier-dev/session-core/state';
 
 import { renderScreen as renderRealScreen } from '@/dev/testkit/render/renderScreen';
 import { createMachineFixture, createSessionFixture, standardCleanup } from '@/dev/testkit';
-import type { ScmStatus, Session } from '@/sync/domains/state/storageTypes';
+import type { ScmStatus } from '@/sync/domains/state/storageTypes';
 import { installUiListsCommonModuleMocks } from '@/components/ui/lists/uiListsTestHelpers';
+import { parseDecryptedSessionMetadata } from '@/sync/engine/sessions/parsePlainSessionPayload';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -104,14 +106,20 @@ async function seedCockpitState(element: React.ReactNode) {
         // These are producer fixture payloads; the presentation owner and store readers remain real.
         const target = reachableMachineState.target ?? { machineId: 'machine-1', basePath: '/repo' };
         const serverId = fixtureSessionServerId ?? route.serverId;
-        const metadata = sessionMetadataState.metadataLayoutVersion === 1 ? sessionMetadataState.metadata : sessionMetadataState.metadata === null ? null : {
+        const metadata = sessionMetadataState.metadataLayoutVersion === 1
+            ? parseDecryptedSessionMetadata(sessionMetadataState.metadata, 1)
+            : sessionMetadataState.metadata === null ? null : MetadataSchema.parse({
             ...createSessionFixture().metadata,
             machineId: target.machineId, path: target.basePath,
             ...sessionMetadataState.metadata,
-        } as Session['metadata'];
-        const ownerMetadataView = (sessionMetadataState.metadataLayoutVersion === 1 && sessionMetadataState.ownerMetadataView === undefined
-            ? { ...createSessionFixture().metadata, machineId: target.machineId, path: target.basePath }
-            : sessionMetadataState.ownerMetadataView) as Session['ownerMetadataView'];
+        });
+        const ownerMetadataView = sessionMetadataState.ownerMetadataView === null ? null
+            : sessionMetadataState.metadataLayoutVersion === 1 || sessionMetadataState.ownerMetadataView !== undefined
+                ? MetadataSchema.parse({
+                    ...createSessionFixture().metadata, machineId: target.machineId, path: target.basePath,
+                    ...sessionMetadataState.ownerMetadataView,
+                })
+                : undefined;
         const session = createSessionFixture({ id: route.sessionId, serverId,
             metadata, metadataLayoutVersion: sessionMetadataState.metadataLayoutVersion, ownerMetadataView,
             ...(sessionMetadataState.accessLevel ? { accessLevel: sessionMetadataState.accessLevel } : {}),

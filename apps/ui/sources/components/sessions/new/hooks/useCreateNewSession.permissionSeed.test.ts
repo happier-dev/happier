@@ -31,7 +31,6 @@ import { AIBackendProfileSchema } from '@/sync/domains/profiles/profileCompatibi
 import { renderScreen as renderTestScreen } from '@/dev/testkit';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
-import type { AutomationEditorDraft } from '@/sync/domains/automations/automationEditorDraft';
 import type { ServerScopedMachineRpcParams } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 import type {
     HandleCreateSessionOptions,
@@ -68,8 +67,6 @@ const routerSearchParamsState = vi.hoisted(() => ({
 type SpawnPayloadCapture = SessionSpawnNewInputV2 | null;
 type SessionSpawnNewRpcRequest = ServerScopedMachineRpcParams<SessionSpawnNewInputV2>;
 type SessionSpawnNewSuccessResult = Extract<SessionSpawnNewResultV1, Readonly<{ type: 'success' }>>;
-
-type AutomationEditorSaveCapture = AutomationEditorDraft | null;
 
 function createCompatibleTestProfile(id = 'profile-test') {
     return AIBackendProfileSchema.parse({
@@ -382,12 +379,11 @@ async function createUseCreateNewSessionHarness(accountMode: 'plain' | 'e2ee' = 
             ? { kind: 'available' as const, sessionId }
             : { kind: 'missing' as const, sessionId, cause: 'not_found' as const }
     ));
-    const saveAutomationEditorDraftSpy = vi.spyOn(sync, 'saveAutomationEditorDraft');
     const refreshAutomationsSpy = vi.spyOn(sync, 'refreshAutomations');
     const syncSendMessageSpy = vi.spyOn(sync, 'sendMessage');
-    const automationCaptured: { readonly value: AutomationEditorSaveCapture } = {
+    const automationCaptured = {
         get value() {
-            return saveAutomationEditorDraftSpy.mock.calls.at(-1)?.[0] ?? null;
+            return lastCreatedAutomation;
         },
     };
     // The daemon transport is the boundary; Action dispatch and local launch custody stay real.
@@ -462,7 +458,6 @@ async function createUseCreateNewSessionHarness(accountMode: 'plain' | 'e2ee' = 
             sessionSpawnNewRpcRequest.value = null;
             lastCreatedAutomation = null;
             sessionSpawnNewRpcSpy.mockReset().mockImplementation(defaultSpawn);
-            saveAutomationEditorDraftSpy.mockClear();
             refreshAutomationsSpy.mockClear();
             syncSendMessageSpy.mockClear();
             scopeStorage.setState({ ...initialStore, sessions: {}, sessionPending: {} });
@@ -516,7 +511,6 @@ async function createUseCreateNewSessionHarness(accountMode: 'plain' | 'e2ee' = 
         },
         captured,
         automationCaptured,
-        saveAutomationEditorDraftSpy,
         modalAlertSpy,
         modalConfirmSpy,
         clearNewSessionDraftSpy,

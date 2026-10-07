@@ -5,8 +5,8 @@ import { flattenTestStyle, renderScreen, standardCleanup } from '@/dev/testkit';
 
 // The web renderer is the platform boundary; material policy, settings and reconciliation stay real.
 vi.mock('react-native', async () => {
-    const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeNativeMock({ platformOS: 'web' });
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
 });
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
