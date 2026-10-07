@@ -325,7 +325,7 @@ server never learns E2EE destination content. Definitions and Automation trigger
 sets derive their destinations through the same Protocol walker and authorized
 definition resolver; unresolved references remain explicit.
 
-Machine start capacity is independent of trigger scope. The incumbent Automation
+Workflow machine start capacity is independent of trigger scope. The incumbent Automation
 worker's active-execution map reserves the existing server-configured budget
 only for accepted graphs that can start an Agent. Existing-Session writes from
 Account recipes and Session-scoped triggers reserve no slot. At a full budget,
