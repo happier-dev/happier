@@ -27,6 +27,7 @@ import type { InputFieldHint } from '../inputs/inputFields.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
+import { isWorkflowActionLiteralFieldV1 } from './stepActionsV1.js';
 
 export {
   WorkflowStepComposerDocumentSchema,
@@ -209,13 +210,20 @@ export const WorkflowActionFieldBindingV1Schema = z.union([
 ]);
 export type WorkflowActionFieldBindingV1 = z.infer<typeof WorkflowActionFieldBindingV1Schema>;
 const workflowLeafFields = { id: WorkflowBlockIdSchema, name: WorkflowBlockNameV1Schema, execution: WorkflowStepSelectionV1Schema.optional(), onlyWhen: WorkflowConditionSchema.optional() };
+function refineWorkflowActionBindings(value: Readonly<{ actionId: string; input: Record<string, { kind: string }> }>, context: z.RefinementCtx) {
+  for (const [field, binding] of Object.entries(value.input)) {
+    if (isWorkflowActionLiteralFieldV1(value.actionId, field) && binding.kind !== 'literal') {
+      context.addIssue({ code: 'custom', path: ['input', field], message: 'Command text must be literal; bind dynamic values through env' });
+    }
+  }
+}
 export const WorkflowActionLeafV1Schema = z.object({
   ...workflowLeafFields, kind: z.literal('action'),
   actionId: z.string().min(1).refine((id) => !id.startsWith('workflow.run.'), 'Workflow composition uses a Workflow leaf'),
   input: z.record(z.string().min(1), WorkflowActionFieldBindingV1Schema).default({}),
   timeoutMs: z.number().int().positive().safe().optional(),
   pauseForReview: z.boolean().optional(),
-}).strict().overwrite(omitEmptyWorkflowBlockName);
+}).strict().superRefine(refineWorkflowActionBindings).overwrite(omitEmptyWorkflowBlockName);
 export type WorkflowActionLeafV1 = z.infer<typeof WorkflowActionLeafV1Schema>;
 export const WorkflowNestedLeafV1Schema = z.object({
   ...workflowLeafFields, kind: z.literal('workflow'), workflowRef: WorkflowDefinitionRefV1StringSchema,
@@ -386,7 +394,8 @@ function createWorkflowBlockSchema<T extends WorkflowIngressBlock | WorkflowInse
   const allowShorthand = dialect === 'ingress';
   const optionalIds = dialect === 'insert';
   const step = optionalIds ? workflowFieldsWithOptionalId(WorkflowStepSchema).overwrite(omitEmptyWorkflowBlockName) : WorkflowStepSchema;
-  const action = optionalIds ? workflowFieldsWithOptionalId(WorkflowActionLeafV1Schema).overwrite(omitEmptyWorkflowBlockName) : WorkflowActionLeafV1Schema;
+  const action = optionalIds ? workflowFieldsWithOptionalId(WorkflowActionLeafV1Schema)
+    .superRefine(refineWorkflowActionBindings).overwrite(omitEmptyWorkflowBlockName) : WorkflowActionLeafV1Schema;
   const workflow = optionalIds ? workflowFieldsWithOptionalId(WorkflowNestedLeafV1Schema).overwrite(omitEmptyWorkflowBlockName) : WorkflowNestedLeafV1Schema;
   const wait = optionalIds ? workflowFieldsWithOptionalId(WorkflowWaitLeafV1Schema).overwrite(omitEmptyWorkflowBlockName) : WorkflowWaitLeafV1Schema;
   const parallel = optionalIds ? workflowFieldsWithOptionalId(WorkflowParallelBlockFieldsSchema).overwrite(omitEmptyWorkflowBlockName) : WorkflowParallelBlockFieldsSchema;

@@ -21,6 +21,7 @@ import { MachinesAgentsListInputSchema } from '../capabilities/machineAgentInven
 import { WorkspaceFilesSearchActionInputSchema } from './actionSpecs.js';
 import { HomeConnectInputSchema, MachineAddCommandInputSchema, MachinePairingCreateInputSchema, MachineTerminalOpenInputSchema, MachineTerminalListInputSchema, MACHINE_ADD_SSH_ACTION_IDS, MACHINE_ADD_SSH_INPUT_SCHEMAS, type MachineAddSshActionId } from './specs/machineConnection.js';
 import { NotificationsNotifyMeInputV1Schema } from '../account/notifications/notifyMeV1.js';
+import { WorkflowWebhookInputV1Schema, WorkflowMachineCommandInputV1Schema } from '../workflows/stepActionsV1.js';
 import { MachinesAgentsSignInStartInputSchema, MachinesAgentsSignInStatusInputSchema, MachinesAgentsSignInCancelInputSchema } from '../daemon/agentSignIn.js';
 import { isRoleActionIdV1 } from '../prompts/roles/roleActionIdsV1.js';
 import { projectAccountRoleActionRefusalV1 } from '../prompts/roles/accountRoleActions.js';
@@ -3691,6 +3692,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             : input,
           ctx,
         );
+        return readActionFailureEnvelope(result) ?? { ok: true, result };
+      }
+
+      if (actionId === 'webhooks.call' || actionId === 'machines.command.run') {
+        const result = actionId === 'webhooks.call'
+          ? await deps.webhookCall?.(WorkflowWebhookInputV1Schema.parse(parsed.data), ctx)
+          : await deps.machineCommandRun?.(WorkflowMachineCommandInputV1Schema.parse(parsed.data), ctx);
+        if (result === undefined) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         return readActionFailureEnvelope(result) ?? { ok: true, result };
       }
 

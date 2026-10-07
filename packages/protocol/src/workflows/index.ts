@@ -11,6 +11,7 @@ export * from './workflowWorkspaceV1.js';
 export * from './workflowV1.js';
 export * from './workflowStepLabel.js';
 export * from './workflowLeafV1.js';
+export * from './stepActionsV1.js';
 export * from './workflowStepSelectionV1.js';
 export * from './materializeWorkflowAcceptedSnapshotV1.js';
 export * from './workflowValidationV1.js';
