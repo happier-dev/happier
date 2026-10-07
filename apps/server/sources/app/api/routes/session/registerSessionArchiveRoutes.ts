@@ -91,6 +91,7 @@ export function registerSessionArchiveRoutes(app: Fastify) {
                 sessionId,
                 wasArchived: session.archivedAt !== null,
                 archivedAt: new Date(),
+                originRunId,
             });
             const runtimeActivityClear = await clearSessionRuntimeActivityProjectionInTx({ tx, sessionId });
 

@@ -303,6 +303,7 @@ export type AutomationRunItem = Readonly<{
     causeSourceSessionId: string | null;
     causeSourceTurnId: string | null;
     causeRunLifecycleEvidenceJson: string | null;
+    causeOriginRunId: string | null;
     causeSessionLifecycleRequestId: string | null;
     causeSessionLifecycleRequestKind: 'permission' | 'user_action' | null;
     causeSessionLifecyclePolicyKind: 'currentTurn' | 'firstMatch' | 'nextMatches' | 'everyMatch' | null;

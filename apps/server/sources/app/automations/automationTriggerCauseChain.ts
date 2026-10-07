@@ -23,7 +23,9 @@ async function sessionOriginRunIdTx(tx: Tx, source: Readonly<{
     sourceSessionId: string;
     sourceTurnId?: string;
     event: AutomationSessionLifecycleOccurrenceEvidenceV1["event"];
+    originRunId?: string;
 }>): Promise<string | null> {
+    if (source.event === "sessionArchived") return source.originRunId ?? null;
     if (source.sourceTurnId !== undefined) {
         const turn = await tx.sessionTurn.findUnique({
             where: { sessionId_turnId: { sessionId: source.sourceSessionId, turnId: source.sourceTurnId } },

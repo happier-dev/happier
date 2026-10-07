@@ -2608,6 +2608,8 @@ model AutomationRun {
     causeSourceSessionId String?
     causeSourceTurnId String?
     causeRunLifecycleEvidenceJson String?
+    /// Immutable authenticated archive publisher; not Session creation origin or private Account content.
+    causeOriginRunId String?
     causeSessionLifecycleRequestId String?
     causeSessionLifecycleRequestKind AutomationSessionLifecycleRequestKind?
     causeSessionLifecyclePolicyKind AutomationSessionLifecyclePolicyKind?

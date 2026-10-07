@@ -109,6 +109,10 @@ describe('Automation occurrence V1', () => {
     const archived = { ...started, event: 'sessionArchived' as const };
     expect(AutomationSessionLifecycleOccurrenceEvidenceV1Schema.parse(started)).not.toHaveProperty('sourceTurnId');
     expect(AutomationSessionLifecycleOccurrenceEvidenceV1Schema.safeParse({ ...started, sourceTurnId: 'fake' }).success).toBe(false);
+    expect(AutomationSessionLifecycleOccurrenceEvidenceV1Schema.parse({ ...archived, originRunId: 'run-origin' }))
+      .toMatchObject({ event: 'sessionArchived', originRunId: 'run-origin' });
+    expect(AutomationSessionLifecycleOccurrenceEvidenceV1Schema.safeParse({ ...started, originRunId: 'run-origin' }).success).toBe(false);
+    expect(AutomationSessionLifecycleOccurrenceEvidenceV1Schema.safeParse({ ...archived, originRunId: '' }).success).toBe(false);
     expect(deriveAutomationOccurrenceKeyV1({ triggerId: 'trigger-1', evidence: started }))
       .toBe(deriveAutomationOccurrenceKeyV1({ triggerId: 'trigger-1', evidence: { ...started, occurredAt: started.occurredAt + 1 } }));
     expect(deriveAutomationOccurrenceKeyV1({ triggerId: 'trigger-1', evidence: archived }))

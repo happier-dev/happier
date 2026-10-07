@@ -32,7 +32,8 @@ import { claimAutomationRun } from "./automationClaimService";
 import { admitDueAutomationScheduleTriggerTx } from "./automationRunQueueService";
 import { failAutomationRun } from "./automationRunService";
 import { validateSessionLifecycleTriggerRegistrationTx } from "./automationSessionLifecycleRegistration";
-import { encodeAutomationRunCause } from "./automationRunCauseCodec";
+import { decodeAutomationRunCause, encodeAutomationRunCause } from "./automationRunCauseCodec";
+import { readAutomationOriginTriggerIdsTx } from "./automationTriggerCauseChain";
 
 const authentication = createPresentUserSessionAccessAuthentication();
 
@@ -453,7 +454,15 @@ describe("Session lifecycle Automation admission on SQLite", () => {
             expect(await db.automationRun.count({ where: { triggerId: own.id } })).toBe(1);
             expect((await db.automationTrigger.findUniqueOrThrow({ where: { id: own.id } })).remainingOccurrences).toBe(1);
             const descendant = await db.automationRun.findFirstOrThrow({ where: { triggerId: unrelated.id } });
-            expect(JSON.parse(descendant.triggerEvidenceEnvelope!)).toMatchObject({ originRunId: root.id, evidence: null });
+            expect(decodeAutomationRunCause(descendant)).toMatchObject({
+                kind: "trigger", triggerKind: "sessionLifecycle",
+                evidence: { event: "sessionArchived", originRunId: root.id },
+            });
+            expect(descendant.triggerEvidenceEnvelope).toBeNull();
+            expect(await inTx((tx) => readAutomationOriginTriggerIdsTx(tx, {
+                v: 1, kind: "sessionLifecycle", event: "sessionArchived", sourceSessionId: current.sessionId,
+                occurredAt: Date.now(), originRunId: descendant.id,
+            }))).toEqual(new Set([unrelated.id, own.id]));
         });
     });
 
