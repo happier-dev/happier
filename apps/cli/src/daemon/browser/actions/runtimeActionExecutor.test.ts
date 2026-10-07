@@ -663,7 +663,7 @@ describe('daemon browser runtime action executor', () => {
     const dispatchCommand = vi.fn<BrowserDaemonControlRoutes['dispatchCommand']>();
     const execute = realMod.createBrowserDaemonRuntimeActionExecutor({
       control: { dispatchCommand, listViews: () => [] },
-      featureGate: gateWith({ 'browser.sidecar': false }),
+      featureGate: gateWith({ 'browser.sidecar': false, 'browser.automation': true }),
     });
 
     await expect(execute(runtimeArgs({

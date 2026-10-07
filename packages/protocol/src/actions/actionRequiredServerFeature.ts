@@ -1,5 +1,5 @@
 import type { FeatureId } from '../features/catalog.js';
-import { WorkflowActionIdV1Schema } from './actionIds.js';
+import { ACTION_ID_FAMILIES_V1, WorkflowActionIdV1Schema } from './actionIds.js';
 import { isSessionBoardActionIdV1 } from '../sessions/board/actionIds.js';
 import { isSessionDiscussionActionIdV1 } from '../sessions/discussions/actionIds.js';
 import { TeamCredentialActionIdV1Schema } from '../teams/credentials/actionsV1.js';
@@ -9,6 +9,13 @@ import { isSessionFollowActionIdV1 } from '../sessions/follow/actions.js';
 import { isSessionAccessActionIdV1 } from './sessionAccessActionFamily.js';
 import { MachinePoolActionIdV1Schema } from '../machines/pools/actionsV1.js';
 import { EphemeralRunnerActionIdV1Schema } from '../ephemeralRunner/actionIdsV1.js';
+
+// Native navigation mutates the page just like the automation family. Human
+// sidecar commands are a separate entry point, not automation Actions.
+const browserAutomationActionIds: ReadonlySet<string> = new Set([
+  ...ACTION_ID_FAMILIES_V1.browser_automation,
+  'browser.navigate', 'browser.goBack', 'browser.goForward', 'browser.reload', 'browser.stop',
+]);
 
 /**
  * The canonical server feature each gated Action family depends on.
@@ -24,6 +31,7 @@ import { EphemeralRunnerActionIdV1Schema } from '../ephemeralRunner/actionIdsV1.
  * Action adapter; this is availability only.
  */
 export function getActionRequiredServerFeatureId(actionId: string): FeatureId | null {
+  if (browserAutomationActionIds.has(actionId)) return 'browser.automation';
   if (actionId.startsWith('artifact.public_link.')) return 'sharing.public';
   if (WorkflowActionIdV1Schema.safeParse(actionId).success) return 'workflows';
   if (isSessionBoardActionIdV1(actionId)) return 'sessions.board';

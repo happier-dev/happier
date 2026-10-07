@@ -52,6 +52,13 @@ opt-ins. UI and CLI local policy no longer read the former injected-page/eval `_
 variables. This does not add an eval implementation or bypass adapter support, the automation
 decision, or action approval requirements.
 
+In current development source, native agent navigation Actions consume the same
+`browser.automation` decision through the shared Action-to-feature policy. A disabled or
+unavailable decision returns typed Action unavailability; it does not remove the Action's
+declared surface. Human manual browsing, takeover and hand back remain sidecar controls and
+do not require automation. Keep the two capability tiers independent rather than making
+`browser.sidecar` depend on `browser.automation`.
+
 ### External Sessions feature id
 
 **External Sessions** is the product and UI name. Its deployed feature id remains exactly `sessions.direct`.

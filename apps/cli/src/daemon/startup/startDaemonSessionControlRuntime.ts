@@ -9402,8 +9402,8 @@ export async function startDaemonSessionControlRuntime(
                             },
                         });
                     }
-                    // Control Actions can mutate a page even when automation Actions are disabled.
-                    // They must share the same input authority and drain as automation and streamed human input.
+                    // Human sidecar commands can mutate a page while agent automation is disabled.
+                    // They share the same input authority and drain as automation and streamed human input.
                     if (browserControlBroker.hasExecutableAdapters() && !browserAutomationServiceForCapture) {
                         const browserSidecarContextCapture = browserSidecarControlAdapterResult.contextCapture;
                         const browserAutomationService = createBrowserAutomationDaemonService({
