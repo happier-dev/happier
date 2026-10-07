@@ -24,17 +24,19 @@ import {
 import { provisionPosixDevTarget } from './utils/dev_targets/provision.mjs';
 import { provisionManagedLimaDevTarget } from './utils/dev_targets/managed_worker.mjs';
 import {
+  inspectDevTargetAdmission,
   inspectDevTargetSync,
   runDevTargetCommand,
   syncDevTarget,
 } from './utils/dev_targets/executor.mjs';
+import { renderAdmissionOwnerProgress } from './utils/proc/service_memory.mjs';
 import {
   inspectDevTargetSyncService,
   startDevTargetSyncService,
   stopDevTargetSyncService,
   waitForDevTargetSyncMonitor,
 } from './utils/dev_targets/sync_service.mjs';
-import { writeNativeExecutionProjection } from './utils/dev_targets/native_execution_projection.mjs';
+import { prepareCommandRepository, writeNativeExecutionProjection } from './utils/dev_targets/native_execution_projection.mjs';
 import { moveRetainedServerData } from './utils/dev_targets/retained_server_data.mjs';
 
 async function configureWorkerPower(target) {
@@ -303,7 +305,7 @@ function setTargetCapacity(config, targetName, mode, kv) {
   };
 }
 
-async function writeConfig(path, config) {
+async function writeConfig(path, config, repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')) {
   await mkdir(dirname(path), { recursive: true });
   const temporary = `${path}.${process.pid}.tmp`;
   await writeFile(temporary, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
@@ -311,7 +313,7 @@ async function writeConfig(path, config) {
   await writeNativeExecutionProjection({
     configPath: path,
     outputPath: join(dirname(path), 'dev-target-exec-v1.sh'),
-    repoRoot: resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..'),
+    repoRoot,
   });
 }
 
@@ -324,7 +326,9 @@ async function main() {
   const command = String(positionals[0] ?? '').trim();
   const stackName =
     String(kv.get('--stack') ?? process.env.HAPPIER_STACK_STACK ?? 'main').trim() || 'main';
-  const path = resolveDevTargetsConfigPath({ stackName, env: process.env });
+  let path = resolveDevTargetsConfigPath({ stackName, env: process.env });
+  const executorRepoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+  const commandRepoRoot = kv.get('--repo') ? resolve(kv.get('--repo')) : executorRepoRoot;
 
   if (wantsHelp(wrapperArgs, { flags }) || !command) {
     printResult({
@@ -350,7 +354,7 @@ async function main() {
         '  hstack dev-targets placement set build local|TARGET|ordered [--targets=NAME,...] [--fallback=local] [--stack=NAME]',
         '  hstack dev-targets placement set qa local|TARGET|ordered|auto [--targets=NAME,...] [--fallback=local] [--stack=NAME]',
         '  hstack dev-targets placement set daemon local|TARGET|local-and-targets [--targets=NAME,...] [--stack=NAME]',
-        '  hstack dev-targets placement set commands local|TARGET|auto [--targets=NAME,...] [--include-local] [--fallback=local|error] [--load-probe-ttl-ms=MS] [--unavailable-probe-ttl-ms=MS] [--stack=NAME]',
+        '  hstack dev-targets placement set commands local|TARGET|auto [--repo=ABSOLUTE_SIBLING] [--targets=NAME,...] [--include-local] [--fallback=local|error] [--load-probe-ttl-ms=MS] [--unavailable-probe-ttl-ms=MS] [--stack=NAME]',
         '  hstack dev-targets placement clear --downgrade-v1 [--stack=NAME]',
         '  hstack dev-targets add NAME --host=HOST --user=USER [--managed-lima] [--lima-instance=NAME] [--lima-home=PATH] [--lima-profile=worker-balanced] [--repo-dir=PATH] [--cli-home-dir=PATH] [--stack=NAME]',
         '  hstack dev-targets add NAME --managed-lima --outer-target=NAME [--lima-instance=NAME] [--lima-home=PATH] [--lima-profile=worker-balanced] [--repo-dir=PATH] [--cli-home-dir=PATH] [--stack=NAME]',
@@ -367,6 +371,17 @@ async function main() {
   }
 
   let loaded = await loadDevTargetsConfig({ stackName, env: process.env, allowMissing: true });
+  if (commandRepoRoot !== executorRepoRoot) {
+    if (!['placement', 'status', 'sync', 'path', 'list', 'show'].includes(command)
+      || (command === 'placement' && positionals[1] === 'set' && positionals[2] !== 'commands')) {
+      throw new Error('[dev-targets] --repo scopes command placement and mirror inspection/synchronization only');
+    }
+    const prepared = await prepareCommandRepository({
+      configPath: loaded.path, executorRepoRoot, repoRoot: commandRepoRoot, synchronize: false,
+    });
+    path = prepared.path;
+    loaded = { path, config: prepared.config };
+  }
   if (loaded.config.targets.length === 0 && (command === 'move-server'
     || (command === 'placement' && positionals[1] === 'set' && positionals[2] === 'qa'))) {
     const inherited = await loadControlledRuntimeConfig({ stackName, env: process.env });
@@ -451,14 +466,29 @@ async function main() {
     if (requestedName && targets.length === 0) {
       throw new Error(`[dev-targets] target not found: ${requestedName}`);
     }
-    const diagnosis = await runDevTargetsDoctor({ targets, env: process.env });
+    const toolDiagnosis = await runDevTargetsDoctor({ targets, env: process.env });
+    const diagnosedTargets = await Promise.all(toolDiagnosis.targets.map(async (observed, index) => {
+      const synchronization = await inspectDevTargetSync({
+        target: targets[index], stackBaseDir: dirname(loaded.path), env: process.env,
+      });
+      return {
+        ...observed,
+        synchronization,
+        ok: observed.ok && ['ready', 'needs-flush'].includes(synchronization.state),
+      };
+    }));
+    const diagnosis = {
+      ...toolDiagnosis,
+      targets: diagnosedTargets,
+      ok: toolDiagnosis.ok && diagnosedTargets.every(target => target.ok),
+    };
     printResult({
       json,
       data: { path, stackName, ...diagnosis },
       text: [
         `[dev-targets] Mutagen\t${diagnosis.mutagen.ok ? 'ok' : 'failed'}`,
         ...diagnosis.targets.map(
-          (target) => `[dev-targets] ${target.name}\t${target.ok ? 'ok' : 'failed'}`,
+          (target) => `[dev-targets] ${target.name}\t${target.ok ? 'ok' : 'failed'}\tsync ${target.synchronization.state}`,
         ),
         ...(diagnosis.targets.length === 0 ? ['[dev-targets] no targets configured'] : []),
       ].join('\n'),
@@ -468,7 +498,7 @@ async function main() {
   }
   if (command === 'status') {
     const target = requireTarget(loaded.config.targets, positionals[1], command);
-    const [status, managedRuntime] = await Promise.all([
+    const [status, managedRuntime, admission] = await Promise.all([
       inspectDevTargetSync({
         target,
         stackBaseDir: dirname(loaded.path),
@@ -477,6 +507,7 @@ async function main() {
       target.managedRuntime
         ? doctorManagedDevTargetRuntime({ target, env: process.env })
         : null,
+      inspectDevTargetAdmission({ target, env: process.env }),
     ]);
     printResult({
       json,
@@ -485,16 +516,18 @@ async function main() {
         stackName,
         target,
         status,
+        admission,
         ...(managedRuntime ? { managedRuntime } : {}),
       },
       text: [
         formatSyncStatus(target, status),
+        `[dev-targets] ${target.name} admission\t${admission.state}${admission.state === 'observed' ? '\t' + (renderAdmissionOwnerProgress(admission) || 'no live owners') : admission.error ? '\t' + admission.error : ''}`,
         ...(managedRuntime
           ? [`[dev-targets] ${target.name} managed ${target.managedRuntime.kind}\t${managedRuntime.status}\t${managedRuntime.ok ? 'ok' : 'failed'}`]
           : []),
       ].join('\n'),
     });
-    if (status.state !== 'ready' || managedRuntime?.ok === false) process.exitCode = 1;
+    if (!['ready', 'needs-flush'].includes(status.state) || managedRuntime?.ok === false) process.exitCode = 1;
     return;
   }
   if (command === 'capacity') {
@@ -616,7 +649,9 @@ async function main() {
             `[dev-targets] ${target} startup preparation history\t${preparation.state}`
               + (preparation.error ? `\t${preparation.error}` : '')
           )),
-          ...result.statuses.map(({ target, status }) => `[dev-targets] ${target}\t${status.state}`),
+          ...result.statuses.map(({ target, status }) => `[dev-targets] ${target}\t${status.state}`
+            + (status.lastError || status.error ? `\t${status.lastError || status.error}` : '')
+            + (status.recovery === 'rescan' ? '\twill rescan at the next dispatch barrier' : '')),
         ].join('\n'),
       });
       if (result.state !== 'ready') {
@@ -730,7 +765,7 @@ async function main() {
       if (positionals[2] === 'commands' && config.commandExecution?.mode === 'auto') {
         await Promise.all(config.commandExecution.targets.map((name) => configureWorkerPower(requireTarget(config.targets, name, 'placement'))));
       }
-      await writeConfig(path, config);
+      await writeConfig(path, config, commandRepoRoot);
       printResult({
         json,
         data: { path, stackName, config },

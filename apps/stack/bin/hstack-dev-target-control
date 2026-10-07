@@ -15,6 +15,7 @@ esac
 control_dir=${control_path%/*}
 [ "$control_dir" != "$control_path" ] || control_dir=.
 control_path=$(CDPATH= cd -- "$control_dir" && pwd -P)/${control_path##*/}
+. "$control_dir/../scripts/utils/dev_targets/native_sync_readiness.sh" || exit 1
 
 usage() {
   printf '%s\n' 'usage: hstack-dev-target-control [--sync-flush SESSION] [--sync-check SESSION] -- COMMAND [ARG...]' >&2
@@ -89,6 +90,7 @@ run_control_command() {
 
 check_sync_session_clean() {
   session_name=$1
+  allow_needs_flush=${2-0}
   case "$session_name" in ''|*[!A-Za-z0-9._-]*)
     printf '%s\n' "hstack-dev-target-control: invalid sync session name: $session_name" >&2
     return 1
@@ -98,7 +100,7 @@ check_sync_session_clean() {
     printf '%s\n' 'hstack-dev-target-control: MUTAGEN_DATA_DIRECTORY is required for sync inspection' >&2
     return 1
   }
-  sync_template='{{range .}}{{.Name}}|{{.Status}}|{{.Paused}}|{{.Alpha.Connected}}|{{if .Alpha.Connected}}{{if .Alpha.Scanned}}1{{else}}0{{end}}{{else}}X{{end}}|{{if .Alpha.Connected}}{{len .Alpha.ScanProblems}}/{{.Alpha.ExcludedScanProblems}}{{else}}X{{end}}|{{if .Alpha.Connected}}{{len .Alpha.TransitionProblems}}/{{.Alpha.ExcludedTransitionProblems}}{{else}}X{{end}}|{{.Beta.Connected}}|{{if .Beta.Connected}}{{if .Beta.Scanned}}1{{else}}0{{end}}{{else}}X{{end}}|{{if .Beta.Connected}}{{len .Beta.ScanProblems}}/{{.Beta.ExcludedScanProblems}}{{else}}X{{end}}|{{if .Beta.Connected}}{{len .Beta.TransitionProblems}}/{{.Beta.ExcludedTransitionProblems}}{{else}}X{{end}}|{{if .Paused}}paused|0|ok|0|0{{else}}active|{{.SuccessfulCycles}}|{{if .LastError}}error{{else}}ok{{end}}|{{len .Conflicts}}|{{.ExcludedConflicts}}{{end}}{{end}}'
+  sync_template='{{range .}}{{.Name}}|{{.Status}}|{{.Paused}}|{{.Alpha.Connected}}|{{if .Alpha.Connected}}{{if .Alpha.Scanned}}1{{else}}0{{end}}{{else}}X{{end}}|{{if .Alpha.Connected}}{{len .Alpha.ScanProblems}}/{{.Alpha.ExcludedScanProblems}}{{else}}X{{end}}|{{if .Alpha.Connected}}{{len .Alpha.TransitionProblems}}/{{.Alpha.ExcludedTransitionProblems}}{{else}}X{{end}}|{{.Beta.Connected}}|{{if .Beta.Connected}}{{if .Beta.Scanned}}1{{else}}0{{end}}{{else}}X{{end}}|{{if .Beta.Connected}}{{len .Beta.ScanProblems}}/{{.Beta.ExcludedScanProblems}}{{else}}X{{end}}|{{if .Beta.Connected}}{{len .Beta.TransitionProblems}}/{{.Beta.ExcludedTransitionProblems}}{{else}}X{{end}}|{{if .Paused}}paused|0|ok|0|0{{else}}active|{{.SuccessfulCycles}}|{{if .LastError}}error{{else}}ok{{end}}|{{len .Conflicts}}|{{.ExcludedConflicts}}{{end}}|{{.Alpha.Watch.Mode}}|{{.Beta.Watch.Mode}}{{end}}'
   if ! status_output=$(mutagen sync list "$session_name" --template "$sync_template" 2>/dev/null); then
     printf '%s\n' "hstack-dev-target-control: $session_name synchronization status inspection failed" >&2
     return 1
@@ -108,7 +110,7 @@ check_sync_session_clean() {
     return 1
   }
   status_line=$(printf '%s\n' "$status_output" | sed -n '1p')
-  IFS='|' read -r s_name s_status s_paused s_alpha_connected s_alpha_scanned s_alpha_scan s_alpha_trans s_beta_connected s_beta_scanned s_beta_scan s_beta_trans s_active s_cycles s_error s_conflicts s_excluded <<EOF
+  IFS='|' read -r s_name s_status s_paused s_alpha_connected s_alpha_scanned s_alpha_scan s_alpha_trans s_beta_connected s_beta_scanned s_beta_scan s_beta_trans s_active s_cycles s_error s_conflicts s_excluded s_alpha_watch s_beta_watch <<EOF
 $status_line
 EOF
   [ "$s_name" = "$session_name" ] || {
@@ -134,20 +136,8 @@ EOF
     printf '%s\n' "hstack-dev-target-control: $session_name synchronization is missing connected endpoint evidence" >&2
     return 1
   }
-  [ "$s_alpha_scanned" = 1 ] && [ "$s_beta_scanned" = 1 ] || {
-    printf '%s\n' "hstack-dev-target-control: $session_name synchronization endpoints are not scanned" >&2
-    return 1
-  }
-  [ "$s_alpha_scan" = "0/0" ] || {
-    printf '%s\n' "hstack-dev-target-control: $session_name synchronization has alpha scan problems: $s_alpha_scan" >&2
-    return 1
-  }
   [ "$s_alpha_trans" = "0/0" ] || {
     printf '%s\n' "hstack-dev-target-control: $session_name synchronization has alpha transition problems: $s_alpha_trans" >&2
-    return 1
-  }
-  [ "$s_beta_scan" = "0/0" ] || {
-    printf '%s\n' "hstack-dev-target-control: $session_name synchronization has beta scan problems: $s_beta_scan" >&2
     return 1
   }
   [ "$s_beta_trans" = "0/0" ] || {
@@ -162,11 +152,32 @@ EOF
     printf '%s\n' "hstack-dev-target-control: $session_name synchronization has unresolved conflicts: ${s_conflicts-?}/${s_excluded-?}" >&2
     return 1
   }
-  case "$s_cycles" in ''|*[!0-9]*|0)
-    printf '%s\n' "hstack-dev-target-control: $session_name synchronization has no completed cycle" >&2
+  # Only well-formed scan-only problems may request a fresh cycle. Conflicts,
+  # transition failures, paused sessions and missing evidence stay fail-closed.
+  for scan_counts in "$s_alpha_scan" "$s_beta_scan"; do
+    case "$scan_counts" in ''|*[!0-9/]*|/*|*/|*/*/*) return 1 ;; esac
+    case "$scan_counts" in */*) ;; *) return 1 ;; esac
+  done
+  sync_fact_watching=0; [ "$s_status" != Watching ] || sync_fact_watching=1
+  sync_fact_noWatch=0
+  if [ "$s_alpha_watch" = WatchModeNoWatch ] && [ "$s_beta_watch" = WatchModeNoWatch ]; then sync_fact_noWatch=1; fi
+  sync_fact_scanned=0
+  if [ "$s_alpha_scanned" = 1 ] && [ "$s_beta_scanned" = 1 ]; then sync_fact_scanned=1; fi
+  sync_fact_cyclesValid=1
+  case "$s_cycles" in ''|*[!0-9]*) sync_fact_cyclesValid=0 ;; esac
+  sync_fact_completed=0
+  if [ "$sync_fact_cyclesValid" = 1 ] && [ "$s_cycles" -gt 0 ]; then sync_fact_completed=1; fi
+  sync_fact_scanProblems=0
+  if [ "$s_alpha_scan" != "0/0" ] || [ "$s_beta_scan" != "0/0" ]; then sync_fact_scanProblems=1; fi
+  classify_clean_mutagen_readiness
+  if [ "$sync_readiness" = rescan ]; then
+    printf '%s\n' "hstack-dev-target-control: $session_name synchronization has scan problems (alpha=$s_alpha_scan beta=$s_beta_scan)" >&2
+    return 2
+  fi
+  if [ "$sync_readiness" != ready ] && { [ "$sync_readiness" != needs-flush ] || [ "$allow_needs_flush" != 1 ]; }; then
+    printf '%s\n' "hstack-dev-target-control: $session_name synchronization is $sync_readiness (scanned=$sync_fact_scanned cycles=$s_cycles)" >&2
     return 1
-    ;;
-  esac
+  fi
   if [ "${HSTACK_SYNC_CHECK_VERBOSE-}" = 1 ]; then
     printf '%s\n' "$status_line"
   fi
@@ -245,8 +256,16 @@ case "${1-}" in
     [ "$#" -eq 2 ] || usage
     session_name=$2
     case "$session_name" in ''|*[!A-Za-z0-9._-]*) usage ;; esac
-    check_sync_session_clean "$session_name"
-    exit "$?"
+    check_sync_session_clean "$session_name" 1
+    status=$?
+    if [ "$status" -eq 2 ]; then
+      printf '%s\n' "hstack-dev-target-control: $session_name requesting a fresh scan through the dispatch flush barrier" >&2
+      "$control_path" --sync-flush "$session_name" -- mutagen sync flush "$session_name" || exit 1
+      check_sync_session_clean "$session_name"
+      status=$?
+    fi
+    [ "$status" -eq 0 ] || exit 1
+    exit 0
     ;;
   --sync-flush)
     [ "$#" -ge 4 ] || usage

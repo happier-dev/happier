@@ -30,9 +30,11 @@ const target = {
 };
 
 test('try admission reports owner denial only when exit 75 and its stderr sentinel agree', async () => {
-  const sentinel = '[preferred-execution] heavyweight admission declined before dispatch';
+  const sentinel = 'HSTACK_ADMISSION_BUSY:admission-test-id';
   for (const scenario of [
     { code: 75, stream: 'stderr', line: sentinel, declined: true },
+    { code: 75, stream: 'stderr', line: 'HSTACK_ADMISSION_BUSY:another-execution-id', declined: false },
+    { code: 75, stream: 'stderr', line: '[preferred-execution] heavyweight admission declined before dispatch (memory-available)', declined: false },
     { code: 75, stream: 'stderr', line: 'worker failed', declined: false },
     { code: 75, stream: 'stdout', line: sentinel, declined: false },
     { code: 0, stream: 'stderr', line: sentinel, declined: false },
@@ -45,6 +47,7 @@ test('try admission reports owner denial only when exit 75 and its stderr sentin
       createExecutionId: () => 'admission-test-id',
       spawnProcess: ({ args, onLine }) => {
         assert.ok(args.at(-1).includes('--no-wait'), args.at(-1));
+        assert.ok(args.at(-1).includes('--failure-id=admission-test-id'), args.at(-1));
         onLine?.({ stream: scenario.stream, line: scenario.line });
         return { completion: Promise.resolve({ code: scenario.code, signal: null }) };
       },
@@ -66,6 +69,22 @@ function readyListResult(sessionName = 'happier-linux') {
     err: '',
   };
 }
+
+test('explicit sync rescans scan-only problems through the existing flush before admission', async () => {
+  const initial = readyListResult();
+  const sessions = JSON.parse(initial.out);
+  sessions[0].alpha.scanProblems = [{ path: 'apps/ui/sources/text/translations/es.ts', error: 'hashed size mismatch: 847308 != 28672' }];
+  initial.out = JSON.stringify(sessions);
+  let flushed = false;
+  const result = await syncDevTarget({ target, stackBaseDir: '/tmp/stack', env: {} }, {
+    runCaptureResult: async ({ args }) => {
+      if (args.includes('flush')) { flushed = true; return { ok: true, exitCode: 0, out: '', err: '' }; }
+      return flushed ? readyListResult() : initial;
+    },
+  });
+  assert.equal(flushed, true);
+  assert.equal(result.state, 'ready');
+});
 
 function transitionProblemListResult() {
   return {
@@ -617,6 +636,31 @@ test('explicit sync waits through an active first synchronization while ordinary
     ),
     /synchronizing/i,
   );
+});
+
+test('explicit exec admits a no-watch first cycle only through its mandatory flush', async () => {
+  const unseeded = { ...readyListResult(), out: JSON.stringify([{
+    name: 'happier-linux', paused: false, status: 'watching',
+    alpha: { connected: true, scanned: false, watch: { mode: 'no-watch' } },
+    beta: { connected: true, scanned: false, watch: { mode: 'no-watch' } },
+  }]) };
+  let flushed = false;
+  const deps = {
+    runCaptureResult: async ({ args }) => {
+      if (args.includes('list')) return unseeded;
+      flushed = true;
+      return { ok: true, exitCode: 0, out: '', err: '' };
+    },
+    spawnProcess: () => {
+      assert.equal(flushed, true, 'payload must follow the causal flush');
+      return { completion: Promise.resolve({ code: 0, signal: null }) };
+    },
+  };
+  const options = { target, stackBaseDir: '/tmp/stack', commandArgs: ['pwd'], provenance: 'skip', env: {} };
+  assert.equal((await runDevTargetCommand(options, deps)).code, 0);
+  flushed = false;
+  await assert.rejects(runDevTargetCommand({ ...options, flush: false }, deps), /needs-flush/);
+  assert.equal(flushed, false);
 });
 
 test('remote exec refuses paused, unhealthy, and missing synchronization sessions', async () => {

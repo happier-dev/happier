@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation.mjs';
 import { resolveYarnCommandInvocation } from './execYarnCommand.mjs';
+import { installNativeAdmissionFixture } from '../../apps/stack/scripts/testkit/core/native_admission_fixture.mjs';
 
 const runner = fileURLToPath(new URL('./runTypeScriptCli.mjs', import.meta.url));
 const serverRunner = fileURLToPath(new URL('../../apps/server/scripts/runTypeScriptCli.mjs', import.meta.url));
@@ -68,6 +69,18 @@ async function fixture(t, { tree = false, route = false, windows = false, platfo
     setInterval(() => {}, 1000);
   `);
   const invocation = resolveTypeScriptCliInvocation({});
+  const admission = await installNativeAdmissionFixture({ root });
+  await mkdir(join(root, 'bin'));
+  await writeFile(join(root, 'bin', 'awk'), `#!/bin/sh
+case "$*" in
+  */proc/meminfo*) printf '67108864 100663296\\n' ;;
+  */proc/loadavg*|*/proc/pressure/*) printf '0\\n' ;;
+  *) exec /usr/bin/awk "$@" ;;
+esac
+`);
+  await writeFile(join(root, 'bin', 'systemctl'), '#!/bin/sh\nexit 1\n');
+  await chmod(join(root, 'bin', 'awk'), 0o755);
+  await chmod(join(root, 'bin', 'systemctl'), 0o755);
   // The compiler process is the OS boundary. Keep the runner and selection owner real.
   await writeFile(preload, `
     ${windows || platform ? `Object.defineProperty(process, 'platform', { value: ${JSON.stringify(windows ? 'win32' : platform)} });` : ''}
@@ -96,19 +109,27 @@ async function fixture(t, { tree = false, route = false, windows = false, platfo
         ${windows ? `if (args.join(' ').includes('hstack-exec')) {
           return original(process.execPath, ['-e', 'process.exit(7)'], options);
         }` : ''}
-        ${route ? `if (command === ${JSON.stringify(fileURLToPath(new URL('../../apps/stack/bin/hstack-exec', import.meta.url)))}) {
+        ${route ? `if (command === ${JSON.stringify(fileURLToPath(new URL('../../apps/stack/bin/hstack-exec', import.meta.url)))} && args[0] !== '--heavyweight-admission') {
           command = process.execPath;
           args = [${JSON.stringify(fakeCompiler)}];
         }` : ''}
-        if (command === process.execPath && args[0] === ${JSON.stringify(invocation.argsPrefix[0])}) {
+        if (args[0] === '--heavyweight-admission' && args.includes(${JSON.stringify(invocation.compilerPath)})) {
+          // Remap only host state and the native compiler process boundary.
+          // The selector and actual admission decision remain exercised.
+          command = ${JSON.stringify(admission.launcher)};
+          args = args.map(arg => arg === ${JSON.stringify(invocation.compilerPath)} ? ${JSON.stringify(fakeCompiler)} : arg);
+          ${spawnError ? `if (args.includes('missing.json')) command = ${JSON.stringify(join(root, 'missing-native'))};` : ''}
+        }
+        if (command === process.execPath && args[0] === ${JSON.stringify(invocation.compilerPath)}) {
           ${spawnError ? `if (args.includes('missing.json')) command = ${JSON.stringify(join(root, 'missing-native'))};` : ''}
           args = [${JSON.stringify(fakeCompiler)}, ...args.slice(1)];
         }
         // Python is an OS adapter: substitute only its canonical compiler argv, not its wait4 logic.
-        if (command === 'python3' && args[0] === ${JSON.stringify(measurementLeaf)} && args[3] === ${JSON.stringify(invocation.argsPrefix[0])}) {
+        if (command === 'python3' && args[0] === ${JSON.stringify(measurementLeaf)} && args.includes(${JSON.stringify(invocation.compilerPath)})) {
           args = [...args];
+          if (args[3] === '--heavyweight-admission') args[2] = ${JSON.stringify(admission.launcher)};
           ${spawnError ? `if (args.includes('missing.json')) args[2] = ${JSON.stringify(join(root, 'missing-native'))};` : ''}
-          args[3] = ${JSON.stringify(fakeCompiler)};
+          args = args.map(arg => arg === ${JSON.stringify(invocation.compilerPath)} ? ${JSON.stringify(fakeCompiler)} : arg);
         }
         return original(command, args, options);
       };
@@ -136,7 +157,8 @@ async function fixture(t, { tree = false, route = false, windows = false, platfo
     fakeCompiler,
     start(args, options = {}) {
       const { command = process.execPath, ...childOptions } = options;
-      const env = { ...process.env, ...options.env, NODE_OPTIONS: `--require=${JSON.stringify(preload)}`, COMPILER_PID_FILE: pidFile };
+      const env = { ...process.env, ...options.env, PATH: `${join(root, 'bin')}:${options.env?.PATH ?? process.env.PATH}`,
+        NODE_OPTIONS: `--require=${JSON.stringify(preload)}`, COMPILER_PID_FILE: pidFile };
       if (route || windows) {
         delete env.HAPPIER_HSTACK_EXECUTION;
         delete env.HAPPIER_DEV_TARGET_EXECUTION;
@@ -207,7 +229,7 @@ for (const explicitLocal of [false, true]) {
     const launcher = fileURLToPath(new URL('../../apps/stack/bin/hstack-exec', import.meta.url));
     const cliPackage = JSON.parse(await readFile(new URL('../../apps/cli/package.json', import.meta.url), 'utf8'));
     const binDir = join(setup.root, 'bin');
-    await mkdir(binDir);
+    await mkdir(binDir, { recursive: true });
     // The compiler is substituted; avoid admitting its tiny OS-boundary fixture
     // as a full compilation on a worker below the real compiler memory floor.
     await writeFile(join(binDir, 'uname'), '#!/bin/sh\nprintf "Darwin\\n"\n');
@@ -589,7 +611,7 @@ for (const [label, entry, signal] of [['compiler', runner, 'SIGTERM'], ['compile
     const entryArgs = entry === cliBuildRunner
       ? ['--input-type=module', '-e', `import { buildCliDist } from ${JSON.stringify(new URL('../../apps/cli/scripts/build.mjs', import.meta.url).href)}; import { exitWithCommandResult } from ${JSON.stringify(procModule)}; await buildCliDist({ packageRoot: process.cwd(), repoRoot: process.cwd(), skipLock: true }).catch(error => { console.error(error); exitWithCommandResult({ status: 1, signal: error.signal }); });`]
       : entry === heartbeatRunner
-        ? [entry, '--', process.execPath, ...resolveTypeScriptCliInvocation({}).argsPrefix]
+        ? (() => { const invocation = resolveTypeScriptCliInvocation({}); return [entry, '--', invocation.command, ...invocation.argsPrefix]; })()
         : [entry];
     const { child, stderr } = setup.start(entryArgs);
     await waitUntil(() => readFile(setup.pidFile).then(() => true, () => false), () => `compiler did not start: ${stderr()}`);

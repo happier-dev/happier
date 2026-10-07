@@ -28,6 +28,7 @@ import {
   resolveRemoteStackStatePaths,
   requiresRemoteDependencyBootstrap,
   requiresRemoteWorkspacePreparation,
+  resolveRemoteServerRuntimeConfig,
 } from './remote_commands.mjs';
 
 const executionId = '018f0f52-5fe8-7a9f-8ef5-f81f20572791';
@@ -91,6 +92,23 @@ test('controlled writable state rejects the one-way source replica and accepts s
     { ...windows, repoDir: 'C:/Remote/Repo', cliHomeDir: 'c:\\remote\\repo\\state' },
   ]) assert.throws(() => resolveRemoteStackStatePaths(target, { stackName: 'qa', runtimeMode: 'controlled' }), /outside.*source replica/);
   assert.ok(resolveRemoteStackStatePaths({ ...posix, repoDir: '/remote/repo', cliHomeDir: '/remote/repo-state' }, { stackName: 'qa', runtimeMode: 'controlled' }).workspaceDir);
+});
+
+test('controlled daemon-only commands reach the forwarded server without starting a server or UI', () => {
+  for (const target of [posix, windows]) {
+    const invocation = buildRemoteStackCommand(target, {
+      stackName: 'agent-qa', runtimeMode: 'controlled', runtimeSnapshotId: 'daemon-linux',
+      services: { server: false, expo: false, daemon: true },
+      serverUrl: 'http://127.0.0.1:43001', publicServerUrl: 'http://127.0.0.1:3005',
+    });
+    const command = target.platform === 'windows'
+      ? Buffer.from(invocation.split(' ').at(-1), 'base64').toString('utf16le')
+      : invocation;
+    assert.match(command, /--no-server/);
+    assert.match(command, /--no-ui/);
+    assert.ok(command.includes('http://127.0.0.1:43001'));
+    assert.doesNotMatch(command, /--no-daemon/);
+  }
 });
 
 test('whole-operation admission covers preparation children, preserves cwd/env and stops on preparation failure', async (t) => {
@@ -806,6 +824,34 @@ test('remote Stack server receives the non-secret auth mail, email/password and 
   assert.match(command, /HAPPIER_FEATURE_AUTH_EMAIL_PASSWORD__PROVISION_ENABLED=true/);
   // A secret would land in a remote command line and a persisted env file: never forwarded.
   assert.doesNotMatch(command, /smtp-secret-do-not-forward|HAPPIER_AUTH_EMAIL_SMTP_PASSWORD/);
+});
+
+test('remote Stack server projects public-share isolation and fixed-window policy on POSIX and Windows', () => {
+  const environment = {
+    HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN: 'qa.example.test',
+    HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__RATE_LIMIT_CHECKER: 'fixed_window',
+    HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__RATE_LIMIT_MAX_REQUESTS: '120',
+    HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__RATE_LIMIT_WINDOW_MS: '60000',
+  };
+  const config = resolveRemoteServerRuntimeConfig({
+    serverComponentName: 'happier-server-light',
+    env: { ...environment, HAPPIER_MASTER_SECRET: 'private-secret', UNRELATED_SETTING: 'unrelated' },
+  });
+  assert.deepEqual(config.environment, environment);
+  for (const target of [posix, windows]) {
+    const command = buildRemoteStackCommand(target, {
+      services: { server: true, expo: false, daemon: false },
+      stackName: 'remote-qa', serverUrl: 'http://127.0.0.1:43005',
+      publicServerUrl: 'https://qa.example.test', remoteServerPort: 43005,
+      remoteServerRuntimeConfig: config,
+    });
+    const rendered = target.platform === 'windows'
+      ? Buffer.from(command.split(' ').at(-1), 'base64').toString('utf16le') : command;
+    for (const [key, value] of Object.entries(environment)) {
+      assert.ok(rendered.includes(`${key}=${value}`), `${target.platform} omitted ${key}`);
+    }
+    assert.doesNotMatch(rendered, /private-secret|UNRELATED_SETTING/);
+  }
 });
 
 test('remote Stack server uses the stable outer public URL and projects only supported light/SQLite semantics', () => {

@@ -209,6 +209,7 @@ function normalizeTarget(raw, index, version) {
     ...(limaInstance ? { limaInstance, limaHome } : {}),
     ...(managedRuntime ? { managedRuntime } : {}),
     repoDir,
+    ...(raw.executorRepoDir ? { executorRepoDir: requireNonEmptyString(raw.executorRepoDir, `target ${name} executorRepoDir`) } : {}),
     cliHomeDir,
     ...(remotePath.length ? { remotePath } : {}),
     remoteServerPort,
@@ -512,7 +513,7 @@ export async function loadDevTargetsConfig({ stackName, path: configPath, env = 
       delete raw.runtimePlacement.build;
       logger.warn?.(`[dev-targets] runtimePlacement.build in ${path} ignored; configure the producer's runtimePlacement.build in ${buildPlacementOwnerPath}`);
     }
-    return { path, config: parseDevTargetsConfig(raw) };
+    return { path, config: parseDevTargetsConfig(raw), daemonExplicitlySet: raw?.runtimePlacement?.daemon != null };
   } catch (error) {
     if (allowMissing && error?.code === 'ENOENT') {
       return { path, config: { version: 1, targets: [] } };

@@ -6,8 +6,11 @@ import { fileURLToPath } from 'node:url';
 import { buildStackStableScopeId } from '../auth/stable_scope_id.mjs';
 import { REQUIRED_MANAGED_LIMA_GUEST_TOOLCHAIN } from '../managed_lima/provisioner.mjs';
 import { resolveEffectiveDbProvider } from '../server/effective_db_provider.mjs';
+import { renderNativeHeavyweightPressureCadence } from './heavyweight_pressure_cadence.mjs';
+export { resolveHeavyweightPressureRetryMilliseconds } from './heavyweight_pressure_cadence.mjs';
 
 export const DEFAULT_REMOTE_STACK_STARTUP_TIMEOUT_MS = 30 * 60_000;
+
 
 // Both dispatchers evaluate this policy. The native artifact is generated once,
 // while argv and path normalization remain thin transport adapters.
@@ -42,6 +45,10 @@ const HEAVYWEIGHT_MEMORY_KIB = Object.freeze({
   'runtime-build': 18874368,
   compilation: 22020096,
 });
+// The primary VM's browser/agent workloads pause below 8 GiB MemAvailable
+// (2026-10-06 observation). Worker envelopes remain class-owned; only local
+// admission raises smaller envelopes to this measured controller floor.
+const LOCAL_HEAVYWEIGHT_MEMORY_FLOOR_KIB = 8 * 1024 * 1024;
 const COMMAND_RULES = [
   { when: { hasScript: ['1'] }, set: { bootstrap: '1' } },
   { when: { command: ['git'] }, set: { placement: 'primary-only', commandClass: 'vcs-authority' } },
@@ -81,6 +88,13 @@ const FINAL_COMMAND_RULES = [
   { when: { script: ['build', 'build:finite', 'build:clean'], component: ['packages/cli-common', 'packages/protocol'] }, set: { heavyClass: 'package-dist' } },
   { when: { command: ['node', 'nodejs'], entryPath: ['scripts/build.mjs', 'packages/cli-common/scripts/build.mjs'], component: ['packages/cli-common'] }, set: { heavyClass: 'package-dist' } },
   { when: { command: ['node', 'nodejs'], entry: ['buildTypeScriptPackageDist.mjs'], component: ['packages/protocol'], project: ['tsconfig.json', './tsconfig.json'] }, set: { heavyClass: 'package-dist' } },
+  { when: { command: ['node', 'nodejs'], entry: ['buildTypeScriptPackageDist.mjs'], noCheck: ['1'] }, set: { heavyClass: 'package-dist' } },
+  // Carry the explicit envelope into placement before its payload starts.
+  { when: { command: ['hstack-exec'], entry: ['--heavyweight-admission'] }, set: { heavyClass: 'compilation' } },
+  ...Object.keys(HEAVYWEIGHT_MEMORY_KIB).map(heavyClass => ({
+    when: { command: ['hstack-exec'], admissionClass: [heavyClass] }, set: { heavyClass },
+  })),
+  { when: { command: ['hstack-exec'], admissionClass: ['targeted-validation', 'full-validation'] }, set: { heavyClass: 'validation' } },
   { when: { kind: ['runtime'], runnerKnown: ['1'], component: REMOTE_COMMAND_CLASSIFICATION.sourceTestComponents, config: REMOTE_COMMAND_CLASSIFICATION.sourceTestConfigs, resolverOverride: ['0'] }, set: { kind: 'source-test' } },
 ];
 function commandBasename(value) {
@@ -126,9 +140,23 @@ function normalizeCommandArguments(commandArgs, cwd) {
       break;
     }
   }
-  const stripTypes = args[1] === '--experimental-strip-types' ? '1' : '0';
-  if (stripTypes === '1') entry = commandBasename(args[2]);
-  const rawEntryPath = String(args[stripTypes === '1' ? 2 : 1] ?? '').replaceAll('\\', '/');
+  let stripTypes = args[1] === '--experimental-strip-types' ? '1' : '0';
+  let entryIndex = stripTypes === '1' ? 2 : 1;
+  if (command === 'node' || command === 'nodejs') {
+    stripTypes = '0';
+    entryIndex = 1;
+    // These are Node prefixes, not payload options. Stop at the entry (also
+    // -e/-p), so source text never becomes an executable script identity.
+    while (entryIndex < args.length) {
+      const argument = args[entryIndex];
+      if (argument === '--experimental-strip-types') { stripTypes = '1'; entryIndex += 1; }
+      else if (argument === '--import') entryIndex += 2;
+      else if (argument.startsWith('--import=')) entryIndex += 1;
+      else break;
+    }
+    entry = commandBasename(args[entryIndex]);
+  } else if (stripTypes === '1') entry = commandBasename(args[2]);
+  const rawEntryPath = String(args[entryIndex] ?? '').replaceAll('\\', '/');
   const entryPath = posix.normalize(rawEntryPath.startsWith(COMMAND_REPO_ROOT + '/') ? rawEntryPath.slice(COMMAND_REPO_ROOT.length + 1) : rawEntryPath);
   let config = 'vitest.config.ts', resolverOverride = '0', project = '', mode = 'write';
   for (let index = 1; index < args.length; index += 1) {
@@ -148,8 +176,17 @@ function normalizeCommandArguments(commandArgs, cwd) {
     return posix.normalize(path.startsWith(COMMAND_REPO_ROOT + '/') ? path.slice(COMMAND_REPO_ROOT.length + 1) : posix.join(slashCwd, path));
   });
   const testComponents = testPaths.map(nativeTestComponent);
+  let admissionClass = '';
+  if (command === 'hstack-exec' && args[1] === '--heavyweight-admission') {
+    admissionClass = 'validation';
+    for (const argument of args.slice(2)) {
+      if (argument === '--') break;
+      if (argument.startsWith('--class=')) admissionClass = argument.slice('--class='.length);
+    }
+  }
   return {
-    command, script, family: script.split(':', 1)[0], entry, entryPath, managerNode,
+    command, script, family: script.split(':', 1)[0], entry, entryPath, managerNode, admissionClass,
+    noCheck: args.includes('--noCheck') || args.includes('--noCheck=true') ? '1' : '0',
     hasScript: script ? '1' : '0', nativeTest: args.includes('--test') ? '1' : '0',
     stripTypes, mode, config: normalizeCommandPath(config), resolverOverride,
     workerRequest: args.some(arg => arg.startsWith('--worker-request=') && arg.length > '--worker-request='.length) ? '1' : '0',
@@ -202,14 +239,19 @@ export function renderNativeCommandPolicy() {
   return [
     '# Generated by native_execution_projection.mjs --write-command-policy.',
     '# Rule authority: remote_commands.mjs. Do not edit this projection.',
+    renderNativeHeavyweightPressureCadence(),
     'heavyweight_memory_floor_kib() {',
     '  case "$1" in',
-    ...Object.entries(HEAVYWEIGHT_MEMORY_KIB).map(([key, value]) => '    ' + key + ') printf ' + posixQuote(String(value)) + ' ;;'),
+    ...Object.entries(HEAVYWEIGHT_MEMORY_KIB).map(([key, value]) => '    ' + key + ') heavyweight_policy_floor=' + posixQuote(String(value)) + ' ;;'),
     // Historical dispatch labels are validation, while unrecognized resource
     // classes must not silently acquire a smaller compilation envelope.
-    '    targeted-validation|full-validation) printf ' + posixQuote(String(HEAVYWEIGHT_MEMORY_KIB.validation)) + ' ;;',
-    '    *) printf ' + posixQuote(String(HEAVYWEIGHT_MEMORY_KIB.compilation)) + ' ;;',
-    '  esac', '}',
+    '    targeted-validation|full-validation) heavyweight_policy_floor=' + posixQuote(String(HEAVYWEIGHT_MEMORY_KIB.validation)) + ' ;;',
+    '    *) heavyweight_policy_floor=' + posixQuote(String(HEAVYWEIGHT_MEMORY_KIB.compilation)) + ' ;;',
+    '  esac',
+    '  if [ "${2-}" = local ] && [ "$heavyweight_policy_floor" -lt ' + LOCAL_HEAVYWEIGHT_MEMORY_FLOOR_KIB + ' ]; then',
+    '    heavyweight_policy_floor=' + posixQuote(String(LOCAL_HEAVYWEIGHT_MEMORY_FLOOR_KIB)),
+    '  fi',
+    '  printf \'%s\' "$heavyweight_policy_floor"', '}',
     'native_command_policy_base() {',
     ...Object.entries(DEFAULT_COMMAND_POLICY).map(([key, value]) => '  policy_' + key + '=' + posixQuote(value)),
     renderShellCommandRules(COMMAND_RULES), '}',
@@ -243,6 +285,19 @@ native_command_basename() {
   while :; do case "$native_basename" in *\\\\*) native_basename="\${native_basename%%\\\\*}/\${native_basename#*\\\\}" ;; *) break ;; esac; done
   native_basename=\${native_basename##*/}
 }
+native_node_entry() {
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --experimental-strip-types) policy_stripTypes=1; shift ;;
+      --import) shift; [ "$#" -eq 0 ] || shift ;;
+      --import=*) shift ;;
+      *) break ;;
+    esac
+  done
+  native_entry_path=\${1-}
+  native_command_basename "$native_entry_path"; policy_entry=$native_basename
+}
 resolve_native_command_policy() {
   [ "\${1-}" = -- ] && shift
   case "\${1-}" in --script=*) native_script=\${1#--script=}; shift; [ "\${1-}" = -- ] && shift; set -- corepack yarn -s "$native_script" "$@" ;; esac
@@ -252,15 +307,25 @@ resolve_native_command_policy() {
   native_manager_cwd=; native_project=; policy_mode=write
   policy_nativeTest=0; policy_config=vitest.config.ts; policy_resolverOverride=0
   policy_project=; policy_workerRequest=0
+  policy_noCheck=0
+  policy_admissionClass=
+  if [ "$policy_command" = hstack-exec ] && [ "\${2-}" = --heavyweight-admission ]; then
+    policy_admissionClass=validation
+    for native_arg in "$@"; do
+      case "$native_arg" in --) break ;; --class=*) policy_admissionClass=\${native_arg#--class=} ;; esac
+    done
+  fi
   native_cwd=\${invoked_cwd#"$repo_root"}
   native_cwd=\${native_cwd#/}
   [ "\${explicit_relative_cwd_set-0}" = 1 ] && native_cwd=$explicit_relative_cwd
   native_normalize_path "$native_cwd"; policy_component=$native_result
   policy_stackScope=0
   case "$policy_component" in apps/stack|apps/stack/*) policy_stackScope=1 ;; esac
-  if [ "\${2-}" = --experimental-strip-types ]; then policy_stripTypes=1; native_command_basename "\${3-}"; policy_entry=$native_basename; fi
   native_entry_path=\${2-}
-  [ "$policy_stripTypes" = 1 ] && native_entry_path=\${3-}
+  case "$policy_command" in
+    node|nodejs) native_node_entry "$@" ;;
+    *) if [ "\${2-}" = --experimental-strip-types ]; then policy_stripTypes=1; native_entry_path=\${3-}; native_command_basename "$native_entry_path"; policy_entry=$native_basename; fi ;;
+  esac
   native_normalize_path "$native_entry_path"; policy_entryPath=$native_result
   case "$policy_entryPath" in "$repo_root"/*) policy_entryPath=\${policy_entryPath#"$repo_root"/} ;; esac
   native_pending=
@@ -272,6 +337,7 @@ resolve_native_command_policy() {
     esac
     case "$native_arg" in
       --test) policy_nativeTest=1 ;;
+      --noCheck|--noCheck=true) policy_noCheck=1 ;;
       --worker-request=?*) policy_workerRequest=1 ;;
       --config|-c) native_pending=config; policy_config= ;;
       --config=*) policy_config=\${native_arg#--config=} ;;
@@ -440,7 +506,7 @@ export function buildRemoteExecCommand(
     args = ['bash', '-c', body.join('; ')];
     if (admissionClass) {
       args = [`${repoDir}/apps/stack/bin/hstack-exec`, '--heavyweight-admission',
-        `--class=${admissionClass}`, `--machine=${target.name}`, ...(admissionMode === 'try' ? ['--no-wait'] : []), '--', ...args];
+        `--class=${admissionClass}`, `--machine=${target.name}`, `--failure-id=${normalizedExecutionId}`, ...(admissionMode === 'try' ? ['--no-wait'] : []), '--', ...args];
     }
   }
   if (target.platform === 'windows') {
@@ -629,6 +695,11 @@ const REMOTE_SERVER_LIGHT_SEMANTIC_ENV_KEYS = new Set([
   'HAPPIER_WEBAPP_URL',
   'HAPPIER_SQLITE_BUSY_TIMEOUT_MS',
   'HAPPIER_SQLITE_CONNECTION_LIMIT',
+  // Stored-content public shares use the server's isolated-origin and abuse-control owners.
+  'HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN',
+  'HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__RATE_LIMIT_CHECKER',
+  'HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__RATE_LIMIT_MAX_REQUESTS',
+  'HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__RATE_LIMIT_WINDOW_MS',
 ]);
 const REMOTE_SERVER_LIGHT_SEMANTIC_ENV_PREFIXES = [
   'HAPPIER_SERVER_RETENTION__',
@@ -923,7 +994,10 @@ function resolveRemoteStackInvocation(target, {
     ...(expoPublicUrl && !resolveExpoPublicUrlOnTarget ? [`EXPO_PACKAGER_PROXY_URL=${expoPublicUrl}`] : []),
   ];
   const devArgs = runtimeMode === 'controlled'
-    ? ['--runtime', '--no-dev-targets', '--no-browser', ...(!normalizedServices.daemon ? ['--no-daemon'] : []), ...(borrowedExpoProducerStackName ? ['--no-ui'] : [])]
+    ? ['--runtime', '--no-dev-targets', '--no-browser',
+      ...(!normalizedServices.server ? ['--no-server', `--server-url=${serverUrl}`] : []),
+      ...(!normalizedServices.daemon ? ['--no-daemon'] : []),
+      ...(!normalizedServices.server || borrowedExpoProducerStackName ? ['--no-ui'] : [])]
     : buildRemoteDevArgs({
     services: normalizedServices,
     serverUrl,
