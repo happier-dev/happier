@@ -25,7 +25,9 @@ it('keeps the interactive renderer and protocol root barrel unloaded through dae
     console.info('daemon-entrypoint-cold-load-memory', JSON.stringify({ before, after: process.memoryUsage(),
       protocolScripts: scripts.filter(({ url }) => /packages\/protocol\/src\//u.test(url)).length,
     }));
-    if (process.env.SCHEMA_MEMORY_GRAPH === '1') {
+    // A failed admission always identifies the importing module; opt-in graph
+    // diagnostics remain available for successful memory measurements.
+    if (rootLoaded() || process.env.SCHEMA_MEMORY_GRAPH === '1') {
       const rootImporters: { url: string; imports: string[] }[] = [];
       for (const { url, scriptId } of scripts) {
         if (!/\/(?:apps|packages)\//u.test(url) || /(?:\.test\.|vitest\.config|daemon-schema-memory\.config)/u.test(url)) continue;
